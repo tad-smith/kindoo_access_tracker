@@ -1,0 +1,1 @@
+// Cross-role endpoints callable from any signed-in principal: bootstrap(jwt, requestedPage) → {principal, pageModel}, whoami(jwt), health, version info. Every endpoint takes the GSI JWT as first arg and calls Auth.principalFrom(jwt) before proceeding.

@@ -1,0 +1,1 @@
+// Shared helpers: normaliseEmail (lowercase + Gmail-specific dot/+suffix/googlemail canonicalisation — see D4 in architecture.md), SHA-256 source_row_hash, UUID generation, today-ISO/now-timestamp helpers, slug generation, base64url + RSA-SHA256 verify helpers for JWT.

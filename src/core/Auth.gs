@@ -1,0 +1,1 @@
+// GSI identity + role resolution: verifyIdToken(jwt) (JWKS-cached RS256 verify against Config.gsi_client_id), resolveRoles(email), principalFrom(jwt), requireRole(principal, ...), requireWardScope(principal, wardId).
