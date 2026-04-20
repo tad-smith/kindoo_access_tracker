@@ -22,72 +22,71 @@ Chunks 3 and 4 can develop in parallel after Chunk 2. Chunk 5 and 8 can develop 
 
 ---
 
-## Chunk 1 — Scaffolding
+## Chunk 1 — Scaffolding `[DONE — see docs/changelog/chunk-1-scaffolding.md]`
 
-**Goal:** deploy an empty-but-real web app that demonstrates the full auth handshake — unauthenticated users get a login, signed-in users see their resolved roles or a clean "not authorized" page. Same shape as a pre-GSI "hello, you are role X" chunk, with the GSI handshake in front.
+**Goal:** deploy an empty-but-real web app that demonstrates the full auth handshake — unauthenticated users get a login, signed-in users see their resolved roles or a clean "not authorized" page.
 
 **Dependencies:** none.
 
-**Proof-driven scope.** Chunk 1 exists to demonstrate six specific things. Everything in this chunk maps to one of them; anything that doesn't is explicitly deferred below.
+**Proof-driven scope.** Chunk 1 existed to demonstrate six specific things. The proofs below were originally framed around Google Sign-In (GSI) drop-in button + JWT verification, but during the chunk we discovered that no browser-initiated Google OAuth flow can succeed from inside Apps Script HtmlService (the iframe runs on `*.googleusercontent.com`, which is on Google's permanent OAuth-origin denylist). The proofs were re-cast for the **two-deployment Session+HMAC** pattern that finally landed; the discovery trail (three failed pivots) is in `docs/open-questions.md` A-8 and `docs/changelog/chunk-1-scaffolding.md`.
 
-**The 6 proofs (acceptance criteria)**
+**The 6 proofs (acceptance criteria — final form)**
 
-1. **Login page loads and renders the GSI button.** Visiting `/exec` while signed out shows `ui/Login.html` with the GSI widget populated from `Config.gsi_client_id`. No blank pages, no server errors.
-2. **GSI returns a JWT; the client hands it to the server.** Clicking the button (or accepting One Tap) gives the client a signed ID token, which lands in `sessionStorage.jwt` and is sent to the server via `rpc('bootstrap', ...)`.
-3. **Server verifies the JWT against JWKS and extracts email.** `Auth.verifyIdToken` fetches+caches Google's JWKS, validates signature/`iss`/`aud`/`exp`/`email_verified`, and returns a canonical email. Tampered signature, wrong `aud`, and expired `exp` each cleanly reject. JWKS is fetched at most once per ~6 h across all calls (verified via CacheService contents + execution logs).
-4. **Role resolver resolves that email against the Sheet.** `Auth.resolveRoles` reads `KindooManagers` (active=true) and `Access` and returns the union of roles for the verified email. Canonical-email matching (D4) lets `alice.smith@gmail.com` in the sheet match `alicesmith@gmail.com` from the JWT claim.
-5. **Hello page renders with email + roles.** A Chunk-1-only `ui/Hello.html` template shows "Hello, [name] ([email]) — you are role X (wardId Y)" for every role the user holds. No real roster / request UI yet.
-6. **Failure modes land correctly.** No JWT → login page. JWT OK but the email has no role → `NotAuthorized.html`. Stale/invalid JWT → client clears `sessionStorage.jwt` and re-shows login.
+1. **Login page loads.** Visiting Main `/exec` while signed out shows `ui/Login.html` — a "Sign in with Google" anchor whose `href` is `Config.identity_url + ?service=identity`. No blank pages, no server errors.
+2. **Sign-in produces a verifiable session token.** Clicking the link navigates the top frame to the Identity deployment (`executeAs: USER_ACCESSING`); `Identity_serve` reads `Session.getActiveUser().getEmail()`, HMAC-signs `{email, exp, nonce}` with `Config.session_secret`, and renders a redirect page that lands the top frame back on Main `/exec?token=…`.
+3. **Server verifies the token and extracts email.** Main's `doGet` reads `?token=`, calls `Auth_verifySessionToken` (constant-time HMAC-SHA256 compare against `session_secret`, plus `exp > now − 30s` check), injects the verified token into the rendered Layout. Tampered signature → `AuthInvalid`. Past-exp → `AuthExpired`. Token persists in `sessionStorage.jwt` and is re-verified on every `google.script.run` call.
+4. **Role resolver resolves the verified email against the Sheet.** `Auth_resolveRoles` reads `KindooManagers` (active=true) and `Access` and returns the union of roles for the verified email. Canonical-email matching (D4) lets `alice.smith@gmail.com` in the sheet match `alicesmith@gmail.com` from `Session.getActiveUser`.
+5. **Hello page renders with email + roles.** A Chunk-1-only `ui/Hello.html` template shows `Hello, [name] ([email]) — you are role X (wardId Y)` for every role the user holds. No real roster / request UI yet.
+6. **Failure modes land correctly.** No token → login page. Token OK but the email has no role → `NotAuthorized.html`. Stale/invalid token → client clears `sessionStorage.jwt` and re-shows login.
 
-**Sub-tasks, grouped by which proof they support**
+**Sub-tasks (final form, all complete)**
 
 _Infrastructure (serves all six proofs)_
 
-- [ ] Create the backing Google Sheet and bind an Apps Script project (see `docs/sheet-setup.md`).
-- [ ] `clasp clone <scriptId>` into `src/`.
-- [ ] Write `appsscript.json` with the scopes and web-app config from `architecture.md` (`access: ANYONE_WITH_GOOGLE_ACCOUNT`).
-- [ ] Implement `services/Setup.gs#setupSheet()` — creates all 10 tabs with headers, idempotent. (Creates future tabs too so the data model is stable from chunk 1, even though only `Config` / `KindooManagers` / `Access` are read this chunk.)
-- [ ] Run `setupSheet()` once; verify all 10 tabs/headers.
-- [ ] Deploy as a web app and note the `/exec` URL.
+- [x] Create the backing Google Sheet and bind an Apps Script project (see `docs/sheet-setup.md`).
+- [x] `clasp clone <scriptId>` into `src/`.
+- [x] Write `appsscript.json` with `webapp.access = "ANYONE"` and the minimum scope set (no OAuth client; no `script.external_request`).
+- [x] Implement `services/Setup.gs#setupSheet()` — creates all 10 tabs with headers, idempotent; auto-generates `Config.session_secret` on first run.
+- [x] Implement `scripts/stamp-version.js` + `npm run push` wrapper — stamps `src/core/Version.gs` with a UTC ISO timestamp on every push; Layout shell renders it as a tiny footer for stale-deployment detection.
+- [x] Deploy **Main** (`executeAs: USER_DEPLOYING`) and **Identity** (`executeAs: USER_ACCESSING`) web apps; paste their URLs into `Config.main_url` and `Config.identity_url`.
 
 _Proof 1 — login page loads_
 
-- [ ] Create an OAuth 2.0 Client ID in Google Cloud Console (Authorized JS origins: `https://script.google.com` and the current Apps Script user-content host). Publish the consent screen.
-- [ ] Seed `Config.bootstrap_admin_email` and `Config.gsi_client_id` by hand in the Sheet; leave `setup_complete=FALSE`.
-- [ ] Implement `ui/Layout.html` — shell that injects `gsi_client_id`, pulls in `Styles` and `ClientUtils`.
-- [ ] Implement `ui/Login.html` — GSI button markup (`<script src="https://accounts.google.com/gsi/client">`), `data-client_id` populated from the server-side template.
-- [ ] Implement `core/Main.gs#doGet(e)` — renders `Layout.html`. No server-side auth decisions here; the client drives the handshake.
+- [x] Implement `ui/Layout.html` — shell that injects `identity_url`, `main_url`, `app_version`, and the per-request `injected_token` / `injected_error`.
+- [x] Implement `ui/Login.html` — anchor whose `href` is `Config.identity_url + ?service=identity` (auto-appended by Layout's `showLogin` so users paste the bare URL into Config).
+- [x] Implement `core/Main.gs#doGet(e)` — routes to `Identity_serve` on `?service=identity`, otherwise renders Layout (Main UI branch).
 
-_Proof 2 — JWT travels client → server_
+_Proof 2 — token issuance_
 
-- [ ] Implement `ui/ClientUtils.html#rpc(name, args)` — promise wrapper over `google.script.run`; auto-injects `sessionStorage.jwt` as the first argument. On `AuthExpired` / `AuthInvalid` response, clear `sessionStorage.jwt` and switch to login view.
-- [ ] Wire `ui/Login.html`'s GSI callback: stash `credential` (the ID token) into `sessionStorage.jwt`, call `rpc('bootstrap', { requestedPage })`, render the returned page.
+- [x] Implement `services/Identity.gs#Identity_serve()` — calls `Session.getActiveUser().getEmail()` (works under `USER_ACCESSING`); HMAC-signs the email via `Auth_signSessionToken`; renders a top-frame redirect to `Config.main_url + ?token=…`.
+- [x] Implement `core/Auth.gs#Auth_signSessionToken(email, ttlSeconds?)` — base64url-encodes `{email, exp, nonce}` and HMAC-SHA256-signs with `Config.session_secret`. Two-segment token, dot-separated.
 
-_Proof 3 — server verifies JWT_
+_Proof 3 — server verifies the token_
 
-- [ ] Implement `core/Utils.gs` with `normaliseEmail` (D4 canonicalisation), `hashRow`, `nowTs`, `todayIso`, plus base64url decode and RSA-SHA256 signature verify helpers. Unit-test `normaliseEmail` with at least: `Alice.Smith@Gmail.com`, `alicesmith+church@googlemail.com`, `alice@csnorth.org` (dots retained), `  Bob@Foo.COM  ` (trim + lowercase only).
-- [ ] Implement `repos/ConfigRepo.gs` — read-only accessors for `gsi_client_id`, `bootstrap_admin_email`, `setup_complete` (no writes in this chunk).
-- [ ] Implement `core/Auth.gs#verifyIdToken(jwt)` — fetches Google JWKS, caches in `CacheService` keyed `gsi_jwks` with 6 h TTL; validates signature, `iss ∈ {"accounts.google.com", "https://accounts.google.com"}`, `aud === Config.gsi_client_id`, `exp > now`, `email_verified === true`; returns `{ email: normaliseEmail(claims.email), name, picture }` or throws `AuthInvalid` / `AuthExpired`.
+- [x] Implement `core/Utils.gs` with `normaliseEmail` (D4 canonicalisation), `hashRow`, `nowTs`, `todayIso`, base64url encode/decode helpers. Unit-test `normaliseEmail` with at least: `Alice.Smith@Gmail.com`, `alicesmith+church@googlemail.com`, `alice@csnorth.org` (dots retained), `  Bob@Foo.COM  ` (trim + lowercase only). Unit-test base64url encode + decode round-trip.
+- [x] Implement `repos/ConfigRepo.gs` — read-only accessors for `session_secret`, `main_url`, `identity_url`, `bootstrap_admin_email`, `setup_complete` (no writes in this chunk).
+- [x] Implement `core/Auth.gs#Auth_verifySessionToken(token)` — constant-time HMAC re-verify; `exp` check with 30-s clock-skew leeway; throws `AuthInvalid` / `AuthExpired` / `AuthNotConfigured`.
+- [x] Implement `ui/ClientUtils.html#rpc(name, args)` — promise wrapper over `google.script.run`; auto-injects `sessionStorage.jwt` as the first argument. On `AuthExpired` / `AuthInvalid` response, clear `sessionStorage.jwt` and switch to login view.
 
 _Proof 4 — role resolver_
 
-- [ ] Implement `repos/KindooManagersRepo.gs`, `repos/AccessRepo.gs` — read-only `getAll` / `getByEmail` (no writes in this chunk).
-- [ ] Implement `core/Auth.gs#resolveRoles(email)` — returns `{ email, roles: [{type, wardId?}, ...] }` using the three read repos. Matching is on canonical email.
-- [ ] Implement `core/Auth.gs#principalFrom(jwt)` — `verifyIdToken` → `resolveRoles` composition.
-- [ ] Implement `core/Auth.gs#requireRole(principal, matcher)` and `requireWardScope(principal, wardId)` so Chunk 2+ has them ready.
+- [x] Implement `repos/KindooManagersRepo.gs`, `repos/AccessRepo.gs` — read-only `getAll` / `getByEmail` (no writes in this chunk).
+- [x] Implement `core/Auth.gs#Auth_resolveRoles(email)` — returns `{ email, roles: [{type, wardId?}, ...] }`. Matching is on canonical email.
+- [x] Implement `core/Auth.gs#Auth_principalFrom(token)` — `Auth_verifySessionToken` → `Auth_resolveRoles` composition.
+- [x] Implement `core/Auth.gs#Auth_requireRole(principal, matcher)` and `Auth_requireWardScope(principal, wardId)` so Chunk 2+ has them ready.
 
 _Proof 5 — hello page_
 
-- [ ] Implement `core/Router.gs#pick(requestedPage, principal)` — for Chunk 1 this always returns the hello template regardless of `requestedPage`.
-- [ ] Implement `api/ApiShared.gs#bootstrap(jwt, requestedPage)` — `principalFrom(jwt)` → `Router.pick` → return `{ principal, pageModel, pageHtml }`.
-- [ ] Implement `ui/Hello.html` — temporary Chunk-1-only template that renders "Hello, [name] ([email]) — you are role X (wardId Y)" for every role held. **This file is deleted in Chunk 5** when real rosters land; do not reuse it.
+- [x] Implement `core/Router.gs#Router_pick(requestedPage, principal)` — for Chunk 1 always returns the hello template (or NotAuthorized if `roles.length === 0`).
+- [x] Implement `api/ApiShared.gs#ApiShared_bootstrap(token, requestedPage)` — `Auth_principalFrom(token)` → `Router_pick` → return `{ principal, template, pageModel, pageHtml }`.
+- [x] Implement `ui/Hello.html` — temporary Chunk-1-only template that renders `Hello, [name] ([email]) — you are role X (wardId Y)` for every role held. **This file is deleted in Chunk 5** when real rosters land; do not reuse it.
 
 _Proof 6 — failure modes_
 
-- [ ] Implement `ui/NotAuthorized.html` — shown when `principal.roles.length === 0`; mentions the bishopric-import-lag possibility.
-- [ ] Exercise the client's `AuthExpired` / `AuthInvalid` branch by hand-invalidating `sessionStorage.jwt`.
+- [x] Implement `ui/NotAuthorized.html` — shown when `principal.roles.length === 0`; mentions the bishopric-import-lag possibility.
+- [x] Verify the client's `AuthExpired` / `AuthInvalid` branch by hand-invalidating `sessionStorage.jwt`.
 
-**Explicitly deferred to later chunks** (listed here so scope creep doesn't pull them in)
+**Explicitly deferred to later chunks** (respected — none built in Chunk 1)
 
 - `core/Lock.gs#withLock` — no writes in Chunk 1, so no lock. Moves to **Chunk 2**.
 - `repos/AuditRepo.gs` — nothing to audit yet. **Chunk 2**.

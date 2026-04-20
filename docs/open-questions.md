@@ -14,7 +14,7 @@ Confirmed by the project owner. Downstream consequences:
 
 - `Session.getActiveUser().getEmail()` can't be used — it returns empty cross-customer. It has been removed from the auth plan.
 - Auth pivots to **Google Sign-In (GSI) with server-side JWT verification**. See architecture.md D10 and §§4–5.
-- `webapp.access` is `ANYONE_WITH_GOOGLE_ACCOUNT` (D2 updated).
+- `webapp.access` is `ANYONE` in the manifest, shown as "Anyone with Google account" in the deploy dialog (D2 updated).
 - A one-time OAuth 2.0 Client ID setup in Google Cloud Console is added to the deployment steps (sheet-setup.md).
 - `Config.gsi_client_id` is a new required key; seeded manually before first deploy.
 - Chunk 1 scope grows to include: `Login.html`, `verifyIdToken` with JWKS caching, token-plumbing through `rpc`, and every `api/` endpoint taking the JWT as its first argument.
@@ -59,6 +59,81 @@ Confirmed. The `Personal Email` column in the callings sheet is the Gmail the pe
 ### A-7 `[RESOLVED 2026-04-19]` OAuth consent screen publishing status
 
 **Publish the app** (not Testing). The `openid`/`email`/`profile` scopes don't require Google verification, so publication is immediate. Test-users list is irrelevant and removed from the deployment checklist.
+
+### A-8 `[RESOLVED 2026-04-19]` All browser-initiated Google OAuth from inside Apps Script HtmlService is blocked — switch to two-deployment Session+HMAC
+
+**Discovery (Chunk 1).** The Chunk 0 plan called for Google Identity Services' (`gsi/client`) drop-in button rendered in `Login.html`. **Three pivots** showed that *no* browser-initiated Google OAuth flow can succeed from inside an Apps Script HtmlService iframe.
+
+#### Why no browser-initiated OAuth works
+
+1. Apps Script HtmlService (the only HTML rendering option for an Apps Script web app) sandboxes user-supplied HTML inside a per-script iframe on `https://n-<hash>-script.googleusercontent.com`. That's the origin `window.location.origin` returns inside the page — `script.google.com` is the *parent* frame.
+2. GSI's `google.accounts.id.initialize` checks the iframe's origin against the OAuth Client ID's Authorized JavaScript origins.
+3. Cloud Console rejects `*.googleusercontent.com` origins with "Invalid Origin: uses a forbidden domain." Permanent denylist (rationale: googleusercontent.com hosts user-uploaded content across many Google products, so allowing it as an OAuth origin would let arbitrary user content impersonate any app). No workaround at the OAuth-client-config level.
+4. **First pivot (didn't work):** OAuth 2.0 *implicit* flow (`response_type=id_token`) with a same-tab redirect to `accounts.google.com`. Hypothesis: `accounts.google.com` only checks `redirect_uri`, not the calling page's origin. **Wrong.** `accounts.google.com/o/oauth2/v2/auth` inspects the request's `Origin` / `Referer` for *all* browser-initiated flows and rejects with `origin_mismatch` (HTTP 400) when the origin isn't on the JS-origin allowlist.
+5. **Second pivot (also didn't work):** OAuth 2.0 *authorization code* flow (`response_type=code`) with server-side token exchange. The server-side exchange (`UrlFetchApp.fetch` POST to `oauth2.googleapis.com/token`) does escape the origin check — Google validates only the `redirect_uri` for that POST. **But the initial browser GET to `accounts.google.com/o/oauth2/v2/auth` happens first, and that request still gets `origin_mismatch`.** The second pivot died in the same place as the first.
+6. We also tried `<meta name="referrer" content="no-referrer">`, `rel="noreferrer"` on anchors, and programmatic-anchor-click navigation. All failed: modern browsers leak the iframe origin via `Sec-Fetch-Site` and other headers we can't suppress from JS. Google's debug page after the failure showed `origin: https://n-<hash>-script.googleusercontent.com` directly.
+
+#### Resolution: two-deployment `Session.getActiveUser` + HMAC-signed session token
+
+The only Apps-Script-native primitive that returns the user's email reliably for consumer Gmail is `Session.getActiveUser` under `executeAs: USER_ACCESSING`. The catch — covered in the original D10 reasoning — is that `USER_ACCESSING` makes the script run with the user's permissions, so the user would need read access to the backing Sheet, breaking the privacy model.
+
+The fix: **split identity into a separate deployment** of the same script project.
+
+- **Main deployment** (`executeAs: USER_DEPLOYING`, URL stored in `Config.main_url`): renders all UI, reads/writes the backing Sheet under the deployer's identity (so the Sheet stays private to the deployer).
+- **Identity deployment** (`executeAs: USER_ACCESSING`, URL stored in `Config.identity_url`): runs `Session.getActiveUser().getEmail()`, HMAC-signs `{email, exp, nonce}` with `Config.session_secret`, renders a tiny HTML page that navigates the top frame back to Main with the token in the query string.
+
+Same script project, same `appsscript.json`, same code — just two different deployments with different `executeAs` settings. `Main.doGet` routes by comparing `ScriptApp.getService().getUrl()` against `Config.identity_url` (and accepts `?service=identity` as an explicit override for smoke-testing fresh Identity deployments before their URL is in Config).
+
+The HMAC signature lets Main *trust* what Identity returns without sharing a database — the only shared state is `Config.session_secret`, which both deployments read from the same Sheet (because both are deployments of the same script project bound to the same Sheet).
+
+#### Sign-in flow
+
+1. User visits Main `/exec`. No session token → render Login button.
+2. Click → top navigates to Identity `/exec`.
+3. Identity deployment runs:
+   - `Session.getActiveUser().getEmail()` returns the user's email (works for consumer Gmail because the script runs as the user).
+   - First-time per user: Google prompts the standard "Kindoo Access Tracker wants to: View your email address" consent. Non-sensitive scope, no Google review required, immediate accept.
+   - HMAC-sign `{email, exp, nonce}` with `Config.session_secret` (HMAC-SHA256 via `Utilities.computeHmacSha256Signature`).
+   - Token format: `<base64url(payload)>.<base64url(sig)>` — two segments, distinguishable from a JWT.
+   - Render HTML that does `window.top.location.replace(MAIN_URL + '?token=…')`.
+4. Top navigates back to Main `/exec?token=…`. Main's `doGet` verifies the HMAC, drops the token into the rendered Layout HTML as `INJECTED_TOKEN`. Client stashes it in `sessionStorage`, reloads top to clean `MAIN_URL` (strips `?token` from address bar).
+5. Subsequent rpc calls pass the token; server re-verifies HMAC + checks `exp` on each call. HMAC re-verify is pure local CPU — no network — so cheap.
+
+#### Cost vs. benefit
+
+**Removed:**
+- No OAuth client in Cloud Console at all (no `gsi_client_id`, no `gsi_client_secret`, no Authorized JS origins / redirect URIs to manage).
+- No JWT/JWKS code (~150 lines of BigInt RSA verifier + JWKS cache deleted from `Auth.gs` + `Utils.gs`).
+- No third-party identity dependency — Google's own `Session.getActiveUser` is the source of truth.
+- Cloudflare Worker (Chunk 11) gets simpler too: no auth-redirect concerns, since auth is internal to script.google.com.
+
+**Added:**
+- Second web app deployment (~2 minutes one-time setup; Apps Script supports multiple deployments per project).
+- Two new `Config` keys (`main_url`, `identity_url`) + an auto-generated `session_secret`.
+- One-time per-user OAuth consent on the Identity deployment for the email scope. UI: standard "Kindoo Access Tracker wants to: View your email address" — non-scary, immediate accept.
+
+#### Spec impacts
+
+Reflected in:
+- `spec.md` §2 (Auth bullet rewritten for the two-deployment Session+HMAC pattern; no OAuth)
+- `architecture.md` D10 (rewritten with all three failed approaches called out as discoveries) + §4 (request-lifecycle Mermaid diagram redrawn with two top frames + two iframes for the round-trip) + §3 directory structure (`services/Identity.gs` added) + §12 quick-reference table (rows updated)
+- `data-model.md` Config tab (`gsi_client_id` and `gsi_client_secret` removed; `main_url`, `identity_url`, `session_secret` added)
+- `sheet-setup.md` steps 11–15 (rewritten: deploy Main, deploy Identity, paste URLs into Config, one-time per-user consent on Identity)
+- `services/Setup.gs` (drop OAuth keys; seed new keys; auto-generate `session_secret`)
+- `services/Identity.gs` (new file)
+- `core/Auth.gs` (delete `Auth_verifyIdToken` / JWKS / `Auth_exchangeAuthCode`; add `Auth_signSessionToken` / `Auth_verifySessionToken`)
+- `core/Utils.gs` (delete BigInt RSA helpers; add `Utils_base64UrlEncode` / `Utils_base64UrlEncodeBytes`)
+- `chunk-1-scaffolding.md` deviation list (all three pivots recorded)
+
+#### Future-proofing
+
+- **Token expiry:** session tokens last 1 hour by default (matching what GSI's id_token TTL would have been). After expiry, the user is bounced back through the Identity deployment, which is silent for consumer Gmail (no re-prompt) since `Session.getActiveUser` returns immediately. Net UX impact: a brief redirect every hour.
+- **Cloudflare Worker (Chunk 11):** the worker proxies `kindoo.csnorth.org/*` to Main `/exec`. The Identity URL stays on `script.google.com` directly (the user briefly sees `script.google.com` in the address bar during the round trip; acceptable since it's clearly a Google-owned domain). Re-evaluate at Chunk 11.
+- **`session_secret` rotation:** clear the Config cell and re-run `setupSheet`. All live tokens become invalid (users re-sign-in). Document as the rotation procedure.
+
+### A-9 `[RESOLVED 2026-04-19]` `webapp.access` manifest enum value
+
+The Chunk 0 docs/manifest used `"ANYONE_WITH_GOOGLE_ACCOUNT"`, which is the *deploy dialog's human-readable label* — not the manifest enum. The actual enum is **`ANYONE`** (sign-in required; `ANYONE_ANONYMOUS` is the no-sign-in variant). Surfaced when `clasp push` rejected the manifest with `Expected one of [UNKNOWN_ACCESS, DOMAIN, ANYONE, ANYONE_ANONYMOUS, MYSELF]`. Behaviour intent unchanged — sign-in required, no domain restriction. Spec corrected in `spec.md` §2, `architecture.md` D2, `build-plan.md` Chunk 1, `sheet-setup.md` checklist.
 
 ---
 
@@ -253,7 +328,7 @@ If a header gets renamed manually, repos will throw loud errors on next read. `s
 These aren't ambiguities — I made a choice. Flagging here in case you disagree.
 
 - **D1 (architecture.md) Container-bound script.** Simpler than standalone; one sheet per deployment. If a test/prod separation is wanted, we'd flip this to standalone with a `callings_sheet_id`-style `app_sheet_id` config key.
-- **D2** `executeAs: USER_DEPLOYING`, `access: ANYONE_WITH_GOOGLE_ACCOUNT` — updated 2026-04-19 after A-1 resolved. Identity is handled by GSI (D10), not by `Session.getActiveUser()`.
+- **D2** `executeAs: USER_DEPLOYING`, `access: ANYONE` (manifest enum; shown as "Anyone with Google account" in the deploy dialog) — updated 2026-04-19 after A-1 resolved. Identity is handled by GSI (D10), not by `Session.getActiveUser()`.
 - **D3** UUIDs for `seat_id` and `request_id`; slugs for `ward_id` and `building_id`. Slugs make audit logs readable. Generated automatically from `name` on insert unless specified.
 - **D8** Dates stored as ISO `YYYY-MM-DD` strings (not Sheet date objects). Sorts lexically, avoids tz confusion. Timestamps remain as Sheet Date objects.
 - **D10** Google Sign-In + JWT verification for identity, added 2026-04-19. One-time OAuth 2.0 Client ID creation in Google Cloud Console; `Config.gsi_client_id` seeded manually.

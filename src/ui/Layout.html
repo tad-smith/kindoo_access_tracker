@@ -1,1 +1,214 @@
-<!-- Page shell: <head> (with GSI client library + gsi_client_id injected from Config), shared styles/scripts, session check, Nav include, content slot. Shows Login.html when sessionStorage.jwt is absent/expired; otherwise renders the role-specific page via a sub-template. -->
+<!--
+  Page shell. Drives the auth handshake for the two-deployment Session+HMAC
+  pattern (architecture.md D10, open-questions.md A-8).
+
+  Boot flow:
+    1. doGet may have just consumed a `?token=…` from the Identity-deployment
+       redirect, verified its HMAC server-side, and injected it as
+       INJECTED_TOKEN. (Or set INJECTED_ERR on failure.)
+    2. If INJECTED_TOKEN: stash in sessionStorage, reload top to clean
+       MAIN_URL (strips ?token from the address bar).
+    3. Else if INJECTED_ERR: surface it — usually a stale or wrong-secret
+       token; route the user back to Login.
+    4. Else if sessionStorage.jwt is present and not expired (decoded exp):
+       call rpc('ApiShared_bootstrap', requestedPage) and render the page.
+    5. Else: show the Login page. The "Sign in with Google" anchor's href is
+       set to IDENTITY_URL by showLogin(). Clicking it navigates the top frame
+       (via <base target="_top">) to the Identity deployment, which runs as
+       the user, reads Session.getActiveUser, signs an HMAC token, and
+       redirects back here with `?token=…` (step 1). No JS click handler —
+       it's just a plain anchor.
+
+  No browser-side OAuth happens anywhere — this whole flow is internal to
+  script.google.com. The two failed attempts (GSI button → implicit flow →
+  server-side code flow) all hit `origin_mismatch` because Google's OAuth
+  endpoint inspects the iframe origin (*.googleusercontent.com), which is
+  permanently denylisted as a JS origin. See open-questions.md A-8.
+-->
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>Kindoo Access Tracker</title>
+    <?!= include('ui/Styles') ?>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">Kindoo Access Tracker</div>
+      <div class="user-meta" id="user-meta"></div>
+    </header>
+
+    <main id="app">
+      <div id="content" class="hidden">Loading…</div>
+      <div id="login-container" class="hidden">
+        <?!= include('ui/Login') ?>
+      </div>
+    </main>
+
+    <footer class="version-stamp" title="Deployed source version. Compare against KINDOO_VERSION_ in src/core/Version.gs to detect a stale deployment.">
+      v: <?= app_version ?>
+    </footer>
+
+    <script>
+      var IDENTITY_URL    = <?!= JSON.stringify(identity_url) ?>;
+      var MAIN_URL        = <?!= JSON.stringify(main_url) ?>;
+      var INJECTED_TOKEN  = <?!= JSON.stringify(injected_token) ?>;
+      var INJECTED_ERR    = <?!= JSON.stringify(injected_error) ?>;
+    </script>
+    <?!= include('ui/ClientUtils') ?>
+    <script>
+      (function () {
+        function $(id) { return document.getElementById(id); }
+        function show(el) { el.classList.remove('hidden'); }
+        function hide(el) { el.classList.add('hidden'); }
+
+        function setUserMeta(p) {
+          if (!p) { $('user-meta').textContent = ''; return; }
+          var label = (p.name && p.name.length) ? p.name + ' (' + p.email + ')' : p.email;
+          $('user-meta').textContent = label;
+        }
+
+        function showLogin(errMsg) {
+          hide($('content'));
+          show($('login-container'));
+          setUserMeta(null);
+          var link = $('signin-link');
+          var errEl = $('login-error');
+          if (link) {
+            if (IDENTITY_URL) {
+              // Always append ?service=identity so the Identity deployment's
+              // doGet dispatches to Identity_serve regardless of how
+              // identity_url was pasted into Config. ScriptApp.getService()
+              // .getUrl() is unreliable in multi-deployment setups (can
+              // return the same URL for both deployments), so we don't
+              // rely on URL-match alone for routing.
+              var sep = IDENTITY_URL.indexOf('?') === -1 ? '?' : '&';
+              link.href = IDENTITY_URL + sep + 'service=identity';
+              link.style.pointerEvents = '';
+              link.style.opacity = '';
+            } else {
+              link.removeAttribute('href');
+              link.style.pointerEvents = 'none';
+              link.style.opacity = '0.4';
+              if (!errMsg) {
+                errMsg = 'identity_url is not configured. Set ' +
+                  'Config.identity_url in the backing Sheet ' +
+                  '(see docs/sheet-setup.md).';
+              }
+            }
+          }
+          if (errEl) errEl.textContent = errMsg || '';
+        }
+
+        function showContent(html, principal) {
+          $('content').innerHTML = html;
+          show($('content'));
+          hide($('login-container'));
+          setUserMeta(principal);
+        }
+
+        function showError(msg) {
+          $('content').innerHTML =
+            '<div class="error"><strong>Error:</strong> ' + escapeHtml(msg) + '</div>';
+          show($('content'));
+          hide($('login-container'));
+          setUserMeta(null);
+        }
+
+        function escapeHtml(s) {
+          return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        }
+
+        // Cheap client-side expiry check on the HMAC token's exp claim.
+        // Token format: <base64url(payload)>.<base64url(sig)> — two segments,
+        // unlike a JWT's three. Server-side Auth_verifySessionToken is the
+        // authority; this is just to skip a server round-trip on dead tokens.
+        function isExpired(token) {
+          try {
+            var parts = token.split('.');
+            if (parts.length !== 2) return true;
+            var b64 = parts[0].replace(/-/g, '+').replace(/_/g, '/');
+            while (b64.length % 4) b64 += '=';
+            var payload = JSON.parse(atob(b64));
+            if (typeof payload.exp !== 'number') return true;
+            return (payload.exp * 1000) < Date.now();
+          } catch (e) {
+            return true;
+          }
+        }
+
+        function proceedWithToken() {
+          var token = sessionStorage.getItem('jwt');
+          if (!token || isExpired(token)) {
+            if (token) sessionStorage.removeItem('jwt');
+            showLogin();
+            return;
+          }
+          var qs = new URLSearchParams(window.location.search);
+          var requestedPage = qs.get('p') || '';
+          $('content').innerHTML = 'Loading…';
+          show($('content'));
+          hide($('login-container'));
+          rpc('ApiShared_bootstrap', requestedPage).then(function (resp) {
+            showContent(resp.pageHtml, resp.principal);
+          }).catch(function (err) {
+            var msg = (err && err.message) ? err.message : String(err);
+            if (msg.indexOf('AuthExpired') !== -1 || msg.indexOf('AuthInvalid') !== -1) {
+              sessionStorage.removeItem('jwt');
+              showLogin('Your session expired. Please sign in again.');
+            } else if (msg.indexOf('AuthNotConfigured') !== -1) {
+              showError('App not configured: session_secret missing in the Config tab.');
+            } else if (msg.indexOf('Forbidden') !== -1) {
+              showError('You are not authorised for that action.');
+            } else {
+              showError(msg);
+            }
+          });
+        }
+
+        function boot() {
+          // Just landed from the Identity deployment with a verified token?
+          if (INJECTED_TOKEN) {
+            sessionStorage.setItem('jwt', INJECTED_TOKEN);
+            if (MAIN_URL) {
+              // Reload top to bare /exec — strips ?token from address bar.
+              window.top.location.replace(MAIN_URL);
+              return;
+            }
+            // Fallback: no main URL to navigate to — just continue. The
+            // ?token= will linger in the parent URL bar until the user
+            // navigates away.
+            proceedWithToken();
+            return;
+          }
+          if (INJECTED_ERR) {
+            // Token verification failed server-side. Most often: stale token
+            // (exp passed) or session_secret was rotated.
+            if (INJECTED_ERR.indexOf('AuthNotConfigured') !== -1) {
+              showError('App not configured: session_secret missing in the Config tab. ' +
+                'Run setupSheet from the editor to auto-generate one, then re-sign-in.');
+            } else if (INJECTED_ERR.indexOf('AuthExpired') !== -1) {
+              showLogin('Your sign-in token expired. Please sign in again.');
+            } else if (INJECTED_ERR.indexOf('AuthInvalid') !== -1) {
+              showLogin('Your sign-in token was rejected. Please sign in again.');
+            } else {
+              showError(INJECTED_ERR);
+            }
+            return;
+          }
+          proceedWithToken();
+        }
+
+        boot();
+      })();
+    </script>
+  </body>
+</html>

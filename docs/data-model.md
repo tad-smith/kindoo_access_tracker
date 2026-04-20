@@ -34,7 +34,9 @@ Key/value pairs. The primary "knobs" the app reads on startup.
 | `callings_sheet_id` | string | Google Sheet ID for the weekly import source. Seeded via bootstrap wizard. |
 | `stake_seat_cap` | number | Max seats in the stake pool. Seeded via bootstrap wizard. |
 | `bootstrap_admin_email` | string | Seeded manually in the Sheet before first deploy. |
-| `gsi_client_id` | string | Google OAuth 2.0 Client ID used by GSI and verified as the JWT `aud`. Seeded manually before first deploy. Changing this value logs everyone out. |
+| `main_url` | string | Web-app URL of the **Main** deployment (`executeAs: USER_DEPLOYING`). Used by `Identity_serve` as the redirect target after signing the session token, and by the client for "clean URL" redirects after token consumption. Seeded manually after first deploy. Format: `https://script.google.com/macros/s/<MAIN_DEPLOYMENT_ID>/exec`. |
+| `identity_url` | string | Web-app URL of the **Identity** deployment (`executeAs: USER_ACCESSING`). Used by `Main.doGet` to detect "this request is hitting Identity, dispatch to `Identity_serve`" and by the Login button as the navigation target. Seeded manually after the Identity deployment is created. Format: `https://script.google.com/macros/s/<IDENTITY_DEPLOYMENT_ID>/exec`. |
+| `session_secret` | string | HMAC-SHA256 signing secret for session tokens. Auto-generated on first `setupSheet` run as two concatenated UUIDs (~73 chars / ~256 bits of entropy). Both deployments read it from the same Sheet — that's how the HMAC signature lets Main *trust* what Identity signs without sharing a database. **Treat as sensitive**: anyone with this value can mint valid session tokens for any email. To rotate, clear the cell and re-run `setupSheet` (will auto-regenerate); all live tokens become invalid. |
 | `setup_complete` | boolean | `FALSE` until bootstrap wizard finishes. |
 | `last_import_at` | timestamp | Written by Importer. |
 | `last_import_summary` | string | Short human-readable summary of the last run. |
@@ -48,7 +50,9 @@ Key/value pairs. The primary "knobs" the app reads on startup.
 | `callings_sheet_id` | `1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789` |
 | `stake_seat_cap` | `15` |
 | `bootstrap_admin_email` | `tad.e.smith@gmail.com` |
-| `gsi_client_id` | `1234567890-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com` |
+| `main_url` | `https://script.google.com/macros/s/AKfycby...EXAMPLE.../exec` |
+| `identity_url` | `https://script.google.com/macros/s/AKfycbx...EXAMPLE.../exec` |
+| `session_secret` | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx-yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy` |
 | `setup_complete` | `TRUE` |
 | `last_import_at` | `2026-04-19 03:02:11` |
 | `last_import_summary` | `CO: +2/-1 auto, +1 access · ST: +0/-0 auto · over cap: none` |

@@ -55,24 +55,30 @@ Specification: [`docs/spec.md`](docs/spec.md) (live — always describes the cur
    ```
    npm run push
    ```
-5. In the Apps Script editor, open `core/Setup` and run `setupSheet()` once. This creates every tab with the correct headers. (If preferred, this step can be triggered from a custom menu — see [`docs/sheet-setup.md`](docs/sheet-setup.md).)
-6. Create an OAuth 2.0 Client ID for Google Sign-In (full walkthrough in [`docs/sheet-setup.md`](docs/sheet-setup.md#path-1--setupsheet-preferred), step 11): Google Cloud Console → Credentials → OAuth client ID → Web application; add `https://script.google.com` (and later your custom domain) to Authorized JavaScript origins.
-7. Open the Sheet's `Config` tab and set `bootstrap_admin_email` to your address and `gsi_client_id` to the OAuth client ID you just created. You'll finish setup via the in-app bootstrap wizard after the first deploy.
-8. Deploy the web app:
-   ```
-   npm run deploy
-   ```
-   Note the `/exec` URL printed — that's the app URL. Access setting: `Anyone with Google account`.
-9. Open the URL in a browser while signed in as the bootstrap admin. Google Sign-In prompts once, then the first-run wizard walks you through the rest of the configuration.
+5. In the Apps Script editor, open `services/Setup` and run `setupSheet()` once. This creates every tab with the correct headers and auto-generates `Config.session_secret`. (If preferred, this step can be triggered from the `Kindoo Admin → Setup sheet…` custom menu added by `onOpen()` — see [`docs/sheet-setup.md`](docs/sheet-setup.md).)
+6. Open the Sheet's `Config` tab and set `bootstrap_admin_email` to your address.
+7. Deploy **two** web apps from the same script project (full walkthrough in [`docs/sheet-setup.md`](docs/sheet-setup.md#path-1--setupsheet-preferred), steps 11–14):
+   - **Main** — `executeAs: Me`, access: `Anyone with Google account`. Paste its `/exec` URL into `Config.main_url`.
+   - **Identity** — `executeAs: User accessing the web app`, access: `Anyone with Google account`. Paste its `/exec` URL into `Config.identity_url`.
+   No OAuth Client ID in Google Cloud Console is needed; identity comes from `Session.getActiveUser()` on the Identity deployment, signed with `Config.session_secret` (HMAC) so Main can trust the result. See [`docs/architecture.md`](docs/architecture.md) D10 + [`docs/open-questions.md`](docs/open-questions.md) A-8 for why this two-deployment shape is necessary.
+8. Visit the Identity URL once directly in a browser, signed in as the bootstrap admin, to grant the one-time per-user OAuth consent for the email scope. Then visit the Main URL — Google Sign-In completes via the Identity round-trip, and the first-run wizard (Chunk 4) walks you through the rest of the configuration.
 
 ### Day-to-day
 
 - Edit files under `src/`.
-- `npm run push` to sync to Apps Script.
-- `npm run push:watch` to sync on save.
+- `npm run push` to sync to Apps Script. Stamps `src/core/Version.gs` with the current UTC timestamp before pushing — the value renders as a tiny footer on every page.
+- `npm run push:watch` to sync on save (timestamp stamped once at the start).
 - `npm run open` opens the script in the Apps Script editor.
 - `npm run logs` tails execution logs.
-- `npm run deploy` creates a new deployment version. `clasp deployments` lists them.
+- `npm run deploy` creates a *new* deployment (new ID, new URL — usually not what you want). For ongoing dev, **update the existing deployment** via the Apps Script editor: **Deploy → Manage deployments → ✎ Edit → Version: New version → Deploy**. Without that step, `/exec` keeps serving the previously-deployed code even after `clasp push`.
+
+### Detecting a stale deployment
+
+Apps Script's `/exec` URL serves the most recently *deployed* code, not the head. If you push but forget to update the deployment, you're testing yesterday's code. To detect this:
+
+1. After `npm run push`, note the timestamp printed by `stamp-version`.
+2. Open `/exec` in the browser — the footer shows `v: <timestamp>`.
+3. If the footer's timestamp is older than what was just printed, the deployment hasn't been updated. Update it via the editor as described above.
 
 ### Production domain
 
@@ -82,7 +88,7 @@ The app is also served at `kindoo.csnorth.org` via a Cloudflare Worker that prox
 
 - **`docs/spec.md` is the live source of truth.** Code and spec change together, in the same commit. Per-chunk changelogs in [`docs/changelog/`](docs/changelog/) record the "why" behind each change — reading the latest chunk file plus `spec.md` is the catch-up recipe.
 - **Never commit `.clasprc.json` or `.clasp.json`.** The first holds your personal clasp OAuth credentials; the second holds your local scriptId. Both are gitignored. The committed `.clasp.json.example` is the template.
-- **No secrets in source.** The OAuth Client ID is not a secret (Google's threat model doesn't treat it as one), but it still lives in `Config.gsi_client_id` in the Sheet so it can be rotated without a redeploy. The callings-sheet ID and the backing-sheet ID are runtime config. Member data never enters the repo — it's all in the Sheet.
+- **No secrets in source.** `Config.session_secret` (the HMAC signing secret for session tokens — auto-generated by `setupSheet`), the callings-sheet ID, and the backing-sheet ID are all runtime config in the Sheet. Member data never enters the repo — it's all in the Sheet.
 - **Apps Script has a flat namespace.** Subdirectories under `src/` become folder prefixes in the Apps Script editor (e.g. `repos/SeatsRepo`), but all functions still share one global scope. Name exported functions defensively (`Seats_getAll`, not `getAll`).
 - **Every write goes through `LockService`.** See [`docs/architecture.md`](docs/architecture.md#lockservice-strategy).
 - **Every write emits an `AuditLog` row.** No exceptions, including automated jobs (use actor `"Importer"` or `"ExpiryTrigger"`). Callers pass the actor explicitly — `AuditRepo.write` never falls back to `Session.getActiveUser`, because that's the deployer, not the authenticated user (see [`docs/architecture.md` §5](docs/architecture.md)).

@@ -17,7 +17,7 @@
 | # | Decision | Why |
 | --- | --- | --- |
 | D1 | **Container-bound** Apps Script project (bound to the backing Sheet via Extensions → Apps Script). | Simpler deploy and permissions model; `SpreadsheetApp.getActiveSpreadsheet()` always returns the right sheet, no Script-Property plumbing. Trade-off: one sheet per deployment. |
-| D2 | `webapp.executeAs = "USER_DEPLOYING"` and `webapp.access = "ANYONE_WITH_GOOGLE_ACCOUNT"`. | Users never need read access to the backing sheet (the deployer does). All users are on consumer Gmail, so `DOMAIN` access doesn't apply; `ANYONE_WITH_GOOGLE_ACCOUNT` gates the app at the Google login wall. Identity is established by GSI (D10), not `Session.getActiveUser().getEmail()` — the latter returns empty cross-customer. |
+| D2 | `webapp.executeAs = "USER_DEPLOYING"` (Main deployment) and `webapp.access = "ANYONE"`. The Identity deployment uses `executeAs = "USER_ACCESSING"` instead — see D10. Both share `access = "ANYONE"`. (The deploy dialog shows `ANYONE` as the human-readable label "Anyone with Google account" — `ANYONE` in the manifest *requires sign-in*; `ANYONE_ANONYMOUS` would be the no-sign-in variant.) | On Main, users never need read access to the backing sheet (the deployer does). All users are on consumer Gmail, so `DOMAIN` access doesn't apply; `ANYONE` gates the app at the Google login wall. Identity is established by Identity_serve under `USER_ACCESSING` (D10), not by `Session.getActiveUser().getEmail()` on Main — that returns empty cross-customer. |
 | D3 | UUIDs (`Utilities.getUuid()`) for `seat_id` and `request_id`. Human-readable slugs (e.g., `cordera-1st`) for `ward_id` and `building_id`. | UUIDs avoid race conditions on ID generation; slug IDs keep audit logs and cross-references readable. |
 | D4 | Emails are normalised to a **canonical form** before compare/store/hash: lowercased, and — for `@gmail.com` / `@googlemail.com` only — with `.`s and `+suffix` stripped from the local part, and `googlemail.com` collapsed to `gmail.com`. Workspace addresses are preserved literally. | Gmail routes `alice.smith+foo@gmail.com` and `alicesmith@gmail.com` to the same inbox, and LCR / GSI sometimes disagree on which form they hand us. Without canonicalisation, role resolution and seat uniqueness silently drift. See [`open-questions.md` I-8](open-questions.md#i-8-resolved-2026-04-19-gmail-address-canonicalisation--apply-from-day-1) for the exact algorithm. |
 | D5 | `source_row_hash` = SHA-256 of `scope|calling|canonical_email` (canonicalisation per D4). | Stable; identifies a specific auto-seat assignment across imports regardless of row order or incoming email variant. |
@@ -25,7 +25,7 @@
 | D7 | A single `Setup.gs` function (`setupSheet`) creates/repairs all tabs and headers. Optionally exposed via `onOpen()` custom menu. | Removes human error from manual tab creation; safely re-runnable. |
 | D8 | Dates stored as ISO date strings in `Requests.start_date`, `Seats.start_date`, etc.; timestamps stored as `Date` in `*_at` columns. | ISO dates sort lexically and are unambiguous across locales; `Date` on `*_at` lets Sheets show human-readable times. |
 | D9 | Query routing via a single `?p=` query param; default page picked by highest-privilege role held by the user. | Keeps URLs short, makes deep links possible, preserves single-entry-point `doGet`. |
-| D10 | **Google Sign-In (GSI) with server-side JWT verification** as the identity layer. Every `google.script.run` call passes the GSI-issued ID token; the server verifies it against Google's JWKS on each call and extracts the verified `email` claim. | Required because all users are on consumer Gmail (separate security realms), so `Session.getActiveUser().getEmail()` returns empty. JWT verification is pure local crypto after the JWKS is cached — one HTTP fetch every ~6 h. |
+| D10 | **Two-deployment `Session.getActiveUser` + HMAC-signed session token** as the identity layer. Same Apps Script project, two web app deployments. **Main** (`executeAs: USER_DEPLOYING`, `Config.main_url`) renders all UI and reads/writes the backing Sheet under the deployer's identity (so the Sheet stays private to the deployer). **Identity** (`executeAs: USER_ACCESSING`, `Config.identity_url`) exists only to read `Session.getActiveUser().getEmail()`, HMAC-sign `{email, exp, nonce}` with `Config.session_secret`, and redirect the top back to Main with the token in the query string. `Main.doGet` routes by checking `?service=identity` in the query string. The Login link in `Layout.html` always auto-appends that param to `Config.identity_url`, so the routing fires for every legitimate sign-in navigation regardless of which deployment URL the user pasted. (We tried using `ScriptApp.getService().getUrl()` matched against `Config.identity_url` as a secondary signal — it breaks because Apps Script's `getUrl()` can return the same URL for both deployments in a multi-deployment setup, which makes the URL-match dispatch fire on Main and create a sign-in loop. Removed.) The token is verified on every subsequent `google.script.run` call via `Auth_verifySessionToken` (constant-time HMAC compare + `exp` check). | Consumer-Gmail users get empty from `Session.getActiveUser().getEmail()` when the script runs as the deployer (`USER_DEPLOYING` + cross-customer security realms) — that's why naïve `Session.*` doesn't work for our user base. **All browser-initiated OAuth flows from Apps Script HtmlService also fail** — `*.googleusercontent.com` is on Google's permanent OAuth-origin denylist, and Google rejects every initial `accounts.google.com/o/oauth2/v2/auth` request with `origin_mismatch` regardless of `response_type` (implicit *or* code), regardless of Referer suppression (`<meta name="referrer">`, `rel="noreferrer"`). Modern browsers leak the iframe origin via `Sec-Fetch-Site` and other channels we can't suppress from JS. The only Apps-Script-native primitive that returns the user's email reliably is `Session.getActiveUser` under `USER_ACCESSING`, which runs the script as the accessing user — but that would require every user to have read access to the backing Sheet, defeating the privacy model. Splitting identity into a separate deployment lets `USER_ACCESSING` run only the email-collection step (no Sheet access, no scope creep) while Main keeps `USER_DEPLOYING` for data access. The HMAC signature lets Main *trust* what Identity returns without sharing a database — the only shared state is `Config.session_secret`, which both deployments read from the same Sheet. **No OAuth client is involved.** Cost: a one-time per-user OAuth-consent prompt on the Identity deployment (for the email scope only) and a second deployment to manage. See open-questions.md A-8 for the full discovery trail through three failed approaches. |
 
 See [`open-questions.md`](open-questions.md) for decisions I'm not sure about.
 
@@ -55,6 +55,7 @@ src/
 │
 ├── services/                      # business logic; calls repos, wraps locks, writes audit
 │   ├── Setup.gs                   # setupSheet(): idempotent tab/header creation
+│   ├── Identity.gs                # Identity_serve(): the Identity-deployment branch (Session + HMAC sign)
 │   ├── Bootstrap.gs               # first-run wizard state machine
 │   ├── Importer.gs                # weekly import from callings sheet
 │   ├── Expiry.gs                  # daily temp-seat expiry
@@ -98,88 +99,134 @@ src/
 
 ## 4. Request lifecycle
 
-Authentication is split between the client (handles GSI) and the server (verifies the resulting JWT on every call). `doGet` intentionally does *not* try to identify the user — it only renders the shell.
+Authentication is split between **two deployments** of the same script project — a Main deployment that handles the UI and data access, and an Identity deployment that exists only to read `Session.getActiveUser` and HMAC-sign the result. The flow round-trips the user between them once at sign-in.
 
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant C as Client (browser)
-    participant G as Google Identity
-    participant S as Server (Apps Script)
+    participant TopM as Top frame @ Main /exec
+    participant IFM as Iframe @ googleusercontent.com (Main)
+    participant TopI as Top frame @ Identity /exec
+    participant IFI as Iframe @ googleusercontent.com (Identity)
+    participant S as Server (Apps Script doGet / google.script.run)
 
-    U->>C: visit /exec (or kindoo.csnorth.org)
-    C->>S: doGet(e)
-    S-->>C: Layout.html (shell + gsi_client_id)
-    C->>C: check sessionStorage for JWT
-    alt no JWT / expired
-      C->>G: GSI sign-in (One Tap or button)
-      G-->>C: id_token (JWT, RS256-signed)
-      C->>C: sessionStorage.jwt = id_token
-    end
-    C->>S: rpc('bootstrap', { jwt, requestedPage })
-    S->>S: Auth.verifyIdToken(jwt)
-    Note over S: verifies signature against cached JWKS,<br/>checks iss, aud, exp; extracts email
-    S->>S: check Config.setup_complete; Auth.resolveRoles(email)
-    S-->>C: { principal, pageModel }
-    C->>C: render Nav + page
-    U->>C: navigate / click
-    C->>S: rpc('<endpoint>', { jwt, args })
-    S->>S: verifyIdToken + requireRole
-    S-->>C: result
+    U->>TopM: visit Main /exec
+    TopM->>S: doGet(e) — Main branch, no params
+    S-->>TopM: Layout.html (identity_url, main_url injected)
+    TopM->>IFM: render iframe
+    IFM->>IFM: no INJECTED_TOKEN, no INJECTED_ERR, no sessionStorage.jwt
+    IFM->>U: render Login button
+    U->>IFM: click "Sign in"
+    IFM->>TopM: anchor.click() target=_top → IDENTITY_URL
+    TopM->>S: doGet(e) — routes to Identity (URL match)
+    S->>S: Identity_serve(): Session.getActiveUser().getEmail()
+    Note over S: USER_ACCESSING means Session returns the user's email
+    S->>S: Auth_signSessionToken(email) — HMAC-SHA256 over {email,exp,nonce}
+    S-->>TopI: tiny HTML: window.top.location.replace(MAIN_URL + '?token=…')
+    TopI->>IFI: render iframe (briefly, just runs the redirect script)
+    IFI->>TopM: top.location.replace(MAIN_URL + '?token=…')
+    TopM->>S: doGet(e) — Main branch, params.token present
+    S->>S: Auth_verifySessionToken(token) — HMAC verify + exp check
+    S-->>TopM: Layout.html with INJECTED_TOKEN = token
+    TopM->>IFM: render iframe
+    IFM->>IFM: sessionStorage.jwt = INJECTED_TOKEN
+    IFM->>TopM: top.location.replace(MAIN_URL) — strips ?token from URL bar
+    TopM->>S: doGet(e) — Main branch, no params
+    S-->>TopM: Layout.html (no INJECTED_TOKEN this time)
+    TopM->>IFM: render iframe (sessionStorage.jwt set)
+    IFM->>S: rpc('ApiShared_bootstrap', requestedPage) — token auto-injected
+    S->>S: Auth_verifySessionToken + Auth_resolveRoles
+    S-->>IFM: { principal, pageHtml, pageModel }
+    IFM->>U: render pageHtml
+    U->>IFM: navigate / click
+    IFM->>S: rpc('<endpoint>', args) — token auto-injected
+    S->>S: verifySessionToken + requireRole
+    S-->>IFM: result
 ```
 
 ### Step-by-step
 
-1. **`Main.doGet(e)`** returns `Layout.html`. The template is rendered with `gsi_client_id` (read from `Config.gsi_client_id`) injected into the `<head>` so the GSI script has what it needs. No user-identification happens here.
-2. **Client checks `sessionStorage.jwt`.** If present and not expired (decoded JWT's `exp`), reuse. Otherwise show the GSI button on `Login.html` (or trigger One Tap) and store the resulting `id_token`.
-3. **Client calls `rpc('bootstrap', { jwt, requestedPage })`.** This is the first authenticated call. Server-side:
-   1. `Auth.verifyIdToken(jwt)` — retrieves Google's JWKS from `CacheService` (falls back to `UrlFetchApp.fetch('https://www.googleapis.com/oauth2/v3/certs')` with a ~6 h cache), finds the key matching the JWT's `kid`, verifies the RS256 signature, checks `iss ∈ {"accounts.google.com", "https://accounts.google.com"}`, `aud === Config.gsi_client_id`, and `exp > now`. Rejects otherwise.
-   2. Read `Config.setup_complete`. If false and verified email matches `bootstrap_admin_email`, render `BootstrapWizard`; otherwise render "setup in progress".
-   3. `Auth.resolveRoles(email)` returns `{ email, roles[] }`. No roles → `NotAuthorized`.
-   4. `Router.pick(requestedPage, principal)` returns `{ template, model }`; role restrictions enforced here.
-   5. Server returns `{ principal, pageModel, pageHtml }` to the client.
-4. **Client renders.** `Nav.html` is emitted with role-aware links; the page template's model is hydrated in place.
-5. **Subsequent calls** pass `{ jwt, ...args }` and re-verify. JWT verification is local crypto after the first JWKS fetch, so re-verification is cheap.
+1. **Initial visit.** User visits Main `/exec`. `Main.doGet(e)` checks whether the current request is hitting the Identity deployment by comparing `ScriptApp.getService().getUrl()` against `Config.identity_url`. On the Main deployment this comparison is false, so doGet renders `Layout.html` with `identity_url`, `main_url`, `injected_token=''`, `injected_error=''` injected.
+2. **Iframe boot.** Layout.html's `<script>` checks four states in order:
+   1. `INJECTED_TOKEN` set → just returned from Identity with a verified token. Stash in `sessionStorage.jwt`, reload top to clean `MAIN_URL`.
+   2. `INJECTED_ERR` set → token verification failed server-side (most often: stale token, or `session_secret` was rotated). Show the error.
+   3. `sessionStorage.jwt` present and not client-side-expired → bootstrap path.
+   4. Otherwise → show Login button.
+3. **Sign-in click.** `startSignIn()` programmatically clicks an `<a target="_top" href="IDENTITY_URL">` to navigate the top frame to the Identity deployment.
+4. **Identity round trip.** Top frame navigates to the Identity deployment's `/exec`. Apps Script invokes `doGet`, which sees that this URL matches `Config.identity_url` and dispatches to `Identity_serve()`:
+   1. Reads `Session.getActiveUser().getEmail()` (works because this deployment runs as `USER_ACCESSING`). On first user visit, Google shows the standard "Kindoo Access Tracker wants to access: View your email address" consent screen — non-sensitive scope, no Google-verification review required, immediate accept.
+   2. Calls `Auth_signSessionToken(email)`: builds `{ email: canonical, exp: now+3600, nonce: uuid() }`, base64url-encodes the JSON payload, HMAC-SHA256 signs it with `Config.session_secret`, returns `<base64url-payload>.<base64url-sig>`.
+   3. Returns a tiny HTML page that does `window.top.location.replace(MAIN_URL + '?token=<TOKEN>')`. Wrapped in iframe by HtmlService — but the script inside reaches `window.top` and navigates the top frame.
+5. **Token exchange completes.** Top frame navigates to Main `/exec?token=…`. `Main.doGet` sees `e.parameter.token`, calls `Auth_verifySessionToken(token)`:
+   1. Splits on `.`. Re-computes HMAC over the payload using `Config.session_secret`. Constant-time compare against the supplied signature.
+   2. base64url-decodes the payload, parses JSON. Validates `exp > now − 30s`.
+   3. Returns `{ email, name:'', picture:'' }`.
+   doGet sets `template.injected_token = token` (or `template.injected_error = err.message` on failure) and renders Layout.
+6. **Client stashes token, cleans URL.** Iframe boot sees `INJECTED_TOKEN` (step 2.i): `sessionStorage.jwt = INJECTED_TOKEN`, then `window.top.location.replace(MAIN_URL)`. The top reloads to bare Main `/exec`, stripping `?token` from the address bar and browser history.
+7. **Bootstrap path.** With `sessionStorage.jwt` set, the client calls `rpc('ApiShared_bootstrap', requestedPage)` (the rpc helper auto-injects the token as the first argument). Server-side:
+   1. `Auth_verifySessionToken(token)` — cheap HMAC re-verify.
+   2. *(Chunk 4)* Read `Config.setup_complete`. If false and verified email matches `bootstrap_admin_email`, render `BootstrapWizard`; otherwise render "setup in progress".
+   3. `Auth_resolveRoles(email)` returns `{ email, roles[] }`. No roles → `NotAuthorized`.
+   4. `Router_pick(requestedPage, principal)` returns `{ template, pageHtml, pageModel }`; role restrictions enforced here.
+   5. Server returns `{ principal, pageHtml, pageModel }` to the client.
+8. **Client renders** the returned `pageHtml` into the content slot. Topbar shows the user's email.
+9. **Subsequent calls** pass the token (auto-injected by `rpc`) and re-verify on the server. HMAC verification is pure local CPU — no network — so re-verify is essentially free.
 
 ### Failure modes
 
 | Failure | Client behaviour | Server behaviour |
 | --- | --- | --- |
-| JWT expired (exp in the past) | Clear `sessionStorage.jwt`; re-show GSI. | `Auth.verifyIdToken` throws `AuthExpired`. |
-| JWT signature invalid | Clear JWT; show "something went wrong — please sign in again". | Throws `AuthInvalid`. Logged. |
-| `aud` mismatch (wrong client_id) | Same as above. | Throws `AuthInvalid`; logged with aud/expected for debugging. |
-| User has no roles | Show `NotAuthorized` explaining bishopric-import-lag possibility. | `principal.roles.length === 0`. |
-| Client_id missing in Config | Block the page with an ops-facing error — only happens pre-bootstrap. | `Auth.verifyIdToken` throws `AuthNotConfigured`. |
+| Token expired (exp in the past) | Client-side `isExpired` short-circuits before any rpc — clear `sessionStorage.jwt`, show Login. | `Auth_verifySessionToken` throws `AuthExpired` if a stale token slipped past the client check. |
+| Token HMAC invalid (tampered or signed with a rotated `session_secret`) | Same as above (clear token, show Login). | Throws `AuthInvalid`. Logged. |
+| `session_secret` missing in Config | Login button works through to Identity, but Identity throws `AuthNotConfigured` and renders an error page. | `Auth_signSessionToken` / `Auth_verifySessionToken` throw `AuthNotConfigured`. |
+| `identity_url` missing in Config | Login button refuses; shows "identity_url is not configured." | n/a. |
+| `main_url` missing in Config | Identity service refuses to redirect; shows "Configuration error: main_url is not configured." | n/a. |
+| `Session.getActiveUser` returns empty (user hasn't authorised the Identity deployment) | Identity service shows "Sign-in unavailable: visit the Identity URL once directly to grant the email permission, then return." | n/a. (Should self-heal once the user goes through Google's consent prompt.) |
+| User has no roles after sign-in | Show `NotAuthorized` explaining bishopric-import-lag possibility. | `principal.roles.length === 0`. |
+| Browser-initiated OAuth from inside the HtmlService iframe (e.g. an attempt to revert to GSI's drop-in button or `response_type=id_token`) | Google rejects with `origin_mismatch` because `*.googleusercontent.com` is on the JS-origin denylist and can't be allowlisted. **This is why we use the two-deployment Session+HMAC pattern instead of OAuth.** See open-questions.md A-8. | n/a. |
 
 ## 5. Auth & role resolution
 
 ### Inputs
 
-- A **GSI ID token (JWT)** presented by the client with every request. Source of truth for identity.
+- An **HMAC-signed session token** presented by the client with every `google.script.run` call. Source of truth for identity. Issued by the Identity deployment after it reads `Session.getActiveUser().getEmail()`; verified by Main on every request via `Config.session_secret`.
 - `KindooManagers` rows with `active = true` — the manager set.
 - `Access` rows — the bishopric and stake-presidency set.
 
-(`Session.getActiveUser().getEmail()` is *not* used — it returns empty for consumer Gmail users when the script runs as the deployer.)
+`Session.getActiveUser().getEmail()` is **only** called inside `Identity_serve` — that's the one place in the codebase that runs under `executeAs: USER_ACCESSING`, where Session correctly returns the accessing user's email (even for consumer Gmail). Everywhere else (Main deployment, `executeAs: USER_DEPLOYING`), Session would return either empty or the deployer; we never use it for identity outside Identity_serve.
 
-### JWT verification — `Auth.verifyIdToken(jwt)`
+### Session token format
 
-1. Decode the JWT header without verifying to extract `kid`.
-2. Load Google's signing keys from `CacheService.getScriptCache()` under key `gsi_jwks`. If absent or expired (6 h TTL), `UrlFetchApp.fetch('https://www.googleapis.com/oauth2/v3/certs')` and repopulate.
-3. Find the JWK whose `kid` matches the header; convert `n`/`e` to an RSA public key; verify the JWT's RS256 signature using `Utilities.computeRsaSha256Signature` or a tiny hand-rolled verifier.
-4. Check claims:
-   - `iss` ∈ `{"accounts.google.com", "https://accounts.google.com"}`
-   - `aud === Config.gsi_client_id`
-   - `exp > now` (with a small leeway, e.g., 30 s for clock skew)
-   - `email_verified === true`
-5. Return `{ email: claims.email.toLowerCase(), name: claims.name, picture: claims.picture }`. On any failure, throw a typed error — the caller does not distinguish between `AuthInvalid` / `AuthExpired` for security (both surface to the client as "please sign in again").
+```
+<base64url(JSON({ email, exp, nonce }))>.<base64url(HMAC-SHA256(payload, session_secret))>
+```
 
-**Cache strategy:** JWKS under `CacheService` for 6 h (Google rotates daily but publishes early). The verified-claims result is **not** cached — every incoming JWT is re-checked. That's cheap: one RSA verify per call, no network. If the call rate ever gets loud, we can cache `jwt → claims` briefly keyed by a hash of the JWT.
+Two segments, dot-separated. Distinguishable from a JWT (three segments). Stored client-side in `sessionStorage.jwt` (the key name predates this design and is preserved for rpc-helper compat).
+
+### Token verification — `Auth_verifySessionToken(token)`
+
+1. Split on `.` — must yield exactly two segments.
+2. Re-compute `HMAC-SHA256(segment0, Config.session_secret)` via `Utilities.computeHmacSha256Signature`.
+3. base64url-encode and constant-time-compare against `segment1`. Mismatch → throw `AuthInvalid`.
+4. base64url-decode `segment0`, parse JSON.
+5. Check `exp > now − 30s` (small clock-skew leeway). Past-exp → throw `AuthExpired`.
+6. Return `{ email: normaliseEmail(payload.email), name: '', picture: '' }`. The `name`/`picture` fields are empty because `Session.getActiveUser` doesn't surface them; we could fill via a People API call later if we needed avatars in the UI.
+
+If `Config.session_secret` is unset or shorter than 32 chars, both `Auth_signSessionToken` and `Auth_verifySessionToken` throw `AuthNotConfigured`.
+
+### Token issuance — `Auth_signSessionToken(email, ttlSeconds?)`
+
+Inverse of the above. Builds `{ email: canonical, exp: now+ttl, nonce: uuid() }`, base64url-encodes the JSON, HMAC-SHA256-signs with the secret, returns the two-segment token. Default TTL is 1 hour.
+
+Called only from `Identity_serve` after `Session.getActiveUser` succeeds.
 
 ### Output — a `Principal` object
 
 ```
 {
   email: "jane@csnorth.org",
+  name: "",     // empty for now; Session.getActiveUser doesn't surface it
+  picture: "",  // ditto
   roles: [
     { type: "manager" },
     { type: "stake" },
@@ -192,9 +239,9 @@ Multi-role is possible (one person can be a Kindoo Manager AND a bishopric couns
 
 ### Enforcement
 
-- `Auth.principalFrom(jwt)` — verifies the token (see above), resolves roles, returns a `Principal`. Every `api/` function calls this before doing work.
-- `Auth.requireRole(principal, roleMatcher)` — throws on mismatch.
-- `Auth.requireWardScope(principal, wardId)` — throws if the user is not a bishopric for that ward and not a manager/stake. Used to prevent cross-ward data access.
+- `Auth_principalFrom(token)` — verifies the session token, resolves roles, returns a `Principal`. Every `api/` function calls this before doing work.
+- `Auth_requireRole(principal, roleMatcher)` — throws `Forbidden` on mismatch.
+- `Auth_requireWardScope(principal, wardId)` — throws `Forbidden` if the user is not a bishopric for that ward and not a manager/stake. Used to prevent cross-ward data access.
 - The client's `rpc(name, args)` helper automatically injects `sessionStorage.jwt` as the first argument, so call sites don't repeat it.
 
 ### Bishopric lag
@@ -203,15 +250,15 @@ Accepted per spec. A newly-called bishopric member cannot sign in until the next
 
 ### Two identities — Apps Script execution vs. actor
 
-With `executeAs: USER_DEPLOYING`, every Sheet write happens under the **deployer's** Google identity. That's what shows up in the Sheet's file-level revision history, and that's what `Session.getEffectiveUser().getEmail()` returns. That identity is **infrastructure** — it represents "the app", not the person who caused the change.
+The **Main** deployment runs `executeAs: USER_DEPLOYING`, so every Sheet write happens under the **deployer's** Google identity. That's what shows up in the Sheet's file-level revision history, and that's what `Session.getEffectiveUser().getEmail()` would return inside Main. That identity is **infrastructure** — it represents "the app", not the person who caused the change.
 
-The **actor** on any change is whoever initiated it: the signed-in user whose GSI JWT we just verified, or the literal string `"Importer"` / `"ExpiryTrigger"` for automated runs. That's what we write to `AuditLog.actor_email`.
+The **actor** on any change is whoever initiated it: the signed-in user whose HMAC session token we just verified (originally captured by Identity_serve via `Session.getActiveUser` under `USER_ACCESSING`), or the literal string `"Importer"` / `"ExpiryTrigger"` for automated runs. That's what we write to `AuditLog.actor_email`.
 
 This distinction is deliberate and needs to be understood before debugging history:
 
 - **Sheet revision history shows the deployer for every row** — this is correct and uninteresting. Don't use it to figure out who did what.
 - **`AuditLog` is the authoritative record** of authorship. `actor_email` is truth; the Apps Script execution identity is plumbing.
-- **We never read `Session.getActiveUser()` or `Session.getEffectiveUser()` for authorship** — the only source is the verified JWT.
+- **In the Main deployment we never read `Session.getActiveUser()` or `Session.getEffectiveUser()` for authorship** — the only source is the verified session token. (Inside Identity_serve, `Session.getActiveUser` is the *only* identity primitive — that's the entire purpose of having a separate Identity deployment with `USER_ACCESSING`.)
 
 Consequence for services: `AuditRepo.write({actor_email, ...})` requires the caller to pass the actor — there is no "pick it up from the environment" convenience fallback, because doing so would silently record the deployer.
 
@@ -345,13 +392,13 @@ export default {
 
 | Concern | File |
 | --- | --- |
-| HTTP entry point | `core/Main.gs` |
+| HTTP entry point | `core/Main.gs` (routes between Main and Identity deployments) |
 | Decides what page to render | `core/Router.gs` |
-| Verifies GSI JWTs; resolves roles | `core/Auth.gs` |
-| JWKS fetch/cache helper | `core/Auth.gs` (private) |
+| Identity collection (Session.getActiveUser + HMAC sign) | `services/Identity.gs` (runs only on the Identity deployment) |
+| Verifies HMAC session tokens; resolves roles | `core/Auth.gs` |
 | Guards against concurrent writes | `core/Lock.gs` |
 | Reads/writes one Sheet tab | `repos/XxxRepo.gs` |
 | Orchestrates a business workflow | `services/Xxx.gs` |
-| Exposed to client via `google.script.run` | `api/ApiXxx.gs` (each endpoint takes `jwt` as first arg) |
+| Exposed to client via `google.script.run` | `api/ApiXxx.gs` (each endpoint takes the session token as first arg) |
 | Rendered to the user | `ui/**.html` |
-| GSI button + token capture | `ui/Login.html` + `ui/ClientUtils.html#rpc` |
+| Login button + token capture | `ui/Login.html` + `ui/ClientUtils.html#rpc` |

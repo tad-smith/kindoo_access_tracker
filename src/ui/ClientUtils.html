@@ -1,1 +1,23 @@
-<!-- Shared client JS: rpc() promise wrapper over google.script.run (auto-injects sessionStorage.jwt as first arg; clears and redirects to login on AuthExpired/AuthInvalid), toast/error UI, tiny DOM helpers. -->
+<!--
+  Shared client JS. The single, app-wide entry point for talking to the
+  server: rpc(funcName, ...args) auto-injects sessionStorage.jwt as the
+  first argument. Layout.html handles the AuthExpired/AuthInvalid recovery
+  in the .catch handler — every page using rpc() can do the same.
+
+  Don't scatter raw google.script.run calls; they'll skip JWT injection.
+-->
+<script>
+  function rpc(funcName) {
+    var rest = Array.prototype.slice.call(arguments, 1);
+    var jwt = sessionStorage.getItem('jwt') || '';
+    return new Promise(function (resolve, reject) {
+      var runner = google.script.run
+        .withSuccessHandler(function (result) { resolve(result); })
+        .withFailureHandler(function (err) {
+          var msg = (err && err.message) ? err.message : String(err);
+          reject(new Error(msg));
+        });
+      runner[funcName].apply(runner, [jwt].concat(rest));
+    });
+  }
+</script>

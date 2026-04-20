@@ -1,0 +1,25 @@
+<!--
+  ⚠ CHUNK-1 SCAFFOLDING ONLY ⚠
+
+  This template proves Chunk 1 acceptance criterion #5: a signed-in user with
+  one or more resolved roles sees their identity and roles. It is **deleted in
+  Chunk 5** when bishopric/stake/manager Roster pages land.
+
+  Do not link to it from anywhere durable. Do not promote it into a shared
+  template. See docs/build-plan.md Chunk 1 (Proof 5) and Chunk 5.
+-->
+<section class="hello">
+  <h1>Hello, <?= principal.name ? principal.name + ' ' : '' ?>(<?= principal.email ?>)</h1>
+  <p>You hold <?= principal.roles.length ?> role<?= principal.roles.length === 1 ? '' : 's' ?>:</p>
+  <ul>
+    <? for (var i = 0; i < principal.roles.length; i++) {
+         var r = principal.roles[i]; ?>
+      <li>
+        <?= r.type ?><? if (r.wardId) { ?> &mdash; ward: <code><?= r.wardId ?></code><? } ?>
+      </li>
+    <? } ?>
+  </ul>
+  <p class="scaffold-note">
+    Chunk-1 scaffolding page. Replaced by real role-aware rosters in Chunk 5.
+  </p>
+</section>

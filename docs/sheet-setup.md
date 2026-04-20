@@ -14,18 +14,40 @@ Two paths, in order of preference:
 1. In Google Drive as the Kindoo Manager (the deployer), **New → Google Sheets**. Name it, e.g., `Kindoo Access Tracker — CS North`.
 2. From the sheet, **Extensions → Apps Script**. This opens a new Apps Script project that is **container-bound** to the sheet.
 3. Rename the Apps Script project (top-left) to something like `Kindoo Access Tracker`.
-4. Copy the script ID from the editor URL: `https://script.google.com/.../projects/<SCRIPT_ID>/edit`.
-5. In your local clone of this repo, put the script ID into `.clasp.json`:
+4. Copy the **script ID only** (not the whole URL) from the editor URL. The URL looks like `https://script.google.com/.../projects/<SCRIPT_ID>/edit` (or `.../projects/<SCRIPT_ID>` from the projects list). The script ID is the long alphanumeric token between `/projects/` and the next `/` — ~57 characters, starts with `1`, may contain `-` and `_`. Don't paste the URL itself — clasp will throw "Could not find script."
+5. In your local clone of this repo, copy the committed template and paste in your script ID:
+   ```
+   cp .clasp.json.example .clasp.json
+   ```
+   Then open `.clasp.json` and replace `REPLACE_WITH_YOUR_SCRIPT_ID` with the real ID. The file should end up looking like:
    ```json
-   { "scriptId": "<SCRIPT_ID>", "rootDir": "src" }
+   { "scriptId": "1aBc...XyZ", "rootDir": "src" }
    ```
-6. Log in to clasp and push:
+   `.clasp.json` is gitignored — your script ID stays local. The `.clasp.json.example` template is what's committed.
+6. Install dependencies, log clasp into Google, and push the code to your bound script.
+
+   **Do these two prerequisites first** (one-time per Google account):
+   - **a. Decide which Google account is the deployer.** It must be the same account that owns the bound Sheet from step 1. You'll sign clasp in as this account in a moment, and you'll need to be signed into it in your browser too.
+   - **b. Enable the Apps Script API for that account.** In a browser signed in as the deployer, visit <https://script.google.com/home/usersettings> and toggle **Google Apps Script API** to **On**. (Wait ~30 seconds for it to propagate.) Skipping this step is the most common cause of `clasp push` failures. If you're juggling multiple Google accounts in your browser, use the account-switcher in the top-right of the settings page to confirm you're toggling the right one.
+
+   Then run, in order:
    ```
-   npm install
-   npm run login
-   npm run push
+   npm install      # installs @google/clasp into node_modules/
+   npm run login    # one-time per machine: opens a browser to Google
+   npm run push     # uploads everything in src/ to the Apps Script project
    ```
-7. Back in the Apps Script editor, refresh the page. You'll see the project has new files.
+
+   What to expect:
+   - **`npm run login`** opens your default browser to a Google OAuth page. **Sign in as the deployer account.** When the browser shows "Logged in!", switch back to the terminal — you'll see `Authorization successful`. Credentials are stored in `~/.clasprc.json` (your home directory, not the repo).
+   - **First `npm run push` will prompt:** `? Manifest file has been updated. Do you want to push and overwrite? (y/N)` — answer **`y`**. The bound project starts with a default `appsscript.json`; our local `src/appsscript.json` is the source of truth (it has the webapp config, the `America/Denver` timezone, and the OAuth scopes the app needs). This prompt only re-appears on future pushes when `src/appsscript.json` changes (e.g., a later chunk adds a new OAuth scope) — code-only pushes don't ask.
+   - On success, `clasp push` prints one line per file pushed (~22 files for Chunk 1) and ends with `Pushed N files.`
+   - To re-push after edits during development: `npm run push` again, or `npm run push:watch` to push automatically on save.
+
+   Troubleshooting:
+   - **"User has not enabled the Apps Script API"** — you skipped prerequisite 6.b above, or you toggled it on the wrong account in the browser. Confirm with `npx clasp login --status` which account clasp is using; check the Google account-switcher on <https://script.google.com/home/usersettings> to confirm which account the toggle is set on. Both must be the deployer account.
+   - **"Could not find script"** — `.clasp.json` has the wrong scriptId (e.g., you pasted the whole URL instead of just the ID).
+   - **`npm run login` signed you in as the wrong Google account** — run `npx clasp logout`, then `npm run login` again and pick the deployer account.
+7. Back in the Apps Script editor, refresh the page. You'll see the project has new files in the left-hand file tree, organised under `core/`, `repos/`, `services/`, `api/`, and `ui/`.
 8. In the editor, open `services/Setup` and run `setupSheet`. (First run prompts for OAuth consent — click through as the deployer.) This:
    - Creates all 10 tabs in the correct order.
    - Sets headers for each.
@@ -33,25 +55,67 @@ Two paths, in order of preference:
    - Adds an `onOpen()`-installed custom menu to the sheet (`Kindoo Admin → Setup sheet…`, `…Install triggers`) so future setup-related actions don't require the script editor.
 9. Switch to the sheet. Open the `Config` tab.
 10. Set `bootstrap_admin_email` to the deployer's email. Leave `setup_complete` as `FALSE`.
-11. **Create an OAuth 2.0 Client ID** (one-time per deployment — needed for Google Sign-In):
-    1. Open <https://console.cloud.google.com/apis/credentials>, sign in as the deployer, and select (or create) a project — a default project is fine.
-    2. If prompted, configure the OAuth consent screen: User Type **External**, app name `Kindoo Access Tracker`, user support email = deployer, developer contact email = deployer. Scopes: leave defaults (`openid`, `email`, `profile`). Publishing status: click **Publish app**. The three default scopes don't require Google verification, so publication is immediate (no review wait, no test-users list to maintain).
-    3. **Credentials → + Create Credentials → OAuth client ID**. Application type: **Web application**. Name it `Kindoo Access Tracker`.
-    4. **Authorized JavaScript origins** — add `https://script.google.com`. You'll add `https://kindoo.csnorth.org` in Chunk 11 when the custom domain goes live.
-    5. **Authorized redirect URIs** — leave empty; we use GSI popup/One-Tap, not redirect flow.
-    6. Create. Copy the **Client ID** (looks like `1234567890-abcdefghijklmnop.apps.googleusercontent.com`).
-    7. Back in the sheet's `Config` tab, set `gsi_client_id` to that value.
-12. Deploy the web app: **Deploy → New deployment → Web app**, execute as `Me (<your email>)`, who has access `Anyone with Google account`. Note the `/exec` URL.
-13. Open the `/exec` URL in a browser while signed in as the bootstrap admin. You'll be prompted to sign in with Google (GSI); after that, the first-run wizard finishes the rest (stake name, callings-sheet ID, buildings, wards, additional managers).
+11. **Deploy the Main web app.** In the Apps Script editor: **Deploy → New deployment**.
+    - Click the gear icon (top-left of the dialog) → **Web app**.
+    - **Description:** `Kindoo Access Tracker — Main`.
+    - **Execute as:** `Me (<your deployer email>)`. _(Critical: this is what keeps the backing Sheet private to the deployer.)_
+    - **Who has access:** **Anyone with Google account**.
+    - Click **Deploy**.
+    - The dialog shows the **Web app URL** ending in `/exec`. Copy it. Format: `https://script.google.com/macros/s/<MAIN_DEPLOYMENT_ID>/exec`.
+    - Click **Done**.
+    - Open the Sheet's `Config` tab and paste this URL into the `value` cell of the `main_url` row.
+
+12. **Deploy the Identity web app.** Same script, **second deployment**, different `executeAs` setting. Apps Script supports multiple deployments per project; this is the standard pattern.
+    - In the Apps Script editor: **Deploy → New deployment** again (do not edit the Main deployment).
+    - Click the gear icon → **Web app**.
+    - **Description:** `Kindoo Access Tracker — Identity`.
+    - **Execute as:** **User accessing the web app**. _(Different from Main. This is what makes `Session.getActiveUser` return the user's email rather than the deployer's.)_
+    - **Who has access:** **Anyone with Google account**.
+    - Click **Deploy**.
+    - Copy the new `/exec` URL. Format: `https://script.google.com/macros/s/<IDENTITY_DEPLOYMENT_ID>/exec`. **Different from the Main URL** (different deployment ID).
+    - Click **Done**.
+    - Open the Sheet's `Config` tab and paste this URL **as-is** (no query string) into the `value` cell of the `identity_url` row. The Login link will automatically append `?service=identity` when navigating — that's how the Identity deployment's `doGet` knows to dispatch to `Identity_serve` rather than render the Main UI. (Apps Script's `ScriptApp.getService().getUrl()` is unreliable in multi-deployment setups, so we route by query parameter rather than URL match.)
+
+13. **Confirm `Config.session_secret` is populated.** Open the `Config` tab. The `session_secret` row should already contain ~73 characters of random hex (auto-generated by `setupSheet`). If it's empty, re-run `setupSheet()` from the Apps Script editor — it auto-generates the secret on first run.
+
+14. **First-time per-user authorisation of the Identity deployment.** The Identity deployment runs as the user, so each user is prompted to grant permission to it on first visit. As the deployer, do this once for yourself now:
+    - Open the **Identity URL** (from step 12) directly in a browser, signed in as the deployer.
+    - Google shows the standard OAuth consent screen: "Kindoo Access Tracker wants to: View your email address". Click **Allow**.
+    - You'll see "Signing in… [Continue]". The page should redirect back to Main /exec automatically.
+    - On Main /exec you'll see the `Hello, you are role X` page (in Chunk 1) or NotAuthorized if your email isn't in `KindooManagers`/`Access` yet.
+    - Other users will hit this same consent prompt the first time they sign in — non-sensitive scope, no Google review required, immediate accept.
+
+15. **Use the app via the Main URL.** From now on, users visit the Main URL. The Login button on Main navigates them to Identity, which silently signs an HMAC token (after the one-time consent) and redirects them back. Subsequent sessions just re-hit Identity (no new consent prompt) and complete in <1 second.
+
+### Detecting a stale deployment
+
+Apps Script's `/exec` URL serves the most recently *deployed* version, not the latest pushed code. After `npm run push` you must also do **Deploy → Manage deployments → ✎ Edit → Version: New version → Deploy** in the editor for the change to take effect on the deployed URL. If you forget, `/exec` will keep serving the previous version's code.
+
+To detect this without poking around: every page renders `v: <timestamp>` in a tiny footer. The timestamp is auto-stamped into `src/core/Version.gs` at the start of every `npm run push`. Compare the footer value against the value in the file (or against the timestamp `npm run push` just printed). Mismatch = the deployment hasn't been updated.
 
 ### If something goes wrong
 
 - **`setupSheet` says "already set up"**: that's fine — it means all the tabs exist and their headers are correct. It's a no-op.
 - **Header drift detected**: one of the tabs has a header that doesn't match what the code expects (e.g., someone renamed a column). `setupSheet` will log the mismatch and refuse to touch the tab. Fix by hand.
 - **Triggers not installed after bootstrap**: run `TriggersService.install` from the Apps Script editor or use the `Kindoo Admin → Install triggers` menu item.
-- **"Error 400: invalid_request — Origin not allowed" from GSI**: the origin the browser is on (e.g., `script.googleusercontent.com` when opened in an iframe) isn't in the OAuth Client ID's authorized JavaScript origins. Add it in Google Cloud Console → Credentials → the client → Authorized JavaScript origins. Changes can take a few minutes to propagate.
-- **Everyone gets logged out after editing `Config.gsi_client_id`**: expected. Tokens are signed for a specific audience; the new client_id means old tokens no longer verify. Users just need to sign in again.
-- **OAuth consent screen still in "Testing" mode and unapproved users can't sign in**: click **Publish app** on the consent screen. The `openid`/`email`/`profile` scopes don't require Google verification; publication is immediate.
+- **Login button error: "identity_url is not configured"**: the `Config.identity_url` cell is empty or you didn't deploy the Identity web app. Complete step 12.
+- **Identity page error: "main_url is not configured"**: the `Config.main_url` cell is empty. Complete step 11's last sub-step (paste the Main URL into Config).
+- **Login link reloads the same Login page (sign-in loop)**: the Identity deployment's `doGet` is falling through to the Main UI branch instead of dispatching to `Identity_serve`. Most likely cause: the deployment hasn't been updated to the latest code (compare the `v: <ts>` footer on Login against the value in `src/core/Version.gs` — see "Detecting a stale deployment" above). Push, then **Deploy → Manage deployments → Edit Identity deployment → Version: New version → Deploy**. To verify Identity routing is working, visit `<IDENTITY_URL>?service=identity` directly in the browser — you should land on Main with a token, not the Login page.
+- **Identity page error: "Sign-in unavailable: We could not determine your Google identity"**: the user hasn't granted the Identity deployment permission yet. Have them visit the **Identity URL** directly once (not via the Main Login button) to trigger the OAuth consent prompt for the email scope, then return to Main and sign in. (Future logins for that user are silent.)
+- **Login completes but lands on `NotAuthorized`**: the user's email isn't in `KindooManagers` (active=TRUE) and isn't in `Access`. Add a row, then re-sign-in. Note that emails are matched after Gmail dot/`+suffix` canonicalisation (see data-model.md `Conventions → Email`).
+- **"Your sign-in token was rejected. Please sign in again."** on Main: usually means the `session_secret` was rotated (cleared in `Config` and re-run of `setupSheet`) while the user had a live token. Expected — the user just signs in again.
+- **All users suddenly logged out after re-running `setupSheet`**: expected if you cleared the `session_secret` cell; `setupSheet` regenerates and all live tokens become invalid. Don't clear it without intending to log everyone out.
+
+### If you already created an OAuth client per the OLD instructions
+
+Earlier revisions of this doc had you create an OAuth 2.0 Client ID in Cloud Console + populate `gsi_client_id` and `gsi_client_secret` in `Config`. **None of that is used anymore.** Both attempted OAuth approaches (implicit flow, authorization code flow) were blocked by Google's `origin_mismatch` check on `*.googleusercontent.com`; see open-questions.md A-8. The current design uses no OAuth client at all.
+
+You can safely:
+- Leave the `gsi_client_id` / `gsi_client_secret` rows in your `Config` tab (they're inert — never read).
+- Or delete those two rows by hand for tidiness.
+- Leave the OAuth client alive in Cloud Console (it's free, no harm), or delete it.
+
+The two new keys you need (`main_url`, `identity_url`, `session_secret`) are added by the latest `setupSheet`. Re-run `setupSheet()` once to seed them, then complete steps 11–15 above.
 
 ---
 
@@ -174,20 +238,21 @@ timestamp	actor_email	action	entity_type	entity_id	before_json	after_json
 
 ### After manual creation
 
-Continue from Path 1 step 11 (create the OAuth 2.0 Client ID, paste it into `Config.gsi_client_id`, deploy the web app, open the `/exec` URL, run the bootstrap wizard).
+Continue from Path 1 step 11 (deploy the Main and Identity web apps, paste their URLs into `Config.main_url` / `Config.identity_url`, complete the one-time per-user OAuth consent on the Identity URL).
 
 ---
 
 ## Things to double-check before the first deploy
 
-- [ ] `Config.bootstrap_admin_email` is set to the deployer's email. You can type it however you like — the app canonicalises on read (lowercase + Gmail dot/`+suffix` stripping) before comparing against the GSI-verified identity.
-- [ ] `Config.gsi_client_id` is set to the OAuth 2.0 Client ID you created in Google Cloud Console.
-- [ ] The OAuth Client ID's **Authorized JavaScript origins** include `https://script.google.com`.
-- [ ] The OAuth consent screen's publishing status is **In production** (not Testing).
+- [ ] `Config.bootstrap_admin_email` is set to the deployer's email. You can type it however you like — the app canonicalises on read (lowercase + Gmail dot/`+suffix` stripping) before comparing against the user's verified identity.
+- [ ] `Config.session_secret` is populated (~73 chars). `setupSheet` auto-generates this on first run; verify it isn't empty.
+- [ ] `Config.main_url` is set to the **Main** deployment's `/exec` URL (`executeAs: USER_DEPLOYING`).
+- [ ] `Config.identity_url` is set to the **Identity** deployment's `/exec` URL (`executeAs: USER_ACCESSING`). Different deployment ID from `main_url`.
 - [ ] `Config.setup_complete` is `FALSE`.
 - [ ] Every tab's headers match the data-model doc byte-for-byte (case, spelling, underscores).
 - [ ] The backing sheet is owned by the deployer account.
-- [ ] `appsscript.json` in the deployed version has `webapp.access = "ANYONE_WITH_GOOGLE_ACCOUNT"` and `executeAs = "USER_DEPLOYING"`.
+- [ ] `appsscript.json` in the deployed version has `webapp.access = "ANYONE"`. The Main deployment's `executeAs` is `USER_DEPLOYING`; the Identity deployment's `executeAs` is `USER_ACCESSING`. The deploy dialog labels `ANYONE` as "Anyone with Google account" — that's the same value, just a UI alias. (`ANYONE` requires sign-in; `ANYONE_ANONYMOUS` would not.)
+- [ ] **No OAuth client in Cloud Console is required** for the current architecture (see open-questions.md A-8). If you have an old one from earlier docs revisions, it's inert — leave it or delete it.
 
 ## What the bootstrap wizard will do
 

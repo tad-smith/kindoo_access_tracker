@@ -1,1 +1,31 @@
-<!-- Login view: Google Sign-In button (One Tap + button) configured with Config.gsi_client_id; on credential response, stashes the ID token in sessionStorage and calls rpc('bootstrap'). -->
+<!--
+  Login fragment. The "Sign in with Google" anchor's href is the Identity
+  deployment URL — Layout.html's <script> populates it from IDENTITY_URL
+  (injected server-side from Config.identity_url) at boot time. Clicking
+  the link navigates the top frame to the Identity deployment, which reads
+  Session.getActiveUser, signs an HMAC token, and redirects back here with
+  the token in the query string. See architecture.md D10 / open-questions.md A-8.
+
+  No JS click handler — the anchor is just a plain link. <base target="_top">
+  in Layout.html's <head> ensures the navigation lands on the top frame
+  (escapes the HtmlService iframe).
+-->
+<section class="login">
+  <h1>Sign in</h1>
+  <p>
+    Sign in with the Google account associated with your bishopric calling,
+    stake calling, or Kindoo Manager role.
+  </p>
+  <p>
+    <a id="signin-link" class="signin-button" rel="noreferrer">
+      <span class="signin-button-icon" aria-hidden="true">G</span>
+      <span>Sign in with Google</span>
+    </a>
+  </p>
+  <p class="login-hint">
+    First-time users will see a one-time Google prompt asking to share your
+    email address with this app — that's expected. Click <strong>Allow</strong>;
+    you'll land back here automatically.
+  </p>
+  <p id="login-error" class="error"></p>
+</section>

@@ -6,8 +6,9 @@
   "scripts": {
     "login": "clasp login",
     "logout": "clasp logout",
-    "push": "clasp push",
-    "push:watch": "clasp push --watch",
+    "version:stamp": "node scripts/stamp-version.js",
+    "push": "npm run version:stamp && clasp push",
+    "push:watch": "npm run version:stamp && clasp push --watch",
     "pull": "clasp pull",
     "open": "clasp open",
     "open:web": "clasp open --webapp",
