@@ -121,8 +121,17 @@ Callings that trigger auto Kindoo seats in every ward. Applied uniformly to ever
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `calling_name` | string | Must match the post-prefix string in the callings sheet's `Position` column. Unique. |
+| `calling_name` | string | Matched against the post-prefix `Position` value in the callings sheet. Exact match by default; a `*` in the pattern stands for "any run of characters" (equivalent to `.*` in a regex, anchored to both ends). Unique per tab. See "Wildcard patterns" below. |
 | `give_app_access` | boolean | If `TRUE`, the importer writes an `Access` row so the person can sign into the app. |
+
+**Wildcard patterns.** The `*` character in `calling_name` is treated as "any extra text here," so one template row can cover a family of LCR-side calling names that share a prefix or common structure. Examples:
+
+- `Bishop` — exact match only.
+- `Stake High Councilor*` — matches `Stake High Councilor`, `Stake High Councilor - Cordera Ward`, etc.
+- `*` — matches every calling on the tab.
+- `Second*Counselor` — matches `Second Counselor`, `Second Ward Counselor`, etc.
+
+When a calling matches both an exact row and a wildcard row, the exact row wins. Among multiple matching wildcard rows, the one that appears first in the Sheet wins (Sheet row order is user-set, so operators can order by priority). Matching is case-sensitive.
 
 ### Example rows
 

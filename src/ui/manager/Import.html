@@ -1,1 +1,150 @@
-<!-- Kindoo Manager Import: "Import Now" button plus last-import timestamp and summary. -->
+<!--
+  Manager Import page (Chunk 3). One button, one status line.
+
+  - "Import Now" calls ApiManager_importerRun (server-side work wrapped in
+    Lock_withLock with a 30 s timeout). While it runs the button disables
+    and a spinner shows; lock contention / "sheet not shared" surface as
+    red toasts — no stack traces.
+  - Last import time + summary are Config_get('last_import_at') and
+    Config_get('last_import_summary'); we fetch them on page load via
+    ApiManager_importStatus and refresh after any successful run.
+  - Weekly scheduled import is Chunk 9.
+-->
+<section class="import-page">
+  <h1>Import</h1>
+  <p class="import-intro">
+    Pulls the latest state from the callings spreadsheet and updates
+    <code>Seats</code> (auto) and <code>Access</code>. Runs idempotently —
+    re-running it with no source changes makes no edits.
+  </p>
+
+  <div class="import-card">
+    <div class="import-actions">
+      <button class="btn" id="run-import-btn">Import Now</button>
+      <span id="run-import-spinner" class="import-spinner" hidden>Working…</span>
+    </div>
+
+    <dl class="import-status">
+      <dt>Last import</dt>
+      <dd id="last-import-at">—</dd>
+      <dt>Summary</dt>
+      <dd id="last-import-summary">—</dd>
+      <dt>Callings sheet ID</dt>
+      <dd id="callings-sheet-id">—</dd>
+    </dl>
+
+    <details class="import-warnings" id="warnings-block" hidden>
+      <summary>Warnings from last run (<span id="warnings-count">0</span>)</summary>
+      <ul id="warnings-list"></ul>
+    </details>
+  </div>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function fmtTs(v) {
+    if (!v) return '—';
+    // google.script.run serialises Date as ISO-ish strings; show the
+    // browser's locale rendering so managers read their own tz.
+    try {
+      var d = new Date(v);
+      if (isNaN(d.getTime())) return String(v);
+      return d.toLocaleString();
+    } catch (e) { return String(v); }
+  }
+
+  function renderStatus(status) {
+    // Defensive: google.script.run has occasionally been observed to return
+    // null for a perfectly valid return value (serialization edge cases).
+    // Treat missing fields as "never ran".
+    var s = status || {};
+    $('last-import-at').textContent = fmtTs(s.last_import_at);
+    $('last-import-summary').textContent = s.last_import_summary || '—';
+    $('callings-sheet-id').textContent = s.callings_sheet_id || '(not set — add to Config)';
+    // Warnings block is per-run (set from run result); loadStatus leaves it
+    // alone so a prior run's warnings stay visible until next run.
+  }
+
+  function renderWarnings(warnings) {
+    var block = $('warnings-block');
+    var list  = $('warnings-list');
+    var count = $('warnings-count');
+    if (!warnings || warnings.length === 0) {
+      block.hidden = true;
+      block.open = false;
+      list.innerHTML = '';
+      count.textContent = '0';
+      return;
+    }
+    count.textContent = String(warnings.length);
+    list.innerHTML = warnings.map(function (w) {
+      return '<li>' + esc(w) + '</li>';
+    }).join('');
+    block.hidden = false;
+    block.open = true; // auto-expand on any warnings so they're visible, not hidden
+  }
+
+  function loadStatus() {
+    rpc('ApiManager_importStatus').then(function (status) {
+      try { console.log('[Importer] status:', status); } catch (_) {}
+      renderStatus(status);
+    }).catch(function (err) {
+      try { console.error('[Importer] status load failed:', err); } catch (_) {}
+      toast((err && err.message) ? err.message : String(err), 'error');
+    });
+  }
+
+  function runImport() {
+    var btn = $('run-import-btn');
+    var spinner = $('run-import-spinner');
+    btn.disabled = true;
+    spinner.hidden = false;
+    rpc('ApiManager_importerRun').then(function (res) {
+      // Server responded with {ok, summary, inserted, deleted, warnings, ...}.
+      // Always dump the full result to DevTools so the manager can copy it
+      // (toasts auto-dismiss, and warnings can be long).
+      try { console.log('[Importer] result:', res); } catch (_) {}
+      if (res && res.warnings && res.warnings.length) {
+        try {
+          console.warn('[Importer] ' + res.warnings.length + ' warning(s):');
+          for (var wi = 0; wi < res.warnings.length; wi++) {
+            console.warn('  - ' + res.warnings[wi]);
+          }
+        } catch (_) {}
+      }
+      if (res && res.skipped_tabs && res.skipped_tabs.length) {
+        try { console.log('[Importer] skipped tabs:', res.skipped_tabs); } catch (_) {}
+      }
+      // Refresh last-import fields from the persisted Config state so we
+      // show exactly what will be visible on the next page load.
+      loadStatus();
+      renderWarnings(res && res.warnings);
+      var kind = (res && res.warnings && res.warnings.length) ? 'warn' : 'success';
+      toast((res && res.summary) ? res.summary : 'Import complete.', kind);
+    }).catch(function (err) {
+      var msg = (err && err.message) ? err.message : String(err);
+      // Dump the full error (including stack, if any) for copy/paste
+      // troubleshooting. Toast auto-dismisses; console.error persists.
+      try { console.error('[Importer] run failed:', err); } catch (_) {}
+      try { console.error('[Importer] message:', msg); } catch (_) {}
+      toast(msg, 'error');
+      // Persist the failure into the status panel so the user can copy it
+      // for troubleshooting.
+      loadStatus();
+    }).then(function () {
+      btn.disabled = false;
+      spinner.hidden = true;
+    });
+  }
+
+  $('run-import-btn').addEventListener('click', runImport);
+  loadStatus();
+})();
+</script>

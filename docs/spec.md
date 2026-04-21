@@ -150,15 +150,24 @@ Daily trigger: scan `Seats` where `type=temp AND end_date < today`. Delete the r
 
 Runs weekly (trigger) and on-demand ("Import Now" button on the Manager's Import page).
 
-**Source**: Google Sheet ID stored in `Config`. One tab per ward, named to match the ward's `ward_code` (2-letter code). Plus one tab named `Stake`. Columns: `Organization`, `Forwarding Email`, `Position`, `Personal Email`, and additional columns to the right holding emails for multi-person callings.
+**Source**: Google Sheet ID stored in `Config`. One tab per ward, named to match the ward's `ward_code` (2-letter code). Plus one tab named `Stake`.
 
-**`Position` format**: 2-letter prefix (matching the ward code), space, then the calling name. Example: `CO Bishop` in the Cordera tab. The Stake tab uses prefix `ST`.
+**Tab layout** (matches the LCR-exported callings sheet format):
+- Col A: `Organization` (ignored).
+- Col B: `Forwarding Email` (ignored).
+- Col C: `Position` — not required to be column C exactly; the importer finds the column by header name anywhere in the top 5 rows (a title / instructions block may live above the real headers, which is common in LCR exports).
+- Col D: the personal-email column. Header text varies by export (`Personal Email`, `Personal Email(s)`, `Personal Emails`, sometimes followed by an explanatory `Note: …` block bleeding into the same cell). The importer **requires the column-D header to contain `personal email` (case-insensitive)** as a sanity check, but does not require an exact match.
+- Col E and rightward: additional email cells for multi-person callings. Header text in these columns is free-form and ignored.
+
+**`Position` format**:
+- Ward tabs: 2-letter prefix (matching the `ward_code`), a space, then the calling name. Example: `CO Bishop` in the Cordera tab. The importer strips the prefix before matching against `WardCallingTemplate.calling_name`.
+- Stake tab: **no prefix**. Position holds the full calling name directly, e.g. `Stake Relief Society President`. The importer treats Position verbatim and matches against `StakeCallingTemplate.calling_name`. (Note: LCR's Stake-tab Position values already start with the word `Stake`; that's part of the calling name, not a prefix the importer strips.)
 
 **Per tab:**
 
-1. Read rows. Strip the 2-letter prefix from `Position` to get the calling name.
-2. Collect `Personal Email` + any non-blank cells to its right.
-3. For each `(calling, email)` pair where calling matches a row in the appropriate template (`WardCallingTemplate` for ward tabs, `StakeCallingTemplate` for the Stake tab):
+1. Find the header row (top 5 rows, contains `Position`). Read data rows below it. On ward tabs, strip the 2-letter `<CODE> ` prefix from `Position` to get the calling name; on the Stake tab, use `Position` verbatim.
+2. Collect the email cell (column D) + any non-blank cells to its right.
+3. For each `(calling, email)` pair where calling matches a row in the appropriate template (`WardCallingTemplate` for ward tabs, `StakeCallingTemplate` for the Stake tab). Template `calling_name` values may contain a `*` wildcard standing for "any run of characters"; see data-model.md "Wildcard patterns" for the matching rules (exact wins over wildcard, Sheet order wins among wildcards):
    - Compute `source_row_hash = hash(scope, calling, email)`.
    - If no matching auto-seat exists in `Seats`, insert a new row (`type=auto`); write `AuditLog` entry.
    - If it exists, no change.

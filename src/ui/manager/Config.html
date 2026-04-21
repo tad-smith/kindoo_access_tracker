@@ -393,6 +393,26 @@
     var rpcDelete = tabName === 'wardTemplate' ? 'ApiManager_wardTemplateDelete'  : 'ApiManager_stakeTemplateDelete';
     var idPrefix  = tabName === 'wardTemplate' ? 'add-wtpl-' : 'add-stpl-';
     var html = '';
+    // Plain-English wildcard documentation. The importer supports `*` in
+    // calling_name as "match anything here"; most users won't know regex,
+    // so explain it by example.
+    html +=
+      '<p class="template-hint">' +
+      'Type a calling name exactly as it appears in the callings ' +
+      'spreadsheet. You can use a <code>*</code> as a wildcard — it stands ' +
+      'for "any extra text here." ' +
+      'Examples:' +
+      '<ul class="template-hint-list">' +
+      '<li><code>Bishop</code> matches only the exact calling <em>Bishop</em>.</li>' +
+      '<li><code>Stake High Councilor*</code> matches <em>Stake High Councilor</em>, ' +
+      '<em>Stake High Councilor - Cordera Ward</em>, <em>Stake High Councilor ' +
+      'over Temple Work</em>, and any other calling that starts with ' +
+      '"Stake High Councilor."</li>' +
+      '<li><code>*</code> alone matches every calling on the sheet (rarely useful).</li>' +
+      '</ul>' +
+      'If a calling matches more than one row, an exact name beats a wildcard. ' +
+      'Wildcard rows are compared in the order you list them.' +
+      '</p>';
     if (rows.length === 0) {
       html += '<div class="empty-state">No ' + esc(label) + ' template rows yet. Add one below.</div>';
     } else {
@@ -413,7 +433,7 @@
     }
     html +=
       '<div class="add-row-form"><h3>Add a ' + esc(label) + ' calling</h3><div class="form-grid" style="grid-template-columns:160px 1fr;">' +
-      '<label>calling_name</label><input type="text" id="' + idPrefix + 'name" placeholder="e.g. Bishop">' +
+      '<label>calling_name</label><input type="text" id="' + idPrefix + 'name" placeholder="e.g. Bishop  or  Stake High Councilor*">' +
       '<label>give_app_access</label><div><input type="checkbox" id="' + idPrefix + 'access"></div>' +
       '</div><div class="form-actions"><button class="btn" id="' + idPrefix + 'btn">Add calling</button></div></div>';
     $('panel-' + tabName).innerHTML = html;

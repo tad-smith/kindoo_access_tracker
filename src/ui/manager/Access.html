@@ -1,1 +1,109 @@
-<!-- Kindoo Manager Access: read-only view of the importer-owned Access tab. -->
+<!--
+  Manager Access page (Chunk 3). Read-only table of the Access tab.
+
+  Access rows are importer-owned (spec §3.1, open-questions.md A-6). There
+  is no edit path; the weekly import (or the Import Now button on the
+  sibling page) is the only way rows change. Sort is stable by scope then
+  calling so related rows cluster.
+-->
+<section class="access-page">
+  <h1>Access</h1>
+  <p class="access-intro">
+    Everyone the app considers signed-in-eligible, with the callings that
+    grant their access. Populated by the importer; not editable here.
+  </p>
+
+  <div class="access-toolbar">
+    <label>
+      Scope:
+      <select id="scope-filter">
+        <option value="">All</option>
+      </select>
+    </label>
+    <span class="access-count" id="access-count"></span>
+  </div>
+
+  <div id="access-table-host">Loading…</div>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  var state = { rows: [] };
+
+  function render() {
+    var filter = $('scope-filter').value;
+    var rows = state.rows.slice();
+    if (filter) rows = rows.filter(function (r) { return r.scope === filter; });
+    rows.sort(function (a, b) {
+      if (a.scope !== b.scope) return a.scope < b.scope ? -1 : 1;
+      if (a.calling !== b.calling) return a.calling < b.calling ? -1 : 1;
+      return a.email < b.email ? -1 : a.email > b.email ? 1 : 0;
+    });
+
+    $('access-count').textContent =
+      rows.length + ' row' + (rows.length === 1 ? '' : 's') +
+      (filter ? ' in ' + filter : '');
+
+    if (rows.length === 0) {
+      $('access-table-host').innerHTML =
+        '<div class="empty-state">No access rows for the current filter. ' +
+        'Run the importer from the Import page to populate this tab.</div>';
+      return;
+    }
+
+    var html = '<table class="config-table"><thead><tr>' +
+      '<th>Scope</th><th>Calling</th><th>Email</th></tr></thead><tbody>';
+    for (var i = 0; i < rows.length; i++) {
+      html += '<tr>' +
+        '<td><code>' + esc(rows[i].scope) + '</code></td>' +
+        '<td>' + esc(rows[i].calling) + '</td>' +
+        '<td>' + esc(rows[i].email) + '</td>' +
+        '</tr>';
+    }
+    html += '</tbody></table>';
+    $('access-table-host').innerHTML = html;
+  }
+
+  function buildScopeFilter() {
+    var scopes = {};
+    for (var i = 0; i < state.rows.length; i++) scopes[state.rows[i].scope] = true;
+    var ordered = Object.keys(scopes).sort(function (a, b) {
+      // Put "stake" at the top for scanning; wards alphabetical.
+      if (a === 'stake') return -1;
+      if (b === 'stake') return 1;
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    var sel = $('scope-filter');
+    // Keep "All" option at index 0.
+    sel.length = 1;
+    for (var j = 0; j < ordered.length; j++) {
+      var opt = document.createElement('option');
+      opt.value = ordered[j];
+      opt.textContent = ordered[j];
+      sel.appendChild(opt);
+    }
+  }
+
+  function load() {
+    rpc('ApiManager_accessList').then(function (rows) {
+      state.rows = rows || [];
+      buildScopeFilter();
+      render();
+    }).catch(function (err) {
+      $('access-table-host').innerHTML =
+        '<div class="error">Could not load Access rows: ' +
+        esc((err && err.message) ? err.message : String(err)) + '</div>';
+    });
+  }
+
+  $('scope-filter').addEventListener('change', render);
+  load();
+})();
+</script>

@@ -24,27 +24,30 @@
        if (principal.roles[__i].type === 'manager') { isMgr = true; break; }
      } ?>
   <? if (isMgr) { ?>
-    <p>
-      <a id="hello-config-link" href="#">Open Configuration page</a>
-      <span class="scaffold-note">(Chunk 2)</span>
-    </p>
+    <ul class="scaffold-links">
+      <li><a class="hello-mgr-link" data-page="mgr/config" href="#">Open Configuration page</a> <span class="scaffold-note">(Chunk 2)</span></li>
+      <li><a class="hello-mgr-link" data-page="mgr/import" href="#">Open Import page</a> <span class="scaffold-note">(Chunk 3)</span></li>
+      <li><a class="hello-mgr-link" data-page="mgr/access" href="#">Open Access page</a> <span class="scaffold-note">(Chunk 3)</span></li>
+    </ul>
     <script>
       // The HtmlService iframe is on *.googleusercontent.com, so a relative
       // href would resolve against that origin and 404. Use Layout's
-      // server-injected MAIN_URL to build an absolute link, and navigate
+      // server-injected MAIN_URL to build absolute links, and navigate
       // the top frame on click.
       (function () {
-        var a = document.getElementById('hello-config-link');
-        if (!a) return;
-        if (typeof MAIN_URL === 'string' && MAIN_URL) {
-          a.href = MAIN_URL + '?p=mgr/config';
-          a.setAttribute('target', '_top');
-        } else {
-          a.addEventListener('click', function (e) {
-            e.preventDefault();
-            alert('main_url is not configured.');
-          });
-        }
+        var links = document.querySelectorAll('.hello-mgr-link');
+        Array.prototype.forEach.call(links, function (a) {
+          var page = a.getAttribute('data-page');
+          if (typeof MAIN_URL === 'string' && MAIN_URL) {
+            a.href = MAIN_URL + '?p=' + encodeURIComponent(page);
+            a.setAttribute('target', '_top');
+          } else {
+            a.addEventListener('click', function (e) {
+              e.preventDefault();
+              alert('main_url is not configured.');
+            });
+          }
+        });
       })();
     </script>
   <? } ?>

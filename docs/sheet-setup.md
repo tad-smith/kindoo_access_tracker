@@ -78,6 +78,12 @@ Two paths, in order of preference:
 
 14. **Use the app via the Main URL.** From now on, users visit the Main URL. The Login button navigates them to the Identity URL (the personal-account project from step 13), which silently signs an HMAC token (after the one-time consent) and redirects them back to Main with the token. Subsequent sessions just re-hit Identity (no new consent prompt) and complete in <1 second.
 
+15. **Wire up the importer (Chunk 3).** The manager "Import Now" button reads `Config.callings_sheet_id` and calls `SpreadsheetApp.openById` against it — which runs under the **deployer's** identity (the Main deployment's `executeAs: USER_DEPLOYING`). Two prerequisites:
+    - Paste the callings spreadsheet's ID into `Config.callings_sheet_id`. Same format as `main_url` — just the ID, not the whole URL. Easiest source is the callings sheet's URL: `https://docs.google.com/spreadsheets/d/<ID>/edit` → copy the `<ID>` segment.
+    - **Share the callings sheet with the deployer's Google account** (at minimum Viewer). The Main script runs as the deployer, so anything the deployer can't open, the importer can't either. If the callings sheet lives in a different Workspace / shared drive, use "Share → add people" and grant access to the deployer's personal email (the one running Main).
+    - From the manager **Import** page, click **Import Now** once. On success you'll see a summary like `36 inserts, 0 deletes, 0 access+/0 access- (2026-04-20 14:32 MDT, 6.4s)` and `Seats` / `Access` tabs fill in. Re-clicking should report `0 inserts, 0 deletes` — that's the idempotency acceptance criterion.
+    - Troubleshooting: if the callings sheet isn't accessible, the page surfaces a red toast naming the sheet ID rather than a stack trace. The most common causes are (a) `callings_sheet_id` is blank, (b) the sheet hasn't been shared with the deployer. Fix and re-click.
+
 ### Detecting a stale deployment
 
 Apps Script's `/exec` URL serves the most recently *deployed* version, not the latest pushed code. After `npm run push` you must also do **Deploy → Manage deployments → ✎ Edit → Version: New version → Deploy** in the editor for the change to take effect on the deployed URL. If you forget, `/exec` will keep serving the previous version's code.
@@ -245,6 +251,7 @@ Continue from Path 1 step 11 (deploy the Main and Identity web apps, paste their
 - [ ] Every tab's headers match the data-model doc byte-for-byte (case, spelling, underscores).
 - [ ] `appsscript.json` in the deployed version has `webapp.access = "ANYONE"`. The Main deployment's `executeAs` is `USER_DEPLOYING`; the Identity deployment's `executeAs` is `USER_ACCESSING`. The deploy dialog labels `ANYONE` as "Anyone with Google account" — that's the same value, just a UI alias. (`ANYONE` requires sign-in; `ANYONE_ANONYMOUS` would not.)
 - [ ] **No OAuth client in Cloud Console is required** for the current architecture (see open-questions.md A-8). If you have an old one from earlier docs revisions, it's inert — leave it or delete it.
+- [ ] **Importer prerequisites (from Chunk 3 onwards):** `Config.callings_sheet_id` is set to the source callings spreadsheet's ID, and that spreadsheet has been shared with the **deployer's** Google account at minimum Viewer. The Main deployment runs as the deployer, and `SpreadsheetApp.openById` inherits those permissions.
 
 ## What the bootstrap wizard will do
 

@@ -143,11 +143,11 @@ The Chunk 0 docs/manifest used `"ANYONE_WITH_GOOGLE_ACCOUNT"`, which is the *dep
 
 Approach confirmed: build the full per-tab diff in memory before applying anything. If parse fails for a tab, skip that tab's mutations and emit an `import_error` audit row with actor `Importer`. Lock is acquired once and covers all applies. Other tabs in the same run proceed.
 
-### I-2 `[P1]` Missing tab in the callings sheet
+### I-2 `[RESOLVED 2026-04-20]` Missing tab in the callings sheet
 
-If a ward in `Wards` has a `ward_code` that doesn't correspond to any tab in the callings spreadsheet, do we delete every auto-seat for that ward (since we "didn't see" any rows) or skip the ward?
+**Decision (Chunk 3):** Skip. Wards whose `ward_code` does not match a tab in the callings spreadsheet keep their existing auto-seats and Access rows untouched. The importer records the list of unmatched ward_codes in the `import_end` audit payload's `warnings` field and surfaces them on the Import page's "Warnings from last run" details block. No per-ward audit row is written — the `import_end` bracket carries the full warning list, which is enough for triage and avoids cluttering AuditLog on every run with repeat warnings.
 
-**Best guess:** Skip and log a per-ward warning audit row. Deleting all auto-seats when someone simply renamed a tab would be catastrophic.
+This matters because a tab rename in the callings sheet (human typo) would otherwise delete every auto-seat for that ward. The implementation therefore only diffs scopes that actually appeared in the current run (`scopesSeen`). Scopes not in that set are inert.
 
 ### I-3 `[P1]` Multi-person callings: multiple rows vs. extra email columns
 
@@ -159,21 +159,32 @@ Spec says multi-person callings use extra columns to the right of `Personal Emai
 
 Confirmed — **`Forwarding Email` is used for other (non-Kindoo) purposes and we never read it in this app.** `Organization` likewise ignored. Importer reads `Personal Email` + rightward cells only.
 
-### I-5 `[P1]` Prefix mismatches
+### I-5 `[RESOLVED 2026-04-20]` Prefix mismatches
 
-A row in the `CO` tab whose `Position` starts with `ST ` (wrong prefix) — skip it, warn, or error?
-
-**Best guess:** Skip with a warning audit row. The import loops by tab, and a mis-prefixed row is almost certainly a human typo, not a legitimate assignment.
+**Decision (Chunk 3):** Skip, with the row captured in the `import_end` payload's `warnings` field (e.g. `Tab "CO" row 14: Position "ST Bishop" does not start with expected prefix "CO " — skipped.`). Warnings surface on the manager Import page's collapsible "Warnings from last run" block; no per-row audit row is written (same rationale as I-2). A mis-prefixed row is almost always a human typo in LCR, not a legitimate assignment, and guessing the "real" scope would mask the typo.
 
 ### I-6 `[P1]` Row-with-no-matching-template
 
 A `(calling, email)` pair where `calling` isn't in the template — spec says filter out. Confirmed.
 
-### I-7 `[P2]` Empty rows at the bottom of the callings sheet
+### I-9 `[P1]` `[GoogleAccount: <gmail>]` bracketed syntax in Personal Email(s) cells
 
-The callings sheet may have trailing blank rows. Need a "stop at first blank" heuristic vs. iterating to the last filled row.
+Surfaced 2026-04-20. The real LCR-exported callings sheet's column-D header text reads roughly:
 
-**Best guess:** Iterate to `getLastRow()` and skip any row with a blank `Position`. Trivial.
+> "Personal Email(s) — Note: If someone sends email to a non-Google account, you can add the Google account only for access purposes. Add this following their email address: `[GoogleAccount: <GMAIL ACCOUNT>@gmail.com]`"
+
+So a cell may contain e.g. `first.last@workplace.com [GoogleAccount: flast@gmail.com]` — the real email the user will sign in with is inside the brackets. The importer as currently written (Chunk 3) runs `Utils_cleanEmail` on the whole cell (trim only), which preserves the bracket syntax literally. Consequences:
+
+- `Seats.person_email` and `Access.email` store the bracket-laden string rather than the gmail address.
+- `source_row_hash` is computed over the canonicalised bracket string, so it's stable across runs (no phantom delta), but it doesn't match the canonical form the user's session token will carry when they sign in — they'd fail role resolution.
+
+**Best guess:** if a cell contains `[GoogleAccount: X]`, extract `X` as the email to use for both storage and hashing; also emit the full bracket-stripped address (the non-Google part) as an additional email if useful? Or prefer the GoogleAccount unconditionally since that's what sign-in uses. Needs a pass in a follow-up chunk (3.1 bugfix or roll into Chunk 4/6 where manual requests land).
+
+**Not fixed in Chunk 3** — user's immediate request was to relax header validation, which is done. Record here so the next import with a bracketed cell shows up as a miss in Access-membership tests and we remember why.
+
+### I-7 `[RESOLVED 2026-04-20]` Empty rows at the bottom of the callings sheet
+
+**Decision (Chunk 3):** Iterate through the tab's full `getDataRange().getValues()` output and skip any row whose `Position` cell is blank. No "stop at first blank" heuristic — interior blank rows (if any) are also skipped, which is the desired behaviour. Trivial as predicted.
 
 ### I-8 `[RESOLVED 2026-04-19, REVISED 2026-04-19]` Gmail address canonicalisation — compare canonical, store as typed
 

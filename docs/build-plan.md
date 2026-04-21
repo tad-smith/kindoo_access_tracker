@@ -135,7 +135,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 3 — Importer
+## Chunk 3 — Importer `[DONE — see docs/changelog/chunk-3-importer.md]`
 
 **Goal:** Kindoo Manager can click "Import Now" and have auto-seats + Access rows reflect the current callings spreadsheet.
 
@@ -143,7 +143,7 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Implement `services/Importer.gs#runImport({ triggeredBy })`:
+- [x] Implement `services/Importer.gs#Importer_runImport({ triggeredBy })`:
   - Open the callings sheet via `SpreadsheetApp.openById(Config.callings_sheet_id)`.
   - Loop tabs; match tab names against `Wards.ward_code` or `"Stake"`.
   - For each matched tab: parse rows, strip prefix, collect `(calling, email)` pairs from `Personal Email` + right-hand-side columns.
@@ -153,10 +153,10 @@ _Proof 6 — failure modes_
   - Diff against existing `Access` rows (where template row has `give_app_access=true`); upsert new, delete missing.
   - Write `import_start` / `import_end` brackets around the per-row AuditLog entries, all inside one lock acquisition.
   - Update `Config.last_import_at` and `Config.last_import_summary`.
-- [ ] Implement `api/ApiManager.gs#runImport()`.
-- [ ] Implement `ui/manager/Import.html` — "Import Now" button, shows spinner, then shows last import time and summary.
-- [ ] Implement `ui/manager/Access.html` — read-only table of `Access` rows.
-- [ ] Test with a snapshot of the real callings spreadsheet — confirm expected inserts/deletes.
+- [x] Implement `api/ApiManager.gs#ApiManager_importerRun` (plus sibling `ApiManager_importStatus`, `ApiManager_accessList` for page-load fetches).
+- [x] Implement `ui/manager/Import.html` — "Import Now" button, shows spinner, then shows last import time and summary.
+- [x] Implement `ui/manager/Access.html` — read-only table of `Access` rows.
+- [x] Test with a snapshot of the real callings spreadsheet — confirm expected inserts/deletes.
 
 **Acceptance criteria**
 
@@ -164,8 +164,8 @@ _Proof 6 — failure modes_
 - Running it again with no changes produces zero inserts and zero deletes (idempotent).
 - Changing a person in the callings sheet and re-running produces exactly one delete + one insert for the affected row.
 - Removing a calling from the template deletes the corresponding auto-seats on the next run.
-- Every change produces a per-row `AuditLog` entry with actor `"Importer"`.
-- Every email written to `Seats`, `Access`, and `AuditLog` is in the canonical form per D4 (Gmail dot/`+suffix` stripping verified against real callings-sheet examples).
+- Every change produces a per-row `AuditLog` entry with actor `"Importer"` (literal string, not the manager's email — the manager's email is recorded only as `triggeredBy` in the `import_start` / `import_end` payloads).
+- Per D4 (as revised in Chunk 2): emails written to `Seats.person_email` and `Access.email` are stored **as typed** (trim only via `Utils_cleanEmail`), not canonicalised. `source_row_hash` is computed on the canonical form (`Utils_normaliseEmail`) so the diff is stable across Gmail dot/`+suffix` variants — verified by flipping a source email between `First.Last@gmail.com` and `firstlast@gmail.com` and confirming zero inserts/deletes on re-run.
 
 **Out of scope**
 

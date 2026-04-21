@@ -392,6 +392,71 @@ function ApiManager_templateDelete_(kind, principal, callingName, label) {
 }
 
 // ===========================================================================
+// Importer (Chunk 3)
+// ===========================================================================
+//
+// The canonical Chunk-2 shape for writes is (token) → Auth_principalFrom →
+// Auth_requireRole → Lock_withLock(before/after/audit). Imports fit the
+// same shape, but the actual per-row diff + audit bracketing live inside
+// Importer_runImport itself (services/Importer.gs) — the lock wraps the
+// whole service call, not each tab. Inside that single acquisition the
+// service does: import_start audit → diff-and-apply across all matched
+// tabs → Config.last_import_at/summary update → import_end audit. One
+// lock, not one-per-tab.
+//
+// timeoutMs is bumped to 30 s (architecture.md §6) — a real import can
+// take longer than the 10 s default if a lot of audit rows are flushed or
+// the callings sheet has many tabs. On contention, users see the same
+// "Another change is in progress" message every other write path emits.
+//
+// actor_email on every per-row AuditLog entry is "Importer" (literal
+// string — see architecture.md §5 and data-model.md §10). principal.email
+// flows in as `triggeredBy` so the import_start / import_end brackets
+// can record who ran the import.
+
+function ApiManager_importerRun(token) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  return Lock_withLock(function () {
+    return Importer_runImport({ triggeredBy: principal.email });
+  }, { timeoutMs: 30000 });
+}
+
+function ApiManager_importStatus(token) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  // Serialise Date to an ISO-ish string server-side. google.script.run's
+  // automatic Date-to-string conversion has edge cases (notably returning
+  // the whole response as null in some SDK versions when a Date property
+  // coexists with null-valued siblings) — a pre-formatted string is
+  // predictable. Client parses it back with `new Date()` for locale
+  // rendering if it wants to.
+  var rawAt = Config_get('last_import_at');
+  var lastAt = null;
+  if (rawAt instanceof Date) {
+    var tz = Session.getScriptTimeZone();
+    lastAt = Utilities.formatDate(rawAt, tz, 'yyyy-MM-dd HH:mm:ss z');
+  } else if (rawAt) {
+    lastAt = String(rawAt);
+  }
+  return {
+    last_import_at:      lastAt,
+    last_import_summary: Config_get('last_import_summary') || null,
+    callings_sheet_id:   Config_get('callings_sheet_id')   || null
+  };
+}
+
+// ===========================================================================
+// Access — read-only manager view of importer-owned tab
+// ===========================================================================
+
+function ApiManager_accessList(token) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  return Access_getAll();
+}
+
+// ===========================================================================
 // Manual smoke tests, runnable from the Apps Script editor.
 // Not callable via google.script.run from the client (no token argument).
 // ===========================================================================

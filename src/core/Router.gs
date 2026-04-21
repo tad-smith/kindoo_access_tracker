@@ -4,8 +4,10 @@
 // through to the role's default page (Hello in Chunks 1–4; the real
 // dashboards land in Chunks 5+).
 //
-// Chunk 2 adds:
-//   - mgr/config → ui/manager/Config (manager only)
+// Implemented so far:
+//   - mgr/config → ui/manager/Config (manager only) — Chunk 2
+//   - mgr/import → ui/manager/Import (manager only) — Chunk 3
+//   - mgr/access → ui/manager/Access (manager only) — Chunk 3
 //
 // Cross-role unknowns or insufficient permissions silently fall back to
 // the role's default page (the spec's "redirect with toast" model — toast
@@ -24,13 +26,19 @@ function Router_pick(requestedPage, principal) {
 
   var page = String(requestedPage || '').trim();
 
-  if (page === 'mgr/config') {
+  var managerPages = {
+    'mgr/config': 'ui/manager/Config',
+    'mgr/import': 'ui/manager/Import',
+    'mgr/access': 'ui/manager/Access'
+  };
+
+  if (managerPages[page]) {
     if (Router_hasRole_(principal, 'manager')) {
-      var cfg = HtmlService.createTemplateFromFile('ui/manager/Config');
-      cfg.principal = principal;
+      var tpl = HtmlService.createTemplateFromFile(managerPages[page]);
+      tpl.principal = principal;
       return {
-        template: 'ui/manager/Config',
-        pageHtml: cfg.evaluate().getContent(),
+        template: managerPages[page],
+        pageHtml: tpl.evaluate().getContent(),
         pageModel: { principal: principal }
       };
     }
