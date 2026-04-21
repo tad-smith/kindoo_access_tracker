@@ -1,1 +1,554 @@
-<!-- Kindoo Manager Configuration: tabbed editor for Wards, Buildings, KindooManagers, templates, and Config. -->
+<!--
+  Manager Configuration page (Chunk 2). Tabbed editor for the six
+  configuration tabs: Wards, Buildings, KindooManagers, WardCallingTemplate,
+  StakeCallingTemplate, and Config (key/value).
+
+  Plain HTML/JS — same spirit as Login.html. Every server call goes through
+  ClientUtils.html#rpc (which auto-injects the session token); errors land
+  as toasts via ClientUtils.html#toast.
+
+  Out of scope per build-plan Chunk 2:
+    - Access tab (importer-owned, Chunk 3).
+    - Seats inline edit (Chunk 5/6).
+    - AuditLog viewer (Chunk 10).
+-->
+<section class="config-page">
+  <h1>Configuration</h1>
+
+  <div class="config-tabs" role="tablist">
+    <button class="config-tab-btn active" data-tab="wards">Wards</button>
+    <button class="config-tab-btn"        data-tab="buildings">Buildings</button>
+    <button class="config-tab-btn"        data-tab="kindooManagers">Kindoo Managers</button>
+    <button class="config-tab-btn"        data-tab="wardTemplate">Ward Calling Template</button>
+    <button class="config-tab-btn"        data-tab="stakeTemplate">Stake Calling Template</button>
+    <button class="config-tab-btn"        data-tab="config">Config (key/value)</button>
+  </div>
+
+  <div class="config-tab-panel active" data-panel="wards"          id="panel-wards">          Loading…</div>
+  <div class="config-tab-panel"        data-panel="buildings"      id="panel-buildings">      Loading…</div>
+  <div class="config-tab-panel"        data-panel="kindooManagers" id="panel-kindooManagers"> Loading…</div>
+  <div class="config-tab-panel"        data-panel="wardTemplate"   id="panel-wardTemplate">   Loading…</div>
+  <div class="config-tab-panel"        data-panel="stakeTemplate"  id="panel-stakeTemplate">  Loading…</div>
+  <div class="config-tab-panel"        data-panel="config"         id="panel-config">         Loading…</div>
+</section>
+
+<script>
+(function () {
+  // ---------------------------------------------------------------------------
+  // Per-tab state. Cached client-side so we can re-render after edits without
+  // re-fetching every other tab. `loaded[name]` flips true after first fetch.
+  // ---------------------------------------------------------------------------
+  var state = {
+    wards:          { rows: [],  loaded: false },
+    buildings:      { rows: [],  loaded: false },
+    kindooManagers: { rows: [],  loaded: false },
+    wardTemplate:   { rows: [],  loaded: false },
+    stakeTemplate:  { rows: [],  loaded: false },
+    config:         { all: {}, protected: [], importer: [], loaded: false }
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Tab click handler — show the chosen panel, lazy-load if needed.
+  Array.prototype.forEach.call(document.querySelectorAll('.config-tab-btn'), function (btn) {
+    btn.addEventListener('click', function () {
+      var name = btn.getAttribute('data-tab');
+      activateTab(name);
+    });
+  });
+
+  function activateTab(name) {
+    Array.prototype.forEach.call(document.querySelectorAll('.config-tab-btn'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-tab') === name);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.config-tab-panel'), function (p) {
+      p.classList.toggle('active', p.getAttribute('data-panel') === name);
+    });
+    if (!state[name].loaded) loadTab(name);
+  }
+
+  function loadTab(name) {
+    var rpcName = {
+      wards:          'ApiManager_wardsList',
+      buildings:      'ApiManager_buildingsList',
+      kindooManagers: 'ApiManager_kindooManagersList',
+      wardTemplate:   'ApiManager_wardTemplateList',
+      stakeTemplate:  'ApiManager_stakeTemplateList',
+      config:         'ApiManager_configList'
+    }[name];
+    return rpc(rpcName).then(function (resp) {
+      if (name === 'config') {
+        state.config.all       = resp.all       || {};
+        state.config.protected = resp.protected || [];
+        state.config.importer  = resp.importer  || [];
+      } else {
+        state[name].rows = resp || [];
+      }
+      state[name].loaded = true;
+      renderTab(name);
+    }).catch(function (err) {
+      $('panel-' + name).innerHTML = '<div class="error">Failed to load: ' + esc(err.message) + '</div>';
+      toast(err.message, 'error');
+    });
+  }
+
+  function renderTab(name) {
+    var renderers = {
+      wards:          renderWards,
+      buildings:      renderBuildings,
+      kindooManagers: renderKindooManagers,
+      wardTemplate:   function () { renderTemplate('wardTemplate', 'Ward'); },
+      stakeTemplate:  function () { renderTemplate('stakeTemplate', 'Stake'); },
+      config:         renderConfig
+    };
+    renderers[name]();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Wards. ward_code is the PK; building_name field is rendered as a select
+  // populated from the current Buildings rows (loaded eagerly here so the
+  // combobox is ready). If a row references a building that no longer
+  // exists (e.g., it was renamed), the option is added to the select with
+  // a "(missing)" suffix so the user can see the orphan.
+  // ---------------------------------------------------------------------------
+  function renderWards() {
+    var rows = state.wards.rows;
+    // Make sure the Buildings list is loaded so we can populate selects.
+    var ensureBuildings = state.buildings.loaded
+      ? Promise.resolve()
+      : rpc('ApiManager_buildingsList').then(function (resp) {
+          state.buildings.rows = resp || [];
+          state.buildings.loaded = true;
+        }).catch(function (err) {
+          toast('Could not load buildings list for picker: ' + err.message, 'warn');
+          state.buildings.loaded = true;
+        });
+
+    ensureBuildings.then(function () {
+      var buildingNames = state.buildings.rows.map(function (b) { return b.building_name; });
+      var html = '';
+      if (rows.length === 0) {
+        html += '<div class="empty-state">No wards yet. Add one below.</div>';
+      } else {
+        html += '<table class="config-table"><thead><tr>' +
+          '<th>ward_code</th><th>ward_name</th><th>building</th>' +
+          '<th>seat_cap</th><th class="row-actions">Actions</th>' +
+          '</tr></thead><tbody>';
+        for (var i = 0; i < rows.length; i++) {
+          var r = rows[i];
+          html += '<tr data-key="' + esc(r.ward_code) + '">' +
+            '<td><input type="text" data-field="ward_code" maxlength="2" value="' + esc(r.ward_code) + '"></td>' +
+            '<td><input type="text" data-field="ward_name" value="' + esc(r.ward_name) + '"></td>' +
+            '<td>' + buildingSelect_(buildingNames, r.building_name, 'data-field="building_name"') + '</td>' +
+            '<td><input type="number" data-field="seat_cap" value="' + esc(r.seat_cap == null ? '' : r.seat_cap) + '"></td>' +
+            '<td class="row-actions">' +
+              '<button class="btn" data-act="save">Save</button> ' +
+              '<button class="btn btn-danger" data-act="delete">Delete</button>' +
+            '</td></tr>';
+        }
+        html += '</tbody></table>';
+      }
+      var addBuildingSelect = buildingNames.length === 0
+        ? '<div class="empty-state" style="text-align:left;">Add a building first (Buildings tab) — wards need to be assigned to a building.</div>'
+        : buildingSelect_(buildingNames, '', 'id="add-ward-building"');
+      html +=
+        '<div class="add-row-form"><h3>Add a ward</h3><div class="form-grid" style="grid-template-columns:160px 1fr;">' +
+        '<label>ward_code (2 chars)</label><input type="text" id="add-ward-code" maxlength="2" placeholder="CO">' +
+        '<label>ward_name</label><input type="text" id="add-ward-name" placeholder="Cordera 1st Ward">' +
+        '<label>building</label>' + addBuildingSelect +
+        '<label>seat_cap</label><input type="number" id="add-ward-cap" placeholder="20">' +
+        '</div><div class="form-actions"><button class="btn" id="add-ward-btn"' +
+          (buildingNames.length === 0 ? ' disabled' : '') + '>Add ward</button></div></div>';
+      $('panel-wards').innerHTML = html;
+
+      // Per-row actions
+      Array.prototype.forEach.call($('panel-wards').querySelectorAll('tr[data-key]'), function (tr) {
+        tr.querySelector('button[data-act="save"]').addEventListener('click', function () {
+          var key = tr.getAttribute('data-key');
+          var patch = {
+            ward_code:     tr.querySelector('input[data-field="ward_code"]').value.trim(),
+            ward_name:     tr.querySelector('input[data-field="ward_name"]').value,
+            building_name: tr.querySelector('select[data-field="building_name"]').value,
+            seat_cap:      Number(tr.querySelector('input[data-field="seat_cap"]').value)
+          };
+          if (patch.ward_code !== key) {
+            if (!confirm('Renaming ward_code from "' + key + '" to "' + patch.ward_code + '" will break references in Seats / Access / Requests AND the importer\'s tab match. Continue?')) return;
+          }
+          rpc('ApiManager_wardsUpsert', patch).then(function () {
+            toast('Saved.', 'success');
+            loadTab('wards');
+          }).catch(function (err) { toast(err.message, 'error'); });
+        });
+        tr.querySelector('button[data-act="delete"]').addEventListener('click', function () {
+          var key = tr.getAttribute('data-key');
+          if (!confirm('Delete ward "' + key + '"? This cannot be undone.')) return;
+          rpc('ApiManager_wardsDelete', key).then(function () {
+            toast('Deleted.', 'success');
+            loadTab('wards');
+          }).catch(function (err) { toast(err.message, 'error'); });
+        });
+      });
+
+      var addBtn = $('add-ward-btn');
+      if (addBtn) {
+        addBtn.addEventListener('click', function () {
+          var row = {
+            ward_code:     $('add-ward-code').value.trim(),
+            ward_name:     $('add-ward-name').value.trim(),
+            building_name: $('add-ward-building').value,
+            seat_cap:      Number($('add-ward-cap').value)
+          };
+          if (!row.ward_code || !row.ward_name || !row.building_name || !row.seat_cap) {
+            toast('All fields required.', 'warn');
+            return;
+          }
+          rpc('ApiManager_wardsUpsert', row).then(function () {
+            toast('Ward added.', 'success');
+            loadTab('wards');
+          }).catch(function (err) { toast(err.message, 'error'); });
+        });
+      }
+    });
+  }
+
+  // Build a <select> over the available building names. If `current` doesn't
+  // match any of them (orphan), include it as a "(missing)" option so the
+  // user can see and fix the dangling reference.
+  function buildingSelect_(buildingNames, current, extraAttrs) {
+    var html = '<select ' + (extraAttrs || '') + '>';
+    var matched = false;
+    if (!current) {
+      html += '<option value="">— select —</option>';
+    }
+    for (var i = 0; i < buildingNames.length; i++) {
+      var b = buildingNames[i];
+      var sel = (b === current) ? ' selected' : '';
+      if (b === current) matched = true;
+      html += '<option value="' + esc(b) + '"' + sel + '>' + esc(b) + '</option>';
+    }
+    if (current && !matched) {
+      html += '<option value="' + esc(current) + '" selected>' + esc(current) + ' (missing)</option>';
+    }
+    html += '</select>';
+    return html;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Buildings. building_name is the PK (no slug column).
+  // ---------------------------------------------------------------------------
+  function renderBuildings() {
+    var rows = state.buildings.rows;
+    var html = '';
+    if (rows.length === 0) {
+      html += '<div class="empty-state">No buildings yet. Add one below.</div>';
+    } else {
+      html += '<table class="config-table"><thead><tr>' +
+        '<th>building_name</th><th>address</th>' +
+        '<th class="row-actions">Actions</th></tr></thead><tbody>';
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        html += '<tr data-key="' + esc(r.building_name) + '">' +
+          '<td><input type="text" data-field="building_name" value="' + esc(r.building_name) + '"></td>' +
+          '<td><input type="text" data-field="address" value="' + esc(r.address) + '"></td>' +
+          '<td class="row-actions">' +
+            '<button class="btn" data-act="save">Save</button> ' +
+            '<button class="btn btn-danger" data-act="delete">Delete</button>' +
+          '</td></tr>';
+      }
+      html += '</tbody></table>';
+    }
+    html +=
+      '<div class="add-row-form"><h3>Add a building</h3><div class="form-grid" style="grid-template-columns:160px 1fr;">' +
+      '<label>building_name</label><input type="text" id="add-building-name" placeholder="Stake Center">' +
+      '<label>address</label><input type="text" id="add-building-address" placeholder="12345 Powers Blvd">' +
+      '</div><div class="form-actions"><button class="btn" id="add-building-btn">Add building</button></div></div>';
+    $('panel-buildings').innerHTML = html;
+
+    Array.prototype.forEach.call($('panel-buildings').querySelectorAll('tr[data-key]'), function (tr) {
+      tr.querySelector('button[data-act="save"]').addEventListener('click', function () {
+        var key = tr.getAttribute('data-key');
+        var patch = {
+          building_name: tr.querySelector('input[data-field="building_name"]').value.trim(),
+          address:       tr.querySelector('input[data-field="address"]').value
+        };
+        if (patch.building_name !== key) {
+          if (!confirm('Renaming building from "' + key + '" to "' + patch.building_name + '" will break references in Wards. Continue?')) return;
+        }
+        rpc('ApiManager_buildingsUpsert', patch).then(function () {
+          toast('Saved.', 'success');
+          loadTab('buildings');
+          // Wards picker depends on this list; force-refresh next time wards renders.
+          state.wards.loaded = false;
+        }).catch(function (err) { toast(err.message, 'error'); });
+      });
+      tr.querySelector('button[data-act="delete"]').addEventListener('click', function () {
+        var key = tr.getAttribute('data-key');
+        if (!confirm('Delete building "' + key + '"?')) return;
+        rpc('ApiManager_buildingsDelete', key).then(function () {
+          toast('Deleted.', 'success');
+          loadTab('buildings');
+          state.wards.loaded = false;
+        }).catch(function (err) { toast(err.message, 'error'); });
+      });
+    });
+    $('add-building-btn').addEventListener('click', function () {
+      var row = {
+        building_name: $('add-building-name').value.trim(),
+        address:       $('add-building-address').value
+      };
+      if (!row.building_name) {
+        toast('building_name is required.', 'warn');
+        return;
+      }
+      rpc('ApiManager_buildingsUpsert', row).then(function () {
+        toast('Building added.', 'success');
+        loadTab('buildings');
+        state.wards.loaded = false;
+      }).catch(function (err) { toast(err.message, 'error'); });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // KindooManagers
+  // ---------------------------------------------------------------------------
+  function renderKindooManagers() {
+    var rows = state.kindooManagers.rows;
+    var html = '';
+    if (rows.length === 0) {
+      html += '<div class="empty-state">No Kindoo Managers yet. Add one below.</div>';
+    } else {
+      html += '<table class="config-table"><thead><tr>' +
+        '<th>email</th><th>name</th><th>active</th>' +
+        '<th class="row-actions">Actions</th></tr></thead><tbody>';
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        html += '<tr data-key="' + esc(r.email) + '">' +
+          '<td><input type="email" data-field="email" value="' + esc(r.email) + '"></td>' +
+          '<td><input type="text"  data-field="name"  value="' + esc(r.name) + '"></td>' +
+          '<td><input type="checkbox" data-field="active"' + (r.active ? ' checked' : '') + '></td>' +
+          '<td class="row-actions">' +
+            '<button class="btn" data-act="save">Save</button> ' +
+            '<button class="btn btn-danger" data-act="delete">Delete</button>' +
+          '</td></tr>';
+      }
+      html += '</tbody></table>';
+    }
+    html +=
+      '<div class="add-row-form"><h3>Add a Kindoo Manager</h3><div class="form-grid" style="grid-template-columns:160px 1fr;">' +
+      '<label>email</label><input type="email" id="add-mgr-email" placeholder="alice@example.com">' +
+      '<label>name</label><input type="text" id="add-mgr-name" placeholder="Alice Smith">' +
+      '<label>active</label><div><input type="checkbox" id="add-mgr-active" checked></div>' +
+      '</div><div class="form-actions"><button class="btn" id="add-mgr-btn">Add manager</button></div></div>';
+    $('panel-kindooManagers').innerHTML = html;
+
+    Array.prototype.forEach.call($('panel-kindooManagers').querySelectorAll('tr[data-key]'), function (tr) {
+      tr.querySelector('button[data-act="save"]').addEventListener('click', function () {
+        var key = tr.getAttribute('data-key');
+        var patch = {
+          email:  tr.querySelector('input[data-field="email"]').value.trim(),
+          name:   tr.querySelector('input[data-field="name"]').value,
+          active: tr.querySelector('input[data-field="active"]').checked
+        };
+        // Server canonicalises email; sending the original is fine.
+        rpc('ApiManager_kindooManagersUpsert', patch).then(function () {
+          toast('Saved.', 'success');
+          loadTab('kindooManagers');
+        }).catch(function (err) { toast(err.message, 'error'); });
+      });
+      tr.querySelector('button[data-act="delete"]').addEventListener('click', function () {
+        var key = tr.getAttribute('data-key');
+        if (!confirm('Delete Kindoo Manager "' + key + '"?')) return;
+        rpc('ApiManager_kindooManagersDelete', key).then(function (resp) {
+          if (resp && resp.warning) toast(resp.warning, 'warn');
+          else toast('Deleted.', 'success');
+          loadTab('kindooManagers');
+        }).catch(function (err) { toast(err.message, 'error'); });
+      });
+    });
+    $('add-mgr-btn').addEventListener('click', function () {
+      var row = {
+        email:  $('add-mgr-email').value.trim(),
+        name:   $('add-mgr-name').value.trim(),
+        active: $('add-mgr-active').checked
+      };
+      if (!row.email) { toast('email is required.', 'warn'); return; }
+      rpc('ApiManager_kindooManagersUpsert', row).then(function () {
+        toast('Manager added.', 'success');
+        loadTab('kindooManagers');
+      }).catch(function (err) { toast(err.message, 'error'); });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Templates (ward + stake share this renderer)
+  // ---------------------------------------------------------------------------
+  function renderTemplate(tabName, label) {
+    var rows = state[tabName].rows;
+    var rpcUpsert = tabName === 'wardTemplate' ? 'ApiManager_wardTemplateUpsert'  : 'ApiManager_stakeTemplateUpsert';
+    var rpcDelete = tabName === 'wardTemplate' ? 'ApiManager_wardTemplateDelete'  : 'ApiManager_stakeTemplateDelete';
+    var idPrefix  = tabName === 'wardTemplate' ? 'add-wtpl-' : 'add-stpl-';
+    var html = '';
+    if (rows.length === 0) {
+      html += '<div class="empty-state">No ' + esc(label) + ' template rows yet. Add one below.</div>';
+    } else {
+      html += '<table class="config-table"><thead><tr>' +
+        '<th>calling_name</th><th>give_app_access</th>' +
+        '<th class="row-actions">Actions</th></tr></thead><tbody>';
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        html += '<tr data-key="' + esc(r.calling_name) + '">' +
+          '<td><input type="text" data-field="calling_name" value="' + esc(r.calling_name) + '"></td>' +
+          '<td><input type="checkbox" data-field="give_app_access"' + (r.give_app_access ? ' checked' : '') + '></td>' +
+          '<td class="row-actions">' +
+            '<button class="btn" data-act="save">Save</button> ' +
+            '<button class="btn btn-danger" data-act="delete">Delete</button>' +
+          '</td></tr>';
+      }
+      html += '</tbody></table>';
+    }
+    html +=
+      '<div class="add-row-form"><h3>Add a ' + esc(label) + ' calling</h3><div class="form-grid" style="grid-template-columns:160px 1fr;">' +
+      '<label>calling_name</label><input type="text" id="' + idPrefix + 'name" placeholder="e.g. Bishop">' +
+      '<label>give_app_access</label><div><input type="checkbox" id="' + idPrefix + 'access"></div>' +
+      '</div><div class="form-actions"><button class="btn" id="' + idPrefix + 'btn">Add calling</button></div></div>';
+    $('panel-' + tabName).innerHTML = html;
+
+    Array.prototype.forEach.call($('panel-' + tabName).querySelectorAll('tr[data-key]'), function (tr) {
+      tr.querySelector('button[data-act="save"]').addEventListener('click', function () {
+        var key = tr.getAttribute('data-key');
+        var patch = {
+          calling_name:    tr.querySelector('input[data-field="calling_name"]').value.trim(),
+          give_app_access: tr.querySelector('input[data-field="give_app_access"]').checked
+        };
+        if (patch.calling_name !== key) {
+          if (!confirm('Renaming "' + key + '" to "' + patch.calling_name + '" will break the importer\'s match against the callings sheet. Continue?')) return;
+        }
+        rpc(rpcUpsert, patch).then(function () {
+          toast('Saved.', 'success');
+          loadTab(tabName);
+        }).catch(function (err) { toast(err.message, 'error'); });
+      });
+      tr.querySelector('button[data-act="delete"]').addEventListener('click', function () {
+        var key = tr.getAttribute('data-key');
+        if (!confirm('Delete calling "' + key + '"? Auto-seats for this calling will disappear on the next import.')) return;
+        rpc(rpcDelete, key).then(function () {
+          toast('Deleted.', 'success');
+          loadTab(tabName);
+        }).catch(function (err) { toast(err.message, 'error'); });
+      });
+    });
+    $(idPrefix + 'btn').addEventListener('click', function () {
+      var row = {
+        calling_name:    $(idPrefix + 'name').value.trim(),
+        give_app_access: $(idPrefix + 'access').checked
+      };
+      if (!row.calling_name) { toast('calling_name is required.', 'warn'); return; }
+      rpc(rpcUpsert, row).then(function () {
+        toast('Calling added.', 'success');
+        loadTab(tabName);
+      }).catch(function (err) { toast(err.message, 'error'); });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Config (key/value)
+  // ---------------------------------------------------------------------------
+  function renderConfig() {
+    var all = state.config.all;
+    var protectedSet = {};
+    for (var i = 0; i < state.config.protected.length; i++) protectedSet[state.config.protected[i]] = true;
+    var importerSet  = {};
+    for (var j = 0; j < state.config.importer.length;  j++) importerSet[state.config.importer[j]]   = true;
+
+    var keys = Object.keys(all).sort();
+    var editable = [];
+    var readOnly = [];
+    for (var k = 0; k < keys.length; k++) {
+      var key = keys[k];
+      if (protectedSet[key] || importerSet[key]) readOnly.push(key);
+      else editable.push(key);
+    }
+
+    var html = '';
+
+    html += '<p class="config-readonly-note">' +
+      'These are the key/value Config entries. Editable keys can be changed inline. ' +
+      'Protected keys (auth secrets, deployment URLs, bootstrap admin) and importer-owned ' +
+      'keys are shown read-only — edit those directly in the Sheet if absolutely needed. ' +
+      'See <code>docs/open-questions.md</code> C-4 for the rationale.' +
+      '</p>';
+
+    if (editable.length === 0) {
+      html += '<div class="empty-state">No editable Config keys.</div>';
+    } else {
+      html += '<table class="config-table"><thead><tr>' +
+        '<th>key</th><th>value</th><th class="row-actions">Actions</th>' +
+        '</tr></thead><tbody>';
+      for (var e = 0; e < editable.length; e++) {
+        var ek = editable[e];
+        var ev = all[ek];
+        var inputHtml;
+        if (typeof ev === 'boolean') {
+          inputHtml = '<input type="checkbox" data-field="value"' + (ev ? ' checked' : '') + '>';
+        } else if (typeof ev === 'number') {
+          inputHtml = '<input type="number" data-field="value" value="' + esc(ev) + '">';
+        } else {
+          inputHtml = '<input type="text" data-field="value" value="' + esc(ev == null ? '' : ev) + '">';
+        }
+        html += '<tr data-key="' + esc(ek) + '">' +
+          '<td><code>' + esc(ek) + '</code></td>' +
+          '<td>' + inputHtml + '</td>' +
+          '<td class="row-actions"><button class="btn" data-act="save">Save</button></td>' +
+          '</tr>';
+      }
+      html += '</tbody></table>';
+    }
+
+    if (readOnly.length > 0) {
+      html += '<h3 style="margin-top:24px; font-size:1em;">Read-only keys</h3>';
+      html += '<table class="config-table"><thead><tr>' +
+        '<th>key</th><th>value</th><th>why read-only</th>' +
+        '</tr></thead><tbody>';
+      for (var r = 0; r < readOnly.length; r++) {
+        var rk = readOnly[r];
+        var rv = all[rk];
+        var why = protectedSet[rk]
+          ? '<span class="config-readonly-badge">protected</span>'
+          : '<span class="config-readonly-badge">importer-owned</span>';
+        html += '<tr>' +
+          '<td><code>' + esc(rk) + '</code></td>' +
+          '<td><input type="text" value="' + esc(rv == null ? '' : rv) + '" readonly></td>' +
+          '<td>' + why + '</td>' +
+          '</tr>';
+      }
+      html += '</tbody></table>';
+    }
+
+    $('panel-config').innerHTML = html;
+
+    Array.prototype.forEach.call($('panel-config').querySelectorAll('tr[data-key]'), function (tr) {
+      tr.querySelector('button[data-act="save"]').addEventListener('click', function () {
+        var key = tr.getAttribute('data-key');
+        var input = tr.querySelector('input[data-field="value"]');
+        var value = input.type === 'checkbox' ? input.checked
+                  : input.type === 'number'   ? Number(input.value)
+                                              : input.value;
+        rpc('ApiManager_configUpdate', key, value).then(function () {
+          toast('Saved.', 'success');
+          loadTab('config');
+        }).catch(function (err) { toast(err.message, 'error'); });
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Boot — render the default-active "wards" tab.
+  // ---------------------------------------------------------------------------
+  loadTab('wards');
+})();
+</script>

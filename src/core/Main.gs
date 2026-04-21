@@ -1,44 +1,18 @@
-// Web-app entry point. Same script project, **two deployments**:
+// Web-app entry point for the Main Kindoo Apps Script project.
 //
-//   - **Main** (`executeAs: USER_DEPLOYING`) — renders the user-facing UI.
-//     URL stored in `Config.main_url`.
-//   - **Identity** (`executeAs: USER_ACCESSING`) — calls
-//     `Session.getActiveUser` and HMAC-signs the result back to Main via a
-//     top-frame redirect. URL stored in `Config.identity_url`.
+// Identity (the OAuth round-trip half of the auth flow) lives in a
+// SEPARATE Apps Script project, owned by a personal Google account, with
+// its own /exec URL. See `identity-project/README.md` and
+// architecture.md D1 / D10 / open-questions.md D-3 for why.
 //
-// `doGet` routes between the two SOLELY on the `?service=identity` query
-// parameter. The Login link in `Layout.html` always appends that param to
-// `Config.identity_url`, so the user just pastes the bare /exec URL into
-// Config — the client tags the navigation with the routing flag.
-//
-// We tried using `ScriptApp.getService().getUrl()` matched against
-// `Config.identity_url` as a secondary signal so that a directly-
-// bookmarked Identity URL without the query param would still route. It
-// breaks in practice — Apps Script's getUrl() can return the same value
-// for both deployments in a multi-deployment setup, which makes the URL-
-// match dispatch fire on Main and create a sign-in loop. Removed.
-//
-// To smoke-test the Identity deployment in isolation, visit it with
-// `?service=identity` appended to the URL.
-//
-// See architecture.md D10 + §4 and open-questions.md A-8.
+// Consequently `Main.doGet` has no Identity branch — it always renders
+// the Main UI (or consumes the `?token=…` handed back by the personal-
+// account Identity project after a sign-in round-trip). The Login link
+// in `Layout.html` navigates the top frame to `Config.identity_url`
+// directly.
 
 function doGet(e) {
   var params = (e && e.parameter) || {};
-
-  // Route to the Identity-deployment branch ONLY on ?service=identity. The
-  // Login link in Layout.html always auto-appends that query param to
-  // Config.identity_url, so the routing fires for every legitimate sign-in
-  // navigation regardless of which deployment URL the user pasted.
-  //
-  // We deliberately do NOT compare ScriptApp.getService().getUrl() against
-  // Config.identity_url here — empirically getUrl() returns the same value
-  // for both deployments in some Apps Script multi-deployment configs,
-  // which makes URL-match dispatch fire on Main and create a sign-in loop.
-  // The query-param flag is the only reliable signal.
-  if (params.service === 'identity') {
-    return Identity_serve();
-  }
 
   // Main UI branch.
   var mainUrl     = '';
@@ -67,11 +41,18 @@ function doGet(e) {
     }
   }
 
+  // The HtmlService iframe's URL is on *.googleusercontent.com and does
+  // not carry the parent's query string, so client-side
+  // `URLSearchParams(window.location.search)` cannot see ?p=. Read it
+  // here, server-side, and inject into Layout for the client to use.
+  var requestedPage = String(params.p || '');
+
   var template = HtmlService.createTemplateFromFile('ui/Layout');
   template.identity_url   = identityUrl;
   template.main_url       = mainUrl;
   template.injected_token = injectedToken;
   template.injected_error = injectedError;
+  template.requested_page = requestedPage;
   template.app_version    = Version_get();
   return template.evaluate()
     .setTitle('Kindoo Access Tracker')

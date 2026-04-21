@@ -21,8 +21,8 @@ Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for
 ## 2. Stack
 
 - **Backend + UI**: Google Apps Script (`HtmlService` + `google.script.run`).
-- **Database**: Google Sheet in the stake's Workspace.
-- **Auth**: a **two-deployment Session+HMAC pattern**. The same Apps Script project is deployed twice as a web app: a **Main** deployment (`executeAs: USER_DEPLOYING`, renders all UI and reads/writes the backing Sheet under the deployer's identity) and an **Identity** deployment (`executeAs: USER_ACCESSING`, exists only to read `Session.getActiveUser().getEmail()` and HMAC-sign it). The Login button on Main navigates the top frame to the Identity deployment's URL; Identity reads the user's email, signs `{email, exp, nonce}` with `Config.session_secret` (HMAC-SHA256), and renders a tiny redirect page that navigates the top back to Main with `?token=…`. Main's `doGet` verifies the HMAC, drops the token into `sessionStorage`, cleans the URL, and proceeds; every subsequent `google.script.run` call passes the same token, which the server re-verifies on each call. The verified `email` — canonicalised (lowercase + Gmail dot/`+suffix` stripping + `googlemail.com` → `gmail.com`) — is resolved against the `KindooManagers` and `Access` tabs. **No Google OAuth client is involved** — neither Google Identity Services' drop-in button nor the OAuth implicit nor code flow can be used inside Apps Script HtmlService, because the iframe origin (`*.googleusercontent.com`) is on Google's permanent OAuth-origin denylist (`origin_mismatch` on every browser-initiated request to `accounts.google.com`). `Session.getActiveUser` under `USER_ACCESSING` works for consumer Gmail because the script runs as the user; the two-deployment split lets us still keep the Sheet private to the deployer (Main runs as deployer, only Identity runs as user, and Identity touches no data). Users sign in with consumer Gmail accounts; the web app's `access` is `ANYONE` in the manifest (shown as "Anyone with Google account" in the deploy dialog — sign-in required, no domain restriction). First-time per-user OAuth consent on the Identity deployment for the email scope only.
+- **Database**: Google Sheet in the stake's Workspace (shared drive, owned by the Workspace). The Main Apps Script project is container-bound to that Sheet and inherits its Workspace ownership.
+- **Auth**: a **two-project Session+HMAC pattern**. There are two distinct Apps Script projects: the Workspace-bound **Main** (this repo's `src/`, `executeAs: USER_DEPLOYING`, renders all UI and reads/writes the backing Sheet) and a personal-account-owned standalone **Identity** (this repo's `identity-project/`, `executeAs: USER_ACCESSING`, exists only to read `Session.getActiveUser().getEmail()` and HMAC-sign it). The Login button on Main navigates the top frame to Identity's URL; Identity reads the user's email, signs `{email, exp, nonce}` with `session_secret` (HMAC-SHA256), and renders a tiny redirect page that navigates the top back to Main with `?token=…`. Main's `doGet` verifies the HMAC, drops the token into `sessionStorage`, cleans the URL, and proceeds; every subsequent `google.script.run` call passes the same token, which the server re-verifies on each call. The verified `email` is resolved against the `KindooManagers` and `Access` tabs (canonical-on-the-fly comparison via `Utils_emailsEqual`: lowercase + Gmail dot/`+suffix` stripping + `googlemail.com` → `gmail.com`; addresses are stored as typed). The shared `session_secret` lives in two manually-synchronized places: Main's Sheet `Config.session_secret` cell and Identity's project Script Properties — see `identity-project/README.md` for the rotation procedure. **No Google OAuth client (GCP-managed) is involved** — neither Google Identity Services' drop-in button nor the OAuth implicit nor code flow can be used inside Apps Script HtmlService, because the iframe origin (`*.googleusercontent.com`) is on Google's permanent OAuth-origin denylist. `Session.getActiveUser` under `USER_ACCESSING` works for consumer Gmail when the script lives in a personal-account Cloud project — Workspace-owned scripts gate consumer-Gmail authorization at a tenant level the deployment dialog can't override, which is why Identity is split into a separate personal-account project while Main stays Workspace-bound. Users sign in with consumer Gmail accounts; both projects' `webapp.access` is `ANYONE` in the manifest (shown as "Anyone with Google account" in the deploy dialog). First-time per-user OAuth consent on the Identity project for the email scope only.
 - **Email**: `MailApp.sendEmail()`.
 - **Scheduling**: time-based triggers (daily expiry; weekly import).
 - **Domain**: `kindoo.csnorth.org` → Cloudflare Worker → Apps Script `/exec` URL.
@@ -43,11 +43,11 @@ Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for
 
 **`Buildings`**
 
-- Columns: `building_id`, `name`, `address`.
+- Columns: `building_name`, `address`. (`building_name` is the PK; cross-tab references use it directly — no slug column.)
 
 **`Wards`**
 
-- Columns: `ward_id`, `name`, `ward_code` (2-letter; matches the tab name in the callings sheet), `building_id`, `seat_cap`.
+- Columns: `ward_code` (2-letter PK; matches the tab name in the callings sheet), `ward_name`, `building_name` (FK), `seat_cap`. `ward_code` is also the value used in `Seats.scope` / `Access.scope` / `Requests.scope`.
 
 **`WardCallingTemplate`**
 
@@ -61,7 +61,7 @@ Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for
 
 **`Access`** — populated by the importer; visible only to Kindoo Managers.
 
-- Columns: `email`, `scope` (ward_id or `"stake"`), `calling`.
+- Columns: `email`, `scope` (`ward_code` or `"stake"`), `calling`.
 - Maintained automatically from callings whose template row has `give_app_access=true`. Not manually edited.
 
 ### 3.2 Operational tabs
@@ -70,13 +70,13 @@ Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for
 
 - Columns:
   - `seat_id`
-  - `scope` (ward_id or `"stake"`)
+  - `scope` (`ward_code` or `"stake"`)
   - `type` (`auto` / `manual` / `temp`)
   - `person_email`, `person_name`
   - `calling_name` (auto only), `source_row_hash` (auto only)
   - `reason`
   - `start_date`, `end_date` (temp only)
-  - `building_ids` (comma-separated; defaults to ward's building)
+  - `building_names` (comma-separated; defaults to ward's `building_name`)
   - `created_by`, `created_at`, `last_modified_by`, `last_modified_at`
 
 **`Requests`**
@@ -105,7 +105,7 @@ On each page load, look up the signed-in email:
 
 - In `KindooManagers` (active=true) → **Kindoo Manager**.
 - In `Access` with `scope=stake` → **Stake Presidency**.
-- In `Access` with `scope=<ward_id>` → **Bishopric** for that ward.
+- In `Access` with `scope=<ward_code>` → **Bishopric** for that ward.
 - None of the above → show "not authorized".
 
 A user can hold multiple roles; the UI shows the union.

@@ -102,7 +102,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 2 — Config CRUD
+## Chunk 2 — Config CRUD `[DONE — see docs/changelog/chunk-2-config-crud.md]`
 
 **Goal:** Kindoo Managers can edit all configuration tabs from the app.
 
@@ -110,13 +110,14 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Implement `core/Lock.gs#withLock(fn, opts)` — `LockService.getScriptLock()`, 10 s default tryLock timeout, throws a user-friendly error on contention. (Deferred from Chunk 1; this is the first chunk with writes.)
-- [ ] Implement `repos/AuditRepo.gs#write({ actor_email, action, entity_type, entity_id, before, after })` — append-only; callers pass `actor_email` explicitly (per the "two identities" note in architecture.md §5).
-- [ ] Extend each config repo with `insert`, `update`, `delete`, all called inside `Lock_withLock`, each emitting an `AuditLog` row inside the same lock acquisition.
-- [ ] Implement `repos/WardsRepo.gs`, `repos/BuildingsRepo.gs`, `repos/TemplatesRepo.gs` (full CRUD).
-- [ ] Implement `api/ApiManager.gs` endpoints: `config_list`, `config_update`, `wards_list`, `wards_upsert`, `wards_delete`, `buildings_*`, `kindooManagers_*`, `wardTemplate_*`, `stakeTemplate_*`. Each calls `Auth.requireRole(principal, 'manager')` first.
-- [ ] Implement `ui/manager/Config.html` — tabbed editor, one tab per editable table. Simple HTML tables with inline forms. Re-uses `rpc` from Chunk 1's `ui/ClientUtils.html`.
-- [ ] Manual test: add a ward, toggle a manager inactive, add a template row, edit a Config key.
+- [x] Implement `core/Lock.gs#withLock(fn, opts)` — `LockService.getScriptLock()`, 10 s default tryLock timeout, throws a user-friendly error on contention. (Deferred from Chunk 1; this is the first chunk with writes.)
+- [x] Implement `repos/AuditRepo.gs#write({ actor_email, action, entity_type, entity_id, before, after })` — append-only; callers pass `actor_email` explicitly (per the "two identities" note in architecture.md §5).
+- [x] Extend each config repo with `insert`, `update`, `delete`. Lock acquisition + audit emission live in the **API layer** (one lock acquisition per endpoint, audit row written inside the same closure). Repos stay pure single-tab data access; see architecture.md §7 for the resolved repo-vs-API responsibility split.
+- [x] Implement `repos/WardsRepo.gs`, `repos/BuildingsRepo.gs`, `repos/TemplatesRepo.gs` (full CRUD).
+- [x] Implement `api/ApiManager.gs` endpoints: `ApiManager_configList`, `ApiManager_configUpdate`, `ApiManager_wardsList`, `ApiManager_wardsUpsert`, `ApiManager_wardsDelete`, `ApiManager_buildings*`, `ApiManager_kindooManagers*`, `ApiManager_wardTemplate*`, `ApiManager_stakeTemplate*`. Each calls `Auth_requireRole(principal, 'manager')` first.
+- [x] Implement `ui/manager/Config.html` — tabbed editor, one tab per editable table. Simple HTML tables with inline forms. Re-uses `rpc` (and a new `toast`) from `ui/ClientUtils.html`.
+- [x] Wire the router so `?p=mgr/config` reaches the new template (manager only); add a single deep-link from `Hello.html` for managers so the page is reachable without URL surgery during Chunks 2–4.
+- [x] Manual test: add a ward, toggle a manager inactive, add a template row, edit a Config key.
 
 **Acceptance criteria**
 
@@ -129,6 +130,8 @@ _Proof 6 — failure modes_
 
 - `Access` edits (Chunk 3 — the importer owns that tab).
 - `Seats` inline edit on the manager All Seats page (Chunk 5/6).
+- The four "protected" Config keys (`session_secret`, `main_url`, `identity_url`, `bootstrap_admin_email`) are intentionally **read-only** in the Config UI — see `open-questions.md` C-4. Importer-owned keys (`last_import_at`, `last_import_summary`) are also read-only in the UI even though Importer (Chunk 3) writes them.
+- Ward → Seats foreign-key check on Ward delete is deferred to Chunk 5 when SeatsRepo lands; in Chunk 2 there are no Seat rows to reference, so the check is a no-op.
 
 ---
 
@@ -183,7 +186,7 @@ _Proof 6 — failure modes_
 - [ ] Implement `services/Bootstrap.gs` state-machine:
   - Step 1: stake name + callings-sheet ID + stake seat cap.
   - Step 2: at least one Building.
-  - Step 3: at least one Ward (with `ward_code`, `building_id`, `seat_cap`).
+  - Step 3: at least one Ward (with `ward_code`, `ward_name`, `building_name`, `seat_cap`).
   - Step 4: additional Kindoo Managers (optional).
   - Finish: install triggers, set `setup_complete=true`, write `setup_complete` audit row, redirect to manager dashboard.
 - [ ] Implement `ui/BootstrapWizard.html`.
@@ -253,7 +256,7 @@ _Proof 6 — failure modes_
 - [ ] Implement `services/EmailService.gs` with typed functions: `notifyManagersNewRequest`, `notifyRequesterCompleted`, `notifyRequesterRejected`, `notifyManagersCancelled`.
 - [ ] Implement `ui/bishopric/NewRequest.html`, `ui/bishopric/MyRequests.html`, `ui/stake/NewRequest.html`, `ui/stake/MyRequests.html`, `ui/manager/RequestsQueue.html`.
 - [ ] New Request client-side duplicate check (calls a `checkDuplicate(target_email, scope)` API before submit and warns).
-- [ ] Manager inline edit of `Seats` on All Seats page (reason, building_ids, person_name, dates on temp).
+- [ ] Manager inline edit of `Seats` on All Seats page (reason, building_names, person_name, dates on temp).
 
 **Acceptance criteria**
 

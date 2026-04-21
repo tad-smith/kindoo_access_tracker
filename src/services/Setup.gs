@@ -13,9 +13,9 @@ const SETUP_TAB_DEFS_ = [
   { name: 'KindooManagers',
     headers: ['email', 'name', 'active'] },
   { name: 'Buildings',
-    headers: ['building_id', 'name', 'address'] },
+    headers: ['building_name', 'address'] },
   { name: 'Wards',
-    headers: ['ward_id', 'name', 'ward_code', 'building_id', 'seat_cap'] },
+    headers: ['ward_code', 'ward_name', 'building_name', 'seat_cap'] },
   { name: 'WardCallingTemplate',
     headers: ['calling_name', 'give_app_access'] },
   { name: 'StakeCallingTemplate',
@@ -25,7 +25,7 @@ const SETUP_TAB_DEFS_ = [
   { name: 'Seats',
     headers: ['seat_id', 'scope', 'type', 'person_email', 'person_name',
               'calling_name', 'source_row_hash', 'reason', 'start_date',
-              'end_date', 'building_ids', 'created_by', 'created_at',
+              'end_date', 'building_names', 'created_by', 'created_at',
               'last_modified_by', 'last_modified_at'] },
   { name: 'Requests',
     headers: ['request_id', 'type', 'scope', 'target_email', 'target_name',
@@ -172,6 +172,8 @@ function onOpen() {
     .addItem('Setup sheet…', 'setupSheet')
     .addSeparator()
     .addItem('Run normaliseEmail tests', 'Utils_test_normaliseEmail')
-    .addItem('Run base64UrlDecode tests', 'Utils_test_base64UrlDecode')
+    .addItem('Run emailsEqual tests', 'Utils_test_emailsEqual')
+    .addItem('Run base64url tests', 'Utils_test_base64Url')
+    .addItem('Run forbidden-path tests', 'ApiManager_test_forbidden')
     .addToUi();
 }

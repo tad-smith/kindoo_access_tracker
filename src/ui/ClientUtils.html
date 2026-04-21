@@ -1,10 +1,17 @@
 <!--
-  Shared client JS. The single, app-wide entry point for talking to the
-  server: rpc(funcName, ...args) auto-injects sessionStorage.jwt as the
-  first argument. Layout.html handles the AuthExpired/AuthInvalid recovery
-  in the .catch handler — every page using rpc() can do the same.
+  Shared client JS. Two responsibilities:
 
-  Don't scatter raw google.script.run calls; they'll skip JWT injection.
+    rpc(funcName, ...args)
+      Promise wrapper around google.script.run that auto-injects
+      sessionStorage.jwt as the first argument. Layout.html handles the
+      AuthExpired/AuthInvalid recovery in the .catch handler — every page
+      using rpc() can do the same.
+      Don't scatter raw google.script.run calls; they'll skip JWT injection.
+
+    toast(msg, kind?)
+      Tiny non-blocking notifications. kind ∈ {'info','success','warn','error'}.
+      Auto-dismiss after a few seconds; multiple toasts stack. Used by the
+      manager Config page (Chunk 2) and by every later chunk.
 -->
 <script>
   function rpc(funcName) {
@@ -19,5 +26,24 @@
         });
       runner[funcName].apply(runner, [jwt].concat(rest));
     });
+  }
+
+  function toast(msg, kind) {
+    var host = document.getElementById('toast-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'toast-host';
+      host.className = 'toast-host';
+      document.body.appendChild(host);
+    }
+    var el = document.createElement('div');
+    el.className = 'toast toast-' + (kind || 'info');
+    el.textContent = String(msg);
+    host.appendChild(el);
+    var ttlMs = (kind === 'error' || kind === 'warn') ? 6500 : 3500;
+    setTimeout(function () {
+      el.classList.add('toast-leaving');
+      setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 250);
+    }, ttlMs);
   }
 </script>

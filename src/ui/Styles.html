@@ -77,4 +77,162 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     user-select: all;
   }
+
+  /* Toast notifications (ClientUtils.html#toast). */
+  .toast-host {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(420px, calc(100vw - 32px));
+    pointer-events: none;
+  }
+  .toast {
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 0.92em;
+    background: #1d2333;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    pointer-events: auto;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .toast-leaving { opacity: 0; transform: translateY(-6px); }
+  .toast-info    { background: #1f3a93; }
+  .toast-success { background: #2c7a3f; }
+  .toast-warn    { background: #b76d00; }
+  .toast-error   { background: #b00020; }
+
+  /* Manager Config page (Chunk 2). */
+  .config-page { max-width: 1000px; }
+  .config-tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 2px solid #d8dbe4;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .config-tab-btn {
+    background: transparent;
+    color: #4b5266;
+    border: none;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.95em;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+  }
+  .config-tab-btn:hover     { color: #1d2333; }
+  .config-tab-btn.active    { color: #1f3a93; border-bottom-color: #1f3a93; font-weight: 600; }
+  .config-tab-panel         { display: none; }
+  .config-tab-panel.active  { display: block; }
+
+  .config-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border: 1px solid #d8dbe4;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .config-table th, .config-table td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid #eef0f5;
+    font-size: 0.92em;
+    vertical-align: middle;
+  }
+  .config-table th { background: #f3f5fa; font-weight: 600; color: #4b5266; }
+  .config-table tbody tr:last-child td { border-bottom: none; }
+  .config-table input[type="text"],
+  .config-table input[type="number"],
+  .config-table input[type="email"] {
+    width: 100%;
+    padding: 4px 6px;
+    border: 1px solid #c8ccd6;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: inherit;
+    box-sizing: border-box;
+  }
+  .config-table input[readonly] {
+    background: #f3f5fa;
+    color: #6b7280;
+    cursor: not-allowed;
+  }
+  .config-table .row-actions {
+    white-space: nowrap;
+    text-align: right;
+  }
+  .btn {
+    background: #1f3a93;
+    color: #fff;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 0.9em;
+    cursor: pointer;
+  }
+  .btn:hover  { background: #182d72; }
+  .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+  .btn-secondary {
+    background: #fff;
+    color: #1f3a93;
+    border: 1px solid #c8ccd6;
+  }
+  .btn-secondary:hover { background: #f3f5fa; }
+  .btn-danger {
+    background: #b00020;
+    color: #fff;
+    border: none;
+  }
+  .btn-danger:hover { background: #8c001a; }
+  .add-row-form {
+    margin-top: 14px;
+    padding: 14px;
+    background: #f3f5fa;
+    border: 1px solid #d8dbe4;
+    border-radius: 6px;
+  }
+  .add-row-form h3 { margin: 0 0 10px; font-size: 1em; }
+  .add-row-form .form-grid {
+    display: grid;
+    gap: 8px 12px;
+    align-items: center;
+  }
+  .add-row-form label {
+    font-size: 0.9em;
+    color: #4b5266;
+  }
+  .add-row-form .form-actions {
+    margin-top: 10px;
+    text-align: right;
+  }
+  .config-readonly-note {
+    color: #6b7280;
+    font-size: 0.85em;
+    margin: 8px 0 16px;
+  }
+  .config-readonly-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    background: #eef0f5;
+    color: #6b7280;
+    border-radius: 3px;
+    font-size: 0.78em;
+    margin-left: 6px;
+  }
+  .empty-state {
+    color: #6b7280;
+    padding: 14px;
+    text-align: center;
+    background: #fff;
+    border: 1px dashed #d8dbe4;
+    border-radius: 6px;
+  }
 </style>

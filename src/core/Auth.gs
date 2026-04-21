@@ -1,45 +1,32 @@
-// Identity + role resolution for the two-deployment Session+HMAC pattern.
+// Token verification + role resolution for the Main Kindoo project.
 //
-// Identity is established by the *Identity* deployment (executeAs:
-// USER_ACCESSING) calling `Session.getActiveUser().getEmail()`. The email
-// is wrapped in a short-lived HMAC token signed with `Config.session_secret`,
-// shipped to the Main deployment via a top-frame redirect, and verified on
-// every subsequent rpc call.
+// Token *issuance* lives in a SEPARATE Apps Script project (personal-
+// account-owned, see identity-project/README.md) — Main only verifies.
+// Both projects share the same `session_secret`, kept in sync by hand:
+//   - Main reads it from the backing Sheet's Config.session_secret cell.
+//   - Identity reads it from its own Script Properties (key: session_secret).
+// Rotation procedure is documented in identity-project/README.md.
 //
-// We use `Session.getActiveUser()` rather than browser-side OAuth (GSI,
-// implicit, code) because Apps Script HtmlService renders user code in an
-// iframe on `*.googleusercontent.com`, and Google's OAuth endpoints reject
-// all browser-initiated requests from that origin (`origin_mismatch`).
-// Server-to-server token-exchange escapes the origin check, but the initial
-// browser-side `accounts.google.com` GET cannot. `Session.getActiveUser`
-// under USER_ACCESSING bypasses OAuth entirely. See architecture.md D10
-// and open-questions.md A-8 for the full discovery trail.
+// We use `Session.getActiveUser` (in the Identity project) rather than
+// browser-side OAuth (GSI, implicit, code) because Apps Script HtmlService
+// renders user code in an iframe on `*.googleusercontent.com`, and
+// Google's OAuth endpoints reject all browser-initiated requests from
+// that origin (`origin_mismatch`). The split-project design exists
+// because Workspace-bound Apps Script projects can't accept consumer-
+// Gmail OAuth authorize for `executeAs: USER_ACCESSING` deployments.
+// See architecture.md D1 / D10 and open-questions.md A-8 / D-3 for the
+// full discovery.
 
 const AUTH_TOKEN_TTL_S_   = 3600; // 1 hour
 const AUTH_CLOCK_SKEW_S_  = 30;
 const AUTH_MIN_SECRET_LEN = 32;
 
-// Token shape:
+// Token shape (issued by the Identity project; see identity-project/Code.gs):
 //   <base64url(JSON({email, exp, nonce}))>.<base64url(HMAC-SHA256(payload, secret))>
 //
 // Two segments, dot-separated. Distinguishable from a JWT (three segments).
 // Stored client-side in sessionStorage.jwt (the key name is preserved for
 // rpc-helper compat — it predates this auth pivot).
-
-function Auth_signSessionToken(email, ttlSeconds) {
-  var canonical = Utils_normaliseEmail(email);
-  if (!canonical) throw new Error('AuthInvalid');
-  var secret = Auth_requireSessionSecret_();
-  var payload = {
-    email: canonical,
-    exp:   Math.floor(Date.now() / 1000) + (ttlSeconds || AUTH_TOKEN_TTL_S_),
-    nonce: Utils_uuid()
-  };
-  var payloadB64 = Utils_base64UrlEncode(JSON.stringify(payload));
-  var sigBytes   = Utilities.computeHmacSha256Signature(payloadB64, secret);
-  var sigB64     = Utils_base64UrlEncodeBytes(sigBytes);
-  return payloadB64 + '.' + sigB64;
-}
 
 // Returns { email, name, picture } on success.
 // Throws AuthInvalid / AuthExpired / AuthNotConfigured.
@@ -74,7 +61,7 @@ function Auth_verifySessionToken(token) {
   if (!payload.email) throw new Error('AuthInvalid');
 
   return {
-    email:   Utils_normaliseEmail(payload.email),
+    email:   Utils_cleanEmail(payload.email),  // typed form, preserved
     name:    '',  // Session.getActiveUser doesn't surface this; can fill via People API later
     picture: ''
   };
@@ -88,18 +75,20 @@ function Auth_requireSessionSecret_() {
   return String(secret);
 }
 
-// Resolves a canonical email to the union of roles that email holds in the
-// sheet. Always returns { email, roles }; an empty roles array means "no
-// access" (the caller should render NotAuthorized).
+// Resolves an email (display form) to the union of roles that email holds
+// in the sheet. The repos use Utils_emailsEqual under the hood, so dot/
+// +suffix variants of the same gmail address resolve correctly. Returns
+// the email in its display form (whatever the caller passed in); an empty
+// roles array means "no access" (caller should render NotAuthorized).
 function Auth_resolveRoles(email) {
-  var canon = Utils_normaliseEmail(email);
+  var typed = Utils_cleanEmail(email);
   var roles = [];
 
-  if (KindooManagers_isActiveByEmail(canon)) {
+  if (KindooManagers_isActiveByEmail(typed)) {
     roles.push({ type: 'manager' });
   }
 
-  var accessRows = Access_getByEmail(canon);
+  var accessRows = Access_getByEmail(typed);
   var seenStake = false;
   var seenWards = {};
   for (var i = 0; i < accessRows.length; i++) {
@@ -117,7 +106,7 @@ function Auth_resolveRoles(email) {
     }
   }
 
-  return { email: canon, roles: roles };
+  return { email: typed, roles: roles };
 }
 
 // Composes verifySessionToken + resolveRoles into the Principal object the

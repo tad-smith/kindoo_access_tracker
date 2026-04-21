@@ -1,5 +1,8 @@
 // Read-only access to the Access tab. The importer (Chunk 3) owns writes;
 // no manual editing path will exist.
+//
+// Emails are stored as typed (preserve case + dots + +suffix); equality
+// is via Utils_emailsEqual (architecture.md D4).
 
 const ACCESS_HEADERS_ = ['email', 'scope', 'calling'];
 
@@ -20,7 +23,7 @@ function Access_getAll() {
     var rawEmail = data[i][0];
     if (rawEmail === '' || rawEmail == null) continue;
     out.push({
-      email:   Utils_normaliseEmail(String(rawEmail)),
+      email:   Utils_cleanEmail(String(rawEmail)),
       scope:   String(data[i][1] == null ? '' : data[i][1]),
       calling: String(data[i][2] == null ? '' : data[i][2])
     });
@@ -28,11 +31,12 @@ function Access_getAll() {
   return out;
 }
 
-function Access_getByEmail(canonEmail) {
+function Access_getByEmail(email) {
+  if (!email) return [];
   var all = Access_getAll();
   var out = [];
   for (var i = 0; i < all.length; i++) {
-    if (all[i].email === canonEmail) out.push(all[i]);
+    if (Utils_emailsEqual(all[i].email, email)) out.push(all[i]);
   }
   return out;
 }

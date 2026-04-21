@@ -175,11 +175,11 @@ The callings sheet may have trailing blank rows. Need a "stop at first blank" he
 
 **Best guess:** Iterate to `getLastRow()` and skip any row with a blank `Position`. Trivial.
 
-### I-8 `[RESOLVED 2026-04-19]` Gmail address canonicalisation — apply from day 1
+### I-8 `[RESOLVED 2026-04-19, REVISED 2026-04-19]` Gmail address canonicalisation — compare canonical, store as typed
 
-Confirmed to be a real problem in the LCR data. **Ship v1 with Gmail canonicalisation baked in, not as a reactive fix.**
+Confirmed to be a real problem in the LCR data. **Ship v1 with Gmail-aware comparison baked in, not as a reactive fix** — but **store what the user typed, not the canonical form**.
 
-**Rule** — `Utils.normaliseEmail(email)`:
+**Rule** — `Utils_normaliseEmail(email)` (used only for comparison):
 
 1. Trim; lowercase; if no `@`, return as-is.
 2. Split into `local@domain`.
@@ -189,11 +189,20 @@ Confirmed to be a real problem in the LCR data. **Ship v1 with Gmail canonicalis
    - Force `domain = "gmail.com"` (canonicalise the googlemail alias).
 4. Return `local + "@" + domain`.
 
-**Applies to every email column**: `KindooManagers.email`, `Access.email`, `Seats.person_email`, `Requests.target_email`/`requester_email`/`completer_email`, `AuditLog.actor_email`, `Config.bootstrap_admin_email`, and the `email` claim extracted from GSI JWTs. Canonical form is what we **store and compare**; there's no separate display-form column (D4 updated).
+**Where the canonical form is used:**
+- `Utils_emailsEqual(a, b)` — boolean comparison helper. Repos call this for unique-row lookups (`KindooManagers_getByEmail`, `Access_getByEmail`), uniqueness checks on insert, and the importer's diff sets.
+- `Utils_hashRow(scope, calling, email)` — the importer's `source_row_hash` is computed on the canonical email so it's stable across format wobbles in the callings sheet (per D5).
 
-**Workspace addresses** are preserved literally — dots there are significant and the rule only fires for `@gmail.com` / `@googlemail.com`.
+**Where the typed form is used (everything else):**
+- All email *cells* in the Sheet: `KindooManagers.email`, `Access.email`, `Seats.person_email`, `Requests.{target,requester,completer}_email`, `AuditLog.actor_email`, `Config.bootstrap_admin_email`. The repo `_insert` / `_update` paths call `Utils_cleanEmail` (trim only) and write the trimmed-but-otherwise-untouched value.
+- The `email` claim signed into the HMAC session token by `Identity_serve`. `Auth_signSessionToken` no longer calls `Utils_normaliseEmail`. `Auth_verifySessionToken` returns the email as it was signed.
+- `principal.email` flowing through the API layer and into `AuditLog.actor_email` — the user sees their own typed address in audit history, not a normalised one.
 
-**Source-row hash** (`SHA-256(scope|calling|email)`) uses the canonical email. Since no production data exists yet, no migration is needed.
+**Workspace addresses** are unaffected — dots there are significant; the rule only fires for `@gmail.com` / `@googlemail.com`. So `first.last@example.org` and `firstlast@example.org` are *different* people.
+
+**Why the revision (2026-04-19, mid-Chunk 2):** the original rule canonicalised on write too, so a manager who typed `first.last@gmail.com` saw `firstlast@gmail.com` back in the UI and the Sheet — wrong for display, wrong for any future "email this person" path, wrong as a record of what was actually entered. The new rule uses canonicalisation only for matching; storage round-trips the typed form.
+
+**Migration:** if any existing row already contains a canonicalised email from before the revision, edit the cell by hand to the original typed form. (For Chunk-2 development, the only affected row is whichever `KindooManagers.email` was added before the revision.)
 
 ---
 
@@ -223,9 +232,9 @@ Is "My Requests" only the requests *you* submitted, or all pending requests for 
 
 **Best guess:** Strictly what you submitted. A bishopric counsellor's page shows their own requests, not the bishop's.
 
-### R-5 `[P1]` `building_ids` on a new request
+### R-5 `[P1]` `building_names` on a new request
 
-Requester form has a `comment` field for multi-building notes; `building_ids` is set to the ward default on insert. Managers adjust after the fact via inline edit on the All Seats page. Confirm this is the intended flow.
+Requester form has a `comment` field for multi-building notes; `building_names` is set to the ward default (the ward's `building_name`) on insert. Managers adjust after the fact via inline edit on the All Seats page. Confirm this is the intended flow.
 
 **Best guess:** Yes, exactly that. The bishopric form intentionally doesn't expose a building picker (per the spec's out-of-scope list).
 
@@ -281,6 +290,31 @@ Import holds the script lock for its full run. User-initiated writes during that
 
 100 emails/day for consumer, 1500 for Workspace. Not a risk for this workload.
 
+### C-4 `[RESOLVED 2026-04-19]` Protected Config keys excluded from manager Config UI
+
+**Decision (Chunk 2):** four Config keys — `session_secret`, `main_url`, `identity_url`, `bootstrap_admin_email` — are **excluded from inline edit** in the manager Configuration page. They render in a separate "Read-only keys" table with a `protected` badge and `readonly` input. `ApiManager_configUpdate` rejects writes to any of them server-side (defence-in-depth) with `Config_isProtectedKey`; the literal cell is editable in the Sheet by the deployer if a real rotation is intended.
+
+**Why:** rotating each of these keys has app-wide consequences that benefit from a deliberate "open the Sheet" action rather than an inline button:
+- `session_secret` — rotating invalidates every active session token (everyone bounced to Login).
+- `main_url` / `identity_url` — wrong value here breaks the auth round-trip and there's no UI left to recover from inside the app; you'd have to re-edit via the Sheet anyway.
+- `bootstrap_admin_email` — read by the Chunk-4 wizard, post-bootstrap edits are theoretical.
+
+The alternative (a confirm-text-match modal) was considered and rejected: the modal adds UI complexity for a workflow used roughly never, and the Sheet is already the rotation surface (the deployer always has Sheet write access, and `setupSheet` regenerates `session_secret` if cleared).
+
+Two importer-owned keys — `last_import_at`, `last_import_summary` — are also read-only in the UI but for a different reason (the Importer writes them; manager edits would just get clobbered on the next run). They're flagged with an `importer-owned` badge.
+
+`ApiManager_configList` masks `session_secret`'s value before returning to the client (`(set — N chars; hidden)`) so the secret isn't shipped over the wire to render the read-only field.
+
+### C-5 `[P1]` ward_code / building_name rename breaks references
+
+Wards' `ward_code` and Buildings' `building_name` are now natural-key PKs (architecture.md D3, no more slug PK). The Wards / Buildings UIs let a manager edit them inline. The repo `_update` handlers allow rename (with collision check), but the consequences cascade hard:
+- Renaming a `ward_code` dangles every `Seats.scope` / `Access.scope` / `Requests.scope` row whose value matched the old code, AND breaks the importer's tab-name match.
+- Renaming a `building_name` dangles every `Wards.building_name` row whose value matched the old name, plus every `Seats.building_names` cell that contained it.
+
+The UI fires a `confirm()` warning before submitting a rename.
+
+**Best guess:** Acceptable for v1 — the Configuration page is manager-only and they'll know what they're doing. If we wanted to be safer, we'd cascade the rename across referencing tabs in the API endpoint (inside the same lock). Defer until we see this misused. If you choose to forbid renames entirely, gate it server-side in `ApiManager_*Upsert`.
+
 ---
 
 ## Over-cap
@@ -323,12 +357,56 @@ If a header gets renamed manually, repos will throw loud errors on next read. `s
 
 ---
 
+## Deployment
+
+### D-3 `[RESOLVED 2026-04-19, REVISED 2026-04-20]` Workspace-bound Sheet incompatible with `USER_ACCESSING` for consumer Gmail — fix is to split Identity into a separate personal-account project
+
+**Discovery (Chunk 2 manual testing).** The Chunk 1 deployment was set up against a Sheet in the deployer's Workspace (`csnorth.org`). The deployer (a Workspace account) signed in successfully through Identity and used the app. When we attempted to test sign-in with a *consumer Gmail account* (not in the Workspace), the user got Google's `You do not have permission to access the requested document` page **before `Identity_serve` ran** — i.e., Google rejected the request at the access-gate level.
+
+Settings that were already correct and did not fix it:
+- Identity deployment: "Who has access" = "Anyone with Google account" (`webapp.access = "ANYONE"`).
+- Identity deployment: `executeAs: USER_ACCESSING`.
+- The linked Cloud project's OAuth consent screen: User type = External, Publishing status = In production.
+- Workspace Admin Console → Security → Access and data control → API controls → App access control: not blocking.
+- URL form: bare `https://script.google.com/macros/s/<ID>/exec` (not the Workspace-routed `/a/macros/<domain>/` form).
+- Browser context: incognito with only the consumer-Gmail account signed in.
+
+The block persisted across all of those, indicating that Workspace-owned Apps Script projects gate external accounts at a tenant level the deployment dialog can't override. The OAuth consent screen toggle to External is necessary but not sufficient when the project itself is Workspace-owned.
+
+**Initial resolution (2026-04-19):** move the bound Sheet (and therefore the Apps Script project) into a personal Drive. Rejected by the user — the Sheet must stay in the Workspace shared drive for data ownership/governance reasons.
+
+**Final resolution (2026-04-20): two-project split.** Main stays Workspace-bound (Sheet stays in Workspace). Identity becomes a **separate, standalone Apps Script project** owned by a personal Google account, no bound Sheet, ~70 lines of code. The two projects share an HMAC `session_secret` value held in two manually-synchronized places: Main's Sheet `Config.session_secret` cell and Identity's Script Properties (`session_secret` key). The HMAC token format is unchanged, so Main's `Auth_verifySessionToken` works against tokens issued by either the previous same-project Identity or the new separate-project Identity without code changes — only the deployment-URL pointer in `Config.identity_url` differs.
+
+**Spec impacts:**
+- `architecture.md` D1 (drop the personal-Drive constraint; Main can be Workspace-bound) and D10 (rewritten for the two-project model: same protocol, different topology) and §3 (directory structure now has both `src/` and `identity-project/`) and §4 / §12 (sequence diagram intro + quick-reference table updated to "two projects" framing).
+- `spec.md` §2 (Database: Workspace shared drive OK; Auth: rewritten for two-project architecture).
+- `sheet-setup.md` step 1 (drop personal-Drive warning), step 12+ (replaced with a pointer to `identity-project/README.md`).
+- `identity-project/` (new directory at repo root) — `Code.gs`, `appsscript.json`, `README.md`. Identity source kept here for version control and copy-paste reference; not pushed via clasp (the user creates the project manually in the Apps Script editor).
+- `src/services/Identity.gs` — **deleted** from the Main project.
+- `src/core/Main.gs` — `?service=identity` routing branch removed (no longer needed; Identity is a separate URL entirely).
+- `src/core/Auth.gs` — `Auth_signSessionToken` removed (only Identity signs now); verification stays.
+- `src/ui/Layout.html` — Login link no longer auto-appends `?service=identity` (Identity has no query-param routing).
+
+**Workarounds considered and rejected (besides the one above):**
+- *Switch the user model to Workspace-only accounts.* Would force every bishopric/stake/manager to have a `csnorth.org` Workspace identity, which they don't and can't. Conflicts with spec A-1.
+- *Loosen Workspace admin policy.* The "Anyone with Google account" deployment toggle empirically doesn't override the underlying tenant rule; even if a policy could be found that does, depending on it makes the deployment fragile to future Workspace policy changes.
+- *Move the Sheet to a personal Drive.* Considered first; rejected because data ownership / shared-drive governance has to stay with the Workspace.
+- *Magic-link auth (no Google identity at all).* A bigger architectural pivot than the two-project split; deferred. Worth revisiting only if the two-project setup proves operationally unmanageable.
+
+**Operational cost** of the two-project split:
+- One additional Apps Script project to manage (Identity).
+- Manual `session_secret` synchronization on rotation (procedure documented in `identity-project/README.md`).
+- Identity changes are copy-paste into the editor (no clasp); Main changes still go through `clasp push`.
+- Acceptable for low-traffic stake software; revisit if the operational burden becomes a maintenance issue.
+
+---
+
 ## Decisions I made to keep moving
 
 These aren't ambiguities — I made a choice. Flagging here in case you disagree.
 
 - **D1 (architecture.md) Container-bound script.** Simpler than standalone; one sheet per deployment. If a test/prod separation is wanted, we'd flip this to standalone with a `callings_sheet_id`-style `app_sheet_id` config key.
 - **D2** `executeAs: USER_DEPLOYING`, `access: ANYONE` (manifest enum; shown as "Anyone with Google account" in the deploy dialog) — updated 2026-04-19 after A-1 resolved. Identity is handled by GSI (D10), not by `Session.getActiveUser()`.
-- **D3** UUIDs for `seat_id` and `request_id`; slugs for `ward_id` and `building_id`. Slugs make audit logs readable. Generated automatically from `name` on insert unless specified.
+- **D3** (revised mid-Chunk-2) UUIDs for `seat_id` and `request_id`; **natural keys** for Wards (`ward_code`) and Buildings (`building_name`). The earlier slug-PK design (`ward_id` / `building_id`) was dropped because the natural keys were already unique by usage and an extra slug was just bookkeeping. See architecture.md D3.
 - **D8** Dates stored as ISO `YYYY-MM-DD` strings (not Sheet date objects). Sorts lexically, avoids tz confusion. Timestamps remain as Sheet Date objects.
 - **D10** Google Sign-In + JWT verification for identity, added 2026-04-19. One-time OAuth 2.0 Client ID creation in Google Cloud Console; `Config.gsi_client_id` seeded manually.

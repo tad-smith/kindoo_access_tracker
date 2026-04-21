@@ -57,6 +57,12 @@
       var MAIN_URL        = <?!= JSON.stringify(main_url) ?>;
       var INJECTED_TOKEN  = <?!= JSON.stringify(injected_token) ?>;
       var INJECTED_ERR    = <?!= JSON.stringify(injected_error) ?>;
+      // The iframe URL doesn't carry the parent's ?p= — Apps Script
+      // wraps user-supplied HTML in a *.googleusercontent.com iframe with
+      // its own search params, so client-side URLSearchParams reads
+      // those (e.g. ?createOAuthDialog=true), not what the user typed.
+      // Main.doGet reads e.parameter.p server-side and hands it down here.
+      var REQUESTED_PAGE  = <?!= JSON.stringify(requested_page) ?>;
     </script>
     <?!= include('ui/ClientUtils') ?>
     <script>
@@ -79,14 +85,11 @@
           var errEl = $('login-error');
           if (link) {
             if (IDENTITY_URL) {
-              // Always append ?service=identity so the Identity deployment's
-              // doGet dispatches to Identity_serve regardless of how
-              // identity_url was pasted into Config. ScriptApp.getService()
-              // .getUrl() is unreliable in multi-deployment setups (can
-              // return the same URL for both deployments), so we don't
-              // rely on URL-match alone for routing.
-              var sep = IDENTITY_URL.indexOf('?') === -1 ? '?' : '&';
-              link.href = IDENTITY_URL + sep + 'service=identity';
+              // IDENTITY_URL points at the personal-account Identity
+              // project's /exec — see identity-project/README.md. No
+              // query-param dispatch needed: that project's doGet always
+              // runs the sign-in flow.
+              link.href = IDENTITY_URL;
               link.style.pointerEvents = '';
               link.style.opacity = '';
             } else {
@@ -105,9 +108,32 @@
 
         function showContent(html, principal) {
           $('content').innerHTML = html;
+          // <script> tags injected via innerHTML are inert per HTML spec —
+          // the browser parses them but never executes them. Page modules
+          // rely on inline <script> blocks (Config.html's IIFE, Hello's
+          // link rewiring), so we have to clone each script into a fresh
+          // element and re-insert it for the browser to run it. Order
+          // preserved so dependent inline blocks still see prior globals.
+          rehydrateScripts($('content'));
           show($('content'));
           hide($('login-container'));
           setUserMeta(principal);
+        }
+
+        function rehydrateScripts(root) {
+          var scripts = root.querySelectorAll('script');
+          for (var i = 0; i < scripts.length; i++) {
+            var oldScript = scripts[i];
+            var newScript = document.createElement('script');
+            // Copy attributes (src, type, etc.) so external-script tags
+            // and module declarations work too.
+            for (var a = 0; a < oldScript.attributes.length; a++) {
+              var attr = oldScript.attributes[a];
+              newScript.setAttribute(attr.name, attr.value);
+            }
+            if (!oldScript.src) newScript.textContent = oldScript.textContent;
+            oldScript.parentNode.replaceChild(newScript, oldScript);
+          }
         }
 
         function showError(msg) {
@@ -152,8 +178,7 @@
             showLogin();
             return;
           }
-          var qs = new URLSearchParams(window.location.search);
-          var requestedPage = qs.get('p') || '';
+          var requestedPage = REQUESTED_PAGE || '';
           $('content').innerHTML = 'Loading…';
           show($('content'));
           hide($('login-container'));
@@ -179,13 +204,18 @@
           if (INJECTED_TOKEN) {
             sessionStorage.setItem('jwt', INJECTED_TOKEN);
             if (MAIN_URL) {
-              // Reload top to bare /exec — strips ?token from address bar.
-              window.top.location.replace(MAIN_URL);
-              return;
+              // Try to strip ?token= from the address bar by re-navigating
+              // top to bare MAIN_URL. Modern browsers can silently block
+              // programmatic top-frame navigation from inside an iframe
+              // without recent user activation, and we can't detect that
+              // from script. So always proceed to render the app
+              // afterwards — if the replace succeeded, the navigation
+              // discards the render in flight (no harm); if it was
+              // blocked, the app renders with ?token= lingering in the
+              // URL (cosmetic, not security — the token lives in
+              // sessionStorage and is single-use anyway).
+              try { window.top.location.replace(MAIN_URL); } catch (e) {}
             }
-            // Fallback: no main URL to navigate to — just continue. The
-            // ?token= will linger in the parent URL bar until the user
-            // navigates away.
             proceedWithToken();
             return;
           }

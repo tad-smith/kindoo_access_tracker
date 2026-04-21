@@ -6,11 +6,33 @@
 // functions from the editor's Run dropdown).
 
 // ---------------------------------------------------------------------------
-// Email canonicalisation (architecture.md D4 / open-questions.md I-8).
-// Applied at every email boundary: UI input, importer reads, repo reads,
-// Session.getActiveUser results. The canonical form is what's stored,
-// hashed, and compared. There is no separate display form.
+// Email handling (architecture.md D4 / open-questions.md I-8).
+//
+// We store emails AS TYPED — the user's display-form is preserved on every
+// write boundary (UI input, Session.getActiveUser, importer reads). Only
+// the comparison key is canonicalised: lowercased, trimmed, and (for
+// @gmail.com / @googlemail.com only) with local-part .s and +suffix stripped
+// and googlemail.com collapsed to gmail.com. No separate "canonical_email"
+// column is stored — the canonical form is computed on demand by the
+// comparison helper.
+//
+// This means `first.last@gmail.com` in the Sheet stays `first.last@gmail.com`
+// (not `firstlast@gmail.com`), but role resolution still matches it against
+// `firstlast@gmail.com` from Session.getActiveUser if Google ever hands us
+// the dot-stripped variant.
 // ---------------------------------------------------------------------------
+
+// Trim whitespace and discard nulls. Preserves case + dots + +suffix —
+// what gets stored / displayed. Use on every write boundary.
+function Utils_cleanEmail(input) {
+  if (input == null) return '';
+  return String(input).trim();
+}
+
+// Build the comparison key: lower + Gmail dot/+suffix stripping +
+// googlemail.com → gmail.com. NEVER store the result; only use it for
+// equality checks via Utils_emailsEqual (or for source_row_hash, where
+// stability across format wobbles is the whole point).
 function Utils_normaliseEmail(input) {
   if (input == null) return '';
   var s = String(input).trim().toLowerCase();
@@ -26,6 +48,12 @@ function Utils_normaliseEmail(input) {
     domain = 'gmail.com';
   }
   return local + '@' + domain;
+}
+
+// Two display-form emails are equivalent if their canonical forms match.
+// Use this everywhere we previously compared canonical-to-canonical.
+function Utils_emailsEqual(a, b) {
+  return Utils_normaliseEmail(a) === Utils_normaliseEmail(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +130,7 @@ function Utils_test_normaliseEmail() {
     // From build-plan.md Chunk 1 ("Proof 3" sub-tasks):
     { in: 'Alice.Smith@Gmail.com',            out: 'alicesmith@gmail.com' },
     { in: 'alicesmith+church@googlemail.com', out: 'alicesmith@gmail.com' },
-    { in: 'alice@csnorth.org',                out: 'alice@csnorth.org' },
+    { in: 'alice@example.org',                out: 'alice@example.org' },
     { in: '  Bob@Foo.COM  ',                  out: 'bob@foo.com' },
     // Defensive cases:
     { in: '',                                 out: '' },
@@ -113,8 +141,8 @@ function Utils_test_normaliseEmail() {
     { in: 'foo@GMAIL.COM',                    out: 'foo@gmail.com' },
     { in: 'john.doe+test@googlemail.com',     out: 'johndoe@gmail.com' },
     // Workspace addresses keep dots and +suffix literally:
-    { in: 'first.last@csnorth.org',           out: 'first.last@csnorth.org' },
-    { in: 'alice+church@csnorth.org',         out: 'alice+church@csnorth.org' }
+    { in: 'first.last@example.org',           out: 'first.last@example.org' },
+    { in: 'alice+church@example.org',         out: 'alice+church@example.org' }
   ];
   var fails = [];
   for (var i = 0; i < cases.length; i++) {
@@ -176,9 +204,38 @@ function Utils_test_base64Url() {
   return 'All ' + (decodeCases.length + encodeCases.length) + ' base64Url cases passed.';
 }
 
+function Utils_test_emailsEqual() {
+  var cases = [
+    // Display-form on the left, what Session.getActiveUser might hand us
+    // on the right. All should be considered equivalent.
+    { a: 'first.last@gmail.com',          b: 'firstlast@gmail.com',          eq: true  },
+    { a: 'First.Last@Gmail.com',          b: 'firstlast@googlemail.com',     eq: true  },
+    { a: 'first.last+church@gmail.com',   b: 'firstlast@gmail.com',          eq: true  },
+    { a: 'first.last@example.org',        b: 'firstlast@example.org',        eq: false }, // dots significant on Workspace
+    { a: 'alice@example.org',             b: 'ALICE@example.org',            eq: true  },
+    { a: '',                              b: '',                             eq: true  },
+    { a: 'foo@gmail.com',                 b: 'bar@gmail.com',                eq: false }
+  ];
+  var fails = [];
+  for (var i = 0; i < cases.length; i++) {
+    var got = Utils_emailsEqual(cases[i].a, cases[i].b);
+    var ok = got === cases[i].eq;
+    var line = (ok ? 'PASS' : 'FAIL') +
+      ' emailsEqual(' + JSON.stringify(cases[i].a) + ', ' + JSON.stringify(cases[i].b) +
+      ') -> ' + got + (ok ? '' : ' (expected ' + cases[i].eq + ')');
+    Logger.log(line);
+    if (!ok) fails.push(line);
+  }
+  if (fails.length > 0) {
+    throw new Error(fails.length + ' emailsEqual FAIL(s):\n' + fails.join('\n'));
+  }
+  return 'All ' + cases.length + ' emailsEqual cases passed.';
+}
+
 function Utils_test_all() {
   var results = [];
   results.push(Utils_test_normaliseEmail());
+  results.push(Utils_test_emailsEqual());
   results.push(Utils_test_base64Url());
   return results.join('\n');
 }

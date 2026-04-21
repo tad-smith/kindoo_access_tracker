@@ -16,20 +16,29 @@
 
 | # | Decision | Why |
 | --- | --- | --- |
-| D1 | **Container-bound** Apps Script project (bound to the backing Sheet via Extensions → Apps Script). | Simpler deploy and permissions model; `SpreadsheetApp.getActiveSpreadsheet()` always returns the right sheet, no Script-Property plumbing. Trade-off: one sheet per deployment. |
+| D1 | **Container-bound** Apps Script project for Main (bound to the backing Sheet via Extensions → Apps Script). The Sheet may live in a Workspace shared drive — the auth flow's Workspace incompatibility is handled by D10 (Identity is a separate, personal-account-owned project). | Simpler deploy and permissions model; `SpreadsheetApp.getActiveSpreadsheet()` always returns the right sheet, no Script-Property plumbing. Trade-off: one Sheet per Main deployment. |
 | D2 | `webapp.executeAs = "USER_DEPLOYING"` (Main deployment) and `webapp.access = "ANYONE"`. The Identity deployment uses `executeAs = "USER_ACCESSING"` instead — see D10. Both share `access = "ANYONE"`. (The deploy dialog shows `ANYONE` as the human-readable label "Anyone with Google account" — `ANYONE` in the manifest *requires sign-in*; `ANYONE_ANONYMOUS` would be the no-sign-in variant.) | On Main, users never need read access to the backing sheet (the deployer does). All users are on consumer Gmail, so `DOMAIN` access doesn't apply; `ANYONE` gates the app at the Google login wall. Identity is established by Identity_serve under `USER_ACCESSING` (D10), not by `Session.getActiveUser().getEmail()` on Main — that returns empty cross-customer. |
-| D3 | UUIDs (`Utilities.getUuid()`) for `seat_id` and `request_id`. Human-readable slugs (e.g., `cordera-1st`) for `ward_id` and `building_id`. | UUIDs avoid race conditions on ID generation; slug IDs keep audit logs and cross-references readable. |
-| D4 | Emails are normalised to a **canonical form** before compare/store/hash: lowercased, and — for `@gmail.com` / `@googlemail.com` only — with `.`s and `+suffix` stripped from the local part, and `googlemail.com` collapsed to `gmail.com`. Workspace addresses are preserved literally. | Gmail routes `alice.smith+foo@gmail.com` and `alicesmith@gmail.com` to the same inbox, and LCR / GSI sometimes disagree on which form they hand us. Without canonicalisation, role resolution and seat uniqueness silently drift. See [`open-questions.md` I-8](open-questions.md#i-8-resolved-2026-04-19-gmail-address-canonicalisation--apply-from-day-1) for the exact algorithm. |
+| D3 | UUIDs (`Utilities.getUuid()`) for `seat_id` and `request_id` (system-generated, never seen by users). **Natural keys** for `Wards` (`ward_code`, 2-char user-chosen) and `Buildings` (`building_name`, free text user-chosen). Cross-tab references (`Wards.building_name`, `Seats.scope`, `Access.scope`, `Requests.scope`, `Seats.building_names`) use these natural keys directly — no separate slug-PK column. | UUIDs are right when there's no good natural key (the same person can have many seats; same email can have many requests). Wards and Buildings each have an obviously-unique natural identifier (`ward_code` because the importer joins on it; `building_name` because users picked unique names anyway), so a separate slug-PK was just one more thing to keep in sync. Renaming a natural key still cascades-breaks references; the manager UI fires a `confirm()` before submitting a rename. See open-questions.md C-5. |
+| D4 | Emails are stored **as typed** (preserve case, dots, `+suffix`); a canonical form (lowercased + Gmail dot/`+suffix` stripping + `googlemail.com` → `gmail.com`) is computed on the fly only for **comparison** via `Utils_emailsEqual`. The canonical form never lands in a cell. Source-row hashes (importer) still use the canonical form so they're stable across the format wobbles LCR introduces. | Storing canonical strips information the user typed (e.g. `first.last@gmail.com` → `firstlast@gmail.com`), which is wrong for display and for any future "email this person" path. Comparing canonical-on-the-fly preserves the original while still letting `first.last@gmail.com` and `firstlast@gmail.com` resolve to the same role. See [`open-questions.md` I-8](open-questions.md#i-8-resolved-2026-04-19-gmail-address-canonicalisation--apply-from-day-1) for the exact algorithm. |
 | D5 | `source_row_hash` = SHA-256 of `scope|calling|canonical_email` (canonicalisation per D4). | Stable; identifies a specific auto-seat assignment across imports regardless of row order or incoming email variant. |
 | D6 | All sheet reads go through a thin `Repo` layer that returns plain objects; callers never touch `Range`/`Values` directly. | Lets us swap out Sheet for another backend later; and keeps column-index knowledge in exactly one place. |
 | D7 | A single `Setup.gs` function (`setupSheet`) creates/repairs all tabs and headers. Optionally exposed via `onOpen()` custom menu. | Removes human error from manual tab creation; safely re-runnable. |
 | D8 | Dates stored as ISO date strings in `Requests.start_date`, `Seats.start_date`, etc.; timestamps stored as `Date` in `*_at` columns. | ISO dates sort lexically and are unambiguous across locales; `Date` on `*_at` lets Sheets show human-readable times. |
 | D9 | Query routing via a single `?p=` query param; default page picked by highest-privilege role held by the user. | Keeps URLs short, makes deep links possible, preserves single-entry-point `doGet`. |
-| D10 | **Two-deployment `Session.getActiveUser` + HMAC-signed session token** as the identity layer. Same Apps Script project, two web app deployments. **Main** (`executeAs: USER_DEPLOYING`, `Config.main_url`) renders all UI and reads/writes the backing Sheet under the deployer's identity (so the Sheet stays private to the deployer). **Identity** (`executeAs: USER_ACCESSING`, `Config.identity_url`) exists only to read `Session.getActiveUser().getEmail()`, HMAC-sign `{email, exp, nonce}` with `Config.session_secret`, and redirect the top back to Main with the token in the query string. `Main.doGet` routes by checking `?service=identity` in the query string. The Login link in `Layout.html` always auto-appends that param to `Config.identity_url`, so the routing fires for every legitimate sign-in navigation regardless of which deployment URL the user pasted. (We tried using `ScriptApp.getService().getUrl()` matched against `Config.identity_url` as a secondary signal — it breaks because Apps Script's `getUrl()` can return the same URL for both deployments in a multi-deployment setup, which makes the URL-match dispatch fire on Main and create a sign-in loop. Removed.) The token is verified on every subsequent `google.script.run` call via `Auth_verifySessionToken` (constant-time HMAC compare + `exp` check). | Consumer-Gmail users get empty from `Session.getActiveUser().getEmail()` when the script runs as the deployer (`USER_DEPLOYING` + cross-customer security realms) — that's why naïve `Session.*` doesn't work for our user base. **All browser-initiated OAuth flows from Apps Script HtmlService also fail** — `*.googleusercontent.com` is on Google's permanent OAuth-origin denylist, and Google rejects every initial `accounts.google.com/o/oauth2/v2/auth` request with `origin_mismatch` regardless of `response_type` (implicit *or* code), regardless of Referer suppression (`<meta name="referrer">`, `rel="noreferrer"`). Modern browsers leak the iframe origin via `Sec-Fetch-Site` and other channels we can't suppress from JS. The only Apps-Script-native primitive that returns the user's email reliably is `Session.getActiveUser` under `USER_ACCESSING`, which runs the script as the accessing user — but that would require every user to have read access to the backing Sheet, defeating the privacy model. Splitting identity into a separate deployment lets `USER_ACCESSING` run only the email-collection step (no Sheet access, no scope creep) while Main keeps `USER_DEPLOYING` for data access. The HMAC signature lets Main *trust* what Identity returns without sharing a database — the only shared state is `Config.session_secret`, which both deployments read from the same Sheet. **No OAuth client is involved.** Cost: a one-time per-user OAuth-consent prompt on the Identity deployment (for the email scope only) and a second deployment to manage. See open-questions.md A-8 for the full discovery trail through three failed approaches. |
+| D10 | **Two-project `Session.getActiveUser` + HMAC-signed session token** as the identity layer. Two **separate** Apps Script projects, sharing only an HMAC `session_secret` value held in two places (manually synchronized). **Main** is the Workspace-owned, Sheet-bound project (`executeAs: USER_DEPLOYING`, URL stored in `Config.main_url`); it renders all UI and reads/writes the backing Sheet under the deployer's identity. **Identity** is a personal-account-owned, *standalone* project (`executeAs: USER_ACCESSING`, URL stored in `Config.identity_url`); it only reads `Session.getActiveUser().getEmail()`, HMAC-signs `{email, exp, nonce}` with `session_secret`, and renders a tiny page that navigates the top frame back to Main with `?token=…`. Main's `doGet` consumes the `?token`, hands it to `Auth_verifySessionToken` (constant-time HMAC compare + `exp` check), and stashes it in `sessionStorage.jwt`; every subsequent `google.script.run` call re-verifies. The Login link in `Layout.html` navigates straight to `Config.identity_url` — no routing param, no dispatch on the Main side. The shared `session_secret` lives in (a) Main's Sheet `Config.session_secret`, (b) Identity's project Script Properties; rotation procedure is documented in `identity-project/README.md`. Both projects' source is in this repo: Main under `src/`, Identity under `identity-project/` (copy-pasted into the editor; not pushed via clasp). | The original plan was to use Google Sign-In (GSI) drop-in or any other browser-initiated OAuth flow from inside Apps Script HtmlService. **All such flows fail** — `*.googleusercontent.com` is on Google's permanent OAuth-origin denylist, and Google rejects every initial `accounts.google.com/o/oauth2/v2/auth` request with `origin_mismatch` regardless of `response_type` (implicit *or* code), regardless of Referer suppression. The only Apps-Script-native primitive that returns the user's email reliably is `Session.getActiveUser` under `USER_ACCESSING`. The two-project (rather than two-deployment) split exists because **Workspace-owned Apps Script projects gate consumer-Gmail accounts at the OAuth-authorize step** for `executeAs: USER_ACCESSING` deployments, even when "Who has access" is "Anyone with Google account" and the OAuth consent screen is External + In production. The Workspace tenant's gate is below the deployment dialog. Personal-account projects are not subject to that gate, so Identity lives in a personal-account project. Main remains Workspace-bound so the Sheet keeps its Workspace ownership / shared-drive properties. The HMAC signature lets Main *trust* what Identity issues without any shared database — the only shared state is the secret, which is small enough to copy by hand. **No OAuth client (in the GCP sense) is required.** Cost: a one-time per-user OAuth-consent prompt on the Identity project (for the email scope only — non-sensitive, immediate accept) and a second Apps Script project to manage. See open-questions.md A-8 (the failed OAuth pivots) and D-3 (the Workspace incompatibility). |
 
 See [`open-questions.md`](open-questions.md) for decisions I'm not sure about.
 
 ## 3. Directory structure
+
+The repo holds **two** Apps Script projects:
+
+- **`src/`** — the Main project. Workspace-bound to the backing Sheet,
+  pushed via `clasp` (`npm run push`).
+- **`identity-project/`** — the standalone Identity service. Lives in a
+  personal Google Drive (no Workspace ownership), no bound Sheet.
+  Source kept in this repo for reference; copy-pasted into the
+  Apps Script editor manually. See `identity-project/README.md`.
 
 ```
 src/
@@ -55,7 +64,6 @@ src/
 │
 ├── services/                      # business logic; calls repos, wraps locks, writes audit
 │   ├── Setup.gs                   # setupSheet(): idempotent tab/header creation
-│   ├── Identity.gs                # Identity_serve(): the Identity-deployment branch (Session + HMAC sign)
 │   ├── Bootstrap.gs               # first-run wizard state machine
 │   ├── Importer.gs                # weekly import from callings sheet
 │   ├── Expiry.gs                  # daily temp-seat expiry
@@ -93,13 +101,18 @@ src/
         ├── Access.html
         ├── Import.html
         └── AuditLog.html
+
+identity-project/                  # standalone Identity service (separate Apps Script project)
+├── Code.gs                        # Session.getActiveUser → HMAC-sign → top-frame redirect
+├── appsscript.json                # USER_ACCESSING + ANYONE + userinfo.email scope only
+└── README.md                      # setup + secret-rotation runbook
 ```
 
 **Note on Apps Script's flat namespace.** Apps Script concatenates all `.gs` files into one global scope at runtime; subdirectories under `src/` become folder prefixes in the Apps Script editor (e.g., `repos/SeatsRepo`) but don't isolate anything. Every exported function must have a unique, prefixed name — `Seats_getByScope`, not `getByScope`. Treat the repo modules like `namespace.module` identifiers.
 
 ## 4. Request lifecycle
 
-Authentication is split between **two deployments** of the same script project — a Main deployment that handles the UI and data access, and an Identity deployment that exists only to read `Session.getActiveUser` and HMAC-sign the result. The flow round-trips the user between them once at sign-in.
+Authentication is split between **two Apps Script projects** — a Workspace-bound Main project that handles UI and data access, and a personal-account-owned Identity project that exists only to read `Session.getActiveUser` and HMAC-sign the result. The two share an HMAC `session_secret` value (manually synchronized between Main's `Config.session_secret` cell and Identity's Script Properties — see `identity-project/README.md`). The flow round-trips the user between them once at sign-in. Sequence diagram below labels them generically as "Main" and "Identity"; the underlying split is two-project, not two-deployment-of-one-project.
 
 ```mermaid
 sequenceDiagram
@@ -224,7 +237,7 @@ Called only from `Identity_serve` after `Session.getActiveUser` succeeds.
 
 ```
 {
-  email: "jane@csnorth.org",
+  email: "jane@example.org",
   name: "",     // empty for now; Session.getActiveUser doesn't surface it
   picture: "",  // ditto
   roles: [
@@ -288,6 +301,7 @@ function Lock_withLock(fn, opts) {
 - Importer and Expiry wrap their full run (they're long — up to a few minutes — so we raise `timeoutMs` to, e.g., 30s of waiting). They also write a `start`/`end` row to `AuditLog` to bracket the run.
 - Read paths do **not** take the lock. Sheet reads are snapshot-consistent enough for this workload, and locking reads would serialise the entire app.
 - Within a single request, we acquire the lock once at the top of the write path and release at the end. Nested calls are avoided.
+- **Contention contract.** On `tryLock` timeout, `Lock_withLock` throws the literal string `"Another change is in progress — please retry in a moment."` The client's `rpc` helper surfaces server-thrown errors as toasts (`ClientUtils.html#toast`); the message is intended to be shown to the user verbatim.
 
 ### Why script lock, not document lock
 
@@ -301,8 +315,11 @@ One file per tab under `repos/`. Each exports pure functions that return plain J
 
 - `Xxx_getAll()` — returns every row as an array of objects.
 - `Xxx_getById(id)` / `Xxx_getByScope(scope)` — filtered reads.
-- `Xxx_insert(obj)` / `Xxx_update(id, patch)` / `Xxx_delete(id)` — writes. All writes must be called from a `Lock_withLock` context. Each emits a corresponding `AuditRepo.write(...)` call **inside the same lock** so the log is always consistent with the data.
-- Columns are defined once per repo as a `const COLUMNS = ['seat_id', 'scope', ...]` tuple. `setupSheet` reads these to build the headers. If a header mismatch is detected on any read, the repo throws with a loud error — prevents subtle column-drift bugs.
+- `Xxx_insert(obj)` / `Xxx_update(id, patch)` / `Xxx_delete(id)` — pure single-tab writes. The repo enforces single-tab invariants (PK uniqueness on insert, existence-check on update/delete, header-drift refusal). The repo does **not** call `AuditRepo.write` itself, and does **not** acquire the lock. Both are the **API layer's** responsibility — the canonical Chunk-2 pattern (chunk-1-scaffolding.md "Next") wraps the repo write and the audit write in the same `Lock_withLock` block, so the log is always consistent with the data even on crash.
+- Cross-tab invariants (foreign-key blocks like Buildings → Wards on delete; Wards → Seats on delete in Chunk 5+) live in the **API layer**, not in repos. This keeps each repo testable in isolation and avoids circular module dependencies.
+- For tabs whose schema is shared between two physical tabs (e.g., `WardCallingTemplate` and `StakeCallingTemplate`), one repo file exports `Xxx_<verb>(kind, ...)` taking a `kind` discriminator (`'ward'` / `'stake'`), so the schema lives in one place.
+- The API-layer convention for "insert or update by PK" is `ApiManager_<thing>Upsert(token, row)`: read existing by PK, branch to repo `_insert` or `_update` based on whether it exists, emit one audit row with the chosen action (`insert` / `update`) and `before` populated from the lookup.
+- Columns are defined once per repo as a `const XXX_HEADERS_ = ['seat_id', 'scope', ...]` tuple. `setupSheet` reads these to build the headers. If a header mismatch is detected on any read **or write** path, the repo throws with the column index and bad value — prevents subtle column-drift bugs.
 
 ### Why not one monolithic `SheetService`
 
@@ -392,9 +409,9 @@ export default {
 
 | Concern | File |
 | --- | --- |
-| HTTP entry point | `core/Main.gs` (routes between Main and Identity deployments) |
-| Decides what page to render | `core/Router.gs` |
-| Identity collection (Session.getActiveUser + HMAC sign) | `services/Identity.gs` (runs only on the Identity deployment) |
+| HTTP entry point (Main project) | `src/core/Main.gs` |
+| Decides what page to render | `src/core/Router.gs` |
+| Identity collection (Session.getActiveUser + HMAC sign) | `identity-project/Code.gs` (separate Apps Script project; see `identity-project/README.md`) |
 | Verifies HMAC session tokens; resolves roles | `core/Auth.gs` |
 | Guards against concurrent writes | `core/Lock.gs` |
 | Reads/writes one Sheet tab | `repos/XxxRepo.gs` |
