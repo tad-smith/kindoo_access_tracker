@@ -72,6 +72,52 @@ function KindooManagers_insert(row) {
   return toWrite;
 }
 
+// Bulk insert. Same contract as Buildings_bulkInsert / Wards_bulkInsert:
+// validate all N rows (non-empty email, cross-batch canonical-email
+// uniqueness, uniqueness against existing via Utils_emailsEqual) before
+// any setValues. Caller owns lock + audit.
+function KindooManagers_bulkInsert(rows) {
+  if (!rows || rows.length === 0) return [];
+  var sheet = KindooManagers_sheet_();
+  var data = sheet.getDataRange().getValues();
+  if (data.length > 0) KindooManagers_assertHeaders_(data[0]);
+  var existingCanonical = {};
+  for (var i = 1; i < data.length; i++) {
+    var e = String(data[i][0]);
+    if (e === '' || e == null) continue;
+    existingCanonical[Utils_normaliseEmail(e)] = true;
+  }
+  var seenCanonical = {};
+  var prepared = [];
+  for (var r = 0; r < rows.length; r++) {
+    var row = rows[r];
+    if (!row || !row.email) {
+      throw new Error('KindooManagers_bulkInsert: row ' + (r + 1) + ' missing email');
+    }
+    var typed = Utils_cleanEmail(row.email);
+    if (!typed) {
+      throw new Error('KindooManagers_bulkInsert: row ' + (r + 1) + ' email did not parse');
+    }
+    var canon = Utils_normaliseEmail(typed);
+    if (seenCanonical[canon]) {
+      throw new Error('Duplicate manager email "' + typed + '" in the batch.');
+    }
+    if (existingCanonical[canon]) {
+      throw new Error('A Kindoo Manager with the same address (' + typed + ') already exists.');
+    }
+    seenCanonical[canon] = true;
+    prepared.push({
+      email:  typed,
+      name:   row.name == null ? '' : String(row.name),
+      active: row.active === true || String(row.active).trim().toLowerCase() === 'true'
+    });
+  }
+  var values = prepared.map(function (p) { return [p.email, p.name, p.active]; });
+  var startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, values.length, KINDOO_MGR_HEADERS_.length).setValues(values);
+  return prepared;
+}
+
 // Update by email-equality. Returns { before, after }. Throws if not found.
 function KindooManagers_update(email, patch) {
   var typed = Utils_cleanEmail(email);

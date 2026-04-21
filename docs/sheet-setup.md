@@ -78,6 +78,10 @@ Two paths, in order of preference:
 
 14. **Use the app via the Main URL.** From now on, users visit the Main URL. The Login button navigates them to the Identity URL (the personal-account project from step 13), which silently signs an HMAC token (after the one-time consent) and redirects them back to Main with the token. Subsequent sessions just re-hit Identity (no new consent prompt) and complete in <1 second.
 
+    **The first sign-in triggers the bootstrap wizard (Chunk 4).** As long as `Config.setup_complete=FALSE` and the signed-in email matches `Config.bootstrap_admin_email`, Main renders the setup wizard instead of the normal UI. The wizard walks the deployer through everything that used to be a hand-edit: stake name + callings-sheet ID + stake seat cap → at least one Building → at least one Ward → optionally more Kindoo Managers → Complete Setup. On finish, `setup_complete` flips to `TRUE`, triggers install (stubbed until Chunks 8/9), and the deployer lands on the manager default page as a Kindoo Manager (auto-added on wizard entry). No other user can use the app until `setup_complete=TRUE`; during bootstrap they see a "setup in progress" page.
+
+    **You do NOT need to hand-enter** Buildings, Wards, KindooManagers, or the three stake-level `Config` values (`stake_name`, `callings_sheet_id`, `stake_seat_cap`) — the wizard owns all of those. `bootstrap_admin_email`, `session_secret`, `main_url`, `identity_url` are the only pre-wizard hand-edits required.
+
 15. **Wire up the importer (Chunk 3).** The manager "Import Now" button reads `Config.callings_sheet_id` and calls `SpreadsheetApp.openById` against it — which runs under the **deployer's** identity (the Main deployment's `executeAs: USER_DEPLOYING`). Two prerequisites:
     - Paste the callings spreadsheet's ID into `Config.callings_sheet_id`. Same format as `main_url` — just the ID, not the whole URL. Easiest source is the callings sheet's URL: `https://docs.google.com/spreadsheets/d/<ID>/edit` → copy the `<ID>` segment.
     - **Share the callings sheet with the deployer's Google account** (at minimum Viewer). The Main script runs as the deployer, so anything the deployer can't open, the importer can't either. If the callings sheet lives in a different Workspace / shared drive, use "Share → add people" and grant access to the deployer's personal email (the one running Main).
@@ -253,16 +257,19 @@ Continue from Path 1 step 11 (deploy the Main and Identity web apps, paste their
 - [ ] **No OAuth client in Cloud Console is required** for the current architecture (see open-questions.md A-8). If you have an old one from earlier docs revisions, it's inert — leave it or delete it.
 - [ ] **Importer prerequisites (from Chunk 3 onwards):** `Config.callings_sheet_id` is set to the source callings spreadsheet's ID, and that spreadsheet has been shared with the **deployer's** Google account at minimum Viewer. The Main deployment runs as the deployer, and `SpreadsheetApp.openById` inherits those permissions.
 
-## What the bootstrap wizard will do
+## What the bootstrap wizard does
 
-Once the deployer first visits the `/exec` URL signed in as the bootstrap admin, the wizard will:
+The wizard landed in Chunk 4. Once the deployer first visits the `/exec` URL signed in as the bootstrap admin, it:
 
-1. Ask for stake name, callings-sheet ID, stake seat cap → writes to `Config`.
-2. Ask for at least one Building → writes to `Buildings`.
-3. Ask for at least one Ward → writes to `Wards`.
-4. Optionally ask for additional Kindoo Managers → writes to `KindooManagers`.
-5. Install daily expiry and weekly import triggers.
-6. Flip `Config.setup_complete = TRUE`.
-7. Redirect to the manager dashboard.
+1. Auto-adds the deployer to `KindooManagers` as active (so role resolution on the next page load returns `manager` without manual seed).
+2. Asks for stake name, callings-sheet ID, stake seat cap → writes to `Config`.
+3. Asks for at least one Building → writes to `Buildings`.
+4. Asks for at least one Ward → writes to `Wards`.
+5. Optionally asks for additional Kindoo Managers → writes to `KindooManagers`.
+6. Calls `TriggersService_install()` (no-op stub until Chunks 8/9 ship the real daily-expiry and weekly-import triggers).
+7. Flips `Config.setup_complete = TRUE` and writes an `AuditLog` row with `action='setup_complete'`.
+8. Redirects the deployer to the Main URL, which now routes through normal role resolution → manager default page.
 
-No other users can access the app until step 6 finishes.
+The wizard is **one-shot** — every `ApiBootstrap_*` endpoint re-checks `Config.setup_complete` on every call and refuses once the flag is `TRUE`. Post-setup changes to Buildings / Wards / KindooManagers / Config go through the normal manager Configuration page.
+
+No other users can access the app until step 7 finishes. During bootstrap, non-admin signed-in users see a "setup in progress" page.

@@ -189,7 +189,23 @@ Runs weekly (trigger) and on-demand ("Import Now" button on the Manager's Import
 
 ## 10. Bootstrap flow
 
-`Config.bootstrap_admin_email` is seeded on deploy. First page load by that email runs a setup wizard: stake name, callings-sheet ID, at least one Building, at least one Ward, additional Kindoo Managers. Until setup completes, no other user can access the app.
+`Config.bootstrap_admin_email` is seeded on deploy; `Config.setup_complete` starts as `FALSE`. Until it flips to `TRUE`, every page load first routes through a **setup-complete gate** in `ApiShared_bootstrap` (runs **before** role resolution):
+
+- If the signed-in email matches `bootstrap_admin_email` (via `Utils_emailsEqual`) → render `ui/BootstrapWizard.html`, ignoring `?p=`.
+- Otherwise → render `ui/SetupInProgress.html` (distinct from `NotAuthorized` — the user isn't unauthorised, the app isn't ready).
+
+The wizard is a single multi-step page driven from the server; each step persists directly into the real tabs (`Config`, `Buildings`, `Wards`, `KindooManagers`), so closing and reopening mid-setup resumes where the data says it should.
+
+Steps:
+
+1. Stake name, callings-sheet ID, stake seat cap (writes to `Config`).
+2. At least one Building (writes to `Buildings`).
+3. At least one Ward with `ward_code`, `ward_name`, `building_name`, `seat_cap` (writes to `Wards`).
+4. Additional Kindoo Managers (optional; writes to `KindooManagers`). The bootstrap admin is **auto-added** as an active `KindooManager` on first wizard load — they can't delete themselves from step 4, and won't be locked out after setup.
+
+**Complete Setup** (enabled when steps 1-3 are complete): flips `Config.setup_complete=TRUE`, calls `TriggersService_install()` (stubbed until Chunks 8/9), writes an `AuditLog` row with `action='setup_complete'`, and redirects the admin to the main `/exec` URL (which now routes via normal role resolution — they land on the manager default page).
+
+**One-shot wizard.** Every `ApiBootstrap_*` endpoint has its own auth gate that checks both (a) signed-in email equals `bootstrap_admin_email` via `Utils_emailsEqual`, AND (b) `setup_complete` is still `FALSE`. Once setup flips, every endpoint refuses regardless of caller. Post-setup changes go through the normal manager Configuration page.
 
 ## 11. Concurrency
 

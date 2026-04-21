@@ -174,7 +174,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 4 — Bootstrap wizard
+## Chunk 4 — Bootstrap wizard `[DONE — see docs/changelog/chunk-4-bootstrap.md]`
 
 **Goal:** a fresh install can be configured end-to-end by the bootstrap admin without touching the sheet by hand.
 
@@ -182,26 +182,28 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Add gating to `core/Main.doGet`: if `Config.setup_complete=false`, only the bootstrap admin hits a wizard; others get a "setup in progress" page.
-- [ ] Implement `services/Bootstrap.gs` state-machine:
+- [x] Add gating to `api/ApiShared.gs#ApiShared_bootstrap`: if `Config.setup_complete=false`, the bootstrap admin hits the wizard (regardless of `?p=`); everyone else gets a "setup in progress" page. Runs before role resolution.
+- [x] Implement `services/Bootstrap.gs` state-machine + `ApiBootstrap_*` endpoints with their own auth gate (bootstrap admin + `setup_complete=false`):
   - Step 1: stake name + callings-sheet ID + stake seat cap.
   - Step 2: at least one Building.
   - Step 3: at least one Ward (with `ward_code`, `ward_name`, `building_name`, `seat_cap`).
-  - Step 4: additional Kindoo Managers (optional).
-  - Finish: install triggers, set `setup_complete=true`, write `setup_complete` audit row, redirect to manager dashboard.
-- [ ] Implement `ui/BootstrapWizard.html`.
-- [ ] Test on a fresh sheet end-to-end.
+  - Step 4: additional Kindoo Managers (optional). The bootstrap admin is auto-added as the first active KindooManager on wizard entry.
+  - Finish: install triggers (stubbed — real install is Chunks 8/9), set `setup_complete=true`, write `setup_complete` audit row, redirect to the Main URL (normal role resolution → manager default page).
+- [x] Implement `ui/BootstrapWizard.html` + `ui/SetupInProgress.html`.
+- [x] Stub `services/TriggersService.gs#TriggersService_install` (no-op log; real triggers are Chunks 8/9).
+- [x] Test on a fresh sheet end-to-end.
 
 **Acceptance criteria**
 
-- Fresh sheet + first visit as bootstrap admin → wizard appears.
-- Non-admins hitting the app during bootstrap see the "setup in progress" page.
-- Completing the wizard flips `setup_complete` to true and installs triggers (verified via `ScriptApp.getProjectTriggers()`).
-- Re-visiting after completion lands on the normal role-based default page.
+- Fresh sheet + first visit as bootstrap admin → wizard appears regardless of `?p=` on the URL.
+- Non-admins hitting the app during bootstrap see the "setup in progress" page (not `NotAuthorized`).
+- Completing the wizard flips `setup_complete` to true, calls `TriggersService_install`, and writes an `AuditLog` row with `action='setup_complete'`. (Verifying real triggers via `ScriptApp.getProjectTriggers()` lands in Chunks 8/9 when the real install code ships.)
+- Re-visiting after completion lands on the normal role-based default page; every `ApiBootstrap_*` endpoint refuses post-setup.
 
 **Out of scope**
 
-- Post-setup re-running of the wizard (not a requirement).
+- Post-setup re-running of the wizard (one-shot by design — `ApiBootstrap_*` endpoints refuse once `setup_complete=true`).
+- Actual installation of daily expiry / weekly import triggers — `TriggersService_install` is a no-op stub this chunk; Chunks 8 and 9 add the real `ScriptApp.newTrigger` calls. The wizard calls the stub and audits the call so the flow is correct end-to-end.
 
 ---
 

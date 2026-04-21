@@ -56,6 +56,48 @@ function Wards_insert(row) {
   return toWrite;
 }
 
+// Bulk insert. Same contract as Buildings_bulkInsert: validate all N rows
+// (ward_code 2-char, cross-batch uniqueness, uniqueness against existing)
+// before any setValues. Building FK check stays in the API layer. Caller
+// owns lock + audit.
+function Wards_bulkInsert(rows) {
+  if (!rows || rows.length === 0) return [];
+  var sheet = Wards_sheet_();
+  var data = sheet.getDataRange().getValues();
+  if (data.length > 0) Wards_assertHeaders_(data[0]);
+  var existing = {};
+  for (var i = 1; i < data.length; i++) {
+    var k = String(data[i][0]);
+    if (k !== '' && k != null) existing[k] = true;
+  }
+  var seen = {};
+  var prepared = [];
+  for (var r = 0; r < rows.length; r++) {
+    var row = rows[r];
+    if (!row || !row.ward_code) {
+      throw new Error('Wards_bulkInsert: row ' + (r + 1) + ' missing ward_code');
+    }
+    var code = String(row.ward_code).trim();
+    Wards_validateCode_(code);
+    if (seen[code]) {
+      throw new Error('Duplicate ward_code "' + code + '" in the batch.');
+    }
+    if (existing[code]) {
+      throw new Error('A ward with ward_code "' + code + '" already exists.');
+    }
+    seen[code] = true;
+    var prep = Wards_normaliseInput_(row);
+    prep.ward_code = code;
+    prepared.push(prep);
+  }
+  var values = prepared.map(function (p) {
+    return [p.ward_code, p.ward_name, p.building_name, p.seat_cap];
+  });
+  var startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, values.length, WARDS_HEADERS_.length).setValues(values);
+  return prepared;
+}
+
 function Wards_update(wardCode, patch) {
   if (!wardCode) throw new Error('Wards_update: ward_code required');
   var key = String(wardCode).trim();

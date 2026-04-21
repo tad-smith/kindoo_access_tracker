@@ -55,6 +55,54 @@ function Buildings_insert(row) {
   return toWrite;
 }
 
+// Bulk insert. Batches N rows into a single setValues call. Used by the
+// Chunk-4 bootstrap wizard to commit a step's accumulated pending rows in
+// one round-trip. Validates each row and cross-row PK uniqueness (within
+// the batch AND against existing rows) before touching the Sheet, so a
+// validation failure on row 5 leaves the Sheet unchanged. Returns the
+// array of inserted row objects in the same order.
+//
+// Caller owns the lock and the audit writes (emit N entries via
+// AuditRepo_writeMany for symmetry with single-row inserts).
+function Buildings_bulkInsert(rows) {
+  if (!rows || rows.length === 0) return [];
+  var sheet = Buildings_sheet_();
+  var data = sheet.getDataRange().getValues();
+  if (data.length > 0) Buildings_assertHeaders_(data[0]);
+  var existing = {};
+  for (var i = 1; i < data.length; i++) {
+    var k = String(data[i][0]);
+    if (k !== '' && k != null) existing[k] = true;
+  }
+  var seen = {};
+  var prepared = [];
+  for (var r = 0; r < rows.length; r++) {
+    var row = rows[r];
+    if (!row || !row.building_name) {
+      throw new Error('Buildings_bulkInsert: row ' + (r + 1) + ' missing building_name');
+    }
+    var name = String(row.building_name).trim();
+    if (!name) {
+      throw new Error('Buildings_bulkInsert: row ' + (r + 1) + ' has empty building_name');
+    }
+    if (seen[name]) {
+      throw new Error('Duplicate building "' + name + '" in the batch.');
+    }
+    if (existing[name]) {
+      throw new Error('A building named "' + name + '" already exists.');
+    }
+    seen[name] = true;
+    prepared.push({
+      building_name: name,
+      address:       String(row.address == null ? '' : row.address)
+    });
+  }
+  var values = prepared.map(function (p) { return [p.building_name, p.address]; });
+  var startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, values.length, BUILDINGS_HEADERS_.length).setValues(values);
+  return prepared;
+}
+
 function Buildings_update(buildingName, patch) {
   if (!buildingName) throw new Error('Buildings_update: building_name required');
   var key = String(buildingName).trim();
