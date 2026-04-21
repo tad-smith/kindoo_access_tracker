@@ -207,7 +207,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 5 — Rosters (read-only)
+## Chunk 5 — Rosters (read-only) `[DONE — see docs/changelog/chunk-5-rosters.md]`
 
 **Goal:** bishoprics, stake presidency, and managers can read seat rosters.
 
@@ -215,26 +215,36 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Extend `repos/SeatsRepo.gs` with `getByScope(scope)` returning a uniform shape including human-readable fields.
-- [ ] Implement `api/ApiBishopric.gs#roster()`, `api/ApiStake.gs#roster()`, `api/ApiStake.gs#wardRoster(wardId)`, `api/ApiManager.gs#allSeats(filters)`.
-- [ ] Implement `ui/bishopric/Roster.html` — ward roster with utilization bar.
-- [ ] Implement `ui/stake/Roster.html` — stake roster with utilization bar.
-- [ ] Implement `ui/stake/WardRosters.html` — dropdown + read-only ward roster.
-- [ ] Implement `ui/manager/AllSeats.html` — full roster with `ward`/`building`/`type` filters.
-- [ ] Implement `ui/Nav.html` with role-aware links.
+- [x] Extend `repos/SeatsRepo.gs` with `Seats_getAll()` (manager AllSeats does one full-scan read instead of N per-scope reads); `Seats_getByScope` was already present from Chunk 3.
+- [x] Implement `services/Rosters.gs` — shared row mapper + per-scope utilization math, called by every roster endpoint so the four read-side UIs share one shape.
+- [x] Add `core/Auth.gs#Auth_findBishopricRole(principal)` — returns the first bishopric role (with `wardId`) or null; used by `ApiBishopric_roster` to derive scope from the verified principal so the endpoint doesn't accept a spoofable parameter.
+- [x] Implement `api/ApiBishopric.gs#ApiBishopric_roster`, `api/ApiStake.gs#ApiStake_roster` / `ApiStake_wardRoster(wardCode)` / `ApiStake_wardsList`, `api/ApiManager.gs#ApiManager_allSeats(filters)`.
+- [x] Extend `api/ApiManager.gs#ApiManager_test_forbidden` with scope-guard checks: `Auth_findBishopricRole(stake-only) === null`; CO bishopric fails `Auth_requireRole(stake)`; CO bishopric fails `Auth_requireWardScope(GE)`; CO bishopric passes `Auth_requireWardScope(CO)`.
+- [x] Implement `ui/bishopric/Roster.html` — ward roster with utilization bar.
+- [x] Implement `ui/stake/Roster.html` — stake roster with utilization bar.
+- [x] Implement `ui/stake/WardRosters.html` — dropdown + read-only ward roster.
+- [x] Implement `ui/manager/AllSeats.html` — full roster with `ward`/`building`/`type` filters; per-scope summary cards with utilization bars above the filtered table; deep-link filter state via URL query params (read server-side from `Main.doGet`, forwarded into `QUERY_PARAMS` on the client).
+- [x] Rebuild `ui/Nav.html` as real role-aware navigation — role union of links, active-page highlight, rendered by `Router_pick` as `navHtml` alongside `pageHtml`.
+- [x] Add sign-out button to the topbar (`ui/Layout.html`) — clears `sessionStorage.jwt` and reloads top to bare `MAIN_URL`.
+- [x] Delete `ui/Hello.html`; `Router_pick` returns role defaults on empty/unrecognised `?p=` (manager → `mgr/seats`, stake → `stake/roster`, bishopric → `bishopric/roster`; highest-privilege role wins on multi-role principals).
+- [x] Add Chunk-5 CSS to `ui/Styles.html` (nav, utilization bars, roster table, badges, AllSeats filter row + summary cards). Add `escapeHtml` / `renderUtilizationBar` / `renderRosterTable` / `rosterRowHtml` helpers to `ui/ClientUtils.html` so the four read-side UIs share rendering.
 
 **Acceptance criteria**
 
-- Bishopric sees only their own ward's seats.
-- A bishopric member cannot retrieve another ward's roster by crafting a URL or direct `rpc` call (enforced in `Auth.requireWardScope`).
-- Stake sees stake pool + can pick any ward via dropdown.
-- Manager can filter by ward, building, or type.
-- Utilization bar shows `active seats / seat_cap`.
+- Bishopric sees only their own ward's seats. Hand-crafted `ApiBishopric_roster` call from a non-bishopric browser console throws `Forbidden: bishopric role required`. `ApiStake_*` from a bishopric-only console throws `Forbidden`.
+- Stake sees the stake pool on `stake/roster`; `stake/ward-rosters` lists every ward (via `ApiStake_wardsList`) and picking one renders that ward read-only via `ApiStake_wardRoster(wardCode)`.
+- Manager `mgr/seats` page filters combine as AND: ward + building + type. Deep link `?p=mgr/seats&ward=CO&type=manual` lands with both filters pre-populated from `QUERY_PARAMS`.
+- Utilization bar renders `total_seats / seat_cap`; when `total_seats > seat_cap` the bar colour flips and the label shows an "OVER CAP" flag (e.g. 21/20). Cap-unset scopes render a neutral "N seats (cap unset)" label with no bar.
+- Temp seats with `end_date <= today` render an "expired" / "expires today" badge (Chunk-8 expiry trigger will delete them; until then the badge signals why utilization is high).
+- Nav highlights the current page via `?p=`; sign-out link clears `sessionStorage.jwt` and returns to Login. Nav hides every link for unbuilt chunks (New Request / My Requests / Requests Queue / Dashboard / Audit Log).
+- Visiting `/exec` with an empty or unrecognised `?p=` routes to the principal's role default. Post-bootstrap completion (Chunk 4 `ApiBootstrap_complete` → redirect to Main URL) lands the admin on `mgr/seats` (manager default) rather than a 404.
 
 **Out of scope**
 
 - Request submission (Chunk 6), removal actions (Chunk 7), manager inline edits (Chunk 6).
 - Server-side pagination. Target scale (~20 seats/ward, 250 seats total) fits a single-page render with room to spare.
+- URL reflects post-load filter changes on AllSeats. Filter state flows *in* from the URL on page load (deep-link support works), but changing a filter does not rewrite the top-frame URL — the HtmlService iframe can't manipulate top's `history.replaceState` cross-origin (open-questions.md A-8). Acceptable trade-off; the shareable-deep-link use case still works.
+- "Redirect with toast" UX when a user hits a `?p=` they can't access — currently silent fall-through to role default. Toast is Chunk-10 polish.
 
 ---
 

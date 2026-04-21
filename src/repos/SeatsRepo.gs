@@ -6,6 +6,11 @@
 //   - Seats_bulkInsertAuto(rows)     — batched append for import inserts
 //   - Seats_deleteByHash(hash)       — single-row delete by source_row_hash
 //
+// Chunk 5 adds the read side for roster pages:
+//   - Seats_getAll()                 — full scan used by manager AllSeats
+//     (a single getDataRange() read instead of N per-scope reads; at
+//     target scale ~250 rows that's well under any budget).
+//
 // Full CRUD (manual/temp insert, update, delete-by-id) lands in Chunks 5–7.
 // The importer is the only writer here today.
 //
@@ -23,6 +28,10 @@ const SEATS_HEADERS_ = [
   'end_date', 'building_names', 'created_by', 'created_at',
   'last_modified_by', 'last_modified_at'
 ];
+
+function Seats_getAll() {
+  return Seats_readAll_();
+}
 
 function Seats_getByScope(scope) {
   if (scope === undefined || scope === null) return [];

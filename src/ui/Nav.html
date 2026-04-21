@@ -1,6 +1,83 @@
 <!--
-  Trivial stub. Real role-aware navigation lands in Chunk 5 alongside the
-  Roster pages. Layout.html does not include this file in Chunk 1 — the
-  topbar in Layout.html shows the brand + user identity, which is enough.
+  Role-aware navigation for Chunk 5+. Rendered server-side by
+  core/Router.gs (Router_pick), which hands us `principal` and
+  `current_page`. The client rehydrates the nav slot like any other
+  page HTML — the inline script below runs on insert and rewires each
+  data-page anchor's href to MAIN_URL + ?p=<page> (the client-side
+  global MAIN_URL is injected once by Layout.html).
+
+  Nav label conventions:
+    - "Ward Roster" / "Stake Roster" — use role-prefixed labels when
+      the user holds multiple roster-bearing roles, so a dual
+      bishopric+stake user sees two unambiguous entries. Single-role
+      users get the same prefixed labels for consistency (costs
+      nothing; screenshots read the same regardless of the viewer).
+    - Manager links use the same labels as Chunk 2–3 ("Configuration",
+      "Access", "Import") plus Chunk 5's new "All Seats".
+    - Chunk 6+ links (bishopric/stake New Request + My Requests,
+      manager Dashboard + Requests Queue + Audit Log) are deliberately
+      omitted — clicking a nav entry must never lead to a broken page.
+
+  The sign-out control is in the topbar (rendered by Layout.html, not
+  here) — nav stays focused on page navigation, and sign-out is
+  available even on NotAuthorized (where nav has no entries).
 -->
-<nav id="nav-stub" hidden></nav>
+<?
+  // Compute role flags once.
+  var __isBishopric = false, __isStake = false, __isManager = false;
+  for (var __i = 0; __i < principal.roles.length; __i++) {
+    var __r = principal.roles[__i];
+    if      (__r.type === 'bishopric') __isBishopric = true;
+    else if (__r.type === 'stake')     __isStake     = true;
+    else if (__r.type === 'manager')   __isManager   = true;
+  }
+  // Ordered link list: bishopric first, then stake, then manager —
+  // matches the default-role priority direction (lowest → highest).
+  var __links = [];
+  if (__isBishopric) __links.push({ page: 'bishopric/roster',   label: 'Ward Roster' });
+  if (__isStake) {
+    __links.push({ page: 'stake/roster',       label: 'Stake Roster' });
+    __links.push({ page: 'stake/ward-rosters', label: 'Ward Rosters' });
+  }
+  if (__isManager) {
+    __links.push({ page: 'mgr/seats',  label: 'All Seats' });
+    __links.push({ page: 'mgr/config', label: 'Configuration' });
+    __links.push({ page: 'mgr/access', label: 'Access' });
+    __links.push({ page: 'mgr/import', label: 'Import' });
+  }
+?>
+<nav class="app-nav">
+  <ul class="nav-links">
+    <? for (var __j = 0; __j < __links.length; __j++) {
+         var __lk = __links[__j];
+         var __active = (__lk.page === current_page) ? ' active' : '';
+    ?>
+      <li><a class="nav-link<?= __active ?>" data-page="<?= __lk.page ?>" href="#"><?= __lk.label ?></a></li>
+    <? } ?>
+  </ul>
+</nav>
+<script>
+(function () {
+  // Runs after Layout's rehydrateScripts re-inserts the script into
+  // the live DOM (innerHTML-injected scripts are inert per HTML spec).
+  var nav = document.querySelector('.app-nav');
+  if (!nav) return;
+  var links = nav.querySelectorAll('.nav-link[data-page]');
+  for (var i = 0; i < links.length; i++) {
+    var page = links[i].getAttribute('data-page');
+    if (typeof MAIN_URL === 'string' && MAIN_URL && page) {
+      links[i].href = MAIN_URL + '?p=' + encodeURIComponent(page);
+      links[i].setAttribute('target', '_top');
+    } else {
+      // Safe fallback so clicking a link without MAIN_URL doesn't
+      // navigate the iframe to a broken relative URL.
+      (function (a) {
+        a.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          alert('main_url is not configured.');
+        });
+      })(links[i]);
+    }
+  }
+})();
+</script>

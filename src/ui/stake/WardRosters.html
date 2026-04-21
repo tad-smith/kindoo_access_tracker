@@ -1,1 +1,91 @@
-<!-- Stake Presidency Ward Rosters: read-only dropdown to view any ward's roster. -->
+<!--
+  Stake Presidency Ward Rosters (Chunk 5, read-only).
+
+  Dropdown of every ward (from ApiStake_wardsList); picking one loads
+  that ward's roster via ApiStake_wardRoster(wardCode). Read-only —
+  stake users cannot request or remove from another ward's roster
+  through this page; that would be the ward's bishopric's job. The
+  stake presidency's own pool lives on stake/Roster.html.
+
+  ApiStake_wardRoster validates wardCode against Wards server-side;
+  picking an unknown (or deleted-since-load) ward surfaces the server
+  error as a toast rather than rendering an empty roster.
+-->
+<section class="roster-page ward-rosters-page">
+  <div class="roster-header">
+    <h1>Ward Rosters</h1>
+    <span class="roster-scope-label">Read-only view of any ward in the stake.</span>
+  </div>
+
+  <div class="ward-select-row">
+    <label for="ward-select">Ward:</label>
+    <select id="ward-select"><option value="">Loading wards…</option></select>
+  </div>
+
+  <div id="utilization-host"></div>
+  <div id="roster-table-host">
+    <div class="roster-empty">Pick a ward above to see its roster.</div>
+  </div>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  function populateWards(wards) {
+    var sel = $('ward-select');
+    sel.innerHTML = '';
+    if (!wards || wards.length === 0) {
+      var opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No wards configured';
+      sel.appendChild(opt);
+      sel.disabled = true;
+      return;
+    }
+    var placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Choose a ward…';
+    sel.appendChild(placeholder);
+    for (var i = 0; i < wards.length; i++) {
+      var opt2 = document.createElement('option');
+      opt2.value = wards[i].ward_code;
+      opt2.textContent = wards[i].ward_name + ' (' + wards[i].ward_code + ')';
+      sel.appendChild(opt2);
+    }
+  }
+
+  function loadRoster(wardCode) {
+    if (!wardCode) {
+      $('utilization-host').innerHTML = '';
+      $('roster-table-host').innerHTML =
+        '<div class="roster-empty">Pick a ward above to see its roster.</div>';
+      return;
+    }
+    $('roster-table-host').innerHTML = 'Loading…';
+    $('utilization-host').innerHTML = '';
+    rpc('ApiStake_wardRoster', wardCode).then(function (resp) {
+      $('utilization-host').innerHTML = renderUtilizationBar(resp.summary);
+      $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
+        emptyMsg: 'No seats in ' + resp.summary.ward_name + ' yet.'
+      });
+    }).catch(function (err) {
+      var msg = (err && err.message) ? err.message : String(err);
+      $('roster-table-host').innerHTML =
+        '<div class="error">Could not load roster: ' + escapeHtml(msg) + '</div>';
+    });
+  }
+
+  $('ward-select').addEventListener('change', function () {
+    loadRoster(this.value);
+  });
+
+  rpc('ApiStake_wardsList').then(function (wards) {
+    populateWards(wards);
+  }).catch(function (err) {
+    $('ward-select').innerHTML =
+      '<option value="">Could not load wards</option>';
+    toast((err && err.message) || String(err), 'error');
+  });
+})();
+</script>

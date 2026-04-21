@@ -457,6 +457,127 @@ function ApiManager_accessList(token) {
 }
 
 // ===========================================================================
+// Rosters — All Seats (Chunk 5)
+// ===========================================================================
+//
+// Manager-facing equivalent of ApiBishopric_roster / ApiStake_roster. Returns
+// every seat across every scope, filtered by optional { ward, building,
+// type } filters, plus per-scope summaries for the utilization bar(s) and
+// the filter-dropdown option lists. Filters combine as AND.
+//
+// ward filter values: '' / 'all' (no filter), 'stake', or any ward_code.
+// building filter:    '' / 'all' (no filter), or a Buildings.building_name.
+//                     Matches if the seat's comma-separated building_names
+//                     contains an exact-match entry.
+// type filter:        '' / 'all', 'auto', 'manual', 'temp'.
+
+function ApiManager_allSeats(token, filters) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  filters = filters || {};
+
+  var wardFilter     = ApiManager_allSeats_coerce_(filters.ward);
+  var buildingFilter = ApiManager_allSeats_coerce_(filters.building);
+  var typeFilter     = ApiManager_allSeats_coerce_(filters.type);
+
+  var ctx   = Rosters_buildContext_();
+  var seats = Seats_getAll();
+
+  // Filter first, then bucket + shape via Rosters_buildResponseFromSeats_
+  // so the per-scope summaries reflect the *filtered* view (e.g., filtering
+  // to type=manual shows a small utilization relative to cap, which is
+  // correct: that's how many manual seats exist, not how many total).
+  //
+  // Note: over-cap summaries always reflect the filtered count. An operator
+  // who picks type=auto and sees over_cap=false even when the ward is over
+  // cap overall is by design — the header-level "over cap" signal belongs
+  // on the Dashboard (Chunk 10), not here.
+  var filtered = [];
+  for (var i = 0; i < seats.length; i++) {
+    var row = seats[i];
+    if (wardFilter && row.scope !== wardFilter) continue;
+    if (typeFilter && row.type  !== typeFilter) continue;
+    if (buildingFilter && !ApiManager_allSeats_matchesBuilding_(row.building_names, buildingFilter)) continue;
+    filtered.push(row);
+  }
+
+  // Bucket by scope for per-scope summaries. Order: 'stake' first, then
+  // ward_codes alphabetically — matches the stake-first convention used
+  // on the manager Access page.
+  var byScope = {};
+  for (var j = 0; j < filtered.length; j++) {
+    var sc = filtered[j].scope;
+    if (!byScope[sc]) byScope[sc] = [];
+    byScope[sc].push(filtered[j]);
+  }
+  var scopeKeys = Object.keys(byScope).sort(function (a, b) {
+    if (a === 'stake') return -1;
+    if (b === 'stake') return 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+
+  var summaries = [];
+  var rows      = [];
+  for (var k = 0; k < scopeKeys.length; k++) {
+    var packet = Rosters_buildResponseFromSeats_(scopeKeys[k], byScope[scopeKeys[k]], ctx);
+    summaries.push(packet.summary);
+    for (var r = 0; r < packet.rows.length; r++) rows.push(packet.rows[r]);
+  }
+
+  // Filter-option lists. Tiny at scale (12 wards + Stake, handful of
+  // buildings), always sent so the client can render the filter row
+  // without a second round-trip. The ward list includes 'stake' as a
+  // pseudo-entry since it's a valid filter value.
+  var wardList = [];
+  var allWards = Wards_getAll();
+  for (var w = 0; w < allWards.length; w++) {
+    wardList.push({ ward_code: allWards[w].ward_code, ward_name: allWards[w].ward_name });
+  }
+  var buildingList = [];
+  var allBuildings = Buildings_getAll();
+  for (var b = 0; b < allBuildings.length; b++) {
+    buildingList.push(allBuildings[b].building_name);
+  }
+
+  return {
+    rows:           rows,
+    summaries:      summaries,
+    total_rows:     rows.length,
+    filter_options: {
+      wards:     wardList,
+      buildings: buildingList
+    },
+    applied_filters: {
+      ward:     wardFilter     || '',
+      building: buildingFilter || '',
+      type:     typeFilter     || ''
+    }
+  };
+}
+
+function ApiManager_allSeats_coerce_(v) {
+  if (v == null) return '';
+  var s = String(v).trim();
+  if (!s || s === 'all') return '';
+  return s;
+}
+
+// Seat's building_names is a comma-separated string of building_name
+// values (data-model.md Tab 8). An empty value means "uses the ward's
+// default" — for filter purposes we treat empty as "no match" against
+// any specific building_name so the filter excludes un-assigned seats.
+// The manager can either filter to 'all' or edit the seat to add an
+// explicit building_name. (Chunk-6 inline edit adds that surface.)
+function ApiManager_allSeats_matchesBuilding_(buildingNames, filter) {
+  if (!buildingNames) return false;
+  var parts = String(buildingNames).split(',');
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i].trim() === filter) return true;
+  }
+  return false;
+}
+
+// ===========================================================================
 // Manual smoke tests, runnable from the Apps Script editor.
 // Not callable via google.script.run from the client (no token argument).
 // ===========================================================================
@@ -490,6 +611,45 @@ function ApiManager_test_forbidden() {
   }
   if (!threw) throw new Error('FAIL: bishopric-only principal passed manager check');
   Logger.log('PASS: bishopric-only principal -> Auth_requireRole(manager) throws Forbidden');
+
+  // Chunk 5: scope-guard checks — a bishopric for CO must not be treated
+  // as a stake user, and Auth_findBishopricRole on a stake-only principal
+  // must return null (so ApiBishopric_roster throws Forbidden rather than
+  // falling through to an empty roster or an "undefined" scope).
+  var stakeOnly = { email: 's@example.com', name: '', picture: '',
+                    roles: [{ type: 'stake' }] };
+  if (Auth_findBishopricRole(stakeOnly) !== null) {
+    throw new Error('FAIL: Auth_findBishopricRole(stake-only) returned non-null');
+  }
+  Logger.log('PASS: Auth_findBishopricRole(stake-only) returns null');
+
+  var coBishopric = { email: 'bco@example.com', name: '', picture: '',
+                      roles: [{ type: 'bishopric', wardId: 'CO' }] };
+  var found = Auth_findBishopricRole(coBishopric);
+  if (!found || found.wardId !== 'CO') {
+    throw new Error('FAIL: Auth_findBishopricRole(CO bishopric) did not return the CO role');
+  }
+  Logger.log('PASS: Auth_findBishopricRole(CO bishopric) returns the CO role');
+
+  // CO bishopric failing the stake role check — that's what keeps them from
+  // calling ApiStake_* endpoints (the endpoints themselves do this check).
+  threw = false;
+  try {
+    Auth_requireRole(coBishopric, 'stake');
+  } catch (e3) { threw = true; }
+  if (!threw) throw new Error('FAIL: CO bishopric passed stake role check');
+  Logger.log('PASS: CO bishopric -> Auth_requireRole(stake) throws Forbidden');
+
+  // Auth_requireWardScope: CO bishopric can read CO but not GE.
+  threw = false;
+  try {
+    Auth_requireWardScope(coBishopric, 'GE');
+  } catch (e4) { threw = true; }
+  if (!threw) throw new Error('FAIL: CO bishopric passed ward-scope check for GE');
+  Logger.log('PASS: CO bishopric -> Auth_requireWardScope(GE) throws Forbidden');
+
+  Auth_requireWardScope(coBishopric, 'CO'); // should NOT throw
+  Logger.log('PASS: CO bishopric -> Auth_requireWardScope(CO) allows');
 
   return 'All ApiManager forbidden-path checks passed.';
 }

@@ -67,6 +67,7 @@ src/
 │   ├── Bootstrap.gs               # first-run wizard state machine
 │   ├── Importer.gs                # weekly import from callings sheet
 │   ├── Expiry.gs                  # daily temp-seat expiry
+│   ├── Rosters.gs                 # read-side roster shape + utilization math
 │   ├── RequestsService.gs         # submit / complete / reject / cancel
 │   ├── EmailService.gs            # typed wrappers over MailApp.sendEmail
 │   └── TriggersService.gs         # install/remove time-based triggers
@@ -331,27 +332,36 @@ Tried it mentally — every function ends up switch-casing on tab name. Per-tab 
 - **Includes**: a global `include(path)` helper returns `HtmlService.createHtmlOutputFromFile(path).getContent()` so templates can compose each other via `<?!= include('ui/Styles') ?>`.
 - **Model injection**: the template's `evaluate()` is preceded by assigning properties on the template object (`t.principal = ...; t.model = ...`). Client code reads initial state from a `<script>var __init = <?= JSON.stringify(model) ?>;</script>` block at the bottom of the layout.
 - **Client RPC**: `ClientUtils.html` wraps `google.script.run` into a `rpc(name, args)` that returns a Promise, with a toast/error UI on failure. All client-side calls go through it.
-- **Role-based menus**: `Nav.html` is rendered with the current principal; it emits only the links the user's roles allow.
-- **Deep links**: query-string `?p=<page-id>`. Deep links survive the Cloudflare Worker proxy as long as the worker preserves query strings.
+- **Role-based menus**: `Nav.html` is rendered server-side with the current principal (by `Router_pick` in `core/Router.gs`) and returned as `navHtml` alongside `pageHtml`. It emits only the links the user's roles allow and marks the currently-rendered page as `active`. `Layout.html` hosts it in a `#nav-host` slot above `#content` and rehydrates its inline script (the one that rewires each `data-page` anchor's href to `MAIN_URL + ?p=<page>`).
+- **Deep links**: query-string `?p=<page-id>` for page dispatch, plus per-page filter keys (e.g. `&ward=CO&type=manual` for `mgr/seats`) forwarded through as `QUERY_PARAMS` on the client. Main.doGet strips the reserved keys (`p`, `token`) and JSON-encodes the remainder into the Layout template, since the iframe can't read the top-frame's query string (cross-origin). Deep links survive the Cloudflare Worker proxy as long as the worker preserves query strings.
 
 ### Page ID map
 
+Entries marked *(Chunk N)* are page-id placeholders reserved for later chunks — Router returns the role default for them today.
+
 | `?p=` | Template | Allowed roles |
 | --- | --- | --- |
-| *(empty)* | role default (manager → dashboard, stake → stake/Roster, bishopric → bishopric/Roster) | any |
-| `roster` | role default roster page | bishopric / stake |
-| `new` | `ui/{role}/NewRequest` | bishopric / stake |
-| `my` | `ui/{role}/MyRequests` | bishopric / stake |
-| `ward-rosters` | `ui/stake/WardRosters` | stake, manager |
-| `mgr/dashboard` | `ui/manager/Dashboard` | manager |
-| `mgr/queue` | `ui/manager/RequestsQueue` | manager |
+| *(empty)* | role default (manager → `mgr/seats` until Chunk 10's Dashboard; stake → `stake/roster`; bishopric → `bishopric/roster`) | any |
+| `bishopric/roster` | `ui/bishopric/Roster` | bishopric |
+| `bishopric/new` *(Chunk 6)* | `ui/bishopric/NewRequest` | bishopric |
+| `bishopric/my` *(Chunk 6)* | `ui/bishopric/MyRequests` | bishopric |
+| `stake/roster` | `ui/stake/Roster` | stake |
+| `stake/ward-rosters` | `ui/stake/WardRosters` | stake |
+| `stake/new` *(Chunk 6)* | `ui/stake/NewRequest` | stake |
+| `stake/my` *(Chunk 6)* | `ui/stake/MyRequests` | stake |
 | `mgr/seats` | `ui/manager/AllSeats` | manager |
 | `mgr/config` | `ui/manager/Config` | manager |
 | `mgr/access` | `ui/manager/Access` | manager |
 | `mgr/import` | `ui/manager/Import` | manager |
-| `mgr/audit` | `ui/manager/AuditLog` | manager |
+| `mgr/dashboard` *(Chunk 10)* | `ui/manager/Dashboard` | manager |
+| `mgr/queue` *(Chunk 6)* | `ui/manager/RequestsQueue` | manager |
+| `mgr/audit` *(Chunk 10)* | `ui/manager/AuditLog` | manager |
 
-A user who hits a `p=` they can't access is redirected to their default page (not 403'd), with a toast explaining why.
+Multi-role principals land on the highest-privilege role's default (manager > stake > bishopric). A user who hits a `?p=` they can't access (wrong role, or an unrecognised id) silently falls back to their default page; the "redirect with toast" UX is Chunk 10 polish.
+
+### Role-scoped reads
+
+Roster reads enforce scope at the **API layer**, not the UI. A bishopric member for ward CO physically cannot read ward GE's roster by crafting a URL or calling `ApiBishopric_roster` with a spoofed scope — the scope is derived server-side from the verified principal via `Auth_findBishopricRole(principal)`, never from a parameter. Cross-ward reads for stake users go through `ApiStake_wardRoster(token, wardCode)` which validates the ward_code exists and that the caller holds the `stake` role. Managers use `ApiManager_allSeats(token, filters)` which checks `manager` independently. Every endpoint checks its own role requirement — having manager role doesn't satisfy a bishopric-scoped check.
 
 ## 9. Importer & Expiry triggers
 
@@ -430,12 +440,15 @@ export default {
 | Concern | File |
 | --- | --- |
 | HTTP entry point (Main project) | `src/core/Main.gs` |
-| Decides what page to render | `src/core/Router.gs` |
+| Decides what page to render; role-default picking; Nav render | `src/core/Router.gs` |
 | Identity collection (Session.getActiveUser + HMAC sign) | `identity-project/Code.gs` (separate Apps Script project; see `identity-project/README.md`) |
-| Verifies HMAC session tokens; resolves roles | `core/Auth.gs` |
+| Verifies HMAC session tokens; resolves roles; `Auth_findBishopricRole` | `core/Auth.gs` |
 | Guards against concurrent writes | `core/Lock.gs` |
 | Reads/writes one Sheet tab | `repos/XxxRepo.gs` |
 | Orchestrates a business workflow | `services/Xxx.gs` |
+| Shared roster shape (row mapper + utilization) | `services/Rosters.gs` |
 | Exposed to client via `google.script.run` | `api/ApiXxx.gs` (each endpoint takes the session token as first arg) |
 | Rendered to the user | `ui/**.html` |
+| Shared client helpers (`rpc`, `toast`, `escapeHtml`, roster renderer) | `ui/ClientUtils.html` |
+| Role-aware navigation template | `ui/Nav.html` |
 | Login button + token capture | `ui/Login.html` + `ui/ClientUtils.html#rpc` |

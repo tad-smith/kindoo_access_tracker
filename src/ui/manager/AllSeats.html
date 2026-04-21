@@ -1,1 +1,157 @@
-<!-- Kindoo Manager All Seats: full roster with ward/building/type filters and inline edit of manual/temp seats. -->
+<!--
+  Kindoo Manager All Seats (Chunk 5, read-only).
+
+  Full roster across every scope, with ward / building / type filters
+  (AND-combined). Per-scope summaries with utilization bars render
+  above the table so the manager can see over-cap conditions at a
+  glance, even while filtering to a subset.
+
+  Initial filter values come from the URL's query params (deep link
+  support — `?p=mgr/seats&ward=CO&type=manual`): Main.doGet forwards
+  the params into `QUERY_PARAMS` (Layout.html). Changing filters
+  re-fetches but DOES NOT update the top-frame URL — that's a
+  cross-origin restriction from the HtmlService iframe (see
+  open-questions.md A-8). Deep links still work; the address bar just
+  doesn't reflect post-load filter changes.
+
+  Inline edit (reason / person_name / building_names / dates) lands in
+  Chunk 6 per build-plan. For now this is a pure read surface.
+
+  Target scale (~240 rows at 12 wards × ~20 seats) renders in one pass
+  with sticky headers — no pagination (see architecture.md §1 and
+  build-plan Chunk 5 "Out of scope: Server-side pagination").
+-->
+<section class="all-seats-page">
+  <h1>All Seats</h1>
+  <p class="roster-scope-label">Full roster across every scope.</p>
+
+  <div class="all-seats-filters">
+    <label>Ward:
+      <select id="ward-filter">
+        <option value="">All</option>
+      </select>
+    </label>
+    <label>Building:
+      <select id="building-filter">
+        <option value="">All</option>
+      </select>
+    </label>
+    <label>Type:
+      <select id="type-filter">
+        <option value="">All</option>
+        <option value="auto">auto</option>
+        <option value="manual">manual</option>
+        <option value="temp">temp</option>
+      </select>
+    </label>
+    <span class="all-seats-count" id="all-seats-count"></span>
+  </div>
+
+  <div id="summaries-host" class="all-seats-summaries"></div>
+
+  <div id="roster-table-host">Loading…</div>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  var filters = {
+    ward:     (typeof QUERY_PARAMS === 'object' && QUERY_PARAMS && QUERY_PARAMS.ward)     ? String(QUERY_PARAMS.ward)     : '',
+    building: (typeof QUERY_PARAMS === 'object' && QUERY_PARAMS && QUERY_PARAMS.building) ? String(QUERY_PARAMS.building) : '',
+    type:     (typeof QUERY_PARAMS === 'object' && QUERY_PARAMS && QUERY_PARAMS.type)     ? String(QUERY_PARAMS.type)     : ''
+  };
+  var populatedOptions = false;
+
+  function populateFilterOptions(opts) {
+    if (populatedOptions) return;
+    populatedOptions = true;
+    // Ward filter: always-present 'stake' pseudo-option, then every
+    // configured ward_code. 'All' is index 0 already.
+    var wardSel = $('ward-filter');
+    var stakeOpt = document.createElement('option');
+    stakeOpt.value = 'stake';
+    stakeOpt.textContent = 'Stake';
+    wardSel.appendChild(stakeOpt);
+    for (var i = 0; i < opts.wards.length; i++) {
+      var w = document.createElement('option');
+      w.value = opts.wards[i].ward_code;
+      w.textContent = opts.wards[i].ward_name + ' (' + opts.wards[i].ward_code + ')';
+      wardSel.appendChild(w);
+    }
+    // Building filter.
+    var buildSel = $('building-filter');
+    for (var j = 0; j < opts.buildings.length; j++) {
+      var b = document.createElement('option');
+      b.value = opts.buildings[j];
+      b.textContent = opts.buildings[j];
+      buildSel.appendChild(b);
+    }
+    // Re-apply deep-link filter values now that the dropdowns are
+    // populated. If the URL referenced a ward that's since been
+    // deleted, the select falls back to '' (All) silently — that's
+    // preferable to showing a broken filter state.
+    wardSel.value  = filters.ward     || '';
+    buildSel.value = filters.building || '';
+    $('type-filter').value = filters.type || '';
+    filters.ward     = wardSel.value;
+    filters.building = buildSel.value;
+    filters.type     = $('type-filter').value;
+  }
+
+  function renderSummaries(summaries) {
+    if (!summaries || summaries.length === 0) {
+      $('summaries-host').innerHTML = '';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < summaries.length; i++) {
+      var s = summaries[i];
+      var sub = (s.scope === 'stake' ? 'Stake pool' : 'ward_code: ' + s.scope);
+      html += '<div class="all-seats-summary-card">' +
+        '<div class="scope-label">' + escapeHtml(s.ward_name) + '</div>' +
+        '<div class="scope-sub">' + escapeHtml(sub) + '</div>' +
+        renderUtilizationBar(s) +
+        '</div>';
+    }
+    $('summaries-host').innerHTML = html;
+  }
+
+  function render(resp) {
+    populateFilterOptions(resp.filter_options);
+    renderSummaries(resp.summaries);
+    $('all-seats-count').textContent =
+      resp.total_rows + ' row' + (resp.total_rows === 1 ? '' : 's');
+    $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
+      showScope: true,
+      emptyMsg: 'No seats match the current filters.'
+    });
+  }
+
+  function load() {
+    $('roster-table-host').innerHTML = 'Loading…';
+    rpc('ApiManager_allSeats', filters).then(function (resp) {
+      render(resp);
+    }).catch(function (err) {
+      var msg = (err && err.message) ? err.message : String(err);
+      $('roster-table-host').innerHTML =
+        '<div class="error">Could not load seats: ' + escapeHtml(msg) + '</div>';
+    });
+  }
+
+  $('ward-filter').addEventListener('change', function () {
+    filters.ward = this.value;
+    load();
+  });
+  $('building-filter').addEventListener('change', function () {
+    filters.building = this.value;
+    load();
+  });
+  $('type-filter').addEventListener('change', function () {
+    filters.type = this.value;
+    load();
+  });
+
+  load();
+})();
+</script>

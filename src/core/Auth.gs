@@ -161,3 +161,24 @@ function Auth_requireWardScope(principal, wardId) {
   }
   throw new Error('Forbidden');
 }
+
+// Returns the first bishopric role object on the principal, or null. The
+// returned object has the existing `{type:'bishopric', wardId}` shape (wardId
+// carries the ward_code). Used by ApiBishopric_* endpoints to derive the
+// scope from the verified principal rather than accepting it as a parameter:
+// that's the only thing stopping a bishopric for CO from hand-crafting a
+// `?wardCode=GE` call to read another ward's roster.
+//
+// If the principal holds multiple bishopric roles (rare — a counsellor
+// moving wards mid-term during a template-grace window — but possible in
+// theory), we return the first. That matches `Auth_requireRole`'s first-
+// match semantics. If we ever need a "which ward is this user currently
+// acting as?" switcher we'll extend the Principal, not this helper.
+function Auth_findBishopricRole(principal) {
+  if (!principal || !principal.roles) return null;
+  for (var i = 0; i < principal.roles.length; i++) {
+    var r = principal.roles[i];
+    if (r && r.type === 'bishopric' && r.wardId) return r;
+  }
+  return null;
+}

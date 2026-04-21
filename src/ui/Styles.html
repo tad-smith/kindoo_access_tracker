@@ -272,10 +272,6 @@
   }
   .access-count { color: #6b7280; font-size: 0.9em; }
 
-  /* Chunk-1 Hello scaffolding links list. */
-  .scaffold-links { padding-left: 20px; }
-  .scaffold-links li { margin: 4px 0; }
-
   /* Bootstrap wizard (Chunk 4). */
   .bootstrap-wizard { max-width: 900px; }
   .wizard-intro { color: #4b5266; max-width: 60ch; }
@@ -430,6 +426,236 @@
   /* SetupInProgress page (Chunk 4). */
   .setup-in-progress { max-width: 720px; }
   .setup-in-progress p { color: #4b5266; max-width: 60ch; }
+
+  /* Nav + sign-out (Chunk 5). */
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .signout-btn {
+    background: transparent;
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.4);
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 0.85em;
+    cursor: pointer;
+  }
+  .signout-btn:hover  { background: rgba(255,255,255,0.12); }
+  .signout-btn:focus  { outline: 2px solid #9fc1ff; outline-offset: 2px; }
+  .nav-host {
+    background: #2d4ca8;
+    color: #fff;
+  }
+  .app-nav {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+  .nav-links {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  .nav-links li { margin: 0; }
+  .nav-link {
+    display: block;
+    padding: 10px 14px;
+    color: #dbe3ff;
+    text-decoration: none;
+    font-size: 0.94em;
+    border-bottom: 2px solid transparent;
+  }
+  .nav-link:hover  { color: #fff; background: rgba(255,255,255,0.08); }
+  .nav-link.active { color: #fff; border-bottom-color: #ffd54a; font-weight: 600; }
+
+  /* Roster pages — shared (Chunk 5). */
+  .roster-page { max-width: 1100px; }
+  .roster-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .roster-header h1 { margin: 0; }
+  .roster-scope-label { color: #4b5266; font-size: 0.92em; }
+
+  /* Utilization bar. */
+  .utilization {
+    margin: 12px 0 20px;
+    max-width: 520px;
+  }
+  .utilization-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9em;
+    color: #4b5266;
+    margin-bottom: 4px;
+  }
+  .utilization-label .over-cap-flag {
+    color: #b00020;
+    font-weight: 600;
+  }
+  .utilization-bar {
+    position: relative;
+    height: 10px;
+    background: #eef0f5;
+    border-radius: 5px;
+    overflow: hidden;
+    border: 1px solid #d8dbe4;
+  }
+  .utilization-fill {
+    height: 100%;
+    background: #1f3a93;
+    transition: width 0.2s ease;
+  }
+  .utilization-fill.over { background: #b00020; }
+  .utilization-fill.near { background: #b76d00; }
+
+  /* Roster table. */
+  .roster-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border: 1px solid #d8dbe4;
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 0.92em;
+  }
+  .roster-table th, .roster-table td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid #eef0f5;
+    vertical-align: top;
+  }
+  .roster-table th {
+    background: #f3f5fa;
+    font-weight: 600;
+    color: #4b5266;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .roster-table tbody tr:last-child td { border-bottom: none; }
+  .roster-table tr.type-auto   td { background: #fafbff; }
+  .roster-table tr.type-manual td { background: #ffffff; }
+  .roster-table tr.type-temp   td { background: #fff8ea; }
+
+  .roster-email {
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+    vertical-align: bottom;
+  }
+  .roster-section-header td {
+    background: #eef0f5 !important;
+    font-weight: 600;
+    color: #1d2333;
+    padding: 10px;
+  }
+
+  /* Roster row badges (type, expired, expires-today). */
+  .roster-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.76em;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge-type-auto   { background: #e0e7ff; color: #1f3a93; }
+  .badge-type-manual { background: #ffe3c2; color: #7a4400; }
+  .badge-type-temp   { background: #fde4a1; color: #6b4a00; }
+  .badge-expired       { background: #f8d7da; color: #a61128; margin-left: 6px; }
+  .badge-expires-today { background: #ffe3c2; color: #7a4400; margin-left: 6px; }
+  .roster-empty {
+    color: #6b7280;
+    padding: 20px;
+    text-align: center;
+    background: #fff;
+    border: 1px dashed #d8dbe4;
+    border-radius: 6px;
+  }
+
+  /* Ward Rosters dropdown page. */
+  .ward-rosters-page .ward-select-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin: 14px 0 18px;
+  }
+  .ward-rosters-page select {
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: inherit;
+    border: 1px solid #c8ccd6;
+    border-radius: 3px;
+    min-width: 220px;
+  }
+
+  /* Manager AllSeats filters + per-scope summaries. */
+  .all-seats-page { max-width: 1200px; }
+  .all-seats-filters {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 12px;
+    background: #f3f5fa;
+    border: 1px solid #d8dbe4;
+    border-radius: 6px;
+    margin: 14px 0;
+  }
+  .all-seats-filters label {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 0.92em;
+    color: #4b5266;
+  }
+  .all-seats-filters select {
+    padding: 4px 6px;
+    border: 1px solid #c8ccd6;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: inherit;
+  }
+  .all-seats-count {
+    color: #4b5266;
+    font-size: 0.9em;
+  }
+  .all-seats-summaries {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .all-seats-summary-card {
+    background: #fff;
+    border: 1px solid #d8dbe4;
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+  .all-seats-summary-card .scope-label {
+    font-weight: 600;
+    font-size: 0.95em;
+    color: #1d2333;
+    margin-bottom: 4px;
+  }
+  .all-seats-summary-card .scope-sub {
+    color: #4b5266;
+    font-size: 0.85em;
+    margin-bottom: 6px;
+  }
 
   /* Calling-template hint on the Ward / Stake template tabs (Chunk 3). */
   .template-hint {

@@ -1,1 +1,40 @@
-<!-- Bishopric Roster: active seats for this bishopric's ward, utilization bar, per-row X/trashcan on manual/temp rows, "removal pending" badge. -->
+<!--
+  Bishopric Roster (Chunk 5, read-only).
+
+  Renders the active seats for the bishopric member's own ward — scope
+  is derived server-side from Auth_findBishopricRole(principal), not
+  from a URL parameter. A bishopric member for CO physically cannot
+  request GE's roster through this page.
+
+  Chunk 7 adds the X/trashcan remove control on manual/temp rows and
+  the "removal pending" badge; Chunk 6 adds the New Request / My
+  Requests links the nav already points at (hidden until those chunks
+  ship so clicking never leads to a broken page).
+-->
+<section class="roster-page">
+  <div class="roster-header">
+    <h1>Ward Roster</h1>
+    <span class="roster-scope-label" id="roster-scope-label"></span>
+  </div>
+  <div id="utilization-host"></div>
+  <div id="roster-table-host">Loading…</div>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  rpc('ApiBishopric_roster').then(function (resp) {
+    $('roster-scope-label').textContent =
+      resp.summary.ward_name + ' (' + resp.summary.scope + ')';
+    $('utilization-host').innerHTML = renderUtilizationBar(resp.summary);
+    $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
+      emptyMsg: 'No seats assigned to this ward yet. Run the importer (a Kindoo Manager has an Import page) or add manual/temp seats once Chunk 6 ships.'
+    });
+  }).catch(function (err) {
+    var msg = (err && err.message) ? err.message : String(err);
+    $('roster-table-host').innerHTML =
+      '<div class="error">Could not load roster: ' + escapeHtml(msg) + '</div>';
+  });
+})();
+</script>

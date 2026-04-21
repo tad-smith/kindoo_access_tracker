@@ -38,8 +38,13 @@
   <body>
     <header class="topbar">
       <div class="brand">Kindoo Access Tracker</div>
-      <div class="user-meta" id="user-meta"></div>
+      <div class="topbar-right">
+        <div class="user-meta" id="user-meta"></div>
+        <button id="signout-btn" class="signout-btn hidden" type="button">Sign out</button>
+      </div>
     </header>
+
+    <div id="nav-host" class="nav-host hidden"></div>
 
     <main id="app">
       <div id="content" class="hidden">Loading…</div>
@@ -63,6 +68,12 @@
       // those (e.g. ?createOAuthDialog=true), not what the user typed.
       // Main.doGet reads e.parameter.p server-side and hands it down here.
       var REQUESTED_PAGE  = <?!= JSON.stringify(requested_page) ?>;
+      // Chunk 5: per-page query params (minus 'p' and 'token'), forwarded
+      // from Main.doGet so pages can read deep-link state that the
+      // iframe can't see on window.location (cross-origin top frame).
+      // Example: mgr/seats reads QUERY_PARAMS.ward / .type / .building to
+      // pre-populate its filter dropdowns.
+      var QUERY_PARAMS    = <?!= JSON.stringify(query_params || {}) ?>;
     </script>
     <?!= include('ui/ClientUtils') ?>
     <script>
@@ -72,15 +83,51 @@
         function hide(el) { el.classList.add('hidden'); }
 
         function setUserMeta(p) {
-          if (!p) { $('user-meta').textContent = ''; return; }
+          if (!p) {
+            $('user-meta').textContent = '';
+            hide($('signout-btn'));
+            return;
+          }
           var label = (p.name && p.name.length) ? p.name + ' (' + p.email + ')' : p.email;
           $('user-meta').textContent = label;
+          show($('signout-btn'));
         }
+
+        function setNav(html) {
+          var host = $('nav-host');
+          if (html && html.length) {
+            host.innerHTML = html;
+            rehydrateScripts(host);
+            show(host);
+          } else {
+            host.innerHTML = '';
+            hide(host);
+          }
+        }
+
+        // Wire the sign-out click once at boot. Clears the session token
+        // and navigates the top frame back to Main; the next doGet will
+        // render Layout without INJECTED_TOKEN and the boot flow will
+        // drop to showLogin(). We intentionally *don't* hit the Identity
+        // project to revoke — there's nothing to revoke (tokens are
+        // stateless) and Session.getActiveUser can't be reset from here.
+        (function () {
+          var btn = document.getElementById('signout-btn');
+          if (!btn) return;
+          btn.addEventListener('click', function () {
+            sessionStorage.removeItem('jwt');
+            if (MAIN_URL) {
+              try { window.top.location.replace(MAIN_URL); return; } catch (e) {}
+            }
+            window.location.reload();
+          });
+        })();
 
         function showLogin(errMsg) {
           hide($('content'));
           show($('login-container'));
           setUserMeta(null);
+          setNav('');
           var link = $('signin-link');
           var errEl = $('login-error');
           if (link) {
@@ -106,11 +153,11 @@
           if (errEl) errEl.textContent = errMsg || '';
         }
 
-        function showContent(html, principal) {
+        function showContent(html, principal, navHtml) {
           $('content').innerHTML = html;
           // <script> tags injected via innerHTML are inert per HTML spec —
           // the browser parses them but never executes them. Page modules
-          // rely on inline <script> blocks (Config.html's IIFE, Hello's
+          // rely on inline <script> blocks (Config.html's IIFE, Nav's
           // link rewiring), so we have to clone each script into a fresh
           // element and re-insert it for the browser to run it. Order
           // preserved so dependent inline blocks still see prior globals.
@@ -118,6 +165,7 @@
           show($('content'));
           hide($('login-container'));
           setUserMeta(principal);
+          setNav(navHtml || '');
         }
 
         function rehydrateScripts(root) {
@@ -142,6 +190,7 @@
           show($('content'));
           hide($('login-container'));
           setUserMeta(null);
+          setNav('');
         }
 
         function escapeHtml(s) {
@@ -183,7 +232,7 @@
           show($('content'));
           hide($('login-container'));
           rpc('ApiShared_bootstrap', requestedPage).then(function (resp) {
-            showContent(resp.pageHtml, resp.principal);
+            showContent(resp.pageHtml, resp.principal, resp.navHtml);
           }).catch(function (err) {
             var msg = (err && err.message) ? err.message : String(err);
             if (msg.indexOf('AuthExpired') !== -1 || msg.indexOf('AuthInvalid') !== -1) {

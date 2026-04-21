@@ -43,7 +43,8 @@ function ApiShared_bootstrap(token, requestedPage) {
         principal: principal,
         template:  'ui/BootstrapWizard',
         pageModel: { principal: principal },
-        pageHtml:  wiz.evaluate().getContent()
+        pageHtml:  wiz.evaluate().getContent(),
+        navHtml:   ''
       };
     }
     // Signed in but not the bootstrap admin, and setup isn't done.
@@ -54,17 +55,20 @@ function ApiShared_bootstrap(token, requestedPage) {
       principal: principal,
       template:  'ui/SetupInProgress',
       pageModel: { email: principal.email, admin_email: adminEmail },
-      pageHtml:  sip.evaluate().getContent()
+      pageHtml:  sip.evaluate().getContent(),
+      navHtml:   ''
     };
   }
 
-  // Normal path — setup is complete.
+  // Normal path — setup is complete. Router_pick also returns navHtml
+  // (populated for principals with roles; empty for NotAuthorized).
   var routed = Router_pick(requestedPage || '', principal);
   return {
     principal: principal,
     template:  routed.template,
     pageModel: routed.pageModel,
-    pageHtml:  routed.pageHtml
+    pageHtml:  routed.pageHtml,
+    navHtml:   routed.navHtml || ''
   };
 }
 

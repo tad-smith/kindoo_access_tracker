@@ -47,12 +47,27 @@ function doGet(e) {
   // here, server-side, and inject into Layout for the client to use.
   var requestedPage = String(params.p || '');
 
+  // Chunk 5: the manager AllSeats page supports deep-link filter state
+  // via ?p=mgr/seats&ward=CO&type=manual. Since the iframe can't read
+  // the top-frame's query string (cross-origin), we forward the rest of
+  // the query params as a typed JSON blob to the client via Layout. We
+  // strip the two reserved keys ('p' is Layout's page dispatch; 'token'
+  // is the one-shot auth hand-off from Identity and already consumed
+  // above) — every other param passes through untouched.
+  var queryParams = {};
+  for (var k in params) {
+    if (!params.hasOwnProperty(k)) continue;
+    if (k === 'p' || k === 'token') continue;
+    queryParams[k] = String(params[k] == null ? '' : params[k]);
+  }
+
   var template = HtmlService.createTemplateFromFile('ui/Layout');
   template.identity_url   = identityUrl;
   template.main_url       = mainUrl;
   template.injected_token = injectedToken;
   template.injected_error = injectedError;
   template.requested_page = requestedPage;
+  template.query_params   = queryParams;
   template.app_version    = Version_get();
   return template.evaluate()
     .setTitle('Kindoo Access Tracker')

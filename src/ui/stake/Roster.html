@@ -1,1 +1,33 @@
-<!-- Stake Presidency Roster: seats with scope=stake; same UX as bishopric/Roster but scoped to the stake pool. -->
+<!--
+  Stake Presidency Roster (Chunk 5, read-only).
+
+  Mirrors bishopric/Roster.html but scoped to the stake pool. Scope is
+  hard-coded server-side to 'stake'; Auth_requireRole('stake') is what
+  keeps bishoprics out. Chunks 6/7 extend with request / removal
+  workflows against the stake pool.
+-->
+<section class="roster-page">
+  <div class="roster-header">
+    <h1>Stake Roster</h1>
+    <span class="roster-scope-label">Stake pool</span>
+  </div>
+  <div id="utilization-host"></div>
+  <div id="roster-table-host">Loading…</div>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  rpc('ApiStake_roster').then(function (resp) {
+    $('utilization-host').innerHTML = renderUtilizationBar(resp.summary);
+    $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
+      emptyMsg: 'No seats in the stake pool yet. Run the importer or add manual/temp seats once Chunk 6 ships.'
+    });
+  }).catch(function (err) {
+    var msg = (err && err.message) ? err.message : String(err);
+    $('roster-table-host').innerHTML =
+      '<div class="error">Could not load roster: ' + escapeHtml(msg) + '</div>';
+  });
+})();
+</script>

@@ -28,6 +28,113 @@
     });
   }
 
+  // HTML escaping for user-supplied strings. Chunk-5 roster rendering and
+  // every future chunk that renders dynamic rows routes string interpolation
+  // through this so pages don't have to keep redefining their own `esc`.
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Utilization bar for Chunk-5 roster pages. `summary` is whatever the
+  // ApiXxx_roster endpoints return in their .summary field
+  // (total_seats, seat_cap, utilization_pct, over_cap, ward_name). Handles
+  // the cap-missing case (renders a neutral "N seats" label without a
+  // progress bar) so ward rows with seat_cap unset don't break.
+  function renderUtilizationBar(summary) {
+    if (!summary) return '';
+    var total = Number(summary.total_seats) || 0;
+    var cap   = summary.seat_cap == null ? null : Number(summary.seat_cap);
+    if (cap == null || isNaN(cap) || cap <= 0) {
+      return '<div class="utilization">' +
+        '<div class="utilization-label">' +
+          '<span>' + total + ' seat' + (total === 1 ? '' : 's') + '</span>' +
+          '<span>(cap unset)</span>' +
+        '</div></div>';
+    }
+    var pct = Math.min(100, Math.round((total / cap) * 100));
+    var fillClass = 'utilization-fill';
+    if (summary.over_cap) fillClass += ' over';
+    else if (total / cap >= 0.9) fillClass += ' near';
+    var overFlag = summary.over_cap
+      ? '<span class="over-cap-flag">OVER CAP</span>'
+      : '';
+    return '<div class="utilization">' +
+      '<div class="utilization-label">' +
+        '<span>' + total + ' / ' + cap + ' seats used</span>' + overFlag +
+      '</div>' +
+      '<div class="utilization-bar">' +
+        '<div class="' + fillClass + '" style="width:' + pct + '%"></div>' +
+      '</div></div>';
+  }
+
+  // Single roster row → HTML <tr>. opts.showScope=true prepends a Scope
+  // column (for manager AllSeats; single-scope pages omit). The row shape
+  // is whatever Rosters_mapRow_ on the server returns (data-model.md Tab 8
+  // projection minus internal-only fields).
+  function rosterRowHtml(row, opts) {
+    opts = opts || {};
+    var typeBadge =
+      '<span class="roster-badge badge-type-' + escapeHtml(row.type) + '">' +
+        escapeHtml(row.type) + '</span>';
+    var expiryBadge = '';
+    if (row.expiry_badge === 'expired') {
+      expiryBadge = '<span class="roster-badge badge-expired">expired</span>';
+    } else if (row.expiry_badge === 'expires_today') {
+      expiryBadge = '<span class="roster-badge badge-expires-today">expires today</span>';
+    }
+    var scopeCell = opts.showScope
+      ? '<td><code>' + escapeHtml(row.scope) + '</code></td>'
+      : '';
+    // Display columns and their content by type:
+    //   auto   — calling_name in the "Calling / Reason" column
+    //   manual — reason
+    //   temp   — reason + start/end dates
+    var callingOrReason = '';
+    if (row.type === 'auto') {
+      callingOrReason = escapeHtml(row.calling_name);
+    } else {
+      callingOrReason = escapeHtml(row.reason || '');
+    }
+    var datesCell = '';
+    if (row.type === 'temp') {
+      var s = row.start_date ? escapeHtml(row.start_date) : '';
+      var e = row.end_date   ? escapeHtml(row.end_date)   : '';
+      datesCell = s + (s && e ? ' → ' : '') + e;
+    }
+    return '<tr class="type-' + escapeHtml(row.type) + '">' +
+      scopeCell +
+      '<td>' + typeBadge + expiryBadge + '</td>' +
+      '<td>' + escapeHtml(row.person_name || '') + '<br>' +
+        '<span class="roster-email" title="' + escapeHtml(row.person_email) + '">' +
+          escapeHtml(row.person_email) + '</span></td>' +
+      '<td>' + callingOrReason + '</td>' +
+      '<td>' + datesCell + '</td>' +
+      '<td>' + escapeHtml(row.building_names || '') + '</td>' +
+      '</tr>';
+  }
+
+  // Full table. opts.showScope (see rosterRowHtml) + opts.emptyMsg.
+  function renderRosterTable(rows, opts) {
+    opts = opts || {};
+    if (!rows || rows.length === 0) {
+      return '<div class="roster-empty">' +
+        escapeHtml(opts.emptyMsg || 'No seats in this roster.') +
+        '</div>';
+    }
+    var headers = '';
+    if (opts.showScope) headers += '<th>Scope</th>';
+    headers += '<th>Type</th><th>Person</th><th>Calling / Reason</th>' +
+               '<th>Dates</th><th>Buildings</th>';
+    var body = '';
+    for (var i = 0; i < rows.length; i++) {
+      body += rosterRowHtml(rows[i], opts);
+    }
+    return '<table class="roster-table"><thead><tr>' + headers +
+           '</tr></thead><tbody>' + body + '</tbody></table>';
+  }
+
   function toast(msg, kind) {
     var host = document.getElementById('toast-host');
     if (!host) {
