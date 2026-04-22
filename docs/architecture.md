@@ -504,8 +504,8 @@ export default {
 | Guards against concurrent writes | `core/Lock.gs` |
 | Reads/writes one Sheet tab | `repos/XxxRepo.gs` |
 | Orchestrates a business workflow | `services/Xxx.gs` |
-| Shared roster shape (row mapper + utilization) | `services/Rosters.gs` |
-| Request lifecycle (submit / complete / reject / cancel) | `services/RequestsService.gs` |
+| Shared roster shape (row mapper + utilization; row.removal_pending annotation) | `services/Rosters.gs` |
+| Request lifecycle (submit / complete / reject / cancel; remove branch with R-1 race auto-complete) | `services/RequestsService.gs` |
 | Typed mail wrappers + kill-switch | `services/EmailService.gs` (reads `Config.notifications_enabled`) |
 | Exposed to client via `google.script.run` | `api/ApiXxx.gs` (each endpoint takes the session token as first arg) |
 | Rendered to the user | `ui/**.html` |

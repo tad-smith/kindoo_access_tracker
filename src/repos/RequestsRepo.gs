@@ -14,6 +14,15 @@
 //   - Requests_insert(row)                        — full row, any status
 //   - Requests_update(request_id, patch)          — limited field set only
 //
+// Chunk 7 additions:
+//   - Requests_getPendingRemoveByScopeAndEmail(scope, email)
+//       Single-row lookup for the "removal pending" badge on roster pages
+//       and for the duplicate-remove guard in RequestsService_submit.
+//   - `completion_note` column on every row (data-model.md Tab 9). Used by
+//     RequestsService_complete on the R-1 race ("seat already removed at
+//     completion time — no-op") so the audit trail stays honest without
+//     overloading rejection_reason. Mutable via Requests_update.
+//
 // There is intentionally NO Requests_delete — cancelled / rejected /
 // completed rows persist so the audit trail holds. State machine transitions
 // (pending → complete / rejected / cancelled) are enforced one layer up in
@@ -34,7 +43,8 @@ const REQUESTS_HEADERS_ = [
   'status',
   'requester_email', 'requested_at',
   'completer_email', 'completed_at',
-  'rejection_reason'
+  'rejection_reason',
+  'completion_note'
 ];
 
 // Fields Requests_update will accept. The rest of a request row (type,
@@ -42,11 +52,16 @@ const REQUESTS_HEADERS_ = [
 // inserted — changing any of them would rewrite history. If a requester
 // changes their mind they cancel and submit a new request; if a manager
 // needs a different add, they reject with reason and wait for a resubmit.
+//
+// completion_note (Chunk 7) carries the R-1 "seat already removed at
+// completion time" note. Distinct from rejection_reason so the audit log
+// can tell a no-op apart from a manager-initiated rejection.
 const REQUESTS_MUTABLE_FIELDS_ = {
   status:           true,
   completer_email:  true,
   completed_at:     true,
-  rejection_reason: true
+  rejection_reason: true,
+  completion_note:  true
 };
 
 const REQUESTS_VALID_STATUSES_ = {
@@ -59,9 +74,10 @@ const REQUESTS_VALID_STATUSES_ = {
 const REQUESTS_VALID_TYPES_ = {
   add_manual: true,
   add_temp:   true,
-  remove:     true  // reserved for Chunk 7; inserted here so the repo
-                    // can hold remove rows once Chunk 7 ships without
-                    // another schema pass.
+  remove:     true  // Chunk 7: live request type. Roster X/trashcan submits
+                    // these; RequestsService_complete deletes the matching
+                    // Seats row (or auto-completes with a note if the seat
+                    // is already gone — see R-1).
 };
 
 function Requests_getAll() {
@@ -110,6 +126,32 @@ function Requests_getByRequesterAndScope(email, scope) {
   return out;
 }
 
+// Chunk 7: lookup the (at most one) pending `remove` request matching
+// (scope, target_email). Used by:
+//   - RequestsService_submit('remove', …) to refuse duplicate submits.
+//   - Rosters_buildResponseForScope to flag the row's `removal_pending`
+//     badge so the X/trashcan can render disabled.
+//   - ApiManager_listRequests for symmetric defence (a pending remove
+//     against an already-removed seat shows the no-op indicator).
+//
+// Canonical-email match via Utils_emailsEqual, so a `first.last@gmail.com`
+// roster row and a `firstlast@gmail.com` request still resolve to the
+// same person. Returns the first match (there should be at most one;
+// the submit-time guard enforces it).
+function Requests_getPendingRemoveByScopeAndEmail(scope, email) {
+  if (!scope || !email) return null;
+  var scopeKey = String(scope);
+  var all = Requests_readAll_();
+  for (var i = 0; i < all.length; i++) {
+    var r = all[i];
+    if (r.status !== 'pending') continue;
+    if (r.type !== 'remove') continue;
+    if (r.scope !== scopeKey) continue;
+    if (Utils_emailsEqual(r.target_email, email)) return r;
+  }
+  return null;
+}
+
 // Insert a fresh Request row. Caller is responsible for generating
 // request_id (so services can return it without a round-trip), setting
 // `status`, `requester_email`, and `requested_at`. This keeps the repo
@@ -151,7 +193,7 @@ function Requests_insert(row) {
     toWrite.status,
     toWrite.requester_email, toWrite.requested_at,
     toWrite.completer_email, toWrite.completed_at,
-    toWrite.rejection_reason
+    toWrite.rejection_reason, toWrite.completion_note
   ]);
   return toWrite;
 }
@@ -172,7 +214,7 @@ function Requests_update(requestId, patch) {
     if (!patch.hasOwnProperty(k)) continue;
     if (!REQUESTS_MUTABLE_FIELDS_[k]) {
       throw new Error('Requests_update: cannot modify "' + k + '" — ' +
-        'only status / completer_email / completed_at / rejection_reason are mutable.');
+        'only status / completer_email / completed_at / rejection_reason / completion_note are mutable.');
     }
   }
   if (patch.status != null && !REQUESTS_VALID_STATUSES_[patch.status]) {
@@ -201,7 +243,8 @@ function Requests_update(requestId, patch) {
       requested_at:     before.requested_at,
       completer_email:  patch.completer_email  != null ? Utils_cleanEmail(patch.completer_email) : before.completer_email,
       completed_at:     patch.completed_at     != null ? patch.completed_at             : before.completed_at,
-      rejection_reason: patch.rejection_reason != null ? String(patch.rejection_reason) : before.rejection_reason
+      rejection_reason: patch.rejection_reason != null ? String(patch.rejection_reason) : before.rejection_reason,
+      completion_note:  patch.completion_note  != null ? String(patch.completion_note)  : before.completion_note
     };
     sheet.getRange(i + 1, 1, 1, REQUESTS_HEADERS_.length).setValues([[
       after.request_id, after.type, after.scope,
@@ -211,7 +254,7 @@ function Requests_update(requestId, patch) {
       after.status,
       after.requester_email, after.requested_at,
       after.completer_email, after.completed_at,
-      after.rejection_reason
+      after.rejection_reason, after.completion_note
     ]]);
     return { before: before, after: after };
   }
@@ -262,7 +305,8 @@ function Requests_rowToObject_(row) {
     requested_at:     row[11] instanceof Date ? row[11] : (row[11] == null ? null : row[11]),
     completer_email:  Utils_cleanEmail(String(row[12] == null ? '' : row[12])),
     completed_at:     row[13] instanceof Date ? row[13] : (row[13] == null ? null : row[13]),
-    rejection_reason: String(row[14] == null ? '' : row[14])
+    rejection_reason: String(row[14] == null ? '' : row[14]),
+    completion_note:  String(row[15] == null ? '' : row[15])
   };
 }
 
@@ -282,6 +326,7 @@ function Requests_normaliseInput_(row) {
     requested_at:     row.requested_at instanceof Date ? row.requested_at : (row.requested_at == null ? '' : row.requested_at),
     completer_email:  row.completer_email == null ? '' : Utils_cleanEmail(row.completer_email),
     completed_at:     row.completed_at instanceof Date ? row.completed_at : (row.completed_at == null ? '' : row.completed_at),
-    rejection_reason: row.rejection_reason == null ? '' : String(row.rejection_reason)
+    rejection_reason: row.rejection_reason == null ? '' : String(row.rejection_reason),
+    completion_note:  row.completion_note == null ? '' : String(row.completion_note)
   };
 }

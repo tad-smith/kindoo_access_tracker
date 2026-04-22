@@ -50,10 +50,12 @@ function EmailService_notifyManagersNewRequest(request, requesterPrincipal) {
     : (request.requester_email || 'a requester');
   var targetLabel = EmailService_personLabel_(request.target_name, request.target_email);
   var typeLabel = EmailService_typeLabel_(request.type);
+  var isRemove = request.type === 'remove';
+  var verb = isRemove ? 'requested removal of' : ('submitted a new ' + typeLabel + ' request for');
 
   var subject = '[Kindoo Access] New request from ' + requesterLabel + ' (' + scopeLabel + ')';
   var lines = [
-    requesterLabel + ' submitted a new ' + typeLabel + ' request for ' + targetLabel + '.',
+    requesterLabel + ' ' + verb + ' ' + targetLabel + '.',
     '',
     'Scope: ' + scopeLabel,
     'Type: ' + typeLabel,
@@ -82,10 +84,16 @@ function EmailService_notifyRequesterCompleted(request, managerPrincipal, seat) 
   var targetLabel = EmailService_personLabel_(request.target_name, request.target_email);
   var typeLabel = EmailService_typeLabel_(request.type);
   var managerLabel = managerPrincipal && managerPrincipal.email ? managerPrincipal.email : 'a Kindoo Manager';
+  var isRemove = request.type === 'remove';
 
-  var subject = '[Kindoo Access] Your request for ' + (request.target_email || 'a user') + ' has been completed';
+  // Subject line names the action so the requester's inbox shows
+  // "completed" / "removed" rather than always "completed".
+  var subjectVerb = isRemove ? 'has been processed' : 'has been completed';
+  var subject = '[Kindoo Access] Your ' + (isRemove ? 'removal request' : 'request') +
+    ' for ' + (request.target_email || 'a user') + ' ' + subjectVerb;
+  var leadVerb = isRemove ? 'processed your removal request for' : ('marked your ' + typeLabel + ' request for');
   var lines = [
-    managerLabel + ' marked your ' + typeLabel + ' request for ' + targetLabel + ' as complete.',
+    managerLabel + ' ' + leadVerb + ' ' + targetLabel + (isRemove ? '.' : ' as complete.'),
     '',
     'Scope: ' + scopeLabel,
     'Target: ' + targetLabel
@@ -95,6 +103,12 @@ function EmailService_notifyRequesterCompleted(request, managerPrincipal, seat) 
     lines.push('End:   ' + (seat.end_date   || '(unset)'));
   }
   if (request.reason) lines.push('Reason: ' + request.reason);
+  // R-1 no-op note: tell the requester nothing visibly changed so they
+  // don't wonder why the roster looks the same.
+  if (request.completion_note) {
+    lines.push('');
+    lines.push('Note: ' + request.completion_note);
+  }
   lines.push('');
   lines.push('See your requests: ' + EmailService_myRequestsLink_());
 
@@ -112,10 +126,12 @@ function EmailService_notifyRequesterRejected(request, managerPrincipal, reason)
   var targetLabel = EmailService_personLabel_(request.target_name, request.target_email);
   var typeLabel = EmailService_typeLabel_(request.type);
   var managerLabel = managerPrincipal && managerPrincipal.email ? managerPrincipal.email : 'a Kindoo Manager';
+  var isRemove = request.type === 'remove';
 
-  var subject = '[Kindoo Access] Your request was rejected';
+  var subject = '[Kindoo Access] Your ' + (isRemove ? 'removal request' : 'request') + ' was rejected';
+  var leadVerb = isRemove ? 'rejected your removal request for' : ('rejected your ' + typeLabel + ' request for');
   var lines = [
-    managerLabel + ' rejected your ' + typeLabel + ' request for ' + targetLabel + '.',
+    managerLabel + ' ' + leadVerb + ' ' + targetLabel + '.',
     '',
     'Scope: ' + scopeLabel,
     'Target: ' + targetLabel,
@@ -144,10 +160,14 @@ function EmailService_notifyManagersCancelled(request, requesterPrincipal) {
   var requesterLabel = requesterPrincipal && requesterPrincipal.email
     ? requesterPrincipal.email
     : (request.requester_email || 'a requester');
+  var isRemove = request.type === 'remove';
 
   var subject = '[Kindoo Access] Request cancelled by ' + requesterLabel;
+  var leadVerb = isRemove
+    ? 'cancelled their pending removal request for'
+    : ('cancelled their pending ' + typeLabel + ' request for');
   var lines = [
-    requesterLabel + ' cancelled their pending ' + typeLabel + ' request for ' + targetLabel + '.',
+    requesterLabel + ' ' + leadVerb + ' ' + targetLabel + '.',
     '',
     'Scope: ' + scopeLabel,
     'Target: ' + targetLabel,

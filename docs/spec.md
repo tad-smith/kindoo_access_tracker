@@ -114,7 +114,7 @@ A user can hold multiple roles; the UI shows the union.
 
 ### 5.1 Bishopric (scoped to own ward)
 
-- **Roster** — active ward seats. All rows show calling + person (auto rows included). Manual/temp rows show reason; temp rows show dates. Each manual/temp row has an X/trashcan; clicking opens "Remove access for [person]? Reason:" and submits a `remove` Request. Row shows "removal pending" badge once submitted. Utilization bar: "14 of 20 seats used." *(Remove X/trashcan is Chunk 7.)*
+- **Roster** — active ward seats. All rows show calling + person (auto rows included). Manual/temp rows show reason; temp rows show dates. Each manual/temp row has an X/trashcan; clicking opens "Remove access for [person]?" with a required reason field and submits a `remove` Request via the shared `ApiRequests_submit` endpoint. Once submitted, the row's X is replaced by a "removal pending" badge so the requester can't double-submit (server-side `RequestsService_submit` reinforces the rule by refusing a duplicate pending remove for the same `(scope, person_email)` pair). Auto rows render no X — auto seats track LCR callings and are removed by the next import after the calling change in LCR. Utilization bar: "14 of 20 seats used."
 - **New Kindoo Request** — shared template `ui/NewRequest` (same page for bishopric and stake principals; scope is derived from the principal's roles, not the route). Form: add_manual / add_temp. Fields: target email (required), target name, reason (required), comment (multi-building notes etc.), dates (if temp). Client-side duplicate check via `ApiRequests_checkDuplicate` warns when the target already has a seat in the selected scope (inline render via the shared `rosterRowHtml` helper). Warns; does not block. Principals holding more than one request-capable role (bishopric+stake, or multiple bishoprics) see a "Requesting for:" scope dropdown at the top; single-role principals see an implicit scope label.
 - **My Requests** — shared template `ui/MyRequests`. Shows the current user's submitted requests with status; Cancel button on pending rows; rejection reason surfaced on rejected rows. Multi-role principals see a scope filter dropdown (including an "All" option); single-role principals see their requests directly.
 
@@ -158,7 +158,10 @@ State machine (pending is the only admissible starting state; each terminal stat
 
 Attempting to complete / reject / cancel a non-pending request returns a clean "Request is no longer pending (current status: X)" error, not a stack trace — the typical cause is a stale queue page (another manager processed the request between page load and click).
 
-Remove-requests (Chunk 7) follow the same lifecycle; the `complete` action deletes the matching `Seats` row instead of inserting.
+Remove-requests follow the same lifecycle; the `complete` action deletes the matching `Seats` row instead of inserting. Two extra rules apply only to remove:
+
+- **R-1 race (seat already gone at completion time).** If the matching seat is missing when a manager clicks Complete (a duplicate remove already ran, or — once Chunk 8 ships — the daily expiry trigger removed a temp seat between submit and complete, or the row was edited out of the Sheet by hand), the request still flips to `complete` so the requester's ask is closed out. A `completion_note` of `"Seat already removed at completion time (no-op)."` is stamped on the Request row, only ONE AuditLog row is written (`complete_request` on the Request — there's no Seat to delete and therefore no Seat audit row), and the requester's completion email body mentions the no-op so they aren't confused that nothing visibly changed.
+- **Submit-time guards.** A remove submit is rejected server-side if (a) no active manual/temp seat exists for `(scope, target_email)` (open-questions.md R-3 — auto seats are LCR-managed and not removable via this path; a stale roster page is the typical cause), or (b) another remove request for the same `(scope, target_email)` is already pending. Both surfaces also gate at the UI (the X is only rendered on manual/temp rows, and is disabled when `removal_pending` is set), but the server-side check defends against a stale roster page or a crafted rpc.
 
 ## 7. Temporary-seat expiry
 
@@ -199,7 +202,7 @@ Runs weekly (trigger) and on-demand ("Import Now" button on the Manager's Import
 
 ## 9. Email notifications
 
-Four request-lifecycle notifications ship in Chunk 6, plus an over-cap notification in Chunk 9. All use `MailApp.sendEmail` from the deployer's identity (Main runs `executeAs: USER_DEPLOYING`), with a display-name of `"<stake_name> — Kindoo Access"` when `Config.stake_name` is set. Bodies are plain text; every email includes a link back to the relevant app page.
+Four request-lifecycle notifications ship in Chunk 6 and cover every request type — `add_manual`, `add_temp`, and `remove` (Chunk 7). Body copy is type-aware (the lead verb reads "submitted a new manual-add request" vs "requested removal of"); the four templates and their triggers don't change. An over-cap notification is added in Chunk 9. All use `MailApp.sendEmail` from the deployer's identity (Main runs `executeAs: USER_DEPLOYING`), with a display-name of `"<stake_name> — Kindoo Access"` when `Config.stake_name` is set. Bodies are plain text; every email includes a link back to the relevant app page. The completion email for a remove request that hit the R-1 race carries a `Note:` line surfacing `Requests.completion_note` so the requester knows nothing visibly changed.
 
 | Trigger | Recipients | Subject | Link back |
 | --- | --- | --- | --- |

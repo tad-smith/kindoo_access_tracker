@@ -60,6 +60,13 @@
              escapeHtml(status) + '</span>';
   }
 
+  function typeLabel(type) {
+    if (type === 'add_manual') return 'Add (manual)';
+    if (type === 'add_temp')   return 'Add (temp)';
+    if (type === 'remove')     return 'Remove';
+    return String(type);
+  }
+
   function rowHtml(row) {
     var type = row.type;
     var dates = '';
@@ -77,11 +84,17 @@
     } else if (row.status === 'rejected' && row.rejection_reason) {
       actions = '<span class="rejection-reason-hint" title="' +
         escapeHtml(row.rejection_reason) + '">why?</span>';
+    } else if (row.status === 'complete' && row.completion_note) {
+      // Chunk 7: surface the R-1 no-op note ("Seat already removed at
+      // completion time") so a requester who got a "done" email isn't
+      // confused that nothing visibly changed on the roster.
+      actions = '<span class="completion-note-hint" title="' +
+        escapeHtml(row.completion_note) + '">note</span>';
     }
     return '<tr class="req-row status-row-' + escapeHtml(row.status) + '">' +
       '<td>' + escapeHtml(row.requested_at || '') + '</td>' +
       '<td><code>' + escapeHtml(row.scope) + '</code></td>' +
-      '<td>' + escapeHtml(type) + '</td>' +
+      '<td>' + escapeHtml(typeLabel(type)) + '</td>' +
       '<td>' + target + '</td>' +
       '<td>' + escapeHtml(row.reason || '') + '</td>' +
       '<td>' + dates + '</td>' +
@@ -130,6 +143,16 @@
       function (el) {
         el.addEventListener('click', function () {
           alert(el.getAttribute('title') || '(no reason given)');
+        });
+      }
+    );
+
+    // Same affordance for the completion_note (R-1 no-op note).
+    Array.prototype.forEach.call(
+      $('my-requests-host').querySelectorAll('.completion-note-hint'),
+      function (el) {
+        el.addEventListener('click', function () {
+          alert(el.getAttribute('title') || '(no note)');
         });
       }
     );

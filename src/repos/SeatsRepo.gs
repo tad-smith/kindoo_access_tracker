@@ -23,7 +23,10 @@
 //                                       the UI does not expose an edit
 //                                       affordance on them.
 //
-// Chunk 7 will add Seats_deleteById for the remove-request complete path.
+// Chunk 7 adds:
+//   - Seats_deleteById(seat_id)     — single-row delete by PK for the
+//     remove-request complete path. Caller (RequestsService_complete) owns
+//     the lock and the AuditLog write per the repo/service boundary.
 //
 // Emails are stored as typed per architecture.md D4 (Utils_cleanEmail — trim
 // only). source_row_hash is computed on the canonical form (Utils_hashRow)
@@ -217,8 +220,8 @@ function Seats_insert(row) {
 //
 // Immutable: seat_id, scope, type, person_email, calling_name,
 // source_row_hash, created_by, created_at. Changing any of them means a
-// different seat; the right path is delete + insert (Chunk 7 handles
-// delete). Refusing here defends the audit trail (a patch that looked
+// different seat; the right path is delete (Seats_deleteById, Chunk 7)
+// + insert. Refusing here defends the audit trail (a patch that looked
 // like `{person_email: 'new@example.com'}` would turn a seat into a new
 // person silently).
 //
@@ -301,6 +304,35 @@ function Seats_update(seatId, patch) {
     return { before: before, after: after };
   }
   throw new Error('Seats_update: no seat with seat_id "' + seatId + '"');
+}
+
+// Chunk 7: delete a row by seat_id. Returns the deleted object, or null
+// if no row matched (the caller — RequestsService_complete on a remove
+// request — interprets the null as the R-1 race: the seat was already
+// gone by the time complete fired). Symmetric with Seats_getById /
+// Seats_update — same lookup, but the row is removed rather than mutated.
+//
+// No type guard here. Auto rows are theoretically removable via this path
+// (the service layer guarantees that won't happen — remove requests are
+// rejected on submit if they target an auto row, see RequestsService_submit
+// and ApiBishopric / ApiStake roster pages, which only render the X on
+// manual/temp rows). Keeping the repo dumb means a future "force-delete
+// auto seat" surface (none planned) doesn't have to fight the repo.
+function Seats_deleteById(seatId) {
+  if (!seatId) throw new Error('Seats_deleteById: seat_id required');
+  var key = String(seatId);
+  var sheet = Seats_sheet_();
+  var data = sheet.getDataRange().getValues();
+  if (data.length === 0) return null;
+  Seats_assertHeaders_(data[0]);
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === '' || data[i][0] == null) continue;
+    if (String(data[i][0]) !== key) continue;
+    var before = Seats_rowToObject_(data[i]);
+    sheet.deleteRow(i + 1);
+    return before;
+  }
+  return null;
 }
 
 // Delete the first auto-row whose source_row_hash equals `hash`. Returns

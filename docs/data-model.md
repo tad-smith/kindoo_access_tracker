@@ -238,16 +238,18 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 | `requested_at` | timestamp | |
 | `completer_email` | string | Set on `complete` or `rejected` (the manager's email). Left blank on `cancelled` — the cancel is a requester action, not a completer action; the audit row carries the same information. |
 | `completed_at` | timestamp | Set on every terminal transition (`complete`, `rejected`, `cancelled`) — the name is kept from the original spec but the semantic is "when the lifecycle ended", not strictly "when the manager completed it". |
-| `rejection_reason` | string | Required on `rejected`. |
+| `rejection_reason` | string | Required on `rejected`. **Scoped to the rejection action only** — the R-1 no-op note for completed `remove` requests goes in `completion_note` instead, so a triage filter on rejection reasons doesn't pick up unrelated completion artefacts. |
+| `completion_note` | string | Optional. Populated on `complete` for special-case outcomes that aren't captured by the request fields themselves. Currently used for the Chunk-7 R-1 race ("seat already removed at completion time — no-op") so the audit log can tell a real removal apart from a no-op completion. Empty on every other terminal state and on the normal complete path. |
 
 ### Example rows
 
-| request_id | type | scope | target_email | target_name | reason | comment | start_date | end_date | status | requester_email | requested_at | completer_email | completed_at | rejection_reason |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `r1…` | `add_manual` | `CO` | `frank@example.org` | `Frank Pierce` | `Youth activity coordinator` | `Needs access on Tuesdays after 6pm.` | | | `complete` | `alice@example.org` | `2026-04-10 17:55:11` | `bob@example.org` | `2026-04-10 19:03:02` | |
-| `r2…` | `add_temp` | `CO` | `guest@example.com` | `Mark Long` | `Visiting facilities crew` | | `2026-04-20` | `2026-04-27` | `pending` | `alice@example.org` | `2026-04-18 13:45:20` | | | |
-| `r3…` | `remove` | `CO` | `frank@example.org` | `Frank Pierce` | `No longer serving in that capacity` | | | | `pending` | `alice@example.org` | `2026-04-19 09:00:00` | | | |
-| `r4…` | `add_manual` | `stake` | `grace@example.org` | `Grace Woo` | `Stake activity chair` | | | | `rejected` | `pat@example.org` | `2026-04-15 11:30:00` | `bob@example.org` | `2026-04-16 08:12:55` | `Stake pool full — please resubmit after next quarter.` |
+| request_id | type | scope | target_email | target_name | reason | comment | start_date | end_date | status | requester_email | requested_at | completer_email | completed_at | rejection_reason | completion_note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `r1…` | `add_manual` | `CO` | `frank@example.org` | `Frank Pierce` | `Youth activity coordinator` | `Needs access on Tuesdays after 6pm.` | | | `complete` | `alice@example.org` | `2026-04-10 17:55:11` | `bob@example.org` | `2026-04-10 19:03:02` | | |
+| `r2…` | `add_temp` | `CO` | `guest@example.com` | `Mark Long` | `Visiting facilities crew` | | `2026-04-20` | `2026-04-27` | `pending` | `alice@example.org` | `2026-04-18 13:45:20` | | | | |
+| `r3…` | `remove` | `CO` | `frank@example.org` | `Frank Pierce` | `No longer serving in that capacity` | | | | `pending` | `alice@example.org` | `2026-04-19 09:00:00` | | | | |
+| `r4…` | `add_manual` | `stake` | `grace@example.org` | `Grace Woo` | `Stake activity chair` | | | | `rejected` | `pat@example.org` | `2026-04-15 11:30:00` | `bob@example.org` | `2026-04-16 08:12:55` | `Stake pool full — please resubmit after next quarter.` | |
+| `r5…` | `remove` | `CO` | `mark@example.org` | `Mark Long` | `Done with assignment` | | | | `complete` | `alice@example.org` | `2026-04-22 09:10:00` | `bob@example.org` | `2026-04-22 10:02:14` | | `Seat already removed at completion time (no-op).` |
 
 ---
 

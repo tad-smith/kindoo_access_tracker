@@ -49,6 +49,7 @@
         <option value="">All</option>
         <option value="add_manual">add_manual</option>
         <option value="add_temp">add_temp</option>
+        <option value="remove">remove</option>
       </select>
     </label>
     <span class="queue-count" id="queue-count"></span>
@@ -66,7 +67,7 @@
     <div class="complete-modal-inner">
       <h2>Complete request</h2>
       <div id="cm-summary" class="complete-modal-summary"></div>
-      <div class="form-row">
+      <div class="form-row" id="cm-buildings-row">
         <div class="label"><strong>Buildings assigned to this seat:</strong></div>
         <div id="cm-buildings-list" class="cm-buildings-list"></div>
         <div class="cm-buildings-hint">
@@ -168,9 +169,14 @@
 
   function requestCardHtml(req) {
     var isPending = req.status === 'pending';
+    var isRemove  = req.type === 'remove';
 
+    // duplicate_existing only matters for add_manual / add_temp (managers
+    // use it to spot a person already seated). For remove, the analogous
+    // signal is current_seat — we render the live row that will be
+    // deleted, or an "already removed (no-op)" indicator if it's gone.
     var dupBlock = '';
-    if (isPending && req.duplicate_existing && req.duplicate_existing.length > 0) {
+    if (isPending && !isRemove && req.duplicate_existing && req.duplicate_existing.length > 0) {
       dupBlock =
         '<div class="duplicate-warning">' +
           '<strong>Duplicate:</strong> target already has ' +
@@ -201,11 +207,41 @@
     var actionsBlock = '';
     var resolvedBlock = '';
     if (isPending) {
-      previewBlock =
-        '<div class="queue-field queue-preview">' +
-          '<div class="label">Seat preview (what will be created on Complete):</div>' +
-          renderRosterTable([previewSeatRow(req)], { emptyMsg: '' }) +
-        '</div>';
+      if (isRemove) {
+        if (req.current_seat_status === 'removable' && req.current_seat) {
+          previewBlock =
+            '<div class="queue-field queue-preview">' +
+              '<div class="label">Seat to delete on Complete:</div>' +
+              renderRosterTable([req.current_seat], { emptyMsg: '', preview: 'remove' }) +
+            '</div>';
+        } else if (req.current_seat_status === 'auto_only') {
+          previewBlock =
+            '<div class="queue-field queue-preview">' +
+              '<div class="noop-warning">' +
+                '<strong>Only an LCR-managed seat remains</strong> — no manual/temp seat to delete. ' +
+                'Complete will close the request without changing the roster (the auto seat stays; ' +
+                'remove the calling in LCR if access should end).' +
+              '</div>' +
+            '</div>';
+        } else {
+          // current_seat_status === 'none' (R-1 race) — also covers an
+          // older queue payload missing the status field.
+          previewBlock =
+            '<div class="queue-field queue-preview">' +
+              '<div class="noop-warning">' +
+                '<strong>Seat already removed.</strong> ' +
+                'Complete is a no-op — the request will close without deleting anything ' +
+                '(the requester still gets a completion email noting that nothing changed).' +
+              '</div>' +
+            '</div>';
+        }
+      } else {
+        previewBlock =
+          '<div class="queue-field queue-preview">' +
+            '<div class="label">Seat preview (what will be created on Complete):</div>' +
+            renderRosterTable([previewSeatRow(req)], { emptyMsg: '' }) +
+          '</div>';
+      }
       actionsBlock =
         '<div class="queue-card-actions">' +
           '<button class="btn"            data-act="complete">Mark Complete</button>' +
@@ -226,13 +262,18 @@
         ? '<div class="queue-field"><span class="label">Rejection reason:</span> ' +
           escapeHtml(req.rejection_reason) + '</div>'
         : '';
+      var completionNoteLine = req.completion_note
+        ? '<div class="queue-field"><span class="label">Note:</span> ' +
+          escapeHtml(req.completion_note) + '</div>'
+        : '';
       resolvedBlock =
         '<div class="queue-field"><span class="label">Status:</span> ' +
           '<span class="status-badge status-' + escapeHtml(req.status) + '">' +
             escapeHtml(req.status) + '</span>' +
         '</div>' +
         resolverLine +
-        rejectionLine;
+        rejectionLine +
+        completionNoteLine;
     }
 
     return '<div class="queue-card queue-card-status-' + escapeHtml(req.status) +
@@ -337,8 +378,10 @@
       toast('Request not found in the current view.', 'error');
       return;
     }
+    var isRemove = req.type === 'remove';
     // Summary — echoes the card fields so the manager has everything
-    // in one focused frame while deciding on buildings.
+    // in one focused frame while deciding on buildings (or confirming
+    // a removal).
     var dates = req.type === 'add_temp'
       ? (escapeHtml(req.start_date || '?') + ' → ' + escapeHtml(req.end_date || '?'))
       : '';
@@ -351,36 +394,68 @@
       '<div class="queue-field"><span class="label">Reason:</span> ' + escapeHtml(req.reason || '') + '</div>' +
       (req.comment ? '<div class="queue-field"><span class="label">Comment:</span> ' + escapeHtml(req.comment) + '</div>' : '') +
       (dates ? '<div class="queue-field"><span class="label">Dates:</span> ' + dates + '</div>' : '');
+    if (isRemove) {
+      if (req.current_seat_status === 'removable' && req.current_seat) {
+        summaryHtml +=
+          '<div class="queue-field queue-preview">' +
+            '<div class="label">Seat that will be deleted:</div>' +
+            renderRosterTable([req.current_seat], { emptyMsg: '', preview: 'remove' }) +
+          '</div>';
+      } else if (req.current_seat_status === 'auto_only') {
+        summaryHtml +=
+          '<div class="noop-warning">' +
+            '<strong>Only an LCR-managed seat remains.</strong> Complete will close ' +
+            'the request without changing the roster — the auto seat stays in place ' +
+            '(remove the calling in LCR if access should end).' +
+          '</div>';
+      } else {
+        summaryHtml +=
+          '<div class="noop-warning">' +
+            '<strong>Seat already removed.</strong> Complete is a no-op — ' +
+            'the request will close without deleting anything.' +
+          '</div>';
+      }
+    }
     $('cm-summary').innerHTML = summaryHtml;
 
-    // Building checkboxes — every Buildings.building_name as a
-    // checkbox, with the ward's default pre-ticked (nothing for
-    // stake). Empty catalogue (no Buildings configured yet) surfaces
-    // a hint rather than a blank area.
-    var defaultBuilding = defaultBuildingFor(req.scope);
-    var listHost = $('cm-buildings-list');
-    if (buildingsCatalogue.length === 0) {
-      listHost.innerHTML =
-        '<div class="cm-buildings-empty">No Buildings configured. ' +
-        'Add buildings via Configuration to assign them here, or proceed ' +
-        'with no buildings and edit this seat later on All Seats.</div>';
+    var buildingsRow = $('cm-buildings-row');
+    if (isRemove) {
+      // Remove requests don't insert a Seats row, so the buildings
+      // selector is irrelevant — hide it entirely.
+      buildingsRow.classList.add('hidden');
     } else {
-      var html = '';
-      for (var i = 0; i < buildingsCatalogue.length; i++) {
-        var b = buildingsCatalogue[i];
-        var checked = b === defaultBuilding ? ' checked' : '';
-        html +=
-          '<label class="cm-building-row">' +
-            '<input type="checkbox" value="' + escapeHtml(b) + '"' + checked + '> ' +
-            escapeHtml(b) +
-          '</label>';
+      buildingsRow.classList.remove('hidden');
+      // Building checkboxes — every Buildings.building_name as a
+      // checkbox, with the ward's default pre-ticked (nothing for
+      // stake). Empty catalogue (no Buildings configured yet) surfaces
+      // a hint rather than a blank area.
+      var defaultBuilding = defaultBuildingFor(req.scope);
+      var listHost = $('cm-buildings-list');
+      if (buildingsCatalogue.length === 0) {
+        listHost.innerHTML =
+          '<div class="cm-buildings-empty">No Buildings configured. ' +
+          'Add buildings via Configuration to assign them here, or proceed ' +
+          'with no buildings and edit this seat later on All Seats.</div>';
+      } else {
+        var html = '';
+        for (var i = 0; i < buildingsCatalogue.length; i++) {
+          var b = buildingsCatalogue[i];
+          var checked = b === defaultBuilding ? ' checked' : '';
+          html +=
+            '<label class="cm-building-row">' +
+              '<input type="checkbox" value="' + escapeHtml(b) + '"' + checked + '> ' +
+              escapeHtml(b) +
+            '</label>';
+        }
+        listHost.innerHTML = html;
       }
-      listHost.innerHTML = html;
     }
 
     $('complete-modal').setAttribute('data-request-id', reqId);
+    $('complete-modal').setAttribute('data-request-type', req.type);
     $('complete-modal').classList.remove('hidden');
     $('cm-confirm-btn').disabled = false;
+    $('cm-confirm-btn').textContent = isRemove ? 'Confirm and delete seat' : 'Confirm and complete';
   }
 
   function closeCompleteModal() {
@@ -403,11 +478,20 @@
   });
   $('cm-confirm-btn').addEventListener('click', function () {
     var reqId = $('complete-modal').getAttribute('data-request-id');
+    var reqType = $('complete-modal').getAttribute('data-request-type');
     if (!reqId) return;
-    var selection = currentBuildingSelection().join(',');
+    // Removes don't insert a seat → no building_names override.
+    var overrides = (reqType === 'remove')
+      ? null
+      : { building_names: currentBuildingSelection().join(',') };
     this.disabled = true;
-    rpc('ApiManager_completeRequest', reqId, { building_names: selection }).then(function (resp) {
-      toast('Request completed and seat created.', 'success');
+    rpc('ApiManager_completeRequest', reqId, overrides).then(function (resp) {
+      var msg = (resp && resp.noop)
+        ? 'Request closed (seat was already removed — no change made).'
+        : (reqType === 'remove'
+            ? 'Request completed and seat deleted.'
+            : 'Request completed and seat created.');
+      toast(msg, 'success');
       if (resp && resp.warning) toast(resp.warning, 'warn');
       closeCompleteModal();
       load();

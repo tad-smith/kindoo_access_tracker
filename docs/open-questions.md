@@ -219,11 +219,18 @@ Confirmed to be a real problem in the LCR data. **Ship v1 with Gmail-aware compa
 
 ## Request lifecycle
 
-### R-1 `[P1]` Race: complete a `remove` when the seat is already gone
+### R-1 `[RESOLVED 2026-04-21]` Race: complete a `remove` when the seat is already gone
 
-Two managers, or a temp-seat expiry trigger, could delete the seat between the bishopric submitting `remove` and a manager completing it.
+**Decision (Chunk 7):** auto-complete the request and stamp a note. Concretely, when `RequestsService_complete` runs against a `remove` request and `Seats_getActiveByScopeAndEmail` returns no removable row (auto-only matches don't count — those would have been rejected at submit per R-3), the service:
 
-**Best guess:** If the seat is already gone at completion time, auto-complete the request with a `reason`-suffixed note ("seat no longer present — nothing to do") rather than erroring. Requester email should still go out.
+1. Flips the Request to `complete` with `completer_email` / `completed_at` set.
+2. Stamps `Requests.completion_note` with the literal `"Seat already removed at completion time (no-op)."` — distinct from `rejection_reason` so the audit log can tell a no-op apart from a manager-initiated rejection.
+3. Emits ONE AuditLog row (`complete_request` on the Request — there is no Seat to delete and therefore no Seat audit row, which is correct: nothing actually changed).
+4. Returns `{ request, noop: true }`. The API layer still sends `notifyRequesterCompleted`, whose body reads `request.completion_note` and surfaces the no-op so the requester knows nothing visibly changed.
+
+The note column added in Chunk 7 means we never overload `rejection_reason`; the latter stays scoped to `rejected` outcomes for clean filtering.
+
+Sources of the race covered: (a) two managers completing duplicate remove requests near-simultaneously (the duplicate-pending guard in `RequestsService_submit` makes (a) rare, but possible if a stale roster smuggled past the client check); (b) Chunk 8's daily expiry trigger removing a temp seat between submit and Complete; (c) belt-and-braces against a defensive Sheet hand-edit. (See `chunk-7-removals.md` "Decisions made" for the storage-column choice rationale and the tested behaviour.)
 
 ### R-2 `[P1]` Race: complete `add_manual` when the target already has a manual seat
 

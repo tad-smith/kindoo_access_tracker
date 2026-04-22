@@ -944,6 +944,109 @@
     margin-top: 14px;
   }
 
+  /* Removal flow (Chunk 7): X/trashcan, removal-pending badge, remove
+     confirmation modal, queue preview strikethrough. */
+  .badge-removal-pending {
+    background: #f8d7da;
+    color: #a61128;
+    margin-left: 6px;
+  }
+  .btn-icon {
+    padding: 4px 8px;
+    font-size: 1.05em;
+    line-height: 1;
+  }
+  .btn-remove {
+    background: #fff;
+    color: #b00020;
+    border: 1px solid #f0bcc3;
+  }
+  .btn-remove:hover { background: #fdf3f5; border-color: #b00020; }
+  .remove-disabled {
+    display: inline-block;
+    padding: 4px 8px;
+    color: #a0a4b1;
+    font-size: 1.05em;
+    line-height: 1;
+    cursor: not-allowed;
+  }
+
+  .remove-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(29, 35, 51, 0.55);
+    z-index: 1200;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 16px;
+    overflow-y: auto;
+  }
+  .remove-modal.hidden { display: none; }
+  .remove-modal-inner {
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px 24px;
+    width: min(560px, 100%);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  }
+  .remove-modal-inner h2 { margin: 0 0 12px; font-size: 1.15em; color: #a61128; }
+  .remove-modal-summary {
+    background: #f3f5fa;
+    border: 1px solid #d8dbe4;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+  }
+  .remove-modal-inner .form-row { margin-bottom: 14px; }
+  .remove-modal-inner textarea {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #c8ccd6;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: inherit;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  .remove-modal-inner .form-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 14px;
+  }
+
+  /* "Will be deleted on Complete" preview row in the manager queue. */
+  .roster-table tr.preview-remove td {
+    background: #fdf3f5;
+    text-decoration: line-through;
+    color: #6b7280;
+  }
+  /* Don't strike the type badge — it's metadata, not data being deleted. */
+  .roster-table tr.preview-remove td .roster-badge { text-decoration: none; }
+
+  .noop-warning {
+    margin: 8px 0;
+    padding: 10px 12px;
+    background: #fff8ea;
+    border: 1px dashed #b76d00;
+    border-radius: 4px;
+    color: #5c4100;
+    font-size: 0.92em;
+  }
+  .noop-warning strong { color: #7a4400; }
+
+  .completion-note-hint {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: #fde4a1;
+    color: #6b4a00;
+    font-size: 0.78em;
+    cursor: pointer;
+    text-decoration: underline dotted;
+  }
+
   /* Calling-template hint on the Ward / Stake template tabs (Chunk 3). */
   .template-hint {
     margin: 0 0 14px;

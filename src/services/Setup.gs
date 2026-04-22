@@ -31,7 +31,7 @@ const SETUP_TAB_DEFS_ = [
     headers: ['request_id', 'type', 'scope', 'target_email', 'target_name',
               'reason', 'comment', 'start_date', 'end_date', 'status',
               'requester_email', 'requested_at', 'completer_email',
-              'completed_at', 'rejection_reason'] },
+              'completed_at', 'rejection_reason', 'completion_note'] },
   { name: 'AuditLog',
     headers: ['timestamp', 'actor_email', 'action', 'entity_type',
               'entity_id', 'before_json', 'after_json'] }

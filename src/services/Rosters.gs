@@ -25,6 +25,13 @@ const ROSTERS_STAKE_SCOPE_ = 'stake';
 
 // Build a response for a single scope. `scope` is a ward_code or 'stake'.
 // `ctx` is whatever Rosters_buildContext_() produced for this request.
+//
+// Chunk 7: each row is also annotated with `removal_pending: bool` so the
+// roster UI can render the X/trashcan as disabled (and a "Removal pending"
+// badge) when the row already has an outstanding remove request. We do
+// the lookup once per scope (one pass over Requests) rather than per row
+// to keep the read pattern bounded — typical pending-remove count for a
+// scope is 0-1.
 function Rosters_buildResponseForScope(scope, ctx) {
   var key = String(scope);
   var seats = Seats_getByScope(key);
@@ -34,26 +41,85 @@ function Rosters_buildResponseForScope(scope, ctx) {
 // Same as above, but for callers that already have the row subset in hand
 // (e.g. ApiManager_allSeats reads every seat once, then buckets by scope).
 function Rosters_buildResponseFromSeats_(scope, seats, ctx) {
+  // Build a per-scope set of canonical emails with a pending remove
+  // request. Read Requests once and bucket by scope so the manager
+  // AllSeats path (which calls this once per scope) doesn't do N reads.
+  var pendingRemoveEmails = Rosters_pendingRemoveEmailsForScope_(scope, ctx);
   var rows = [];
   for (var i = 0; i < seats.length; i++) {
-    rows.push(Rosters_mapRow_(seats[i], ctx.today));
+    var mapped = Rosters_mapRow_(seats[i], ctx.today);
+    // Auto rows are never removable via the request flow (R-3); leave the
+    // badge off so the UI doesn't surface a misleading "removal pending"
+    // on an importer-owned row even if a stale request snuck in somehow.
+    mapped.removal_pending = (mapped.type !== 'auto') &&
+      pendingRemoveEmails[Utils_normaliseEmail(mapped.person_email)] === true;
+    rows.push(mapped);
   }
   Rosters_sortRows_(rows);
   var summary = Rosters_buildSummary_(scope, rows.length, ctx);
   return { summary: summary, rows: rows };
 }
 
-// Build the shared context object once per endpoint (reads Wards + Config).
+// Build the shared context object once per endpoint (reads Wards + Config
+// + pending Requests). Pending remove-requests are pre-bucketed by scope
+// so per-scope responses don't each re-read the Requests tab.
 function Rosters_buildContext_() {
   var wards = Wards_getAll();
   var byCode = {};
   for (var i = 0; i < wards.length; i++) byCode[wards[i].ward_code] = wards[i];
   var rawCap = Config_get('stake_seat_cap');
+
+  // Pending remove-requests bucketed by scope. Map shape:
+  //   { '<scope>': { '<canonical_email>': true, ... }, ... }
+  // ApiBishopric / ApiStake roster paths only need one scope's bucket,
+  // but the read is cheap (typically 0-5 pending across all scopes) and
+  // keeping the bucketing here avoids spreading the Requests read into
+  // four different roster endpoints.
+  //
+  // Catch policy: silence ONLY the "Requests tab missing" case (a brand-
+  // new spreadsheet that hasn't run setupSheet yet — extremely rare, but
+  // the roster pages should still render so the operator can see what's
+  // configured). Header drift (e.g. an existing install that hasn't
+  // added the Chunk-7 `completion_note` column) MUST surface — silencing
+  // it would let some pages render an enabled X for rows that already
+  // have a pending remove while the actual submit / queue / cancel paths
+  // throw loudly. That inconsistency is worse than a uniformly loud fail
+  // (open-questions.md SD-2: header drift is a "fix by hand" signal,
+  // never a quietly-degrade signal).
+  var pendingRemovesByScope = {};
+  try {
+    var pending = Requests_getPending();
+    for (var p = 0; p < pending.length; p++) {
+      var pr = pending[p];
+      if (pr.type !== 'remove') continue;
+      var sc = pr.scope || '';
+      if (!pendingRemovesByScope[sc]) pendingRemovesByScope[sc] = {};
+      pendingRemovesByScope[sc][Utils_normaliseEmail(pr.target_email)] = true;
+    }
+  } catch (e) {
+    var msg = e && e.message ? e.message : String(e);
+    // The literal string thrown by Requests_sheet_() when the tab is
+    // missing. Anything else (header drift, sheet locked, etc.) propagates.
+    if (msg.indexOf('Requests tab missing') !== 0) {
+      throw e;
+    }
+    Logger.log('[Rosters] Requests tab missing — treating as no pending removes.');
+  }
+
   return {
-    today:        Utils_todayIso(),
-    wardsByCode:  byCode,
-    stakeSeatCap: (rawCap == null || rawCap === '') ? null : Number(rawCap)
+    today:                 Utils_todayIso(),
+    wardsByCode:           byCode,
+    stakeSeatCap:          (rawCap == null || rawCap === '') ? null : Number(rawCap),
+    pendingRemovesByScope: pendingRemovesByScope
   };
+}
+
+// Returns the per-scope "canonical email → true" map for pending remove
+// requests. Falls back to an empty map when the ctx wasn't built by
+// Rosters_buildContext_ (e.g. unit tests, legacy callers).
+function Rosters_pendingRemoveEmailsForScope_(scope, ctx) {
+  if (!ctx || !ctx.pendingRemovesByScope) return {};
+  return ctx.pendingRemovesByScope[String(scope)] || {};
 }
 
 // Translate a SeatsRepo object into the UI-agnostic roster shape. Drops
@@ -81,7 +147,13 @@ function Rosters_mapRow_(seat, today) {
     building_names:   seat.building_names,
     created_at:       Rosters_formatDate_(seat.created_at),
     last_modified_at: Rosters_formatDate_(seat.last_modified_at),
-    expiry_badge:     badge
+    expiry_badge:     badge,
+    // Default false; Rosters_buildResponseFromSeats_ overrides with true
+    // when the row is in the pending-remove set for its scope. Direct
+    // callers (duplicate-check previews, queue current-seat previews)
+    // get false here, which is correct — those previews aren't part of
+    // a roster-wide "click X to start a remove" flow.
+    removal_pending:  false
   };
 }
 

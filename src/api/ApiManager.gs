@@ -658,15 +658,59 @@ function ApiManager_listRequests(token, filters) {
   // Duplicate-preview map: relevant only for pending rows (managers
   // use it at complete-time to check for dupes). Terminal rows skip
   // the preview since the decision's already been made.
-  var ctx = Rosters_buildContext_();
+  //
+  // Chunk 7: for pending REMOVE requests, also attach the current Seats
+  // row so the queue card can render "what will be deleted" with a
+  // strikethrough — or, if no removable seat exists, a status indicator
+  // so the manager knows what Complete will actually do before clicking.
+  // Three current_seat_status values surface the three real cases:
+  //   - 'removable'  → current_seat is a manual/temp row to be deleted
+  //   - 'auto_only'  → only auto matches exist; Complete will be a no-op
+  //                    AND the LCR-managed seat stays in place. UI says
+  //                    "Only an LCR-managed seat remains — no manual/temp
+  //                    to delete."
+  //   - 'none'       → no matches at all (R-1 race). UI says "Seat
+  //                    already removed."
+  // duplicate_existing stays empty for remove (the dupe check is
+  // meaningful for adds; for removes the analogous information is
+  // current_seat itself).
+  //
+  // We don't need Rosters_buildContext_ here — only `today` is consumed
+  // (for Rosters_mapRow_'s expiry-badge math), and that's a one-line
+  // helper. Building the full ctx would do an unnecessary Wards_getAll
+  // + Requests_getPending per queue load.
+  var today = Utils_todayIso();
   for (var d = 0; d < rows.length; d++) {
     var rd = rows[d];
     if (rd.status !== 'pending') {
       rd.duplicate_existing = [];
+      rd.current_seat = null;
+      rd.current_seat_status = '';
       continue;
     }
-    var existing = Seats_getActiveByScopeAndEmail(rd.scope, rd.target_email);
-    rd.duplicate_existing = existing.map(function (s) { return Rosters_mapRow_(s, ctx.today); });
+    if (rd.type === 'remove') {
+      rd.duplicate_existing = [];
+      var rmMatches = Seats_getActiveByScopeAndEmail(rd.scope, rd.target_email);
+      var match = null;
+      for (var mm = 0; mm < rmMatches.length; mm++) {
+        if (rmMatches[mm].type !== 'auto') { match = rmMatches[mm]; break; }
+      }
+      if (match) {
+        rd.current_seat = Rosters_mapRow_(match, today);
+        rd.current_seat_status = 'removable';
+      } else if (rmMatches.length > 0) {
+        rd.current_seat = null;
+        rd.current_seat_status = 'auto_only';
+      } else {
+        rd.current_seat = null;
+        rd.current_seat_status = 'none';
+      }
+    } else {
+      rd.current_seat = null;
+      rd.current_seat_status = '';
+      var existing = Seats_getActiveByScopeAndEmail(rd.scope, rd.target_email);
+      rd.duplicate_existing = existing.map(function (s) { return Rosters_mapRow_(s, today); });
+    }
   }
 
   // Filter-option lists for the UI dropdowns. The Complete-confirmation
@@ -811,7 +855,8 @@ function ApiManager_shapeRequestForClient_(req) {
     completer_email:  req.completer_email,
     completed_at:     ApiManager_formatDate_(req.completed_at),
     completed_at_ms:  req.completed_at instanceof Date ? req.completed_at.getTime() : 0,
-    rejection_reason: req.rejection_reason
+    rejection_reason: req.rejection_reason,
+    completion_note:  req.completion_note || ''
   };
 }
 

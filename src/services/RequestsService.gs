@@ -45,10 +45,16 @@
 // submit — write a new pending Request row.
 //
 // Validates the draft shape:
-//   - type ∈ {add_manual, add_temp}            (remove is Chunk 7)
+//   - type ∈ {add_manual, add_temp, remove}
 //   - target_email present and non-empty
 //   - reason present (required by spec §3.2 for all types)
 //   - if add_temp: start_date + end_date both ISO YYYY-MM-DD, end ≥ start
+//   - if remove (Chunk 7):
+//       - target must correspond to an active manual/temp seat in the
+//         scope (open-questions.md R-3: auto seats can't be removed via
+//         this path; that's an LCR change).
+//       - no other pending remove request for the same (scope, email)
+//         already exists.
 //
 // Fills request_id (UUID), status = pending, requester_email / requested_at
 // from the caller. Returns the inserted Request row shape.
@@ -62,8 +68,8 @@ function RequestsService_submit(args) {
 
   var draft = args.draft;
   var type = String(draft.type || '');
-  if (type !== 'add_manual' && type !== 'add_temp') {
-    throw new Error('Invalid request type "' + type + '" — must be add_manual or add_temp.');
+  if (type !== 'add_manual' && type !== 'add_temp' && type !== 'remove') {
+    throw new Error('Invalid request type "' + type + '" — must be add_manual, add_temp, or remove.');
   }
 
   var targetEmail = Utils_cleanEmail(draft.target_email);
@@ -97,6 +103,45 @@ function RequestsService_submit(args) {
     }
   }
 
+  // Chunk 7: remove-specific guards. All run server-side (the UI hides
+  // the X on already-pending rows, but a stale roster page or a crafted
+  // rpc could still attempt the submit).
+  if (type === 'remove') {
+    var matches = Seats_getActiveByScopeAndEmail(args.scope, targetEmail);
+    if (matches.length === 0) {
+      throw new Error('No active seat for ' + targetEmail + ' in scope ' + args.scope +
+        '. The roster page may be stale — refresh and try again.');
+    }
+    // open-questions.md R-3: auto seats are importer-owned. Filter them
+    // out and reason on the removable subset.
+    var removable = [];
+    for (var m = 0; m < matches.length; m++) {
+      if (matches[m].type !== 'auto') removable.push(matches[m]);
+    }
+    if (removable.length === 0) {
+      throw new Error('Cannot remove an auto seat for ' + targetEmail +
+        ' — auto seats come from the callings sheet. Update the calling in LCR; ' +
+        'the next import will remove the seat.');
+    }
+    // If a person somehow holds multiple manual/temp seats in the same
+    // scope, the request shape can't say which one to remove (no seat_id
+    // on the wire — the request's natural key is (scope, target_email)).
+    // Refuse the submit loudly until a multi-seat removal UX exists.
+    // At target scale this should never fire; if it does, the manager
+    // can clean up via the AllSeats inline edit / future hand-edit path
+    // before the request goes through.
+    if (removable.length > 1) {
+      throw new Error('Multiple removable seats found for ' + targetEmail + ' in ' +
+        args.scope + ' (' + removable.length + ' rows). The request flow can\'t ' +
+        'choose between them — ask a Kindoo Manager to resolve the duplicates first.');
+    }
+    var existingPending = Requests_getPendingRemoveByScopeAndEmail(args.scope, targetEmail);
+    if (existingPending) {
+      throw new Error('A removal request for ' + targetEmail + ' in ' + args.scope +
+        ' is already pending (request ' + existingPending.request_id + ').');
+    }
+  }
+
   var requestId = Utils_uuid();
   var row = {
     request_id:       requestId,
@@ -113,7 +158,8 @@ function RequestsService_submit(args) {
     requested_at:     Utils_nowTs(),
     completer_email:  '',
     completed_at:     '',
-    rejection_reason: ''
+    rejection_reason: '',
+    completion_note:  ''
   };
   var inserted = Requests_insert(row);
   AuditRepo_write({
@@ -128,18 +174,26 @@ function RequestsService_submit(args) {
 }
 
 // ---------------------------------------------------------------------------
-// complete — flip a pending Request to complete AND insert a matching Seats
-// row atomically, both inside the caller's Lock_withLock.
+// complete — flip a pending Request to a terminal `complete` state and
+// apply the matching Seats mutation atomically, both inside the caller's
+// Lock_withLock.
 //
-// Per the Chunk 6 spec: the Seats row is stamped with manager credentials
-// as created_by / last_modified_by (they're the person who actually made
-// the change in Kindoo + this app). building_names is left empty — the
-// manager sets it via the inline-edit path on the All Seats page if the
-// person needs more than the ward default.
+// add_manual / add_temp:
+//   Inserts a new Seats row stamped with manager credentials. Two audit
+//   rows: complete_request on Request + insert on Seat.
 //
-// Emits TWO audit rows (per data-model.md: one row per entity touched):
-//   1. complete_request on the Request row (before/after status flip)
-//   2. insert            on the new Seat row
+// remove (Chunk 7):
+//   Deletes the matching Seats row (lookup by scope + canonical email).
+//   Two audit rows on the happy path: complete_request on Request +
+//   delete on Seat.
+//   R-1 RACE: if the seat is already gone (concurrent remove, future
+//   expiry trigger, manual sheet edit), still flip the Request to
+//   complete — the requester's ask is fulfilled — but stamp
+//   completion_note so the audit trail is honest. ONE audit row in that
+//   case (complete_request only; no Seat row was deleted, so no Seat
+//   audit). The completion email body mentions the no-op so the
+//   requester isn't confused by getting a "done" notification when
+//   nothing visibly changed.
 //
 // The request_id → seat_id pairing is recorded implicitly by the shared
 // timestamp and the managerPrincipal.email on both rows; if we needed a
@@ -157,11 +211,12 @@ function RequestsService_complete(managerPrincipal, requestId, overrides) {
   if (req.status !== 'pending') {
     throw new Error('Request is no longer pending (current status: ' + req.status + ').');
   }
-  if (req.type !== 'add_manual' && req.type !== 'add_temp') {
-    // Chunk 7 will teach this path to handle remove; for now refuse
-    // loudly so a remove row that somehow slipped in during Chunk 7
-    // development doesn't silently insert a dangling seat.
-    throw new Error('Request type "' + req.type + '" is not completable in Chunk 6 (add_manual / add_temp only).');
+  if (req.type !== 'add_manual' && req.type !== 'add_temp' && req.type !== 'remove') {
+    throw new Error('Request type "' + req.type + '" is not completable.');
+  }
+
+  if (req.type === 'remove') {
+    return RequestsService_completeRemove_(managerPrincipal, req);
   }
 
   // Build the Seat row first so validation errors (e.g. Seats_insert's
@@ -235,6 +290,108 @@ function RequestsService_complete(managerPrincipal, requestId, overrides) {
   ]);
 
   return { request: updatedReq, seat: seatInserted };
+}
+
+// ---------------------------------------------------------------------------
+// completeRemove — internal: complete a pending `remove` request.
+//
+// Looks up the matching active seat by (scope, canonical email). Two
+// outcomes:
+//   - Seat found  → delete the Seats row, flip Request to complete; emit
+//     two audit rows (complete_request on Request, delete on Seat).
+//     Returns { request, seat_deleted }.
+//   - Seat absent → R-1 race. Flip Request to complete with a
+//     completion_note; emit ONE audit row (complete_request only).
+//     Returns { request, noop: true }.
+//
+// In both cases the requester gets the completion email. The body of
+// the email differs (EmailService_notifyRequesterCompleted reads
+// `request.completion_note`), so the no-op case isn't silently
+// indistinguishable from a real removal.
+// ---------------------------------------------------------------------------
+function RequestsService_completeRemove_(managerPrincipal, req) {
+  var managerEmail = managerPrincipal.email;
+  var seat = null;
+  var matches = Seats_getActiveByScopeAndEmail(req.scope, req.target_email);
+  // Skip auto rows defensively: a remove against an auto seat is rejected
+  // at submit, but if a calling change between submit and complete turned
+  // the only matching seat into an auto-only result, treat it as already-
+  // removed for our purposes (the LCR-managed row is the canonical source).
+  for (var i = 0; i < matches.length; i++) {
+    if (matches[i].type !== 'auto') { seat = matches[i]; break; }
+  }
+
+  // R-1 race: nothing to delete. Still mark the request complete so the
+  // requester's ask is closed out, and stamp a note for the audit trail.
+  if (!seat) {
+    return RequestsService_completeRemoveNoop_(req, managerEmail);
+  }
+
+  // Delete the Seat first; if it throws (header drift, race) we'd rather
+  // surface that BEFORE flipping the Request, same defence-in-depth as
+  // the add path's "build seat row first".
+  var deleted = Seats_deleteById(seat.seat_id);
+  if (!deleted) {
+    // Seat vanished between Seats_getActiveByScopeAndEmail and
+    // Seats_deleteById — shouldn't happen inside the lock, but if it
+    // does, fall back to the no-op path so we don't 500 on the manager.
+    return RequestsService_completeRemoveNoop_(req, managerEmail);
+  }
+
+  var updatedReqOk = Requests_update(req.request_id, {
+    status:          'complete',
+    completer_email: managerEmail,
+    completed_at:    Utils_nowTs()
+  }).after;
+
+  AuditRepo_writeMany([
+    {
+      actor_email: managerEmail,
+      action:      'complete_request',
+      entity_type: 'Request',
+      entity_id:   req.request_id,
+      before:      req,
+      after:       updatedReqOk
+    },
+    {
+      actor_email: managerEmail,
+      action:      'delete',
+      entity_type: 'Seat',
+      entity_id:   deleted.seat_id,
+      before:      deleted,
+      after:       null
+    }
+  ]);
+
+  return { request: updatedReqOk, seat_deleted: deleted };
+}
+
+// Fired from RequestsService_completeRemove_ when the matching seat is
+// gone (either Seats_getActiveByScopeAndEmail returned no removable rows,
+// or Seats_deleteById returned null after a positive lookup — both end up
+// here so the audit trail and the email body are identical regardless of
+// which sub-case raced). Flips the Request to complete, stamps a note,
+// emits ONE AuditLog row (no Seat audit because no Seat changed). Returns
+// the same { request, noop: true } shape the happy path returns
+// (sans seat_deleted), so EmailService_notifyRequesterCompleted can read
+// `request.completion_note` uniformly.
+function RequestsService_completeRemoveNoop_(req, managerEmail) {
+  var note = 'Seat already removed at completion time (no-op).';
+  var updatedReq = Requests_update(req.request_id, {
+    status:          'complete',
+    completer_email: managerEmail,
+    completed_at:    Utils_nowTs(),
+    completion_note: note
+  }).after;
+  AuditRepo_write({
+    actor_email: managerEmail,
+    action:      'complete_request',
+    entity_type: 'Request',
+    entity_id:   req.request_id,
+    before:      req,
+    after:       updatedReq
+  });
+  return { request: updatedReq, noop: true };
 }
 
 // ---------------------------------------------------------------------------

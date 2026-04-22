@@ -80,6 +80,15 @@
   // renderRosterTable so the <th> line matches the column count. The
   // manager AllSeats page uses this to render an inline "Edit" button on
   // manual/temp rows.
+  //
+  // Chunk 7 additions:
+  //   - row.removal_pending (bool, set server-side by Rosters_mapRow_):
+  //     when true, append a "Removal pending" badge in the Type cell.
+  //     Caller's rowActions function should also disable the X.
+  //   - opts.preview = 'remove' (string): style this row as
+  //     "will be deleted on Complete" — strikethrough text + a leading
+  //     ⌫ marker. Used by the manager RequestsQueue to render the
+  //     current_seat for a remove-type request.
   function rosterRowHtml(row, opts) {
     opts = opts || {};
     var typeBadge =
@@ -90,6 +99,10 @@
       expiryBadge = '<span class="roster-badge badge-expired">expired</span>';
     } else if (row.expiry_badge === 'expires_today') {
       expiryBadge = '<span class="roster-badge badge-expires-today">expires today</span>';
+    }
+    var removalBadge = '';
+    if (row.removal_pending) {
+      removalBadge = '<span class="roster-badge badge-removal-pending" title="A removal request for this person is pending a Kindoo Manager">removal pending</span>';
     }
     var scopeCell = opts.showScope
       ? '<td><code>' + escapeHtml(row.scope) + '</code></td>'
@@ -114,9 +127,12 @@
     if (typeof opts.rowActions === 'function') {
       actionsCell = '<td class="row-actions">' + (opts.rowActions(row) || '') + '</td>';
     }
-    return '<tr class="type-' + escapeHtml(row.type) + '" data-seat-id="' + escapeHtml(row.seat_id || '') + '">' +
+    var trClasses = 'type-' + escapeHtml(row.type);
+    if (opts.preview === 'remove') trClasses += ' preview-remove';
+    if (row.removal_pending)       trClasses += ' has-removal-pending';
+    return '<tr class="' + trClasses + '" data-seat-id="' + escapeHtml(row.seat_id || '') + '">' +
       scopeCell +
-      '<td>' + typeBadge + expiryBadge + '</td>' +
+      '<td>' + typeBadge + expiryBadge + removalBadge + '</td>' +
       '<td>' + escapeHtml(row.person_name || '') + '<br>' +
         '<span class="roster-email" title="' + escapeHtml(row.person_email) + '">' +
           escapeHtml(row.person_email) + '</span></td>' +

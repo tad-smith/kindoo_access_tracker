@@ -289,7 +289,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 7 — Removals
+## Chunk 7 — Removals `[DONE — see docs/changelog/chunk-7-removals.md]`
 
 **Goal:** bishoprics and stake can request removal of a manual/temp seat via the Roster X button; managers complete the request to delete the seat.
 
@@ -297,21 +297,33 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Add X/trashcan control on `bishopric/Roster.html` and `stake/Roster.html` for `manual`/`temp` rows only.
-- [ ] Modal: "Remove access for [person]? Reason:" → submits `type=remove` request via `RequestsService.submit`.
-- [ ] "Removal pending" badge on any roster row with an outstanding `remove` request for that `(scope, person_email)`.
-- [ ] `RequestsService.complete` handles `remove` type: deletes the matching `Seats` row (matched on `scope + person_email`).
-- [ ] Handle edge case: seat already gone when the remove request is completed (auto-complete the request with a note; don't error).
+- [x] Add X/trashcan control on `bishopric/Roster.html` and `stake/Roster.html` for `manual`/`temp` rows only (auto rows render no X — importer-owned).
+- [x] Modal: "Remove access for [person]?" with required reason field → submits `type=remove` request via the shared `ApiRequests_submit`.
+- [x] "Removal pending" badge on any roster row with an outstanding `remove` request for that `(scope, person_email)`. X is rendered as a disabled glyph for those rows.
+- [x] `Rosters_buildResponseFromSeats_` annotates each row's `removal_pending` from a per-scope pending-remove map built once in `Rosters_buildContext_`.
+- [x] `RequestsService_submit` validates remove drafts: target must have an active manual/temp seat in scope (R-3); no other pending remove for the same `(scope, target_email)`.
+- [x] `RequestsService_complete` handles `remove` type: deletes the matching `Seats` row via the new `Seats_deleteById`. Two audit rows on the happy path (`complete_request` + `delete`).
+- [x] R-1 race: if the seat is already gone at completion time, flip the Request to `complete` with a `completion_note` ("Seat already removed at completion time (no-op).") and emit ONE audit row. Requester still gets the completion email; the body surfaces the note.
+- [x] Add `completion_note` column to the Requests tab (data-model.md updated; setupSheet seeds the new header for fresh installs; existing installs add the column by hand — `setupSheet` reports header drift loudly so the operator notices).
+- [x] Manager queue and MyRequests render remove-type rows: queue card preview is the live `current_seat` styled "will be deleted" (or an "already removed (no-op)" panel when the seat is gone); MyRequests row shows the type label, the target, and a clickable "note" hint surfacing `completion_note` on completed remove rows.
+- [x] Email body copy for all four notifications updated to be type-aware (handles `remove` alongside `add_manual` / `add_temp`); the completion email surfaces `completion_note` for the R-1 case.
 
 **Acceptance criteria**
 
-- Bishopric can request removal; badge appears immediately.
-- Manager completes; `Seats` row deleted; badge gone.
-- Concurrent race (two remove requests for same seat) doesn't double-delete or error.
+- Bishopric can request removal; badge appears immediately on refresh; X is disabled while the request is pending.
+- Manager completes; `Seats` row deleted; badge gone; AuditLog has `complete_request` + `delete` rows.
+- Concurrent race (two remove requests for same seat, OR a hand-edit of the Sheet between submit and Complete) doesn't double-delete or error: the second Complete auto-completes with the no-op note and emits only one audit row.
+- Submitting a remove for a target with no active seat is rejected server-side with a clear error.
+- Submitting a remove for a target whose only active seat is `auto` is rejected server-side ("auto seats come from the callings sheet…").
+- Submitting a remove for a target with more than one removable manual/temp seat in the scope is rejected server-side ("Multiple removable seats found…"), since the request shape can't disambiguate.
+- Submitting a duplicate remove (same scope + target) while one is pending is rejected server-side.
+- Manager queue surfaces three distinct messages for pending remove cards: a strikethrough preview ("Seat to delete on Complete"), an "Only an LCR-managed seat remains" warning when only auto matches exist, and an "Already removed (no-op)" warning when nothing matches.
+- Cancelling / Rejecting a pending remove works unchanged from Chunk 6's flow; emails read correctly for the remove type.
 
 **Out of scope**
 
-- Removals for auto-seats (not allowed by spec — that's an LCR change).
+- Removals for auto-seats (not allowed by spec — that's an LCR change). Server rejects the submit explicitly.
+- New email types — the four Chunk-6 notifications cover all three request types; only body copy needed updating.
 
 ---
 

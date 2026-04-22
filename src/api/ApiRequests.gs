@@ -231,7 +231,8 @@ function ApiRequests_shapeForClient_(req) {
     completer_email:     req.completer_email,
     completed_at:        ApiRequests_formatDate_(req.completed_at),
     completed_at_ms:     req.completed_at instanceof Date ? req.completed_at.getTime() : 0,
-    rejection_reason:    req.rejection_reason
+    rejection_reason:    req.rejection_reason,
+    completion_note:     req.completion_note || ''
   };
 }
 
