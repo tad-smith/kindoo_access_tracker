@@ -12,18 +12,27 @@
 const WARDS_HEADERS_ = ['ward_code', 'ward_name', 'building_name', 'seat_cap'];
 const WARDS_CODE_LEN_ = 2;
 
+// Chunk 10.5: CacheService key for Wards_getAll. 300s TTL — Wards is a
+// nearly-static tab (ward codes rarely change; a rename / cap edit once a
+// quarter is typical). Every ward mutation invalidates. Wards_getByCode
+// delegates to the cached Wards_getAll.
+const WARDS_CACHE_KEY_ = 'wards:getAll';
+const WARDS_CACHE_TTL_S_ = 300;
+
 function Wards_getAll() {
-  var sheet = Wards_sheet_();
-  var data = sheet.getDataRange().getValues();
-  if (data.length === 0) return [];
-  Wards_assertHeaders_(data[0]);
-  var out = [];
-  for (var i = 1; i < data.length; i++) {
-    var raw = data[i][0];
-    if (raw === '' || raw == null) continue;
-    out.push(Wards_rowToObject_(data[i]));
-  }
-  return out;
+  return Cache_memoize(WARDS_CACHE_KEY_, WARDS_CACHE_TTL_S_, function () {
+    var sheet = Wards_sheet_();
+    var data = sheet.getDataRange().getValues();
+    if (data.length === 0) return [];
+    Wards_assertHeaders_(data[0]);
+    var out = [];
+    for (var i = 1; i < data.length; i++) {
+      var raw = data[i][0];
+      if (raw === '' || raw == null) continue;
+      out.push(Wards_rowToObject_(data[i]));
+    }
+    return out;
+  });
 }
 
 function Wards_getByCode(wardCode) {
@@ -53,6 +62,7 @@ function Wards_insert(row) {
   toWrite.ward_code = code;
   sheet.appendRow([toWrite.ward_code, toWrite.ward_name,
                    toWrite.building_name, toWrite.seat_cap]);
+  Cache_invalidate(WARDS_CACHE_KEY_);
   return toWrite;
 }
 
@@ -95,6 +105,7 @@ function Wards_bulkInsert(rows) {
   });
   var startRow = sheet.getLastRow() + 1;
   sheet.getRange(startRow, 1, values.length, WARDS_HEADERS_.length).setValues(values);
+  Cache_invalidate(WARDS_CACHE_KEY_);
   return prepared;
 }
 
@@ -128,6 +139,7 @@ function Wards_update(wardCode, patch) {
     sheet.getRange(i + 1, 1, 1, WARDS_HEADERS_.length)
          .setValues([[merged.ward_code, merged.ward_name,
                       merged.building_name, merged.seat_cap]]);
+    Cache_invalidate(WARDS_CACHE_KEY_);
     return { before: before, after: merged };
   }
   throw new Error('Wards_update: no ward with ward_code "' + key + '"');
@@ -144,6 +156,7 @@ function Wards_delete(wardCode) {
     if (String(data[i][0]) === key) {
       var before = Wards_rowToObject_(data[i]);
       sheet.deleteRow(i + 1);
+      Cache_invalidate(WARDS_CACHE_KEY_);
       return before;
     }
   }
@@ -160,9 +173,7 @@ function Wards_validateCode_(code) {
 }
 
 function Wards_sheet_() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Wards');
-  if (!sheet) throw new Error('Wards tab missing — run setupSheet().');
-  return sheet;
+  return Sheet_getTab('Wards');
 }
 
 function Wards_assertHeaders_(headers) {

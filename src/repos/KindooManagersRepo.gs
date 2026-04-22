@@ -9,18 +9,35 @@
 
 const KINDOO_MGR_HEADERS_ = ['email', 'name', 'active'];
 
+// Chunk 10.5: CacheService key for KindooManagers_getAll. 60s TTL — this
+// tab feeds role resolution (on every rpc) via
+// KindooManagers_isActiveByEmail → _getByEmail → _getAll. Short TTL keeps
+// a manager toggle from taking longer than a minute to propagate.
+//
+// Architecture.md §7.5 names this entry "KindooManagers_getActive()" in
+// its memoization table, but that function has never existed in shipped
+// code — the real hot path is _getAll (the active-emails reducer and the
+// isActiveByEmail single-row path both funnel through it). Memoizing at
+// the _getAll boundary caches the same data the §7.5 table intended,
+// just at the function that actually fronts the tab. See
+// chunk-10.5-caching.md "Deviations".
+const KINDOO_MGR_CACHE_KEY_ = 'kindooManagers:getAll';
+const KINDOO_MGR_CACHE_TTL_S_ = 60;
+
 function KindooManagers_getAll() {
-  var sheet = KindooManagers_sheet_();
-  var data = sheet.getDataRange().getValues();
-  if (data.length === 0) return [];
-  KindooManagers_assertHeaders_(data[0]);
-  var out = [];
-  for (var i = 1; i < data.length; i++) {
-    var rawEmail = data[i][0];
-    if (rawEmail === '' || rawEmail == null) continue;
-    out.push(KindooManagers_rowToObject_(data[i]));
-  }
-  return out;
+  return Cache_memoize(KINDOO_MGR_CACHE_KEY_, KINDOO_MGR_CACHE_TTL_S_, function () {
+    var sheet = KindooManagers_sheet_();
+    var data = sheet.getDataRange().getValues();
+    if (data.length === 0) return [];
+    KindooManagers_assertHeaders_(data[0]);
+    var out = [];
+    for (var i = 1; i < data.length; i++) {
+      var rawEmail = data[i][0];
+      if (rawEmail === '' || rawEmail == null) continue;
+      out.push(KindooManagers_rowToObject_(data[i]));
+    }
+    return out;
+  });
 }
 
 function KindooManagers_getByEmail(email) {
@@ -69,6 +86,7 @@ function KindooManagers_insert(row) {
     active: row.active === true || String(row.active).trim().toLowerCase() === 'true'
   };
   sheet.appendRow([toWrite.email, toWrite.name, toWrite.active]);
+  Cache_invalidate(KINDOO_MGR_CACHE_KEY_);
   return toWrite;
 }
 
@@ -115,6 +133,7 @@ function KindooManagers_bulkInsert(rows) {
   var values = prepared.map(function (p) { return [p.email, p.name, p.active]; });
   var startRow = sheet.getLastRow() + 1;
   sheet.getRange(startRow, 1, values.length, KINDOO_MGR_HEADERS_.length).setValues(values);
+  Cache_invalidate(KINDOO_MGR_CACHE_KEY_);
   return prepared;
 }
 
@@ -152,6 +171,7 @@ function KindooManagers_update(email, patch) {
     };
     sheet.getRange(i + 1, 1, 1, KINDOO_MGR_HEADERS_.length)
          .setValues([[after.email, after.name, after.active]]);
+    Cache_invalidate(KINDOO_MGR_CACHE_KEY_);
     return { before: before, after: after };
   }
   throw new Error('KindooManagers_update: no row matching "' + typed + '"');
@@ -168,6 +188,7 @@ function KindooManagers_delete(email) {
     if (Utils_emailsEqual(data[i][0], typed)) {
       var before = KindooManagers_rowToObject_(data[i]);
       sheet.deleteRow(i + 1);
+      Cache_invalidate(KINDOO_MGR_CACHE_KEY_);
       return before;
     }
   }
@@ -175,9 +196,7 @@ function KindooManagers_delete(email) {
 }
 
 function KindooManagers_sheet_() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('KindooManagers');
-  if (!sheet) throw new Error('KindooManagers tab missing — run setupSheet().');
-  return sheet;
+  return Sheet_getTab('KindooManagers');
 }
 
 function KindooManagers_assertHeaders_(headers) {

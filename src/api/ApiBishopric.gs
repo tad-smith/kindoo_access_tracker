@@ -14,6 +14,7 @@
 // emit a `type='remove'` request via ApiRequests_submit.
 
 function ApiBishopric_roster(token) {
+  var _startedMs = Date.now();
   var principal = Auth_principalFrom(token);
   var role = Auth_findBishopricRole(principal);
   if (!role) {
@@ -23,5 +24,8 @@ function ApiBishopric_roster(token) {
     throw new Error('Forbidden: bishopric role required');
   }
   var ctx = Rosters_buildContext_();
-  return Rosters_buildResponseForScope(role.wardId, ctx);
+  var response = Rosters_buildResponseForScope(role.wardId, ctx);
+  Logger.log('[measure] bishopric/roster ward=' + role.wardId +
+    ' rows=' + response.rows.length + ' took ' + (Date.now() - _startedMs) + 'ms');
+  return response;
 }

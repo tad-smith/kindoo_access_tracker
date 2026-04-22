@@ -11,19 +11,32 @@ const TEMPLATES_TABS_ = {
   stake: 'StakeCallingTemplate'
 };
 
+// Chunk 10.5: CacheService keys per template kind. 300s TTL — templates
+// are nearly-static (a calling added once a quarter is typical) but
+// frequently read on every import run. One cache key per kind so a ward-
+// template write doesn't thrash the stake-template cache.
+const TEMPLATES_CACHE_KEYS_ = {
+  ward:  'templates:ward:getAll',
+  stake: 'templates:stake:getAll'
+};
+const TEMPLATES_CACHE_TTL_S_ = 300;
+
 function Templates_getAll(kind) {
   var tabName = Templates_tabName_(kind);
-  var sheet = Templates_sheet_(tabName);
-  var data = sheet.getDataRange().getValues();
-  if (data.length === 0) return [];
-  Templates_assertHeaders_(data[0], tabName);
-  var out = [];
-  for (var i = 1; i < data.length; i++) {
-    var rawCalling = data[i][0];
-    if (rawCalling === '' || rawCalling == null) continue;
-    out.push(Templates_rowToObject_(data[i]));
-  }
-  return out;
+  var cacheKey = TEMPLATES_CACHE_KEYS_[String(kind)];
+  return Cache_memoize(cacheKey, TEMPLATES_CACHE_TTL_S_, function () {
+    var sheet = Templates_sheet_(tabName);
+    var data = sheet.getDataRange().getValues();
+    if (data.length === 0) return [];
+    Templates_assertHeaders_(data[0], tabName);
+    var out = [];
+    for (var i = 1; i < data.length; i++) {
+      var rawCalling = data[i][0];
+      if (rawCalling === '' || rawCalling == null) continue;
+      out.push(Templates_rowToObject_(data[i]));
+    }
+    return out;
+  });
 }
 
 function Templates_getByName(kind, callingName) {
@@ -54,6 +67,7 @@ function Templates_insert(kind, row) {
                      String(row.give_app_access).trim().toLowerCase() === 'true'
   };
   sheet.appendRow([toWrite.calling_name, toWrite.give_app_access]);
+  Cache_invalidate(TEMPLATES_CACHE_KEYS_[String(kind)]);
   return toWrite;
 }
 
@@ -86,6 +100,7 @@ function Templates_update(kind, callingName, patch) {
     };
     sheet.getRange(i + 1, 1, 1, TEMPLATES_HEADERS_.length)
          .setValues([[merged.calling_name, merged.give_app_access]]);
+    Cache_invalidate(TEMPLATES_CACHE_KEYS_[String(kind)]);
     return { before: before, after: merged };
   }
   throw new Error('Templates_update: no ' + tabName + ' row with calling_name "' + callingName + '"');
@@ -101,6 +116,7 @@ function Templates_delete(kind, callingName) {
     if (String(data[i][0]) === callingName) {
       var before = Templates_rowToObject_(data[i]);
       sheet.deleteRow(i + 1);
+      Cache_invalidate(TEMPLATES_CACHE_KEYS_[String(kind)]);
       return before;
     }
   }
@@ -114,9 +130,7 @@ function Templates_tabName_(kind) {
 }
 
 function Templates_sheet_(tabName) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(tabName);
-  if (!sheet) throw new Error(tabName + ' tab missing — run setupSheet().');
-  return sheet;
+  return Sheet_getTab(tabName);
 }
 
 function Templates_assertHeaders_(headers, tabName) {

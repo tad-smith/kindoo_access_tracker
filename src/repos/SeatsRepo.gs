@@ -369,10 +369,14 @@ function Seats_readAll_() {
   return out;
 }
 
+// Chunk 10.5: Seats is intentionally NOT CacheService-memoized per
+// architecture.md §7.5 — write-hot enough that short-TTL cache would
+// produce staleness on the pages users refresh most (mgr/queue,
+// mgr/seats). We still share the per-request sheet-handle memo so
+// Seats_getAll + Seats_getById + Seats_deleteByHash collapse their
+// getSheetByName lookups to one per request.
 function Seats_sheet_() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Seats');
-  if (!sheet) throw new Error('Seats tab missing — run setupSheet().');
-  return sheet;
+  return Sheet_getTab('Seats');
 }
 
 function Seats_assertHeaders_(headers) {

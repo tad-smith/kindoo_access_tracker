@@ -121,6 +121,12 @@ function Expiry_runExpiry() {
     };
   }, { timeoutMs: 30000 });
 
+  // Chunk 10.5: flush cached reads touched by the run. Config_update
+  // calls inside the lock already invalidated config:getAll per-write,
+  // but belt-and-braces — symmetric with Importer_runImport's end-of-run
+  // sweep. Seats is NOT CacheService-memoized, so no Seats key here.
+  Cache_invalidate('config:getAll');
+
   Logger.log('[Expiry] completed in ' + summary.elapsed_ms + 'ms — ' +
     summary.expired + ' row' + (summary.expired === 1 ? '' : 's') + ' expired');
   return summary;

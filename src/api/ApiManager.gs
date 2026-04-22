@@ -550,6 +550,7 @@ function ApiManager_reinstallTriggers(token) {
 // type filter:        '' / 'all', 'auto', 'manual', 'temp'.
 
 function ApiManager_allSeats(token, filters) {
+  var _startedMs = Date.now();
   var principal = Auth_principalFrom(token);
   Auth_requireRole(principal, 'manager');
   filters = filters || {};
@@ -616,6 +617,10 @@ function ApiManager_allSeats(token, filters) {
   for (var b = 0; b < allBuildings.length; b++) {
     buildingList.push(allBuildings[b].building_name);
   }
+
+  Logger.log('[measure] allSeats ward=' + (wardFilter || '*') +
+    ' building=' + (buildingFilter || '*') + ' type=' + (typeFilter || '*') +
+    ' rows=' + rows.length + ' took ' + (Date.now() - _startedMs) + 'ms');
 
   return {
     rows:           rows,
@@ -1293,6 +1298,43 @@ function ApiManager_dashboard_auditSummary_(r) {
     } catch (e) { /* ignore */ }
   }
   return prefix + ' · ' + tail;
+}
+
+// ===========================================================================
+// Cache debug surface (Chunk 10.5)
+// ===========================================================================
+//
+// Two endpoints back the "Cache statistics" panel on the manager Config
+// page. Stats are per-script-execution (the module var resets between
+// rpcs) so the panel answers "did THIS page load hit the cache?"; an
+// operator navigates a few pages then clicks Refresh to see the warm-
+// cache hits from the just-rendered navigation.
+//
+// clearCache is the "nuke everything" escape hatch. Writes one audit row
+// so a sudden slowdown can be traced to a deliberate clear rather than a
+// lost cache due to Apps Script eviction.
+
+function ApiManager_cacheStats(token) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  return Cache_getStats();
+}
+
+function ApiManager_clearCache(token) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  return Lock_withLock(function () {
+    Cache_invalidateAll();
+    AuditRepo_write({
+      actor_email: principal.email,
+      action:      'clear_cache',
+      entity_type: 'System',
+      entity_id:   'cache',
+      before:      null,
+      after:       { triggered_by: principal.email }
+    });
+    return { ok: true };
+  });
 }
 
 // ===========================================================================

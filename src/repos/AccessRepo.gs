@@ -11,22 +11,31 @@
 
 const ACCESS_HEADERS_ = ['email', 'scope', 'calling'];
 
+// Chunk 10.5: CacheService key for Access_getAll. Used by role resolution
+// (Access_getByEmail → Access_getAll) — on every rpc — so caching the
+// full scan is a high-leverage win. Invalidated on every single-row
+// write AND at Importer end-of-run (the importer is the dominant writer).
+const ACCESS_CACHE_KEY_ = 'access:getAll';
+const ACCESS_CACHE_TTL_S_ = 60;
+
 function Access_getAll() {
-  var sheet = Access_sheet_();
-  var data = sheet.getDataRange().getValues();
-  if (data.length === 0) return [];
-  Access_assertHeaders_(data[0]);
-  var out = [];
-  for (var i = 1; i < data.length; i++) {
-    var rawEmail = data[i][0];
-    if (rawEmail === '' || rawEmail == null) continue;
-    out.push({
-      email:   Utils_cleanEmail(String(rawEmail)),
-      scope:   String(data[i][1] == null ? '' : data[i][1]),
-      calling: String(data[i][2] == null ? '' : data[i][2])
-    });
-  }
-  return out;
+  return Cache_memoize(ACCESS_CACHE_KEY_, ACCESS_CACHE_TTL_S_, function () {
+    var sheet = Sheet_getTab('Access');
+    var data = sheet.getDataRange().getValues();
+    if (data.length === 0) return [];
+    Access_assertHeaders_(data[0]);
+    var out = [];
+    for (var i = 1; i < data.length; i++) {
+      var rawEmail = data[i][0];
+      if (rawEmail === '' || rawEmail == null) continue;
+      out.push({
+        email:   Utils_cleanEmail(String(rawEmail)),
+        scope:   String(data[i][1] == null ? '' : data[i][1]),
+        calling: String(data[i][2] == null ? '' : data[i][2])
+      });
+    }
+    return out;
+  });
 }
 
 function Access_getByEmail(email) {
@@ -66,6 +75,7 @@ function Access_insert(row) {
   var headers = sheet.getRange(1, 1, 1, ACCESS_HEADERS_.length).getValues()[0];
   Access_assertHeaders_(headers);
   sheet.appendRow([typed, scope, calling]);
+  Cache_invalidate(ACCESS_CACHE_KEY_);
   return { email: typed, scope: scope, calling: calling };
 }
 
@@ -94,15 +104,14 @@ function Access_delete(email, scope, calling) {
       calling: callingKey
     };
     sheet.deleteRow(i + 1);
+    Cache_invalidate(ACCESS_CACHE_KEY_);
     return before;
   }
   return null;
 }
 
 function Access_sheet_() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Access');
-  if (!sheet) throw new Error('Access tab missing — run setupSheet().');
-  return sheet;
+  return Sheet_getTab('Access');
 }
 
 function Access_assertHeaders_(headers) {

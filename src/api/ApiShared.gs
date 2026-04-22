@@ -27,6 +27,7 @@
 // role resolution returns 'manager' for them.
 
 function ApiShared_bootstrap(token, requestedPage) {
+  var _startedMs = Date.now();
   var principal = Auth_principalFrom(token);
 
   // Setup-complete gate. Config.setup_complete is coerced to boolean by
@@ -63,6 +64,8 @@ function ApiShared_bootstrap(token, requestedPage) {
   // Normal path — setup is complete. Router_pick also returns navHtml
   // (populated for principals with roles; empty for NotAuthorized).
   var routed = Router_pick(requestedPage || '', principal);
+  Logger.log('[measure] bootstrap for page=' + (requestedPage || '(default)') +
+    ' took ' + (Date.now() - _startedMs) + 'ms');
   return {
     principal: principal,
     template:  routed.template,

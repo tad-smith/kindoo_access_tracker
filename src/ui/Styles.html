@@ -259,6 +259,33 @@
   }
   .triggers-list-ul li { margin: 2px 0; }
   .triggers-meta { color: #6b7280; font-size: 0.85em; }
+
+  /* Manager Config — Cache stats panel (Chunk 10.5). Same visual vocab as
+     the Triggers panel above so the two read as a consistent pair. */
+  .cache-panel {
+    background: #fff;
+    border: 1px solid #d8dbe4;
+    border-radius: 6px;
+    padding: 14px;
+    margin-top: 8px;
+  }
+  .cache-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .cache-status { color: #4b5266; font-size: 0.9em; }
+  .cache-aggregate {
+    font-size: 0.9em;
+    color: #4b5266;
+    margin-bottom: 10px;
+  }
+  .cache-keys { font-size: 0.9em; }
+  .cache-keys td:nth-child(2),
+  .cache-keys td:nth-child(3),
+  .cache-keys td:nth-child(4),
+  .cache-keys td:nth-child(5) { text-align: right; font-variant-numeric: tabular-nums; }
   .empty-state {
     color: #6b7280;
     padding: 14px;

@@ -274,10 +274,12 @@ function Requests_readAll_() {
   return out;
 }
 
+// Chunk 10.5: Requests is intentionally NOT CacheService-memoized per
+// architecture.md §7.5 — write-hot (submit / complete / cancel flows)
+// and directly surfaced on the manager queue, which users refresh to
+// see freshness. Per-request Sheet_getTab still applies.
 function Requests_sheet_() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Requests');
-  if (!sheet) throw new Error('Requests tab missing — run setupSheet().');
-  return sheet;
+  return Sheet_getTab('Requests');
 }
 
 function Requests_assertHeaders_(headers) {

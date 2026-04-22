@@ -311,7 +311,7 @@ Script lock is per-script-instance and covers any user invocation, including tri
 
 ## 7. Data access layer
 
-One file per tab under `repos/`. Each exports pure functions that return plain JS objects (snake_case keys matching header names). No file talks to `SpreadsheetApp` except through a repo. A tiny shared `Sheet_getTab(name)` helper caches `getSheetByName` lookups within a single request.
+One file per tab under `repos/`. Each exports pure functions that return plain JS objects (snake_case keys matching header names). No file talks to `SpreadsheetApp` except through the shared `Sheet_getTab(name)` helper (in `core/Cache.gs`) — which memoizes `getSheetByName` lookups within a single request. Repos call `Sheet_getTab` from their `_sheet_` helper; direct `SpreadsheetApp.getActiveSpreadsheet().getSheetByName(...)` calls are an error. The one legitimate exception is `services/Setup.gs#setupSheet`, which has to create missing tabs and therefore cannot go through the memo (which throws on miss).
 
 ### Patterns used across repos
 
@@ -342,21 +342,29 @@ Cache_invalidateAll()                       // nuclear option (ward rename, etc.
 Cache_stats()                               // per-request hit/miss counters, for the debug panel
 ```
 
-Serialization is JSON; values ≥ 100 KB skip the cache (Apps Script's per-value limit) with a `[Cache] size-limit skipped <key> (<n>KB)` log line and fall through to the un-cached compute. Throwing on over-size would break reads, which is unacceptable — the Sheet stays the source of truth and cache misses must be transparent.
+Serialization is JSON; values > 90 KB skip the cache with a `[Cache] size-limit skipped <key> (<n>KB)` log line and fall through to the un-cached compute. CacheService's hard per-value limit is 100 KB; 90 KB is a soft ceiling that leaves headroom for the key metadata CacheService prefixes internally. Throwing on over-size would break reads, which is unacceptable — the Sheet stays the source of truth and cache misses must be transparent.
+
+Dates don't survive `JSON.stringify` → `JSON.parse` round-trips as `Date` instances; they come back as ISO strings and callers that type-check `instanceof Date` silently get wrong answers. `Cache_memoize` encodes `Date` values as `{ __date__: ISO }` before put and revives them on get, so the wire shape of cached results matches the uncached shape. Every other value type passes through unchanged.
 
 ### Read paths memoized (initial list)
 
-| Function | TTL | Invalidated by |
-| --- | --- | --- |
-| `Config_get(key)` | 60 s | `Config_update(key, …)` |
-| `KindooManagers_getActive()` | 60 s | `KindooManagers_insert` / `_update` / `_delete` |
-| `Access_getAll()` | 60 s | `Access_insert` / `_update` / `_delete`; `Importer_runImport` end-of-run |
-| `Wards_getAll()` | 300 s | `Wards_insert` / `_update` / `_delete` |
-| `Buildings_getAll()` | 300 s | `Buildings_insert` / `_update` / `_delete` |
-| `WardCallingTemplate_getAll()` | 300 s | `WardCallingTemplate_insert` / `_update` / `_delete` |
-| `StakeCallingTemplate_getAll()` | 300 s | `StakeCallingTemplate_insert` / `_update` / `_delete` |
+| Function | TTL | Cache key | Invalidated by |
+| --- | --- | --- | --- |
+| `Config_getAll()` | 60 s | `config:getAll` | `Config_update(key, …)`; Importer / Expiry end-of-run |
+| `Config_get(key)` | — | (delegates to `Config_getAll`) | (cascades) |
+| `KindooManagers_getAll()` | 60 s | `kindooManagers:getAll` | `KindooManagers_insert` / `_update` / `_delete` / `_bulkInsert` |
+| `Access_getAll()` | 60 s | `access:getAll` | `Access_insert` / `_delete`; `Importer_runImport` end-of-run |
+| `Wards_getAll()` | 300 s | `wards:getAll` | `Wards_insert` / `_update` / `_delete` / `_bulkInsert` |
+| `Buildings_getAll()` | 300 s | `buildings:getAll` | `Buildings_insert` / `_update` / `_delete` / `_bulkInsert` |
+| `Templates_getAll('ward')` | 300 s | `templates:ward:getAll` | `Templates_insert('ward', …)` / `_update` / `_delete` |
+| `Templates_getAll('stake')` | 300 s | `templates:stake:getAll` | `Templates_insert('stake', …)` / `_update` / `_delete` |
 
 TTLs are short on write-frequent tabs (Config, KindooManagers, Access) and longer on nearly-static tabs (Wards, Buildings, Templates). The 60 s floor accepts up to a minute of staleness on a missed invalidation; the 300 s ceiling accepts up to five minutes on the nearly-static tabs. Acceptable at target scale.
+
+Two notes on the table shape vs. the pre-implementation draft:
+
+- **`Config_getAll` rather than per-key `Config_get`.** The pre-implementation table memoized `Config_get(key)` per key, which would have issued N Sheet reads per request for each distinct key a page touched. Memoizing `Config_getAll` once and having `Config_get(key)` read from the cached map keeps the same cache surface (one key, `config:getAll`, invalidated on every `Config_update`) but serves every subsequent `Config_get` for any key from the same in-memory result. Dashboard reads ~5 Config keys; warm-cache that's 0 Sheet reads instead of up to 5.
+- **`KindooManagers_getAll` rather than `_getActive`.** The pre-implementation table named `KindooManagers_getActive()`, which has never existed in shipped code. Role resolution reaches this tab through `KindooManagers_isActiveByEmail → _getByEmail → _getAll`, so `_getAll` is the real hot path. Memoizing there caches the data the `_getActive` entry intended.
 
 ### Invalidation discipline
 
@@ -385,11 +393,11 @@ If a future auth refactor reintroduces a network-identity lookup (e.g. People AP
 
 Distinct from `CacheService`. `Sheet_getTab(name)` memoizes `SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name)` within a single script invocation (a module-level `var` that resets between requests). Apps Script's `getActiveSpreadsheet().getSheetByName()` is not free — each call hits the underlying spreadsheet handle — so collapsing N calls per request to one is a measurable lift when every repo touches the spreadsheet.
 
-§7 above has described this helper since Chunk 1, but the actual repos call `SpreadsheetApp.getActiveSpreadsheet().getSheetByName(...)` directly — the helper hadn't been written. Chunk 10.5 closes that gap alongside the `CacheService` work: `Sheet_getTab` is implemented in `core/Cache.gs` (or a sibling `core/Sheet.gs`), and repos are refactored to call it. The CacheService-level cache and the request-lifetime memo are separate concerns; the latter doesn't need invalidation (the request ends and the memo vanishes).
+§7 has described this helper since Chunk 1, but the actual repos called `SpreadsheetApp.getActiveSpreadsheet().getSheetByName(...)` directly until Chunk 10.5. The helper now lives in `core/Cache.gs` alongside the `CacheService` wrapper — one module owns both caching concerns — and every repo's `Xxx_sheet_()` helper delegates to it. The ConfigRepo and AuditRepo paths (which had inline `SpreadsheetApp` calls, not a `_sheet_` helper) were refactored to route through `Sheet_getTab` too. The CacheService-level cache and the request-lifetime memo are separate concerns; the latter doesn't need invalidation (the request ends and the memo vanishes). The one non-repo call to `SpreadsheetApp.getActiveSpreadsheet()` that remains in the tree is in `services/Setup.gs#setupSheet` — it has to create missing tabs, and `Sheet_getTab` throws on miss.
 
 ### Debug surface
 
-`ApiManager_cacheStats(token)` returns `{ hits: N, misses: M, skipped_oversize: [...] }`. The manager Configuration page renders a small read-only panel reflecting the counters. Hit / miss counts reset per request — the panel answers "is the cache working right now?", not "what's our long-term hit rate" (the latter would need a sheet-backed counter, which is not worth building).
+`ApiManager_cacheStats(token)` returns `{ byKey: { '<key>': { hits, misses, skipped_size, bytes_cached } }, aggregate: { hits, misses, skipped_size } }`. The manager Configuration page renders a read-only "Cache statistics" panel below the Scheduled triggers panel, showing the aggregate line plus the top-10 keys by total access count. Hit / miss counts reset per script execution — the panel answers "did THIS rpc hit the cache?", not "what's our long-term hit rate" (the latter would need a sheet-backed counter, which is not worth building). A sibling `ApiManager_clearCache(token)` endpoint runs `Cache_invalidateAll()` and writes one `clear_cache` audit row so a sudden slowdown can be traced to a deliberate clear rather than cache eviction.
 
 ## 8. HTML & page routing
 

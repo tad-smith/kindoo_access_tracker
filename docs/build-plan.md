@@ -434,7 +434,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 10.5 — Caching pass
+## Chunk 10.5 — Caching pass `[DONE — see docs/changelog/chunk-10.5-caching.md]`
 
 **Goal:** reduce page latency by ~40-60 % on typical pages by wrapping the hot read paths in `CacheService` with explicit invalidation at every write site. No architectural change, no behaviour change visible to users. Drop-in performance lift.
 
@@ -444,29 +444,29 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Implement `core/Cache.gs`:
+- [x] Implement `core/Cache.gs`:
   - `Cache_memoize(key, ttlSeconds, computeFn)` — standard get-or-compute over `CacheService.getScriptCache()`, with JSON serialization of the computed value.
   - `Cache_invalidate(keyOrKeys)` — removes one or many keys (accepts either a string or an array).
   - `Cache_invalidateAll()` — nuclear option for config / roster changes that affect many keys at once; used sparingly (e.g. a ward rename from `ApiManager_wardsUpsert`).
   - Size-limit handling: `CacheService.put` rejects values > 100 KB; on over-size, log a `[Cache] size-limit skipped <key> (<n>KB)` line and fall through to the un-cached compute. Never throw — cache misses must not break reads.
   - Internal hit/miss counters held in a module-level var (reset on each script invocation, which is fine — counters are per-request so the Config page can surface "we hit the cache N times this request" for debug). Exposed via `Cache_stats()`.
-- [ ] Wrap the hot read paths. The list below is illustrative, not authoritative — the implementer discovers what's actually hot during the measurement pass and adjusts. At minimum:
+- [x] Wrap the hot read paths. The list below is illustrative, not authoritative — the implementer discovers what's actually hot during the measurement pass and adjusts. At minimum:
   - `Config_get(key)` — per-key memoization, **60 s TTL**.
   - `KindooManagers_getActive()` — 60 s TTL.
   - `Access_getAll()` — 60 s TTL.
   - `Wards_getAll()` — 300 s TTL (rarely changes).
   - `Buildings_getAll()` — 300 s TTL.
   - `WardCallingTemplate_getAll()` / `StakeCallingTemplate_getAll()` — 300 s TTL.
-- [ ] Colocate invalidation at every write site:
+- [x] Colocate invalidation at every write site:
   - Every repo `_insert` / `_update` / `_delete` invalidates its tab's cache keys before returning to the caller (so the API layer's audit row still sees fresh data on subsequent reads inside the same request).
   - `Importer_runImport` invalidates `Seats` + `Access` keys at end of run, after the lock releases (so the over-cap pass reads fresh).
   - `Expiry_runExpiry` invalidates `Seats` keys at end of run.
   - `Config_update` invalidates the specific Config key it just wrote.
-- [ ] Cache stats debug view on the manager Configuration page — small read-only panel showing per-key hit / miss counts (or aggregate if per-key is too noisy). New `ApiManager_cacheStats` endpoint.
-- [ ] **Role-resolution caching decision** — do NOT cache role resolution per-user. Chunk 10.5's caches are per-script (`getScriptCache()`), and Alice's role set is not Bob's. Caching the reads that role resolution DOES (`KindooManagers_getActive` + `Access_getAll`) makes role resolution itself cheap without introducing per-user cache scope. If a per-user cache is later needed (e.g. a specific hot-path rpc justifies `getUserCache()`), introduce it one call site at a time, never as a blanket default.
-- [ ] Implement `Sheet_getTab(name)` per-request memo (architecture.md §7 already describes one; Chunk 1 didn't land it). Lives in `core/Cache.gs` (or a sibling `core/Sheet.gs` — implementer's call) and is distinct from `CacheService` — it's a request-lifetime module var that caches the `SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name)` handle. Repos adopted one-by-one; the architecture already assumes it exists, so adoption is a refactor, not a new concept.
-- [ ] Measure before / after on three representative pages (Dashboard, bishopric Roster, manager AllSeats). Record timings in the chunk-10.5 changelog. Use `elapsed_ms` instrumentation where it already exists (`ApiManager_dashboard` logs it; add it to the other two endpoints for this chunk).
-- [ ] Audit every write path for missing invalidation calls. Add a short "Invalidation sites" block to the chunk-10.5 changelog listing every repo / service write site and the cache key it invalidates — makes it one review pass to confirm completeness.
+- [x] Cache stats debug view on the manager Configuration page — small read-only panel showing per-key hit / miss counts (or aggregate if per-key is too noisy). New `ApiManager_cacheStats` endpoint.
+- [x] **Role-resolution caching decision** — do NOT cache role resolution per-user. Chunk 10.5's caches are per-script (`getScriptCache()`), and Alice's role set is not Bob's. Caching the reads that role resolution DOES (`KindooManagers_getActive` + `Access_getAll`) makes role resolution itself cheap without introducing per-user cache scope. If a per-user cache is later needed (e.g. a specific hot-path rpc justifies `getUserCache()`), introduce it one call site at a time, never as a blanket default.
+- [x] Implement `Sheet_getTab(name)` per-request memo (architecture.md §7 already describes one; Chunk 1 didn't land it). Lives in `core/Cache.gs` (or a sibling `core/Sheet.gs` — implementer's call) and is distinct from `CacheService` — it's a request-lifetime module var that caches the `SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name)` handle. Repos adopted one-by-one; the architecture already assumes it exists, so adoption is a refactor, not a new concept.
+- [x] Measure before / after on three representative pages (Dashboard, bishopric Roster, manager AllSeats). Record timings in the chunk-10.5 changelog. Use `elapsed_ms` instrumentation where it already exists (`ApiManager_dashboard` logs it; add it to the other two endpoints for this chunk).
+- [x] Audit every write path for missing invalidation calls. Add a short "Invalidation sites" block to the chunk-10.5 changelog listing every repo / service write site and the cache key it invalidates — makes it one review pass to confirm completeness.
 
 **Acceptance criteria**
 

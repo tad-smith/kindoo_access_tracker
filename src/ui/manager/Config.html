@@ -601,6 +601,30 @@
       '<div class="triggers-list" id="triggers-list">Loading…</div>' +
       '</div>';
 
+    // Cache statistics panel (Chunk 10.5). Per-execution counters — the
+    // panel answers "did THIS rpc hit the cache?" live, which is what an
+    // operator cares about when confirming the Chunk-10.5 wins. Navigate
+    // around the app, then open Config fresh and click Refresh stats to
+    // see warm-cache hits on the populated keys.
+    html += '<h3 style="margin-top:24px; font-size:1em;">Cache statistics</h3>';
+    html += '<p class="config-readonly-note">' +
+      'Hit / miss counts for the in-memory CacheService layer. Counters ' +
+      'reset on every page load — click <em>Refresh stats</em> to re-query ' +
+      '(which is itself a new rpc, so the numbers reflect that rpc\'s ' +
+      'cache activity). Navigate a few pages first to populate keys, then ' +
+      'come back here for a meaningful reading. <em>Clear cache</em> ' +
+      'forces every memoized read to re-scan the Sheet on its next call; ' +
+      'harmless, but slows the next page load.' +
+      '</p>';
+    html += '<div class="cache-panel">' +
+      '<div class="cache-actions">' +
+        '<button class="btn" id="cache-refresh-btn">Refresh stats</button> ' +
+        '<button class="btn btn-danger" id="cache-clear-btn">Clear cache</button>' +
+        '<span class="cache-status" id="cache-status"></span>' +
+      '</div>' +
+      '<div class="cache-stats" id="cache-stats">Loading…</div>' +
+      '</div>';
+
     $('panel-config').innerHTML = html;
 
     Array.prototype.forEach.call($('panel-config').querySelectorAll('tr[data-key]'), function (tr) {
@@ -655,6 +679,87 @@
         $('triggers-status').textContent = 'Failed: ' + err.message;
         toast(err.message, 'error');
       });
+    });
+
+    // Wire the cache stats panel (Chunk 10.5).
+    renderCacheStats();
+    $('cache-refresh-btn').addEventListener('click', function () {
+      $('cache-status').textContent = 'Refreshing…';
+      renderCacheStats();
+    });
+    $('cache-clear-btn').addEventListener('click', function () {
+      if (!confirm('Clear the entire CacheService cache? The next page load will be slower while caches re-warm. This writes one AuditLog row.')) return;
+      var btn = $('cache-clear-btn');
+      btn.disabled = true;
+      $('cache-status').textContent = 'Clearing…';
+      rpc('ApiManager_clearCache').then(function () {
+        btn.disabled = false;
+        $('cache-status').textContent = 'Cleared at ' + formatTime_(new Date());
+        toast('Cache cleared.', 'success');
+        renderCacheStats();
+      }).catch(function (err) {
+        btn.disabled = false;
+        $('cache-status').textContent = 'Failed: ' + err.message;
+        toast(err.message, 'error');
+      });
+    });
+  }
+
+  // Chunk 10.5: render the cache stats panel. Shape from Cache_getStats:
+  //   { byKey: { '<key>': { hits, misses, skipped_size, bytes_cached } },
+  //     aggregate: { hits, misses, skipped_size } }
+  // Top-10 keys by total access count (hits+misses+skipped).
+  function renderCacheStats() {
+    var container = $('cache-stats');
+    if (!container) return;
+    rpc('ApiManager_cacheStats').then(function (stats) {
+      var agg = stats.aggregate || { hits: 0, misses: 0, skipped_size: 0 };
+      var total = agg.hits + agg.misses;
+      var hitRate = total > 0 ? Math.round((agg.hits / total) * 100) : 0;
+      var html = '';
+      html += '<div class="cache-aggregate">' +
+        '<strong>Aggregate (this rpc):</strong> ' +
+        agg.hits + ' hit' + (agg.hits === 1 ? '' : 's') + ' · ' +
+        agg.misses + ' miss' + (agg.misses === 1 ? '' : 'es') + ' · ' +
+        agg.skipped_size + ' size-skip' + (agg.skipped_size === 1 ? '' : 's') + ' · ' +
+        'hit rate ' + hitRate + '%' +
+        '</div>';
+
+      var keys = Object.keys(stats.byKey || {});
+      keys.sort(function (a, b) {
+        var ax = stats.byKey[a];
+        var bx = stats.byKey[b];
+        var aTotal = (ax.hits || 0) + (ax.misses || 0) + (ax.skipped_size || 0);
+        var bTotal = (bx.hits || 0) + (bx.misses || 0) + (bx.skipped_size || 0);
+        return bTotal - aTotal;
+      });
+      keys = keys.slice(0, 10);
+
+      if (keys.length === 0) {
+        html += '<div class="empty-state" style="text-align:left;">No cache activity recorded for this rpc yet. Navigate a few pages and come back.</div>';
+      } else {
+        html += '<table class="config-table cache-keys">' +
+          '<thead><tr>' +
+          '<th>key</th><th>hits</th><th>misses</th><th>size-skip</th><th>bytes cached</th>' +
+          '</tr></thead><tbody>';
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          var b = stats.byKey[k];
+          html += '<tr>' +
+            '<td><code>' + esc(k) + '</code></td>' +
+            '<td>' + (b.hits || 0) + '</td>' +
+            '<td>' + (b.misses || 0) + '</td>' +
+            '<td>' + (b.skipped_size || 0) + '</td>' +
+            '<td>' + (b.bytes_cached || 0) + '</td>' +
+            '</tr>';
+        }
+        html += '</tbody></table>';
+      }
+      container.innerHTML = html;
+      $('cache-status').textContent = '';
+    }).catch(function (err) {
+      container.innerHTML = '<div class="error">Failed to load: ' + esc(err.message) + '</div>';
+      $('cache-status').textContent = '';
     });
   }
 

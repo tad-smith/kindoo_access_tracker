@@ -114,6 +114,15 @@ function Importer_runImport(opts) {
   }
 
   importResult.over_caps = overCaps;
+
+  // Chunk 10.5: flush cached reads touched by the run. The per-row repo
+  // invalidations inside the import lock already kept the in-run reads
+  // consistent (Access_insert / _delete each invalidated access:getAll);
+  // this final sweep catches Config-driven caches the over-cap snapshot
+  // and status fields just wrote. Seats is NOT CacheService-memoized
+  // (architecture.md §7.5), so no Seats key here.
+  Cache_invalidate(['config:getAll', 'access:getAll']);
+
   return importResult;
 }
 

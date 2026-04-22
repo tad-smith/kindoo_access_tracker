@@ -10,18 +10,26 @@
 
 const BUILDINGS_HEADERS_ = ['building_name', 'address'];
 
+// Chunk 10.5: CacheService key for Buildings_getAll. 300s TTL — nearly
+// static; a new building lands maybe once a year. Invalidated on every
+// write, plus Buildings_getByName delegates to the cached Buildings_getAll.
+const BUILDINGS_CACHE_KEY_ = 'buildings:getAll';
+const BUILDINGS_CACHE_TTL_S_ = 300;
+
 function Buildings_getAll() {
-  var sheet = Buildings_sheet_();
-  var data = sheet.getDataRange().getValues();
-  if (data.length === 0) return [];
-  Buildings_assertHeaders_(data[0]);
-  var out = [];
-  for (var i = 1; i < data.length; i++) {
-    var raw = data[i][0];
-    if (raw === '' || raw == null) continue;
-    out.push(Buildings_rowToObject_(data[i]));
-  }
-  return out;
+  return Cache_memoize(BUILDINGS_CACHE_KEY_, BUILDINGS_CACHE_TTL_S_, function () {
+    var sheet = Buildings_sheet_();
+    var data = sheet.getDataRange().getValues();
+    if (data.length === 0) return [];
+    Buildings_assertHeaders_(data[0]);
+    var out = [];
+    for (var i = 1; i < data.length; i++) {
+      var raw = data[i][0];
+      if (raw === '' || raw == null) continue;
+      out.push(Buildings_rowToObject_(data[i]));
+    }
+    return out;
+  });
 }
 
 function Buildings_getByName(buildingName) {
@@ -52,6 +60,7 @@ function Buildings_insert(row) {
     address:       String(row.address == null ? '' : row.address)
   };
   sheet.appendRow([toWrite.building_name, toWrite.address]);
+  Cache_invalidate(BUILDINGS_CACHE_KEY_);
   return toWrite;
 }
 
@@ -100,6 +109,7 @@ function Buildings_bulkInsert(rows) {
   var values = prepared.map(function (p) { return [p.building_name, p.address]; });
   var startRow = sheet.getLastRow() + 1;
   sheet.getRange(startRow, 1, values.length, BUILDINGS_HEADERS_.length).setValues(values);
+  Cache_invalidate(BUILDINGS_CACHE_KEY_);
   return prepared;
 }
 
@@ -130,6 +140,7 @@ function Buildings_update(buildingName, patch) {
     };
     sheet.getRange(i + 1, 1, 1, BUILDINGS_HEADERS_.length)
          .setValues([[merged.building_name, merged.address]]);
+    Cache_invalidate(BUILDINGS_CACHE_KEY_);
     return { before: before, after: merged };
   }
   throw new Error('Buildings_update: no building named "' + key + '"');
@@ -146,6 +157,7 @@ function Buildings_delete(buildingName) {
     if (String(data[i][0]) === key) {
       var before = Buildings_rowToObject_(data[i]);
       sheet.deleteRow(i + 1);
+      Cache_invalidate(BUILDINGS_CACHE_KEY_);
       return before;
     }
   }
@@ -153,9 +165,7 @@ function Buildings_delete(buildingName) {
 }
 
 function Buildings_sheet_() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Buildings');
-  if (!sheet) throw new Error('Buildings tab missing — run setupSheet().');
-  return sheet;
+  return Sheet_getTab('Buildings');
 }
 
 function Buildings_assertHeaders_(headers) {

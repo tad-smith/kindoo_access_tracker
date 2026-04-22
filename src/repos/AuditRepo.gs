@@ -29,8 +29,7 @@ function AuditRepo_write(entry) {
   if (entry.entity_id === undefined || entry.entity_id === null || entry.entity_id === '') {
     throw new Error('AuditRepo.write: entity_id required');
   }
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('AuditLog');
-  if (!sheet) throw new Error('AuditLog tab missing — run setupSheet().');
+  var sheet = Sheet_getTab('AuditLog');
 
   var headers = sheet.getRange(1, 1, 1, AUDIT_HEADERS_.length).getValues()[0];
   for (var h = 0; h < AUDIT_HEADERS_.length; h++) {
@@ -72,8 +71,7 @@ function AuditRepo_write(entry) {
 // checked once, not per entry.
 function AuditRepo_writeMany(entries) {
   if (!entries || entries.length === 0) return;
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('AuditLog');
-  if (!sheet) throw new Error('AuditLog tab missing — run setupSheet().');
+  var sheet = Sheet_getTab('AuditLog');
   var headers = sheet.getRange(1, 1, 1, AUDIT_HEADERS_.length).getValues()[0];
   for (var h = 0; h < AUDIT_HEADERS_.length; h++) {
     if (String(headers[h]) !== AUDIT_HEADERS_[h]) {
@@ -129,8 +127,7 @@ function AuditRepo_writeMany(entries) {
 // cache (CacheService) or a reverse-chronological read that stops once
 // the date_from cut-off is passed. Recorded for future scale.
 function AuditRepo_getAll() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('AuditLog');
-  if (!sheet) throw new Error('AuditLog tab missing — run setupSheet().');
+  var sheet = Sheet_getTab('AuditLog');
   var data = sheet.getDataRange().getValues();
   if (data.length === 0) return [];
   var headers = data[0];

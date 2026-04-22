@@ -12,6 +12,12 @@
 
 const CONFIG_HEADERS_ = ['key', 'value'];
 
+// CacheService key for the full Config tab (Chunk 10.5). Config_getAll
+// memoizes here; Config_get reads from the cached map rather than doing
+// its own Sheet read. Invalidated on every Config_update.
+const CONFIG_CACHE_KEY_ = 'config:getAll';
+const CONFIG_CACHE_TTL_S_ = 60;
+
 // Keys we coerce to non-string types on read. Everything else is returned as
 // the Sheet hands it to us (string, number, boolean, or Date for *_at).
 const CONFIG_TYPED_KEYS_ = {
@@ -61,29 +67,28 @@ const CONFIG_SYSTEM_KEYS_ = {
 };
 
 function Config_getAll() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
-  if (!sheet) throw new Error('Config tab missing — run setupSheet().');
-  var data = sheet.getDataRange().getValues();
-  Config_assertHeaders_(data);
-  var out = {};
-  for (var i = 1; i < data.length; i++) {
-    var key = data[i][0];
-    if (key === '' || key == null) continue;
-    out[String(key)] = Config_coerce_(String(key), data[i][1]);
-  }
-  return out;
+  return Cache_memoize(CONFIG_CACHE_KEY_, CONFIG_CACHE_TTL_S_, function () {
+    var sheet = Sheet_getTab('Config');
+    var data = sheet.getDataRange().getValues();
+    Config_assertHeaders_(data);
+    var out = {};
+    for (var i = 1; i < data.length; i++) {
+      var key = data[i][0];
+      if (key === '' || key == null) continue;
+      out[String(key)] = Config_coerce_(String(key), data[i][1]);
+    }
+    return out;
+  });
 }
 
+// Chunk 10.5: reads from the memoized Config_getAll result rather than
+// doing its own per-call scan. Previously this did N getDataRange reads
+// per request (Dashboard reads ~5 Config keys); now a single warm getAll
+// serves every caller for the TTL.
 function Config_get(key) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
-  if (!sheet) throw new Error('Config tab missing — run setupSheet().');
-  var data = sheet.getDataRange().getValues();
-  Config_assertHeaders_(data);
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(key)) {
-      return Config_coerce_(String(key), data[i][1]);
-    }
-  }
+  var all = Config_getAll();
+  var k = String(key);
+  if (Object.prototype.hasOwnProperty.call(all, k)) return all[k];
   return undefined;
 }
 
@@ -95,8 +100,7 @@ function Config_update(key, value) {
   if (!key || typeof key !== 'string') {
     throw new Error('Config_update: key required');
   }
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
-  if (!sheet) throw new Error('Config tab missing — run setupSheet().');
+  var sheet = Sheet_getTab('Config');
   var data = sheet.getDataRange().getValues();
   Config_assertHeaders_(data);
   // Refuse to write to a tab whose headers have drifted — symmetric with
@@ -137,6 +141,9 @@ function Config_update(key, value) {
         toWrite = dv;
       }
       sheet.getRange(i + 1, 2).setValue(toWrite);
+      // Chunk 10.5: invalidate the Config memo so the next read reflects
+      // this write. Cheap — one cache key removes one entry.
+      Cache_invalidate(CONFIG_CACHE_KEY_);
       return { key: key, before: oldCoerced, after: Config_coerce_(key, toWrite) };
     }
   }
