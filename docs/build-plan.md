@@ -248,7 +248,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 6 — Requests v1 (add flows + queue)
+## Chunk 6 — Requests v1 (add flows + queue) `[DONE — see docs/changelog/chunk-6-requests.md]`
 
 **Goal:** the full add-manual / add-temp request lifecycle works, including email.
 
@@ -258,17 +258,21 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Implement `repos/RequestsRepo.gs` (full CRUD).
-- [ ] Implement `services/RequestsService.gs`:
-  - `submit(requesterPrincipal, draft)` — writes pending row, sends email, returns request_id.
-  - `complete(managerPrincipal, requestId)` — updates status, inserts `Seats` row, sends email to requester.
-  - `reject(managerPrincipal, requestId, reason)` — updates status, sends email to requester.
-  - `cancel(requesterPrincipal, requestId)` — updates status, sends email to managers.
-  - All wrapped in `Lock_withLock`; all emit `AuditLog` entries.
-- [ ] Implement `services/EmailService.gs` with typed functions: `notifyManagersNewRequest`, `notifyRequesterCompleted`, `notifyRequesterRejected`, `notifyManagersCancelled`.
-- [ ] Implement `ui/bishopric/NewRequest.html`, `ui/bishopric/MyRequests.html`, `ui/stake/NewRequest.html`, `ui/stake/MyRequests.html`, `ui/manager/RequestsQueue.html`.
-- [ ] New Request client-side duplicate check (calls a `checkDuplicate(target_email, scope)` API before submit and warns).
-- [ ] Manager inline edit of `Seats` on All Seats page (reason, building_names, person_name, dates on temp).
+- [x] Implement `repos/RequestsRepo.gs` — full CRUD minus delete (cancelled/rejected/completed rows persist for the audit trail). Limited-field `Requests_update` (only `status`, `completer_email`, `completed_at`, `rejection_reason` are mutable).
+- [x] Implement `services/RequestsService.gs`:
+  - `RequestsService_submit({scope, requesterPrincipal, draft})` — validates the draft, writes the `pending` row, emits one `submit_request` audit row, returns `{request}`. Email is sent AFTER the lock by the API layer.
+  - `RequestsService_complete(managerPrincipal, requestId)` — asserts `status==='pending'`, inserts the matching `Seats` row (manual/temp), flips the Request to `complete`, emits two audit rows (`complete_request` on Request + `insert` on Seat). Returns `{request, seat}`.
+  - `RequestsService_reject(managerPrincipal, requestId, reason)` — requires a non-empty reason; asserts pending; flips to `rejected`; emits one `reject_request` audit row.
+  - `RequestsService_cancel(requesterPrincipal, requestId)` — requires the principal's email to match `requester_email` (canonical-equal); asserts pending; flips to `cancelled`; emits one `cancel_request` audit row.
+  - All wrapped in `Lock_withLock` at the API layer; audit rows all emitted inside the same closure.
+- [x] Implement `services/EmailService.gs` — typed wrappers: `notifyManagersNewRequest`, `notifyRequesterCompleted`, `notifyRequesterRejected`, `notifyManagersCancelled`. Global kill-switch via `Config.notifications_enabled` (default `TRUE`). Sent OUTSIDE the lock, best-effort, with a surfaced `warning` on failure.
+- [x] Consolidated to single top-level `ui/NewRequest.html` + `ui/MyRequests.html` instead of bishopric/* + stake/* pairs. Scope selector for multi-role principals; implicit scope + label for single-role. `ui/manager/RequestsQueue.html` shows all pending with ward/type filters, per-request seat preview, and inline duplicate warning.
+- [x] Consolidated request endpoints in a new `api/ApiRequests.gs`: `ApiRequests_submit(token, draft, scope?)`, `ApiRequests_listMy(token, scope?)`, `ApiRequests_cancel(token, requestId)`, `ApiRequests_checkDuplicate(token, targetEmail, scope?)`. Scope is required when the principal holds multiple request-capable roles, inferred otherwise, always validated against `Auth_requestableScopes(principal)` server-side.
+- [x] Manager-side endpoints in `api/ApiManager.gs`: `ApiManager_listRequests(filters)`, `ApiManager_completeRequest`, `ApiManager_rejectRequest`, `ApiManager_updateSeat`.
+- [x] New Request client-side duplicate check calls `ApiRequests_checkDuplicate(targetEmail, scope)`; warns with an inline roster table (via `rosterRowHtml`); does not block.
+- [x] Manager inline edit of `Seats` on All Seats page — person_name, reason, building_names; plus start_date/end_date on temp. Auto rows are not editable (importer-owned).
+- [x] Nav + Router updated: new `?p=new`, `?p=my`, `?p=mgr/queue` pages. `new` and `my` accept bishopric OR stake roles (the first pages with a multi-role access shape; `Router_hasAllowedRole_` supports both).
+- [x] New `Config.notifications_enabled` (boolean) seeded by `setupSheet` with default `TRUE`; editable in the manager Configuration page's Editable table as a checkbox.
 
 **Acceptance criteria**
 

@@ -6,10 +6,10 @@
   from a URL parameter. A bishopric member for CO physically cannot
   request GE's roster through this page.
 
-  Chunk 7 adds the X/trashcan remove control on manual/temp rows and
-  the "removal pending" badge; Chunk 6 adds the New Request / My
-  Requests links the nav already points at (hidden until those chunks
-  ship so clicking never leads to a broken page).
+  Chunk 6 lit up the "New Kindoo Request" and "My Requests" nav links
+  (shared templates at the top of ui/). Chunk 7 will add the
+  X/trashcan remove control on manual/temp rows here plus a "removal
+  pending" badge on rows with an outstanding remove request.
 -->
 <section class="roster-page">
   <div class="roster-header">
@@ -29,7 +29,7 @@
       resp.summary.ward_name + ' (' + resp.summary.scope + ')';
     $('utilization-host').innerHTML = renderUtilizationBar(resp.summary);
     $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
-      emptyMsg: 'No seats assigned to this ward yet. Run the importer (a Kindoo Manager has an Import page) or add manual/temp seats once Chunk 6 ships.'
+      emptyMsg: 'No seats assigned to this ward yet. Run the importer (a Kindoo Manager has an Import page) or submit a request from "New Kindoo Request".'
     });
   }).catch(function (err) {
     var msg = (err && err.message) ? err.message : String(err);

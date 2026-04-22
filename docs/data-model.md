@@ -43,6 +43,7 @@ Key/value pairs. The primary "knobs" the app reads on startup.
 | `last_import_at` | timestamp | Written by Importer. |
 | `last_import_summary` | string | Short human-readable summary of the last run. |
 | `expiry_hour` | number | Local hour for the daily expiry trigger. Default `3`. |
+| `notifications_enabled` | boolean | Global kill-switch for every `EmailService` send. Default `TRUE`. When `FALSE`, the four request-lifecycle notifications (and the future Chunk-9 over-cap email) log what would have been sent but never call `MailApp.sendEmail`. Editable from the manager Configuration page. |
 
 ### Example rows
 
@@ -59,6 +60,7 @@ Key/value pairs. The primary "knobs" the app reads on startup.
 | `last_import_at` | `2026-04-19 03:02:11` |
 | `last_import_summary` | `CO: +2/-1 auto, +1 access · ST: +0/-0 auto · over cap: none` |
 | `expiry_hour` | `3` |
+| `notifications_enabled` | `TRUE` |
 
 ---
 
@@ -234,8 +236,8 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 | `status` | enum | `pending` / `complete` / `rejected` / `cancelled`. |
 | `requester_email` | string | Lowercased. |
 | `requested_at` | timestamp | |
-| `completer_email` | string | Set on `complete` or `rejected`. |
-| `completed_at` | timestamp | Set on `complete` or `rejected` (name kept for both for simplicity). |
+| `completer_email` | string | Set on `complete` or `rejected` (the manager's email). Left blank on `cancelled` — the cancel is a requester action, not a completer action; the audit row carries the same information. |
+| `completed_at` | timestamp | Set on every terminal transition (`complete`, `rejected`, `cancelled`) — the name is kept from the original spec but the semantic is "when the lifecycle ended", not strictly "when the manager completed it". |
 | `rejection_reason` | string | Required on `rejected`. |
 
 ### Example rows

@@ -11,8 +11,19 @@
 //     (a single getDataRange() read instead of N per-scope reads; at
 //     target scale ~250 rows that's well under any budget).
 //
-// Full CRUD (manual/temp insert, update, delete-by-id) lands in Chunks 5–7.
-// The importer is the only writer here today.
+// Chunk 6 adds the manual/temp write side:
+//   - Seats_getById(seat_id)         — looked up before inline edits
+//   - Seats_getActiveByScopeAndEmail — duplicate-check lookup (req → seat)
+//   - Seats_insert(row)              — manual/temp insert on request complete
+//   - Seats_update(seat_id, patch)   — inline edit of manual/temp fields
+//                                       (person_name, reason, building_names,
+//                                        and dates on temp). scope, type,
+//                                        seat_id, person_email are immutable.
+//                                       auto rows are still importer-owned;
+//                                       the UI does not expose an edit
+//                                       affordance on them.
+//
+// Chunk 7 will add Seats_deleteById for the remove-request complete path.
 //
 // Emails are stored as typed per architecture.md D4 (Utils_cleanEmail — trim
 // only). source_row_hash is computed on the canonical form (Utils_hashRow)
@@ -107,6 +118,189 @@ function Seats_bulkInsertAuto(rows) {
   var startRow = sheet.getLastRow() + 1;
   sheet.getRange(startRow, 1, values.length, SEATS_HEADERS_.length).setValues(values);
   return materialised;
+}
+
+// Chunk 6: single-row lookup by seat_id. Used by the inline-edit path
+// on the manager AllSeats page so the API layer has a `before` shape for
+// the audit row.
+function Seats_getById(seatId) {
+  if (!seatId) return null;
+  var key = String(seatId);
+  var all = Seats_readAll_();
+  for (var i = 0; i < all.length; i++) {
+    if (all[i].seat_id === key) return all[i];
+  }
+  return null;
+}
+
+// Chunk 6: duplicate-check. Returns every seat in the given scope whose
+// person_email canonicalises to the supplied email. Used by
+// ApiRequests_checkDuplicate and RequestsQueue's server-side duplicate
+// warning — "active" here means "in the tab right now" (no soft-delete
+// in the schema, per spec §3.2 — rows are inserted on add, deleted on
+// remove/expire, so every row is active).
+function Seats_getActiveByScopeAndEmail(scope, email) {
+  if (!scope || !email) return [];
+  var scopeKey = String(scope);
+  var rows = Seats_getByScope(scopeKey);
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    if (Utils_emailsEqual(rows[i].person_email, email)) out.push(rows[i]);
+  }
+  return out;
+}
+
+// Chunk 6: manual / temp insert. Caller (RequestsService_complete) provides
+// the full row shape — seat_id (UUID), scope, type ('manual' | 'temp'),
+// person_email / person_name / reason / start_date / end_date /
+// building_names / created_by / last_modified_by. The repo fills
+// created_at / last_modified_at from the server clock and validates
+// type ∈ {manual, temp} (auto rows are the importer's responsibility via
+// Seats_bulkInsertAuto; mixing surfaces would break import idempotency).
+function Seats_insert(row) {
+  if (!row || typeof row !== 'object') throw new Error('Seats_insert: row required');
+  if (!row.seat_id)      throw new Error('Seats_insert: seat_id required');
+  if (!row.scope)        throw new Error('Seats_insert: scope required');
+  if (row.type !== 'manual' && row.type !== 'temp') {
+    throw new Error('Seats_insert: type must be "manual" or "temp" (auto rows use Seats_bulkInsertAuto)');
+  }
+  if (!row.created_by)       throw new Error('Seats_insert: created_by required');
+  if (!row.last_modified_by) throw new Error('Seats_insert: last_modified_by required');
+
+  var sheet = Seats_sheet_();
+  var headers = sheet.getRange(1, 1, 1, SEATS_HEADERS_.length).getValues()[0];
+  Seats_assertHeaders_(headers);
+
+  // Uniqueness check on seat_id — symmetric with Requests_insert.
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(row.seat_id)) {
+      throw new Error('Seats_insert: duplicate seat_id "' + row.seat_id + '"');
+    }
+  }
+
+  var now = row.created_at instanceof Date ? row.created_at : new Date();
+  var modAt = row.last_modified_at instanceof Date ? row.last_modified_at : now;
+
+  var seat = {
+    seat_id:          String(row.seat_id),
+    scope:            String(row.scope),
+    type:             String(row.type),
+    person_email:     Utils_cleanEmail(row.person_email),
+    person_name:      row.person_name == null ? '' : String(row.person_name),
+    calling_name:     '',       // manual/temp never carry a calling
+    source_row_hash:  '',       // manual/temp never have a hash
+    reason:           row.reason == null ? '' : String(row.reason),
+    start_date:       row.start_date == null ? '' : String(row.start_date),
+    end_date:         row.end_date == null ? '' : String(row.end_date),
+    building_names:   row.building_names == null ? '' : String(row.building_names),
+    created_by:       String(row.created_by),
+    created_at:       now,
+    last_modified_by: String(row.last_modified_by),
+    last_modified_at: modAt
+  };
+  sheet.appendRow([
+    seat.seat_id, seat.scope, seat.type, seat.person_email, seat.person_name,
+    seat.calling_name, seat.source_row_hash, seat.reason, seat.start_date,
+    seat.end_date, seat.building_names, seat.created_by, seat.created_at,
+    seat.last_modified_by, seat.last_modified_at
+  ]);
+  return seat;
+}
+
+// Chunk 6: manager inline edit. Mutable fields:
+//   - person_name            (always)
+//   - reason                 (always — required for manual/temp per spec)
+//   - building_names         (always)
+//   - start_date, end_date   (only when row.type === 'temp')
+//   - last_modified_by       (caller provides; typically managerPrincipal.email)
+//
+// Immutable: seat_id, scope, type, person_email, calling_name,
+// source_row_hash, created_by, created_at. Changing any of them means a
+// different seat; the right path is delete + insert (Chunk 7 handles
+// delete). Refusing here defends the audit trail (a patch that looked
+// like `{person_email: 'new@example.com'}` would turn a seat into a new
+// person silently).
+//
+// auto rows refuse every patch — they're importer-owned and would be
+// clobbered on the next run; the UI hides the edit affordance on them,
+// but the repo reinforces the rule.
+function Seats_update(seatId, patch) {
+  if (!seatId) throw new Error('Seats_update: seat_id required');
+  if (!patch || typeof patch !== 'object') {
+    throw new Error('Seats_update: patch object required');
+  }
+  var sheet = Seats_sheet_();
+  var data = sheet.getDataRange().getValues();
+  if (data.length === 0) throw new Error('Seats_update: no seat with seat_id "' + seatId + '"');
+  Seats_assertHeaders_(data[0]);
+  var key = String(seatId);
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) !== key) continue;
+    var before = Seats_rowToObject_(data[i]);
+
+    if (before.type === 'auto') {
+      throw new Error('Auto seats are managed by the weekly import and cannot be edited here. ' +
+        'Changes made in the callings sheet flow through on the next Import Now run.');
+    }
+
+    // Refuse immutable-field patches loudly rather than silently ignoring them —
+    // a client bug that thinks it's renaming a person should surface, not
+    // look successful.
+    var immutable = ['seat_id', 'scope', 'type', 'person_email',
+                     'calling_name', 'source_row_hash',
+                     'created_by', 'created_at'];
+    for (var m = 0; m < immutable.length; m++) {
+      if (patch[immutable[m]] !== undefined) {
+        throw new Error('Seats_update: cannot modify "' + immutable[m] + '" — it is immutable. ' +
+          'If you need to change this, delete the seat and create a new one.');
+      }
+    }
+
+    // Temp-only fields are silently ignored on non-temp rows (harmless;
+    // the UI only surfaces the date inputs on temp rows, and a patch with
+    // null/undefined dates from a manual-row edit shouldn't throw).
+    var isTemp = before.type === 'temp';
+    var nextStart = before.start_date;
+    var nextEnd   = before.end_date;
+    if (isTemp) {
+      if (patch.start_date !== undefined) nextStart = patch.start_date == null ? '' : String(patch.start_date);
+      if (patch.end_date   !== undefined) nextEnd   = patch.end_date   == null ? '' : String(patch.end_date);
+    } else {
+      if (patch.start_date !== undefined || patch.end_date !== undefined) {
+        // Loud failure on a date patch to a manual row — almost certainly a
+        // UI bug, and silently dropping would mask it.
+        throw new Error('Seats_update: start_date / end_date are only editable on temp seats (type=' + before.type + ').');
+      }
+    }
+
+    var now = new Date();
+    var after = {
+      seat_id:          before.seat_id,
+      scope:            before.scope,
+      type:             before.type,
+      person_email:     before.person_email,
+      person_name:      patch.person_name    !== undefined ? (patch.person_name    == null ? '' : String(patch.person_name))    : before.person_name,
+      calling_name:     before.calling_name,
+      source_row_hash:  before.source_row_hash,
+      reason:           patch.reason         !== undefined ? (patch.reason         == null ? '' : String(patch.reason))         : before.reason,
+      start_date:       nextStart,
+      end_date:         nextEnd,
+      building_names:   patch.building_names !== undefined ? (patch.building_names == null ? '' : String(patch.building_names)) : before.building_names,
+      created_by:       before.created_by,
+      created_at:       before.created_at,
+      last_modified_by: patch.last_modified_by != null ? String(patch.last_modified_by) : before.last_modified_by,
+      last_modified_at: now
+    };
+    sheet.getRange(i + 1, 1, 1, SEATS_HEADERS_.length).setValues([[
+      after.seat_id, after.scope, after.type, after.person_email, after.person_name,
+      after.calling_name, after.source_row_hash, after.reason, after.start_date,
+      after.end_date, after.building_names, after.created_by, after.created_at,
+      after.last_modified_by, after.last_modified_at
+    ]]);
+    return { before: before, after: after };
+  }
+  throw new Error('Seats_update: no seat with seat_id "' + seatId + '"');
 }
 
 // Delete the first auto-row whose source_row_hash equals `hash`. Returns

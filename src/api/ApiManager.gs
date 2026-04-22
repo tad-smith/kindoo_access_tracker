@@ -578,6 +578,253 @@ function ApiManager_allSeats_matchesBuilding_(buildingNames, filter) {
 }
 
 // ===========================================================================
+// Requests Queue + inline Seat edit (Chunk 6)
+// ===========================================================================
+//
+// Manager surface for the request lifecycle. Submit / cancel flows live in
+// api/ApiRequests.gs (shared across bishopric + stake principals);
+// complete / reject are manager-only and live here.
+//
+// Self-approval policy (build-plan.md Chunk 6 → "Policy (confirmed)"): a
+// manager who is ALSO a bishopric / stake member may complete or reject
+// requests they themselves submitted. The server-side handler does NOT
+// check requester_email against managerPrincipal.email — the audit trail
+// already records who submitted and who completed, so the chain of
+// custody is clear even when those addresses are the same. No guard
+// here; none in the queue UI.
+//
+// Email sends happen OUTSIDE Lock_withLock, best-effort; a mail failure
+// surfaces as a `warning` field on the response rather than unwinding
+// the write (same pattern as ApiRequests_submit / _cancel).
+
+// Queue state filter. `state='pending'` shows only open requests.
+// `state='complete'` groups the three terminal statuses (complete,
+// rejected, cancelled) — the queue UI only needs to distinguish "waiting
+// on a manager" from "done, for whatever definition of done". A future
+// Chunk-10 audit-log page may want to filter by the exact status value;
+// that surface can call ApiManager_listRequests with a different filter
+// shape then.
+const REQUESTS_STATE_TERMINAL_ = {
+  complete:  true,
+  rejected:  true,
+  cancelled: true
+};
+
+function ApiManager_listRequests(token, filters) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  filters = filters || {};
+  var wardFilter = ApiManager_listRequests_coerce_(filters.ward);
+  var typeFilter = ApiManager_listRequests_coerce_(filters.type);
+  // state is the canonical UI filter ('pending' | 'complete'); default
+  // pending. `status` (singular-value) is still accepted for future
+  // pages that want an exact match; if both are supplied, state wins.
+  var stateFilter = ApiManager_listRequests_coerce_(filters.state);
+  var exactStatus = ApiManager_listRequests_coerce_(filters.status);
+  if (!stateFilter && !exactStatus) stateFilter = 'pending';
+  if (stateFilter && stateFilter !== 'pending' && stateFilter !== 'complete') {
+    throw new Error('Invalid state filter "' + stateFilter + '" — must be pending or complete.');
+  }
+
+  // Read once; filter in memory. Target scale is 1-2 requests/week; a
+  // full scan is trivially cheap here.
+  var all = Requests_getAll();
+  var rows = [];
+  for (var i = 0; i < all.length; i++) {
+    var r = all[i];
+    if (stateFilter === 'pending'  && r.status !== 'pending') continue;
+    if (stateFilter === 'complete' && !REQUESTS_STATE_TERMINAL_[r.status]) continue;
+    if (exactStatus && !stateFilter && r.status !== exactStatus) continue;
+    if (wardFilter && r.scope !== wardFilter) continue;
+    if (typeFilter && r.type  !== typeFilter) continue;
+    rows.push(ApiManager_shapeRequestForClient_(r));
+  }
+  // Pending queue: oldest-first so the backlog clears FIFO.
+  // Complete view: newest-first so recently-resolved requests are
+  // immediately visible (the typical "what just happened" need).
+  if (stateFilter === 'pending' || exactStatus === 'pending') {
+    rows.sort(function (a, b) {
+      return (a.requested_at_ms || 0) - (b.requested_at_ms || 0);
+    });
+  } else {
+    rows.sort(function (a, b) {
+      // Use completed_at when set, fall back to requested_at.
+      var ax = a.completed_at_ms || a.requested_at_ms || 0;
+      var bx = b.completed_at_ms || b.requested_at_ms || 0;
+      return bx - ax;
+    });
+  }
+
+  // Duplicate-preview map: relevant only for pending rows (managers
+  // use it at complete-time to check for dupes). Terminal rows skip
+  // the preview since the decision's already been made.
+  var ctx = Rosters_buildContext_();
+  for (var d = 0; d < rows.length; d++) {
+    var rd = rows[d];
+    if (rd.status !== 'pending') {
+      rd.duplicate_existing = [];
+      continue;
+    }
+    var existing = Seats_getActiveByScopeAndEmail(rd.scope, rd.target_email);
+    rd.duplicate_existing = existing.map(function (s) { return Rosters_mapRow_(s, ctx.today); });
+  }
+
+  // Filter-option lists for the UI dropdowns. The Complete-confirmation
+  // dialog also reads from here — it needs the full Buildings list
+  // (for the checkbox group) and each ward's default building (for the
+  // pre-check). Wards are sent with their building_name so the dialog
+  // doesn't have to call a second endpoint.
+  var wardList = [];
+  var allWards = Wards_getAll();
+  for (var w = 0; w < allWards.length; w++) {
+    wardList.push({
+      ward_code:     allWards[w].ward_code,
+      ward_name:     allWards[w].ward_name,
+      building_name: allWards[w].building_name || ''
+    });
+  }
+  var buildingList = [];
+  var allBuildings = Buildings_getAll();
+  for (var b = 0; b < allBuildings.length; b++) {
+    buildingList.push(allBuildings[b].building_name);
+  }
+
+  return {
+    rows:            rows,
+    total_rows:      rows.length,
+    filter_options:  { wards: wardList, buildings: buildingList },
+    applied_filters: {
+      ward:   wardFilter  || '',
+      type:   typeFilter  || '',
+      state:  stateFilter || '',
+      status: exactStatus || ''
+    }
+  };
+}
+
+// overrides (optional): { building_names: 'Stake Center,Foo Hall' }
+//
+// When the manager confirms via the queue dialog they pass their chosen
+// building_names selection; omitting overrides falls back to the ward's
+// default (for wards) or '' (for stake). Validation happens in
+// RequestsService_validateBuildings_.
+function ApiManager_completeRequest(token, requestId, overrides) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  if (!requestId) throw new Error('request_id required');
+
+  var result = Lock_withLock(function () {
+    return RequestsService_complete(principal, requestId, overrides);
+  });
+
+  try {
+    EmailService_notifyRequesterCompleted(result.request, principal, result.seat);
+  } catch (e) {
+    Logger.log('[ApiManager_completeRequest] notifyRequesterCompleted failed: ' +
+      (e && e.message ? e.message : e));
+    result.warning = 'Request completed, but the requester notification email failed to send.';
+  }
+  return result;
+}
+
+function ApiManager_rejectRequest(token, requestId, rejectionReason) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  if (!requestId) throw new Error('request_id required');
+
+  var result = Lock_withLock(function () {
+    return RequestsService_reject(principal, requestId, rejectionReason);
+  });
+
+  try {
+    EmailService_notifyRequesterRejected(result.request, principal, rejectionReason);
+  } catch (e) {
+    Logger.log('[ApiManager_rejectRequest] notifyRequesterRejected failed: ' +
+      (e && e.message ? e.message : e));
+    result.warning = 'Request rejected, but the requester notification email failed to send.';
+  }
+  return result;
+}
+
+// Inline seat edit on the manager All Seats page. Fields editable by the
+// manager:
+//   - person_name, reason, building_names   (always)
+//   - start_date, end_date                  (temp seats only; repo guards)
+// Everything else is immutable (auto seats are fully locked — the repo
+// throws). Patch is handed to Seats_update, which does the immutable-field
+// check and returns { before, after } for the audit row.
+function ApiManager_updateSeat(token, seatId, patch) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  if (!seatId) throw new Error('seat_id required');
+
+  // Accept only the whitelisted editable fields from the client. Anything
+  // else is stripped silently — the repo would throw, but this keeps the
+  // failure mode narrow (client can't accidentally fabricate a
+  // `scope: 'stake'` patch by typo).
+  var narrowed = {};
+  if (patch && patch.person_name    !== undefined) narrowed.person_name    = patch.person_name;
+  if (patch && patch.reason         !== undefined) narrowed.reason         = patch.reason;
+  if (patch && patch.building_names !== undefined) narrowed.building_names = patch.building_names;
+  if (patch && patch.start_date     !== undefined) narrowed.start_date     = patch.start_date;
+  if (patch && patch.end_date       !== undefined) narrowed.end_date       = patch.end_date;
+  narrowed.last_modified_by = principal.email;
+
+  return Lock_withLock(function () {
+    var result = Seats_update(seatId, narrowed);
+    AuditRepo_write({
+      actor_email: principal.email,
+      action:      'update',
+      entity_type: 'Seat',
+      entity_id:   seatId,
+      before:      result.before,
+      after:       result.after
+    });
+    return { ok: true, seat: result.after };
+  });
+}
+
+function ApiManager_listRequests_coerce_(v) {
+  if (v == null) return '';
+  var s = String(v).trim();
+  if (!s || s === 'all') return '';
+  return s;
+}
+
+// Wire shape for queue rendering. Dates pre-formatted; the `_ms` twins
+// carry the raw millisecond stamp so the UI can sort without re-parsing.
+function ApiManager_shapeRequestForClient_(req) {
+  return {
+    request_id:       req.request_id,
+    type:             req.type,
+    scope:            req.scope,
+    target_email:     req.target_email,
+    target_name:      req.target_name,
+    reason:           req.reason,
+    comment:          req.comment,
+    start_date:       req.start_date,
+    end_date:         req.end_date,
+    status:           req.status,
+    requester_email:  req.requester_email,
+    requested_at:     ApiManager_formatDate_(req.requested_at),
+    requested_at_ms:  req.requested_at instanceof Date ? req.requested_at.getTime() : 0,
+    completer_email:  req.completer_email,
+    completed_at:     ApiManager_formatDate_(req.completed_at),
+    completed_at_ms:  req.completed_at instanceof Date ? req.completed_at.getTime() : 0,
+    rejection_reason: req.rejection_reason
+  };
+}
+
+function ApiManager_formatDate_(d) {
+  if (!d) return null;
+  if (d instanceof Date) {
+    var tz = Session.getScriptTimeZone();
+    return Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm:ss z');
+  }
+  return String(d);
+}
+
+// ===========================================================================
 // Manual smoke tests, runnable from the Apps Script editor.
 // Not callable via google.script.run from the client (no token argument).
 // ===========================================================================

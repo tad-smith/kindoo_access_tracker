@@ -1,5 +1,5 @@
 <!--
-  Kindoo Manager All Seats (Chunk 5, read-only).
+  Kindoo Manager All Seats (Chunks 5 + 6).
 
   Full roster across every scope, with ward / building / type filters
   (AND-combined). Per-scope summaries with utilization bars render
@@ -11,11 +11,13 @@
   the params into `QUERY_PARAMS` (Layout.html). Changing filters
   re-fetches but DOES NOT update the top-frame URL — that's a
   cross-origin restriction from the HtmlService iframe (see
-  open-questions.md A-8). Deep links still work; the address bar just
-  doesn't reflect post-load filter changes.
+  open-questions.md A-8).
 
-  Inline edit (reason / person_name / building_names / dates) lands in
-  Chunk 6 per build-plan. For now this is a pure read surface.
+  Chunk 6 adds inline edit for manual/temp rows (person_name, reason,
+  building_names; plus start_date/end_date on temp). Auto rows are not
+  editable — they're importer-owned and would be overwritten on the
+  next Import Now run. The edit button only appears on manual/temp
+  rows; SeatsRepo reinforces the rule server-side.
 
   Target scale (~240 rows at 12 wards × ~20 seats) renders in one pass
   with sticky headers — no pagination (see architecture.md §1 and
@@ -50,6 +52,43 @@
   <div id="summaries-host" class="all-seats-summaries"></div>
 
   <div id="roster-table-host">Loading…</div>
+
+  <!-- Edit modal (Chunk 6). Hidden by default; shown when the manager
+       clicks Edit on a manual/temp row. Non-modal on small viewports
+       for usability. -->
+  <div id="seat-edit-modal" class="seat-edit-modal hidden" role="dialog" aria-modal="true">
+    <div class="seat-edit-modal-inner">
+      <h2>Edit seat</h2>
+      <form id="seat-edit-form">
+        <div class="form-row">
+          <label>Scope<br><input type="text" id="se-scope" readonly></label>
+        </div>
+        <div class="form-row">
+          <label>Type<br><input type="text" id="se-type" readonly></label>
+        </div>
+        <div class="form-row">
+          <label>Email (immutable)<br><input type="text" id="se-email" readonly></label>
+        </div>
+        <div class="form-row">
+          <label>Person name<br><input type="text" id="se-person-name"></label>
+        </div>
+        <div class="form-row">
+          <label>Reason<br><textarea id="se-reason" rows="2"></textarea></label>
+        </div>
+        <div class="form-row">
+          <label>Building names (comma-separated)<br><input type="text" id="se-buildings"></label>
+        </div>
+        <div class="form-row temp-only hidden" id="se-temp-fields">
+          <label>Start date<br><input type="date" id="se-start-date"></label>
+          <label>End date<br><input type="date" id="se-end-date"></label>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="se-cancel-btn">Cancel</button>
+          <button type="submit" class="btn" id="se-save-btn">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </section>
 
 <script>
@@ -117,16 +156,101 @@
     $('summaries-host').innerHTML = html;
   }
 
+  // Index the rows by seat_id so the edit modal can look up the
+  // current values without re-fetching.
+  var currentRowsById = {};
+
   function render(resp) {
     populateFilterOptions(resp.filter_options);
     renderSummaries(resp.summaries);
     $('all-seats-count').textContent =
       resp.total_rows + ' row' + (resp.total_rows === 1 ? '' : 's');
+
+    currentRowsById = {};
+    for (var i = 0; i < resp.rows.length; i++) currentRowsById[resp.rows[i].seat_id] = resp.rows[i];
+
     $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
       showScope: true,
-      emptyMsg: 'No seats match the current filters.'
+      emptyMsg: 'No seats match the current filters.',
+      actionsHeader: 'Edit',
+      rowActions: function (row) {
+        // Auto rows are importer-owned; never editable here.
+        if (row.type === 'auto' || !row.seat_id) return '';
+        return '<button class="btn btn-secondary" data-seat-edit="' +
+          escapeHtml(row.seat_id) + '">Edit</button>';
+      }
+    });
+
+    // Wire edit buttons after the table is in the DOM.
+    var host = $('roster-table-host');
+    Array.prototype.forEach.call(host.querySelectorAll('button[data-seat-edit]'), function (btn) {
+      btn.addEventListener('click', function () {
+        openEditModal(btn.getAttribute('data-seat-edit'));
+      });
     });
   }
+
+  function openEditModal(seatId) {
+    var row = currentRowsById[seatId];
+    if (!row) {
+      toast('Seat not found in the current view.', 'error');
+      return;
+    }
+    $('se-scope').value       = row.scope || '';
+    $('se-type').value        = row.type  || '';
+    $('se-email').value       = row.person_email || '';
+    $('se-person-name').value = row.person_name  || '';
+    $('se-reason').value      = row.reason       || '';
+    $('se-buildings').value   = row.building_names || '';
+    var isTemp = row.type === 'temp';
+    $('se-temp-fields').classList.toggle('hidden', !isTemp);
+    if (isTemp) {
+      $('se-start-date').value = row.start_date || '';
+      $('se-end-date').value   = row.end_date   || '';
+    } else {
+      $('se-start-date').value = '';
+      $('se-end-date').value   = '';
+    }
+    $('seat-edit-modal').classList.remove('hidden');
+    $('seat-edit-modal').setAttribute('data-editing-seat', seatId);
+  }
+
+  function closeEditModal() {
+    $('seat-edit-modal').classList.add('hidden');
+    $('seat-edit-modal').removeAttribute('data-editing-seat');
+  }
+
+  $('se-cancel-btn').addEventListener('click', closeEditModal);
+  $('seat-edit-modal').addEventListener('click', function (ev) {
+    // Click outside the inner card closes the modal.
+    if (ev.target === this) closeEditModal();
+  });
+
+  $('seat-edit-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var seatId = $('seat-edit-modal').getAttribute('data-editing-seat');
+    if (!seatId) return;
+    var row = currentRowsById[seatId];
+    var patch = {
+      person_name:    $('se-person-name').value,
+      reason:         $('se-reason').value,
+      building_names: $('se-buildings').value
+    };
+    if (row && row.type === 'temp') {
+      patch.start_date = $('se-start-date').value || '';
+      patch.end_date   = $('se-end-date').value   || '';
+    }
+    $('se-save-btn').disabled = true;
+    rpc('ApiManager_updateSeat', seatId, patch).then(function () {
+      toast('Seat updated.', 'success');
+      closeEditModal();
+      load();
+    }).catch(function (err) {
+      toast(err.message || String(err), 'error');
+    }).then(function () {
+      $('se-save-btn').disabled = false;
+    });
+  });
 
   function load() {
     $('roster-table-host').innerHTML = 'Loading…';

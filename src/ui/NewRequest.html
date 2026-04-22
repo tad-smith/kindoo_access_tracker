@@ -1,0 +1,215 @@
+<!--
+  New Kindoo Request (Chunk 6). Single template shared between bishopric
+  and stake principals — the scope is derived from the principal's roles,
+  not from the URL or a role-suffixed route. Simplification from the
+  original build-plan's ui/bishopric/NewRequest + ui/stake/NewRequest.
+
+  Scope selector UX (from the Chunk-6 prompt):
+    - Single role  → no dropdown; scope is implicit. A "Requesting for:
+      Ward CO" label sits at the top so the requester sees which scope
+      they're submitting against.
+    - Multi-role   → dropdown at the top labelled "Requesting for:".
+      Default is whichever scope Auth_requestableScopes returned first
+      (bishopric-before-stake, arbitrary but consistent). Changing it
+      re-runs the duplicate check against the new scope.
+
+  Duplicate check behaviour: calls ApiRequests_checkDuplicate on
+  target-email blur (debounced a little) and on scope change. If
+  existing seats exist for (scope, target_email), renders them inline
+  via ClientUtils rosterRowHtml. This WARNS — it does NOT block. The
+  user can still submit; the manager applies judgment at complete time.
+
+  Server-side validation mirrors client-side: required fields, date
+  format + order for add_temp. Client validation is first-pass UX;
+  server validation is authoritative.
+-->
+<section class="new-request-page">
+  <h1>New Kindoo Request</h1>
+  <div id="scope-selector-host"></div>
+
+  <form id="new-request-form" class="new-request-form" autocomplete="off">
+    <div class="form-row">
+      <label>Request type<br>
+        <select id="f-type" required>
+          <option value="add_manual">Manual (ongoing)</option>
+          <option value="add_temp">Temporary (dated)</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="form-row">
+      <label>Target email<br>
+        <input type="email" id="f-target-email" required placeholder="person@example.com">
+      </label>
+    </div>
+
+    <div class="form-row">
+      <label>Target name<br>
+        <input type="text" id="f-target-name" placeholder="Display name">
+      </label>
+    </div>
+
+    <div class="form-row">
+      <label>Reason (required)<br>
+        <textarea id="f-reason" required rows="2" placeholder="Why does this person need Kindoo access?"></textarea>
+      </label>
+    </div>
+
+    <div class="form-row">
+      <label>Comment<br>
+        <textarea id="f-comment" rows="2" placeholder="Anything the manager should know — e.g. multi-building access, special access hours."></textarea>
+      </label>
+    </div>
+
+    <div class="form-row temp-only hidden" id="temp-fields">
+      <label>Start date<br>
+        <input type="date" id="f-start-date">
+      </label>
+      <label>End date<br>
+        <input type="date" id="f-end-date">
+      </label>
+    </div>
+
+    <div id="duplicate-warning-host" class="duplicate-warning-host"></div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn" id="submit-btn">Submit request</button>
+    </div>
+  </form>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  // Populated by ApiRequests_listMy on page init (cheapest server call
+  // that returns the allowed-scopes list). Could be a dedicated endpoint,
+  // but a listMy with no filter is a fine shape — we just ignore the rows.
+  var allowedScopes = [];
+  var selectedScope = '';
+
+  function setupScopeSelector() {
+    var host = $('scope-selector-host');
+    if (allowedScopes.length <= 1) {
+      if (allowedScopes.length === 1) {
+        selectedScope = allowedScopes[0].scope;
+        host.innerHTML = '<div class="requesting-for"><strong>Requesting for:</strong> ' +
+          escapeHtml(allowedScopes[0].label) + '</div>';
+      } else {
+        host.innerHTML = '<div class="error">You do not hold a bishopric or stake role. ' +
+          'Only those roles may submit new requests.</div>';
+        $('submit-btn').disabled = true;
+      }
+      return;
+    }
+    // Multi-role: dropdown.
+    selectedScope = allowedScopes[0].scope;
+    var html = '<div class="requesting-for"><label><strong>Requesting for:</strong> ' +
+      '<select id="f-scope">';
+    for (var i = 0; i < allowedScopes.length; i++) {
+      html += '<option value="' + escapeHtml(allowedScopes[i].scope) + '">' +
+                escapeHtml(allowedScopes[i].label) + '</option>';
+    }
+    html += '</select></label></div>';
+    host.innerHTML = html;
+    $('f-scope').addEventListener('change', function () {
+      selectedScope = this.value;
+      checkDuplicate();
+    });
+  }
+
+  function init() {
+    rpc('ApiRequests_listMy').then(function (resp) {
+      allowedScopes = resp.scopes || [];
+      setupScopeSelector();
+    }).catch(function (err) {
+      $('scope-selector-host').innerHTML =
+        '<div class="error">Could not load your allowed scopes: ' + escapeHtml(err.message || err) + '</div>';
+      $('submit-btn').disabled = true;
+    });
+  }
+
+  // Show / hide date inputs based on type.
+  $('f-type').addEventListener('change', function () {
+    var isTemp = this.value === 'add_temp';
+    $('temp-fields').classList.toggle('hidden', !isTemp);
+    if (isTemp) {
+      $('f-start-date').setAttribute('required', 'required');
+      $('f-end-date').setAttribute('required', 'required');
+    } else {
+      $('f-start-date').removeAttribute('required');
+      $('f-end-date').removeAttribute('required');
+    }
+  });
+
+  // Duplicate check: on email blur + on scope change. Debounced on
+  // rapid changes so the server isn't hit more than necessary (typing
+  // a long address still triggers only one call on blur).
+  var dupTimer = null;
+  $('f-target-email').addEventListener('blur', function () {
+    if (dupTimer) clearTimeout(dupTimer);
+    dupTimer = setTimeout(checkDuplicate, 0);
+  });
+
+  function checkDuplicate() {
+    var email = ($('f-target-email').value || '').trim();
+    var host = $('duplicate-warning-host');
+    if (!email || !selectedScope) {
+      host.innerHTML = '';
+      return;
+    }
+    rpc('ApiRequests_checkDuplicate', email, selectedScope).then(function (resp) {
+      if (!resp.exists) {
+        host.innerHTML = '';
+        return;
+      }
+      host.innerHTML =
+        '<div class="duplicate-warning">' +
+          '<strong>Heads up:</strong> ' + escapeHtml(email) + ' already has ' +
+          resp.existing.length + ' active seat' + (resp.existing.length === 1 ? '' : 's') +
+          ' in ' + escapeHtml(resp.scope) + '. You can still submit if you mean to; ' +
+          'the manager will see the duplicate too.' +
+          '<div class="duplicate-warning-rows">' +
+            renderRosterTable(resp.existing, { emptyMsg: 'No seats' }) +
+          '</div>' +
+        '</div>';
+    }).catch(function (err) {
+      // Silent failure on duplicate-check — not worth a toast. The
+      // server-side check at complete-time is the authoritative surface.
+      host.innerHTML = '';
+      // Best-effort console log for debugging.
+      try { console.log('[NewRequest] checkDuplicate failed: ' + err.message); } catch (e) {}
+    });
+  }
+
+  $('new-request-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var btn = $('submit-btn');
+    btn.disabled = true;
+    var draft = {
+      type:         $('f-type').value,
+      target_email: ($('f-target-email').value || '').trim(),
+      target_name:  ($('f-target-name').value || '').trim(),
+      reason:       ($('f-reason').value || '').trim(),
+      comment:      ($('f-comment').value || '').trim(),
+      start_date:   ($('f-start-date') ? $('f-start-date').value : '') || '',
+      end_date:     ($('f-end-date')   ? $('f-end-date').value   : '') || ''
+    };
+    rpc('ApiRequests_submit', draft, selectedScope).then(function (resp) {
+      toast('Request submitted.', 'success');
+      if (resp && resp.warning) toast(resp.warning, 'warn');
+      // Clear the form for a potential next submission. The scope
+      // selector stays on the same scope.
+      $('new-request-form').reset();
+      $('temp-fields').classList.add('hidden');
+      $('duplicate-warning-host').innerHTML = '';
+    }).catch(function (err) {
+      toast(err.message || String(err), 'error');
+    }).then(function () {
+      btn.disabled = false;
+    });
+  });
+
+  init();
+})();
+</script>

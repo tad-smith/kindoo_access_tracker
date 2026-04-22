@@ -22,7 +22,7 @@
   rpc('ApiStake_roster').then(function (resp) {
     $('utilization-host').innerHTML = renderUtilizationBar(resp.summary);
     $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
-      emptyMsg: 'No seats in the stake pool yet. Run the importer or add manual/temp seats once Chunk 6 ships.'
+      emptyMsg: 'No seats in the stake pool yet. Run the importer or submit a request from "New Kindoo Request".'
     });
   }).catch(function (err) {
     var msg = (err && err.message) ? err.message : String(err);

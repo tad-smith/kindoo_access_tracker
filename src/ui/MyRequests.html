@@ -1,0 +1,161 @@
+<!--
+  My Requests (Chunk 6). Single template shared between bishopric +
+  stake principals — same simplification as NewRequest.html.
+
+  Scope filter UX (from the Chunk-6 prompt):
+    - Single role   → no dropdown; directly shows the user's requests
+      for that scope.
+    - Multi-role    → scope-filter dropdown including an "All" option
+      (empty string on the wire).
+
+  Row rendering: a small, purpose-built table — not rosterRowHtml. The
+  columns are request-ish (requested_at, status, target, reason, dates)
+  rather than seat-ish. Status badges color the row the same way the
+  roster badges color seat types (consistent visual language).
+
+  Actions: Cancel button appears on pending rows only; confirms then
+  calls ApiRequests_cancel. After success, the row flips to cancelled
+  in place (full refresh of the list).
+-->
+<section class="my-requests-page">
+  <h1>My Requests</h1>
+  <div id="scope-filter-host"></div>
+  <div id="my-requests-host">Loading…</div>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  var allowedScopes = [];
+  var selectedScope = '';   // '' means "All" for multi-role
+
+  function setupScopeFilter() {
+    var host = $('scope-filter-host');
+    if (allowedScopes.length <= 1) {
+      if (allowedScopes.length === 1) {
+        host.innerHTML = '<div class="requesting-for"><strong>Scope:</strong> ' +
+          escapeHtml(allowedScopes[0].label) + '</div>';
+      } else {
+        host.innerHTML = '';
+      }
+      return;
+    }
+    var html = '<div class="requesting-for"><label><strong>Scope:</strong> ' +
+      '<select id="f-scope"><option value="">All</option>';
+    for (var i = 0; i < allowedScopes.length; i++) {
+      html += '<option value="' + escapeHtml(allowedScopes[i].scope) + '">' +
+                escapeHtml(allowedScopes[i].label) + '</option>';
+    }
+    html += '</select></label></div>';
+    host.innerHTML = html;
+    $('f-scope').addEventListener('change', function () {
+      selectedScope = this.value;
+      load();
+    });
+  }
+
+  function statusBadge(status) {
+    return '<span class="status-badge status-' + escapeHtml(status) + '">' +
+             escapeHtml(status) + '</span>';
+  }
+
+  function rowHtml(row) {
+    var type = row.type;
+    var dates = '';
+    if (type === 'add_temp') {
+      dates = (row.start_date || '') +
+        (row.start_date && row.end_date ? ' → ' : '') +
+        (row.end_date || '');
+    }
+    var target = (row.target_name ? escapeHtml(row.target_name) + '<br>' : '') +
+      '<span class="roster-email">' + escapeHtml(row.target_email) + '</span>';
+    var actions = '';
+    if (row.status === 'pending') {
+      actions = '<button class="btn btn-secondary" data-act="cancel" data-request-id="' +
+        escapeHtml(row.request_id) + '">Cancel</button>';
+    } else if (row.status === 'rejected' && row.rejection_reason) {
+      actions = '<span class="rejection-reason-hint" title="' +
+        escapeHtml(row.rejection_reason) + '">why?</span>';
+    }
+    return '<tr class="req-row status-row-' + escapeHtml(row.status) + '">' +
+      '<td>' + escapeHtml(row.requested_at || '') + '</td>' +
+      '<td><code>' + escapeHtml(row.scope) + '</code></td>' +
+      '<td>' + escapeHtml(type) + '</td>' +
+      '<td>' + target + '</td>' +
+      '<td>' + escapeHtml(row.reason || '') + '</td>' +
+      '<td>' + dates + '</td>' +
+      '<td>' + statusBadge(row.status) + '</td>' +
+      '<td class="row-actions">' + actions + '</td>' +
+      '</tr>';
+  }
+
+  function render(rows) {
+    if (!rows || rows.length === 0) {
+      $('my-requests-host').innerHTML =
+        '<div class="empty-state">No requests yet.</div>';
+      return;
+    }
+    var html = '<table class="my-requests-table"><thead><tr>' +
+      '<th>Requested</th><th>Scope</th><th>Type</th><th>Target</th>' +
+      '<th>Reason</th><th>Dates</th><th>Status</th><th></th>' +
+      '</tr></thead><tbody>';
+    for (var i = 0; i < rows.length; i++) html += rowHtml(rows[i]);
+    html += '</tbody></table>';
+    $('my-requests-host').innerHTML = html;
+
+    Array.prototype.forEach.call(
+      $('my-requests-host').querySelectorAll('button[data-act="cancel"]'),
+      function (btn) {
+        btn.addEventListener('click', function () {
+          var reqId = btn.getAttribute('data-request-id');
+          if (!confirm('Cancel this pending request?')) return;
+          btn.disabled = true;
+          rpc('ApiRequests_cancel', reqId).then(function (resp) {
+            toast('Request cancelled.', 'success');
+            if (resp && resp.warning) toast(resp.warning, 'warn');
+            load();
+          }).catch(function (err) {
+            toast(err.message || String(err), 'error');
+            btn.disabled = false;
+          });
+        });
+      }
+    );
+
+    // Reveal rejection reason on hover (mobile doesn't have hover, but
+    // click also works on mobile). Click opens an alert with the reason.
+    Array.prototype.forEach.call(
+      $('my-requests-host').querySelectorAll('.rejection-reason-hint'),
+      function (el) {
+        el.addEventListener('click', function () {
+          alert(el.getAttribute('title') || '(no reason given)');
+        });
+      }
+    );
+  }
+
+  function load() {
+    $('my-requests-host').innerHTML = 'Loading…';
+    rpc('ApiRequests_listMy', selectedScope || null).then(function (resp) {
+      allowedScopes = resp.scopes || [];
+      if ($('scope-filter-host').innerHTML === '') setupScopeFilter();
+      render(resp.rows);
+    }).catch(function (err) {
+      $('my-requests-host').innerHTML =
+        '<div class="error">Could not load your requests: ' + escapeHtml(err.message || err) + '</div>';
+    });
+  }
+
+  // First load — this also sets up the scope filter after allowedScopes
+  // comes back from the server.
+  rpc('ApiRequests_listMy').then(function (resp) {
+    allowedScopes = resp.scopes || [];
+    setupScopeFilter();
+    render(resp.rows);
+  }).catch(function (err) {
+    $('my-requests-host').innerHTML =
+      '<div class="error">Could not load your requests: ' + escapeHtml(err.message || err) + '</div>';
+  });
+})();
+</script>

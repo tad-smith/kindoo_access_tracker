@@ -114,21 +114,21 @@ A user can hold multiple roles; the UI shows the union.
 
 ### 5.1 Bishopric (scoped to own ward)
 
-- **Roster** — active ward seats. All rows show calling + person (auto rows included). Manual/temp rows show reason; temp rows show dates. Each manual/temp row has an X/trashcan; clicking opens "Remove access for [person]? Reason:" and submits a `remove` Request. Row shows "removal pending" badge once submitted. Utilization bar: "14 of 20 seats used."
-- **New Request** — form: add manual / add temp. Fields: target email (required), target name, reason, comment (multi-building notes etc.), dates (if temp). Duplicate warning if target has an active seat in this ward.
-- **My Requests** — submitted requests with status; Cancel button on pending.
+- **Roster** — active ward seats. All rows show calling + person (auto rows included). Manual/temp rows show reason; temp rows show dates. Each manual/temp row has an X/trashcan; clicking opens "Remove access for [person]? Reason:" and submits a `remove` Request. Row shows "removal pending" badge once submitted. Utilization bar: "14 of 20 seats used." *(Remove X/trashcan is Chunk 7.)*
+- **New Kindoo Request** — shared template `ui/NewRequest` (same page for bishopric and stake principals; scope is derived from the principal's roles, not the route). Form: add_manual / add_temp. Fields: target email (required), target name, reason (required), comment (multi-building notes etc.), dates (if temp). Client-side duplicate check via `ApiRequests_checkDuplicate` warns when the target already has a seat in the selected scope (inline render via the shared `rosterRowHtml` helper). Warns; does not block. Principals holding more than one request-capable role (bishopric+stake, or multiple bishoprics) see a "Requesting for:" scope dropdown at the top; single-role principals see an implicit scope label.
+- **My Requests** — shared template `ui/MyRequests`. Shows the current user's submitted requests with status; Cancel button on pending rows; rejection reason surfaced on rejected rows. Multi-role principals see a scope filter dropdown (including an "All" option); single-role principals see their requests directly.
 
 ### 5.2 Stake Presidency
 
-Same three pages as Bishopric, scoped to the stake pool. Plus:
+Same three pages as Bishopric, scoped to the stake pool — uses the same shared `ui/NewRequest` + `ui/MyRequests` templates. Plus:
 
 - **Ward Rosters** — read-only dropdown to view any ward's roster.
 
 ### 5.3 Kindoo Manager
 
-- **Dashboard** — pending request count, recent activity, per-ward utilization, over-cap warnings.
-- **Requests Queue** — all pending; filter by ward/type. Actions: Mark Complete, Reject (with reason).
-- **All Seats** — full roster; filter by ward/building/type. Inline edit for manual corrections.
+- **Dashboard** — pending request count, recent activity, per-ward utilization, over-cap warnings. *(Chunk 10.)*
+- **Requests Queue** — filter by state (Pending / Complete — the "Complete" option groups complete, rejected, and cancelled), ward, and type. Default state is Pending (the backlog to act on). Pending cards render metadata + a "seat preview" (what the Seats row will look like after Complete, rendered via the shared `rosterRowHtml`) + a duplicate-warning block when the target already has a seat in the scope, plus Mark Complete / Reject actions. Resolved cards (in the Complete view) render the same metadata plus resolver / timestamp / rejection-reason where applicable, with no action buttons. Pending is sorted oldest-first (FIFO); Complete is sorted newest-first (most-recent-at-top). **Mark Complete opens a confirmation dialog** with the request summary + a Buildings checkbox group (every Building pre-loaded; the requesting ward's default building pre-ticked — empty for stake-scope). The manager adjusts the selection if needed, clicks Confirm, and the resulting Seats row carries that `building_names` selection exactly. Self-approval policy: a manager who is also a bishopric/stake member may complete or reject requests they themselves submitted; the audit trail records who submitted and who completed so the chain of custody is clear even when they're the same person.
+- **All Seats** — full roster; filter by ward/building/type. Inline edit (Edit button on manual/temp rows only — auto rows are importer-owned) of `person_name`, `reason`, `building_names`, plus `start_date` / `end_date` on temp rows. `scope`, `type`, `person_email`, and the seat UUID are immutable.
 - **Configuration** — edit `Wards`, `Buildings`, `KindooManagers`, `WardCallingTemplate`, `StakeCallingTemplate`, and `Config`.
 - **Access** — read-only view of the `Access` tab.
 - **Import** — "Import Now" button; shows last import time and summary.
@@ -136,11 +136,29 @@ Same three pages as Bishopric, scoped to the stake pool. Plus:
 
 ## 6. Request lifecycle
 
-1. Requester submits → `Requests` row appended (`status=pending`) → email to active Kindoo Managers.
-2. Manager action:
-   - **Mark Complete** (after updating Kindoo manually): `Requests` row updated; `Seats` row inserted (adds) or deleted (removes); email to requester.
-   - **Reject**: `Requests` row updated with rejection reason; email to requester.
-3. Requester can **Cancel** a pending request → email to active Kindoo Managers.
+State machine (pending is the only admissible starting state; each terminal state is a one-way flip):
+
+```
+              submit
+                |
+                v
+             pending
+              / | \
+    complete /  |  \ cancel
+            /   |   \
+           v    v    v
+      complete rejected cancelled
+```
+
+1. Requester submits → `Requests` row appended (`status=pending`) via `ApiRequests_submit` (consolidated endpoint used by bishopric + stake principals; scope validated against `Auth_requestableScopes(principal)`) → email to active Kindoo Managers.
+2. Manager action (`ApiManager_completeRequest` / `ApiManager_rejectRequest`):
+   - **Mark Complete** (after updating Kindoo manually): inside one `Lock_withLock`, `Requests` row flipped to `complete` AND the matching `Seats` row is inserted atomically (manual/temp per request type). Two AuditLog rows — one per entity. Email to requester.
+   - **Reject**: `Requests` row updated with `rejection_reason`; email to requester.
+3. Requester can **Cancel** a pending request via `ApiRequests_cancel` → email to active Kindoo Managers. Only the original requester may cancel (server-side enforcement via `Utils_emailsEqual` on `requester_email`); a manager wanting to shut a request down unilaterally should Reject with a reason.
+
+Attempting to complete / reject / cancel a non-pending request returns a clean "Request is no longer pending (current status: X)" error, not a stack trace — the typical cause is a stale queue page (another manager processed the request between page load and click).
+
+Remove-requests (Chunk 7) follow the same lifecycle; the `complete` action deletes the matching `Seats` row instead of inserting.
 
 ## 7. Temporary-seat expiry
 
@@ -181,11 +199,19 @@ Runs weekly (trigger) and on-demand ("Import Now" button on the Manager's Import
 
 ## 9. Email notifications
 
-- Request submitted → active Kindoo Managers.
-- Request completed → requester.
-- Request rejected → requester (with reason).
-- Request cancelled → active Kindoo Managers.
-- Over-cap after import → active Kindoo Managers.
+Four request-lifecycle notifications ship in Chunk 6, plus an over-cap notification in Chunk 9. All use `MailApp.sendEmail` from the deployer's identity (Main runs `executeAs: USER_DEPLOYING`), with a display-name of `"<stake_name> — Kindoo Access"` when `Config.stake_name` is set. Bodies are plain text; every email includes a link back to the relevant app page.
+
+| Trigger | Recipients | Subject | Link back |
+| --- | --- | --- | --- |
+| Request submitted | active Kindoo Managers | `[Kindoo Access] New request from <requester> (<scope label>)` | `<main_url>?p=mgr/queue` |
+| Request completed | original requester | `[Kindoo Access] Your request for <target_email> has been completed` | `<main_url>?p=my` |
+| Request rejected | original requester | `[Kindoo Access] Your request was rejected` | `<main_url>?p=my` |
+| Request cancelled | active Kindoo Managers | `[Kindoo Access] Request cancelled by <requester>` | `<main_url>?p=mgr/queue` |
+| Over-cap after import (Chunk 9) | active Kindoo Managers | TBD in Chunk 9 | `<main_url>?p=mgr/dashboard` |
+
+**Best-effort, outside the lock.** Every request-lifecycle email send happens AFTER the `Lock_withLock` closure completes at the API layer. `MailApp.sendEmail` is slow (~1–2 s per call); holding the lock for mail I/O would starve concurrent writers. If a send fails, the API layer logs the error and surfaces a `warning` field on the response (the client shows it as a `toast('…', 'warn')`). The Sheet write is atomic + audited; the email is best-effort. See `architecture.md` "Email send policy" for the rationale.
+
+**Global kill-switch.** `Config.notifications_enabled` (boolean; default `TRUE`) gates every mail path through `EmailService`. Flipping it to `FALSE` suppresses all sends (the would-be recipients are logged but no `MailApp.sendEmail` happens). Editable from the manager Configuration page so operators can disable notifications during testing, while the mailbox is being provisioned, or temporarily if a bad address in `KindooManagers` is generating bounces.
 
 ## 10. Bootstrap flow
 

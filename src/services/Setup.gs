@@ -52,7 +52,13 @@ const SETUP_CONFIG_SEED_ = [
   { key: 'setup_complete',        value: false },
   { key: 'last_import_at',        value: '' },
   { key: 'last_import_summary',   value: '' },
-  { key: 'expiry_hour',           value: 3 }
+  { key: 'expiry_hour',           value: 3 },
+  // Chunk 6: global off-switch for request-lifecycle notification emails.
+  // TRUE by default (the spec calls for emails on submit / complete /
+  // reject / cancel). Flip to FALSE via the manager Config page during
+  // testing, while the mailbox is being set up, or if a bad address in
+  // KindooManagers is generating bounces while an operator triages.
+  { key: 'notifications_enabled', value: true }
 ];
 
 function setupSheet() {

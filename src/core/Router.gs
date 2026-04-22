@@ -5,10 +5,19 @@
 //   bishopric/roster     → ui/bishopric/Roster           (bishopric)
 //   stake/roster         → ui/stake/Roster               (stake)
 //   stake/ward-rosters   → ui/stake/WardRosters          (stake)
+//   new                  → ui/NewRequest                 (bishopric OR stake)
+//   my                   → ui/MyRequests                 (bishopric OR stake)
 //   mgr/seats            → ui/manager/AllSeats           (manager)
+//   mgr/queue            → ui/manager/RequestsQueue      (manager)
 //   mgr/config           → ui/manager/Config             (manager)
 //   mgr/access           → ui/manager/Access             (manager)
 //   mgr/import           → ui/manager/Import             (manager)
+//
+// Chunk 6 introduces the first pages that accept MORE THAN ONE role
+// (`new` and `my` are open to any request-capable role — bishopric or
+// stake). The page map holds a `roles:` array for these; single-role
+// pages keep using the simpler `role:` string field. See
+// Router_hasAllowedRole_ for the matching logic.
 //
 // Unrecognised or forbidden ?p= falls through to the role's default page.
 // Default-page priority for multi-role principals: manager > stake >
@@ -26,7 +35,11 @@ const ROUTER_PAGES_ = {
   'bishopric/roster':   { template: 'ui/bishopric/Roster',   role: 'bishopric' },
   'stake/roster':       { template: 'ui/stake/Roster',       role: 'stake' },
   'stake/ward-rosters': { template: 'ui/stake/WardRosters',  role: 'stake' },
+  // Chunk 6: shared request pages — either bishopric OR stake is enough.
+  'new':                { template: 'ui/NewRequest',         roles: ['bishopric', 'stake'] },
+  'my':                 { template: 'ui/MyRequests',         roles: ['bishopric', 'stake'] },
   'mgr/seats':          { template: 'ui/manager/AllSeats',   role: 'manager' },
+  'mgr/queue':          { template: 'ui/manager/RequestsQueue', role: 'manager' },
   'mgr/config':         { template: 'ui/manager/Config',     role: 'manager' },
   'mgr/access':         { template: 'ui/manager/Access',     role: 'manager' },
   'mgr/import':         { template: 'ui/manager/Import',     role: 'manager' }
@@ -51,7 +64,7 @@ function Router_pick(requestedPage, principal) {
   // Unknown ?p=, or ?p= that the user can't access → land on their
   // default. (The spec's "redirect with toast" UX lands in Chunk 10's
   // polish pass; for now the silent fall-back matches Chunks 2–4.)
-  if (!entry || !Router_hasRole_(principal, entry.role)) {
+  if (!entry || !Router_hasAllowedRole_(principal, entry)) {
     page  = defaultPage;
     entry = ROUTER_PAGES_[defaultPage];
   }
@@ -93,6 +106,20 @@ function Router_hasRole_(principal, type) {
   if (!principal || !principal.roles) return false;
   for (var i = 0; i < principal.roles.length; i++) {
     if (principal.roles[i].type === type) return true;
+  }
+  return false;
+}
+
+// Page-entry access check — supports both the single-role shape
+// (entry.role = 'manager') and the multi-role shape added in Chunk 6
+// (entry.roles = ['bishopric', 'stake'], holding ANY one suffices).
+function Router_hasAllowedRole_(principal, entry) {
+  if (!entry) return false;
+  if (entry.role) return Router_hasRole_(principal, entry.role);
+  if (entry.roles) {
+    for (var i = 0; i < entry.roles.length; i++) {
+      if (Router_hasRole_(principal, entry.roles[i])) return true;
+    }
   }
   return false;
 }

@@ -1,1 +1,367 @@
-// Request lifecycle: submit(), complete(), reject(), cancel(). Wraps LockService, writes Seats on completion, emits audit + email side-effects.
+// Request lifecycle: submit / complete / reject / cancel.
+//
+// Every service function is invoked INSIDE a Lock_withLock acquisition at
+// the API layer (ApiRequests_*, ApiManager_*Request). The Sheet write and
+// the AuditLog write share the same lock so the log never disagrees with
+// data, even on crash (architecture.md §6 / §7). Each function emits
+// exactly one audit row per entity touched:
+//
+//   - submit   → 1 row  (submit_request on the Request)
+//   - complete → 2 rows (complete_request on Request + insert on Seat)
+//   - reject   → 1 row  (reject_request on the Request)
+//   - cancel   → 1 row  (cancel_request on the Request)
+//
+// The lifecycle verbs (submit_request / complete_request / reject_request /
+// cancel_request) come from data-model.md §10 "Action vocabulary". Seat
+// inserts from a complete flow use the generic `insert` — that's the
+// canonical CRUD verb for any Seats write.
+//
+// State machine (pending → ... transitions; no other transitions are
+// valid):
+//
+//              submit
+//                |
+//                v
+//             pending
+//              / | \
+//    complete /  |  \ cancel
+//            /   |   \
+//           v    v    v
+//      complete rejected cancelled
+//
+// Attempting to complete / reject / cancel a non-pending request returns
+// a clean "Request is no longer pending (current status: X)" error. The
+// typical cause is a stale queue page — another manager processed the
+// request between page load and click — and surfacing the actual current
+// status gives the operator what they need to judge their next action
+// (refresh, not an apology).
+//
+// Email notifications are NOT sent from inside these functions — the
+// API layer invokes EmailService AFTER the Lock_withLock closure
+// completes, best-effort, so a mail failure never unwinds a successful
+// write. See EmailService.gs top-level comment for the rationale.
+
+// ---------------------------------------------------------------------------
+// submit — write a new pending Request row.
+//
+// Validates the draft shape:
+//   - type ∈ {add_manual, add_temp}            (remove is Chunk 7)
+//   - target_email present and non-empty
+//   - reason present (required by spec §3.2 for all types)
+//   - if add_temp: start_date + end_date both ISO YYYY-MM-DD, end ≥ start
+//
+// Fills request_id (UUID), status = pending, requester_email / requested_at
+// from the caller. Returns the inserted Request row shape.
+// ---------------------------------------------------------------------------
+function RequestsService_submit(args) {
+  if (!args || !args.scope) throw new Error('RequestsService_submit: scope required');
+  if (!args.requesterPrincipal || !args.requesterPrincipal.email) {
+    throw new Error('RequestsService_submit: requesterPrincipal required');
+  }
+  if (!args.draft) throw new Error('RequestsService_submit: draft required');
+
+  var draft = args.draft;
+  var type = String(draft.type || '');
+  if (type !== 'add_manual' && type !== 'add_temp') {
+    throw new Error('Invalid request type "' + type + '" — must be add_manual or add_temp.');
+  }
+
+  var targetEmail = Utils_cleanEmail(draft.target_email);
+  if (!targetEmail) throw new Error('Target email is required.');
+  // Minimal sanity check — a "looks like an email" gate so we don't let a
+  // comma-separated list or obvious typo into a pending row. We don't do
+  // full RFC5322 because the submitted string is a communication target,
+  // not a lookup key (Utils_emailsEqual handles canonicalisation at the
+  // comparison boundary).
+  if (targetEmail.indexOf('@') < 1 || targetEmail.indexOf('@') === targetEmail.length - 1) {
+    throw new Error('Target email "' + targetEmail + '" does not look like a valid address.');
+  }
+
+  var reason = String(draft.reason || '').trim();
+  if (!reason) throw new Error('Reason is required.');
+
+  var startDate = '';
+  var endDate   = '';
+  if (type === 'add_temp') {
+    startDate = String(draft.start_date || '').trim();
+    endDate   = String(draft.end_date   || '').trim();
+    if (!RequestsService_isIsoDate_(startDate)) {
+      throw new Error('Start date "' + startDate + '" is not a valid YYYY-MM-DD date.');
+    }
+    if (!RequestsService_isIsoDate_(endDate)) {
+      throw new Error('End date "' + endDate + '" is not a valid YYYY-MM-DD date.');
+    }
+    // Lexical compare works because both are ISO YYYY-MM-DD.
+    if (endDate < startDate) {
+      throw new Error('End date (' + endDate + ') must be on or after the start date (' + startDate + ').');
+    }
+  }
+
+  var requestId = Utils_uuid();
+  var row = {
+    request_id:       requestId,
+    type:             type,
+    scope:            String(args.scope),
+    target_email:     targetEmail,
+    target_name:      String(draft.target_name || '').trim(),
+    reason:           reason,
+    comment:          String(draft.comment || '').trim(),
+    start_date:       startDate,
+    end_date:         endDate,
+    status:           'pending',
+    requester_email:  Utils_cleanEmail(args.requesterPrincipal.email),
+    requested_at:     Utils_nowTs(),
+    completer_email:  '',
+    completed_at:     '',
+    rejection_reason: ''
+  };
+  var inserted = Requests_insert(row);
+  AuditRepo_write({
+    actor_email: inserted.requester_email,
+    action:      'submit_request',
+    entity_type: 'Request',
+    entity_id:   inserted.request_id,
+    before:      null,
+    after:       inserted
+  });
+  return { request: inserted };
+}
+
+// ---------------------------------------------------------------------------
+// complete — flip a pending Request to complete AND insert a matching Seats
+// row atomically, both inside the caller's Lock_withLock.
+//
+// Per the Chunk 6 spec: the Seats row is stamped with manager credentials
+// as created_by / last_modified_by (they're the person who actually made
+// the change in Kindoo + this app). building_names is left empty — the
+// manager sets it via the inline-edit path on the All Seats page if the
+// person needs more than the ward default.
+//
+// Emits TWO audit rows (per data-model.md: one row per entity touched):
+//   1. complete_request on the Request row (before/after status flip)
+//   2. insert            on the new Seat row
+//
+// The request_id → seat_id pairing is recorded implicitly by the shared
+// timestamp and the managerPrincipal.email on both rows; if we needed a
+// harder link we could embed request_id in the Seat's audit payload, but
+// current reporting needs don't require it.
+// ---------------------------------------------------------------------------
+function RequestsService_complete(managerPrincipal, requestId, overrides) {
+  if (!managerPrincipal || !managerPrincipal.email) {
+    throw new Error('RequestsService_complete: managerPrincipal required');
+  }
+  if (!requestId) throw new Error('RequestsService_complete: requestId required');
+
+  var req = Requests_getById(requestId);
+  if (!req) throw new Error('Request not found: ' + requestId);
+  if (req.status !== 'pending') {
+    throw new Error('Request is no longer pending (current status: ' + req.status + ').');
+  }
+  if (req.type !== 'add_manual' && req.type !== 'add_temp') {
+    // Chunk 7 will teach this path to handle remove; for now refuse
+    // loudly so a remove row that somehow slipped in during Chunk 7
+    // development doesn't silently insert a dangling seat.
+    throw new Error('Request type "' + req.type + '" is not completable in Chunk 6 (add_manual / add_temp only).');
+  }
+
+  // Build the Seat row first so validation errors (e.g. Seats_insert's
+  // type guard) throw BEFORE we update the Request row — keeps the Sheet
+  // state consistent if anything goes wrong mid-flow.
+  //
+  // building_names resolution (per data-model.md Tab 8: "Defaults to the
+  // ward's `building_name` on insert; editable by managers"):
+  //   1. If the caller passed `overrides.building_names`, use it
+  //      verbatim — that's the Chunk-6 confirmation dialog letting the
+  //      manager pick which building(s) this seat belongs to before
+  //      commit. Comma-separated string; empty string is allowed
+  //      (manager can leave it blank and edit via AllSeats later).
+  //   2. Otherwise fall back to the ward's default building_name. Stake-
+  //      scope requests have no ward row, so they fall through to ''.
+  //
+  // Validation: each submitted building_name (if any) must exist in
+  // Buildings. We check against Buildings_getAll to catch typos / stale
+  // UI state (a building deleted between list-load and confirm).
+  var managerEmail = managerPrincipal.email;
+  var buildingNames;
+  if (overrides && overrides.building_names !== undefined && overrides.building_names !== null) {
+    buildingNames = String(overrides.building_names);
+    RequestsService_validateBuildings_(buildingNames);
+  } else {
+    buildingNames = '';
+    if (req.scope && req.scope !== 'stake') {
+      var ward = Wards_getByCode(req.scope);
+      if (ward && ward.building_name) buildingNames = ward.building_name;
+    }
+  }
+  var seatRow = {
+    seat_id:          Utils_uuid(),
+    scope:            req.scope,
+    type:             req.type === 'add_manual' ? 'manual' : 'temp',
+    person_email:     req.target_email,    // stored as typed (D4)
+    person_name:      req.target_name || '',
+    reason:           req.reason || '',
+    start_date:       req.start_date || '',
+    end_date:         req.end_date   || '',
+    building_names:   buildingNames,
+    created_by:       managerEmail,
+    last_modified_by: managerEmail
+  };
+
+  var seatInserted = Seats_insert(seatRow);
+
+  var updatedReq = Requests_update(requestId, {
+    status:          'complete',
+    completer_email: managerEmail,
+    completed_at:    Utils_nowTs()
+  }).after;
+
+  AuditRepo_writeMany([
+    {
+      actor_email: managerEmail,
+      action:      'complete_request',
+      entity_type: 'Request',
+      entity_id:   requestId,
+      before:      req,
+      after:       updatedReq
+    },
+    {
+      actor_email: managerEmail,
+      action:      'insert',
+      entity_type: 'Seat',
+      entity_id:   seatInserted.seat_id,
+      before:      null,
+      after:       seatInserted
+    }
+  ]);
+
+  return { request: updatedReq, seat: seatInserted };
+}
+
+// ---------------------------------------------------------------------------
+// reject — flip a pending Request to rejected with a reason.
+//
+// The rejection reason is required per data-model.md Tab 9
+// (rejection_reason is flagged "Required on rejected"). If the caller
+// passes an empty string the UI should have caught it first; we still
+// reject here (clean error, no audit row).
+// ---------------------------------------------------------------------------
+function RequestsService_reject(managerPrincipal, requestId, rejectionReason) {
+  if (!managerPrincipal || !managerPrincipal.email) {
+    throw new Error('RequestsService_reject: managerPrincipal required');
+  }
+  if (!requestId) throw new Error('RequestsService_reject: requestId required');
+  var reason = String(rejectionReason || '').trim();
+  if (!reason) throw new Error('A rejection reason is required.');
+
+  var req = Requests_getById(requestId);
+  if (!req) throw new Error('Request not found: ' + requestId);
+  if (req.status !== 'pending') {
+    throw new Error('Request is no longer pending (current status: ' + req.status + ').');
+  }
+
+  var managerEmail = managerPrincipal.email;
+  var updatedReq = Requests_update(requestId, {
+    status:           'rejected',
+    completer_email:  managerEmail,
+    completed_at:     Utils_nowTs(),
+    rejection_reason: reason
+  }).after;
+
+  AuditRepo_write({
+    actor_email: managerEmail,
+    action:      'reject_request',
+    entity_type: 'Request',
+    entity_id:   requestId,
+    before:      req,
+    after:       updatedReq
+  });
+
+  return { request: updatedReq };
+}
+
+// ---------------------------------------------------------------------------
+// cancel — the requester (or the stake user) flips their own pending
+// Request to cancelled. Only the requester may cancel; a different
+// bishopric / stake / manager user trying to cancel someone else's
+// request hits a Forbidden check here.
+//
+// Rationale for the guard: even though managers can't self-approve (R-6
+// allows that), cancel is conceptually "I changed my mind" — the
+// requester owns that decision. A manager who wants to shut a request
+// down unilaterally should Reject with a reason.
+// ---------------------------------------------------------------------------
+function RequestsService_cancel(requesterPrincipal, requestId) {
+  if (!requesterPrincipal || !requesterPrincipal.email) {
+    throw new Error('RequestsService_cancel: requesterPrincipal required');
+  }
+  if (!requestId) throw new Error('RequestsService_cancel: requestId required');
+
+  var req = Requests_getById(requestId);
+  if (!req) throw new Error('Request not found: ' + requestId);
+  if (!Utils_emailsEqual(req.requester_email, requesterPrincipal.email)) {
+    throw new Error('Forbidden: you can only cancel requests you submitted.');
+  }
+  if (req.status !== 'pending') {
+    throw new Error('Request is no longer pending (current status: ' + req.status + ').');
+  }
+
+  var updatedReq = Requests_update(requestId, {
+    status:       'cancelled',
+    completed_at: Utils_nowTs()
+  }).after;
+
+  AuditRepo_write({
+    actor_email: requesterPrincipal.email,
+    action:      'cancel_request',
+    entity_type: 'Request',
+    entity_id:   requestId,
+    before:      req,
+    after:       updatedReq
+  });
+
+  return { request: updatedReq };
+}
+
+// Validate a comma-separated building_names string against the Buildings
+// tab. Empty string is valid (seats can be unassigned). Each non-empty
+// token must match an existing Buildings.building_name exactly
+// (case-sensitive, per data-model.md). Throws with the offending name on
+// failure so the manager's dialog surfaces a useful error.
+function RequestsService_validateBuildings_(buildingNames) {
+  var s = String(buildingNames || '').trim();
+  if (!s) return;  // empty string is allowed
+  var tokens = s.split(',');
+  var known = {};
+  var all = Buildings_getAll();
+  for (var i = 0; i < all.length; i++) known[all[i].building_name] = true;
+  var seen = {};
+  for (var j = 0; j < tokens.length; j++) {
+    var t = tokens[j].trim();
+    if (!t) continue;  // blank token from trailing comma — ignore
+    if (!known[t]) {
+      throw new Error('Unknown building "' + t + '" — add it via Configuration first, ' +
+        'or pick an existing one.');
+    }
+    if (seen[t]) {
+      throw new Error('Building "' + t + '" is listed twice; please pick each building only once.');
+    }
+    seen[t] = true;
+  }
+}
+
+// YYYY-MM-DD sanity check. Must be exactly 10 chars, dashes in position 5
+// and 8, and JS Date() must parse it to a real date. Rejects 2026-02-30.
+function RequestsService_isIsoDate_(s) {
+  if (!s || typeof s !== 'string') return false;
+  if (s.length !== 10) return false;
+  if (s.charAt(4) !== '-' || s.charAt(7) !== '-') return false;
+  var y = Number(s.substring(0, 4));
+  var m = Number(s.substring(5, 7));
+  var d = Number(s.substring(8, 10));
+  if (isNaN(y) || isNaN(m) || isNaN(d)) return false;
+  if (m < 1 || m > 12) return false;
+  if (d < 1 || d > 31) return false;
+  // Round-trip through Date to catch Feb 30 etc.
+  var parsed = new Date(Date.UTC(y, m - 1, d));
+  return parsed.getUTCFullYear() === y && parsed.getUTCMonth() === m - 1 && parsed.getUTCDate() === d;
+}

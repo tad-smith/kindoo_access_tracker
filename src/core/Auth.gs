@@ -182,3 +182,65 @@ function Auth_findBishopricRole(principal) {
   }
   return null;
 }
+
+// Chunk 6: returns the list of scopes for which this principal may submit
+// requests, with display-ready labels. Consumed by the consolidated
+// ApiRequests_* endpoints:
+//
+//   - Empty list           → principal can't submit (no bishopric/stake role).
+//                            ApiRequests_submit throws Forbidden.
+//   - One entry            → scope is inferred; the scope parameter in
+//                            ApiRequests_submit / _listMy is optional.
+//   - Multiple entries     → scope is required on submit; on listMy, the
+//                            UI offers an "All" filter option.
+//
+// Returned shape (matches the NewRequest / MyRequests UI contract):
+//   [
+//     { type: 'ward',  scope: 'CO',    label: 'Ward CO' },
+//     { type: 'stake', scope: 'stake', label: 'Stake Pool' }
+//   ]
+//
+// Order matches Nav's role priority (bishopric → stake), so the UI's
+// first-option-selected default lands on the bishopric scope for a
+// bishopric+stake user. That's arbitrary but consistent — a multi-role
+// user most often requests for their ward rather than the stake pool.
+//
+// Ward labels use ward_name from the Wards tab for display; if the ward
+// was deleted out from under the principal (shouldn't happen — their
+// Access row would be gone too — but defensive), the label falls back
+// to "Ward <code>" so the UI at least renders.
+function Auth_requestableScopes(principal) {
+  if (!principal || !principal.roles) return [];
+  var out = [];
+  var seenWards = {};
+  var seenStake = false;
+  // Pre-read Wards once so multi-bishopric principals don't hit N reads.
+  // For single-role principals this is still just one tab read.
+  var wardsByCode = null;
+  for (var i = 0; i < principal.roles.length; i++) {
+    var r = principal.roles[i];
+    if (!r) continue;
+    if (r.type === 'bishopric' && r.wardId && !seenWards[r.wardId]) {
+      if (wardsByCode === null) {
+        wardsByCode = {};
+        var wards = Wards_getAll();
+        for (var w = 0; w < wards.length; w++) {
+          wardsByCode[wards[w].ward_code] = wards[w];
+        }
+      }
+      var ward = wardsByCode[r.wardId];
+      var label = ward ? ('Ward ' + r.wardId + ' — ' + ward.ward_name) : ('Ward ' + r.wardId);
+      out.push({ type: 'ward', scope: r.wardId, label: label });
+      seenWards[r.wardId] = true;
+    }
+  }
+  // Stake comes after wards (bishopric-first ordering above).
+  for (var j = 0; j < principal.roles.length; j++) {
+    var r2 = principal.roles[j];
+    if (r2 && r2.type === 'stake' && !seenStake) {
+      out.push({ type: 'stake', scope: 'stake', label: 'Stake Pool' });
+      seenStake = true;
+    }
+  }
+  return out;
+}

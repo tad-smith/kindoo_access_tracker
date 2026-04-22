@@ -1,4 +1,8 @@
-// Bishopric API surface. Read-only in Chunk 5.
+// Bishopric API surface. Roster read endpoint lives here; the request-
+// submit / list-my / cancel / checkDuplicate endpoints consolidated into
+// api/ApiRequests.gs in Chunk 6 (same endpoint set used by stake
+// principals — scope is derived server-side from the verified
+// principal, not chosen by the caller).
 //
 // Every endpoint derives its scope from the verified principal — never
 // from an endpoint parameter. A bishopric member for CO must not be able
@@ -6,9 +10,8 @@
 // wardCode, so we don't accept one. The principal.roles array carries the
 // user's ward via Auth_findBishopricRole — see core/Auth.gs.
 //
-// Chunk 6 will add submitRequest / myRequests / cancelRequest; those will
-// still take the requested-ward scope from the principal. Chunk 7 adds the
-// X/trashcan removal flow.
+// Chunk 7 adds the X/trashcan removal flow on Roster.html, which will
+// emit a `type='remove'` request via ApiRequests_submit.
 
 function ApiBishopric_roster(token) {
   var principal = Auth_principalFrom(token);

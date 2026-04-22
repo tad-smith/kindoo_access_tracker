@@ -76,6 +76,7 @@ src/
 │   ├── ApiShared.gs               # whoami(), version, health
 │   ├── ApiBishopric.gs
 │   ├── ApiStake.gs
+│   ├── ApiRequests.gs             # consolidated submit/listMy/cancel/checkDuplicate (bishopric OR stake)
 │   └── ApiManager.gs
 │
 └── ui/                            # HTML served via HtmlService
@@ -85,14 +86,12 @@ src/
     ├── ClientUtils.html           # shared client JS (<script>) — rpc helper, toasts
     ├── NotAuthorized.html
     ├── BootstrapWizard.html
+    ├── NewRequest.html            # shared submit form (bishopric OR stake) — Chunk 6
+    ├── MyRequests.html            # shared requester list (bishopric OR stake) — Chunk 6
     ├── bishopric/
-    │   ├── Roster.html
-    │   ├── NewRequest.html
-    │   └── MyRequests.html
+    │   └── Roster.html
     ├── stake/
     │   ├── Roster.html
-    │   ├── NewRequest.html
-    │   ├── MyRequests.html
     │   └── WardRosters.html
     └── manager/
         ├── Dashboard.html
@@ -343,19 +342,21 @@ Entries marked *(Chunk N)* are page-id placeholders reserved for later chunks �
 | --- | --- | --- |
 | *(empty)* | role default (manager → `mgr/seats` until Chunk 10's Dashboard; stake → `stake/roster`; bishopric → `bishopric/roster`) | any |
 | `bishopric/roster` | `ui/bishopric/Roster` | bishopric |
-| `bishopric/new` *(Chunk 6)* | `ui/bishopric/NewRequest` | bishopric |
-| `bishopric/my` *(Chunk 6)* | `ui/bishopric/MyRequests` | bishopric |
 | `stake/roster` | `ui/stake/Roster` | stake |
 | `stake/ward-rosters` | `ui/stake/WardRosters` | stake |
-| `stake/new` *(Chunk 6)* | `ui/stake/NewRequest` | stake |
-| `stake/my` *(Chunk 6)* | `ui/stake/MyRequests` | stake |
+| `new` | `ui/NewRequest` | bishopric **OR** stake |
+| `my` | `ui/MyRequests` | bishopric **OR** stake |
 | `mgr/seats` | `ui/manager/AllSeats` | manager |
+| `mgr/queue` | `ui/manager/RequestsQueue` | manager |
 | `mgr/config` | `ui/manager/Config` | manager |
 | `mgr/access` | `ui/manager/Access` | manager |
 | `mgr/import` | `ui/manager/Import` | manager |
 | `mgr/dashboard` *(Chunk 10)* | `ui/manager/Dashboard` | manager |
-| `mgr/queue` *(Chunk 6)* | `ui/manager/RequestsQueue` | manager |
 | `mgr/audit` *(Chunk 10)* | `ui/manager/AuditLog` | manager |
+
+**Multi-role page access (Chunk 6).** The `new` and `my` pages are the first entries that accept MORE THAN ONE role — any principal holding `bishopric` OR `stake` (or both) may reach them. The Router entry stores this as `{ roles: ['bishopric', 'stake'] }` instead of the single-role `{ role: 'manager' }` shape. `Router_hasAllowedRole_` walks either shape; single-role entries are unchanged. Managers do NOT automatically get access to `new` / `my` — holding `manager` without `bishopric` / `stake` is insufficient (a manager who wants to submit a request needs to also hold a request-capable role, which is the realistic case: Kindoo Managers are typically drawn from the stake presidency or a bishopric).
+
+The pre-Chunk-6 plan had role-suffixed pages (`bishopric/new`, `stake/new`, etc.); Chunk 6 consolidated those to one `ui/NewRequest.html` + one `ui/MyRequests.html` since the forms are identical except for scope, which is derived server-side from `Auth_requestableScopes(principal)` and (for multi-role users) a client-side dropdown selection.
 
 Multi-role principals land on the highest-privilege role's default (manager > stake > bishopric). A user who hits a `?p=` they can't access (wrong role, or an unrecognised id) silently falls back to their default page; the "redirect with toast" UX is Chunk 10 polish.
 
@@ -389,6 +390,63 @@ Roster reads enforce scope at the **API layer**, not the UI. A bishopric member 
 ### Trigger management
 
 `TriggersService.install()` idempotently creates both triggers if absent. Invoked from the bootstrap wizard's last step and from a manager-only "Reinstall triggers" button on the Configuration page, so operators can self-heal.
+
+## 9.5. Email send policy (Chunk 6)
+
+Every notification in `services/EmailService.gs` (the four request-lifecycle emails today; the Chunk-9 over-cap email later) follows one policy: **atomic write inside the lock, mail outside the lock, best-effort with a surfaced warning on failure**. The canonical shape is:
+
+```
+function ApiX_action(token, ...) {
+  var principal = Auth_principalFrom(token);
+  // ... role checks ...
+  var result = Lock_withLock(function () {
+    return SomeService_action(principal, ...);  // data write + AuditLog
+  });
+  try {
+    EmailService_notifyX(result.request, principal, ...);
+  } catch (e) {
+    Logger.log('[ApiX_action] notify failed: ' + (e && e.message ? e.message : e));
+    result.warning = '… saved, but the notification email failed to send.';
+  }
+  return result;
+}
+```
+
+### Why outside the lock
+
+`MailApp.sendEmail` typically takes 1–2 s per recipient (network round-trip to Google's mail infrastructure). Holding `LockService.getScriptLock()` for the duration of multi-recipient mail I/O would serialise every other write in the app behind a notification that, operationally, is a side effect — not a load-bearing invariant. The Sheet write and its AuditLog row are what must be atomic; the email is a convenience.
+
+Concurrency model as a result:
+
+- Submit / complete / reject / cancel: the `Requests` row flip (+ `Seats` row on complete) + AuditLog all commit inside one lock acquisition (~50–200 ms at current scale). Another submit from a different browser window waits at most that long.
+- Mail I/O then runs outside the lock. If it takes 2 s, the next writer has already had the lock since ~200 ms in.
+
+### Why best-effort (with warning, not error)
+
+A mail failure means the notification didn't reach someone — the write itself succeeded and is already audited. Rolling back a successful + audited write because a mail provider hiccupped would be worse UX than surfacing a warning.
+
+Every `ApiRequests_*` / `ApiManager_*Request` endpoint returns a response shape that MAY include a `warning` string. The client-side rpc path surfaces it as `toast('…', 'warn')` alongside the success toast. The AuditLog captures the write; the warning tells the operator "go ping the manager in Slack" or equivalent.
+
+A caller that logs + surfaces warnings already has the pattern visible in Chunk-2's `ApiManager_kindooManagersDelete` (last-active-manager warning). Chunk-6 reuses the same field name (`warning`), same toast kind (`warn`).
+
+### Global kill-switch: `Config.notifications_enabled`
+
+`EmailService_send_` reads `Config.notifications_enabled` on every call. When `FALSE`, the function logs what WOULD have been sent (subject + recipient count) and returns without invoking `MailApp.sendEmail`. Default is `TRUE` (the spec-compliant behaviour). An unset / missing cell is also treated as `TRUE` so a pre-Chunk-6 Sheet that's missing the key still sends mail.
+
+The key renders in the manager Configuration page's Editable Config table (it's not protected or importer-owned) as a checkbox. Operators can flip it during testing, while the mailbox is being provisioned, or temporarily if a bad address in `KindooManagers` is bouncing.
+
+### Link-back URLs
+
+Every email includes exactly one link back to the app, built from `Config.main_url`:
+
+- Manager-targeted emails link to `<main_url>?p=mgr/queue`.
+- Requester-targeted emails link to `<main_url>?p=my`.
+
+If `main_url` is unset, the link becomes the literal string `(main_url not configured)` rather than a broken URL — loud rather than subtle, so the operator notices.
+
+### From address and display name
+
+`MailApp.sendEmail` on Main runs as the deployer (`executeAs: USER_DEPLOYING`). The `name:` parameter is set to `"<Config.stake_name> — Kindoo Access"` (or a generic `"Kindoo Access Tracker"` when `stake_name` is unset). Replies go to the deployer's inbox — acceptable per open-questions.md A-2.
 
 ## 10. Bootstrap flow
 
@@ -442,11 +500,13 @@ export default {
 | HTTP entry point (Main project) | `src/core/Main.gs` |
 | Decides what page to render; role-default picking; Nav render | `src/core/Router.gs` |
 | Identity collection (Session.getActiveUser + HMAC sign) | `identity-project/Code.gs` (separate Apps Script project; see `identity-project/README.md`) |
-| Verifies HMAC session tokens; resolves roles; `Auth_findBishopricRole` | `core/Auth.gs` |
+| Verifies HMAC session tokens; resolves roles; `Auth_findBishopricRole`; `Auth_requestableScopes` | `core/Auth.gs` |
 | Guards against concurrent writes | `core/Lock.gs` |
 | Reads/writes one Sheet tab | `repos/XxxRepo.gs` |
 | Orchestrates a business workflow | `services/Xxx.gs` |
 | Shared roster shape (row mapper + utilization) | `services/Rosters.gs` |
+| Request lifecycle (submit / complete / reject / cancel) | `services/RequestsService.gs` |
+| Typed mail wrappers + kill-switch | `services/EmailService.gs` (reads `Config.notifications_enabled`) |
 | Exposed to client via `google.script.run` | `api/ApiXxx.gs` (each endpoint takes the session token as first arg) |
 | Rendered to the user | `ui/**.html` |
 | Shared client helpers (`rpc`, `toast`, `escapeHtml`, roster renderer) | `ui/ClientUtils.html` |

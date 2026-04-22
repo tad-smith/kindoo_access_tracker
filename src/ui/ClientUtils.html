@@ -73,6 +73,13 @@
   // column (for manager AllSeats; single-scope pages omit). The row shape
   // is whatever Rosters_mapRow_ on the server returns (data-model.md Tab 8
   // projection minus internal-only fields).
+  //
+  // Chunk 6: opts.rowActions (optional) is a function (row) → HTML fragment
+  // rendered into an extra rightmost "Actions" <td>. Callers that use
+  // rowActions should also pass opts.actionsHeader (column header text) to
+  // renderRosterTable so the <th> line matches the column count. The
+  // manager AllSeats page uses this to render an inline "Edit" button on
+  // manual/temp rows.
   function rosterRowHtml(row, opts) {
     opts = opts || {};
     var typeBadge =
@@ -103,7 +110,11 @@
       var e = row.end_date   ? escapeHtml(row.end_date)   : '';
       datesCell = s + (s && e ? ' → ' : '') + e;
     }
-    return '<tr class="type-' + escapeHtml(row.type) + '">' +
+    var actionsCell = '';
+    if (typeof opts.rowActions === 'function') {
+      actionsCell = '<td class="row-actions">' + (opts.rowActions(row) || '') + '</td>';
+    }
+    return '<tr class="type-' + escapeHtml(row.type) + '" data-seat-id="' + escapeHtml(row.seat_id || '') + '">' +
       scopeCell +
       '<td>' + typeBadge + expiryBadge + '</td>' +
       '<td>' + escapeHtml(row.person_name || '') + '<br>' +
@@ -112,10 +123,14 @@
       '<td>' + callingOrReason + '</td>' +
       '<td>' + datesCell + '</td>' +
       '<td>' + escapeHtml(row.building_names || '') + '</td>' +
+      actionsCell +
       '</tr>';
   }
 
   // Full table. opts.showScope (see rosterRowHtml) + opts.emptyMsg.
+  // opts.rowActions / opts.actionsHeader (Chunk 6) — when set, an extra
+  // rightmost column is added to the header row to match the per-row
+  // <td> that rosterRowHtml emits.
   function renderRosterTable(rows, opts) {
     opts = opts || {};
     if (!rows || rows.length === 0) {
@@ -127,6 +142,9 @@
     if (opts.showScope) headers += '<th>Scope</th>';
     headers += '<th>Type</th><th>Person</th><th>Calling / Reason</th>' +
                '<th>Dates</th><th>Buildings</th>';
+    if (typeof opts.rowActions === 'function') {
+      headers += '<th>' + escapeHtml(opts.actionsHeader || '') + '</th>';
+    }
     var body = '';
     for (var i = 0; i < rows.length; i++) {
       body += rosterRowHtml(rows[i], opts);

@@ -1,1 +1,438 @@
-<!-- Kindoo Manager Requests Queue: all pending requests, filter by ward/type, Mark Complete / Reject actions. -->
+<!--
+  Manager Requests Queue (Chunk 6).
+
+  Shows all pending requests across every scope, filterable by
+  ward + type. Per request, renders:
+    - metadata (type, scope, target, requester, reason, comment,
+      submitted at, dates when add_temp)
+    - "what the Seats row will look like post-complete" preview, using
+      the Chunk-5 rosterRowHtml so the preview matches what the
+      manager sees on AllSeats / bishopric Roster.
+    - Duplicate warning inline if target_email already has active
+      seats in the request's scope (reuses the server's duplicate
+      preview — same check the client-side NewRequest uses).
+    - Complete button (confirms first) → ApiManager_completeRequest
+    - Reject button (prompts for reason) → ApiManager_rejectRequest
+
+  Self-approval policy (build-plan.md Chunk 6 "Policy (confirmed)"):
+  a manager who submitted a request may complete / reject it
+  themselves. No guard here.
+
+  Deep-link filter state via ?p=mgr/queue&ward=CO&type=add_manual.
+  URL is consumed by Main.doGet → QUERY_PARAMS global → this page.
+  Post-load filter changes do NOT rewrite the top-frame URL (same
+  cross-origin iframe limitation as AllSeats; see open-questions.md A-8).
+-->
+<section class="queue-page">
+  <h1>Requests Queue</h1>
+  <p class="queue-intro">Pending add_manual and add_temp requests across
+    every scope. Mark Complete after mirroring the change in Kindoo;
+    Reject with a reason if the request shouldn't be honored. Switch
+    State to "Complete" to see resolved (complete / rejected / cancelled)
+    history.
+  </p>
+
+  <div class="queue-filters">
+    <label>State:
+      <select id="q-state-filter">
+        <option value="pending">Pending</option>
+        <option value="complete">Complete (incl. rejected + cancelled)</option>
+      </select>
+    </label>
+    <label>Ward:
+      <select id="q-ward-filter">
+        <option value="">All</option>
+      </select>
+    </label>
+    <label>Type:
+      <select id="q-type-filter">
+        <option value="">All</option>
+        <option value="add_manual">add_manual</option>
+        <option value="add_temp">add_temp</option>
+      </select>
+    </label>
+    <span class="queue-count" id="queue-count"></span>
+  </div>
+
+  <div id="queue-host">Loading…</div>
+
+  <!-- Complete-confirmation modal. Opens when the manager clicks Mark
+       Complete on a pending card. Pre-populates the Buildings checkbox
+       group from the ward's default building (for ward scopes) or
+       unchecked (for stake). Manager adjusts, clicks Confirm → the
+       selection is sent through ApiManager_completeRequest as the
+       building_names override. -->
+  <div id="complete-modal" class="complete-modal hidden" role="dialog" aria-modal="true">
+    <div class="complete-modal-inner">
+      <h2>Complete request</h2>
+      <div id="cm-summary" class="complete-modal-summary"></div>
+      <div class="form-row">
+        <div class="label"><strong>Buildings assigned to this seat:</strong></div>
+        <div id="cm-buildings-list" class="cm-buildings-list"></div>
+        <div class="cm-buildings-hint">
+          Defaults to the ward's configured building. Untick to remove, or
+          tick additional buildings this person needs access to.
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" id="cm-cancel-btn"  class="btn btn-secondary">Cancel</button>
+        <button type="button" id="cm-confirm-btn" class="btn">Confirm and complete</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  function qp(name) {
+    return (typeof QUERY_PARAMS === 'object' && QUERY_PARAMS && QUERY_PARAMS[name]) ? String(QUERY_PARAMS[name]) : '';
+  }
+  var filters = {
+    ward:  qp('ward'),
+    type:  qp('type'),
+    state: qp('state') || 'pending'
+  };
+  if (filters.state !== 'pending' && filters.state !== 'complete') filters.state = 'pending';
+  var populatedFilterOpts = false;
+
+  // Captured from every listRequests response so the Complete-confirmation
+  // dialog + the seat-preview rendering know the full buildings catalogue
+  // and each ward's default building. Keyed lookups below.
+  var wardsByCode = {};         // ward_code → { ward_name, building_name }
+  var buildingsCatalogue = [];  // list of building_name strings
+  var rowsByRequestId = {};     // request_id → request row (for modal payload)
+
+  function populateFilterOptions(opts) {
+    // Refresh the ward/building lookup tables on every load so the
+    // dialog / preview reflect the current Config state. The ward-
+    // filter dropdown below is still populated only once.
+    wardsByCode = {};
+    for (var i = 0; i < (opts.wards || []).length; i++) {
+      wardsByCode[opts.wards[i].ward_code] = opts.wards[i];
+    }
+    buildingsCatalogue = (opts.buildings || []).slice();
+
+    if (populatedFilterOpts) return;
+    populatedFilterOpts = true;
+    var wardSel = $('q-ward-filter');
+    var stakeOpt = document.createElement('option');
+    stakeOpt.value = 'stake';
+    stakeOpt.textContent = 'Stake';
+    wardSel.appendChild(stakeOpt);
+    for (var j = 0; j < (opts.wards || []).length; j++) {
+      var w = document.createElement('option');
+      w.value = opts.wards[j].ward_code;
+      w.textContent = opts.wards[j].ward_name + ' (' + opts.wards[j].ward_code + ')';
+      wardSel.appendChild(w);
+    }
+    // Re-apply deep-link values now the options exist.
+    wardSel.value = filters.ward || '';
+    $('q-type-filter').value  = filters.type  || '';
+    $('q-state-filter').value = filters.state || 'pending';
+    filters.ward  = wardSel.value;
+    filters.type  = $('q-type-filter').value;
+    filters.state = $('q-state-filter').value || 'pending';
+  }
+
+  // Resolve the ward's default building for a given scope. Empty
+  // string for stake scope or an unknown ward.
+  function defaultBuildingFor(scope) {
+    if (!scope || scope === 'stake') return '';
+    var ward = wardsByCode[scope];
+    return ward && ward.building_name ? ward.building_name : '';
+  }
+
+  // Build a "what this seat will look like after complete" preview row.
+  // Matches the Rosters_mapRow_ shape so rosterRowHtml can render it.
+  // building_names shows the ward's default so the preview accurately
+  // reflects what'll land in the Seats tab if the manager accepts the
+  // default on the confirmation dialog. Stake scope has no ward default
+  // and renders empty.
+  function previewSeatRow(req) {
+    return {
+      seat_id:        '',
+      scope:          req.scope,
+      type:           req.type === 'add_manual' ? 'manual' : 'temp',
+      person_email:   req.target_email || '',
+      person_name:    req.target_name || '',
+      calling_name:   '',
+      reason:         req.reason || '',
+      start_date:     req.start_date || '',
+      end_date:       req.end_date || '',
+      building_names: defaultBuildingFor(req.scope),
+      expiry_badge:   ''
+    };
+  }
+
+  function requestCardHtml(req) {
+    var isPending = req.status === 'pending';
+
+    var dupBlock = '';
+    if (isPending && req.duplicate_existing && req.duplicate_existing.length > 0) {
+      dupBlock =
+        '<div class="duplicate-warning">' +
+          '<strong>Duplicate:</strong> target already has ' +
+          req.duplicate_existing.length + ' active seat' +
+          (req.duplicate_existing.length === 1 ? '' : 's') +
+          ' in <code>' + escapeHtml(req.scope) + '</code>.' +
+          renderRosterTable(req.duplicate_existing, { emptyMsg: '' }) +
+        '</div>';
+    }
+
+    var datesLine = '';
+    if (req.type === 'add_temp') {
+      datesLine = '<div class="queue-field"><span class="label">Dates:</span> ' +
+        escapeHtml(req.start_date || '?') + ' → ' +
+        escapeHtml(req.end_date || '?') + '</div>';
+    }
+
+    var commentLine = req.comment
+      ? '<div class="queue-field"><span class="label">Comment:</span> ' +
+        escapeHtml(req.comment) + '</div>'
+      : '';
+
+    // Preview + action buttons only render on pending rows. Terminal
+    // rows get a resolved-summary block (status badge, who resolved
+    // it, when, and the rejection reason when applicable) plus a
+    // disabled/absent action row.
+    var previewBlock = '';
+    var actionsBlock = '';
+    var resolvedBlock = '';
+    if (isPending) {
+      previewBlock =
+        '<div class="queue-field queue-preview">' +
+          '<div class="label">Seat preview (what will be created on Complete):</div>' +
+          renderRosterTable([previewSeatRow(req)], { emptyMsg: '' }) +
+        '</div>';
+      actionsBlock =
+        '<div class="queue-card-actions">' +
+          '<button class="btn"            data-act="complete">Mark Complete</button>' +
+          '<button class="btn btn-danger" data-act="reject">Reject</button>' +
+        '</div>';
+    } else {
+      var resolverLine = '';
+      if (req.completer_email) {
+        resolverLine = '<div class="queue-field"><span class="label">Resolved by:</span> ' +
+          '<span class="roster-email">' + escapeHtml(req.completer_email) + '</span>' +
+          (req.completed_at ? ' at ' + escapeHtml(req.completed_at) : '') +
+          '</div>';
+      } else if (req.completed_at) {
+        resolverLine = '<div class="queue-field"><span class="label">Cancelled at:</span> ' +
+          escapeHtml(req.completed_at) + '</div>';
+      }
+      var rejectionLine = req.rejection_reason
+        ? '<div class="queue-field"><span class="label">Rejection reason:</span> ' +
+          escapeHtml(req.rejection_reason) + '</div>'
+        : '';
+      resolvedBlock =
+        '<div class="queue-field"><span class="label">Status:</span> ' +
+          '<span class="status-badge status-' + escapeHtml(req.status) + '">' +
+            escapeHtml(req.status) + '</span>' +
+        '</div>' +
+        resolverLine +
+        rejectionLine;
+    }
+
+    return '<div class="queue-card queue-card-status-' + escapeHtml(req.status) +
+           '" data-request-id="' + escapeHtml(req.request_id) + '">' +
+      '<div class="queue-card-header">' +
+        '<span class="queue-card-type">' + escapeHtml(req.type) + '</span>' +
+        '<span class="queue-card-scope"><code>' + escapeHtml(req.scope) + '</code></span>' +
+        '<span class="queue-card-submitted">Submitted ' + escapeHtml(req.requested_at || '') + '</span>' +
+      '</div>' +
+      '<div class="queue-field"><span class="label">Target:</span> ' +
+        (req.target_name ? escapeHtml(req.target_name) + ' — ' : '') +
+        '<span class="roster-email">' + escapeHtml(req.target_email) + '</span>' +
+      '</div>' +
+      '<div class="queue-field"><span class="label">Requester:</span> ' +
+        '<span class="roster-email">' + escapeHtml(req.requester_email) + '</span></div>' +
+      '<div class="queue-field"><span class="label">Reason:</span> ' + escapeHtml(req.reason || '') + '</div>' +
+      commentLine +
+      datesLine +
+      dupBlock +
+      previewBlock +
+      resolvedBlock +
+      actionsBlock +
+    '</div>';
+  }
+
+  function render(resp) {
+    populateFilterOptions(resp.filter_options);
+    rowsByRequestId = {};
+    for (var i = 0; i < (resp.rows || []).length; i++) {
+      rowsByRequestId[resp.rows[i].request_id] = resp.rows[i];
+    }
+    var noun = filters.state === 'complete' ? 'resolved request' : 'pending request';
+    $('queue-count').textContent =
+      resp.total_rows + ' ' + noun + (resp.total_rows === 1 ? '' : 's');
+    if (!resp.rows || resp.rows.length === 0) {
+      var emptyMsg = filters.state === 'complete'
+        ? 'No resolved requests match the current filters.'
+        : 'Queue is empty. Nice.';
+      $('queue-host').innerHTML = '<div class="empty-state">' + escapeHtml(emptyMsg) + '</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < resp.rows.length; i++) html += requestCardHtml(resp.rows[i]);
+    $('queue-host').innerHTML = html;
+
+    // Action listeners only exist on pending cards; terminal cards
+    // have no Complete / Reject buttons.
+    Array.prototype.forEach.call(
+      $('queue-host').querySelectorAll('.queue-card-status-pending'),
+      function (card) {
+        var reqId = card.getAttribute('data-request-id');
+        var completeBtn = card.querySelector('button[data-act="complete"]');
+        var rejectBtn   = card.querySelector('button[data-act="reject"]');
+        if (completeBtn) {
+          completeBtn.addEventListener('click', function () {
+            openCompleteModal(reqId);
+          });
+        }
+        if (rejectBtn) {
+          rejectBtn.addEventListener('click', function () {
+            var reason = prompt('Rejection reason (required):');
+            if (reason == null) return; // cancelled
+            reason = String(reason).trim();
+            if (!reason) {
+              toast('A rejection reason is required.', 'error');
+              return;
+            }
+            this.disabled = true;
+            rpc('ApiManager_rejectRequest', reqId, reason).then(function (resp) {
+              toast('Request rejected.', 'success');
+              if (resp && resp.warning) toast(resp.warning, 'warn');
+              load();
+            }).catch(function (err) {
+              toast(err.message || String(err), 'error');
+              load();
+            });
+          });
+        }
+      }
+    );
+  }
+
+  function load() {
+    $('queue-host').innerHTML = 'Loading…';
+    rpc('ApiManager_listRequests', {
+      ward:  filters.ward,
+      type:  filters.type,
+      state: filters.state
+    }).then(render).catch(function (err) {
+      $('queue-host').innerHTML =
+        '<div class="error">Could not load the queue: ' + escapeHtml(err.message || err) + '</div>';
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Complete-confirmation modal.
+  // ---------------------------------------------------------------------
+
+  function openCompleteModal(reqId) {
+    var req = rowsByRequestId[reqId];
+    if (!req) {
+      toast('Request not found in the current view.', 'error');
+      return;
+    }
+    // Summary — echoes the card fields so the manager has everything
+    // in one focused frame while deciding on buildings.
+    var dates = req.type === 'add_temp'
+      ? (escapeHtml(req.start_date || '?') + ' → ' + escapeHtml(req.end_date || '?'))
+      : '';
+    var summaryHtml =
+      '<div class="queue-field"><span class="label">Type:</span> ' + escapeHtml(req.type) + '</div>' +
+      '<div class="queue-field"><span class="label">Scope:</span> <code>' + escapeHtml(req.scope) + '</code></div>' +
+      '<div class="queue-field"><span class="label">Target:</span> ' +
+        (req.target_name ? escapeHtml(req.target_name) + ' — ' : '') +
+        '<span class="roster-email">' + escapeHtml(req.target_email) + '</span></div>' +
+      '<div class="queue-field"><span class="label">Reason:</span> ' + escapeHtml(req.reason || '') + '</div>' +
+      (req.comment ? '<div class="queue-field"><span class="label">Comment:</span> ' + escapeHtml(req.comment) + '</div>' : '') +
+      (dates ? '<div class="queue-field"><span class="label">Dates:</span> ' + dates + '</div>' : '');
+    $('cm-summary').innerHTML = summaryHtml;
+
+    // Building checkboxes — every Buildings.building_name as a
+    // checkbox, with the ward's default pre-ticked (nothing for
+    // stake). Empty catalogue (no Buildings configured yet) surfaces
+    // a hint rather than a blank area.
+    var defaultBuilding = defaultBuildingFor(req.scope);
+    var listHost = $('cm-buildings-list');
+    if (buildingsCatalogue.length === 0) {
+      listHost.innerHTML =
+        '<div class="cm-buildings-empty">No Buildings configured. ' +
+        'Add buildings via Configuration to assign them here, or proceed ' +
+        'with no buildings and edit this seat later on All Seats.</div>';
+    } else {
+      var html = '';
+      for (var i = 0; i < buildingsCatalogue.length; i++) {
+        var b = buildingsCatalogue[i];
+        var checked = b === defaultBuilding ? ' checked' : '';
+        html +=
+          '<label class="cm-building-row">' +
+            '<input type="checkbox" value="' + escapeHtml(b) + '"' + checked + '> ' +
+            escapeHtml(b) +
+          '</label>';
+      }
+      listHost.innerHTML = html;
+    }
+
+    $('complete-modal').setAttribute('data-request-id', reqId);
+    $('complete-modal').classList.remove('hidden');
+    $('cm-confirm-btn').disabled = false;
+  }
+
+  function closeCompleteModal() {
+    $('complete-modal').classList.add('hidden');
+    $('complete-modal').removeAttribute('data-request-id');
+  }
+
+  function currentBuildingSelection() {
+    var checks = $('cm-buildings-list').querySelectorAll('input[type="checkbox"]');
+    var out = [];
+    for (var i = 0; i < checks.length; i++) {
+      if (checks[i].checked) out.push(checks[i].value);
+    }
+    return out;
+  }
+
+  $('cm-cancel-btn').addEventListener('click', closeCompleteModal);
+  $('complete-modal').addEventListener('click', function (ev) {
+    if (ev.target === this) closeCompleteModal();
+  });
+  $('cm-confirm-btn').addEventListener('click', function () {
+    var reqId = $('complete-modal').getAttribute('data-request-id');
+    if (!reqId) return;
+    var selection = currentBuildingSelection().join(',');
+    this.disabled = true;
+    rpc('ApiManager_completeRequest', reqId, { building_names: selection }).then(function (resp) {
+      toast('Request completed and seat created.', 'success');
+      if (resp && resp.warning) toast(resp.warning, 'warn');
+      closeCompleteModal();
+      load();
+    }).catch(function (err) {
+      toast(err.message || String(err), 'error');
+      $('cm-confirm-btn').disabled = false;
+      // Don't auto-reload on error — the manager may want to retry
+      // with a different building selection without losing their
+      // modal state.
+    });
+  });
+
+  $('q-state-filter').addEventListener('change', function () {
+    filters.state = this.value || 'pending';
+    load();
+  });
+  $('q-ward-filter').addEventListener('change', function () {
+    filters.ward = this.value;
+    load();
+  });
+  $('q-type-filter').addEventListener('change', function () {
+    filters.type = this.value;
+    load();
+  });
+
+  load();
+})();
+</script>

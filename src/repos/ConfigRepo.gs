@@ -15,9 +15,10 @@ const CONFIG_HEADERS_ = ['key', 'value'];
 // Keys we coerce to non-string types on read. Everything else is returned as
 // the Sheet hands it to us (string, number, boolean, or Date for *_at).
 const CONFIG_TYPED_KEYS_ = {
-  setup_complete: 'boolean',
-  stake_seat_cap: 'number',
-  expiry_hour:    'number'
+  setup_complete:        'boolean',
+  stake_seat_cap:        'number',
+  expiry_hour:           'number',
+  notifications_enabled: 'boolean'  // Chunk 6: global mail kill-switch
 };
 
 // Keys the manager Config UI must NEVER expose to inline edit. session_secret
