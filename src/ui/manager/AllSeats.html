@@ -51,7 +51,7 @@
 
   <div id="summaries-host" class="all-seats-summaries"></div>
 
-  <div id="roster-table-host">Loading…</div>
+  <div id="roster-table-host"><div class="empty-state">Loading seats…</div></div>
 
   <!-- Edit modal (Chunk 6). Hidden by default; shown when the manager
        clicks Edit on a manual/temp row. Non-modal on small viewports
@@ -253,7 +253,7 @@
   });
 
   function load() {
-    $('roster-table-host').innerHTML = 'Loading…';
+    $('roster-table-host').innerHTML = '<div class="empty-state">Loading seats…</div>';
     rpc('ApiManager_allSeats', filters).then(function (resp) {
       render(resp);
     }).catch(function (err) {

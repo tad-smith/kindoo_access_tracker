@@ -20,7 +20,7 @@
 <section class="my-requests-page">
   <h1>My Requests</h1>
   <div id="scope-filter-host"></div>
-  <div id="my-requests-host">Loading…</div>
+  <div id="my-requests-host"><div class="empty-state">Loading your requests…</div></div>
 </section>
 
 <script>
@@ -159,7 +159,7 @@
   }
 
   function load() {
-    $('my-requests-host').innerHTML = 'Loading…';
+    $('my-requests-host').innerHTML = '<div class="empty-state">Loading your requests…</div>';
     rpc('ApiRequests_listMy', selectedScope || null).then(function (resp) {
       allowedScopes = resp.scopes || [];
       if ($('scope-filter-host').innerHTML === '') setupScopeFilter();

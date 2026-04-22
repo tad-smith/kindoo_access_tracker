@@ -108,3 +108,55 @@ function AuditRepo_writeMany(entries) {
   var startRow = sheet.getLastRow() + 1;
   sheet.getRange(startRow, 1, values.length, AUDIT_HEADERS_.length).setValues(values);
 }
+
+// Chunk 10: read side for the Audit Log page + Dashboard "Recent Activity"
+// card. Returns every row as an object with the original-shape columns plus
+// `timestamp_ms` (for stable client-side sort / diff compares) and parsed
+// `before` / `after` objects (when before_json / after_json parse as JSON
+// — otherwise the raw string passes through so the diff renderer can
+// still show something useful).
+//
+// This is a full-scan read. architecture.md §1 said "no server-side
+// pagination for v1"; the Audit Log page is the one exception (Chunk 10
+// rationale: AuditLog grows ~300-500 rows/week, so a year's data is
+// ~20k rows — the only tab that grows unbounded). The filter + paginate
+// logic lives in ApiManager_auditLog and applies against this array.
+//
+// N+1-read concern: every filtered query currently re-reads the full tab.
+// At target scale (~5-10 manager filter operations per month, ~20k rows
+// after a year, one getDataRange read is ~1s) the latency is tolerable.
+// If it stops being tolerable, the fix is either a memoised per-request
+// cache (CacheService) or a reverse-chronological read that stops once
+// the date_from cut-off is passed. Recorded for future scale.
+function AuditRepo_getAll() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('AuditLog');
+  if (!sheet) throw new Error('AuditLog tab missing — run setupSheet().');
+  var data = sheet.getDataRange().getValues();
+  if (data.length === 0) return [];
+  var headers = data[0];
+  for (var h = 0; h < AUDIT_HEADERS_.length; h++) {
+    if (String(headers[h]) !== AUDIT_HEADERS_[h]) {
+      throw new Error('AuditLog header drift at column ' + (h + 1) +
+        ': expected "' + AUDIT_HEADERS_[h] + '", got "' + String(headers[h]) + '"');
+    }
+  }
+  var out = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    // Defensive: a blank row at the bottom (someone manually cleared a
+    // cell) should not crash the read.
+    if (row[0] === '' || row[0] == null) continue;
+    var ts = row[0] instanceof Date ? row[0] : null;
+    out.push({
+      timestamp:    ts,
+      timestamp_ms: ts ? ts.getTime() : 0,
+      actor_email:  String(row[1] == null ? '' : row[1]),
+      action:       String(row[2] == null ? '' : row[2]),
+      entity_type:  String(row[3] == null ? '' : row[3]),
+      entity_id:    String(row[4] == null ? '' : row[4]),
+      before_json:  String(row[5] == null ? '' : row[5]),
+      after_json:   String(row[6] == null ? '' : row[6])
+    });
+  }
+  return out;
+}

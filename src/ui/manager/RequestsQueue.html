@@ -55,7 +55,7 @@
     <span class="queue-count" id="queue-count"></span>
   </div>
 
-  <div id="queue-host">Loading…</div>
+  <div id="queue-host"><div class="empty-state">Loading requests…</div></div>
 
   <!-- Complete-confirmation modal. Opens when the manager clicks Mark
        Complete on a pending card. Pre-populates the Buildings checkbox
@@ -357,7 +357,7 @@
   }
 
   function load() {
-    $('queue-host').innerHTML = 'Loading…';
+    $('queue-host').innerHTML = '<div class="empty-state">Loading requests…</div>';
     rpc('ApiManager_listRequests', {
       ward:  filters.ward,
       type:  filters.type,

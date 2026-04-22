@@ -42,6 +42,8 @@ Key/value pairs. The primary "knobs" the app reads on startup.
 | `setup_complete` | boolean | `FALSE` until bootstrap wizard finishes. |
 | `last_import_at` | timestamp | Written by Importer. |
 | `last_import_summary` | string | Short human-readable summary of the last run. |
+| `last_expiry_at` | timestamp | Written by `Expiry_runExpiry` at the end of every run (including no-op runs). Symmetric with `last_import_at`. Read by the Dashboard's "Last Operations" card. System-managed; read-only in the manager UI. |
+| `last_expiry_summary` | string | Short human-readable summary of the last expiry run (e.g. `"2 rows expired in 145ms"`). Written alongside `last_expiry_at`. System-managed. |
 | `expiry_hour` | number | Local hour for the daily expiry trigger. Default `3`. Integer 0–23; validated in ConfigRepo. Editing does NOT reschedule the existing trigger — click "Reinstall triggers" on the Configuration page. |
 | `import_day` | string | Day of the week the weekly import trigger fires. Default `SUNDAY`. One of `SUNDAY`, `MONDAY`, `TUESDAY`, `WEDNESDAY`, `THURSDAY`, `FRIDAY`, `SATURDAY` (UPPERCASE; case-insensitive on input; stored UPPERCASE). Validated in ConfigRepo against the seven canonical `ScriptApp.WeekDay` names — anything else is rejected with a clean error. Editing does NOT reschedule the existing trigger. |
 | `import_hour` | number | Hour of day the weekly import trigger fires, in the script timezone. Default `4`. Integer 0–23; validated in ConfigRepo. Editing does NOT reschedule the existing trigger. |
@@ -62,6 +64,8 @@ Key/value pairs. The primary "knobs" the app reads on startup.
 | `setup_complete` | `TRUE` |
 | `last_import_at` | `2026-04-19 03:02:11` |
 | `last_import_summary` | `CO: +2/-1 auto, +1 access · ST: +0/-0 auto · over cap: none` |
+| `last_expiry_at` | `2026-04-22 03:00:02` |
+| `last_expiry_summary` | `2 rows expired in 145ms` |
 | `expiry_hour` | `3` |
 | `import_day` | `SUNDAY` |
 | `import_hour` | `4` |

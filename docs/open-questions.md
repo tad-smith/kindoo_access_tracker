@@ -425,7 +425,36 @@ The block persisted across all of those, indicating that Workspace-owned Apps Sc
 
 ---
 
-## Decisions I made to keep moving
+## Chunk 10 polish resolutions
+
+These were flagged for Chunk 10 during earlier chunks and are now resolved.
+
+### Q-7.1 `[RESOLVED 2026-04-22]` Audit-log filtering for completion_note on complete_request rows
+
+**Flagged (Chunk 7):** complete_request rows written by the R-1 race path carry a `completion_note` ("Seat already removed at completion time (no-op).") in `after_json`. The pre-Chunk-10 Audit Log page didn't exist, so the note was only visible by opening the Requests sheet. Chunk 10's Audit Log page needed to surface the note so a triage of "what went through the R-1 no-op path" was a one-filter query.
+
+**Decision (Chunk 10):** the Audit Log page renders the `completion_note` INLINE in the collapsed row (not just in the expanded `<details>` block) for complete_request rows whose `after_json.completion_note` is non-empty. Styled as a small amber note directly under the row's summary line so the R-1 cases are visible without expanding.
+
+`ApiManager_auditLog`'s generic filters (`action=complete_request`) + `entity_id=<request_id>` give a one-filter query into the full trail; the inline note makes scanning the list for no-op completions zero-click.
+
+### Q-8.1 `[RESOLVED 2026-04-22]` Dashboard "last expiry" card
+
+**Flagged (Chunk 8):** the daily expiry job ran but the only surfaces for "when did it last fire and how many rows?" were the AuditLog tab (raw) and the Apps Script execution log (transient). Chunk 10's Dashboard needed a small card symmetric with "last import" so operators could sanity-check the trigger without Sheet archaeology.
+
+**Decision (Chunk 10):** added two Config keys — `last_expiry_at` (timestamp) and `last_expiry_summary` (human-readable string like `"2 rows expired in 145ms"`) — symmetric with the Importer's existing `last_import_at` / `last_import_summary`. `Expiry_runExpiry` writes both at the end of every run (including runs that expire zero rows, so the timestamp always reflects when the trigger last fired). Both are read-only in the manager Config UI (rendered with a `system-managed` badge) and surface on the Dashboard's "Last Operations" card alongside `last_import_at` and a derived `last_triggers_installed_at`.
+
+The rename that accompanied this — `CONFIG_IMPORTER_KEYS_` → `CONFIG_SYSTEM_KEYS_` in `ConfigRepo` — makes the read-only keys list accurately cover keys owned by any background process, not just the importer. `Config_isImporterKey` is kept as a backward-compat alias so Chunk-2's `ApiManager_configUpdate` guard didn't need a touch-up.
+
+### Q-9.1 `[RESOLVED 2026-04-22]` Dashboard Warnings card + last-import monitoring signal
+
+**Flagged (Chunk 9):** the Chunk-9 over-cap pass persists a per-pool snapshot to `Config.last_over_caps_json` and renders a red banner on the manager Import page. The Dashboard equivalent was deferred to Chunk 10.
+
+**Decision (Chunk 10):** the Dashboard's Warnings card reads the same `Config.last_over_caps_json` snapshot and renders the same shape (one bullet per pool with counts + a "view →" deep-link to `?p=mgr/seats&ward=<code>`). Empty snapshot renders a dim "No warnings. All pools within cap." line so the card never looks broken on a fresh install.
+
+No new data path. The Chunk-9 persistence contract ("write `[]` on every clean run so resolved conditions clear the banner") covers the Dashboard for free. The card is decoupled from the Import page render — a page reload (or cross-browser visit) always shows the current persisted state.
+
+The Dashboard also surfaces `last_import_at` on its "Last Operations" card, which is the monitoring signal the chunk-9 changelog flagged for historical-trigger-drift detection: an operator checking the Dashboard can see at a glance whether the weekly import has run in the last week (or the last month), and notice a stale trigger without having to open the Apps Script editor. Drift *mitigation* remains operational (archive old deployments; click "Reinstall triggers" on the new one) — but the Dashboard now gives the observability piece.
+
 
 These aren't ambiguities — I made a choice. Flagging here in case you disagree.
 

@@ -43,14 +43,21 @@ const CONFIG_PROTECTED_KEYS_ = {
   bootstrap_admin_email: true
 };
 
-// Importer-owned keys — manager UI shows them read-only because they reflect
-// importer state, not editable settings. Server-side editing is allowed
-// (Importer writes them) but ApiManager_configUpdate refuses to touch them
-// from the manager surface.
-const CONFIG_IMPORTER_KEYS_ = {
-  last_import_at:       true,
-  last_import_summary:  true,
-  last_over_caps_json:  true   // Chunk 9: over-cap snapshot
+// System-managed keys — manager UI shows them read-only because they reflect
+// background-process state, not editable settings. Server-side editing is
+// allowed (the Importer / Expiry services write them) but
+// ApiManager_configUpdate refuses to touch them from the manager surface.
+//
+// Chunk 10 renamed this (previously CONFIG_IMPORTER_KEYS_) to cover keys
+// owned by any background process, not just the importer — the Chunk-10
+// Expiry run gained its own last_expiry_at / last_expiry_summary pair
+// symmetric with last_import_at / last_import_summary.
+const CONFIG_SYSTEM_KEYS_ = {
+  last_import_at:        true,
+  last_import_summary:   true,
+  last_over_caps_json:   true,  // Chunk 9: over-cap snapshot
+  last_expiry_at:        true,  // Chunk 10: last expiry run timestamp
+  last_expiry_summary:   true   // Chunk 10: last expiry run summary
 };
 
 function Config_getAll() {
@@ -141,10 +148,20 @@ function Config_isProtectedKey(key) {
   return !!CONFIG_PROTECTED_KEYS_[String(key)];
 }
 
-// True if the key is owned by the importer (not editable from the manager
-// Config UI even though it isn't a security-sensitive secret).
+// True if the key is owned by a background process (not editable from the
+// manager Config UI even though it isn't a security-sensitive secret).
+// Kept under the old name Config_isImporterKey for backward-compat with
+// callers; the list itself now covers expiry-owned keys too (Chunk 10).
 function Config_isImporterKey(key) {
-  return !!CONFIG_IMPORTER_KEYS_[String(key)];
+  return !!CONFIG_SYSTEM_KEYS_[String(key)];
+}
+
+// Public alias under the more accurate name. New call sites should use
+// this; the old Config_isImporterKey stays as a thin wrapper so Chunk 2's
+// ApiManager_configUpdate and Chunk 9's ApiManager_configList don't need
+// a touch-up.
+function Config_isSystemKey(key) {
+  return !!CONFIG_SYSTEM_KEYS_[String(key)];
 }
 
 function Config_assertHeaders_(data) {

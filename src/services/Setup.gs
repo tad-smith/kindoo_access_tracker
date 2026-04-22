@@ -52,6 +52,12 @@ const SETUP_CONFIG_SEED_ = [
   { key: 'setup_complete',        value: false },
   { key: 'last_import_at',        value: '' },
   { key: 'last_import_summary',   value: '' },
+  // Chunk 10: symmetric with the Importer's last-run stamps. Written at
+  // the end of Expiry_runExpiry so the Dashboard can render "last expiry:
+  // <ts>, N rows" without scanning the AuditLog. Empty string seed means
+  // "never run"; the Expiry service fills both on its next run.
+  { key: 'last_expiry_at',        value: '' },
+  { key: 'last_expiry_summary',   value: '' },
   { key: 'expiry_hour',           value: 3 },
   // Chunk 9: weekly importer trigger schedule. Script timezone (see
   // appsscript.json). Default: Sunday 04:00 local. Editable from the

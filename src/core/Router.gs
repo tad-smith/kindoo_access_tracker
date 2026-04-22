@@ -7,11 +7,13 @@
 //   stake/ward-rosters   → ui/stake/WardRosters          (stake)
 //   new                  → ui/NewRequest                 (bishopric OR stake)
 //   my                   → ui/MyRequests                 (bishopric OR stake)
+//   mgr/dashboard        → ui/manager/Dashboard          (manager) — Chunk 10
 //   mgr/seats            → ui/manager/AllSeats           (manager)
 //   mgr/queue            → ui/manager/RequestsQueue      (manager)
 //   mgr/config           → ui/manager/Config             (manager)
 //   mgr/access           → ui/manager/Access             (manager)
 //   mgr/import           → ui/manager/Import             (manager)
+//   mgr/audit            → ui/manager/AuditLog           (manager) — Chunk 10
 //
 // Chunk 6 introduces the first pages that accept MORE THAN ONE role
 // (`new` and `my` are open to any request-capable role — bishopric or
@@ -38,11 +40,13 @@ const ROUTER_PAGES_ = {
   // Chunk 6: shared request pages — either bishopric OR stake is enough.
   'new':                { template: 'ui/NewRequest',         roles: ['bishopric', 'stake'] },
   'my':                 { template: 'ui/MyRequests',         roles: ['bishopric', 'stake'] },
+  'mgr/dashboard':      { template: 'ui/manager/Dashboard',  role: 'manager' },
   'mgr/seats':          { template: 'ui/manager/AllSeats',   role: 'manager' },
   'mgr/queue':          { template: 'ui/manager/RequestsQueue', role: 'manager' },
   'mgr/config':         { template: 'ui/manager/Config',     role: 'manager' },
   'mgr/access':         { template: 'ui/manager/Access',     role: 'manager' },
-  'mgr/import':         { template: 'ui/manager/Import',     role: 'manager' }
+  'mgr/import':         { template: 'ui/manager/Import',     role: 'manager' },
+  'mgr/audit':          { template: 'ui/manager/AuditLog',   role: 'manager' }
 };
 
 function Router_pick(requestedPage, principal) {
@@ -91,15 +95,15 @@ function Router_pick(requestedPage, principal) {
 // manager work. Nav shows the union of links so the other roles are still
 // one click away.
 //
-// Chunk-10 note: when mgr/dashboard lands, swap the manager default to
-// 'mgr/dashboard' here — that's the spec's manager landing. Until then
-// mgr/seats is the single most-useful manager page for a first landing
-// (per build-plan Chunk 5 "Out of scope" + the Chunk-5 prompt).
+// Chunk 10 landed the manager Dashboard and swapped the default here from
+// 'mgr/seats' to 'mgr/dashboard'. The post-bootstrap redirect
+// (ApiBootstrap_complete → Config.main_url) naturally lands the admin on
+// the Dashboard through this default.
 function Router_defaultPageFor_(principal) {
-  if (Router_hasRole_(principal, 'manager'))   return 'mgr/seats';
+  if (Router_hasRole_(principal, 'manager'))   return 'mgr/dashboard';
   if (Router_hasRole_(principal, 'stake'))     return 'stake/roster';
   if (Router_hasRole_(principal, 'bishopric')) return 'bishopric/roster';
-  return 'mgr/seats'; // unreachable — no-roles branch above short-circuits first
+  return 'mgr/dashboard'; // unreachable — no-roles branch above short-circuits first
 }
 
 function Router_hasRole_(principal, type) {

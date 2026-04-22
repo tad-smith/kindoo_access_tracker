@@ -61,46 +61,63 @@ function Expiry_runExpiry() {
       if (String(s.end_date) < today) expiring.push(s);
     }
 
-    if (expiring.length === 0) {
-      return { expired: 0, ids: [], elapsed_ms: Date.now() - started };
-    }
-
-    // Delete one-by-one so we have a clean before-row per audit entry.
-    // Collect the audit entries in memory; flush them all at the end in
-    // one AuditRepo_writeMany (matches the Importer's batching — same
-    // Lock_withLock, same AuditLog write shape).
-    var auditEntries = [];
     var deletedIds = [];
-    for (var j = 0; j < expiring.length; j++) {
-      var seat = expiring[j];
-      var deleted = Seats_deleteById(seat.seat_id);
-      if (!deleted) {
-        // Defensive — the lock held since the read, so nothing else should
-        // have removed the row. Log and continue rather than abort the run
-        // (don't punish the remaining expiries for one odd case).
-        Logger.log('[Expiry] seat_id=' + seat.seat_id +
-          ' disappeared between scan and delete (unexpected under lock).');
-        continue;
+
+    if (expiring.length > 0) {
+      // Delete one-by-one so we have a clean before-row per audit entry.
+      // Collect the audit entries in memory; flush them all at the end in
+      // one AuditRepo_writeMany (matches the Importer's batching — same
+      // Lock_withLock, same AuditLog write shape).
+      var auditEntries = [];
+      for (var j = 0; j < expiring.length; j++) {
+        var seat = expiring[j];
+        var deleted = Seats_deleteById(seat.seat_id);
+        if (!deleted) {
+          // Defensive — the lock held since the read, so nothing else should
+          // have removed the row. Log and continue rather than abort the run
+          // (don't punish the remaining expiries for one odd case).
+          Logger.log('[Expiry] seat_id=' + seat.seat_id +
+            ' disappeared between scan and delete (unexpected under lock).');
+          continue;
+        }
+        auditEntries.push({
+          actor_email: EXPIRY_ACTOR_,
+          action:      'auto_expire',
+          entity_type: 'Seat',
+          entity_id:   deleted.seat_id,
+          before:      deleted,
+          after:       null
+        });
+        deletedIds.push(deleted.seat_id);
       }
-      auditEntries.push({
-        actor_email: EXPIRY_ACTOR_,
-        action:      'auto_expire',
-        entity_type: 'Seat',
-        entity_id:   deleted.seat_id,
-        before:      deleted,
-        after:       null
-      });
-      deletedIds.push(deleted.seat_id);
+
+      if (auditEntries.length > 0) {
+        AuditRepo_writeMany(auditEntries);
+      }
     }
 
-    if (auditEntries.length > 0) {
-      AuditRepo_writeMany(auditEntries);
+    // Write the last-run stamps on EVERY run (including runs that expire
+    // zero rows), so the Dashboard's "last expiry" card always reflects
+    // when the trigger most recently fired. Symmetric with the Importer's
+    // Config.last_import_at / last_import_summary. Failing to write these
+    // does not unwind the audit rows above — the audit trail is the
+    // source of truth; Config is a convenience cache.
+    var elapsedMs = Date.now() - started;
+    var summary = deletedIds.length + ' row' +
+      (deletedIds.length === 1 ? '' : 's') + ' expired in ' +
+      elapsedMs + 'ms';
+    try { Config_update('last_expiry_at', new Date()); } catch (e1) {
+      Logger.log('[Expiry] last_expiry_at write failed: ' + e1);
+    }
+    try { Config_update('last_expiry_summary', summary); } catch (e2) {
+      Logger.log('[Expiry] last_expiry_summary write failed: ' + e2);
     }
 
     return {
       expired:    deletedIds.length,
       ids:        deletedIds,
-      elapsed_ms: Date.now() - started
+      elapsed_ms: elapsedMs,
+      summary:    summary
     };
   }, { timeoutMs: 30000 });
 

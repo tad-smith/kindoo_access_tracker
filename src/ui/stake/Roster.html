@@ -17,7 +17,7 @@
     <span class="roster-scope-label">Stake pool</span>
   </div>
   <div id="utilization-host"></div>
-  <div id="roster-table-host">Loading…</div>
+  <div id="roster-table-host"><div class="empty-state">Loading roster…</div></div>
 
   <div id="remove-modal" class="remove-modal hidden" role="dialog" aria-modal="true">
     <div class="remove-modal-inner">
@@ -45,7 +45,7 @@
   var rowsBySeatId = {};
 
   function refresh() {
-    $('roster-table-host').innerHTML = 'Loading…';
+    $('roster-table-host').innerHTML = '<div class="empty-state">Loading roster…</div>';
     rpc('ApiStake_roster').then(function (resp) {
       $('utilization-host').innerHTML = renderUtilizationBar(resp.summary);
       rowsBySeatId = {};

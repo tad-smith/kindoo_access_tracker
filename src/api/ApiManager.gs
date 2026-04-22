@@ -43,15 +43,17 @@
 function ApiManager_configList(token) {
   var principal = Auth_principalFrom(token);
   Auth_requireRole(principal, 'manager');
-  // Read path — no lock. Returns { all: {...}, protected: [...], importer: [...] }
+  // Read path — no lock. Returns { all: {...}, protected: [...], system: [...] }
   // so the UI can decide which keys to render read-only without re-encoding
-  // the policy on the client.
+  // the policy on the client. `importer` is preserved as a legacy alias for
+  // Chunk-2/9 clients; `system` is the Chunk-10 accurate name (the list
+  // includes expiry-owned keys too).
   var all = Config_getAll();
   var protectedKeys = [];
-  var importerKeys = [];
+  var systemKeys = [];
   for (var k in all) {
     if (Config_isProtectedKey(k)) protectedKeys.push(k);
-    else if (Config_isImporterKey(k)) importerKeys.push(k);
+    else if (Config_isSystemKey(k)) systemKeys.push(k);
     // google.script.run has a serialization edge case where a response
     // object with Date-valued properties alongside null-valued properties
     // can arrive at the client as a literal `null`. Config routinely has
@@ -69,7 +71,12 @@ function ApiManager_configList(token) {
   if (all.session_secret) {
     all.session_secret = '(set — ' + String(all.session_secret).length + ' chars; hidden)';
   }
-  return { all: all, protected: protectedKeys, importer: importerKeys };
+  return {
+    all:       all,
+    protected: protectedKeys,
+    system:    systemKeys,
+    importer:  systemKeys  // legacy alias — pre-Chunk-10 clients read this name
+  };
 }
 
 function ApiManager_configUpdate(token, key, value) {
@@ -83,9 +90,9 @@ function ApiManager_configUpdate(token, key, value) {
       'Edit it directly in the Sheet (and re-deploy if needed). See ' +
       'docs/open-questions.md C-4.');
   }
-  if (Config_isImporterKey(key)) {
-    throw new Error('Config key "' + key + '" is owned by the importer; ' +
-      'don\'t edit it from here.');
+  if (Config_isSystemKey(key)) {
+    throw new Error('Config key "' + key + '" is managed by a background ' +
+      'process (importer or expiry); don\'t edit it from here.');
   }
   return Lock_withLock(function () {
     var result = Config_update(key, value);
@@ -938,6 +945,354 @@ function ApiManager_formatDate_(d) {
     return Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm:ss z');
   }
   return String(d);
+}
+
+// ===========================================================================
+// Audit Log + Dashboard (Chunk 10)
+// ===========================================================================
+//
+// These are the only read endpoints that deliberately diverge from the
+// "no server-side pagination for v1" rule in architecture.md §1. The
+// AuditLog tab grows unbounded — ~300-500 rows/week at target scale, so a
+// year's data is ~20k rows that we can't render in a single table. Every
+// other page stays on the one-page model.
+//
+// Pagination is offset/limit (simpler than cursor-based given we already
+// read the full tab to filter); max limit is 100. See
+// architecture.md §8 "Audit Log pagination exception".
+
+// Hard limit — the client UI also caps at 100, but defence-in-depth in
+// case a crafted rpc passes something absurd. Keeps the wire payload
+// bounded regardless of filter.
+const AUDIT_LOG_MAX_LIMIT_ = 100;
+
+// Default date window when no date_from / date_to is supplied. 7 days is
+// enough to see "what happened this week" which is the dominant use case;
+// longer windows are one filter away.
+const AUDIT_LOG_DEFAULT_DAYS_ = 7;
+
+// Valid entity_type values — matches data-model.md §10 plus the explicit
+// Chunk-9 `System` entry. The enum is validated server-side so a crafted
+// filter can't silently match nothing because of a typo.
+const AUDIT_LOG_VALID_ENTITY_TYPES_ = [
+  'Seat', 'Request', 'Access', 'Config', 'Ward', 'Building',
+  'KindooManager', 'Template', 'System', 'Triggers'
+];
+
+function ApiManager_auditLog(token, filters) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  filters = filters || {};
+
+  // Coerce + validate each filter. Invalid filters throw with a clean
+  // error (not a stack trace) so a crafted rpc surfaces as a toast.
+  var actor      = ApiManager_auditLog_coerce_(filters.actor_email);
+  var action     = ApiManager_auditLog_coerce_(filters.action);
+  var entityType = ApiManager_auditLog_coerce_(filters.entity_type);
+  var entityId   = ApiManager_auditLog_coerce_(filters.entity_id);
+  var dateFrom   = ApiManager_auditLog_coerce_(filters.date_from);
+  var dateTo     = ApiManager_auditLog_coerce_(filters.date_to);
+
+  if (entityType && AUDIT_LOG_VALID_ENTITY_TYPES_.indexOf(entityType) === -1) {
+    throw new Error('auditLog: invalid entity_type "' + entityType +
+      '" — must be one of ' + AUDIT_LOG_VALID_ENTITY_TYPES_.join(', '));
+  }
+
+  // Date range defaults to the last 7 days so the initial page load isn't
+  // a full-history scan. The UI surfaces both edges of the default so the
+  // user can see the constraint and broaden it.
+  var tz = Session.getScriptTimeZone();
+  var today = Utils_todayIso();
+  var usedDefaultRange = false;
+  if (!dateFrom && !dateTo) {
+    usedDefaultRange = true;
+    dateTo = today;
+    var d = new Date();
+    d.setDate(d.getDate() - (AUDIT_LOG_DEFAULT_DAYS_ - 1));
+    dateFrom = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+  }
+  // Validate date shape (YYYY-MM-DD). A crafted "all time" via blank
+  // date_from + blank date_to is already handled by the default above; a
+  // blank supplied alongside the other is valid.
+  if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
+    throw new Error('auditLog: date_from must be YYYY-MM-DD');
+  }
+  if (dateTo && !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+    throw new Error('auditLog: date_to must be YYYY-MM-DD');
+  }
+
+  var limit  = Number(filters.limit)  || AUDIT_LOG_MAX_LIMIT_;
+  var offset = Number(filters.offset) || 0;
+  if (limit <= 0 || isNaN(limit))    limit  = AUDIT_LOG_MAX_LIMIT_;
+  if (limit > AUDIT_LOG_MAX_LIMIT_)  limit  = AUDIT_LOG_MAX_LIMIT_;
+  if (offset < 0 || isNaN(offset))   offset = 0;
+
+  // Day boundaries are inclusive on both ends, in the script timezone —
+  // matching the expiry rule's "today = script tz" convention. Build a
+  // timestamp-ms range by parsing the ISO date as the beginning of that
+  // day (00:00:00) and the end of date_to (23:59:59.999).
+  var fromMs = dateFrom ? ApiManager_auditLog_dayStartMs_(dateFrom, tz) : 0;
+  var toMs   = dateTo   ? ApiManager_auditLog_dayEndMs_(dateTo, tz)     : Number.MAX_SAFE_INTEGER;
+
+  var rows = AuditRepo_getAll();
+
+  // Filter. AND-combined. Canonical-email compare for actor_email so
+  // `first.last@gmail.com` and `firstlast@gmail.com` resolve to the same
+  // person; the literal strings `Importer` and `ExpiryTrigger` pass
+  // through the same path (they're trivially equal to themselves).
+  var matched = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (r.timestamp_ms < fromMs || r.timestamp_ms > toMs) continue;
+    if (action     && r.action      !== action)     continue;
+    if (entityType && r.entity_type !== entityType) continue;
+    if (entityId   && r.entity_id   !== entityId)   continue;
+    if (actor) {
+      // Literal-string match for the automated actors; canonical-email
+      // match for real users (so a manager's display variant doesn't
+      // escape the filter).
+      if (actor === 'Importer' || actor === 'ExpiryTrigger') {
+        if (r.actor_email !== actor) continue;
+      } else {
+        if (!Utils_emailsEqual(r.actor_email, actor)) continue;
+      }
+    }
+    matched.push(r);
+  }
+
+  // Newest first — the queue's dominant "what just happened" frame.
+  matched.sort(function (a, b) { return b.timestamp_ms - a.timestamp_ms; });
+
+  var total = matched.length;
+  var slice = matched.slice(offset, offset + limit);
+
+  // Shape for the client. We pre-format the timestamp (so the client
+  // doesn't need to reconstruct a Date for every row) but also pass the
+  // raw ms so the client can re-sort / re-compare if it wants.
+  var out = [];
+  for (var s = 0; s < slice.length; s++) {
+    var row = slice[s];
+    out.push({
+      timestamp:    row.timestamp
+        ? Utilities.formatDate(row.timestamp, tz, 'yyyy-MM-dd HH:mm:ss z')
+        : '',
+      timestamp_ms: row.timestamp_ms,
+      actor_email:  row.actor_email,
+      action:       row.action,
+      entity_type:  row.entity_type,
+      entity_id:    row.entity_id,
+      before_json:  row.before_json,
+      after_json:   row.after_json
+    });
+  }
+
+  return {
+    rows:     out,
+    total:    total,
+    offset:   offset,
+    limit:    limit,
+    has_more: (offset + limit) < total,
+    applied_filters: {
+      actor_email: actor,
+      action:      action,
+      entity_type: entityType,
+      entity_id:   entityId,
+      date_from:   dateFrom,
+      date_to:     dateTo
+    },
+    used_default_range: usedDefaultRange
+  };
+}
+
+function ApiManager_auditLog_coerce_(v) {
+  if (v == null) return '';
+  var s = String(v).trim();
+  if (!s || s === 'all') return '';
+  return s;
+}
+
+function ApiManager_auditLog_dayStartMs_(iso, tz) {
+  // Parse as midnight local tz. Utilities.parseDate handles the tz
+  // offset (so the returned Date's ms is an absolute UTC ms).
+  try {
+    var d = Utilities.parseDate(iso + ' 00:00:00', tz, 'yyyy-MM-dd HH:mm:ss');
+    return d.getTime();
+  } catch (e) {
+    throw new Error('auditLog: could not parse date_from "' + iso + '"');
+  }
+}
+
+function ApiManager_auditLog_dayEndMs_(iso, tz) {
+  try {
+    var d = Utilities.parseDate(iso + ' 23:59:59', tz, 'yyyy-MM-dd HH:mm:ss');
+    return d.getTime() + 999;
+  } catch (e) {
+    throw new Error('auditLog: could not parse date_to "' + iso + '"');
+  }
+}
+
+// Dashboard aggregation (Chunk 10). Single rpc so the manager landing
+// renders in one round-trip. Read-heavy — hits Requests, Seats, Wards,
+// Config, AuditLog, and the trigger list. Logs elapsed_ms at the end so
+// we have a monitoring signal if the page starts feeling sluggish. If it
+// ever creeps past ~2 s, split into smaller endpoints + CacheService.
+function ApiManager_dashboard(token) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+
+  var startedMs = Date.now();
+
+  // --- Pending requests by type ---------------------------------------
+  var pending = Requests_getPending();
+  var byType = { add_manual: 0, add_temp: 0, remove: 0 };
+  for (var p = 0; p < pending.length; p++) {
+    var t = pending[p].type;
+    if (byType[t] === undefined) byType[t] = 0;
+    byType[t]++;
+  }
+
+  // --- Utilization per scope -----------------------------------------
+  // Chunk 5's Rosters_buildContext_ + Rosters_buildSummary_ already own
+  // the cap / count / over-cap logic; reuse it.
+  var ctx = Rosters_buildContext_();
+  var seats = Seats_getAll();
+  var countsByScope = {};
+  for (var si = 0; si < seats.length; si++) {
+    var sc = String(seats[si].scope || '');
+    if (!sc) continue;
+    countsByScope[sc] = (countsByScope[sc] || 0) + 1;
+  }
+  var utilization = [];
+  // Stake pool first (mirrors the All Seats page convention).
+  var stakeSummary = Rosters_buildSummary_('stake', countsByScope['stake'] || 0, ctx);
+  utilization.push(ApiManager_dashboard_summaryToUtil_(stakeSummary));
+  // Every configured ward, alphabetical by ward_code.
+  var wards = Wards_getAll();
+  var wardCodes = [];
+  for (var wi = 0; wi < wards.length; wi++) wardCodes.push(wards[wi].ward_code);
+  wardCodes.sort();
+  for (var wc = 0; wc < wardCodes.length; wc++) {
+    var s = Rosters_buildSummary_(wardCodes[wc], countsByScope[wardCodes[wc]] || 0, ctx);
+    utilization.push(ApiManager_dashboard_summaryToUtil_(s));
+  }
+
+  // --- Warnings (over-cap snapshot from Config) ----------------------
+  var warnings = { over_caps: [] };
+  var rawOverCaps = Config_get('last_over_caps_json');
+  if (rawOverCaps) {
+    try {
+      var parsed = JSON.parse(String(rawOverCaps));
+      if (Array.isArray(parsed)) warnings.over_caps = parsed;
+    } catch (e) {
+      Logger.log('[ApiManager_dashboard] last_over_caps_json parse failed: ' + e);
+    }
+  }
+
+  // --- Recent Activity (last 10 AuditLog rows) -----------------------
+  var allAudit = AuditRepo_getAll();
+  allAudit.sort(function (a, b) { return b.timestamp_ms - a.timestamp_ms; });
+  var tz = Session.getScriptTimeZone();
+  var recentActivity = [];
+  for (var ai = 0; ai < Math.min(10, allAudit.length); ai++) {
+    var ar = allAudit[ai];
+    recentActivity.push({
+      timestamp:    ar.timestamp
+        ? Utilities.formatDate(ar.timestamp, tz, 'yyyy-MM-dd HH:mm:ss z')
+        : '',
+      timestamp_ms: ar.timestamp_ms,
+      actor_email:  ar.actor_email,
+      action:       ar.action,
+      entity_type:  ar.entity_type,
+      entity_id:    ar.entity_id,
+      summary:      ApiManager_dashboard_auditSummary_(ar)
+    });
+  }
+
+  // --- Last Operations ----------------------------------------------
+  function fmtDate(v) {
+    if (!v) return null;
+    if (v instanceof Date) return Utilities.formatDate(v, tz, 'yyyy-MM-dd HH:mm:ss z');
+    return String(v);
+  }
+  // The last-triggers-installed timestamp isn't a Config key — we derive
+  // it from the most recent reinstall_triggers or setup_complete audit
+  // row (both write the trigger install result to after_json). That
+  // survives rotations without adding another Config key to keep in sync.
+  var lastTriggersInstalledAt = null;
+  for (var ai2 = 0; ai2 < allAudit.length; ai2++) {
+    var r2 = allAudit[ai2];
+    if (r2.action === 'reinstall_triggers' || r2.action === 'setup_complete') {
+      lastTriggersInstalledAt = r2.timestamp
+        ? Utilities.formatDate(r2.timestamp, tz, 'yyyy-MM-dd HH:mm:ss z')
+        : null;
+      break;
+    }
+  }
+
+  var lastOperations = {
+    last_import_at:             fmtDate(Config_get('last_import_at')),
+    last_import_summary:        Config_get('last_import_summary') || null,
+    last_expiry_at:             fmtDate(Config_get('last_expiry_at')),
+    last_expiry_summary:        Config_get('last_expiry_summary') || null,
+    last_triggers_installed_at: lastTriggersInstalledAt
+  };
+
+  var elapsedMs = Date.now() - startedMs;
+  Logger.log('[ApiManager_dashboard] rendered in ' + elapsedMs + 'ms — ' +
+    pending.length + ' pending, ' + utilization.length + ' scopes, ' +
+    warnings.over_caps.length + ' over-cap, ' + recentActivity.length + ' recent');
+
+  return {
+    pending: {
+      total:   pending.length,
+      by_type: byType
+    },
+    recent_activity: recentActivity,
+    utilization:     utilization,
+    warnings:        warnings,
+    last_operations: lastOperations,
+    elapsed_ms:      elapsedMs
+  };
+}
+
+// Compact summary → dashboard utilization card shape. Dashboard shows
+// state (ok / warn / over) as a pre-computed label so the UI doesn't need
+// to duplicate the threshold math.
+function ApiManager_dashboard_summaryToUtil_(s) {
+  var state = 'ok';
+  if (s.over_cap) {
+    state = 'over';
+  } else if (s.seat_cap != null && s.seat_cap > 0 && s.total_seats / s.seat_cap >= 0.9) {
+    state = 'warn';
+  }
+  return {
+    scope:           s.scope,
+    label:           s.ward_name,
+    count:           s.total_seats,
+    cap:             s.seat_cap,
+    utilization_pct: s.utilization_pct,
+    over_cap:        s.over_cap,
+    state:           state
+  };
+}
+
+// One-line summary of an audit row for the Recent Activity card. Keeps
+// the wire shape small; the Audit Log page itself renders the full diff.
+function ApiManager_dashboard_auditSummary_(r) {
+  var prefix = r.action;
+  var tail = r.entity_type + ' ' + r.entity_id;
+  // For over_cap_warning we can surface the pool count inline — it's
+  // the one thing worth showing without expanding the row.
+  if (r.action === 'over_cap_warning' && r.after_json) {
+    try {
+      var parsed = JSON.parse(r.after_json);
+      if (parsed && parsed.pools) {
+        tail += ' (' + parsed.pools.length + ' pool' +
+          (parsed.pools.length === 1 ? '' : 's') + ' over)';
+      }
+    } catch (e) { /* ignore */ }
+  }
+  return prefix + ' · ' + tail;
 }
 
 // ===========================================================================

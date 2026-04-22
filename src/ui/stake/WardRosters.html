@@ -62,7 +62,7 @@
         '<div class="roster-empty">Pick a ward above to see its roster.</div>';
       return;
     }
-    $('roster-table-host').innerHTML = 'Loading…';
+    $('roster-table-host').innerHTML = '<div class="empty-state">Loading roster…</div>';
     $('utilization-host').innerHTML = '';
     rpc('ApiStake_wardRoster', wardCode).then(function (resp) {
       $('utilization-host').innerHTML = renderUtilizationBar(resp.summary);

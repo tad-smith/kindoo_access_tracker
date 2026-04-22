@@ -44,7 +44,7 @@
     kindooManagers: { rows: [],  loaded: false },
     wardTemplate:   { rows: [],  loaded: false },
     stakeTemplate:  { rows: [],  loaded: false },
-    config:         { all: {}, protected: [], importer: [], loaded: false }
+    config:         { all: {}, protected: [], system: [], loaded: false }
   };
 
   function $(id) { return document.getElementById(id); }
@@ -85,7 +85,9 @@
       if (name === 'config') {
         state.config.all       = resp.all       || {};
         state.config.protected = resp.protected || [];
-        state.config.importer  = resp.importer  || [];
+        // `system` is the Chunk-10 name; older server builds only return
+        // `importer` — treat either as the same list.
+        state.config.system    = (resp.system || resp.importer || []).slice();
       } else {
         state[name].rows = resp || [];
       }
@@ -482,15 +484,15 @@
     var all = state.config.all;
     var protectedSet = {};
     for (var i = 0; i < state.config.protected.length; i++) protectedSet[state.config.protected[i]] = true;
-    var importerSet  = {};
-    for (var j = 0; j < state.config.importer.length;  j++) importerSet[state.config.importer[j]]   = true;
+    var systemSet  = {};
+    for (var j = 0; j < state.config.system.length;  j++) systemSet[state.config.system[j]]   = true;
 
     var keys = Object.keys(all).sort();
     var editable = [];
     var readOnly = [];
     for (var k = 0; k < keys.length; k++) {
       var key = keys[k];
-      if (protectedSet[key] || importerSet[key]) readOnly.push(key);
+      if (protectedSet[key] || systemSet[key]) readOnly.push(key);
       else editable.push(key);
     }
 
@@ -498,8 +500,9 @@
 
     html += '<p class="config-readonly-note">' +
       'These are the key/value Config entries. Editable keys can be changed inline. ' +
-      'Protected keys (auth secrets, deployment URLs, bootstrap admin) and importer-owned ' +
-      'keys are shown read-only — edit those directly in the Sheet if absolutely needed. ' +
+      'Protected keys (auth secrets, deployment URLs, bootstrap admin) and system-managed ' +
+      'keys (last-run timestamps written by the importer or expiry trigger) are shown ' +
+      'read-only — edit those directly in the Sheet if absolutely needed. ' +
       'See <code>docs/open-questions.md</code> C-4 for the rationale.' +
       '</p>';
 
@@ -567,7 +570,7 @@
         var rv = all[rk];
         var why = protectedSet[rk]
           ? '<span class="config-readonly-badge">protected</span>'
-          : '<span class="config-readonly-badge">importer-owned</span>';
+          : '<span class="config-readonly-badge">system-managed</span>';
         html += '<tr>' +
           '<td><code>' + esc(rk) + '</code></td>' +
           '<td><input type="text" value="' + esc(rv == null ? '' : rv) + '" readonly></td>' +

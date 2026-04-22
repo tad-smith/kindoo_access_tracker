@@ -24,7 +24,7 @@
     <span class="roster-scope-label" id="roster-scope-label"></span>
   </div>
   <div id="utilization-host"></div>
-  <div id="roster-table-host">Loading…</div>
+  <div id="roster-table-host"><div class="empty-state">Loading roster…</div></div>
 
   <!-- Remove-confirmation modal. Shared shape with stake/Roster.html;
        the two pages keep their own copy because Apps Script doesn't have
@@ -57,7 +57,7 @@
   var currentScope = '';
 
   function refresh() {
-    $('roster-table-host').innerHTML = 'Loading…';
+    $('roster-table-host').innerHTML = '<div class="empty-state">Loading roster…</div>';
     rpc('ApiBishopric_roster').then(function (resp) {
       currentScope = resp.summary.scope;
       $('roster-scope-label').textContent =

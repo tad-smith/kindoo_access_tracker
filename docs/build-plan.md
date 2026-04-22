@@ -397,7 +397,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 10 — Audit Log page + polish
+## Chunk 10 — Audit Log page + polish `[DONE — see docs/changelog/chunk-10-dashboard.md]`
 
 **Goal:** a manager can inspect changes; the whole app looks finished.
 
@@ -405,21 +405,30 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Implement `api/ApiManager.gs#auditLog(filters)` — paginate server-side if needed.
-- [ ] Implement `ui/manager/AuditLog.html` with filters: `actor_email`, `entity_type`, date range.
-- [ ] Flesh out `ui/manager/Dashboard.html`: pending request count, recent activity (last 10 audit rows), per-ward utilization, warnings panel.
-- [ ] Shared `ui/Styles.html` pass — responsive layout, table overflow, form spacing.
-- [ ] Empty states, loading states, error toasts.
+- [x] Implement `api/ApiManager.gs#ApiManager_auditLog(token, filters)` — offset/limit pagination (max 100 rows), AND-combined filters (`actor_email`, `action`, `entity_type`, `entity_id`, `date_from`, `date_to`). Default window is the last 7 days when neither date is supplied. Extend `repos/AuditRepo.gs` with a read-side `AuditRepo_getAll()`.
+- [x] Implement `api/ApiManager.gs#ApiManager_dashboard(token)` — single aggregating rpc returning pending counts, last-10 audit activity, per-scope utilization (reusing `Rosters_buildSummary_`), over-cap snapshot from `Config.last_over_caps_json`, and last-operations timestamps (import / expiry / triggers-install).
+- [x] Implement `ui/manager/Dashboard.html` — five cards (Pending, Recent Activity, Utilization, Warnings, Last Operations), deep-linking into Queue / Audit Log / AllSeats / Import. Replaces `mgr/seats` as the manager's default landing.
+- [x] Implement `ui/manager/AuditLog.html` — filter panel (with QUERY_PARAMS deep-link support), Next / Prev pagination, per-row collapsed summary + `<details>` diff. Complete_request rows surface `completion_note` inline (Q-7.1 resolution).
+- [x] Router + Nav — `Router_defaultPageFor_` returns `'mgr/dashboard'` for managers; `ROUTER_PAGES_` entries for `mgr/dashboard` / `mgr/audit` point at the real templates; `Nav.html` unhides both links.
+- [x] `services/Expiry.gs` writes `Config.last_expiry_at` + `last_expiry_summary` at the end of every run (Q-8.1 resolution). `SETUP_CONFIG_SEED_` seeds both keys empty.
+- [x] Rename `CONFIG_IMPORTER_KEYS_` → `CONFIG_SYSTEM_KEYS_` in `ConfigRepo`; the manager Config UI renders the read-only keys under a `system-managed` badge (old `importer-owned` badge replaced). `Config_isImporterKey` kept as a backward-compat alias.
+- [x] Shared `ui/Styles.html` polish — responsive grid / table overflow / filter stacking at 375px viewport; Dashboard + Audit Log card / filter / diff / pagination styles. Bare "Loading…" placeholders across every list-bearing page promoted to `.empty-state` containers for consistent rendering.
 
 **Acceptance criteria**
 
-- Audit filter combinations work (e.g., "all Importer rows in the last 30 days").
-- Dashboard renders correctly with zero data, with one ward, and with all wards.
-- Layout is usable on a phone-width viewport (no horizontal scroll on primary pages).
+- Audit filter combinations work (e.g., "all Importer rows in the last 30 days"); deep-linkable via URL params; pagination Next / Prev update the "Showing 1–N of M" counter; defaulted last-7-days window surfaces in the counter hint.
+- Dashboard renders correctly with zero data, with one ward, and with all wards; all five cards show an empty state when their data is empty (pending queue empty, no recent activity, no wards configured, no warnings, never-run operations).
+- Dashboard Warnings card matches the Import page banner (same `Config.last_over_caps_json` snapshot).
+- Dashboard utilization bar colour-codes: blue < 90 %, amber 90–100 %, red > 100 %.
+- Manager default landing is `mgr/dashboard` (not `mgr/seats`); post-bootstrap redirect lands on Dashboard.
+- Nav shows Dashboard + Audit Log links; both highlight when active.
+- Layout usable on a 375px viewport — no horizontal page scroll; tables scroll within their container; filter rows stack.
+- `last_expiry_at` / `last_expiry_summary` populate after a manual expiry run; Dashboard "Last Operations" card shows both.
 
 **Out of scope**
 
 - Export to CSV (not in spec).
+- Cursor-based pagination for the Audit Log page (offset/limit is the v1 simplification; the N+1-read cost is noted in `ApiManager_auditLog` as a future refactor).
 
 ---
 

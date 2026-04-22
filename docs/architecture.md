@@ -12,6 +12,8 @@
 
 12 wards, ~250 active seats, 1–2 manual/temp requests per week. This is low-traffic software: no server-side pagination, no polling/real-time updates, no batched writes, and no importer continuation-token scheme needed for v1. If any of these assumptions shift by >5×, revisit.
 
+**One exception to the no-pagination rule (Chunk 10).** The `AuditLog` tab grows at ~300-500 rows per week at target scale (per-row import audits from Chunk 3 are the dominant source), so a year's data is ~20k rows. The manager **Audit Log page is the only page that paginates server-side**, because rendering that tab in a single table is not feasible. Every other read (roster pages, queue, access, dashboard, import) still reads the whole tab once per request and returns every relevant row — that's the baked-in assumption for low-traffic software. The Audit Log page uses offset/limit (max 100 rows per page) against the full-scan read — simple; cheap to reason about; refactorable to a cursor scheme or reverse-chronological short-circuit when the N+1-read cost stops being tolerable (noted in the ApiManager_auditLog endpoint).
+
 ## 2. Decisions made here (not explicit in the spec)
 
 | # | Decision | Why |
@@ -336,23 +338,21 @@ Tried it mentally — every function ends up switch-casing on tab name. Per-tab 
 
 ### Page ID map
 
-Entries marked *(Chunk N)* are page-id placeholders reserved for later chunks — Router returns the role default for them today.
-
 | `?p=` | Template | Allowed roles |
 | --- | --- | --- |
-| *(empty)* | role default (manager → `mgr/seats` until Chunk 10's Dashboard; stake → `stake/roster`; bishopric → `bishopric/roster`) | any |
+| *(empty)* | role default (manager → `mgr/dashboard`; stake → `stake/roster`; bishopric → `bishopric/roster`) | any |
 | `bishopric/roster` | `ui/bishopric/Roster` | bishopric |
 | `stake/roster` | `ui/stake/Roster` | stake |
 | `stake/ward-rosters` | `ui/stake/WardRosters` | stake |
 | `new` | `ui/NewRequest` | bishopric **OR** stake |
 | `my` | `ui/MyRequests` | bishopric **OR** stake |
+| `mgr/dashboard` | `ui/manager/Dashboard` | manager |
 | `mgr/seats` | `ui/manager/AllSeats` | manager |
 | `mgr/queue` | `ui/manager/RequestsQueue` | manager |
 | `mgr/config` | `ui/manager/Config` | manager |
 | `mgr/access` | `ui/manager/Access` | manager |
 | `mgr/import` | `ui/manager/Import` | manager |
-| `mgr/dashboard` *(Chunk 10)* | `ui/manager/Dashboard` | manager |
-| `mgr/audit` *(Chunk 10)* | `ui/manager/AuditLog` | manager |
+| `mgr/audit` | `ui/manager/AuditLog` | manager |
 
 **Multi-role page access (Chunk 6).** The `new` and `my` pages are the first entries that accept MORE THAN ONE role — any principal holding `bishopric` OR `stake` (or both) may reach them. The Router entry stores this as `{ roles: ['bishopric', 'stake'] }` instead of the single-role `{ role: 'manager' }` shape. `Router_hasAllowedRole_` walks either shape; single-role entries are unchanged. Managers do NOT automatically get access to `new` / `my` — holding `manager` without `bishopric` / `stake` is insufficient (a manager who wants to submit a request needs to also hold a request-capable role, which is the realistic case: Kindoo Managers are typically drawn from the stake presidency or a bishopric).
 
@@ -515,6 +515,57 @@ The bootstrap admin holds NO roles during setup (KindooManagers empty, Access em
 - **Bulk-insert endpoints** (`ApiBootstrap_buildingsBulkInsert`, `ApiBootstrap_wardsBulkInsert`, `ApiBootstrap_kindooManagersBulkInsert`) take an array of rows and commit the whole batch in one `setValues` call plus one `AuditRepo_writeMany` call. The wizard UI queues each step's Adds client-side and flushes on navigation. Repos' `*_bulkInsert` helpers validate every row (PK presence, cross-batch uniqueness, uniqueness against existing rows) before any Sheet write, so a bad row aborts the whole batch and leaves the Sheet untouched; FK checks stay in the API layer. Single-row `*Upsert` / `*Delete` endpoints are preserved for edits and deletes on already-saved rows.
 - `actor_email` on every audit row is the signed-in admin's email (the one Identity handed us), not a synthetic `"Bootstrap"` literal. This is different from the automated-actor convention (`Importer`, `ExpiryTrigger`) because the admin is a real human initiating a real action — they should see their own email in AuditLog history.
 - The auto-add-admin-as-KindooManager step (`Bootstrap_ensureAdminAsManager_`) runs idempotently at the top of every endpoint inside the lock, emitting its own audit row on first insert. This guarantees that by the time `Complete Setup` runs, the admin is already in KindooManagers, and role resolution on the next page load resolves `'manager'` without manual seed.
+
+## 10.5. Dashboard + Audit Log (Chunk 10)
+
+The manager Dashboard is the default landing page (`Router_defaultPageFor_` returns `'mgr/dashboard'` for the manager role). It renders from a **single `ApiManager_dashboard` rpc** that aggregates five cards' worth of state:
+
+```
+{
+  pending: { total, by_type: { add_manual, add_temp, remove } },
+  recent_activity: [ { timestamp, actor_email, action, entity_type, entity_id, summary }, ... max 10 ],
+  utilization: [ { scope, label, count, cap, utilization_pct, over_cap, state: 'ok'|'warn'|'over' }, ... ],
+  warnings:    { over_caps: [ ... ] },
+  last_operations: {
+    last_import_at, last_import_summary,
+    last_expiry_at, last_expiry_summary,
+    last_triggers_installed_at
+  },
+  elapsed_ms
+}
+```
+
+The single-endpoint design avoids per-card round-trips and keeps the dashboard below Apps Script's per-request budget at target scale. Reads touch `Requests`, `Seats`, `Wards`, `Config`, `AuditLog`, and `ScriptApp.getProjectTriggers()`. The endpoint logs `elapsed_ms` at completion so a future operator can tell whether the aggregation has started to creep. If it does creep past ~2 s, split per-card with `CacheService` for `AuditLog` / `Seats` behind the scenes — the wire shape won't need to change.
+
+Utilization reuses the Chunk-5 `Rosters_buildContext_` + `Rosters_buildSummary_` helpers directly, so the cap / count / over-cap math is identical across Dashboard, All Seats, and the rosters. `utilization[].state` is the one piece the dashboard precomputes — `over` if `over_cap`; `warn` if utilization ≥ 90 %; `ok` otherwise. The UI just reads that state to colour the bar.
+
+Warnings reuse the Chunk-9 `Config.last_over_caps_json` snapshot (same shape the Import page banner already renders). Resolving the over-cap and re-importing clears both the Import page banner and the Dashboard Warnings card on the next run.
+
+`last_triggers_installed_at` is derived from the most-recent `reinstall_triggers` or `setup_complete` AuditLog row rather than a dedicated Config key — the audit trail is already the source of truth for that timestamp, and a parallel Config key would be another thing to keep in sync.
+
+### Audit Log — the server-side-pagination exception
+
+Architecture.md §1 says "no server-side pagination for v1" — the Audit Log page is the ONE exception, because the `AuditLog` tab grows unbounded (~300-500 rows/week at target scale). `ApiManager_auditLog(token, filters)` returns:
+
+```
+{
+  rows:     [ ...audit row objects, max 100 ],
+  total:    <number of rows matching the filters>,
+  offset:   <number>,
+  limit:    <number, ≤ AUDIT_LOG_MAX_LIMIT_>,
+  has_more: <bool>,
+  applied_filters: { actor_email, action, entity_type, entity_id, date_from, date_to },
+  used_default_range: <bool>   // true when the server applied the default last-7-days window
+}
+```
+
+Filters combine as AND. `actor_email` canonical-email-compares real users and literal-matches `"Importer"` / `"ExpiryTrigger"`. `entity_type` is validated against the `data-model.md` §10 enum (so a typo returns an error, not an empty result). Date edges are inclusive on both ends in the script timezone. The endpoint uses offset/limit (simpler than a cursor scheme given we already read the full tab to filter); a future refactor to reverse-chronological short-circuit or a `CacheService`-backed memoisation is one substitution away.
+
+The `last_expiry_at` / `last_expiry_summary` Config keys are written by `Expiry_runExpiry` at the end of every run (including runs that expire zero rows), symmetric with the Importer's `last_import_at` / `last_import_summary`. Both pairs feed the Dashboard's "Last Operations" card.
+
+### Renaming `CONFIG_IMPORTER_KEYS_` → `CONFIG_SYSTEM_KEYS_`
+
+Chunk 10 added two new system-managed Config keys (`last_expiry_at`, `last_expiry_summary`). Pre-Chunk-10, the read-only keys list in `ConfigRepo` was called `CONFIG_IMPORTER_KEYS_` — a misnomer once the Expiry service started writing its own last-run stamps. Chunk 10 renamed it to `CONFIG_SYSTEM_KEYS_` ("owned by any background process") and retained `Config_isImporterKey(key)` as a backward-compat alias for the Chunk-2 ApiManager callers. The manager Configuration UI shows the read-only keys under a `system-managed` badge instead of the old `importer-owned`.
 
 ## 11. Cloudflare Worker
 
