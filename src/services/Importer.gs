@@ -1,13 +1,24 @@
 // Weekly (and on-demand) import from the stake's callings spreadsheet.
 //
-// Entry point: Importer_runImport({ triggeredBy })
-//   - Caller (ApiManager_importerRun or the weekly trigger in Chunk 9) wraps
-//     this in Lock_withLock with a generous timeout — imports touch every
-//     ward tab and can run for tens of seconds on a fresh install.
+// Entry point: Importer_runImport(opts)
+//   - Accepts either {triggeredBy: '<manager email>'} (from
+//     ApiManager_importerRun) or no argument / an Apps Script trigger
+//     event object (from the weekly trigger). Trigger-originated calls
+//     default triggeredBy to the literal 'weekly-trigger'.
+//   - OWNS its own Lock_withLock acquisition (30 s timeout, per
+//     architecture.md §6). Callers must NOT wrap this in their own
+//     Lock_withLock — the diff + apply + Config.last_import_at write + the
+//     AuditLog brackets all live inside one acquisition.
+//   - After the main import lock releases, a second pass detects over-cap
+//     pools (read-only scan), persists Config.last_over_caps_json inside a
+//     small follow-up lock, and (if any pools are over) writes a single
+//     `over_cap_warning` AuditLog row. The manager notification email is
+//     sent best-effort OUTSIDE both locks, matching Chunk 6's email policy.
 //   - actor_email on every per-row AuditLog entry is the literal string
 //     "Importer" (spec §3.2, architecture.md §5). The signed-in manager's
-//     email is recorded only as `triggeredBy` in the import_start /
-//     import_end payload. Never conflate the two.
+//     email (or the literal 'weekly-trigger') is recorded only as
+//     `triggeredBy` in the import_start / import_end payload. Never
+//     conflate the two.
 //
 // Idempotency is the chunk's hardest acceptance criterion:
 //   - Seats diff keys on source_row_hash (SHA-256 of scope|calling|canonical_email
@@ -24,9 +35,95 @@
 // (~150 ms each). One setValues per tab per run keeps us well under.
 
 function Importer_runImport(opts) {
-  opts = opts || {};
-  var triggeredBy = opts.triggeredBy || 'unknown';
+  // Normalise caller shape. The Apps Script time-based trigger passes a
+  // ScriptApp event object (has keys like triggerUid, authMode, etc.) —
+  // NOT our {triggeredBy} convention. Treat any call without an explicit
+  // `triggeredBy` as a weekly-trigger invocation.
+  var triggeredBy = (opts && typeof opts === 'object' && opts.triggeredBy)
+    ? opts.triggeredBy
+    : 'weekly-trigger';
+  var source = triggeredBy === 'weekly-trigger' ? 'weekly-trigger' : 'manual-import';
+
   var startedMs = Date.now();
+  var importResult = Lock_withLock(function () {
+    return Importer_runImportCore_({ triggeredBy: triggeredBy }, startedMs);
+  }, { timeoutMs: 30000 });
+
+  // After the import lock releases, compute over-cap in a read-only scan
+  // and write a single audit row + persist the snapshot in a small lock of
+  // its own. Done outside the import lock so the lock window stays narrow
+  // and over-cap state surfaces even for an import run that failed (see
+  // Importer_runImportCore_'s rethrow — a failure skips this block
+  // because the throw propagates first).
+  var overCaps = [];
+  try {
+    overCaps = Importer_computeOverCaps_();
+  } catch (ocErr) {
+    Logger.log('[Importer] over-cap detection failed: ' +
+      (ocErr && ocErr.message ? ocErr.message : ocErr));
+    importResult.warning = (importResult.warning ? importResult.warning + ' | ' : '') +
+      'Over-cap detection failed after import: ' +
+      (ocErr && ocErr.message ? ocErr.message : String(ocErr));
+  }
+
+  try {
+    Lock_withLock(function () {
+      // Persist the snapshot on every run so the Import page's banner
+      // clears when the over-cap condition resolves. Empty array serialises
+      // to '[]' which the UI treats as "no banner".
+      try {
+        Config_update('last_over_caps_json', JSON.stringify(overCaps));
+      } catch (ce) {
+        Logger.log('[Importer] Config.last_over_caps_json write failed: ' + ce);
+      }
+      if (overCaps.length > 0) {
+        AuditRepo_write({
+          actor_email: 'Importer',
+          action:      'over_cap_warning',
+          entity_type: 'System',
+          entity_id:   'over_cap',
+          before:      null,
+          after:       {
+            pools:        overCaps,
+            source:       source,
+            triggered_by: triggeredBy
+          }
+        });
+      }
+    });
+  } catch (snapErr) {
+    Logger.log('[Importer] over-cap snapshot/audit failed: ' +
+      (snapErr && snapErr.message ? snapErr.message : snapErr));
+    importResult.warning = (importResult.warning ? importResult.warning + ' | ' : '') +
+      'Over-cap audit/snapshot failed: ' +
+      (snapErr && snapErr.message ? snapErr.message : String(snapErr));
+  }
+
+  // Best-effort email outside all locks. Matches Chunk 6's policy:
+  // a mail failure never unwinds a successful import; warning surfaces
+  // alongside the success result.
+  if (overCaps.length > 0) {
+    try {
+      EmailService_notifyManagersOverCap(overCaps, source);
+    } catch (emailErr) {
+      Logger.log('[Importer] over-cap email failed: ' +
+        (emailErr && emailErr.message ? emailErr.message : emailErr));
+      importResult.warning = (importResult.warning ? importResult.warning + ' | ' : '') +
+        'Over-cap detected but the notification email failed to send.';
+    }
+  }
+
+  importResult.over_caps = overCaps;
+  return importResult;
+}
+
+// ---------------------------------------------------------------------------
+// Import core. Assumes the caller holds the script lock. Writes
+// import_start before any mutation and import_end after; flushes batched
+// per-row audits via AuditRepo_writeMany.
+// ---------------------------------------------------------------------------
+function Importer_runImportCore_(opts, startedMs) {
+  var triggeredBy = opts.triggeredBy;
 
   // import_start is written BEFORE any mutations, so even a mid-run crash
   // leaves the bracket row in place. The complementary import_end row is
@@ -46,9 +143,6 @@ function Importer_runImport(opts) {
     var elapsedMs = Date.now() - startedMs;
     var summary = Importer_buildSummary_(result, elapsedMs, null);
 
-    // Record success state. These two Config writes happen inside the
-    // outer Lock_withLock frame, so they're serialised against any
-    // concurrent manager edits.
     try { Config_update('last_import_at', new Date()); }
     catch (e) { /* Config schema missing key? — ignore; summary still logged */ }
     Config_update('last_import_summary', summary);
@@ -109,6 +203,71 @@ function Importer_runImport(opts) {
                's — ' + msg);
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Over-cap detection (Chunk 9).
+//
+// Runs after Importer_runImport's main lock has released — a read-only
+// scan over Seats + Wards + Config.stake_seat_cap. Returns an array of
+// over-cap pool descriptors (empty array if every pool is at or under its
+// cap). One pool per ward that's over; one more entry for the stake pool
+// if it's over.
+//
+// Utilization counts every row in Seats regardless of type, matching
+// Chunk 5's Rosters summary math — an over-cap condition caused by a
+// lingering (un-expired) temp seat is accurate: the seat still holds a
+// license until the expiry trigger next removes it.
+//
+// Pool shape:
+//   { scope: 'CO' | 'stake', ward_name: 'Cordera 1st Ward' | 'Stake Pool',
+//     cap: 20, count: 21, over_by: 1 }
+// ---------------------------------------------------------------------------
+function Importer_computeOverCaps_() {
+  var seats = Seats_getAll();
+  var wards = Wards_getAll();
+  var rawStakeCap = Config_get('stake_seat_cap');
+  var stakeCap = (rawStakeCap == null || rawStakeCap === '') ? null : Number(rawStakeCap);
+
+  // Count per scope. A ward with zero seats never over-caps; we still
+  // include it in the iteration below because the absence of a key in
+  // `counts` means zero.
+  var counts = {};
+  for (var i = 0; i < seats.length; i++) {
+    var sc = String(seats[i].scope || '');
+    if (!sc) continue;
+    counts[sc] = (counts[sc] || 0) + 1;
+  }
+
+  var over = [];
+  for (var w = 0; w < wards.length; w++) {
+    var ward = wards[w];
+    var cap = ward.seat_cap == null || ward.seat_cap === '' ? null : Number(ward.seat_cap);
+    if (cap == null || isNaN(cap) || cap <= 0) continue;  // no cap → nothing to flag
+    var n = counts[ward.ward_code] || 0;
+    if (n > cap) {
+      over.push({
+        scope:     ward.ward_code,
+        ward_name: ward.ward_name || ('Ward ' + ward.ward_code),
+        cap:       cap,
+        count:     n,
+        over_by:   n - cap
+      });
+    }
+  }
+  if (stakeCap != null && !isNaN(stakeCap) && stakeCap > 0) {
+    var stakeN = counts['stake'] || 0;
+    if (stakeN > stakeCap) {
+      over.push({
+        scope:     'stake',
+        ward_name: 'Stake Pool',
+        cap:       stakeCap,
+        count:     stakeN,
+        over_by:   stakeN - stakeCap
+      });
+    }
+  }
+  return over;
 }
 
 // ---------------------------------------------------------------------------

@@ -18,8 +18,17 @@ const CONFIG_TYPED_KEYS_ = {
   setup_complete:        'boolean',
   stake_seat_cap:        'number',
   expiry_hour:           'number',
+  import_hour:           'number',   // Chunk 9: weekly importer hour
   notifications_enabled: 'boolean'  // Chunk 6: global mail kill-switch
 };
+
+// Valid values for Config.import_day. UPPERCASE canonical form — the manager
+// Config UI renders a dropdown with these exact labels, and Config_update
+// rejects anything else with a clear error (so the user sees "must be one of
+// …" instead of a stack trace from ScriptApp.WeekDay[undefined]).
+const CONFIG_VALID_IMPORT_DAYS_ = [
+  'SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'
+];
 
 // Keys the manager Config UI must NEVER expose to inline edit. session_secret
 // rotation invalidates every active session; main_url / identity_url
@@ -39,8 +48,9 @@ const CONFIG_PROTECTED_KEYS_ = {
 // (Importer writes them) but ApiManager_configUpdate refuses to touch them
 // from the manager surface.
 const CONFIG_IMPORTER_KEYS_ = {
-  last_import_at:      true,
-  last_import_summary: true
+  last_import_at:       true,
+  last_import_summary:  true,
+  last_over_caps_json:  true   // Chunk 9: over-cap snapshot
 };
 
 function Config_getAll() {
@@ -101,6 +111,23 @@ function Config_update(key, value) {
         toWrite = n;
       } else if (value === null || value === undefined) {
         toWrite = '';
+      }
+      // Per-key domain validation. Kept in the repo (rather than the API
+      // layer) so the bootstrap wizard and importer writes also benefit —
+      // anything that lands in the Sheet via Config_update is vetted.
+      if (key === 'expiry_hour' || key === 'import_hour') {
+        var hv = Number(toWrite);
+        if (isNaN(hv) || hv < 0 || hv > 23 || Math.floor(hv) !== hv) {
+          throw new Error('Config_update: ' + key + ' must be an integer 0–23, got ' + JSON.stringify(value));
+        }
+        toWrite = hv;
+      } else if (key === 'import_day') {
+        var dv = String(toWrite == null ? '' : toWrite).trim().toUpperCase();
+        if (CONFIG_VALID_IMPORT_DAYS_.indexOf(dv) === -1) {
+          throw new Error('Config_update: import_day must be one of ' +
+            CONFIG_VALID_IMPORT_DAYS_.join(', ') + ', got ' + JSON.stringify(value));
+        }
+        toWrite = dv;
       }
       sheet.getRange(i + 1, 2).setValue(toWrite);
       return { key: key, before: oldCoerced, after: Config_coerce_(key, toWrite) };

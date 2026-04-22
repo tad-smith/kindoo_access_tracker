@@ -368,8 +368,8 @@ Roster reads enforce scope at the **API layer**, not the UI. A bishopric member 
 
 ### Importer
 
-- Public entry: `Importer_runImport({ triggeredBy })` in `services/Importer.gs`. `triggeredBy` is the manager's email (or the literal `"weekly-trigger"` once Chunk 9 lands) and is recorded only in the `import_start` / `import_end` audit payloads — **`actor_email` on every per-row AuditLog entry is the literal string `"Importer"`** (spec §3.2, §5 "Two identities"), not the manager's email.
-- Invoked from `ApiManager_importerRun(token)`, which applies the canonical Chunk-2 shape (`Auth_principalFrom` → `Auth_requireRole('manager')` → `Lock_withLock(fn, { timeoutMs: 30000 })`). One lock covers the full run — diff + apply across all tabs — not one lock per tab. The generous timeout is per §6's "Importer and Expiry wrap their full run" rule.
+- Public entry: `Importer_runImport(opts)` in `services/Importer.gs`. Accepts either `{ triggeredBy: '<manager email>' }` (from `ApiManager_importerRun`) or no argument / an Apps Script trigger-event object (from the weekly trigger — Chunk 9 installs that entry in `Triggers_plan_`). Trigger-originated calls without an explicit `triggeredBy` default to the literal `'weekly-trigger'`. `triggeredBy` is recorded only in the `import_start` / `import_end` audit payloads — **`actor_email` on every per-row AuditLog entry is the literal string `"Importer"`** (spec §3.2, §5 "Two identities"), not the manager's email.
+- `Importer_runImport` **owns its own `Lock_withLock(fn, { timeoutMs: 30000 })` acquisition** (Chunk 9 pulled the lock out of `ApiManager_importerRun` so the weekly trigger — which has no token and no outer lock — gets the same acquisition shape as a manual run). One lock covers the full diff-and-apply run across all tabs, not one lock per tab. The generous timeout is per §6's "Importer and Expiry wrap their full run" rule. `ApiManager_importerRun(token)` just verifies the manager role and forwards; it does NOT take an outer lock.
 - Reads `Config.callings_sheet_id`, opens via `SpreadsheetApp.openById`. Runs as the deployer (Main's `executeAs: USER_DEPLOYING`), so the callings sheet must be shared with the deployer's personal Google account — documented in `sheet-setup.md` step 15.
 - Loops sheets; matches tab name against `Wards.ward_code` or `"Stake"`. Other tabs skipped (recorded as `skipped_tabs` in the `import_end` payload).
 - Per matched tab, parses rows per spec §8: scans the top 5 rows for a header row that has `Position` anywhere AND a column-D header whose text contains `personal email` (case-insensitive) — so a title / instructions block above the real headers doesn't break the parse, and LCR's header-text variations (`Personal Email`, `Personal Email(s)`, `Personal Emails`, sometimes followed by a `Note: …` blurb in the same cell) all resolve. On ward tabs, strips the 2-letter `<CODE> ` prefix from `Position`; on the Stake tab, uses `Position` verbatim (LCR's Stake export has no ward-code prefix). Unions column D + every non-blank cell to its right (handles I-3's multi-row variant too via hash-keyed dedupe), filters `(calling, email)` pairs against the appropriate template (`WardCallingTemplate` or `StakeCallingTemplate`). Template `calling_name` values may contain `*` as a wildcard — the importer builds an index (`Importer_templateIndex_`) that keeps exact entries on a fast-path map and compiles wildcard entries into anchored regexes; `Importer_templateMatch_` prefers exact over wildcard, Sheet-order among wildcards. See data-model.md "Wildcard patterns". Rows whose calling isn't in the template are silently skipped (I-6). On ward tabs, a position that doesn't start with the tab's prefix is skipped with a warning (I-5); the Stake tab has no prefix rule so I-5 doesn't apply there.
@@ -378,8 +378,8 @@ Roster reads enforce scope at the **API layer**, not the UI. A bishopric member 
 - **Scopes with no matching tab are left alone (I-2).** If `Wards` lists `ward_code=CO` but the callings sheet has no `CO` tab, the ward's existing auto-seats and Access rows are preserved — a tab rename must not silently wipe a ward's roster. A per-ward warning is recorded in the `import_end` payload.
 - **Batched writes.** Inserts hit `Seats_bulkInsertAuto(rows)` (one `setValues` call) and `AuditRepo_writeMany(entries)` (one `setValues` for the audit batch). Deletes stay per-row via `Seats_deleteByHash` / `Access_delete` (volumes are small — a few per week). This keeps a full first-run import (~250 rows, ~500 writes equivalent) well under the 6-minute execution cap; `[Importer] completed in Xs` is logged at end-of-run for early detection if scale shifts.
 - Writes `Config.last_import_at` and `Config.last_import_summary` (human-readable: `5 inserts, 2 deletes, 1 access+/0 access- (2026-04-20 14:32 MDT, 6.4s)`) at the end of the successful path. On failure, writes a `FAILED: <msg>` summary so the manager UI shows the reason without re-running.
-- Emits an over-cap email if any ward's or stake's final seat count > its cap — **deferred to Chunk 9**, not part of Chunk 3.
-- **Repo boundary**: the importer service owns the diff logic and the lock; the repos (`SeatsRepo`, `AccessRepo`, `AuditRepo`, `ConfigRepo`) expose pure single-tab helpers and never acquire the lock or emit audit rows themselves (§7).
+- **Over-cap detection (Chunk 9).** After the main import lock releases, `Importer_runImport` runs `Importer_computeOverCaps_()` — a read-only scan over `Seats` + `Wards` + `Config.stake_seat_cap`. For each ward whose `seat_cap > 0` and for the stake pool when `stake_seat_cap > 0`, it counts seats at the scope (every row regardless of `type`, matching Chunk 5's utilization math) and emits a `{scope, ward_name, cap, count, over_by}` descriptor when the count exceeds the cap. Scopes with no configured cap are silently skipped. The resulting array is persisted to `Config.last_over_caps_json` on every run (empty array on clean runs, so a resolved over-cap clears the manager Import page's banner), and — if any pools are over — one `over_cap_warning` AuditLog row (`actor_email='Importer'`, `entity_type='System'`, `entity_id='over_cap'`, `after={pools, source, triggered_by}`) is written in a small follow-up `Lock_withLock`. Both writes live outside the main import lock so the import lock window stays narrow. The manager notification email (`EmailService_notifyManagersOverCap`) is sent best-effort OUTSIDE both locks, matching Chunk 6's "email outside the lock, best-effort with a surfaced warning on failure" policy (§9.5).
+- **Repo boundary**: the importer service owns the diff logic and both locks; the repos (`SeatsRepo`, `AccessRepo`, `AuditRepo`, `ConfigRepo`) expose pure single-tab helpers and never acquire the lock or emit audit rows themselves (§7).
 
 ### Expiry
 
@@ -393,22 +393,31 @@ Roster reads enforce scope at the **API layer**, not the UI. A bishopric member 
 
 ### Trigger management
 
-`TriggersService_install()` idempotently installs every scheduled trigger the project needs. Chunk 8 installs the daily Expiry trigger; Chunk 9 will extend the same plan with the weekly Importer trigger.
+`TriggersService_install()` idempotently installs every scheduled trigger the project needs. Chunk 8 installed the daily Expiry trigger; Chunk 9 added the weekly Importer trigger to the same plan.
+
+`Triggers_plan_()` returns the per-handler descriptor list. Each descriptor has a `handler` (function name) and a `buildSpec` closure that reads Config at install time and returns the schedule spec:
+
+| Handler | kind | Schedule inputs |
+| --- | --- | --- |
+| `Expiry_runExpiry` | `daily` | `Config.expiry_hour` (default `3`) |
+| `Importer_runImport` | `weekly` | `Config.import_day` (default `SUNDAY`), `Config.import_hour` (default `4`) |
+
+The install loop branches on `spec.kind`: `daily` → `ScriptApp.newTrigger(handler).timeBased().atHour(h).everyDays(1).create()`; `weekly` → `.onWeekDay(ScriptApp.WeekDay[DAY]).atHour(h).create()`. Extra kinds (`hourly`, `monthly`, etc.) would slot in without changing the uninstall side.
 
 Idempotency strategy: before installing, `TriggersService_install` scans `ScriptApp.getProjectTriggers()` and **removes every existing trigger whose handlerFunction matches a planned handler**, then creates fresh triggers from the current Config. This covers three cases in one shape:
 
 - *First run* — nothing to remove; install creates new triggers.
-- *Re-run with no Config changes* — old triggers removed, identical new ones created (wasteful but trivial at 1–2 installs over the life of the deployment, and safer than per-trigger attribute comparison — `atHour` isn't exposed on the Trigger object, so the alternative would be to store a parallel "what we installed last time" Config key).
-- *`Config.expiry_hour` changed* — the re-run picks up the new hour automatically.
+- *Re-run with no Config changes* — old triggers removed, identical new ones created (wasteful but trivial at 1–2 installs over the life of the deployment, and safer than per-trigger attribute comparison — `atHour` / `onWeekDay` aren't exposed on the Trigger object, so the alternative would be to store a parallel "what we installed last time" Config key).
+- *`Config.expiry_hour` / `import_day` / `import_hour` changed* — the re-run picks up the new schedule automatically.
 
 Triggers whose handlerFunction is **not** on the planned list are left alone, so an operator can install an ad-hoc trigger via the Apps Script editor without `TriggersService_install` stomping it.
 
 Return shape:
 
 ```
-{ installed: ['Expiry_runExpiry'],
-  removed:   ['Expiry_runExpiry'],
-  message:   '[TriggersService] installed 1 trigger(s): Expiry_runExpiry @ 3:00 daily (removed 1 prior)' }
+{ installed: ['Expiry_runExpiry', 'Importer_runImport'],
+  removed:   ['Expiry_runExpiry', 'Importer_runImport'],
+  message:   '[TriggersService] installed 2 trigger(s): Expiry_runExpiry @ 3:00 daily; Importer_runImport @ 4:00 every Sunday (removed 2 prior)' }
 ```
 
 Invoked from:
@@ -419,7 +428,9 @@ Invoked from:
 
 A sibling read-only `TriggersService_list()` / `ApiManager_listTriggers` returns the current trigger set so the Configuration page can render what's installed without the manager having to open the Apps Script editor.
 
-**UX contract for `expiry_hour`:** the manager Configuration page surfaces `expiry_hour` in the editable Config table and carries a hint that saving the new value does NOT reschedule the existing trigger — an explicit "Reinstall triggers" click is required. A save toast on that key reads *"Saved. Click 'Reinstall triggers' to apply the new hour."* to reduce the chance of a surprised operator.
+**UX contract for schedule keys (`expiry_hour`, `import_day`, `import_hour`):** the manager Configuration page surfaces them in the editable Config table and carries a hint that saving the new value does NOT reschedule the existing trigger — an explicit "Reinstall triggers" click is required. A save toast on any of these keys reads *"Saved. Click 'Reinstall triggers' to apply the new schedule."* to reduce the chance of a surprised operator. `import_day` renders as a dropdown over the seven canonical `ScriptApp.WeekDay` names (UPPERCASE) so the operator can't typo a value; `Config_update` additionally rejects non-weekday values and non-integer / out-of-range hours server-side with clean error messages, not stack traces.
+
+**Historical drift caveat.** Once installed, an Apps Script trigger runs on its own schedule regardless of whether its deployment is still the active one. If the project is re-deployed and the prior deployment is archived, a trigger installed from the archived deployment keeps firing but may hit stale code. The weekly importer is the first trigger in this project that runs without operator presence, so this is worth naming, but the mitigation is operational (archive old deployments; Chunk 10's Dashboard will surface a "last weekly import" card) — nothing to build here.
 
 ## 9.5. Email send policy (Chunk 6)
 

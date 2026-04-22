@@ -362,7 +362,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 9 — Weekly import trigger + over-cap warnings
+## Chunk 9 — Weekly import trigger + over-cap warnings `[DONE — see docs/changelog/chunk-9-scheduled.md]`
 
 **Goal:** imports happen automatically weekly; cap violations surface to managers.
 
@@ -370,20 +370,30 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Extend `TriggersService.install()` to also install a weekly trigger on `Importer_runImport`.
-- [ ] After each import run, compute per-ward and stake seat counts and compare against caps.
-- [ ] If over cap, write an `over_cap_warning` AuditLog row and send an email via `EmailService.notifyManagersOverCap(pools)`.
-- [ ] Surface the warning on the manager dashboard (`ui/manager/Dashboard.html` gets a new "Warnings" card).
+- [x] Extend `Triggers_plan_()` with a second entry for `Importer_runImport` (`kind: 'weekly'`). Install/uninstall loop extended to handle `onWeekDay(weekDay).atHour(hour)`; unknown-handler triggers still left alone.
+- [x] Seed `Config.import_day` (default `SUNDAY`) and `Config.import_hour` (default `4`). Validate both in `Config_update` — seven canonical weekday names for `import_day`, integer 0–23 for `import_hour`. Reject invalid values with clean errors, not stack traces.
+- [x] Move the 30-s `Lock_withLock` acquisition INSIDE `Importer_runImport` so the weekly trigger (no token, no outer lock) and the manual endpoint (`ApiManager_importerRun`) exercise the same acquisition shape. Normalise the opts argument so an Apps Script trigger event defaults to `triggeredBy='weekly-trigger'`.
+- [x] After the import lock releases, run `Importer_computeOverCaps_()` (read-only scan over `Seats` + `Wards` + `Config.stake_seat_cap`). Persist the result to `Config.last_over_caps_json` every run (empty array on clean runs). If non-empty, write a single `over_cap_warning` AuditLog row (`entity_type='System'`, `entity_id='over_cap'`, `after={pools, source, triggered_by}`) inside a small follow-up lock, and send `EmailService_notifyManagersOverCap` best-effort OUTSIDE both locks.
+- [x] `EmailService_notifyManagersOverCap(pools, source)` — typed wrapper over `MailApp.sendEmail`; plain-text body listing every over-cap pool with counts and a deep-link back to `?p=mgr/seats`; respects `Config.notifications_enabled`.
+- [x] Manager Import page (`ui/manager/Import.html`) gains a red over-cap banner above the last-run status panel; reads from `Config.last_over_caps_json` via `ApiManager_importStatus` so page reloads survive. Each pool links to the filtered `mgr/seats` view (`ward=<code>` or `ward=stake`). Dashboard "Warnings card" is deferred to **Chunk 10**.
+- [x] Manager Config page renders `import_day` as a dropdown over the seven weekday names; `import_hour` gets a reinstall hint matching `expiry_hour`; save toast on any of the three trigger-schedule keys warns the operator to click "Reinstall triggers."
+- [x] `Kindoo Admin → Run weekly import now` menu item on the bound Sheet, for an operator running the same code path the weekly trigger runs without loading the web app.
 
 **Acceptance criteria**
 
-- Weekly trigger is registered after a fresh bootstrap (verified via `ScriptApp.getProjectTriggers()`).
-- Intentionally exceeding a ward cap then re-running the importer produces one over-cap email and a dashboard warning.
-- Resolving the over-cap and re-importing clears the dashboard warning (no open audit row for it).
+- Both planned triggers (`Expiry_runExpiry` daily, `Importer_runImport` weekly) install after a fresh bootstrap (verified via `ScriptApp.getProjectTriggers()`).
+- Re-running `TriggersService_install` removes both planned handlers and installs fresh ones; unknown handlers are left alone.
+- Manual import (`ApiManager_importerRun`) with no over-cap: summary populates, no `over_cap_warning` audit row, no email, no banner, `Config.last_over_caps_json='[]'`.
+- Manual import that produces over-cap: summary populates, one `over_cap_warning` audit row, manager email sent (or logged if `notifications_enabled=false`), Import page shows the red banner with per-pool counts + deep links.
+- `notifications_enabled=false` suppresses the email but the audit row still writes and the banner still shows.
+- Weekly-trigger run (simulated by calling `Importer_runImport` without arguments from the editor): `import_start` / `import_end` carry `triggeredBy='weekly-trigger'`; per-row `actor_email` is still `'Importer'`; over-cap behaviour matches the manual path.
+- Invalid `import_day` (e.g. `FUNDAY`) — `ApiManager_configUpdate` rejects with a clear error. Invalid `import_hour` (e.g. `25` or `4.5`) — same.
+- Resolving the over-cap and re-importing clears the banner (`Config.last_over_caps_json` → `'[]'` on the run) and writes no `over_cap_warning` row.
 
 **Out of scope**
 
 - Blocking over-cap — spec says imports always apply.
+- Dashboard Warnings card — lands in Chunk 10 where the Dashboard page itself is built.
 
 ---
 

@@ -147,6 +147,60 @@ function EmailService_notifyRequesterRejected(request, managerPrincipal, reason)
   EmailService_send_([recipient], subject, lines.join('\n'));
 }
 
+// Chunk 9: over-cap warning email. Sent AFTER an import run (manual or
+// weekly-trigger) when any ward or the stake pool holds more seats than
+// its cap. Plain-text body, consistent with the four request-lifecycle
+// wrappers above; one link back to the filtered All Seats page so a
+// manager can jump straight to the offender.
+//
+// source: 'manual-import' | 'weekly-trigger'. Affects the subject line
+// ("after manual import" vs "after weekly import") so a manager scanning
+// their inbox can tell the two apart without opening.
+//
+// pools is an array of { scope, ward_name, cap, count, over_by } from
+// Importer_computeOverCaps_(); empty array is a no-op (caller shouldn't
+// call us in that case, but defend anyway).
+//
+// Respects the Config.notifications_enabled kill-switch via EmailService_send_,
+// same as every other wrapper in this module.
+function EmailService_notifyManagersOverCap(pools, source) {
+  if (!pools || pools.length === 0) return;
+
+  var recipients = EmailService_activeManagerEmails_();
+  if (recipients.length === 0) {
+    Logger.log('[EmailService] notifyManagersOverCap: no active managers; nothing sent.');
+    return;
+  }
+
+  var isWeekly = source === 'weekly-trigger';
+  var subject = '[Kindoo Access] Over-cap warning after ' +
+    (isWeekly ? 'weekly import' : 'manual import');
+
+  var lines = [
+    'The most recent import produced over-cap conditions for the following pools:',
+    ''
+  ];
+  for (var i = 0; i < pools.length; i++) {
+    lines.push('- ' + EmailService_overCapPoolLine_(pools[i]));
+  }
+  lines.push('');
+  lines.push('Review the affected pools: ' + EmailService_seatsLink_());
+  lines.push('');
+  lines.push('Over-cap conditions do not block the import — LCR truth wins. ' +
+    'To resolve, either reduce manual/temp seats in the affected pool(s), ' +
+    'or raise the seat cap on the Configuration page.');
+
+  EmailService_send_(recipients, subject, lines.join('\n'));
+}
+
+function EmailService_overCapPoolLine_(pool) {
+  var label = pool.scope === 'stake'
+    ? 'Stake Pool'
+    : ('Ward ' + pool.scope + (pool.ward_name ? ' (' + pool.ward_name + ')' : ''));
+  return label + ': ' + pool.count + ' / ' + pool.cap +
+    ' (over by ' + pool.over_by + ')';
+}
+
 function EmailService_notifyManagersCancelled(request, requesterPrincipal) {
   var recipients = EmailService_activeManagerEmails_();
   if (recipients.length === 0) {
@@ -261,6 +315,13 @@ function EmailService_myRequestsLink_() {
   try { mainUrl = Config_get('main_url') || ''; } catch (e) {}
   if (!mainUrl) return '(main_url not configured)';
   return mainUrl + '?p=my';
+}
+
+function EmailService_seatsLink_() {
+  var mainUrl = '';
+  try { mainUrl = Config_get('main_url') || ''; } catch (e) {}
+  if (!mainUrl) return '(main_url not configured)';
+  return mainUrl + '?p=mgr/seats';
 }
 
 function EmailService_scopeLabel_(scope) {

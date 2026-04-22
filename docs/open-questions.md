@@ -337,11 +337,17 @@ The UI fires a `confirm()` warning before submitting a rename.
 
 ## Over-cap
 
-### OC-1 `[P1]` Email frequency on persistent over-cap
+### OC-1 `[RESOLVED 2026-04-22]` Email frequency on persistent over-cap
 
-Spec implies an email after every import. If a ward sits over cap for weeks, that's a weekly email.
+**Decision (Chunk 9):** email on every import run where any pool is over cap — not just on *state changes*. Rationale:
 
-**Best guess:** Email only when the over-cap *state* changes (newly over, or newly resolved). Keep the dashboard warning always visible.
+- Imports fire once a week (the weekly trigger + the rare manual Import Now). At target scale (12 wards, 1–2 requests/week) "weekly reminder while the condition persists" is an acceptable cadence, not a noise problem, and it sidesteps the state-delta bookkeeping that a "fire only on change" model would require (which scope was over last week? by how much?).
+- The banner on the manager Import page does stay visible until the condition resolves — so operators have a persistent surface independent of inbox fatigue. The email is the *new-information* signal; the banner is the *current-state* signal.
+- Chunk 10's Dashboard will add the same banner as a Warnings card so managers see it without navigating to Import.
+
+The `over_cap_warning` AuditLog row also fires per-run (not per-state-change) for the same reason — the audit trail should show "we noticed this on Sunday 2026-04-26" even if last week's row said the same thing, so a later question "when did this first go over?" has an actual record rather than a missing-until-it-flipped trail.
+
+If inbox volume becomes a problem (hasn't at target scale), the fix is to gate the email body on state-delta while still writing the audit row per run — add a `over_cap_changed_since` field to `Config.last_over_caps_json` and branch in `EmailService_notifyManagersOverCap`. Not needed for v1.
 
 ### OC-2 `[P1]` Zero active managers
 

@@ -1,22 +1,47 @@
 <!--
-  Manager Import page (Chunk 3). One button, one status line.
+  Manager Import page (Chunks 3 + 9).
 
-  - "Import Now" calls ApiManager_importerRun (server-side work wrapped in
-    Lock_withLock with a 30 s timeout). While it runs the button disables
-    and a spinner shows; lock contention / "sheet not shared" surface as
-    red toasts — no stack traces.
+  - "Import Now" calls ApiManager_importerRun (the service owns its own
+    Lock_withLock acquisition — 30 s timeout per architecture.md §6).
+    While it runs the button disables and a spinner shows; lock contention
+    / "sheet not shared" surface as red toasts — no stack traces.
   - Last import time + summary are Config_get('last_import_at') and
     Config_get('last_import_summary'); we fetch them on page load via
     ApiManager_importStatus and refresh after any successful run.
-  - Weekly scheduled import is Chunk 9.
+  - Chunk 9 adds:
+      * A red banner listing every over-cap pool from the last run, with
+        a "View seats" deep-link to the filtered mgr/seats page.
+      * The banner reads Config.last_over_caps_json via
+        ApiManager_importStatus so page reloads show the current state
+        without a re-import. The importer persists [] on every run where
+        no pool is over, so a resolved over-cap state clears the banner.
+      * The weekly trigger fires Importer_runImport directly with no
+        token; the same over-cap email + audit row + banner-state snapshot
+        happens regardless of which path triggered the import.
 -->
 <section class="import-page">
   <h1>Import</h1>
   <p class="import-intro">
     Pulls the latest state from the callings spreadsheet and updates
     <code>Seats</code> (auto) and <code>Access</code>. Runs idempotently —
-    re-running it with no source changes makes no edits.
+    re-running it with no source changes makes no edits. The weekly
+    scheduled run fires automatically at
+    <code>Config.import_day</code> / <code>Config.import_hour</code>
+    (script timezone); the button below triggers a run on demand.
   </p>
+
+  <!-- Over-cap banner (Chunk 9). Hidden until we know the last-run state;
+       loadStatus flips it visible when last_over_caps is non-empty. -->
+  <div class="over-cap-banner" id="over-cap-banner" hidden>
+    <h2 class="over-cap-heading">Over-cap warning after last import</h2>
+    <p class="over-cap-intro">
+      The most recent import left the following pools over their configured
+      cap. Imports always apply (LCR truth wins); to resolve, reduce
+      manual/temp seats in the affected pool(s), or raise the seat cap on
+      the Configuration page.
+    </p>
+    <ul class="over-cap-list" id="over-cap-list"></ul>
+  </div>
 
   <div class="import-card">
     <div class="import-actions">
@@ -70,6 +95,42 @@
     $('callings-sheet-id').textContent = s.callings_sheet_id || '(not set — add to Config)';
     // Warnings block is per-run (set from run result); loadStatus leaves it
     // alone so a prior run's warnings stay visible until next run.
+    renderOverCapBanner(s.last_over_caps || []);
+  }
+
+  // Render the red "Over-cap warning" banner from the persisted snapshot.
+  // Empty array (or missing key) hides the banner entirely — the importer
+  // writes [] on runs with no over-caps so a resolved condition clears on
+  // the next run.
+  function renderOverCapBanner(pools) {
+    var banner = $('over-cap-banner');
+    var list   = $('over-cap-list');
+    if (!pools || pools.length === 0) {
+      banner.hidden = true;
+      list.innerHTML = '';
+      return;
+    }
+    list.innerHTML = pools.map(function (p) {
+      var label = p.scope === 'stake'
+        ? 'Stake Pool'
+        : ('Ward ' + esc(p.scope) +
+           (p.ward_name ? ' (' + esc(p.ward_name) + ')' : ''));
+      // Deep link to the filtered mgr/seats view. The AllSeats page reads
+      // QUERY_PARAMS.ward and accepts 'stake' as a pseudo-value. Navigate
+      // the TOP frame (not the iframe) via the MAIN_URL global that
+      // Layout.html injects.
+      var wardParam = p.scope === 'stake' ? 'stake' : p.scope;
+      var href = (typeof MAIN_URL === 'string' ? MAIN_URL : '') +
+        '?p=mgr/seats&ward=' + encodeURIComponent(wardParam);
+      return '<li>' +
+        '<span class="over-cap-pool-label">' + label + '</span>: ' +
+        '<span class="over-cap-pool-counts">' + esc(p.count) + ' / ' +
+        esc(p.cap) + '</span> ' +
+        '<span class="over-cap-pool-overby">(over by ' + esc(p.over_by) + ')</span> ' +
+        '<a class="over-cap-pool-link" target="_top" href="' + esc(href) + '">View seats →</a>' +
+        '</li>';
+    }).join('');
+    banner.hidden = false;
   }
 
   function renderWarnings(warnings) {
@@ -126,7 +187,19 @@
       // show exactly what will be visible on the next page load.
       loadStatus();
       renderWarnings(res && res.warnings);
-      var kind = (res && res.warnings && res.warnings.length) ? 'warn' : 'success';
+      // If the server returned over_caps (Chunk 9), render the banner
+      // immediately so the manager doesn't have to wait for loadStatus's
+      // round-trip. loadStatus will also render from Config a moment
+      // later; the two views agree since Importer_runImport persisted
+      // the same snapshot.
+      if (res && res.over_caps) renderOverCapBanner(res.over_caps);
+      // A run-level `warning` field (over-cap email failed, snapshot
+      // write failed, etc.) surfaces as an extra warn toast in addition
+      // to the summary toast below.
+      if (res && res.warning) {
+        toast(res.warning, 'warn');
+      }
+      var kind = (res && (res.warnings && res.warnings.length || (res.over_caps && res.over_caps.length))) ? 'warn' : 'success';
       toast((res && res.summary) ? res.summary : 'Import complete.', kind);
     }).catch(function (err) {
       var msg = (err && err.message) ? err.message : String(err);

@@ -52,6 +52,18 @@ function ApiManager_configList(token) {
   for (var k in all) {
     if (Config_isProtectedKey(k)) protectedKeys.push(k);
     else if (Config_isImporterKey(k)) importerKeys.push(k);
+    // google.script.run has a serialization edge case where a response
+    // object with Date-valued properties alongside null-valued properties
+    // can arrive at the client as a literal `null`. Config routinely has
+    // both (last_import_at is a Date; unset string keys coerce to null).
+    // Pre-stringify every Date here — ApiManager_importStatus does the
+    // same trick for the same reason. Values are consumed read-only by
+    // the manager Config UI, so the shape change (Date → formatted
+    // string) is fine; we don't round-trip them back for a write.
+    if (all[k] instanceof Date) {
+      var tz = Session.getScriptTimeZone();
+      all[k] = Utilities.formatDate(all[k], tz, 'yyyy-MM-dd HH:mm:ss z');
+    }
   }
   // session_secret leaks via the wire if we send it back. Mask its value.
   if (all.session_secret) {
@@ -392,34 +404,37 @@ function ApiManager_templateDelete_(kind, principal, callingName, label) {
 }
 
 // ===========================================================================
-// Importer (Chunk 3)
+// Importer (Chunks 3 + 9)
 // ===========================================================================
 //
-// The canonical Chunk-2 shape for writes is (token) → Auth_principalFrom →
-// Auth_requireRole → Lock_withLock(before/after/audit). Imports fit the
-// same shape, but the actual per-row diff + audit bracketing live inside
-// Importer_runImport itself (services/Importer.gs) — the lock wraps the
-// whole service call, not each tab. Inside that single acquisition the
-// service does: import_start audit → diff-and-apply across all matched
-// tabs → Config.last_import_at/summary update → import_end audit. One
-// lock, not one-per-tab.
+// Chunk 3 established the single-lock contract: one Lock_withLock covers
+// the full run, inside which the service emits import_start → diff-and-
+// apply → Config.last_import_at / summary update → import_end audit.
 //
-// timeoutMs is bumped to 30 s (architecture.md §6) — a real import can
-// take longer than the 10 s default if a lot of audit rows are flushed or
-// the callings sheet has many tabs. On contention, users see the same
-// "Another change is in progress" message every other write path emits.
+// Chunk 9 moves that lock INSIDE Importer_runImport itself so the weekly
+// trigger (which calls Importer_runImport directly) gets the same
+// acquisition shape as a manual run. The endpoint here just verifies the
+// manager role and forwards; no Lock_withLock wrap here any more (would be
+// a nested acquisition — Lock_withLock is not reentrant).
 //
-// actor_email on every per-row AuditLog entry is "Importer" (literal
-// string — see architecture.md §5 and data-model.md §10). principal.email
-// flows in as `triggeredBy` so the import_start / import_end brackets
-// can record who ran the import.
+// After the import lock releases, Importer_runImport runs a second pass
+// for over-cap detection (a read-only scan) and — if any pool is over —
+// writes a single `over_cap_warning` audit row in its own small lock and
+// sends an email best-effort OUTSIDE both locks (architecture.md §9.5).
+// Both the manual endpoint and the weekly trigger exercise the same
+// over-cap path.
+//
+// actor_email on every per-row AuditLog entry (including over_cap_warning)
+// is "Importer" (literal string — see architecture.md §5 and
+// data-model.md §10). principal.email flows in as `triggeredBy` so the
+// import_start / import_end brackets record who ran the import; the
+// weekly trigger substitutes the literal 'weekly-trigger' for the same
+// field.
 
 function ApiManager_importerRun(token) {
   var principal = Auth_principalFrom(token);
   Auth_requireRole(principal, 'manager');
-  return Lock_withLock(function () {
-    return Importer_runImport({ triggeredBy: principal.email });
-  }, { timeoutMs: 30000 });
+  return Importer_runImport({ triggeredBy: principal.email });
 }
 
 function ApiManager_importStatus(token) {
@@ -439,10 +454,24 @@ function ApiManager_importStatus(token) {
   } else if (rawAt) {
     lastAt = String(rawAt);
   }
+  // Chunk 9: last-run over-cap snapshot. Parsed server-side so a
+  // malformed cell (hand-edited) surfaces as an empty banner rather than
+  // a client-side parse exception. '' / '[]' → no banner.
+  var lastOverCaps = [];
+  var rawOverCaps = Config_get('last_over_caps_json');
+  if (rawOverCaps) {
+    try {
+      var parsed = JSON.parse(String(rawOverCaps));
+      if (Array.isArray(parsed)) lastOverCaps = parsed;
+    } catch (e) {
+      Logger.log('[ApiManager_importStatus] last_over_caps_json parse failed: ' + e);
+    }
+  }
   return {
     last_import_at:      lastAt,
     last_import_summary: Config_get('last_import_summary') || null,
-    callings_sheet_id:   Config_get('callings_sheet_id')   || null
+    callings_sheet_id:   Config_get('callings_sheet_id')   || null,
+    last_over_caps:      lastOverCaps
   };
 }
 

@@ -42,8 +42,11 @@ Key/value pairs. The primary "knobs" the app reads on startup.
 | `setup_complete` | boolean | `FALSE` until bootstrap wizard finishes. |
 | `last_import_at` | timestamp | Written by Importer. |
 | `last_import_summary` | string | Short human-readable summary of the last run. |
-| `expiry_hour` | number | Local hour for the daily expiry trigger. Default `3`. |
-| `notifications_enabled` | boolean | Global kill-switch for every `EmailService` send. Default `TRUE`. When `FALSE`, the four request-lifecycle notifications (and the future Chunk-9 over-cap email) log what would have been sent but never call `MailApp.sendEmail`. Editable from the manager Configuration page. |
+| `expiry_hour` | number | Local hour for the daily expiry trigger. Default `3`. Integer 0–23; validated in ConfigRepo. Editing does NOT reschedule the existing trigger — click "Reinstall triggers" on the Configuration page. |
+| `import_day` | string | Day of the week the weekly import trigger fires. Default `SUNDAY`. One of `SUNDAY`, `MONDAY`, `TUESDAY`, `WEDNESDAY`, `THURSDAY`, `FRIDAY`, `SATURDAY` (UPPERCASE; case-insensitive on input; stored UPPERCASE). Validated in ConfigRepo against the seven canonical `ScriptApp.WeekDay` names — anything else is rejected with a clean error. Editing does NOT reschedule the existing trigger. |
+| `import_hour` | number | Hour of day the weekly import trigger fires, in the script timezone. Default `4`. Integer 0–23; validated in ConfigRepo. Editing does NOT reschedule the existing trigger. |
+| `last_over_caps_json` | string (JSON) | Snapshot of the last import run's over-cap pools, written by the importer. Empty string or `[]` means no over-caps. Shape: JSON array of `{scope, ward_name, cap, count, over_by}`. Read by the manager Import page to render the red banner. Importer-owned; read-only in the manager UI. |
+| `notifications_enabled` | boolean | Global kill-switch for every `EmailService` send. Default `TRUE`. When `FALSE`, the four request-lifecycle notifications AND the Chunk-9 over-cap email log what would have been sent but never call `MailApp.sendEmail`. Editable from the manager Configuration page. |
 
 ### Example rows
 
@@ -60,6 +63,9 @@ Key/value pairs. The primary "knobs" the app reads on startup.
 | `last_import_at` | `2026-04-19 03:02:11` |
 | `last_import_summary` | `CO: +2/-1 auto, +1 access · ST: +0/-0 auto · over cap: none` |
 | `expiry_hour` | `3` |
+| `import_day` | `SUNDAY` |
+| `import_hour` | `4` |
+| `last_over_caps_json` | `[]` |
 | `notifications_enabled` | `TRUE` |
 
 ---
@@ -262,7 +268,7 @@ One row per state-changing event. Append-only.
 | `timestamp` | timestamp | |
 | `actor_email` | string | **Authorship** — the canonical email of the signed-in user who initiated the change (from the verified GSI JWT), or `"Importer"` / `"ExpiryTrigger"` for automated runs. **Not** the Apps Script execution identity (which is always the deployer under `executeAs: USER_DEPLOYING`); Sheet file revision history will show the deployer for every write, but that's infrastructure, not authorship. Callers must pass `actor_email` explicitly; `AuditRepo.write` does not fall back to `Session.getActiveUser`. |
 | `action` | enum | See action vocabulary below. |
-| `entity_type` | enum | `Seat` / `Request` / `Access` / `Config` / `Ward` / `Building` / `KindooManager` / `Template`. |
+| `entity_type` | enum | `Seat` / `Request` / `Access` / `Config` / `Ward` / `Building` / `KindooManager` / `Template` / `System` (used by `over_cap_warning` since the row represents a cross-pool condition, not a single domain entity). |
 | `entity_id` | string | PK of the affected row (e.g., `seat_id`, `request_id`, `ward_code`, `building_name`, or a composite like `email\|scope\|calling` for `Access`). |
 | `before_json` | JSON string | Empty for inserts. |
 | `after_json` | JSON string | Empty for deletes. |
@@ -273,7 +279,7 @@ One row per state-changing event. Append-only.
 - `submit_request`, `complete_request`, `reject_request`, `cancel_request` — request lifecycle.
 - `auto_expire` — daily expiry.
 - `import_start`, `import_end` — bracket an importer run (`after_json` on `import_end` includes a counts summary).
-- `over_cap_warning` — emitted after import if any pool exceeds its cap.
+- `over_cap_warning` — emitted after an import run (manual or weekly-trigger) when one or more ward pools or the stake pool exceed their configured cap. `entity_type='System'`, `entity_id='over_cap'`; `before` is empty; `after={pools: [...], source: 'manual-import'|'weekly-trigger', triggered_by: <manager email or 'weekly-trigger'>}`. One audit row per import run where an over-cap is detected (not one row per over-cap pool); a run with no over-caps writes no `over_cap_warning` row.
 - `setup_complete` — bootstrap wizard finishes.
 - `reinstall_triggers` — manager clicked "Reinstall triggers" on the Configuration page (Chunk 8). `entity_type='Config'`, `entity_id='triggers'`; before/after carry the trigger list so an operator can see what was removed and what was installed.
 

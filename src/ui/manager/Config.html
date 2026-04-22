@@ -513,19 +513,39 @@
         var ek = editable[e];
         var ev = all[ek];
         var inputHtml;
-        if (typeof ev === 'boolean') {
+        if (ek === 'import_day') {
+          // Dropdown over the seven canonical weekday names — a free-text
+          // input would be a footgun (ScriptApp.WeekDay[...] is case-
+          // sensitive and returns undefined for typos, which surfaces as
+          // an install-time stack trace). Server-side validation in
+          // Config_update is the backstop; the dropdown is the UX.
+          var daysHtml = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY']
+            .map(function (d) {
+              var selAttr = String(ev || '').toUpperCase() === d ? ' selected' : '';
+              return '<option value="' + d + '"' + selAttr + '>' +
+                d.charAt(0) + d.substring(1).toLowerCase() + '</option>';
+            }).join('');
+          inputHtml = '<select data-field="value">' + daysHtml + '</select>';
+        } else if (typeof ev === 'boolean') {
           inputHtml = '<input type="checkbox" data-field="value"' + (ev ? ' checked' : '') + '>';
         } else if (typeof ev === 'number') {
           inputHtml = '<input type="number" data-field="value" value="' + esc(ev) + '">';
         } else {
           inputHtml = '<input type="text" data-field="value" value="' + esc(ev == null ? '' : ev) + '">';
         }
-        // expiry_hour needs a small hint explaining the reinstall-triggers
-        // round-trip — the existing daily trigger keeps running at the old
-        // hour until TriggersService_install re-runs. See architecture.md §9.3.
+        // Hour / day keys need a small hint explaining the reinstall-
+        // triggers round-trip — the existing scheduled triggers keep
+        // running at the old time until TriggersService_install re-runs.
+        // See architecture.md §9.3.
         var hintHtml = '';
         if (ek === 'expiry_hour') {
           hintHtml = '<div class="config-key-hint">Hour-of-day (0–23, script timezone) for the daily temp-seat expiry trigger. ' +
+            'Editing this value alone does NOT change when the trigger fires — click <em>Reinstall triggers</em> below to apply.</div>';
+        } else if (ek === 'import_hour') {
+          hintHtml = '<div class="config-key-hint">Hour-of-day (0–23, script timezone) for the weekly callings-sheet import. ' +
+            'Editing this value alone does NOT change when the trigger fires — click <em>Reinstall triggers</em> below to apply.</div>';
+        } else if (ek === 'import_day') {
+          hintHtml = '<div class="config-key-hint">Day of the week (script timezone) for the weekly callings-sheet import. ' +
             'Editing this value alone does NOT change when the trigger fires — click <em>Reinstall triggers</em> below to apply.</div>';
         }
         html += '<tr data-key="' + esc(ek) + '">' +
@@ -564,9 +584,11 @@
     html += '<h3 style="margin-top:24px; font-size:1em;">Scheduled triggers</h3>';
     html += '<p class="config-readonly-note">' +
       'Time-based jobs that run in the background. The daily temp-seat expiry fires at ' +
-      '<code>Config.expiry_hour</code> (above) in the script timezone. If you change the ' +
-      'hour, click <em>Reinstall triggers</em> to apply the new schedule — this tears down the ' +
-      'existing daily trigger and creates a fresh one. Safe to re-run any time.' +
+      '<code>Config.expiry_hour</code>; the weekly callings-sheet import fires at ' +
+      '<code>Config.import_day</code> / <code>Config.import_hour</code>. All schedules use ' +
+      'the script timezone. If you change any of these values, click <em>Reinstall triggers</em> ' +
+      'to apply the new schedule — this tears down the existing triggers and creates fresh ones. ' +
+      'Safe to re-run any time.' +
       '</p>';
     html += '<div class="triggers-panel">' +
       '<div class="triggers-actions">' +
@@ -581,13 +603,26 @@
     Array.prototype.forEach.call($('panel-config').querySelectorAll('tr[data-key]'), function (tr) {
       tr.querySelector('button[data-act="save"]').addEventListener('click', function () {
         var key = tr.getAttribute('data-key');
-        var input = tr.querySelector('input[data-field="value"]');
-        var value = input.type === 'checkbox' ? input.checked
-                  : input.type === 'number'   ? Number(input.value)
-                                              : input.value;
+        // The value control is an <input> for most keys and a <select> for
+        // import_day; accept either via [data-field="value"].
+        var input = tr.querySelector('[data-field="value"]');
+        var value;
+        if (input.tagName === 'SELECT') {
+          value = input.value;
+        } else if (input.type === 'checkbox') {
+          value = input.checked;
+        } else if (input.type === 'number') {
+          value = Number(input.value);
+        } else {
+          value = input.value;
+        }
         rpc('ApiManager_configUpdate', key, value).then(function () {
-          if (key === 'expiry_hour') {
-            toast('Saved. Click "Reinstall triggers" to apply the new hour.', 'warn');
+          // Any trigger-schedule key: remind the operator to reinstall.
+          // Server-side validation (ConfigRepo) already rejected a bad
+          // value with a clear error, so reaching this toast means the
+          // cell stored successfully.
+          if (key === 'expiry_hour' || key === 'import_hour' || key === 'import_day') {
+            toast('Saved. Click "Reinstall triggers" to apply the new schedule.', 'warn');
           } else {
             toast('Saved.', 'success');
           }

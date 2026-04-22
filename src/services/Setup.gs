@@ -53,6 +53,18 @@ const SETUP_CONFIG_SEED_ = [
   { key: 'last_import_at',        value: '' },
   { key: 'last_import_summary',   value: '' },
   { key: 'expiry_hour',           value: 3 },
+  // Chunk 9: weekly importer trigger schedule. Script timezone (see
+  // appsscript.json). Default: Sunday 04:00 local. Editable from the
+  // manager Config page; saving either one requires "Reinstall triggers"
+  // to take effect (architecture.md §9.3).
+  { key: 'import_day',            value: 'SUNDAY' },
+  { key: 'import_hour',           value: 4 },
+  // Chunk 9: persisted per-scope over-cap snapshot from the last import
+  // run. JSON-encoded array; empty string (or '[]') means "no over-caps".
+  // Read by the manager Import page to render a red banner after page
+  // load without a second import call. Not editable from the UI — the
+  // importer owns the value.
+  { key: 'last_over_caps_json',   value: '' },
   // Chunk 6: global off-switch for request-lifecycle notification emails.
   // TRUE by default (the spec calls for emails on submit / complete /
   // reject / cancel). Flip to FALSE via the manager Config page during
@@ -170,10 +182,10 @@ function Setup_removeDefaultSheet1_(ss, report) {
 // onOpen() runs whenever someone opens the bound Sheet. We use it to install
 // a Kindoo Admin menu so setup actions don't require the script editor.
 //
-// Chunk 8 adds "Install/reinstall triggers" and "Run expiry now" so an
-// operator can self-heal trigger state and manually kick the expiry job
-// without opening the script editor. Chunk 9 will extend this with
-// "Run weekly import now".
+// Chunk 8 added "Install/reinstall triggers" and "Run expiry now". Chunk 9
+// adds "Run weekly import now" — the same code path the weekly trigger
+// fires, but initiated by the operator; useful for debugging without
+// waiting for the scheduled time or logging into the web app.
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Kindoo Admin')
@@ -181,6 +193,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Install/reinstall triggers', 'TriggersService_install')
     .addItem('Run expiry now', 'Expiry_runExpiry')
+    .addItem('Run weekly import now', 'Importer_runImport')
     .addSeparator()
     .addItem('Run normaliseEmail tests', 'Utils_test_normaliseEmail')
     .addItem('Run emailsEqual tests', 'Utils_test_emailsEqual')

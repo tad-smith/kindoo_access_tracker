@@ -129,9 +129,11 @@
     });
   }
 
-  // Show / hide date inputs based on type.
-  $('f-type').addEventListener('change', function () {
-    var isTemp = this.value === 'add_temp';
+  // Show / hide date inputs based on type. Pulled into a named function
+  // so the post-submit reset path can re-sync the same state without
+  // dispatching a synthetic change event.
+  function syncTempFieldsToType() {
+    var isTemp = $('f-type').value === 'add_temp';
     $('temp-fields').classList.toggle('hidden', !isTemp);
     if (isTemp) {
       $('f-start-date').setAttribute('required', 'required');
@@ -140,7 +142,8 @@
       $('f-start-date').removeAttribute('required');
       $('f-end-date').removeAttribute('required');
     }
-  });
+  }
+  $('f-type').addEventListener('change', syncTempFieldsToType);
 
   // Duplicate check: on email blur + on scope change. Debounced on
   // rapid changes so the server isn't hit more than necessary (typing
@@ -199,9 +202,15 @@
       toast('Request submitted.', 'success');
       if (resp && resp.warning) toast(resp.warning, 'warn');
       // Clear the form for a potential next submission. The scope
-      // selector stays on the same scope.
+      // selector stays on the same scope (it lives outside the form
+      // element, so form.reset() doesn't touch it). form.reset() reverts
+      // #f-type to its default `add_manual`, but does NOT remove the
+      // `required` attributes syncTempFieldsToType set on the date
+      // inputs when the last submission was add_temp — native form
+      // validation would then block the next submit with a bogus
+      // "start date required" error. Re-sync explicitly.
       $('new-request-form').reset();
-      $('temp-fields').classList.add('hidden');
+      syncTempFieldsToType();
       $('duplicate-warning-host').innerHTML = '';
     }).catch(function (err) {
       toast(err.message || String(err), 'error');

@@ -173,7 +173,9 @@ The daily trigger is installed (and idempotently reinstalled) by `TriggersServic
 
 ## 8. Weekly import
 
-Runs weekly (trigger) and on-demand ("Import Now" button on the Manager's Import page).
+Runs weekly (trigger) and on-demand ("Import Now" button on the Manager's Import page). The trigger fires `Importer_runImport` at `Config.import_day` / `Config.import_hour` (default `SUNDAY` / `4`, i.e. 04:00 Sunday in the script timezone). Both keys are editable from the manager Configuration page; saving either fires a warn toast reminding the operator to click "Reinstall triggers" for the new schedule to take effect (same pattern as `expiry_hour` from Chunk 8). `import_day` is validated server-side against the seven canonical `ScriptApp.WeekDay` names (UPPERCASE, case-insensitive on input); `import_hour` is validated as an integer 0–23. Invalid values surface as clean error toasts, not stack traces. The trigger is installed (and idempotently reinstalled) alongside the daily expiry trigger by `TriggersService_install()`.
+
+Both paths — manual Import Now and weekly trigger — run the same code, acquire the same `Lock_withLock(30 s)` for the diff-and-apply, and end with the same over-cap pass (§9 below). The import's `import_start` / `import_end` audit payloads record `triggeredBy=<manager email>` for manual runs and the literal `triggeredBy='weekly-trigger'` for trigger runs; per-row audit rows carry `actor_email='Importer'` regardless.
 
 **Source**: Google Sheet ID stored in `Config`. One tab per ward, named to match the ward's `ward_code` (2-letter code). Plus one tab named `Stake`.
 
@@ -200,13 +202,13 @@ Runs weekly (trigger) and on-demand ("Import Now" button on the Manager's Import
 4. Delete any existing auto-seat for this scope not seen in the current import; write `AuditLog` entry per row.
 5. Delete any `Access` row for this scope whose `(email, calling)` pair wasn't seen; write `AuditLog` entry.
 
-**Cap interaction**: imports always apply — LCR truth wins. Over-cap conditions surface as a Dashboard warning and an email to Kindoo Managers.
+**Cap interaction**: imports always apply — LCR truth wins. After every import run (manual or weekly-trigger), the importer runs a read-only over-cap detection pass — for each ward and for the stake pool, it compares the total seats in that scope (counting every row regardless of `type`, matching Chunk 5's utilization math) against the pool's cap (`Wards.seat_cap` for a ward, `Config.stake_seat_cap` for the stake). A scope with no configured cap (or a cap ≤ 0) is skipped. If any pool is over, the importer persists a snapshot into `Config.last_over_caps_json`, writes one `over_cap_warning` AuditLog row (one row per run, not per pool), and emails active Kindoo Managers best-effort — see §9. A run with no over-caps persists an empty snapshot (`[]`) so the manager Import page's red banner clears the next time a resolved condition is imported. The over-cap detection runs AFTER the import's main lock releases, in a separate tiny lock of its own — the import lock stays scoped to the diff-and-apply work.
 
 **Bishopric lag**: new bishopric members can't sign into the app until the next import runs. This lag is accepted for v1.
 
 ## 9. Email notifications
 
-Four request-lifecycle notifications ship in Chunk 6 and cover every request type — `add_manual`, `add_temp`, and `remove` (Chunk 7). Body copy is type-aware (the lead verb reads "submitted a new manual-add request" vs "requested removal of"); the four templates and their triggers don't change. An over-cap notification is added in Chunk 9. All use `MailApp.sendEmail` from the deployer's identity (Main runs `executeAs: USER_DEPLOYING`), with a display-name of `"<stake_name> — Kindoo Access"` when `Config.stake_name` is set. Bodies are plain text; every email includes a link back to the relevant app page. The completion email for a remove request that hit the R-1 race carries a `Note:` line surfacing `Requests.completion_note` so the requester knows nothing visibly changed.
+Four request-lifecycle notifications ship in Chunk 6 and cover every request type — `add_manual`, `add_temp`, and `remove` (Chunk 7). Body copy is type-aware (the lead verb reads "submitted a new manual-add request" vs "requested removal of"); the four templates and their triggers don't change. Chunk 9 adds a fifth notification — the over-cap warning that fires after an import run (manual or weekly-trigger) when any ward or the stake pool holds more seats than its cap. All five use `MailApp.sendEmail` from the deployer's identity (Main runs `executeAs: USER_DEPLOYING`), with a display-name of `"<stake_name> — Kindoo Access"` when `Config.stake_name` is set. Bodies are plain text; every email includes a link back to the relevant app page. The completion email for a remove request that hit the R-1 race carries a `Note:` line surfacing `Requests.completion_note` so the requester knows nothing visibly changed. The over-cap email lists every affected pool with its current count / cap and a deep-link to the filtered `mgr/seats` page so a manager can jump straight to the offender.
 
 | Trigger | Recipients | Subject | Link back |
 | --- | --- | --- | --- |
@@ -214,7 +216,9 @@ Four request-lifecycle notifications ship in Chunk 6 and cover every request typ
 | Request completed | original requester | `[Kindoo Access] Your request for <target_email> has been completed` | `<main_url>?p=my` |
 | Request rejected | original requester | `[Kindoo Access] Your request was rejected` | `<main_url>?p=my` |
 | Request cancelled | active Kindoo Managers | `[Kindoo Access] Request cancelled by <requester>` | `<main_url>?p=mgr/queue` |
-| Over-cap after import (Chunk 9) | active Kindoo Managers | TBD in Chunk 9 | `<main_url>?p=mgr/dashboard` |
+| Over-cap after import | active Kindoo Managers | `[Kindoo Access] Over-cap warning after <manual\|weekly> import` | `<main_url>?p=mgr/seats` |
+
+The manager Import page also surfaces the last-run over-cap state as a red banner above the import status panel — one line per pool with the same counts/cap/over-by shape as the email body and a "View seats →" deep-link. The banner reads from `Config.last_over_caps_json` so page reloads (and visits from a different browser) reflect the current persisted state without a re-import; a resolved over-cap clears the banner on the next run. Chunk 10's Dashboard will promote this into a persistent Warnings card.
 
 **Best-effort, outside the lock.** Every request-lifecycle email send happens AFTER the `Lock_withLock` closure completes at the API layer. `MailApp.sendEmail` is slow (~1–2 s per call); holding the lock for mail I/O would starve concurrent writers. If a send fails, the API layer logs the error and surfaces a `warning` field on the response (the client shows it as a `toast('…', 'warn')`). The Sheet write is atomic + audited; the email is best-effort. See `architecture.md` "Email send policy" for the rationale.
 
