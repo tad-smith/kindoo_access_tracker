@@ -457,6 +457,48 @@ function ApiManager_accessList(token) {
 }
 
 // ===========================================================================
+// Triggers — self-heal surface (Chunk 8)
+// ===========================================================================
+//
+// architecture.md §9.3: the Configuration page carries a "Reinstall
+// triggers" button so an operator can fix a lost trigger without opening
+// the Apps Script editor. Same code path as the bootstrap wizard's
+// Complete-Setup call — TriggersService_install is idempotent.
+//
+// The list endpoint is read-only (no lock) so the UI can render the
+// current trigger set alongside the button for verification.
+
+function ApiManager_listTriggers(token) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  return TriggersService_list();
+}
+
+function ApiManager_reinstallTriggers(token) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  return Lock_withLock(function () {
+    var before = TriggersService_list();
+    var result = TriggersService_install();
+    var after = TriggersService_list();
+    AuditRepo_write({
+      actor_email: principal.email,
+      action:      'reinstall_triggers',
+      entity_type: 'Config',
+      entity_id:   'triggers',
+      before:      { triggers: before },
+      after:       { triggers: after, result: result }
+    });
+    return {
+      installed: result.installed,
+      removed:   result.removed,
+      message:   result.message,
+      triggers:  after
+    };
+  });
+}
+
+// ===========================================================================
 // Rosters — All Seats (Chunk 5)
 // ===========================================================================
 //

@@ -497,14 +497,27 @@ function ApiBootstrap_complete(token) {
     Bootstrap_ensureAdminAsManager_(principal);
     // Triggers first so we audit the call even if the flag flip fails
     // partway (though neither should fail under normal conditions).
+    //
+    // Chunk 4 stubbed TriggersService_install as returning a bare string.
+    // Chunk 8 made it return { installed, removed, message } — extract
+    // `.message` so the audit row's after_json.triggers_install remains a
+    // short human-readable string (the full triggers list is already
+    // recorded in the reinstall_triggers audit rows the manager UI writes).
     try {
-      triggersMsg = TriggersService_install() || '';
+      var installResult = TriggersService_install();
+      if (installResult && typeof installResult === 'object' && installResult.message) {
+        triggersMsg = String(installResult.message);
+      } else if (typeof installResult === 'string') {
+        triggersMsg = installResult;
+      } else {
+        triggersMsg = '';
+      }
     } catch (e) {
       triggersMsg = 'TriggersService_install threw: ' + (e && e.message ? e.message : String(e));
       Logger.log('[Bootstrap] ' + triggersMsg);
-      // Not fatal — Chunk-4 stub is a no-op, and real triggers land in
-      // Chunk 8/9 with their own install-failure handling. Record in the
-      // audit payload so it's not silently lost.
+      // Not fatal — the install failure-mode is recorded in the audit
+      // payload. An operator can retry via the manager Configuration
+      // page's "Reinstall triggers" button (Chunk 8).
     }
     var before = Config_get('setup_complete');
     var result = Config_update('setup_complete', true);

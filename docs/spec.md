@@ -165,7 +165,11 @@ Remove-requests follow the same lifecycle; the `complete` action deletes the mat
 
 ## 7. Temporary-seat expiry
 
-Daily trigger: scan `Seats` where `type=temp AND end_date < today`. Delete the row and write an `AuditLog` entry (`action=auto_expire`, `actor_email="ExpiryTrigger"`, `before_json` preserving the deleted row). Kindoo removes on its side automatically; no action needed there.
+Daily trigger: `Expiry_runExpiry` scans `Seats` where `type=temp AND end_date < today` (today = `Utils_todayIso()` in the script timezone set by `appsscript.json`, i.e. `America/Denver`), deletes each matching row, and writes an `AuditLog` entry per row (`action=auto_expire`, `actor_email="ExpiryTrigger"` literal, `before_json` preserving the deleted row, `after_json` empty). The entire run is wrapped in one `Lock_withLock` (30 s timeout, matching the Importer) and the per-row audits are flushed via `AuditRepo_writeMany` at end of run.
+
+The trigger fires daily at `Config.expiry_hour` (default `3`, i.e. 03:00 local). Since the scan uses the script timezone to compute "today" and the fire time is in the same timezone, the boundary is unambiguous: a seat with `end_date=2026-04-21` is still alive on 2026-04-21 (`end_date < today` is false) and disappears on the 2026-04-22 03:00 run. No email is sent on auto-expire — the audit row is the trail. Kindoo removes on its side automatically; no action needed there.
+
+The daily trigger is installed (and idempotently reinstalled) by `TriggersService_install()`, called from the bootstrap wizard's Complete-Setup step and from the manager Configuration page's "Reinstall triggers" button. Changing `Config.expiry_hour` does **not** reschedule the existing trigger — an operator must click "Reinstall triggers" for the new hour to take effect.
 
 ## 8. Weekly import
 

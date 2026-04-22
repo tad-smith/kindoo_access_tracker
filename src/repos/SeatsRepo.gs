@@ -194,8 +194,8 @@ function Seats_insert(row) {
     calling_name:     '',       // manual/temp never carry a calling
     source_row_hash:  '',       // manual/temp never have a hash
     reason:           row.reason == null ? '' : String(row.reason),
-    start_date:       row.start_date == null ? '' : String(row.start_date),
-    end_date:         row.end_date == null ? '' : String(row.end_date),
+    start_date:       Utils_formatIsoDate(row.start_date),
+    end_date:         Utils_formatIsoDate(row.end_date),
     building_names:   row.building_names == null ? '' : String(row.building_names),
     created_by:       String(row.created_by),
     created_at:       now,
@@ -267,8 +267,8 @@ function Seats_update(seatId, patch) {
     var nextStart = before.start_date;
     var nextEnd   = before.end_date;
     if (isTemp) {
-      if (patch.start_date !== undefined) nextStart = patch.start_date == null ? '' : String(patch.start_date);
-      if (patch.end_date   !== undefined) nextEnd   = patch.end_date   == null ? '' : String(patch.end_date);
+      if (patch.start_date !== undefined) nextStart = Utils_formatIsoDate(patch.start_date);
+      if (patch.end_date   !== undefined) nextEnd   = Utils_formatIsoDate(patch.end_date);
     } else {
       if (patch.start_date !== undefined || patch.end_date !== undefined) {
         // Loud failure on a date patch to a manual row — almost certainly a
@@ -394,8 +394,8 @@ function Seats_rowToObject_(row) {
     calling_name:     String(row[5] == null ? '' : row[5]),
     source_row_hash:  String(row[6] == null ? '' : row[6]),
     reason:           String(row[7] == null ? '' : row[7]),
-    start_date:       row[8] == null ? '' : String(row[8]),
-    end_date:         row[9] == null ? '' : String(row[9]),
+    start_date:       Utils_formatIsoDate(row[8]),
+    end_date:         Utils_formatIsoDate(row[9]),
     building_names:   String(row[10] == null ? '' : row[10]),
     created_by:       String(row[11] == null ? '' : row[11]),
     created_at:       row[12] instanceof Date ? row[12] : (row[12] == null ? null : row[12]),

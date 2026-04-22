@@ -275,6 +275,7 @@ One row per state-changing event. Append-only.
 - `import_start`, `import_end` — bracket an importer run (`after_json` on `import_end` includes a counts summary).
 - `over_cap_warning` — emitted after import if any pool exceeds its cap.
 - `setup_complete` — bootstrap wizard finishes.
+- `reinstall_triggers` — manager clicked "Reinstall triggers" on the Configuration page (Chunk 8). `entity_type='Config'`, `entity_id='triggers'`; before/after carry the trigger list so an operator can see what was removed and what was installed.
 
 ### Example rows
 

@@ -383,13 +383,43 @@ Roster reads enforce scope at the **API layer**, not the UI. A bishopric member 
 
 ### Expiry
 
-- Runs daily at 03:00 local time (configurable, stored in `Config.expiry_hour`).
-- Scans `Seats` for rows with `type=temp` and `end_date < today` (midnight, local time zone from `appsscript.json`).
-- Deletes rows inside one lock; writes per-row AuditLog entries with action `auto_expire` and `before_json` preserving the row.
+- Public entry: `Expiry_runExpiry()` in `services/Expiry.gs`. Safe to call manually (via the `Kindoo Admin → Run expiry now` menu or from the Apps Script editor) or from the time-based trigger created by `TriggersService_install`.
+- Runs daily at `Config.expiry_hour` (default `3`, local time — `appsscript.json` `timeZone: America/Denver`).
+- Scans `Seats` for rows with `type=temp` and `end_date < today`, where `today = Utils_todayIso()` in the script timezone. Seats with an empty `end_date` are skipped (malformed temp row; the run logs and moves on rather than crashing). The comparison is a lexical string compare on ISO date strings — valid because `YYYY-MM-DD` sorts chronologically.
+- Wraps the full run in one `Lock_withLock(fn, { timeoutMs: 30000 })` — same shape and timeout as the Importer (§6 "Importer and Expiry wrap their full run"). Inside the lock: read `Seats` once, iterate and call `Seats_deleteById` per expiring row collecting the deleted before-rows, then flush per-row AuditLog entries via `AuditRepo_writeMany` in one `setValues` at end of run. Volumes are much smaller than the importer (1–5 rows/week at target scale) but the batched-write shape stays consistent with Chunk 3.
+- `actor_email` on every audit row is the literal `"ExpiryTrigger"` (spec §3.2, data-model.md §10). Not `Session.getEffectiveUser()` — the trigger runs as the script owner, which is infrastructure, not authorship. `AuditRepo.write` requires `actor_email` explicitly, so there's no accidental fallback.
+- No email on auto-expire. Spec §9 doesn't list it as an email trigger; the `auto_expire` audit row is the trail.
+- **R-1 race interaction.** If a requester submits a `remove` request for a temp seat and Expiry deletes the seat before the manager clicks Complete, Chunk 7's `RequestsService_completeRemove_` auto-completes the request with a `completion_note` and emits a single audit row (`complete_request`). Nothing for the Expiry service to do on its side — the two runs produce two distinct audit rows (`auto_expire` from Expiry, `complete_request` from the manager's subsequent complete) with a clean trail.
 
 ### Trigger management
 
-`TriggersService.install()` idempotently creates both triggers if absent. Invoked from the bootstrap wizard's last step and from a manager-only "Reinstall triggers" button on the Configuration page, so operators can self-heal.
+`TriggersService_install()` idempotently installs every scheduled trigger the project needs. Chunk 8 installs the daily Expiry trigger; Chunk 9 will extend the same plan with the weekly Importer trigger.
+
+Idempotency strategy: before installing, `TriggersService_install` scans `ScriptApp.getProjectTriggers()` and **removes every existing trigger whose handlerFunction matches a planned handler**, then creates fresh triggers from the current Config. This covers three cases in one shape:
+
+- *First run* — nothing to remove; install creates new triggers.
+- *Re-run with no Config changes* — old triggers removed, identical new ones created (wasteful but trivial at 1–2 installs over the life of the deployment, and safer than per-trigger attribute comparison — `atHour` isn't exposed on the Trigger object, so the alternative would be to store a parallel "what we installed last time" Config key).
+- *`Config.expiry_hour` changed* — the re-run picks up the new hour automatically.
+
+Triggers whose handlerFunction is **not** on the planned list are left alone, so an operator can install an ad-hoc trigger via the Apps Script editor without `TriggersService_install` stomping it.
+
+Return shape:
+
+```
+{ installed: ['Expiry_runExpiry'],
+  removed:   ['Expiry_runExpiry'],
+  message:   '[TriggersService] installed 1 trigger(s): Expiry_runExpiry @ 3:00 daily (removed 1 prior)' }
+```
+
+Invoked from:
+
+- The bootstrap wizard's Complete-Setup step (Chunk 4). The returned `message` is captured in the `setup_complete` audit row's `after_json.triggers_install` field so the operator can see what landed.
+- The manager Configuration page's "Reinstall triggers" button (via `ApiManager_reinstallTriggers`). Wrapped in `Lock_withLock` + one `AuditRepo_write` with `action='reinstall_triggers'`, `entity_type='Config'`, `entity_id='triggers'`, and before/after payloads carrying the trigger list so the audit trail shows exactly what was torn down and rebuilt.
+- `Kindoo Admin → Install/reinstall triggers` menu item on the bound Sheet, for an operator running directly from the Sheet UI without loading the web app.
+
+A sibling read-only `TriggersService_list()` / `ApiManager_listTriggers` returns the current trigger set so the Configuration page can render what's installed without the manager having to open the Apps Script editor.
+
+**UX contract for `expiry_hour`:** the manager Configuration page surfaces `expiry_hour` in the editable Config table and carries a hint that saving the new value does NOT reschedule the existing trigger — an explicit "Reinstall triggers" click is required. A save toast on that key reads *"Saved. Click 'Reinstall triggers' to apply the new hour."* to reduce the chance of a surprised operator.
 
 ## 9.5. Email send policy (Chunk 6)
 

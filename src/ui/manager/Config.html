@@ -520,8 +520,16 @@
         } else {
           inputHtml = '<input type="text" data-field="value" value="' + esc(ev == null ? '' : ev) + '">';
         }
+        // expiry_hour needs a small hint explaining the reinstall-triggers
+        // round-trip — the existing daily trigger keeps running at the old
+        // hour until TriggersService_install re-runs. See architecture.md §9.3.
+        var hintHtml = '';
+        if (ek === 'expiry_hour') {
+          hintHtml = '<div class="config-key-hint">Hour-of-day (0–23, script timezone) for the daily temp-seat expiry trigger. ' +
+            'Editing this value alone does NOT change when the trigger fires — click <em>Reinstall triggers</em> below to apply.</div>';
+        }
         html += '<tr data-key="' + esc(ek) + '">' +
-          '<td><code>' + esc(ek) + '</code></td>' +
+          '<td><code>' + esc(ek) + '</code>' + hintHtml + '</td>' +
           '<td>' + inputHtml + '</td>' +
           '<td class="row-actions"><button class="btn" data-act="save">Save</button></td>' +
           '</tr>';
@@ -549,6 +557,25 @@
       html += '</tbody></table>';
     }
 
+    // Triggers panel (Chunk 8). "Reinstall triggers" is idempotent — it
+    // removes known planned triggers and recreates them from the current
+    // Config. The triggers-list below renders live after each click so
+    // the manager can verify what landed without opening the editor.
+    html += '<h3 style="margin-top:24px; font-size:1em;">Scheduled triggers</h3>';
+    html += '<p class="config-readonly-note">' +
+      'Time-based jobs that run in the background. The daily temp-seat expiry fires at ' +
+      '<code>Config.expiry_hour</code> (above) in the script timezone. If you change the ' +
+      'hour, click <em>Reinstall triggers</em> to apply the new schedule — this tears down the ' +
+      'existing daily trigger and creates a fresh one. Safe to re-run any time.' +
+      '</p>';
+    html += '<div class="triggers-panel">' +
+      '<div class="triggers-actions">' +
+        '<button class="btn" id="triggers-reinstall-btn">Reinstall triggers</button>' +
+        '<span class="triggers-status" id="triggers-status"></span>' +
+      '</div>' +
+      '<div class="triggers-list" id="triggers-list">Loading…</div>' +
+      '</div>';
+
     $('panel-config').innerHTML = html;
 
     Array.prototype.forEach.call($('panel-config').querySelectorAll('tr[data-key]'), function (tr) {
@@ -559,10 +586,66 @@
                   : input.type === 'number'   ? Number(input.value)
                                               : input.value;
         rpc('ApiManager_configUpdate', key, value).then(function () {
-          toast('Saved.', 'success');
+          if (key === 'expiry_hour') {
+            toast('Saved. Click "Reinstall triggers" to apply the new hour.', 'warn');
+          } else {
+            toast('Saved.', 'success');
+          }
           loadTab('config');
         }).catch(function (err) { toast(err.message, 'error'); });
       });
+    });
+
+    // Wire the triggers panel.
+    renderTriggersList();
+    $('triggers-reinstall-btn').addEventListener('click', function () {
+      var btn = $('triggers-reinstall-btn');
+      btn.disabled = true;
+      $('triggers-status').textContent = 'Reinstalling…';
+      rpc('ApiManager_reinstallTriggers').then(function (resp) {
+        btn.disabled = false;
+        var msg = 'Installed ' + (resp.installed || []).length + ' trigger(s)';
+        if (resp.removed && resp.removed.length) {
+          msg += ' (removed ' + resp.removed.length + ' prior)';
+        }
+        msg += ' at ' + formatTime_(new Date());
+        $('triggers-status').textContent = msg;
+        toast('Triggers reinstalled.', 'success');
+        renderTriggersList(resp.triggers);
+      }).catch(function (err) {
+        btn.disabled = false;
+        $('triggers-status').textContent = 'Failed: ' + err.message;
+        toast(err.message, 'error');
+      });
+    });
+  }
+
+  function formatTime_(d) {
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+
+  function renderTriggersList(triggers) {
+    var container = $('triggers-list');
+    if (!container) return;
+    var p = triggers
+      ? Promise.resolve(triggers)
+      : rpc('ApiManager_listTriggers');
+    p.then(function (list) {
+      list = list || [];
+      if (list.length === 0) {
+        container.innerHTML = '<div class="empty-state" style="text-align:left;">No triggers installed. Click <em>Reinstall triggers</em> to install the scheduled jobs.</div>';
+        return;
+      }
+      var html = '<ul class="triggers-list-ul">';
+      for (var i = 0; i < list.length; i++) {
+        html += '<li><code>' + esc(list[i].handler) + '</code> ' +
+          '<span class="triggers-meta">(' + esc(list[i].event_type) + ')</span></li>';
+      }
+      html += '</ul>';
+      container.innerHTML = html;
+    }).catch(function (err) {
+      container.innerHTML = '<div class="error">Failed to load: ' + esc(err.message) + '</div>';
     });
   }
 

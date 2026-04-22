@@ -170,12 +170,17 @@ function Setup_removeDefaultSheet1_(ss, report) {
 // onOpen() runs whenever someone opens the bound Sheet. We use it to install
 // a Kindoo Admin menu so setup actions don't require the script editor.
 //
-// Triggers-install menu item is intentionally absent in Chunk 1 — there are
-// no triggers to install yet (Chunks 4/8/9 add them).
+// Chunk 8 adds "Install/reinstall triggers" and "Run expiry now" so an
+// operator can self-heal trigger state and manually kick the expiry job
+// without opening the script editor. Chunk 9 will extend this with
+// "Run weekly import now".
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Kindoo Admin')
     .addItem('Setup sheet…', 'setupSheet')
+    .addSeparator()
+    .addItem('Install/reinstall triggers', 'TriggersService_install')
+    .addItem('Run expiry now', 'Expiry_runExpiry')
     .addSeparator()
     .addItem('Run normaliseEmail tests', 'Utils_test_normaliseEmail')
     .addItem('Run emailsEqual tests', 'Utils_test_emailsEqual')

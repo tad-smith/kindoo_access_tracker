@@ -327,7 +327,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 8 — Expiry trigger
+## Chunk 8 — Expiry trigger `[DONE — see docs/changelog/chunk-8-expiry.md]`
 
 **Goal:** temp seats disappear on their `end_date`.
 
@@ -335,20 +335,30 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Implement `services/Expiry.gs#runExpiry()` — scans `Seats` for `type=temp AND end_date < today (local tz)`, deletes inside a lock, writes per-row `AuditLog` entries.
-- [ ] Extend `services/TriggersService.gs` to install a daily time-based trigger on `Expiry_runExpiry`.
-- [ ] Ensure the bootstrap wizard finishes by calling `TriggersService.install()`.
-- [ ] Update all utilization math to count only currently-living rows (temp rows with `end_date >= today`).
+- [x] Implement `services/Expiry.gs#Expiry_runExpiry()` — scans `Seats` for `type=temp AND end_date < today (Utils_todayIso, script tz)`, deletes inside a single `Lock_withLock(30 s)`, collects `before`-rows, flushes per-row `AuditLog` entries via `AuditRepo_writeMany` at end of run, logs a `[Expiry] completed in Xms — N rows expired` summary.
+- [x] Extend `services/TriggersService.gs` to install a daily time-based trigger on `Expiry_runExpiry` at `Config.expiry_hour`. Idempotent — re-running removes existing planned triggers and installs fresh ones. Return shape `{installed, removed, message}`.
+- [x] Bootstrap wizard's Complete-Setup step already calls `TriggersService_install` (Chunk 4); it becomes real this chunk. The returned `message` flows into the `setup_complete` audit row's `after_json.triggers_install` field.
+- [x] Add manager-facing surface: `ApiManager_listTriggers` (read-only) and `ApiManager_reinstallTriggers` (writes audit `action='reinstall_triggers'`). Add "Reinstall triggers" button + live triggers list to the manager Configuration page; the `expiry_hour` row carries a hint that saving alone doesn't reschedule.
+- [x] `Kindoo Admin → Install/reinstall triggers` + `Kindoo Admin → Run expiry now` sheet-menu items (via `services/Setup.gs#onOpen`) so an operator can self-heal without leaving the Sheet.
+- [x] Utilization math: no code change needed — Chunk 5's Rosters service counts every row in `Seats`, so expiry naturally drops the count and clears the "expired" badge once the row is gone (verified in the manual walkthrough).
 
 **Acceptance criteria**
 
-- A temp row with an end-date in the past is deleted within 24 hours of reaching that date.
-- The deletion appears in `AuditLog` with `actor_email="ExpiryTrigger"` and a populated `before_json`.
-- Running `runExpiry` manually twice in a row produces zero deletes on the second run.
+- A temp row with `end_date < today (local tz)` is deleted within 24 hours (by the daily trigger at `Config.expiry_hour`); a manual run via `Kindoo Admin → Run expiry now` deletes it immediately.
+- The deletion appears in `AuditLog` with `actor_email='ExpiryTrigger'`, `action='auto_expire'`, `entity_type='Seat'`, `entity_id=<seat_id>`, populated `before_json`, empty `after_json`.
+- A seat with `end_date=today` is NOT deleted (today is not strictly less than today); a seat with `end_date=tomorrow` is NOT deleted.
+- Non-temp seats (`auto`, `manual`) are NOT deleted regardless of date.
+- Running `Expiry_runExpiry` twice in a row produces zero deletes on the second run.
+- `TriggersService_install()` is safely re-runnable: a second call removes the existing `Expiry_runExpiry` trigger and creates a fresh one. `ScriptApp.getProjectTriggers()` shows exactly one daily trigger for `Expiry_runExpiry` after either call.
+- Bootstrap Complete-Setup's audit row now carries the real install summary in `after_json.triggers_install` (no longer the Chunk-4 stub's log-line).
+- Manager clicks "Reinstall triggers" → triggers list updates live, one audit row written with `action='reinstall_triggers'`.
+- R-1 race integration (from Chunk 7): a pending remove request whose target temp seat is deleted by Expiry auto-completes on the manager's subsequent Complete click with the `completion_note` stamped — two distinct audit rows (`auto_expire` from Expiry, `complete_request` from Complete), not a duplicate delete.
 
 **Out of scope**
 
 - Notifying users when their temp seat expires (not in spec).
+- Weekly import trigger (Chunk 9).
+- Over-cap warning emails (Chunk 9).
 
 ---
 

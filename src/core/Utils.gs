@@ -68,6 +68,33 @@ function Utils_todayIso() {
   return Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
 }
 
+// Coerce a Sheet cell value to a YYYY-MM-DD ISO date string at the read
+// boundary. Data-model.md declares start_date / end_date as ISO strings,
+// but Google Sheets auto-converts typed YYYY-MM-DD values into Date
+// objects on cell entry. getValues() then hands us a Date, and
+// String(date) renders `Wed Apr 20 2026 00:00:00 GMT-0600 …` — which
+// leaks to the UI and also breaks `end_date < today` lexical compares
+// in Expiry_runExpiry.
+//
+// This helper normalises either shape:
+//   - Date → formatted YYYY-MM-DD in the script's timezone (matches
+//     Utils_todayIso so both sides of the expiry compare live in the
+//     same tz).
+//   - string → trimmed; a string that already looks like a date is
+//     returned as-is. (Manual entries like '2026-04-20' from the UI
+//     flow through unchanged.)
+//   - null / undefined / '' → '' (not applicable; manual rows, auto
+//     rows, and never-set cells all use empty).
+function Utils_formatIsoDate(value) {
+  if (value == null) return '';
+  if (value instanceof Date) {
+    var tz = Session.getScriptTimeZone();
+    return Utilities.formatDate(value, tz, 'yyyy-MM-dd');
+  }
+  var s = String(value).trim();
+  return s;
+}
+
 function Utils_uuid() {
   return Utilities.getUuid();
 }
