@@ -1,6 +1,6 @@
 # Build plan
 
-11 chunks, each independently reviewable and shippable. Dependency graph below each chunk; acceptance criteria are the "done" signal — if the criteria don't all pass, the chunk isn't shippable.
+11 chunks, each independently reviewable and shippable, plus two performance chunks (10.5 and 10.6) inserted between Chunks 10 and 11 after Chunk 10 shipped — post-polish timing measurements on the deployed app showed page latency was the one thing standing between "functional" and "users will come back." Numbered 10.5 and 10.6 rather than renumbered so the surrounding narrative (the 11-chunk build order in spec.md §14) stays intact. Dependency graph below each chunk; acceptance criteria are the "done" signal — if the criteria don't all pass, the chunk isn't shippable.
 
 ## Dependency overview
 
@@ -15,10 +15,12 @@
                └─ 8 Expiry ────┤
                     └─ 9 Weekly import trigger + over-cap
                          └─ 10 Audit Log page + polish
-                              └─ 11 Cloudflare Worker
+                              └─ 10.5 Caching pass (perf)
+                                   └─ 10.6 Client-side navigation (perf)
+                                        └─ 11 Cloudflare Worker
 ```
 
-Chunks 3 and 4 can develop in parallel after Chunk 2. Chunk 5 and 8 can develop in parallel after 3/6.
+Chunks 3 and 4 can develop in parallel after Chunk 2. Chunk 5 and 8 can develop in parallel after 3/6. Chunks 10.5 and 10.6 are strictly sequential — 10.6 layers on top of 10.5's cached reads (but doesn't hard-require them; see 10.6's "Interaction with 10.5" note).
 
 ---
 
@@ -432,11 +434,127 @@ _Proof 6 — failure modes_
 
 ---
 
+## Chunk 10.5 — Caching pass
+
+**Goal:** reduce page latency by ~40-60 % on typical pages by wrapping the hot read paths in `CacheService` with explicit invalidation at every write site. No architectural change, no behaviour change visible to users. Drop-in performance lift.
+
+**Dependencies:** Chunk 10 (Dashboard is the read-heaviest endpoint and the one whose p50 the operator will feel most; without Chunk 10 the measurable target doesn't exist yet).
+
+**Scope note.** This is the FIRST chunk to use `CacheService` in the Main project. Chunk 1's original plan had a JWKS cache as precedent, but the A-8 auth pivot deleted the JWKS path (see `open-questions.md` A-8 / `chunk-1-scaffolding.md` deviation list). 10.5's `core/Cache.gs` is therefore new, not a generalisation of existing code — but the shape (per-script cache, JSON serialization, short TTLs, hit/miss logging via `Logger.log`) mirrors what that deleted JWKS cache used, so "same pattern" is still accurate in intent.
+
+**Sub-tasks**
+
+- [ ] Implement `core/Cache.gs`:
+  - `Cache_memoize(key, ttlSeconds, computeFn)` — standard get-or-compute over `CacheService.getScriptCache()`, with JSON serialization of the computed value.
+  - `Cache_invalidate(keyOrKeys)` — removes one or many keys (accepts either a string or an array).
+  - `Cache_invalidateAll()` — nuclear option for config / roster changes that affect many keys at once; used sparingly (e.g. a ward rename from `ApiManager_wardsUpsert`).
+  - Size-limit handling: `CacheService.put` rejects values > 100 KB; on over-size, log a `[Cache] size-limit skipped <key> (<n>KB)` line and fall through to the un-cached compute. Never throw — cache misses must not break reads.
+  - Internal hit/miss counters held in a module-level var (reset on each script invocation, which is fine — counters are per-request so the Config page can surface "we hit the cache N times this request" for debug). Exposed via `Cache_stats()`.
+- [ ] Wrap the hot read paths. The list below is illustrative, not authoritative — the implementer discovers what's actually hot during the measurement pass and adjusts. At minimum:
+  - `Config_get(key)` — per-key memoization, **60 s TTL**.
+  - `KindooManagers_getActive()` — 60 s TTL.
+  - `Access_getAll()` — 60 s TTL.
+  - `Wards_getAll()` — 300 s TTL (rarely changes).
+  - `Buildings_getAll()` — 300 s TTL.
+  - `WardCallingTemplate_getAll()` / `StakeCallingTemplate_getAll()` — 300 s TTL.
+- [ ] Colocate invalidation at every write site:
+  - Every repo `_insert` / `_update` / `_delete` invalidates its tab's cache keys before returning to the caller (so the API layer's audit row still sees fresh data on subsequent reads inside the same request).
+  - `Importer_runImport` invalidates `Seats` + `Access` keys at end of run, after the lock releases (so the over-cap pass reads fresh).
+  - `Expiry_runExpiry` invalidates `Seats` keys at end of run.
+  - `Config_update` invalidates the specific Config key it just wrote.
+- [ ] Cache stats debug view on the manager Configuration page — small read-only panel showing per-key hit / miss counts (or aggregate if per-key is too noisy). New `ApiManager_cacheStats` endpoint.
+- [ ] **Role-resolution caching decision** — do NOT cache role resolution per-user. Chunk 10.5's caches are per-script (`getScriptCache()`), and Alice's role set is not Bob's. Caching the reads that role resolution DOES (`KindooManagers_getActive` + `Access_getAll`) makes role resolution itself cheap without introducing per-user cache scope. If a per-user cache is later needed (e.g. a specific hot-path rpc justifies `getUserCache()`), introduce it one call site at a time, never as a blanket default.
+- [ ] Implement `Sheet_getTab(name)` per-request memo (architecture.md §7 already describes one; Chunk 1 didn't land it). Lives in `core/Cache.gs` (or a sibling `core/Sheet.gs` — implementer's call) and is distinct from `CacheService` — it's a request-lifetime module var that caches the `SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name)` handle. Repos adopted one-by-one; the architecture already assumes it exists, so adoption is a refactor, not a new concept.
+- [ ] Measure before / after on three representative pages (Dashboard, bishopric Roster, manager AllSeats). Record timings in the chunk-10.5 changelog. Use `elapsed_ms` instrumentation where it already exists (`ApiManager_dashboard` logs it; add it to the other two endpoints for this chunk).
+- [ ] Audit every write path for missing invalidation calls. Add a short "Invalidation sites" block to the chunk-10.5 changelog listing every repo / service write site and the cache key it invalidates — makes it one review pass to confirm completeness.
+
+**Acceptance criteria**
+
+- `core/Cache.gs` exists and is the single call site for `CacheService` in non-Auth code. (Auth.gs currently doesn't use CacheService, so "JWKS stays in Auth.gs" from the pre-chunk plan collapses to "don't replicate Cache.gs logic elsewhere".)
+- At minimum the six repo read paths listed above are memoized.
+- Every `_insert` / `_update` / `_delete` path has an invalidation call, verified by code review (and enumerated in the changelog's invalidation-sites block).
+- The Dashboard page's measured time-to-interactive drops by at least 30 % vs. the Chunk 10 baseline. Record before / after numbers in the changelog.
+- `bishopric/roster` and `mgr/seats` show comparable improvements.
+- Manager Configuration page shows a cache stats panel with hit / miss counts.
+- No behaviour regressions — the full end-to-end walkthrough (sign-in → roster read → request submit → manager queue → complete → manager seat edit → manager import → audit log filter) passes.
+- All existing runnable verifications still pass (`Utils_test_*`, the Chunk-2-era `ApiManager_test_forbidden`, etc.).
+
+**Non-obvious concerns to watch during implementation**
+
+- **Cache invalidation is the main risk.** A missed invalidation means stale data for up to the TTL (worst case 5 minutes for ward / building / template reads). Mitigation: keep the write sites narrow (repos + importer + expiry + config update only), and enumerate every invalidation site in the changelog so the review pass is a literal checklist.
+- **The Sheet remains the source of truth.** `CacheService` outages or evictions fall through to the real read. Nothing that blocks a fresh page load should live ONLY in the cache.
+- **Per-request memo ≠ CacheService.** The `Sheet_getTab` memo is a request-lifetime JS var; `CacheService` is cross-request. Don't confuse the two — each request builds its own sheet-handle memo, but `KindooManagers_getActive`'s memoization survives for 60 s across requests.
+- **Role-resolution stays un-cached.** Per-script-cache of "email → roles" would leak Alice's roles to Bob under the same script instance. Per-user-cache would work but is more moving parts. 10.5's scope explicitly avoids that — the underlying reads being cached is enough.
+- **Payloads above 100 KB skip the cache.** The full `AuditLog` read (Chunk 10's `AuditRepo_getAll`) can exceed this at year+1 scale — good; it shouldn't be cached anyway (it's already the ONE paginated read in the app; memoizing it fights the pagination contract). Confirm the log + skip behaviour for this path specifically.
+
+**Out of scope**
+
+- Materialized roll-ups / a `DashboardCache` tab (that was an alternative design; rejected in favour of `CacheService`).
+- Client-side caching (sessionStorage / IndexedDB) — Chunk 10.6 handles navigation-level optimizations.
+- Per-user cache scope unless a specific endpoint clearly needs it.
+- Refactoring the Importer / Expiry diff logic — they already batch; caching at the read boundary is orthogonal.
+
+---
+
+## Chunk 10.6 — Client-side navigation (persistent shell)
+
+**Goal:** eliminate the 1-2 second full-page reload on every intra-app navigation. `Layout` + `Nav` + topbar persist across navigations; only the main content area swaps, fetched via `rpc` rather than a fresh `Main.doGet`. Dramatic UX improvement for users clicking between pages.
+
+**Dependencies:** Chunk 10.5 (benefits from cached reads underneath, though doesn't hard-require them — see "Interaction with 10.5" below).
+
+**Sub-tasks**
+
+- [ ] Intercept nav link clicks on the client side. Instead of letting `data-page` anchors navigate the top frame (which triggers `Main.doGet` → bootstrap → full `Layout` re-render), fetch the target page's HTML + initial data via `rpc` and swap it into the content area in place.
+- [ ] Implement `api/ApiShared.gs#ApiShared_renderPage(token, pageId, queryParams)` — same response shape the Chunk-1 bootstrap currently returns except the `Layout` shell is not re-rendered. Returns `{ principal, pageHtml, pageModel }`; `navHtml` stays cached client-side from the initial bootstrap (see below).
+- [ ] **History API integration** — `pushState` on each intra-app navigation so browser back / forward work and the iframe's URL reflects the current page. Important caveat (see architecture.md new client-side-nav section): Apps Script wraps user HTML in a `*.googleusercontent.com` iframe; the top frame is on `script.google.com`. History manipulations happen inside the iframe. The top frame's address bar does NOT change — sharable deep links rely on the existing direct-load `Main.doGet` path with `?p=`.
+- [ ] Query-param forwarding — filter state (ward, type, etc.) survives navigation. Source of truth becomes the iframe's current pushState URL; `QUERY_PARAMS` is re-derived on each swap rather than frozen at initial bootstrap.
+- [ ] Deep-link resilience — direct-load of any page (a fresh browser visit to Main `/exec?p=mgr/audit&action=...`) continues to work via the existing `Main.doGet` path unchanged. Client-side nav is a layered optimization, not a replacement.
+- [ ] Loading state during the swap — content area shows an `.empty-state` "Loading…" indicator (reusing Chunk 10's polish class), not a flash of empty content.
+- [ ] **Per-page init function convention.** Each page's inline `<script>` block currently executes on first load via `rehydrateScripts` (`Layout.html`). For 10.6, every page template exports an init function whose name matches the pageId (pageId `mgr/seats` → `mgr_seats_init`; `/` → `_`). The shell calls `window.<pageId>_init(pageModel)` after injecting `pageHtml`. Pages that need teardown on swap return a teardown fn from their init (the shell calls it before swapping in the next page). `rehydrateScripts` is kept for the initial bootstrap path; the client-side-nav swap path calls the init fn directly instead of rehydrating (cleaner — the script block body runs once per app load, not once per navigation).
+- [ ] Memory-leak audit across 20+ navigations. Two patterns are allowed: (a) event delegation on stable parents (preferred — no listener cleanup); (b) init returns a teardown that removes what it added. No bare `addEventListener` on page DOM without one of those. Chunk-6 pages (`NewRequest`, `MyRequests`, `RequestsQueue`, `AllSeats`) will need the most attention since they wire several listeners per row.
+- [ ] Multi-role users context-switch — `Nav.html` is rendered once at login per the principal's role set and cached client-side across navigations. If a user's roles change mid-session (unusual: requires LCR change + import run) the nav is stale until a full reload. Accept this; document the `sessionStorage`-refresh rule in the architecture section.
+
+**Acceptance criteria**
+
+- Clicking a nav link swaps the content area without a full page reload — verifiable via Network tab (no new `Main.doGet` request; only the `ApiShared_renderPage` rpc).
+- Browser back / forward buttons work for intra-app navigation.
+- Direct-load deep links (copying a URL from the address bar and opening a new tab) still work via the `Main.doGet` flow — Chunk 5's `QUERY_PARAMS` deep-link behaviour unchanged.
+- Filter-state deep links (e.g. `?p=mgr/seats&ward=CO`) work via BOTH direct-load and in-app navigation.
+- No memory leaks across 20+ navigations (manual test: navigate rapidly between pages, check DOM size + listener count stay stable via DevTools Memory profile).
+- Measured time-to-interactive on intra-app navigation drops by at least 50 % vs. the Chunk 10.5 baseline.
+- Loading indicator visible during the content swap; no flash of empty content.
+- Every Chunk 1-10 acceptance criterion still passes (full walkthrough).
+- Nav highlights the current page correctly after each swap (Chunk 5's "active" behaviour preserved).
+
+**Non-obvious concerns to watch during implementation**
+
+- **Iframe nesting.** The app renders inside an iframe on `n-<hash>-script.googleusercontent.com`; the top frame is on `script.google.com`. History API manipulations happen inside the iframe — the top frame's URL does not change. This is acceptable: deep-linkable sharing continues to use the top-frame URL (unchanged from Chunk 5), and in-app navigation relies on the iframe's own history stack. Document the boundary clearly in the architecture section.
+- **Script loading and re-execution.** The shared `ui/ClientUtils.html` helpers (`rpc`, `toast`, `escapeHtml`, `rosterRowHtml`, `renderUtilizationBar`) already load once at `Layout` and persist across swaps — keep them there. The per-page init-fn convention means page JS runs once per swap, not once per initial parse; the pattern is: `<script>function mgr_seats_init(model) { … }</script>` in each page template, shell calls the fn after injecting HTML.
+- **Exported-init-function pattern over eval.** The alternative is `new Function(scriptText)` / eval — more flexible but harder to reason about and worse for stack traces. Go with named init fns; it's cleaner and testable.
+- **Memory leaks.** Event delegation on stable parents is the default pattern (no teardown needed). Where a page can't delegate (e.g. a dialog attaches to `document`), the init returns a teardown fn and the shell calls it before the next swap.
+- **Filter-state URL rewrite.** Chunk 5's out-of-scope list included "URL reflects post-load filter changes on AllSeats" — the iframe couldn't manipulate the top-frame URL. 10.6 unlocks this for intra-app nav (pushState in the iframe), but the top-frame URL bar still doesn't change; only direct-load deep links and an intentional navigation show in the address bar.
+- **Back-button filter preservation.** A user who filters the Audit Log, navigates to Dashboard, then hits Back, expects the filter to restore. The History API's popstate gives us that for free if pushState URLs carry the filter params. Standard pattern.
+
+**Interaction with 10.5**
+
+10.6 benefits from the cached reads but doesn't require them. If 10.5 isn't shipped, 10.6 still works — just without the read-path speedup. Always build 10.5 first regardless: a cache-backed read + nav-swap overlap in the latency budget, and baselining 10.6 against un-cached reads gives misleadingly flattering numbers.
+
+**Out of scope**
+
+- Prefetch on hover / predictive loading.
+- Service Worker / offline capability.
+- Route-level code splitting — all pages are small.
+- Animated page transitions.
+- Top-frame URL rewrite during in-app nav (architecturally impossible across the googleusercontent ↔ script.google boundary).
+- Any server-side change beyond adding `ApiShared_renderPage` and the per-page init-fn convention.
+
+---
+
 ## Chunk 11 — Cloudflare Worker + custom domain
 
 **Goal:** `https://kindoo.csnorth.org` serves the app.
 
-**Dependencies:** a stable deploy from Chunk 10.
+**Dependencies:** a stable deploy from Chunk 10 (the Chunk 10.5 / 10.6 performance work is independent of Chunk 11 and can ship before OR after; ordering was "10.5, 10.6, then 11" because the performance gap was felt before the custom-domain need).
 
 **Sub-tasks**
 

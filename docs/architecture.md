@@ -327,6 +327,70 @@ One file per tab under `repos/`. Each exports pure functions that return plain J
 
 Tried it mentally — every function ends up switch-casing on tab name. Per-tab repos co-locate column knowledge and validation with the thing being validated. Testable by swapping the repo module.
 
+## 7.5. Caching layer (Chunk 10.5)
+
+Chunk 10.5 adds a thin `core/Cache.gs` module that wraps `CacheService.getScriptCache()` with a memoize / invalidate API, and adopts it at a short list of hot read paths. The module is the **single call site for `CacheService` in the Main project** — no other file touches `CacheService` directly, so invalidation discipline is reviewable from one place.
+
+**Why this chunk exists.** Chunks 1-10 shipped a working v1. Post-Chunk-10 measurements showed the Dashboard endpoint reading the full `Requests`, `Seats`, `Wards`, `Config`, `AuditLog`, and trigger list on every page load; `bishopric/Roster` re-reading `Seats` + `Wards` + `Buildings` + `Requests` (for `removal_pending`) on every load; `mgr/seats` doing similar work across all scopes. At target scale the reads themselves are fast, but `SpreadsheetApp` round-trips add up — 300-500 ms per page is the felt latency, and client-side navigation (§8.5) can't close that gap alone.
+
+### Module shape
+
+```
+Cache_memoize(key, ttlSeconds, computeFn)   // get-or-compute over getScriptCache()
+Cache_invalidate(keyOrKeys)                 // removes one or many keys
+Cache_invalidateAll()                       // nuclear option (ward rename, etc.)
+Cache_stats()                               // per-request hit/miss counters, for the debug panel
+```
+
+Serialization is JSON; values ≥ 100 KB skip the cache (Apps Script's per-value limit) with a `[Cache] size-limit skipped <key> (<n>KB)` log line and fall through to the un-cached compute. Throwing on over-size would break reads, which is unacceptable — the Sheet stays the source of truth and cache misses must be transparent.
+
+### Read paths memoized (initial list)
+
+| Function | TTL | Invalidated by |
+| --- | --- | --- |
+| `Config_get(key)` | 60 s | `Config_update(key, …)` |
+| `KindooManagers_getActive()` | 60 s | `KindooManagers_insert` / `_update` / `_delete` |
+| `Access_getAll()` | 60 s | `Access_insert` / `_update` / `_delete`; `Importer_runImport` end-of-run |
+| `Wards_getAll()` | 300 s | `Wards_insert` / `_update` / `_delete` |
+| `Buildings_getAll()` | 300 s | `Buildings_insert` / `_update` / `_delete` |
+| `WardCallingTemplate_getAll()` | 300 s | `WardCallingTemplate_insert` / `_update` / `_delete` |
+| `StakeCallingTemplate_getAll()` | 300 s | `StakeCallingTemplate_insert` / `_update` / `_delete` |
+
+TTLs are short on write-frequent tabs (Config, KindooManagers, Access) and longer on nearly-static tabs (Wards, Buildings, Templates). The 60 s floor accepts up to a minute of staleness on a missed invalidation; the 300 s ceiling accepts up to five minutes on the nearly-static tabs. Acceptable at target scale.
+
+### Invalidation discipline
+
+Every write site owns its invalidation call. Writes are concentrated in:
+
+- Repo `_insert` / `_update` / `_delete` paths (invalidate their own tab's cache keys before returning).
+- Importer end-of-run (invalidate `Seats` + `Access` keys after the over-cap pass finishes; the invalidation lives in `Importer_runImport`, not in `SeatsRepo_bulkInsertAuto`, so a single batched insert doesn't thrash the cache in the middle of the run).
+- Expiry end-of-run (same shape).
+- `Config_update` (invalidate the specific key it just wrote).
+
+The chunk-10.5 changelog enumerates every invalidation site as a review checklist. A missed invalidation is the dominant failure mode for this chunk; enumeration + review is cheaper than any dynamic detection scheme.
+
+### What is NOT cached
+
+- **Role resolution.** Alice's role set is not Bob's. Per-script-cache of `(email → roles)` would leak roles across users under the same script instance; per-user-cache is more moving parts than the problem warrants. The reads role resolution DOES (`KindooManagers_getActive` + `Access_getAll`) are cached at the repo layer, so role resolution stays cheap without introducing per-user cache scope.
+- **`AuditLog` reads.** The tab grows unbounded (~20k rows / year at target scale) and is already the ONE paginated read in the app (§1 "one exception"). Caching the full-tab read would fight the pagination contract, and the per-row payload can exceed the 100 KB CacheService limit at year+1 scale. The `ApiManager_auditLog` endpoint comment block notes this explicitly.
+- **`Requests` and `Seats` reads.** Write-hot enough that short-TTL cache would produce staleness on the very pages (`mgr/queue`, `mgr/seats`) that users refresh most. If Dashboard's `Seats` read becomes a measured bottleneck, revisit — but the default is uncached.
+
+### Relationship to the JWKS cache
+
+`Auth.gs` no longer uses `CacheService` (the JWKS cache was deleted when Chunk 1's auth pivot landed on the HMAC-signed session token — see `open-questions.md` A-8 and `chunk-1-scaffolding.md` deviation list). Chunk 10.5's `core/Cache.gs` is therefore the project's **first** `CacheService` user in shipped code. The module's shape mirrors what the original JWKS cache used (per-script cache, JSON serialization, short TTLs, hit/miss logging) — "same pattern, new call sites" is accurate in intent even though the literal precedent isn't in the tree.
+
+If a future auth refactor reintroduces a network-identity lookup (e.g. People API for avatars), that one lives in `Auth.gs` with its own cache, distinct from `core/Cache.gs` — auth is cross-cutting enough that it owns its own cache surface. Enforcement is architectural, not code-level: `core/Cache.gs` is for repo / service read paths; `Auth.gs` is for auth-scope network calls.
+
+### Per-request sheet-handle memo — `Sheet_getTab(name)`
+
+Distinct from `CacheService`. `Sheet_getTab(name)` memoizes `SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name)` within a single script invocation (a module-level `var` that resets between requests). Apps Script's `getActiveSpreadsheet().getSheetByName()` is not free — each call hits the underlying spreadsheet handle — so collapsing N calls per request to one is a measurable lift when every repo touches the spreadsheet.
+
+§7 above has described this helper since Chunk 1, but the actual repos call `SpreadsheetApp.getActiveSpreadsheet().getSheetByName(...)` directly — the helper hadn't been written. Chunk 10.5 closes that gap alongside the `CacheService` work: `Sheet_getTab` is implemented in `core/Cache.gs` (or a sibling `core/Sheet.gs`), and repos are refactored to call it. The CacheService-level cache and the request-lifetime memo are separate concerns; the latter doesn't need invalidation (the request ends and the memo vanishes).
+
+### Debug surface
+
+`ApiManager_cacheStats(token)` returns `{ hits: N, misses: M, skipped_oversize: [...] }`. The manager Configuration page renders a small read-only panel reflecting the counters. Hit / miss counts reset per request — the panel answers "is the cache working right now?", not "what's our long-term hit rate" (the latter would need a sheet-backed counter, which is not worth building).
+
 ## 8. HTML & page routing
 
 - **Entry point**: `doGet(e)` returns an `HtmlOutput` built from `Layout.html` via `HtmlService.createTemplateFromFile('ui/Layout')`.
@@ -363,6 +427,67 @@ Multi-role principals land on the highest-privilege role's default (manager > st
 ### Role-scoped reads
 
 Roster reads enforce scope at the **API layer**, not the UI. A bishopric member for ward CO physically cannot read ward GE's roster by crafting a URL or calling `ApiBishopric_roster` with a spoofed scope — the scope is derived server-side from the verified principal via `Auth_findBishopricRole(principal)`, never from a parameter. Cross-ward reads for stake users go through `ApiStake_wardRoster(token, wardCode)` which validates the ward_code exists and that the caller holds the `stake` role. Managers use `ApiManager_allSeats(token, filters)` which checks `manager` independently. Every endpoint checks its own role requirement — having manager role doesn't satisfy a bishopric-scoped check.
+
+## 8.5. Client-side navigation (Chunk 10.6)
+
+Pre-Chunk-10.6, every nav-link click navigates the top frame to `Main /exec?p=<page>`, which re-runs `doGet` → `Router_pick` → `Layout` re-render → `ApiShared_bootstrap` rpc → page render. The `Layout` shell (topbar, sign-out, nav, sidebar) re-renders identically every time — wasted work, felt as a 1-2 second latency budget per click.
+
+Chunk 10.6 layers a client-side swap on top: the shell persists across navigations; only the content area is re-rendered, fetched via one rpc rather than a fresh `doGet` round-trip.
+
+### Endpoint — `ApiShared_renderPage(token, pageId, queryParams)`
+
+Returns `{ principal, pageHtml, pageModel }` — the same page fields `ApiShared_bootstrap` returns, minus the `navHtml` and `template` wrapping. The nav is cached client-side from the initial bootstrap; the role set doesn't change mid-session at target scale (role changes require an LCR update + an import run, which imply a full reload anyway).
+
+Server-side implementation reuses `Router_pick`'s page-resolution logic — same pageId → template mapping, same role-scope enforcement, same `pageModel` shape. The difference is what's returned: no `Layout` wrapper HTML, no nav rebuild. Side effects (AuditLog, locks) are unchanged — `ApiShared_renderPage` is a read-only router, same as `ApiShared_bootstrap`.
+
+### Shell swap — `ui/ClientUtils.html` additions
+
+The shell intercepts clicks on `a[data-page]` anchors, calls `ApiShared_renderPage`, then:
+
+1. Calls the outgoing page's teardown fn (if it registered one via its init return value).
+2. Injects the new `pageHtml` into `#content`.
+3. Calls the new page's init fn (see below).
+4. `pushState`s a URL reflecting the new page + its query params, so browser back / forward work.
+5. Updates the nav's active-link highlight.
+
+Direct-load (a fresh browser tab, a shared URL) still flows through `Main.doGet` → Layout → bootstrap, identical to Chunks 1-10. The client-side path is strictly an optimization for intra-app navigation.
+
+### Per-page init-function convention
+
+Each page template exports an init fn whose name derives from the pageId: `mgr/seats` → `mgr_seats_init`; `new` → `new_init`; `bishopric/roster` → `bishopric_roster_init`. Signature: `function <pageId>_init(pageModel) { … ; return teardownFn?; }`.
+
+The shell's swap-path calls `window[initName](pageModel)` after injecting the page HTML. Initial bootstrap (a fresh doGet) still runs page scripts via `rehydrateScripts` — the `<script>` block inside each page template defines the init fn on `window`, which the shell then calls. Both paths end up calling the same init; the difference is only in who triggers it (`rehydrateScripts` on bootstrap, an explicit `window[initName]` call on swap).
+
+Alternative considered: `eval` / `new Function(scriptText)` on each swap. Rejected — stack traces degrade, refactoring becomes harder, and the test-vs-prod behaviour diverges subtly. Named init fns are boring and legible.
+
+### Memory-leak discipline
+
+Two allowed patterns for per-page event listeners:
+
+- **Event delegation on stable parents** (preferred). A page attaches a single listener to `#content` (or a page-root element) and inspects `event.target`. No listener cleanup needed because the listener lives on an element that doesn't survive the swap — the old `#content` contents are destroyed, and the new page's init reattaches.
+- **Teardown fn returned from init.** If a page needs to attach to `document` (e.g. a modal's keyboard handler) or to `window` (e.g. a resize listener), its init returns a teardown that removes what it added. The shell calls the teardown before swapping in the next page.
+
+Bare `addEventListener(handler)` on page DOM without one of those patterns is a bug. Chunk-6 pages (`NewRequest`, `MyRequests`, `RequestsQueue`, `AllSeats`) wire several listeners per row; they'll need the closest attention during the adoption pass.
+
+### History API boundaries — iframe vs. top frame
+
+Apps Script wraps `HtmlService` output in an iframe on `n-<hash>-script.googleusercontent.com`; the top frame is on `script.google.com`. These are **two different origins** — the iframe cannot manipulate `window.top.location` beyond a handful of whitelisted operations (full-URL `.replace()` for navigation works; `.pathname` / `.search` writes do not).
+
+Chunk 10.6's History API work happens **inside the iframe**. `history.pushState(…, '?p=mgr/seats&ward=CO')` updates the iframe's URL and its back / forward stack; the top frame's URL bar stays on `.../macros/s/<SCRIPT_ID>/exec`. This is an acceptable tradeoff:
+
+- **Intra-app back / forward** — works. The iframe pops its own history stack; the shell's popstate handler re-renders the new content.
+- **Sharable deep links** — still use the top-frame URL (unchanged from Chunk 5). A user who wants to share "the Audit Log filtered by action=over_cap_warning" still copies the top-frame URL, and the recipient's direct-load flows through `Main.doGet` with the query string intact.
+- **Top-frame address bar does not reflect intra-app nav.** Acceptable: users rarely read the address bar of an Apps Script web app (it's a `/macros/s/<id>/exec` URL), and the in-app nav's own highlight makes the current page obvious.
+
+Chunk 5's "URL reflects post-load filter changes on AllSeats" out-of-scope item is effectively unlocked for intra-app nav by 10.6 (pushState in the iframe carries the filter state) — but the top-frame URL still doesn't change on filter changes.
+
+### Nav staleness — accepted
+
+`Nav.html` is rendered once per principal at initial bootstrap and cached client-side. If a user's role set changes mid-session (rare: requires an LCR change + import run), the nav is stale until the user reloads. Accept this; a full reload resolves it. Role-change frequency at target scale is << 1/week; the optimization isn't worth a per-swap nav re-render.
+
+### Interaction with 10.5
+
+10.6 benefits from 10.5's cached reads but doesn't require them. A cache miss on a read underneath an `ApiShared_renderPage` call is identical latency to a cache miss on the Chunk-10 `doGet` path — the swap optimization overlaps with, but doesn't depend on, the read optimization. Ordering is 10.5 first then 10.6 because baselining 10.6 against un-cached reads produces misleadingly flattering numbers.
 
 ## 9. Importer & Expiry triggers
 

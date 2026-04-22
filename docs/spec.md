@@ -276,3 +276,5 @@ Each chunk is independently reviewable and shippable. Expanded into sub-tasks, a
 9. **Weekly import trigger + over-cap warnings** — schedule the import, dashboard warnings, over-cap emails.
 10. **Audit Log page + polish** — filterable log view, utilization bars, dashboard stats, responsive CSS pass.
 11. **Cloudflare Worker + custom domain** — last, since the Apps Script URL works fine during development.
+
+Two performance chunks were inserted between 10 and 11 after Chunk 10 shipped and timing measurements on the deployed app made page latency the dominant gap — numbered **10.5 (caching pass)** and **10.6 (client-side navigation)** rather than renumbered so this 11-chunk narrative stays intact. Both are behaviour-preserving — nothing in §§1–13 changes. See `build-plan.md` for their sub-tasks and acceptance criteria.
