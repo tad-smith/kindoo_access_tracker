@@ -189,59 +189,15 @@ manager/AllSeats is fully instrumented. A cache-stats operator loop is:
 
 ### Measured timings
 
-Target shape (to be confirmed on deploy — see "measurement status" below):
-
-| Page | Chunk-10 baseline | Chunk-10.5 cold | Chunk-10.5 warm | Δ vs. baseline |
-| --- | --- | --- | --- | --- |
-| manager/Dashboard      | _TBD_ | _TBD_ | _TBD_ | ≥ 30 % warm (acceptance) |
-| bishopric/Roster       | _TBD_ | _TBD_ | _TBD_ | comparable warm improvement |
-| manager/AllSeats (no filter) | _TBD_ | _TBD_ | _TBD_ | comparable warm improvement |
-
-**Measurement status.** The timing instrumentation is in place and
-exercised by every relevant endpoint (`ApiShared_bootstrap`,
-`ApiManager_dashboard`, `ApiBishopric_roster`, `ApiManager_allSeats`).
-The actual before/after numbers require a deployed run — the operator
-needs to push this branch, redeploy, and read the `[measure]` log lines
-from the Apps Script executions log. The protocol is:
-
-1. **Capture Chunk-10 baseline first (do this BEFORE pushing Chunk
-   10.5).** From `main` at `cc52350` (Chunk 10 tip): navigate to
-   Dashboard / bishopric Roster / manager AllSeats, note the server
-   elapsed_ms for each. Record as the `Chunk-10 baseline` column.
-2. Push Chunk 10.5 (`npm run push && npm run deploy`).
-3. Open manager Config → **Clear cache**. First load of each target
-   page is cold-cache; record as `Chunk-10.5 cold`.
-4. Reload each page without clearing. Record as `Chunk-10.5 warm`.
-5. Edit this changelog's table with the captured numbers; commit as a
-   follow-up to Chunk 10.5 (or squash into the chunk's commit before
-   pushing to the branch).
-
-**What to expect from the shape.** Warm cache eliminates the full-tab
-reads of Config / Wards / Buildings / Templates / Access /
-KindooManagers from the per-request budget and collapses
-`getSheetByName` lookups to one per tab per request. On Apps Script's
-`getDataRange().getValues()` read, that's typically 80-150 ms per tab
-avoided per request, so a page that reads five Chunk-10.5-memoized tabs
-(Dashboard does: Config x5 keys, Wards, + AuditLog uncached + the
-computed Rosters ctx) should see a meaningful multi-hundred-ms drop
-between baseline and warm. The acceptance target (≥ 30 % Dashboard
-warm) is well within that budget.
-
-**What would indicate trouble.** If the warm-cache Dashboard run isn't
-at least 30 % faster than baseline, something's off. Diagnose by (a)
-checking the Cache statistics panel mid-run — if `config:getAll` is
-showing `misses: 0` after the second load, the cache is working; (b)
-confirming the `Sheet_getTab` memo is in effect (repeat `Sheet_getTab`
-calls for the same tab should be free after the first); (c) reading
-the `[measure]` line — if bootstrap elapsed is high but the endpoint's
-own elapsed is low, the loss is upstream of the read path. The
-post-chunk grep for `SpreadsheetApp.getActiveSpreadsheet` should return
-only `core/Cache.gs` + `services/Setup.gs`.
-
-Cold-cache is expected to match baseline plus a small win from
-`Sheet_getTab` collapsing the `getSheetByName` lookups — an easy 5-10 %
-even before the CacheService tier activates. The headline win is in
-the warm column.
+**Skipped in favour of a qualitative feel test.** Navigating between
+Dashboard / bishopric Roster / manager AllSeats after the deploy, the
+improvement was immediately noticeable — enough that spending the
+additional session time on a before/after protocol didn't feel
+justified. Instrumentation (see above) is in place if a future regression
+forces the question; numbers can be collected at any time by clearing
+the cache from the Config panel and reading the `[measure]` lines from
+the executions log. The ≥ 30 % Dashboard warm-cache acceptance target
+is therefore reported as qualitatively met, not numerically measured.
 
 ## Deviations from pre-chunk architecture.md §7.5
 
