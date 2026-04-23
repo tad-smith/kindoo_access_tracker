@@ -67,7 +67,9 @@
 
 <script>
 (function () {
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6: pane-scoped $.
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -116,9 +118,11 @@
         : ('Ward ' + esc(p.scope) +
            (p.ward_name ? ' (' + esc(p.ward_name) + ')' : ''));
       // Deep link to the filtered mgr/seats view. The AllSeats page reads
-      // QUERY_PARAMS.ward and accepts 'stake' as a pseudo-value. Navigate
-      // the TOP frame (not the iframe) via the MAIN_URL global that
-      // Layout.html injects.
+      // queryParams.ward (and accepts 'stake' as a pseudo-value) — the
+      // href is the top-frame fallback for right-click / middle-click,
+      // while the data-page attribute lets Layout.html's delegated
+      // click handler intercept normal clicks for a fast in-app swap
+      // (Chunk 10.6).
       var wardParam = p.scope === 'stake' ? 'stake' : p.scope;
       var href = (typeof MAIN_URL === 'string' ? MAIN_URL : '') +
         '?p=mgr/seats&ward=' + encodeURIComponent(wardParam);
@@ -127,7 +131,7 @@
         '<span class="over-cap-pool-counts">' + esc(p.count) + ' / ' +
         esc(p.cap) + '</span> ' +
         '<span class="over-cap-pool-overby">(over by ' + esc(p.over_by) + ')</span> ' +
-        '<a class="over-cap-pool-link" target="_top" href="' + esc(href) + '">View seats →</a>' +
+        '<a class="over-cap-pool-link" data-page="mgr/seats" target="_top" href="' + esc(href) + '">View seats →</a>' +
         '</li>';
     }).join('');
     banner.hidden = false;
@@ -217,7 +221,12 @@
     });
   }
 
-  $('run-import-btn').addEventListener('click', runImport);
-  loadStatus();
+  // Exported entry point (Chunk 10.6). Layout.html calls this after
+  // injecting the page HTML.
+  window.page_mgr_import_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    $('run-import-btn').addEventListener('click', runImport);
+    loadStatus();
+  };
 })();
 </script>

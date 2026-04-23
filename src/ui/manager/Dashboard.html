@@ -27,13 +27,18 @@
     relevant page (seats / queue / audit log). Reload to refresh.
   </p>
 
+  <!-- Card order (Chunk 10.6 tweak, 2026-04-22):
+         row 1: Pending + Utilization
+         row 2: Warnings + Recent Activity
+         row 3: Last Operations (spans row when only one card)
+       Grouping reason: the two rows most likely to drive action
+       (pending + over-cap warnings) cluster on the left side on
+       desktop; glanceable state (utilization, recent activity) on
+       the right; the rarely-read "when did the triggers last run"
+       card lands at the bottom. -->
   <div class="dashboard-grid" id="dashboard-grid">
     <div class="dashboard-card" id="card-pending">
       <h2 class="dashboard-card-title">Pending Requests</h2>
-      <div class="dashboard-card-empty">Loading…</div>
-    </div>
-    <div class="dashboard-card" id="card-recent">
-      <h2 class="dashboard-card-title">Recent Activity</h2>
       <div class="dashboard-card-empty">Loading…</div>
     </div>
     <div class="dashboard-card" id="card-utilization">
@@ -42,6 +47,10 @@
     </div>
     <div class="dashboard-card card-warnings" id="card-warnings">
       <h2 class="dashboard-card-title">Warnings</h2>
+      <div class="dashboard-card-empty">Loading…</div>
+    </div>
+    <div class="dashboard-card" id="card-recent">
+      <h2 class="dashboard-card-title">Recent Activity</h2>
       <div class="dashboard-card-empty">Loading…</div>
     </div>
     <div class="dashboard-card" id="card-ops">
@@ -53,10 +62,21 @@
 
 <script>
 (function () {
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6 keep-alive cache: the shell hands init the pane root.
+  // Scoping $ to the pane means rpc callbacks can write to our DOM
+  // whether the pane is currently attached (user on this tab) or
+  // cached-detached (user switched away mid-load — the writes land
+  // on the detached subtree and show up on nav-back).
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
 
   // Shared deep-link helper. The iframe can't navigate top via a relative
   // URL so we always build from MAIN_URL (Layout.html injects it globally).
+  // The returned URL is used both as the anchor's href (top-frame
+  // fallback for right-click / middle-click) and — via a sibling
+  // data-page attribute — as the target for Layout.html's delegated
+  // click handler, which intercepts normal clicks for a fast in-app
+  // swap (Chunk 10.6).
   function pageHref(page, params) {
     var base = (typeof MAIN_URL === 'string') ? MAIN_URL : '';
     if (!base) return '#';
@@ -89,7 +109,7 @@
       if (n === 0) continue;
       var href = pageHref('mgr/queue', { state: 'pending', type: t });
       list += '<li>' +
-        '<a class="dashboard-activity-link" target="_top" href="' +
+        '<a class="dashboard-activity-link" data-page="mgr/queue" target="_top" href="' +
           escapeHtml(href) + '">' + escapeHtml(t) + '</a>' +
         '<span class="dashboard-pending-count">' + n + '</span>' +
         '</li>';
@@ -99,7 +119,7 @@
       '<div class="dashboard-card-total">' + p.total + '</div>' +
       '<ul class="dashboard-pending-list">' + list + '</ul>' +
       '<div class="dashboard-card-sub">' +
-        '<a class="dashboard-activity-link" target="_top" href="' + escapeHtml(all) +
+        '<a class="dashboard-activity-link" data-page="mgr/queue" target="_top" href="' + escapeHtml(all) +
           '">View queue →</a>' +
       '</div>';
   }
@@ -121,7 +141,7 @@
       // can see the full trail for this record.
       var href = pageHref('mgr/audit', { entity_id: r.entity_id });
       list += '<li>' +
-        '<a class="dashboard-activity-link" target="_top" href="' + escapeHtml(href) + '">' +
+        '<a class="dashboard-activity-link" data-page="mgr/audit" target="_top" href="' + escapeHtml(href) + '">' +
           '<span class="' + actorClass + '">' + escapeHtml(r.actor_email) + '</span>' +
           escapeHtml(r.summary) +
         '</a>' +
@@ -132,7 +152,7 @@
     host.innerHTML = head +
       '<ul class="dashboard-activity-list">' + list + '</ul>' +
       '<div class="dashboard-card-sub">' +
-        '<a class="dashboard-activity-link" target="_top" href="' + escapeHtml(all) +
+        '<a class="dashboard-activity-link" data-page="mgr/audit" target="_top" href="' + escapeHtml(all) +
           '">Full audit log →</a>' +
       '</div>';
   }
@@ -157,7 +177,7 @@
         : (u.count + ' seats (cap unset)');
       list += '<li class="dashboard-util-row">' +
         '<div class="dashboard-util-head">' +
-          '<a target="_top" href="' + escapeHtml(href) + '">' +
+          '<a data-page="mgr/seats" target="_top" href="' + escapeHtml(href) + '">' +
             escapeHtml(u.label) + '</a>' +
           '<span class="dashboard-util-counts">' + escapeHtml(counts) + '</span>' +
         '</div>' +
@@ -193,7 +213,7 @@
         '<strong>' + escapeHtml(label) + '</strong>: ' +
         escapeHtml(p.count + ' / ' + p.cap) +
         ' <span class="dashboard-card-sub">(over by ' + escapeHtml(p.over_by) + ')</span> ' +
-        '<a target="_top" href="' + escapeHtml(href) + '">view →</a>' +
+        '<a data-page="mgr/seats" target="_top" href="' + escapeHtml(href) + '">view →</a>' +
         '</li>';
     }
     host.innerHTML = head +
@@ -244,7 +264,7 @@
   function showError(msg) {
     var cards = ['card-pending', 'card-recent', 'card-utilization', 'card-warnings', 'card-ops'];
     for (var i = 0; i < cards.length; i++) {
-      var host = document.getElementById(cards[i]);
+      var host = $(cards[i]);
       if (!host) continue;
       var title = host.querySelector('.dashboard-card-title');
       host.innerHTML = (title ? title.outerHTML : '') +
@@ -252,10 +272,16 @@
     }
   }
 
-  rpc('ApiManager_dashboard').then(render).catch(function (err) {
-    var msg = (err && err.message) ? err.message : String(err);
-    showError(msg);
-    toast(msg, 'error');
-  });
+  // Exported entry point (Chunk 10.6). Every nav entry to the
+  // Dashboard — initial bootstrap or an intra-app swap — flows through
+  // here. Single aggregating rpc is unchanged from Chunk 10.
+  window.page_mgr_dashboard_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    rpc('ApiManager_dashboard').then(render).catch(function (err) {
+      var msg = (err && err.message) ? err.message : String(err);
+      showError(msg);
+      toast(msg, 'error');
+    });
+  };
 })();
 </script>

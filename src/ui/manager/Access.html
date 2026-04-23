@@ -28,7 +28,9 @@
 
 <script>
 (function () {
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6: pane-scoped $.
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -103,7 +105,14 @@
     });
   }
 
-  $('scope-filter').addEventListener('change', render);
-  load();
+  // Exported entry point (Chunk 10.6). Called by Layout.html after the
+  // page's HTML is injected — both on initial-load and on intra-app
+  // nav (the latter serves HTML from the client-side pageBundle, so
+  // init is the first server rpc per tab click).
+  window.page_mgr_access_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    $('scope-filter').addEventListener('change', render);
+    load();
+  };
 })();
 </script>

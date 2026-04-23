@@ -405,7 +405,8 @@ Distinct from `CacheService`. `Sheet_getTab(name)` memoizes `SpreadsheetApp.getA
 - **Includes**: a global `include(path)` helper returns `HtmlService.createHtmlOutputFromFile(path).getContent()` so templates can compose each other via `<?!= include('ui/Styles') ?>`.
 - **Model injection**: the template's `evaluate()` is preceded by assigning properties on the template object (`t.principal = ...; t.model = ...`). Client code reads initial state from a `<script>var __init = <?= JSON.stringify(model) ?>;</script>` block at the bottom of the layout.
 - **Client RPC**: `ClientUtils.html` wraps `google.script.run` into a `rpc(name, args)` that returns a Promise, with a toast/error UI on failure. All client-side calls go through it.
-- **Role-based menus**: `Nav.html` is rendered server-side with the current principal (by `Router_pick` in `core/Router.gs`) and returned as `navHtml` alongside `pageHtml`. It emits only the links the user's roles allow and marks the currently-rendered page as `active`. `Layout.html` hosts it in a `#nav-host` slot above `#content` and rehydrates its inline script (the one that rewires each `data-page` anchor's href to `MAIN_URL + ?p=<page>`).
+- **Role-based menus**: `Nav.html` is rendered server-side with the current principal (by `Router_pick` in `core/Router.gs`) and returned as `navHtml` alongside `pageHtml`. It emits only the links the user's roles allow and marks the currently-rendered page as `active`. `Layout.html` hosts it in a `#nav-host` slot above `#content` and rehydrates its inline script (the one that sets each `data-page` anchor's href to `MAIN_URL + ?p=<page>` as the top-frame fallback for right-click / middle-click). Normal primary-button clicks on `data-page` links are intercepted by `Layout.html`'s delegated click handler and served from the client-side `pageBundle` cache (Chunk 10.6 — §8.5). The `active` class is kept in sync by `updateNavActive` on each swap.
+- **Page routing is server-resolved once per bootstrap**: `Router_pick(requestedPage, principal)` runs inside `ApiShared_bootstrap` to produce the initial page's HTML + navHtml + pageModel, and `Router_buildPageBundle(principal)` renders every other role-allowed page's HTML into a `pageBundle: {pageId → pageHtml}` map that ships with the same bootstrap response. Intra-app navigation after that point is a client-side lookup against the bundle — no rpc, no second pass through `Router_pick`. Role-gating is enforced server-side at bundle-build time: a bishopric user's bundle never contains manager pages, so a hand-crafted `data-page="mgr/seats"` link can't surface HTML the user isn't entitled to. Role changes mid-session produce a stale bundle; the user must reload to refresh (§8.5 "Nav staleness — accepted").
 - **Deep links**: query-string `?p=<page-id>` for page dispatch, plus per-page filter keys (e.g. `&ward=CO&type=manual` for `mgr/seats`) forwarded through as `QUERY_PARAMS` on the client. Main.doGet strips the reserved keys (`p`, `token`) and JSON-encodes the remainder into the Layout template, since the iframe can't read the top-frame's query string (cross-origin). Deep links survive the Cloudflare Worker proxy as long as the worker preserves query strings.
 
 ### Page ID map
@@ -438,44 +439,92 @@ Roster reads enforce scope at the **API layer**, not the UI. A bishopric member 
 
 ## 8.5. Client-side navigation (Chunk 10.6)
 
-Pre-Chunk-10.6, every nav-link click navigates the top frame to `Main /exec?p=<page>`, which re-runs `doGet` → `Router_pick` → `Layout` re-render → `ApiShared_bootstrap` rpc → page render. The `Layout` shell (topbar, sign-out, nav, sidebar) re-renders identically every time — wasted work, felt as a 1-2 second latency budget per click.
+Pre-Chunk-10.6, every nav-link click navigates the top frame to `Main /exec?p=<page>`, which re-runs `doGet` → `Router_pick` → `Layout` re-render → `ApiShared_bootstrap` rpc → page render. The `Layout` shell (topbar, sign-out, nav) re-renders identically every time — wasted work, felt as a 1-2 second latency budget per click.
 
-Chunk 10.6 layers a client-side swap on top: the shell persists across navigations; only the content area is re-rendered, fetched via one rpc rather than a fresh `doGet` round-trip.
+Chunk 10.6 pivots to an SPA shape: the initial bootstrap rpc returns **every role-allowed page's HTML pre-rendered** in a `pageBundle: {pageId → pageHtml}` map. Intra-app navigation after that point is a pure client-side lookup against the bundle — zero rpc per click, zero re-render of the shell. The only server round-trip per tab click is the page's own data rpc inside its init fn (`ApiManager_dashboard`, `ApiManager_allSeats`, etc.), and that runs AFTER the page HTML is already on screen so the user sees a "Loading …" placeholder rather than a blank pause.
 
-### Endpoint — `ApiShared_renderPage(token, pageId, queryParams)`
+### Bootstrap response — extended
 
-Returns `{ principal, pageHtml, pageModel }` — the same page fields `ApiShared_bootstrap` returns, minus the `navHtml` and `template` wrapping. The nav is cached client-side from the initial bootstrap; the role set doesn't change mid-session at target scale (role changes require an LCR update + an import run, which imply a full reload anyway).
+`ApiShared_bootstrap(token, requestedPage)` returns:
 
-Server-side implementation reuses `Router_pick`'s page-resolution logic — same pageId → template mapping, same role-scope enforcement, same `pageModel` shape. The difference is what's returned: no `Layout` wrapper HTML, no nav rebuild. Side effects (AuditLog, locks) are unchanged — `ApiShared_renderPage` is a read-only router, same as `ApiShared_bootstrap`.
+| Field | Shape | Purpose |
+| --- | --- | --- |
+| `principal` | `{email, name, roles}` | Auth-resolved identity. Stashed in `currentPrincipal`; reused to build `pageModel` on every swap. |
+| `template` | template path | Kept for backwards compatibility; shell uses `pageId` (below) directly. |
+| `pageModel` | `{principal, current_page}` | For the INITIAL page's init call. |
+| `pageHtml` | HTML | INITIAL page's rendered HTML. Always present; for bootstrap/wizard / setup-in-progress / NotAuthorized this is the full page (no bundle needed). |
+| `navHtml` | HTML | Rendered `ui/Nav`. Non-empty only for principals with roles. |
+| `pageBundle` | `{pageId → pageHtml}` | Chunk-10.6 addition. Every `ROUTER_PAGES_` entry the principal is role-allowed for, rendered once and shipped in one response. Empty `{}` for no-roles / bootstrap / setup-in-progress principals. |
 
-### Shell swap — `ui/ClientUtils.html` additions
+Bundle construction is `Router_buildPageBundle(principal)` — walks `ROUTER_PAGES_`, filters by `Router_hasAllowedRole_`, and renders each allowed entry. A bishopric user's bundle excludes every `mgr/*` page; a manager's bundle excludes nothing (managers have the union of nav links). The initial page is ALSO present in the bundle (idempotent — same bytes), so re-entering a deep-linked page via in-app nav hits the same cached HTML the bookmark would have rendered.
 
-The shell intercepts clicks on `a[data-page]` anchors, calls `ApiShared_renderPage`, then:
+Cost: one extra `HtmlTemplate.evaluate()` call per allowed page on bootstrap. At the 12-page menu in `ROUTER_PAGES_`, that's ~50-150ms of additional server time and a few tens of KB more on the wire (gzipped). In exchange, every subsequent intra-app click is synchronous.
 
-1. Calls the outgoing page's teardown fn (if it registered one via its init return value).
-2. Injects the new `pageHtml` into `#content`.
-3. Calls the new page's init fn (see below).
-4. `pushState`s a URL reflecting the new page + its query params, so browser back / forward work.
-5. Updates the nav's active-link highlight.
+There is no longer a separate `ApiShared_renderPage` rpc. The earlier draft of Chunk 10.6 had one; it was dropped once the bundled approach made it dead code.
 
-Direct-load (a fresh browser tab, a shared URL) still flows through `Main.doGet` → Layout → bootstrap, identical to Chunks 1-10. The client-side path is strictly an optimization for intra-app navigation.
+### Shell swap — `ui/Layout.html`
+
+The shell lives in `ui/Layout.html` (not `ClientUtils.html` — `ClientUtils.html` stays focused on `rpc`, `toast`, and render helpers shared across pages). State kept across intra-app swaps:
+
+- `currentPageId` — last-rendered pageId; keys teardown + nav-active.
+- `currentPrincipal` — the bootstrap-time principal, reused to build `pageModel` on every swap.
+- `pageBundle` — the `{pageId → pageHtml}` map from bootstrap.
+- `navReady` — flips true once the initial render finishes; guards the click and popstate handlers against pre-render clicks.
+
+A delegated `document.addEventListener('click', …)` catches clicks on any `a[data-page]` anchor; modifier-clicks (cmd / ctrl / shift / alt) and non-primary buttons fall through so "open in new tab" keeps working. Query params come from the clicked link's `href` (stripped of `p` and `token`; same rules `Main.doGet` applies server-side).
+
+`navigateTo(pageId, queryParams, opts)` runs the swap — **synchronously**:
+
+1. Look up `pageBundle[pageId]`. If missing (shouldn't happen — nav + deep-links are all role-gated server-side, so this means a stale bundle after an unexpected role change), toast + fall back to a full top-frame reload.
+2. Call the outgoing page's `window.page_<X>_teardown` if defined.
+3. `innerHTML`-replace `#content` with the cached HTML.
+4. `rehydrateScripts` re-runs each page's inline `<script>`, re-defining `window.page_<X>_init` on `window`.
+5. Update `window.QUERY_PARAMS` so pages still reading it as a Chunk-5-global keep working.
+6. `history.pushState({pageId, queryParams}, '', '?p=<pageId>&...')` unless `opts.skipPushState` is set (popstate does that).
+7. Toggle the `active` class on every `a[data-page]` link to match the new pageId.
+8. Build `pageModel = {principal: currentPrincipal, current_page: pageId}` — identical shape to what `Router_pick` produces server-side — and call `window.page_<X>_init(pageModel, queryParams)`.
+
+No loading bar on swap. The swap itself is single-digit-millisecond; the "Loading …" placeholder the user sees is the init fn's own data rpc (which is unchanged from Chunk 10).
+
+A `popstate` listener re-runs `navigateTo(state.pageId, state.queryParams, {skipPushState: true})` so browser back/forward work across intra-app navs.
+
+The initial bootstrap path (`showContent` after `ApiShared_bootstrap`) stashes the bundle and principal, calls `history.replaceState` on the current URL so the first back-button press pops to a valid state object, and calls the page's init fn the same way the swap path does. Single entry point regardless of how the page was reached.
+
+Direct-load (a fresh browser tab, a shared URL) still flows through `Main.doGet` → Layout → bootstrap, identical to Chunks 1-10. The bundle arrives in the same bootstrap response; the target deep-linked page renders from `pageHtml`; subsequent nav serves from the bundle.
+
+### Other deep-link sources
+
+Besides `Nav.html`, two call sites emit `?p=` anchors inside the content area: `Dashboard.html` (utilization card → `mgr/seats?ward=<code>`; recent-activity → `mgr/audit?entity_id=<id>`; pending-counts → `mgr/queue?state=pending&type=<t>`), and `Import.html`'s over-cap banner (→ `mgr/seats?ward=<code>`). Each anchor carries both `data-page="<pageId>"` (for the shell's interceptor) and a MAIN_URL-based `href` (for right-click / middle-click / modifier-click fallback). The two surfaces read the same pageId; the interceptor parses the other query params out of the href so the two paths agree on filter state.
 
 ### Per-page init-function convention
 
-Each page template exports an init fn whose name derives from the pageId: `mgr/seats` → `mgr_seats_init`; `new` → `new_init`; `bishopric/roster` → `bishopric_roster_init`. Signature: `function <pageId>_init(pageModel) { … ; return teardownFn?; }`.
+Each page template exports an init fn on `window` whose name derives from the pageId: `mgr/seats` → `page_mgr_seats_init`; `new` → `page_new_init`; `bishopric/roster` → `page_bishopric_roster_init`; `stake/ward-rosters` → `page_stake_ward_rosters_init`. Rule: replace every `/` AND every `-` with `_` (hyphens aren't valid in JS identifiers), prefix `page_`, suffix `_init`. Signature: `function page_<pageId>_init(pageModel, queryParams) { … }`.
 
-The shell's swap-path calls `window[initName](pageModel)` after injecting the page HTML. Initial bootstrap (a fresh doGet) still runs page scripts via `rehydrateScripts` — the `<script>` block inside each page template defines the init fn on `window`, which the shell then calls. Both paths end up calling the same init; the difference is only in who triggers it (`rehydrateScripts` on bootstrap, an explicit `window[initName]` call on swap).
+Teardown is a separate optional function on `window` with the `_teardown` suffix (rather than returned from init — avoids the ambiguity of "what if init's return value is something else"). The shell calls it before the next swap:
+
+```
+window.page_new_init     = function (pageModel, queryParams) { … };
+window.page_new_teardown = function () { … };      // optional
+```
+
+The shell's swap-path calls `window[initName](pageModel, queryParams)` after `rehydrateScripts` has re-run the page's inline `<script>` block (which defines the init fn on `window`). Initial bootstrap reaches the same entry point — the bootstrap handler in `Layout.html` calls the init fn after injecting the initial `pageHtml`. Both paths end up calling the same init; the difference is only in who triggers it (bootstrap's `showContent` on initial load, `navigateTo` on swap).
+
+The `queryParams` init arg is authoritative on the swap path (parsed from the clicked link's `href`); on initial load the shell passes the Layout-injected `QUERY_PARAMS` global. Gradual migration: pages port to the init-arg pattern as they're touched, reading `queryParams` instead of the `QUERY_PARAMS` global. Pages that still read the global keep working because the shell also updates `window.QUERY_PARAMS` on every swap.
 
 Alternative considered: `eval` / `new Function(scriptText)` on each swap. Rejected — stack traces degrade, refactoring becomes harder, and the test-vs-prod behaviour diverges subtly. Named init fns are boring and legible.
+
+Pages that DON'T export an init fn (`NotAuthorized`, `SetupInProgress`, `BootstrapWizard`) are reached only through the initial bootstrap path and have no intra-app nav surface. The shell's `callPageInit` is a no-op when the function isn't defined.
 
 ### Memory-leak discipline
 
 Two allowed patterns for per-page event listeners:
 
-- **Event delegation on stable parents** (preferred). A page attaches a single listener to `#content` (or a page-root element) and inspects `event.target`. No listener cleanup needed because the listener lives on an element that doesn't survive the swap — the old `#content` contents are destroyed, and the new page's init reattaches.
-- **Teardown fn returned from init.** If a page needs to attach to `document` (e.g. a modal's keyboard handler) or to `window` (e.g. a resize listener), its init returns a teardown that removes what it added. The shell calls the teardown before swapping in the next page.
+- **Listeners on elements inside `#content`** (preferred — the default). A page attaches listeners to buttons, modals, dropdowns, etc. that live inside `#content`. When the next swap replaces `#content`'s innerHTML, those elements are garbage-collected along with their listeners. No teardown needed because the DOM tear-out handles the cleanup.
+- **Teardown fn declared as `window.page_<X>_teardown`.** If a page attaches to `document`, `window`, or to an element that outlives a swap, its teardown removes what it added. Also right for cancellable timers (`setInterval`, a debounce `setTimeout` that might fire after the page is gone). The shell calls the teardown before swapping in the next page.
 
-Bare `addEventListener(handler)` on page DOM without one of those patterns is a bug. Chunk-6 pages (`NewRequest`, `MyRequests`, `RequestsQueue`, `AllSeats`) wire several listeners per row; they'll need the closest attention during the adoption pass.
+As-of 10.6, the only page with a teardown is `NewRequest` (cancels the duplicate-check debounce timer so an in-flight blur doesn't fire `checkDuplicate` into a torn DOM). Every other page's listeners are inside `#content` and rely on DOM tear-out; teardown is undefined and the shell's `callPageTeardown` is a no-op for those pages.
+
+Bare `addEventListener(handler)` on `document` / `window` without a teardown is a bug.
 
 ### History API boundaries — iframe vs. top frame
 
@@ -495,7 +544,7 @@ Chunk 5's "URL reflects post-load filter changes on AllSeats" out-of-scope item 
 
 ### Interaction with 10.5
 
-10.6 benefits from 10.5's cached reads but doesn't require them. A cache miss on a read underneath an `ApiShared_renderPage` call is identical latency to a cache miss on the Chunk-10 `doGet` path — the swap optimization overlaps with, but doesn't depend on, the read optimization. Ordering is 10.5 first then 10.6 because baselining 10.6 against un-cached reads produces misleadingly flattering numbers.
+10.6 benefits from 10.5's cached reads but doesn't require them. The bundle-build pass (`Router_buildPageBundle`) evaluates ~12 `HtmlTemplate`s — pure HTML generation with no Sheet reads — so it's orthogonal to the read cache. Where 10.5 still helps is the init-fn data rpcs (`ApiManager_dashboard`, `ApiManager_allSeats`, etc.) that fire after each swap — those hit the cached `Wards` / `Buildings` / template reads that 10.5 memoized. The two chunks stack cleanly: 10.5 made data reads cheap, 10.6 made navigation free of data reads entirely.
 
 ## 9. Importer & Expiry triggers
 

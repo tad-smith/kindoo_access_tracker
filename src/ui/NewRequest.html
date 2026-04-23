@@ -80,7 +80,9 @@
 
 <script>
 (function () {
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6: pane-scoped $.
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
 
   // Populated by ApiRequests_listMy on page init (cheapest server call
   // that returns the allowed-scopes list). Could be a dedicated endpoint,
@@ -143,16 +145,13 @@
       $('f-end-date').removeAttribute('required');
     }
   }
-  $('f-type').addEventListener('change', syncTempFieldsToType);
 
   // Duplicate check: on email blur + on scope change. Debounced on
   // rapid changes so the server isn't hit more than necessary (typing
-  // a long address still triggers only one call on blur).
+  // a long address still triggers only one call on blur). Tracked at
+  // module scope so page_new_teardown can cancel any in-flight timer
+  // before the DOM is swapped (Chunk 10.6 memory-leak discipline).
   var dupTimer = null;
-  $('f-target-email').addEventListener('blur', function () {
-    if (dupTimer) clearTimeout(dupTimer);
-    dupTimer = setTimeout(checkDuplicate, 0);
-  });
 
   function checkDuplicate() {
     var email = ($('f-target-email').value || '').trim();
@@ -185,7 +184,26 @@
     });
   }
 
-  $('new-request-form').addEventListener('submit', function (ev) {
+  // Exported entry point (Chunk 10.6). Wires listeners, kicks off
+  // init(), and schedules initial scope resolution. Teardown cancels
+  // the debounce timer so an in-flight blur doesn't fire into a torn
+  // DOM after a nav swap.
+  window.page_new_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    $('f-type').addEventListener('change', syncTempFieldsToType);
+    $('f-target-email').addEventListener('blur', function () {
+      if (dupTimer) clearTimeout(dupTimer);
+      dupTimer = setTimeout(checkDuplicate, 0);
+    });
+    $('new-request-form').addEventListener('submit', onSubmit);
+    init();
+  };
+
+  window.page_new_teardown = function () {
+    if (dupTimer) { clearTimeout(dupTimer); dupTimer = null; }
+  };
+
+  function onSubmit(ev) {
     ev.preventDefault();
     var btn = $('submit-btn');
     btn.disabled = true;
@@ -201,6 +219,11 @@
     rpc('ApiRequests_submit', draft, selectedScope).then(function (resp) {
       toast('Request submitted.', 'success');
       if (resp && resp.warning) toast(resp.warning, 'warn');
+      // Chunk 10.6: the MyRequests tab is now stale — clear its
+      // cached DOM so the next visit re-fetches with the new row.
+      if (typeof window.invalidatePage === 'function') {
+        window.invalidatePage('my');
+      }
       // Clear the form for a potential next submission. The scope
       // selector stays on the same scope (it lives outside the form
       // element, so form.reset() doesn't touch it). form.reset() reverts
@@ -217,8 +240,6 @@
     }).then(function () {
       btn.disabled = false;
     });
-  });
-
-  init();
+  }
 })();
 </script>

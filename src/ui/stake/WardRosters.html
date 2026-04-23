@@ -30,7 +30,9 @@
 
 <script>
 (function () {
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6: pane-scoped $.
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
 
   function populateWards(wards) {
     var sel = $('ward-select');
@@ -76,16 +78,17 @@
     });
   }
 
-  $('ward-select').addEventListener('change', function () {
-    loadRoster(this.value);
-  });
-
-  rpc('ApiStake_wardsList').then(function (wards) {
-    populateWards(wards);
-  }).catch(function (err) {
-    $('ward-select').innerHTML =
-      '<option value="">Could not load wards</option>';
-    toast((err && err.message) || String(err), 'error');
-  });
+  // Exported entry point (Chunk 10.6).
+  window.page_stake_ward_rosters_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    $('ward-select').addEventListener('change', function () {
+      loadRoster(this.value);
+    });
+    rpc('ApiStake_wardsList').then(populateWards).catch(function (err) {
+      $('ward-select').innerHTML =
+        '<option value="">Could not load wards</option>';
+      toast((err && err.message) || String(err), 'error');
+    });
+  };
 })();
 </script>

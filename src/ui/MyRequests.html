@@ -25,7 +25,9 @@
 
 <script>
 (function () {
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6: pane-scoped $.
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
 
   var allowedScopes = [];
   var selectedScope = '';   // '' means "All" for multi-role
@@ -170,15 +172,18 @@
     });
   }
 
-  // First load — this also sets up the scope filter after allowedScopes
-  // comes back from the server.
-  rpc('ApiRequests_listMy').then(function (resp) {
-    allowedScopes = resp.scopes || [];
-    setupScopeFilter();
-    render(resp.rows);
-  }).catch(function (err) {
-    $('my-requests-host').innerHTML =
-      '<div class="error">Could not load your requests: ' + escapeHtml(err.message || err) + '</div>';
-  });
+  // Exported entry point (Chunk 10.6). First load also sets up the
+  // scope filter after allowedScopes comes back from the server.
+  window.page_my_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    rpc('ApiRequests_listMy').then(function (resp) {
+      allowedScopes = resp.scopes || [];
+      setupScopeFilter();
+      render(resp.rows);
+    }).catch(function (err) {
+      $('my-requests-host').innerHTML =
+        '<div class="error">Could not load your requests: ' + escapeHtml(err.message || err) + '</div>';
+    });
+  };
 })();
 </script>

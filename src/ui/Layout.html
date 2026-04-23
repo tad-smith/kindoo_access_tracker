@@ -153,19 +153,370 @@
           if (errEl) errEl.textContent = errMsg || '';
         }
 
-        function showContent(html, principal, navHtml) {
-          $('content').innerHTML = html;
+        // ---------------------------------------------------------
+        // Chunk 10.6 — client-side navigation (SPA-style).
+        //
+        // The initial ApiShared_bootstrap rpc returns EVERY role-allowed
+        // page's HTML pre-rendered, in `pageBundle: {pageId → pageHtml}`.
+        // The shell stashes the bundle and serves intra-app navigation
+        // from it — zero server rpc per click. Each page's init fn still
+        // does its own data rpc (that's the "Loading…" placeholder you
+        // see) so dynamic content stays fresh.
+        //
+        // State we carry across intra-app swaps:
+        //   - currentPageId — last-rendered pageId; keys teardown +
+        //     nav-active.
+        //   - currentPrincipal — from bootstrap; reused to build
+        //     pageModel for each swap (identical shape to what
+        //     Router_pick produces server-side).
+        //   - pageBundle — {pageId → pageHtml}. Populated on bootstrap;
+        //     stale if roles change mid-session (rare — requires an
+        //     LCR change + import run). User reloads to refresh.
+        //   - navReady — flips true after the initial bootstrap render
+        //     completes; guards the delegated click + popstate handlers
+        //     against pre-render clicks.
+        // ---------------------------------------------------------
+        var currentPageId       = '';
+        var currentQueryParams  = {};
+        var currentPrincipal    = null;
+        var pageBundle          = {};
+        var navReady            = false;
+
+        // Chunk 10.6: detached-pane cache for "keep tabs alive across
+        // switches". Each entry is { pane: <DOM>, queryParams: {…} }.
+        // When we nav away, the current pane is detached (not
+        // destroyed) and stashed here; when we nav back, the pane is
+        // re-attached with its listeners, form state, and scroll
+        // position intact — no re-init, no re-fetch. Detached nodes
+        // aren't visible to document.getElementById, so duplicate IDs
+        // across tabs don't collide.
+        //
+        // Invalidation is how mutations tell the shell "previously-
+        // cached state is stale":
+        //   - window.invalidatePage(pageId)  — drops one tab's cache.
+        //   - window.invalidateAllPages()    — drops every cache entry.
+        // Neither touches the currently-rendered tab (which isn't in
+        // cachedPanes by definition — it's live in #content). Pages
+        // that need to refresh themselves after an action call their
+        // own load() / refresh() helper directly.
+        var cachedPanes = {};
+
+        function qpEquals_(a, b) {
+          a = a || {}; b = b || {};
+          var ka = Object.keys(a), kb = Object.keys(b);
+          if (ka.length !== kb.length) return false;
+          for (var i = 0; i < ka.length; i++) {
+            if (a[ka[i]] !== b[ka[i]]) return false;
+          }
+          return true;
+        }
+
+        window.invalidatePage = function (pageId) {
+          if (cachedPanes.hasOwnProperty(pageId)) {
+            delete cachedPanes[pageId];
+          }
+        };
+        window.invalidateAllPages = function () {
+          cachedPanes = {};
+        };
+
+        // pageId → init-fn name. 'mgr/seats' → 'page_mgr_seats_init';
+        // 'new' → 'page_new_init'; 'stake/ward-rosters' →
+        // 'page_stake_ward_rosters_init'. Both `/` and `-` map to `_`
+        // because hyphens aren't valid in JS identifiers and the only
+        // hyphenated pageId today is stake/ward-rosters. See
+        // architecture.md §8.5 "Per-page init-function convention".
+        function initFnName(pageId) {
+          return 'page_' + String(pageId || '').replace(/[\/\-]/g, '_') + '_init';
+        }
+        function teardownFnName(pageId) {
+          return 'page_' + String(pageId || '').replace(/[\/\-]/g, '_') + '_teardown';
+        }
+
+        function callPageInit(pageId, pageModel, queryParams, pane) {
+          var name = initFnName(pageId);
+          var fn = window[name];
+          if (typeof fn !== 'function') return;
+          try {
+            // The `pane` arg is the page's root element (the
+            // <div class="tab-pane">…</div> wrapper). Pages scope
+            // their DOM queries to it so that rpc callbacks firing
+            // after a tab-swap still find their own elements — the
+            // pane stays in memory even when detached from the
+            // document.
+            fn(pageModel || {}, queryParams || {}, pane || null);
+          } catch (e) {
+            try { console.error('[nav] ' + name + ' threw:', e); } catch (_) {}
+            toast('Page init failed: ' + ((e && e.message) || String(e)), 'error');
+          }
+        }
+
+        function callPageTeardown(pageId) {
+          if (!pageId) return;
+          var name = teardownFnName(pageId);
+          var fn = window[name];
+          if (typeof fn !== 'function') return;
+          try { fn(); }
+          catch (e) { try { console.error('[nav] ' + name + ' threw:', e); } catch (_) {} }
+        }
+
+        // Update the nav-active class on data-page links to match the
+        // currently-rendered pageId. Nav.html's server-rendered markup
+        // already carries `class="nav-link active"` for the initial
+        // page; after a swap we need to keep it in sync.
+        function updateNavActive(pageId) {
+          var host = $('nav-host');
+          if (!host) return;
+          var links = host.querySelectorAll('.nav-link[data-page]');
+          for (var i = 0; i < links.length; i++) {
+            links[i].classList.toggle('active',
+              links[i].getAttribute('data-page') === pageId);
+          }
+        }
+
+        // Pull per-page query params out of a link's href. Nav and
+        // dashboard deep-links build hrefs as MAIN_URL + '?p=<pageId>
+        // &ward=CO&...'; the interceptor extracts the search params and
+        // hands them to navigateTo (minus 'p' and 'token', which the
+        // shell owns — same strip set Main.doGet applies server-side).
+        function parseHrefParams(href) {
+          var out = {};
+          if (!href) return out;
+          var i = href.indexOf('?');
+          if (i < 0) return out;
+          var qs = href.substring(i + 1);
+          var hashAt = qs.indexOf('#');
+          if (hashAt >= 0) qs = qs.substring(0, hashAt);
+          var parts = qs.split('&');
+          for (var p = 0; p < parts.length; p++) {
+            if (!parts[p]) continue;
+            var kv = parts[p].split('=');
+            var k = decodeURIComponent(kv[0] || '');
+            var v = kv.length > 1 ? decodeURIComponent((kv[1] || '').replace(/\+/g, ' ')) : '';
+            if (!k || k === 'p' || k === 'token') continue;
+            out[k] = v;
+          }
+          return out;
+        }
+
+        // Build a relative URL that encodes pageId + its query params.
+        // Used for history.pushState / replaceState so back/forward work
+        // AND the iframe URL reflects the current filter state (a free
+        // feature we pick up from pushState; the top-frame URL bar
+        // stays frozen — see architecture.md §8.5 "History API
+        // boundaries").
+        function buildStateUrl(pageId, queryParams) {
+          var parts = ['p=' + encodeURIComponent(pageId || '')];
+          if (queryParams && typeof queryParams === 'object') {
+            for (var k in queryParams) {
+              if (!queryParams.hasOwnProperty(k)) continue;
+              if (k === 'p' || k === 'token') continue;
+              var v = queryParams[k];
+              if (v == null || v === '') continue;
+              parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(String(v)));
+            }
+          }
+          return '?' + parts.join('&');
+        }
+
+        // Build a fresh pane for a pageId: create the wrapper, inject
+        // the cached HTML from pageBundle, rehydrate scripts (which
+        // defines window.page_<X>_init), and return the pane. NOT
+        // attached to the DOM yet — caller decides when to attach.
+        function buildPane_(pageId) {
+          var pane = document.createElement('div');
+          pane.className = 'tab-pane';
+          pane.setAttribute('data-page-id', pageId);
+          pane.innerHTML = pageBundle[pageId] || '';
+          return pane;
+        }
+
+        // The star of Chunk 10.6. Called on nav-link clicks, on
+        // popstate (back/forward), and on the initial post-bootstrap
+        // path. ZERO rpc — the pageHtml comes from the bundle the
+        // bootstrap already delivered.
+        //
+        // Keep-alive model: the outgoing tab's DOM is DETACHED (not
+        // destroyed) and stashed in cachedPanes. If the target tab
+        // has a cache entry with matching queryParams, we re-attach
+        // its cached DOM and skip init — the page's populated state
+        // (listeners, form inputs, scroll position) is preserved. On
+        // cache miss (first visit, post-invalidation, or different
+        // queryParams) we build a fresh pane and call init, which
+        // fires the page's own data rpc.
+        //
+        // opts.skipPushState is set by the popstate handler (the
+        // browser already updated its stack).
+        function navigateTo(pageId, queryParams, opts) {
+          opts = opts || {};
+          if (!navReady) return;
+          queryParams = queryParams || {};
+          if (pageBundle[pageId] == null) {
+            // Shouldn't happen — Nav.html only renders role-allowed
+            // links, and Dashboard / Import deep-links are also role-
+            // gated. If we hit this, something's out of sync (stale
+            // bundle after a role change? bogus hand-crafted data-page
+            // attr?). Toast + fall back to a full reload.
+            try { console.error('[nav] pageId not in bundle: ' + pageId); } catch (_) {}
+            toast('Unknown page: ' + pageId + ' — reloading.', 'error');
+            if (MAIN_URL) {
+              try {
+                window.top.location.replace(
+                  MAIN_URL + '?p=' + encodeURIComponent(pageId)
+                );
+              } catch (_) {}
+            }
+            return;
+          }
+
+          // Detach the OUTGOING tab into the cache. Teardown fires
+          // before the detach so it can still query the document if
+          // it needs to (though none currently do — NewRequest's
+          // teardown just cancels a debounce timer). On nav-back to
+          // this tab the DOM is restored but teardown does NOT have
+          // a corresponding re-init; pages that need "re-awake on
+          // re-attach" behaviour would have to explicitly wire it.
+          if (currentPageId) callPageTeardown(currentPageId);
+          var outgoingPane = $('content').firstElementChild;
+          if (outgoingPane && currentPageId) {
+            cachedPanes[currentPageId] = {
+              pane: outgoingPane,
+              queryParams: currentQueryParams
+            };
+            outgoingPane.remove();
+          }
+
+          // Look up target. Cache hit only if the queryParams also
+          // match — a deep-link with filter params shouldn't re-use
+          // an earlier unfiltered view (and vice versa).
+          var cached = cachedPanes[pageId];
+          var usingCache = !!(cached && qpEquals_(cached.queryParams, queryParams));
+          var incomingPane;
+          if (usingCache) {
+            incomingPane = cached.pane;
+            delete cachedPanes[pageId];
+          } else {
+            // Fresh build — drop any stale cache entry.
+            if (cached) delete cachedPanes[pageId];
+            incomingPane = buildPane_(pageId);
+          }
+
+          $('content').appendChild(incomingPane);
+          show($('content'));
+
+          // Keep QUERY_PARAMS backwards-compatible with pages that
+          // still read it as a global (the Chunk-5 contract).
+          try {
+            QUERY_PARAMS = queryParams;
+            window.QUERY_PARAMS = queryParams;
+          } catch (_) {}
+          currentPageId      = pageId;
+          currentQueryParams = queryParams;
+          updateNavActive(pageId);
+          if (!opts.skipPushState) {
+            try {
+              history.pushState(
+                { pageId: pageId, queryParams: queryParams },
+                '',
+                buildStateUrl(pageId, queryParams)
+              );
+            } catch (_) {}
+          }
+
+          if (!usingCache) {
+            // Rehydrate scripts inside the newly-attached pane —
+            // defines window.page_<X>_init on window. Then call init,
+            // which fires the page's own data rpc (showing its
+            // "Loading…" placeholder in the pane).
+            rehydrateScripts(incomingPane);
+            var pageModel = { principal: currentPrincipal, current_page: pageId };
+            callPageInit(pageId, pageModel, queryParams, incomingPane);
+          }
+          // On cache hit: init is intentionally NOT re-run. The pane's
+          // DOM and its attached listeners survived the detach; the
+          // user sees the page in whatever state they left it.
+        }
+
+        // Global click interception. An anchor with data-page is a
+        // client-side-nav target; anything else (mailto:, external
+        // links, same-page anchors without data-page) falls through to
+        // normal browser handling. Modifier-clicks (cmd/ctrl/shift/alt)
+        // and non-primary buttons skip interception too so
+        // "open in new tab" keeps working.
+        function findNavLink(target) {
+          while (target && target.nodeType && target !== document.body) {
+            if (target.nodeName === 'A' && target.hasAttribute && target.hasAttribute('data-page')) {
+              return target;
+            }
+            target = target.parentNode;
+          }
+          return null;
+        }
+        document.addEventListener('click', function (ev) {
+          if (ev.defaultPrevented) return;
+          if (ev.button !== 0) return;
+          if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+          var link = findNavLink(ev.target);
+          if (!link) return;
+          ev.preventDefault();
+          var pageId = link.getAttribute('data-page') || '';
+          var params = parseHrefParams(link.getAttribute('href') || '');
+          navigateTo(pageId, params);
+        });
+
+        window.addEventListener('popstate', function (ev) {
+          if (!navReady) return;
+          var s = ev.state || {};
+          var pageId = s.pageId || currentPageId;
+          var queryParams = s.queryParams || {};
+          navigateTo(pageId, queryParams, { skipPushState: true });
+        });
+
+        function showContent(html, principal, navHtml, pageId, pageModel, bundle) {
+          // Wrap the initial page's HTML in a tab-pane div so it
+          // matches the structure navigateTo produces and can be
+          // detached-cached on the first nav-away. The pageBundle
+          // field from the server typically contains pageId's HTML
+          // too (identical bytes); we prefer `html` verbatim so
+          // bootstrap / setup-in-progress / no-roles pages (which
+          // aren't in the bundle) still land in the same shape.
+          pageBundle = bundle || {};
+          var initialPane = document.createElement('div');
+          initialPane.className = 'tab-pane';
+          initialPane.setAttribute('data-page-id', pageId || '');
+          initialPane.innerHTML = html;
+          $('content').innerHTML = '';
+          $('content').appendChild(initialPane);
           // <script> tags injected via innerHTML are inert per HTML spec —
           // the browser parses them but never executes them. Page modules
-          // rely on inline <script> blocks (Config.html's IIFE, Nav's
-          // link rewiring), so we have to clone each script into a fresh
-          // element and re-insert it for the browser to run it. Order
-          // preserved so dependent inline blocks still see prior globals.
-          rehydrateScripts($('content'));
+          // rely on inline <script> blocks (defining their exported init
+          // fns, which the shell then calls), so we have to clone each
+          // script into a fresh element and re-insert it for the browser
+          // to run it.
+          rehydrateScripts(initialPane);
           show($('content'));
           hide($('login-container'));
           setUserMeta(principal);
           setNav(navHtml || '');
+          currentPrincipal   = principal;
+          currentPageId      = pageId || '';
+          currentQueryParams = QUERY_PARAMS || {};
+          navReady           = true;
+          updateNavActive(currentPageId);
+          // Attach initial state to the current history entry so the
+          // first popstate has something to read (browsers don't do
+          // this automatically).
+          try {
+            history.replaceState(
+              { pageId: currentPageId, queryParams: currentQueryParams },
+              '',
+              window.location.href
+            );
+          } catch (_) {}
+          // Run the page's init function. Initial-load pages reach the
+          // same entry point as intra-app-nav pages; identical state
+          // regardless of how the page was reached.
+          callPageInit(currentPageId, pageModel, currentQueryParams, initialPane);
         }
 
         function rehydrateScripts(root) {
@@ -232,7 +583,9 @@
           show($('content'));
           hide($('login-container'));
           rpc('ApiShared_bootstrap', requestedPage).then(function (resp) {
-            showContent(resp.pageHtml, resp.principal, resp.navHtml);
+            var initialPageId = (resp && resp.pageModel && resp.pageModel.current_page) || '';
+            showContent(resp.pageHtml, resp.principal, resp.navHtml,
+              initialPageId, resp.pageModel, resp.pageBundle);
           }).catch(function (err) {
             var msg = (err && err.message) ? err.message : String(err);
             if (msg.indexOf('AuthExpired') !== -1 || msg.indexOf('AuthInvalid') !== -1) {

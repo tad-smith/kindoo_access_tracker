@@ -51,7 +51,9 @@
 
 <script>
 (function () {
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6: pane-scoped $.
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
 
   var rowsBySeatId = {};
   var currentScope = '';
@@ -139,43 +141,50 @@
     $('remove-modal').removeAttribute('data-seat-id');
   }
 
-  $('rm-cancel-btn').addEventListener('click', closeRemoveModal);
-  $('remove-modal').addEventListener('click', function (ev) {
-    if (ev.target === this) closeRemoveModal();
-  });
-  $('rm-form').addEventListener('submit', function (ev) {
-    ev.preventDefault();
-    var seatId = $('remove-modal').getAttribute('data-seat-id');
-    if (!seatId) return;
-    var row = rowsBySeatId[seatId];
-    if (!row) {
-      toast('Seat not found.', 'error');
-      closeRemoveModal();
-      return;
-    }
-    var reason = $('rm-reason').value.trim();
-    if (!reason) {
-      toast('A reason is required.', 'error');
-      return;
-    }
-    var draft = {
-      type:         'remove',
-      target_email: row.person_email,
-      target_name:  row.person_name || '',
-      reason:       reason
-    };
-    $('rm-submit-btn').disabled = true;
-    rpc('ApiRequests_submit', draft, currentScope).then(function (resp) {
-      toast('Removal request submitted.', 'success');
-      if (resp && resp.warning) toast(resp.warning, 'warn');
-      closeRemoveModal();
-      refresh();
-    }).catch(function (err) {
-      toast(err.message || String(err), 'error');
-      $('rm-submit-btn').disabled = false;
+  // Exported entry point (Chunk 10.6). Modal listeners live on the
+  // modal element itself — which is inside #content and gets torn out
+  // on every nav swap — so no teardown is needed; the next init
+  // re-wires them.
+  window.page_bishopric_roster_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    $('rm-cancel-btn').addEventListener('click', closeRemoveModal);
+    $('remove-modal').addEventListener('click', function (ev) {
+      if (ev.target === this) closeRemoveModal();
     });
-  });
+    $('rm-form').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var seatId = $('remove-modal').getAttribute('data-seat-id');
+      if (!seatId) return;
+      var row = rowsBySeatId[seatId];
+      if (!row) {
+        toast('Seat not found.', 'error');
+        closeRemoveModal();
+        return;
+      }
+      var reason = $('rm-reason').value.trim();
+      if (!reason) {
+        toast('A reason is required.', 'error');
+        return;
+      }
+      var draft = {
+        type:         'remove',
+        target_email: row.person_email,
+        target_name:  row.person_name || '',
+        reason:       reason
+      };
+      $('rm-submit-btn').disabled = true;
+      rpc('ApiRequests_submit', draft, currentScope).then(function (resp) {
+        toast('Removal request submitted.', 'success');
+        if (resp && resp.warning) toast(resp.warning, 'warn');
+        closeRemoveModal();
+        refresh();
+      }).catch(function (err) {
+        toast(err.message || String(err), 'error');
+        $('rm-submit-btn').disabled = false;
+      });
+    });
 
-  refresh();
+    refresh();
+  };
 })();
 </script>

@@ -47,26 +47,22 @@
     config:         { all: {}, protected: [], system: [], loaded: false }
   };
 
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6: pane-scoped $ so rpc callbacks can write to our DOM
+  // whether the pane is attached or cached-detached.
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
+  function $$(sel) { return (__pane || document).querySelectorAll(sel); }
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  // Tab click handler — show the chosen panel, lazy-load if needed.
-  Array.prototype.forEach.call(document.querySelectorAll('.config-tab-btn'), function (btn) {
-    btn.addEventListener('click', function () {
-      var name = btn.getAttribute('data-tab');
-      activateTab(name);
-    });
-  });
-
   function activateTab(name) {
-    Array.prototype.forEach.call(document.querySelectorAll('.config-tab-btn'), function (b) {
+    Array.prototype.forEach.call($$('.config-tab-btn'), function (b) {
       b.classList.toggle('active', b.getAttribute('data-tab') === name);
     });
-    Array.prototype.forEach.call(document.querySelectorAll('.config-tab-panel'), function (p) {
+    Array.prototype.forEach.call($$('.config-tab-panel'), function (p) {
       p.classList.toggle('active', p.getAttribute('data-panel') === name);
     });
     if (!state[name].loaded) loadTab(name);
@@ -94,7 +90,8 @@
       state[name].loaded = true;
       renderTab(name);
     }).catch(function (err) {
-      $('panel-' + name).innerHTML = '<div class="error">Failed to load: ' + esc(err.message) + '</div>';
+      var host = $('panel-' + name);
+      if (host) host.innerHTML = '<div class="error">Failed to load: ' + esc(err.message) + '</div>';
       toast(err.message, 'error');
     });
   }
@@ -793,8 +790,18 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Boot — render the default-active "wards" tab.
+  // Exported entry point (Chunk 10.6). Also rewires the page-local tab
+  // buttons; the Config page's internal tab switcher is orthogonal to
+  // the app-level nav and keeps working unchanged.
   // ---------------------------------------------------------------------------
-  loadTab('wards');
+  window.page_mgr_config_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    Array.prototype.forEach.call($$('.config-tab-btn'), function (btn) {
+      btn.addEventListener('click', function () {
+        activateTab(btn.getAttribute('data-tab'));
+      });
+    });
+    loadTab('wards');
+  };
 })();
 </script>

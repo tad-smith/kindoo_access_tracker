@@ -2,9 +2,21 @@
   Role-aware navigation for Chunk 5+. Rendered server-side by
   core/Router.gs (Router_pick), which hands us `principal` and
   `current_page`. The client rehydrates the nav slot like any other
-  page HTML — the inline script below runs on insert and rewires each
+  page HTML — the inline script below runs on insert and sets each
   data-page anchor's href to MAIN_URL + ?p=<page> (the client-side
   global MAIN_URL is injected once by Layout.html).
+
+  Chunk 10.6: Layout.html owns a delegated click handler that
+  intercepts every `a[data-page]` click and looks the page up in a
+  client-side `pageBundle` map that ApiShared_bootstrap pre-populated
+  with every role-allowed page's HTML. Swaps are zero-rpc — the only
+  server round-trip per click is the page's own data fetch (inside
+  its init fn), which is what shows the "Loading…" placeholder.
+  The href set here is the FALLBACK surface — right-click "open in
+  new tab", middle-click, and modifier-clicks skip interception and
+  hit `/exec?p=<page>` directly, going through Main.doGet like a
+  shared deep link. The `active` class on the current link is kept
+  in sync by Layout.html's updateNavActive on each swap.
 
   Nav label conventions:
     - "Ward Roster" / "Stake Roster" — use role-prefixed labels when
@@ -32,14 +44,16 @@
     else if (__r.type === 'stake')     __isStake     = true;
     else if (__r.type === 'manager')   __isManager   = true;
   }
-  // Ordered link list: bishopric first, then stake, then manager —
-  // matches the default-role priority direction (lowest → highest).
-  // Chunk 6: New Kindoo Request / My Requests appear for any
-  // request-capable principal (bishopric OR stake). They're emitted
-  // in a single block after the role-specific roster links so the
-  // order on a multi-role user is: own rosters → requests → manager.
+  // Ordered link list. For a bishopric user the action-oriented
+  // tabs (New Kindoo Request + My Requests) come first, with the
+  // reference-oriented Ward Roster at the end — bishoprics open the
+  // app primarily to act, not to browse the roster, so leading with
+  // the request surfaces is the right emphasis. Stake users keep
+  // their roster-first order (Stake Roster + Ward Rosters precede
+  // the shared request block). Manager links stay last regardless.
+  // On a multi-role user the order is: stake rosters → shared
+  // requests → bishopric roster → manager links.
   var __links = [];
-  if (__isBishopric) __links.push({ page: 'bishopric/roster',   label: 'Ward Roster' });
   if (__isStake) {
     __links.push({ page: 'stake/roster',       label: 'Stake Roster' });
     __links.push({ page: 'stake/ward-rosters', label: 'Ward Rosters' });
@@ -48,6 +62,7 @@
     __links.push({ page: 'new', label: 'New Kindoo Request' });
     __links.push({ page: 'my',  label: 'My Requests' });
   }
+  if (__isBishopric) __links.push({ page: 'bishopric/roster',   label: 'Ward Roster' });
   if (__isManager) {
     __links.push({ page: 'mgr/dashboard', label: 'Dashboard' });
     __links.push({ page: 'mgr/queue',     label: 'Requests Queue' });
@@ -72,6 +87,11 @@
 (function () {
   // Runs after Layout's rehydrateScripts re-inserts the script into
   // the live DOM (innerHTML-injected scripts are inert per HTML spec).
+  // Chunk 10.6: the href set here is the FALLBACK surface — right-click
+  // / modifier-click / middle-click bypass Layout.html's delegated
+  // client-side-nav interception and hit /exec?p=<page> through
+  // Main.doGet. The shell's delegated click handler covers the normal
+  // primary-button click.
   var nav = document.querySelector('.app-nav');
   if (!nav) return;
   var links = nav.querySelectorAll('.nav-link[data-page]');
@@ -80,16 +100,10 @@
     if (typeof MAIN_URL === 'string' && MAIN_URL && page) {
       links[i].href = MAIN_URL + '?p=' + encodeURIComponent(page);
       links[i].setAttribute('target', '_top');
-    } else {
-      // Safe fallback so clicking a link without MAIN_URL doesn't
-      // navigate the iframe to a broken relative URL.
-      (function (a) {
-        a.addEventListener('click', function (ev) {
-          ev.preventDefault();
-          alert('main_url is not configured.');
-        });
-      })(links[i]);
     }
+    // If MAIN_URL isn't configured the href stays '#'; the shell's
+    // delegated click handler still intercepts via data-page, so the
+    // intra-app swap works even without a valid fallback href.
   }
 })();
 </script>

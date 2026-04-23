@@ -93,13 +93,16 @@
 
 <script>
 (function () {
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6: $ scoped to this page's pane so rpc callbacks can
+  // write to our DOM even when the pane is cached-detached.
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
 
-  var filters = {
-    ward:     (typeof QUERY_PARAMS === 'object' && QUERY_PARAMS && QUERY_PARAMS.ward)     ? String(QUERY_PARAMS.ward)     : '',
-    building: (typeof QUERY_PARAMS === 'object' && QUERY_PARAMS && QUERY_PARAMS.building) ? String(QUERY_PARAMS.building) : '',
-    type:     (typeof QUERY_PARAMS === 'object' && QUERY_PARAMS && QUERY_PARAMS.type)     ? String(QUERY_PARAMS.type)     : ''
-  };
+  // Declared at module scope; page_mgr_seats_init seeds it from the
+  // init-arg queryParams (preferred) or QUERY_PARAMS (initial-load
+  // compatibility) on every entry so re-visiting via intra-app nav
+  // lands on the correct filters.
+  var filters = { ward: '', building: '', type: '' };
   var populatedOptions = false;
 
   function populateFilterOptions(opts) {
@@ -220,62 +223,75 @@
     $('seat-edit-modal').removeAttribute('data-editing-seat');
   }
 
-  $('se-cancel-btn').addEventListener('click', closeEditModal);
-  $('seat-edit-modal').addEventListener('click', function (ev) {
-    // Click outside the inner card closes the modal.
-    if (ev.target === this) closeEditModal();
-  });
-
-  $('seat-edit-form').addEventListener('submit', function (ev) {
-    ev.preventDefault();
-    var seatId = $('seat-edit-modal').getAttribute('data-editing-seat');
-    if (!seatId) return;
-    var row = currentRowsById[seatId];
-    var patch = {
-      person_name:    $('se-person-name').value,
-      reason:         $('se-reason').value,
-      building_names: $('se-buildings').value
-    };
-    if (row && row.type === 'temp') {
-      patch.start_date = $('se-start-date').value || '';
-      patch.end_date   = $('se-end-date').value   || '';
-    }
-    $('se-save-btn').disabled = true;
-    rpc('ApiManager_updateSeat', seatId, patch).then(function () {
-      toast('Seat updated.', 'success');
-      closeEditModal();
-      load();
-    }).catch(function (err) {
-      toast(err.message || String(err), 'error');
-    }).then(function () {
-      $('se-save-btn').disabled = false;
-    });
-  });
-
   function load() {
     $('roster-table-host').innerHTML = '<div class="empty-state">Loading seats…</div>';
-    rpc('ApiManager_allSeats', filters).then(function (resp) {
-      render(resp);
-    }).catch(function (err) {
+    rpc('ApiManager_allSeats', filters).then(render).catch(function (err) {
       var msg = (err && err.message) ? err.message : String(err);
       $('roster-table-host').innerHTML =
         '<div class="error">Could not load seats: ' + escapeHtml(msg) + '</div>';
     });
   }
 
-  $('ward-filter').addEventListener('change', function () {
-    filters.ward = this.value;
-    load();
-  });
-  $('building-filter').addEventListener('change', function () {
-    filters.building = this.value;
-    load();
-  });
-  $('type-filter').addEventListener('change', function () {
-    filters.type = this.value;
-    load();
-  });
+  // Exported entry point (Chunk 10.6). All listeners — including the
+  // edit modal's — are on elements inside #content, so they die with
+  // the DOM on the next swap; no teardown needed.
+  window.page_mgr_seats_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    var src = (queryParams && typeof queryParams === 'object') ? queryParams : (typeof QUERY_PARAMS === 'object' && QUERY_PARAMS ? QUERY_PARAMS : {});
+    filters = {
+      ward:     String(src.ward || ''),
+      building: String(src.building || ''),
+      type:     String(src.type || '')
+    };
+    populatedOptions = false;
+    currentRowsById = {};
 
-  load();
+    $('se-cancel-btn').addEventListener('click', closeEditModal);
+    $('seat-edit-modal').addEventListener('click', function (ev) {
+      // Click outside the inner card closes the modal.
+      if (ev.target === this) closeEditModal();
+    });
+
+    $('seat-edit-form').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var seatId = $('seat-edit-modal').getAttribute('data-editing-seat');
+      if (!seatId) return;
+      var row = currentRowsById[seatId];
+      var patch = {
+        person_name:    $('se-person-name').value,
+        reason:         $('se-reason').value,
+        building_names: $('se-buildings').value
+      };
+      if (row && row.type === 'temp') {
+        patch.start_date = $('se-start-date').value || '';
+        patch.end_date   = $('se-end-date').value   || '';
+      }
+      $('se-save-btn').disabled = true;
+      rpc('ApiManager_updateSeat', seatId, patch).then(function () {
+        toast('Seat updated.', 'success');
+        closeEditModal();
+        load();
+      }).catch(function (err) {
+        toast(err.message || String(err), 'error');
+      }).then(function () {
+        $('se-save-btn').disabled = false;
+      });
+    });
+
+    $('ward-filter').addEventListener('change', function () {
+      filters.ward = this.value;
+      load();
+    });
+    $('building-filter').addEventListener('change', function () {
+      filters.building = this.value;
+      load();
+    });
+    $('type-filter').addEventListener('change', function () {
+      filters.type = this.value;
+      load();
+    });
+
+    load();
+  };
 })();
 </script>

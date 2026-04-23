@@ -496,7 +496,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 10.6 — Client-side navigation (persistent shell)
+## Chunk 10.6 — Client-side navigation (persistent shell) `[DONE — see docs/changelog/chunk-10.6-client-nav.md]`
 
 **Goal:** eliminate the 1-2 second full-page reload on every intra-app navigation. `Layout` + `Nav` + topbar persist across navigations; only the main content area swaps, fetched via `rpc` rather than a fresh `Main.doGet`. Dramatic UX improvement for users clicking between pages.
 
@@ -504,25 +504,25 @@ _Proof 6 — failure modes_
 
 **Sub-tasks**
 
-- [ ] Intercept nav link clicks on the client side. Instead of letting `data-page` anchors navigate the top frame (which triggers `Main.doGet` → bootstrap → full `Layout` re-render), fetch the target page's HTML + initial data via `rpc` and swap it into the content area in place.
-- [ ] Implement `api/ApiShared.gs#ApiShared_renderPage(token, pageId, queryParams)` — same response shape the Chunk-1 bootstrap currently returns except the `Layout` shell is not re-rendered. Returns `{ principal, pageHtml, pageModel }`; `navHtml` stays cached client-side from the initial bootstrap (see below).
-- [ ] **History API integration** — `pushState` on each intra-app navigation so browser back / forward work and the iframe's URL reflects the current page. Important caveat (see architecture.md new client-side-nav section): Apps Script wraps user HTML in a `*.googleusercontent.com` iframe; the top frame is on `script.google.com`. History manipulations happen inside the iframe. The top frame's address bar does NOT change — sharable deep links rely on the existing direct-load `Main.doGet` path with `?p=`.
-- [ ] Query-param forwarding — filter state (ward, type, etc.) survives navigation. Source of truth becomes the iframe's current pushState URL; `QUERY_PARAMS` is re-derived on each swap rather than frozen at initial bootstrap.
-- [ ] Deep-link resilience — direct-load of any page (a fresh browser visit to Main `/exec?p=mgr/audit&action=...`) continues to work via the existing `Main.doGet` path unchanged. Client-side nav is a layered optimization, not a replacement.
-- [ ] Loading state during the swap — content area shows an `.empty-state` "Loading…" indicator (reusing Chunk 10's polish class), not a flash of empty content.
-- [ ] **Per-page init function convention.** Each page's inline `<script>` block currently executes on first load via `rehydrateScripts` (`Layout.html`). For 10.6, every page template exports an init function whose name matches the pageId (pageId `mgr/seats` → `mgr_seats_init`; `/` → `_`). The shell calls `window.<pageId>_init(pageModel)` after injecting `pageHtml`. Pages that need teardown on swap return a teardown fn from their init (the shell calls it before swapping in the next page). `rehydrateScripts` is kept for the initial bootstrap path; the client-side-nav swap path calls the init fn directly instead of rehydrating (cleaner — the script block body runs once per app load, not once per navigation).
-- [ ] Memory-leak audit across 20+ navigations. Two patterns are allowed: (a) event delegation on stable parents (preferred — no listener cleanup); (b) init returns a teardown that removes what it added. No bare `addEventListener` on page DOM without one of those. Chunk-6 pages (`NewRequest`, `MyRequests`, `RequestsQueue`, `AllSeats`) will need the most attention since they wire several listeners per row.
-- [ ] Multi-role users context-switch — `Nav.html` is rendered once at login per the principal's role set and cached client-side across navigations. If a user's roles change mid-session (unusual: requires LCR change + import run) the nav is stale until a full reload. Accept this; document the `sessionStorage`-refresh rule in the architecture section.
+- [x] Intercept nav link clicks on the client side — delegated `document` click handler on `a[data-page]` anchors serves from a client-side `pageBundle` map instead of letting the browser navigate the top frame. No rpc per click.
+- [x] Add `core/Router.gs#Router_buildPageBundle(principal)` — renders every role-allowed page's HTML into `{pageId → pageHtml}`; role-gated at bundle-build time as a defense-in-depth layer.
+- [x] Extend `api/ApiShared.gs#ApiShared_bootstrap` to return the bundle in the initial response. (No `ApiShared_renderPage` endpoint — bundling the HTML at bootstrap makes it dead code.)
+- [x] **History API integration** — `pushState` on each intra-app navigation so browser back / forward work and the iframe's URL reflects the current page. Top-frame URL does NOT change (architecture.md §8.5 "History API boundaries").
+- [x] Query-param forwarding — filter state (ward, type, etc.) survives navigation. Init fn receives `queryParams` as a second arg; shell also updates `window.QUERY_PARAMS` each swap so un-migrated pages keep working.
+- [x] Deep-link resilience — direct-load of any page continues to work via `Main.doGet` unchanged; the target page renders from `pageHtml`, and subsequent in-app nav serves from the bundle.
+- [x] No loading indicator on swap — swaps are single-digit-millisecond (synchronous client-side lookup). The init fn's own data rpc still shows a `"Loading …"` placeholder in the content area.
+- [x] **Per-page init function convention** — every page template exports `window.page_<pageId>_init(pageModel, queryParams)` on `window` (pageId `/` and `-` → `_`, prefix `page_`, suffix `_init`). Shell calls it after `rehydrateScripts`. Optional `window.page_<pageId>_teardown` runs before the next swap.
+- [x] Memory-leak audit — only `NewRequest` has a cancelable resource (duplicate-check debounce) and gets a teardown. Every other page's listeners live on elements inside `#content` and are garbage-collected with the DOM on swap.
+- [x] Multi-role users context-switch — `Nav.html` rendered once per principal at initial bootstrap and cached across navigations; the bundle is likewise stale on mid-session role changes, which require a reload (accepted per architecture.md §8.5 "Nav staleness — accepted").
 
 **Acceptance criteria**
 
-- Clicking a nav link swaps the content area without a full page reload — verifiable via Network tab (no new `Main.doGet` request; only the `ApiShared_renderPage` rpc).
+- Clicking a nav link swaps the content area without a full page reload AND without any rpc for the HTML swap itself — verifiable via Network tab (no `Main.doGet`, no `ApiShared_renderPage`, just the page's own data rpc that shows the `"Loading …"` placeholder).
 - Browser back / forward buttons work for intra-app navigation.
-- Direct-load deep links (copying a URL from the address bar and opening a new tab) still work via the `Main.doGet` flow — Chunk 5's `QUERY_PARAMS` deep-link behaviour unchanged.
+- Direct-load deep links (copying a URL from the address bar and opening a new tab) still work via the `Main.doGet` flow.
 - Filter-state deep links (e.g. `?p=mgr/seats&ward=CO`) work via BOTH direct-load and in-app navigation.
 - No memory leaks across 20+ navigations (manual test: navigate rapidly between pages, check DOM size + listener count stay stable via DevTools Memory profile).
-- Measured time-to-interactive on intra-app navigation drops by at least 50 % vs. the Chunk 10.5 baseline.
-- Loading indicator visible during the content swap; no flash of empty content.
+- Intra-app navigation time-to-interactive is limited by the page's own data rpc; no per-click `google.script.run` round-trip for the HTML.
 - Every Chunk 1-10 acceptance criterion still passes (full walkthrough).
 - Nav highlights the current page correctly after each swap (Chunk 5's "active" behaviour preserved).
 
@@ -546,7 +546,7 @@ _Proof 6 — failure modes_
 - Route-level code splitting — all pages are small.
 - Animated page transitions.
 - Top-frame URL rewrite during in-app nav (architecturally impossible across the googleusercontent ↔ script.google boundary).
-- Any server-side change beyond adding `ApiShared_renderPage` and the per-page init-fn convention.
+- Any server-side change beyond `Router_buildPageBundle` + the `pageBundle` field on the bootstrap response.
 
 ---
 

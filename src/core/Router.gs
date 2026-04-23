@@ -127,3 +127,40 @@ function Router_hasAllowedRole_(principal, entry) {
   }
   return false;
 }
+
+// Chunk 10.6 — bundle every role-allowed page's HTML into one blob so
+// the client can swap tabs with zero rpc. Called from ApiShared_bootstrap
+// after role resolution; the client stashes the result and serves all
+// intra-app navigations from it.
+//
+// Role-gated server-side: a bishopric user's bundle does NOT include
+// manager pages, and vice versa. If a user's role set changes mid-
+// session (rare — requires an LCR change + import run), the bundle is
+// stale until they reload. Matches architecture.md §8.5 "Nav staleness
+// — accepted".
+//
+// Each page template's <script> defines `window.page_<X>_init` on
+// rehydration; the shell calls that init after injecting the cached
+// HTML. Page-scoped data still round-trips through the page's own rpc
+// (ApiManager_dashboard, ApiManager_allSeats, etc.) — only the HTML
+// shell is cached.
+//
+// Returns {} for principals with no roles (NotAuthorized has no nav
+// targets). Bootstrap wizard + SetupInProgress are pre-role-resolution
+// surfaces and never reach here.
+function Router_buildPageBundle(principal) {
+  var bundle = {};
+  if (!principal || !principal.roles || principal.roles.length === 0) {
+    return bundle;
+  }
+  for (var pageId in ROUTER_PAGES_) {
+    if (!ROUTER_PAGES_.hasOwnProperty(pageId)) continue;
+    var entry = ROUTER_PAGES_[pageId];
+    if (!Router_hasAllowedRole_(principal, entry)) continue;
+    var tpl = HtmlService.createTemplateFromFile(entry.template);
+    tpl.principal      = principal;
+    tpl.requested_page = pageId;
+    bundle[pageId] = tpl.evaluate().getContent();
+  }
+  return bundle;
+}

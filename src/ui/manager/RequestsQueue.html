@@ -85,17 +85,17 @@
 
 <script>
 (function () {
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6: $ scoped to this page's pane.
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
 
   function qp(name) {
     return (typeof QUERY_PARAMS === 'object' && QUERY_PARAMS && QUERY_PARAMS[name]) ? String(QUERY_PARAMS[name]) : '';
   }
-  var filters = {
-    ward:  qp('ward'),
-    type:  qp('type'),
-    state: qp('state') || 'pending'
-  };
-  if (filters.state !== 'pending' && filters.state !== 'complete') filters.state = 'pending';
+  // Declared at module scope; page_mgr_queue_init seeds it from the
+  // init-arg queryParams (preferred) or falls back to the QUERY_PARAMS
+  // global (initial-load compatibility).
+  var filters = { ward: '', type: '', state: 'pending' };
   var populatedFilterOpts = false;
 
   // Captured from every listRequests response so the Complete-confirmation
@@ -345,6 +345,14 @@
             rpc('ApiManager_rejectRequest', reqId, reason).then(function (resp) {
               toast('Request rejected.', 'success');
               if (resp && resp.warning) toast(resp.warning, 'warn');
+              // Chunk 10.6: request state affects Dashboard counts,
+              // My Requests, Audit Log, and potentially All Seats
+              // (on a complete — not here, but the pattern stays
+              // consistent across reject/complete). Nuke every
+              // cached tab so the next visit reflects fresh state.
+              if (typeof window.invalidateAllPages === 'function') {
+                window.invalidateAllPages();
+              }
               load();
             }).catch(function (err) {
               toast(err.message || String(err), 'error');
@@ -472,51 +480,75 @@
     return out;
   }
 
-  $('cm-cancel-btn').addEventListener('click', closeCompleteModal);
-  $('complete-modal').addEventListener('click', function (ev) {
-    if (ev.target === this) closeCompleteModal();
-  });
-  $('cm-confirm-btn').addEventListener('click', function () {
-    var reqId = $('complete-modal').getAttribute('data-request-id');
-    var reqType = $('complete-modal').getAttribute('data-request-type');
-    if (!reqId) return;
-    // Removes don't insert a seat → no building_names override.
-    var overrides = (reqType === 'remove')
-      ? null
-      : { building_names: currentBuildingSelection().join(',') };
-    this.disabled = true;
-    rpc('ApiManager_completeRequest', reqId, overrides).then(function (resp) {
-      var msg = (resp && resp.noop)
-        ? 'Request closed (seat was already removed — no change made).'
-        : (reqType === 'remove'
-            ? 'Request completed and seat deleted.'
-            : 'Request completed and seat created.');
-      toast(msg, 'success');
-      if (resp && resp.warning) toast(resp.warning, 'warn');
-      closeCompleteModal();
+  // Exported entry point (Chunk 10.6). Seed filters from the init-arg
+  // queryParams (preferred) or the QUERY_PARAMS global (initial-load
+  // compatibility). Re-entering the page from any in-app path lands
+  // with the right filter state. Modal listeners live on elements
+  // inside #content — they die with the DOM on the next swap, so no
+  // teardown is needed.
+  window.page_mgr_queue_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    var src = (queryParams && typeof queryParams === 'object') ? queryParams : (typeof QUERY_PARAMS === 'object' && QUERY_PARAMS ? QUERY_PARAMS : {});
+    filters = {
+      ward:  String(src.ward || ''),
+      type:  String(src.type || ''),
+      state: String(src.state || 'pending')
+    };
+    if (filters.state !== 'pending' && filters.state !== 'complete') filters.state = 'pending';
+    populatedFilterOpts = false;
+
+    $('q-state-filter').addEventListener('change', function () {
+      filters.state = this.value || 'pending';
       load();
-    }).catch(function (err) {
-      toast(err.message || String(err), 'error');
-      $('cm-confirm-btn').disabled = false;
-      // Don't auto-reload on error — the manager may want to retry
-      // with a different building selection without losing their
-      // modal state.
     });
-  });
+    $('q-ward-filter').addEventListener('change', function () {
+      filters.ward = this.value;
+      load();
+    });
+    $('q-type-filter').addEventListener('change', function () {
+      filters.type = this.value;
+      load();
+    });
 
-  $('q-state-filter').addEventListener('change', function () {
-    filters.state = this.value || 'pending';
-    load();
-  });
-  $('q-ward-filter').addEventListener('change', function () {
-    filters.ward = this.value;
-    load();
-  });
-  $('q-type-filter').addEventListener('change', function () {
-    filters.type = this.value;
-    load();
-  });
+    $('cm-cancel-btn').addEventListener('click', closeCompleteModal);
+    $('complete-modal').addEventListener('click', function (ev) {
+      if (ev.target === this) closeCompleteModal();
+    });
+    $('cm-confirm-btn').addEventListener('click', function () {
+      var reqId = $('complete-modal').getAttribute('data-request-id');
+      var reqType = $('complete-modal').getAttribute('data-request-type');
+      if (!reqId) return;
+      // Removes don't insert a seat → no building_names override.
+      var overrides = (reqType === 'remove')
+        ? null
+        : { building_names: currentBuildingSelection().join(',') };
+      this.disabled = true;
+      rpc('ApiManager_completeRequest', reqId, overrides).then(function (resp) {
+        var msg = (resp && resp.noop)
+          ? 'Request closed (seat was already removed — no change made).'
+          : (reqType === 'remove'
+              ? 'Request completed and seat deleted.'
+              : 'Request completed and seat created.');
+        toast(msg, 'success');
+        if (resp && resp.warning) toast(resp.warning, 'warn');
+        // Chunk 10.6: Complete mutates Seats + Requests + AuditLog
+        // (and potentially Access for add flows). Nuke every cached
+        // tab so the next visit reflects fresh state everywhere.
+        if (typeof window.invalidateAllPages === 'function') {
+          window.invalidateAllPages();
+        }
+        closeCompleteModal();
+        load();
+      }).catch(function (err) {
+        toast(err.message || String(err), 'error');
+        $('cm-confirm-btn').disabled = false;
+        // Don't auto-reload on error — the manager may want to retry
+        // with a different building selection without losing their
+        // modal state.
+      });
+    });
 
-  load();
+    load();
+  };
 })();
 </script>

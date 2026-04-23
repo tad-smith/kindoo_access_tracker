@@ -103,7 +103,9 @@
 
 <script>
 (function () {
-  function $(id) { return document.getElementById(id); }
+  // Chunk 10.6: pane-scoped $.
+  var __pane = null;
+  function $(id) { return (__pane || document).querySelector('#' + id); }
 
   // Action → colour category. Matches the data-model.md §10 action
   // vocabulary. Unknown actions fall back to the neutral grey.
@@ -455,42 +457,65 @@
     });
   }
 
-  $('apply-filters-btn').addEventListener('click', function () {
-    readInputs();
-    state.offset = 0;
-    load();
-  });
-  $('reset-filters-btn').addEventListener('click', function () {
-    state = { actor_email: '', action: '', entity_type: '', entity_id: '',
-              date_from: '', date_to: '', offset: 0 };
+  // Exported entry point (Chunk 10.6). Pagination state is re-derived
+  // from the URL's query params on each init — so re-entering Audit
+  // Log via intra-app nav (e.g. from Dashboard) preserves the
+  // previously-applied filters, matching direct-load behaviour.
+  window.page_mgr_audit_init = function (pageModel, queryParams, pane) {
+    __pane = pane;
+    // queryParams is authoritative on intra-app nav; the QUERY_PARAMS
+    // global (kept in sync by Layout.html) is used via qp() for
+    // initial-load compatibility. Re-seed state from whichever is
+    // fresher.
+    if (queryParams) {
+      state = {
+        actor_email: String(queryParams.actor || queryParams.actor_email || ''),
+        action:      String(queryParams.action || ''),
+        entity_type: String(queryParams.entity_type || queryParams.entity || ''),
+        entity_id:   String(queryParams.entity_id || queryParams.id || ''),
+        date_from:   String(queryParams.date_from || queryParams.from || ''),
+        date_to:     String(queryParams.date_to   || queryParams.to   || ''),
+        offset:      0
+      };
+    }
+
+    $('apply-filters-btn').addEventListener('click', function () {
+      readInputs();
+      state.offset = 0;
+      load();
+    });
+    $('reset-filters-btn').addEventListener('click', function () {
+      state = { actor_email: '', action: '', entity_type: '', entity_id: '',
+                date_from: '', date_to: '', offset: 0 };
+      applyStateToInputs();
+      load();
+    });
+    $('prev-page-btn').addEventListener('click', function () {
+      state.offset = Math.max(0, state.offset - PAGE_LIMIT);
+      load();
+    });
+    $('next-page-btn').addEventListener('click', function () {
+      state.offset = state.offset + PAGE_LIMIT;
+      load();
+    });
+
+    // Enter key in any text/date input → apply.
+    Array.prototype.forEach.call(
+      $('audit-filters').querySelectorAll('input[type="text"], input[type="date"]'),
+      function (el) {
+        el.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') {
+            ev.preventDefault();
+            readInputs();
+            state.offset = 0;
+            load();
+          }
+        });
+      }
+    );
+
     applyStateToInputs();
     load();
-  });
-  $('prev-page-btn').addEventListener('click', function () {
-    state.offset = Math.max(0, state.offset - PAGE_LIMIT);
-    load();
-  });
-  $('next-page-btn').addEventListener('click', function () {
-    state.offset = state.offset + PAGE_LIMIT;
-    load();
-  });
-
-  // Enter key in any text/date input → apply.
-  Array.prototype.forEach.call(
-    $('audit-filters').querySelectorAll('input[type="text"], input[type="date"]'),
-    function (el) {
-      el.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Enter') {
-          ev.preventDefault();
-          readInputs();
-          state.offset = 0;
-          load();
-        }
-      });
-    }
-  );
-
-  applyStateToInputs();
-  load();
+  };
 })();
 </script>

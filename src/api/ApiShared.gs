@@ -61,17 +61,28 @@ function ApiShared_bootstrap(token, requestedPage) {
     };
   }
 
-  // Normal path — setup is complete. Router_pick also returns navHtml
-  // (populated for principals with roles; empty for NotAuthorized).
-  var routed = Router_pick(requestedPage || '', principal);
+  // Normal path — setup is complete. Router_pick returns the initial
+  // page's HTML + navHtml + pageModel; Router_buildPageBundle renders
+  // every OTHER role-allowed page so the client can swap tabs with
+  // zero further rpcs. The initial page is also present in the bundle
+  // (idempotent — same bytes), so a bookmark to any ?p= deep-link hits
+  // the same cached HTML the shell will serve for re-entry.
+  //
+  // The bundle is ~12 page templates worth of HTML (gzipped on the
+  // wire). At target scale (1-2 users/week, 12 wards) the up-front
+  // cost is negligible and buys instant intra-app navigation for the
+  // rest of the session.
+  var routed      = Router_pick(requestedPage || '', principal);
+  var pageBundle  = Router_buildPageBundle(principal);
   Logger.log('[measure] bootstrap for page=' + (requestedPage || '(default)') +
     ' took ' + (Date.now() - _startedMs) + 'ms');
   return {
-    principal: principal,
-    template:  routed.template,
-    pageModel: routed.pageModel,
-    pageHtml:  routed.pageHtml,
-    navHtml:   routed.navHtml || ''
+    principal:   principal,
+    template:    routed.template,
+    pageModel:   routed.pageModel,
+    pageHtml:    routed.pageHtml,
+    navHtml:     routed.navHtml || '',
+    pageBundle:  pageBundle
   };
 }
 
