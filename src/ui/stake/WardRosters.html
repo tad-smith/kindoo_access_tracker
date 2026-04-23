@@ -68,7 +68,7 @@
     $('utilization-host').innerHTML = '';
     rpc('ApiStake_wardRoster', wardCode).then(function (resp) {
       $('utilization-host').innerHTML = renderUtilizationBar(resp.summary);
-      $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
+      $('roster-table-host').innerHTML = renderRosterCards(resp.rows, {
         emptyMsg: 'No seats in ' + resp.summary.ward_name + ' yet.'
       });
     }).catch(function (err) {

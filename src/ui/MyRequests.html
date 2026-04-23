@@ -1,6 +1,6 @@
 <!--
-  My Requests (Chunk 6). Single template shared between bishopric +
-  stake principals — same simplification as NewRequest.html.
+  My Requests (Chunk 6, TASKS.md #2 card migration). Single template
+  shared between bishopric + stake principals.
 
   Scope filter UX (from the Chunk-6 prompt):
     - Single role   → no dropdown; directly shows the user's requests
@@ -8,14 +8,17 @@
     - Multi-role    → scope-filter dropdown including an "All" option
       (empty string on the wire).
 
-  Row rendering: a small, purpose-built table — not rosterRowHtml. The
-  columns are request-ish (requested_at, status, member, reason, dates)
-  rather than seat-ish. Status badges color the row the same way the
-  roster badges color seat types (consistent visual language).
+  Row rendering: card-per-row using the shared .roster-card /
+  .roster-card-line1 / .roster-card-line2 classes so the visual density
+  matches the roster pages. Status drives the card background via
+  .my-request-card.status-row-* (mirrors the RequestsQueue status
+  colouring convention).
 
   Actions: Cancel button appears on pending rows only; confirms then
   calls ApiRequests_cancel. After success, the row flips to cancelled
-  in place (full refresh of the list).
+  in place (full refresh of the list). Rejected rows carry a "why?"
+  hint; completed remove-requests that hit the R-1 race carry a "note"
+  hint — click either to see the reason / completion_note.
 -->
 <section class="my-requests-page">
   <h1>My Requests</h1>
@@ -69,16 +72,47 @@
     return String(type);
   }
 
+  // Card shape mirrors rosterCardHtml but breaks out dedicated lines
+  // per request-level field so long text wraps predictably:
+  //   Line 1: [type-badge][status-badge] · [scope] · Member (email) ·
+  //           actions (right-aligned)
+  //   Line 2: Dates: ...       (add_temp only)
+  //   Line 3: Reason: ...
+  //   Line 4: Comment: ...     (only when the requester left a comment)
+  //   Line 5: Requested · Resolved (bottom — timestamps anchor the card)
+  // Missing lines collapse silently.
   function rowHtml(row) {
     var type = row.type;
-    var dates = '';
-    if (type === 'add_temp') {
-      dates = (row.start_date || '') +
-        (row.start_date && row.end_date ? ' → ' : '') +
-        (row.end_date || '');
+    var typeBadge = '<span class="roster-badge badge-request-' + escapeHtml(type) + '">' +
+      escapeHtml(typeLabel(type)) + '</span>';
+    var statusBadgeHtml = statusBadge(row.status);
+
+    var memberInner = row.member_name
+      ? '<span class="roster-card-name">' + escapeHtml(row.member_name) + '</span>' +
+        ' (<span class="roster-email">' + escapeHtml(row.member_email) + '</span>)'
+      : '<span class="roster-email">' + escapeHtml(row.member_email) + '</span>';
+    var memberHtml = '<span class="roster-card-member">' + memberInner + '</span>';
+
+    var datesLine = '';
+    if (type === 'add_temp' && (row.start_date || row.end_date)) {
+      var s = row.start_date ? escapeHtml(row.start_date) : '?';
+      var e = row.end_date   ? escapeHtml(row.end_date)   : '?';
+      datesLine =
+        '<div class="roster-card-line2">' +
+          '<span class="roster-card-chip"><span class="label">Dates:</span> ' +
+            s + ' → ' + e +
+          '</span>' +
+        '</div>';
     }
-    var member = (row.member_name ? escapeHtml(row.member_name) + '<br>' : '') +
-      '<span class="roster-email">' + escapeHtml(row.member_email) + '</span>';
+
+    var commentLine = row.comment
+      ? '<div class="roster-card-line2">' +
+          '<span class="roster-card-chip"><span class="label">Comment:</span> ' +
+            escapeHtml(row.comment) +
+          '</span>' +
+        '</div>'
+      : '';
+
     var actions = '';
     if (row.status === 'pending') {
       actions = '<button class="btn btn-secondary" data-act="cancel" data-request-id="' +
@@ -93,16 +127,47 @@
       actions = '<span class="completion-note-hint" title="' +
         escapeHtml(row.completion_note) + '">note</span>';
     }
-    return '<tr class="req-row status-row-' + escapeHtml(row.status) + '">' +
-      '<td>' + escapeHtml(row.requested_at || '') + '</td>' +
-      '<td><code>' + escapeHtml(row.scope) + '</code></td>' +
-      '<td>' + escapeHtml(typeLabel(type)) + '</td>' +
-      '<td>' + member + '</td>' +
-      '<td>' + escapeHtml(row.reason || '') + '</td>' +
-      '<td>' + dates + '</td>' +
-      '<td>' + statusBadge(row.status) + '</td>' +
-      '<td class="row-actions">' + actions + '</td>' +
-      '</tr>';
+    var actionsBlock = actions
+      ? '<span class="roster-card-actions">' + actions + '</span>'
+      : '';
+
+    var reasonLine = row.reason
+      ? '<div class="roster-card-line2">' +
+          '<span class="roster-card-chip"><span class="label">Reason:</span> ' +
+            escapeHtml(row.reason) +
+          '</span>' +
+        '</div>'
+      : '';
+    // Timestamps anchor the card bottom. "Resolved:" is a neutral label
+    // — the status badge on line 1 already says which terminal state it
+    // landed in, so no need for status-specific wording.
+    var requestedChip = row.requested_at
+      ? '<span class="roster-card-chip"><span class="label">Requested:</span> ' +
+          escapeHtml(row.requested_at) + '</span>'
+      : '';
+    var completedChip = row.completed_at
+      ? '<span class="roster-card-chip"><span class="label">Resolved:</span> ' +
+          escapeHtml(row.completed_at) + '</span>'
+      : '';
+    var timestampsLine = (requestedChip || completedChip)
+      ? '<div class="roster-card-line2 roster-card-timestamps">' +
+          requestedChip + completedChip +
+        '</div>'
+      : '';
+
+    return '<div class="roster-card my-request-card status-row-' + escapeHtml(row.status) +
+           '" data-request-id="' + escapeHtml(row.request_id) + '">' +
+      '<div class="roster-card-line1">' +
+        '<span class="roster-card-badges">' + typeBadge + statusBadgeHtml + '</span>' +
+        '<span class="roster-card-chip roster-card-scope"><code>' + escapeHtml(row.scope) + '</code></span>' +
+        memberHtml +
+        actionsBlock +
+      '</div>' +
+      datesLine +
+      reasonLine +
+      commentLine +
+      timestampsLine +
+    '</div>';
   }
 
   function render(rows) {
@@ -111,12 +176,9 @@
         '<div class="empty-state">No requests yet.</div>';
       return;
     }
-    var html = '<table class="my-requests-table"><thead><tr>' +
-      '<th>Requested</th><th>Scope</th><th>Type</th><th>Member</th>' +
-      '<th>Reason</th><th>Dates</th><th>Status</th><th></th>' +
-      '</tr></thead><tbody>';
+    var html = '<div class="roster-cards">';
     for (var i = 0; i < rows.length; i++) html += rowHtml(rows[i]);
-    html += '</tbody></table>';
+    html += '</div>';
     $('my-requests-host').innerHTML = html;
 
     Array.prototype.forEach.call(

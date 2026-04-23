@@ -24,19 +24,27 @@ Two new endpoints: `ApiManager_accessInsertManual(token, row)` and `ApiManager_a
 
 ---
 
-## 2. Convert wide tables to card layout
+## 2. Convert wide tables to card layout [DONE 2026-04-23]
 
-**Why / what.** The shared `renderRosterTable` helper in `src/ui/ClientUtils.html` renders narrow columns that wrap text across many lines on realistic data (long names, multiple buildings, long calling names, long audit diffs). Rework five pages to use a card-per-row layout similar to the manager Requests Queue (see `src/ui/manager/RequestsQueue.html` for the reference look — metadata header, body block, action strip).
+**Why / what.** The shared `renderRosterTable` helper in `src/ui/ClientUtils.html` renders narrow columns that wrap text across many lines on realistic data (long names, multiple buildings, long calling names, long audit diffs). Rework five pages to use a card-per-row layout similar to the manager Requests Queue.
 
-**Pages affected.** `src/ui/manager/AllSeats.html`, `src/ui/manager/AuditLog.html`, `src/ui/stake/Roster.html`, `src/ui/bishopric/Roster.html`, `src/ui/stake/WardRosters.html`.
+**What shipped.** Added a sibling `renderRosterCards(rows, opts)` + `rosterCardHtml(row, opts)` to `src/ui/ClientUtils.html` with the same `opts` shape (`showScope` / `emptyMsg` / `rowActions` / `preview`) so page migrations were a one-line swap. Cards use a compact flex-row layout — badges + member + labeled chips + action strip sit inline on wide viewports, wrap onto a continuation line on narrow ones. The stack has NO gap between cards (shared bottom border, tight vertical padding) so the visual density matches a table row, per the "still look like table rows" constraint the user added mid-implementation.
 
-**Decisions to make before coding.**
-- Replace `renderRosterTable` entirely, or ship a sibling `renderRosterCards` and migrate page-by-page? (Safer: sibling — lets each page be reviewed independently.)
-- Card layout needs to carry per-row action affordances (remove X on rosters, Edit button on AllSeats). Factor a shared `renderRosterCard` that accepts an `opts.rowActions` fn, matching the current table's API.
-- `AuditLog` rows currently have a `<details>` expansion block for the full before/after diff — the card design has to keep that working (probably by rendering the details inside the card body).
-- Mobile responsiveness: `RequestsQueue` cards already stack; reuse the same CSS scaffolding.
+Migrated four roster pages: `bishopric/Roster.html`, `stake/Roster.html`, `stake/WardRosters.html`, `manager/AllSeats.html`. Each was a one-line swap from `renderRosterTable` → `renderRosterCards` + drop the now-irrelevant `actionsHeader` opt.
 
-**Files likely touched.** `src/ui/ClientUtils.html` (new card renderer + possibly retiring `renderRosterTable`), all five pages above, `src/ui/Styles.html` (card styles — possibly just promote the existing `.queue-card*` selectors to a shared class).
+Migrated `manager/AuditLog.html` inline: replaced its custom `<tr>`-based `rowHtml` with a `.audit-card` compact flex-row renderer. Kept the `<details>` expansion — it sits inside the card body as a full-width flex child (`flex: 0 0 100%`) so it wraps onto its own line when opened, matching the roster pattern.
+
+**Kept `renderRosterTable` alive.** The five inline preview / duplicate-warning call sites on `manager/RequestsQueue.html` (4) and `NewRequest.html` (1) still use the table renderer. A compact table is less noisy than a nested card-inside-a-card when previewing a single row or a small duplicate-warning list inside an existing card. So `renderRosterTable` + `rosterRowHtml` + `.roster-table` CSS all remain in the codebase — the five primary pages just don't call them anymore.
+
+**CSS cleanup.** Removed `.audit-row-diff`, `.audit-row-summary-inline`, `.audit-row-note` (superseded by `.audit-card-*` family) and dropped `.audit-log-table` / `.roster-table` from the mobile-breakpoint horizontal-scroll rule (cards flex-wrap natively).
+
+**Decisions locked in.**
+- Sibling helper (safer than replacing in-place); migrate page-by-page.
+- Shared `rowActions` fn matches `renderRosterTable`'s API so callers swapping helpers don't reshape their per-row action wiring.
+- AuditLog `<details>` survives inside the card — clicking "details" still reveals the before/after diff inline.
+- Row-feel visual density (no gap, shared border, tight padding) per mid-implementation user clarification.
+
+**Files touched.** `src/ui/ClientUtils.html` (new helper), `src/ui/Styles.html` (card CSS + cleanup), `src/ui/manager/AllSeats.html`, `src/ui/manager/AuditLog.html`, `src/ui/stake/Roster.html`, `src/ui/bishopric/Roster.html`, `src/ui/stake/WardRosters.html`.
 
 ---
 

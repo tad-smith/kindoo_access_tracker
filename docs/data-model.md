@@ -217,7 +217,7 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 | `reason` | string | Free text. Required for manual/temp; blank for auto. |
 | `start_date` | ISO date (YYYY-MM-DD) | Temp only; optional on manual (blank for auto). |
 | `end_date` | ISO date (YYYY-MM-DD) | Temp only. Expires at end of this day (local tz). |
-| `building_names` | string | Comma-separated `building_name` values (FK to `Buildings.building_name`). Defaults to the ward's `building_name` on insert; editable by managers. |
+| `building_names` | string | Comma-separated `building_name` values (FK to `Buildings.building_name`). Auto-seat defaults at importer insert time: ward callings → the ward's `building_name`; stake callings → every `Buildings.building_name` (stake-level callings cross ward boundaries, so the member needs access to every building in the stake). Editable by managers on manual/temp rows. |
 | `created_by` | string | Email or automated actor (`Importer`, `ExpiryTrigger`). |
 | `created_at` | timestamp | |
 | `last_modified_by` | string | |

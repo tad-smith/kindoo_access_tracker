@@ -54,9 +54,8 @@
       for (var i = 0; i < resp.rows.length; i++) {
         rowsBySeatId[resp.rows[i].seat_id] = resp.rows[i];
       }
-      $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
+      $('roster-table-host').innerHTML = renderRosterCards(resp.rows, {
         emptyMsg: 'No stake seats yet. Run the importer or submit a request from "New Kindoo Request".',
-        actionsHeader: 'Remove',
         rowActions: function (row) {
           if (row.type === 'auto') return '';
           if (row.removal_pending) {

@@ -332,6 +332,17 @@ function Importer_runImport_(opts, startedMs) {
     wardByCode[wards[w].ward_code] = wards[w];
   }
 
+  // Stake-scope auto seats get access to EVERY building in the stake by
+  // default (stake-level callings cross ward boundaries, so the member
+  // needs to enter any building the stake uses). The comma-joined list
+  // becomes `buildingDefault` for the Stake tab below. Empty list is
+  // fine — the seats will just carry an empty building_names until the
+  // operator configures Buildings and re-imports.
+  var allBuildings = Buildings_getAll();
+  var stakeBuildingsDefault = allBuildings
+    .map(function (b) { return b.building_name; })
+    .join(',');
+
   var wardTemplateIndex  = Importer_templateIndex_('ward');
   var stakeTemplateIndex = Importer_templateIndex_('stake');
 
@@ -362,7 +373,8 @@ function Importer_runImport_(opts, startedMs) {
     var kind, scope, prefix, templateIndex, buildingDefault;
     if (name === 'Stake') {
       kind = 'stake'; scope = 'stake'; prefix = '';
-      templateIndex = stakeTemplateIndex; buildingDefault = '';
+      templateIndex = stakeTemplateIndex;
+      buildingDefault = stakeBuildingsDefault;
     } else if (wardByCode[name]) {
       kind = 'ward'; scope = name; prefix = name;
       templateIndex = wardTemplateIndex;
@@ -976,8 +988,7 @@ function Importer_wildcardToRegex_(pattern) {
 // "last import" line. Manager UI renders this verbatim.
 // ---------------------------------------------------------------------------
 function Importer_buildSummary_(result, elapsedMs, errMsg) {
-  var tz = Session.getScriptTimeZone();
-  var when = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm z');
+  var when = Utils_formatDateTime(new Date());
   if (errMsg) {
     return 'FAILED: ' + errMsg + ' (' + when + ', ' + (elapsedMs / 1000).toFixed(1) + 's)';
   }

@@ -17,12 +17,6 @@
 -->
 <section class="access-page">
   <h1>Access</h1>
-  <p class="access-intro">
-    Everyone the app considers signed-in-eligible, with the callings that
-    grant their access. The importer maintains <code>source=importer</code>
-    rows from the callings sheet; <code>source=manual</code> rows are added
-    below and survive imports.
-  </p>
 
   <div class="access-toolbar">
     <label>
@@ -132,6 +126,12 @@
         btn.disabled = true;
         rpc('ApiManager_accessDeleteManual', email, scope, calling).then(function () {
           toast('Manual access removed.', 'success');
+          // Access mutations affect role resolution + write AuditLog
+          // rows, so drop every cached SPA pane — next visit to AllSeats
+          // / Dashboard / Audit Log reflects the change.
+          if (typeof window.invalidateAllPages === 'function') {
+            window.invalidateAllPages();
+          }
           load();
         }).catch(function (err) {
           btn.disabled = false;
@@ -150,6 +150,11 @@
       return a < b ? -1 : a > b ? 1 : 0;
     });
     var sel = $('scope-filter');
+    // Preserve the user's current selection across rebuilds — otherwise
+    // every add / remove silently drops them back to "All." Falls back
+    // to "All" when the previously-selected scope no longer has any
+    // rows (e.g. the only row in that scope was just deleted).
+    var prev = sel.value;
     sel.length = 1;
     for (var j = 0; j < ordered.length; j++) {
       var opt = document.createElement('option');
@@ -157,6 +162,7 @@
       opt.textContent = ordered[j];
       sel.appendChild(opt);
     }
+    if (prev && scopes[prev]) sel.value = prev;
   }
 
   // Add-form scope dropdown: "stake" pinned first, then every configured
@@ -212,6 +218,12 @@
       toast('Manual access added.', 'success');
       $('add-manual-email').value = '';
       $('add-manual-calling').value = '';
+      // Access mutations affect role resolution + write AuditLog rows,
+      // so drop every cached SPA pane — next visit to AllSeats /
+      // Dashboard / Audit Log reflects the change.
+      if (typeof window.invalidateAllPages === 'function') {
+        window.invalidateAllPages();
+      }
       load();
     }).catch(function (err) {
       toast(err.message || String(err), 'error');

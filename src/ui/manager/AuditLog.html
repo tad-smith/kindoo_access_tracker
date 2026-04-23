@@ -354,6 +354,11 @@
     return diffTableHtml(before, after);
   }
 
+  // TASKS.md #2: card-per-row layout. Compact flex-row; `<details>`
+  // expansion kept inside the card so clicking "details" reveals the
+  // before/after diff inline. Collapsed, each card occupies one row-
+  // height unit — no gap between cards, matches the roster-card stack
+  // visually.
   function rowHtml(row) {
     var summary = shortSummary(row);
     var completionNote = '';
@@ -362,28 +367,28 @@
     // no-op path is visible at a glance. Only on complete_request rows.
     if (row.action === 'complete_request' && after && after.completion_note) {
       completionNote =
-        '<div class="audit-row-note"><strong>Note:</strong> ' +
-          escapeHtml(after.completion_note) + '</div>';
+        '<span class="audit-card-note"><strong>Note:</strong> ' +
+          escapeHtml(after.completion_note) + '</span>';
     }
     var badge = '<span class="audit-action-badge ' +
       actionCategoryClass(row.action) + '">' +
       escapeHtml(row.action) + '</span>';
-    return '<tr>' +
-      '<td class="td-ts">' + escapeHtml(row.timestamp) + '</td>' +
-      '<td class="td-actor">' + actorHtml(row.actor_email) + '</td>' +
-      '<td>' + badge + '</td>' +
-      '<td>' +
-        '<code>' + escapeHtml(row.entity_type) + '</code>' +
-        (row.entity_id ? ' <span class="dashboard-activity-ts">' + escapeHtml(row.entity_id) + '</span>' : '') +
-      '</td>' +
-      '<td>' +
-        (summary ? '<div class="audit-row-summary-inline">' + escapeHtml(summary) + '</div>' : '') +
+    return '<div class="audit-card">' +
+      '<div class="audit-card-row">' +
+        '<span class="audit-card-ts">' + escapeHtml(row.timestamp) + '</span>' +
+        '<span class="audit-card-actor">' + actorHtml(row.actor_email) + '</span>' +
+        badge +
+        '<span class="audit-card-entity">' +
+          '<code>' + escapeHtml(row.entity_type) + '</code>' +
+          (row.entity_id ? ' <span class="audit-card-entity-id">' + escapeHtml(row.entity_id) + '</span>' : '') +
+        '</span>' +
+        (summary ? '<span class="audit-card-summary">' + escapeHtml(summary) + '</span>' : '') +
         completionNote +
-        '<details class="audit-row-diff"><summary>details</summary>' +
+        '<details class="audit-card-diff"><summary>details</summary>' +
           diffHtml(row) +
         '</details>' +
-      '</td>' +
-      '</tr>';
+      '</div>' +
+    '</div>';
   }
 
   function render(resp) {
@@ -413,15 +418,9 @@
         '</div>';
       return;
     }
-    var html = '<table class="audit-log-table"><thead><tr>' +
-      '<th>Timestamp</th>' +
-      '<th>Actor</th>' +
-      '<th>Action</th>' +
-      '<th>Entity</th>' +
-      '<th>Change</th>' +
-      '</tr></thead><tbody>';
+    var html = '<div class="audit-log-cards">';
     for (var i = 0; i < rows.length; i++) html += rowHtml(rows[i]);
-    html += '</tbody></table>';
+    html += '</div>';
     $('audit-table-host').innerHTML = html;
   }
 

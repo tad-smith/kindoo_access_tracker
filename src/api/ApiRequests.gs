@@ -236,21 +236,13 @@ function ApiRequests_shapeForClient_(req) {
     end_date:            req.end_date,
     status:              req.status,
     requester_email:     req.requester_email,
-    requested_at:        ApiRequests_formatDate_(req.requested_at),
+    requested_at:        Utils_formatDateTime(req.requested_at),
     requested_at_ms:     req.requested_at instanceof Date ? req.requested_at.getTime() : 0,
     completer_email:     req.completer_email,
-    completed_at:        ApiRequests_formatDate_(req.completed_at),
+    completed_at:        Utils_formatDateTime(req.completed_at),
     completed_at_ms:     req.completed_at instanceof Date ? req.completed_at.getTime() : 0,
     rejection_reason:    req.rejection_reason,
     completion_note:     req.completion_note || ''
   };
 }
 
-function ApiRequests_formatDate_(d) {
-  if (!d) return null;
-  if (d instanceof Date) {
-    var tz = Session.getScriptTimeZone();
-    return Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm:ss z');
-  }
-  return String(d);
-}

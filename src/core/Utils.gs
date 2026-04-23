@@ -68,6 +68,29 @@ function Utils_todayIso() {
   return Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
 }
 
+// Canonical display format for a date-with-time: "2026-04-23 3:45PM" in
+// the script timezone. Every human-visible timestamp in the app —
+// requested_at / completed_at / created_at / last_modified_at / import
+// summary / audit log / dashboard — flows through here so the format
+// stays consistent. Non-Date inputs fall through as-is; null/undefined
+// return null so the client can distinguish "no value" from the empty
+// string.
+//
+// Format is intentionally baked in — callers must not pass a format
+// override. If we ever need an alternate form (e.g. date-only vs.
+// date+time) add a new helper rather than parameterising this one.
+function Utils_formatDateTime(value) {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    var tz = Session.getScriptTimeZone();
+    // SimpleDateFormat's `a` token always emits AM/PM in uppercase; we
+    // want lowercase, so post-process the trailing AM/PM only.
+    var s = Utilities.formatDate(value, tz, 'yyyy-MM-dd h:mma');
+    return s.replace(/(AM|PM)$/, function (m) { return m.toLowerCase(); });
+  }
+  return String(value);
+}
+
 // Coerce a Sheet cell value to a YYYY-MM-DD ISO date string at the read
 // boundary. Data-model.md declares start_date / end_date as ISO strings,
 // but Google Sheets auto-converts typed YYYY-MM-DD values into Date

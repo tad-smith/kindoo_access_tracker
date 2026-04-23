@@ -762,7 +762,10 @@
 
   function formatTime_(d) {
     function pad(n) { return n < 10 ? '0' + n : '' + n; }
-    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    var h24 = d.getHours();
+    var ampm = h24 >= 12 ? 'pm' : 'am';
+    var h12 = h24 % 12; if (h12 === 0) h12 = 12;
+    return h12 + ':' + pad(d.getMinutes()) + ampm;
   }
 
   function renderTriggersList(triggers) {

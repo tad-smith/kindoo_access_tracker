@@ -63,8 +63,7 @@ function ApiManager_configList(token) {
     // the manager Config UI, so the shape change (Date → formatted
     // string) is fine; we don't round-trip them back for a write.
     if (all[k] instanceof Date) {
-      var tz = Session.getScriptTimeZone();
-      all[k] = Utilities.formatDate(all[k], tz, 'yyyy-MM-dd HH:mm:ss z');
+      all[k] = Utils_formatDateTime(all[k]);
     }
   }
   // session_secret leaks via the wire if we send it back. Mask its value.
@@ -456,8 +455,7 @@ function ApiManager_importStatus(token) {
   var rawAt = Config_get('last_import_at');
   var lastAt = null;
   if (rawAt instanceof Date) {
-    var tz = Session.getScriptTimeZone();
-    lastAt = Utilities.formatDate(rawAt, tz, 'yyyy-MM-dd HH:mm:ss z');
+    lastAt = Utils_formatDateTime(rawAt);
   } else if (rawAt) {
     lastAt = String(rawAt);
   }
@@ -731,6 +729,21 @@ function ApiManager_allSeats(token, filters) {
     buildingList.push(allBuildings[b].building_name);
   }
 
+  // Overall stake-wide seat utilization — total Seats rows (unfiltered)
+  // against stake_seat_cap (the total Kindoo license). Drives the
+  // "Seat utilization" bar the manager sees when no ward filter is
+  // applied. Cap ≤ 0 / unset → bar is hidden client-side.
+  var overallTotal = seats.length;
+  var overallCap = Number(Config_get('stake_seat_cap') || 0);
+  var overallState = 'ok';
+  if (overallCap > 0) {
+    if (overallTotal > overallCap) overallState = 'over';
+    else if (overallTotal / overallCap >= 0.9) overallState = 'warn';
+  }
+  var overallPct = overallCap > 0
+    ? Math.min(100, Math.round((overallTotal / overallCap) * 100))
+    : 0;
+
   Logger.log('[measure] allSeats ward=' + (wardFilter || '*') +
     ' building=' + (buildingFilter || '*') + ' type=' + (typeFilter || '*') +
     ' rows=' + rows.length + ' took ' + (Date.now() - _startedMs) + 'ms');
@@ -739,6 +752,13 @@ function ApiManager_allSeats(token, filters) {
     rows:           rows,
     summaries:      summaries,
     total_rows:     rows.length,
+    overall: {
+      total_seats:     overallTotal,
+      seat_cap:        overallCap,
+      utilization_pct: overallPct,
+      state:           overallState,
+      over_cap:        overallCap > 0 && overallTotal > overallCap
+    },
     filter_options: {
       wards:     wardList,
       buildings: buildingList
@@ -1046,24 +1066,16 @@ function ApiManager_shapeRequestForClient_(req) {
     end_date:         req.end_date,
     status:           req.status,
     requester_email:  req.requester_email,
-    requested_at:     ApiManager_formatDate_(req.requested_at),
+    requested_at:     Utils_formatDateTime(req.requested_at),
     requested_at_ms:  req.requested_at instanceof Date ? req.requested_at.getTime() : 0,
     completer_email:  req.completer_email,
-    completed_at:     ApiManager_formatDate_(req.completed_at),
+    completed_at:     Utils_formatDateTime(req.completed_at),
     completed_at_ms:  req.completed_at instanceof Date ? req.completed_at.getTime() : 0,
     rejection_reason: req.rejection_reason,
     completion_note:  req.completion_note || ''
   };
 }
 
-function ApiManager_formatDate_(d) {
-  if (!d) return null;
-  if (d instanceof Date) {
-    var tz = Session.getScriptTimeZone();
-    return Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm:ss z');
-  }
-  return String(d);
-}
 
 // ===========================================================================
 // Audit Log + Dashboard (Chunk 10)
@@ -1192,7 +1204,7 @@ function ApiManager_auditLog(token, filters) {
     var row = slice[s];
     out.push({
       timestamp:    row.timestamp
-        ? Utilities.formatDate(row.timestamp, tz, 'yyyy-MM-dd HH:mm:ss z')
+        ? Utils_formatDateTime(row.timestamp)
         : '',
       timestamp_ms: row.timestamp_ms,
       actor_email:  row.actor_email,
@@ -1313,13 +1325,12 @@ function ApiManager_dashboard(token) {
   // --- Recent Activity (last 10 AuditLog rows) -----------------------
   var allAudit = AuditRepo_getAll();
   allAudit.sort(function (a, b) { return b.timestamp_ms - a.timestamp_ms; });
-  var tz = Session.getScriptTimeZone();
   var recentActivity = [];
   for (var ai = 0; ai < Math.min(10, allAudit.length); ai++) {
     var ar = allAudit[ai];
     recentActivity.push({
       timestamp:    ar.timestamp
-        ? Utilities.formatDate(ar.timestamp, tz, 'yyyy-MM-dd HH:mm:ss z')
+        ? Utils_formatDateTime(ar.timestamp)
         : '',
       timestamp_ms: ar.timestamp_ms,
       actor_email:  ar.actor_email,
@@ -1333,7 +1344,7 @@ function ApiManager_dashboard(token) {
   // --- Last Operations ----------------------------------------------
   function fmtDate(v) {
     if (!v) return null;
-    if (v instanceof Date) return Utilities.formatDate(v, tz, 'yyyy-MM-dd HH:mm:ss z');
+    if (v instanceof Date) return Utils_formatDateTime(v);
     return String(v);
   }
   // The last-triggers-installed timestamp isn't a Config key — we derive
@@ -1345,7 +1356,7 @@ function ApiManager_dashboard(token) {
     var r2 = allAudit[ai2];
     if (r2.action === 'reinstall_triggers' || r2.action === 'setup_complete') {
       lastTriggersInstalledAt = r2.timestamp
-        ? Utilities.formatDate(r2.timestamp, tz, 'yyyy-MM-dd HH:mm:ss z')
+        ? Utils_formatDateTime(r2.timestamp)
         : null;
       break;
     }

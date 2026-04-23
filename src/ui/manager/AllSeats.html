@@ -28,7 +28,7 @@
   <p class="roster-scope-label">Full roster across every scope.</p>
 
   <div class="all-seats-filters">
-    <label>Ward:
+    <label>Scope:
       <select id="ward-filter">
         <option value="">All</option>
       </select>
@@ -48,6 +48,8 @@
     </label>
     <span class="all-seats-count" id="all-seats-count"></span>
   </div>
+
+  <div id="overall-utilization-host" class="overall-utilization-host"></div>
 
   <div id="summaries-host" class="all-seats-summaries"></div>
 
@@ -157,12 +159,43 @@
     $('summaries-host').innerHTML = html;
   }
 
+  // Stake-wide utilization bar — one full-width row comparing every seat
+  // in the stake against the Kindoo license cap (`stake_seat_cap`).
+  // Rendered only when the Scope filter is "All" and the cap is
+  // configured; otherwise the host stays empty. Visual style mirrors the
+  // Dashboard's per-scope bars (dashboard-util-*) for consistency.
+  function renderOverall(overall) {
+    var host = $('overall-utilization-host');
+    if (!host) return;
+    var hasWardFilter = !!filters.ward;
+    var cap = overall ? Number(overall.seat_cap) : 0;
+    if (hasWardFilter || !overall || !cap || cap <= 0) {
+      host.innerHTML = '';
+      return;
+    }
+    var pct = overall.utilization_pct || 0;
+    var fillClass = 'dashboard-util-fill state-' + (overall.state || 'ok');
+    var counts = overall.total_seats + ' / ' + cap +
+      (overall.over_cap ? ' · OVER' : '');
+    host.innerHTML =
+      '<div class="overall-utilization">' +
+        '<div class="overall-utilization-head">' +
+          '<span class="overall-utilization-label">Seat utilization</span>' +
+          '<span class="dashboard-util-counts">' + escapeHtml(counts) + '</span>' +
+        '</div>' +
+        '<div class="dashboard-util-bar">' +
+          '<div class="' + fillClass + '" style="width:' + pct + '%"></div>' +
+        '</div>' +
+      '</div>';
+  }
+
   // Index the rows by seat_id so the edit modal can look up the
   // current values without re-fetching.
   var currentRowsById = {};
 
   function render(resp) {
     populateFilterOptions(resp.filter_options);
+    renderOverall(resp.overall);
     renderSummaries(resp.summaries);
     $('all-seats-count').textContent =
       resp.total_rows + ' row' + (resp.total_rows === 1 ? '' : 's');
@@ -170,10 +203,9 @@
     currentRowsById = {};
     for (var i = 0; i < resp.rows.length; i++) currentRowsById[resp.rows[i].seat_id] = resp.rows[i];
 
-    $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
+    $('roster-table-host').innerHTML = renderRosterCards(resp.rows, {
       showScope: true,
       emptyMsg: 'No seats match the current filters.',
-      actionsHeader: 'Edit',
       rowActions: function (row) {
         // Auto rows are importer-owned; never editable here.
         if (row.type === 'auto' || !row.seat_id) return '';

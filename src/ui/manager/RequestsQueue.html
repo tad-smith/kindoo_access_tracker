@@ -269,7 +269,7 @@
       if (req.completer_email) {
         resolverLine = '<div class="queue-field"><span class="label">Resolved by:</span> ' +
           '<span class="roster-email">' + escapeHtml(req.completer_email) + '</span>' +
-          (req.completed_at ? ' at ' + escapeHtml(req.completed_at) : '') +
+          (req.completed_at ? ' @ ' + escapeHtml(req.completed_at) : '') +
           '</div>';
       } else if (req.completed_at) {
         resolverLine = '<div class="queue-field"><span class="label">Cancelled at:</span> ' +

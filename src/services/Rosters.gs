@@ -171,8 +171,8 @@ function Rosters_mapRow_(seat, today) {
     start_date:       seat.start_date,
     end_date:         seat.end_date,
     building_names:   seat.building_names,
-    created_at:       Rosters_formatDate_(seat.created_at),
-    last_modified_at: Rosters_formatDate_(seat.last_modified_at),
+    created_at:       Utils_formatDateTime(seat.created_at),
+    last_modified_at: Utils_formatDateTime(seat.last_modified_at),
     expiry_badge:     badge,
     // Default false; Rosters_buildResponseFromSeats_ overrides with true
     // when the row is in the pending-remove set for its scope. Direct
@@ -311,13 +311,3 @@ function Rosters_buildStakeTotalSummary_(allSeatsCount, ctx) {
   };
 }
 
-// google.script.run auto-serialises Date objects unreliably — stringify
-// to an ISO-ish form here so the wire shape is always predictable.
-function Rosters_formatDate_(d) {
-  if (!d) return null;
-  if (d instanceof Date) {
-    var tz = Session.getScriptTimeZone();
-    return Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm:ss z');
-  }
-  return String(d);
-}

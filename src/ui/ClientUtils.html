@@ -169,6 +169,130 @@
            '</tr></thead><tbody>' + body + '</tbody></table>';
   }
 
+  // TASKS.md #2: card-per-row sibling of renderRosterTable for the five
+  // primary roster pages (bishopric / stake / stake ward / manager
+  // AllSeats / manager AuditLog — the audit log builds its own card
+  // in-place since its shape differs). The inline preview / duplicate-
+  // warning call sites on RequestsQueue + NewRequest continue to use
+  // renderRosterTable — a compact table is less noisy than a nested
+  // card-inside-a-card for a 1-to-few-row inline preview.
+  //
+  // opts matches renderRosterTable's shape (showScope, emptyMsg,
+  // rowActions, preview) so page migrations are a one-line swap.
+  // opts.actionsHeader is ignored — cards have no column header, the
+  // rowActions fragment renders into a dedicated action strip.
+  function renderRosterCards(rows, opts) {
+    opts = opts || {};
+    if (!rows || rows.length === 0) {
+      return '<div class="roster-empty">' +
+        escapeHtml(opts.emptyMsg || 'No seats in this roster.') +
+        '</div>';
+    }
+    var html = '<div class="roster-cards">';
+    for (var i = 0; i < rows.length; i++) {
+      html += rosterCardHtml(rows[i], opts);
+    }
+    return html + '</div>';
+  }
+
+  // Single roster row → up-to-three-line card fragment.
+  //   Line 1:  badges · member (name + email in parens) ·
+  //            actions (right-aligned)
+  //   Line 2:  Dates: ...              (temp rows only)
+  //   Line 3:  calling/reason · buildings
+  //
+  // Line 2 renders only for temp rows with a start_date or end_date.
+  // Line 3 is suppressed when neither calling/reason nor buildings has
+  // content (e.g. an auto row with no buildings). Stacked cards have
+  // no gap between them — the visual density still reads as table rows
+  // per TASKS.md #2's "look like table rows" constraint.
+  function rosterCardHtml(row, opts) {
+    opts = opts || {};
+    var typeBadge =
+      '<span class="roster-badge badge-type-' + escapeHtml(row.type) + '">' +
+        escapeHtml(row.type) + '</span>';
+    var expiryBadge = '';
+    if (row.expiry_badge === 'expired') {
+      expiryBadge = '<span class="roster-badge badge-expired">expired</span>';
+    } else if (row.expiry_badge === 'expires_today') {
+      expiryBadge = '<span class="roster-badge badge-expires-today">expires today</span>';
+    }
+    var removalBadge = '';
+    if (row.removal_pending) {
+      removalBadge = '<span class="roster-badge badge-removal-pending" title="A removal request for this person is pending a Kindoo Manager">removal pending</span>';
+    }
+    var scopeChip = opts.showScope
+      ? '<span class="roster-card-chip roster-card-scope"><code>' + escapeHtml(row.scope) + '</code></span>'
+      : '';
+
+    // Member: "Alice Smith (alice@x.com)" when name is present,
+    // bare email otherwise. Email stays in its own span so tooltips /
+    // canonical-email hovercards continue to work.
+    var memberInner = row.member_name
+      ? '<span class="roster-card-name">' + escapeHtml(row.member_name) + '</span>' +
+        ' (<span class="roster-email" title="' + escapeHtml(row.member_email) + '">' +
+          escapeHtml(row.member_email) + '</span>)'
+      : '<span class="roster-email" title="' + escapeHtml(row.member_email) + '">' +
+          escapeHtml(row.member_email) + '</span>';
+    var memberHtml = '<span class="roster-card-member">' + memberInner + '</span>';
+
+    // "Calling" label for auto (LCR-driven); "Reason" for manual/temp
+    // (human-entered). Only rendered when the underlying field has data.
+    var callingChip = '';
+    if (row.type === 'auto' && row.calling_name) {
+      callingChip = '<span class="roster-card-chip"><span class="label">Calling:</span> ' +
+        escapeHtml(row.calling_name) + '</span>';
+    } else if ((row.type === 'manual' || row.type === 'temp') && row.reason) {
+      callingChip = '<span class="roster-card-chip"><span class="label">Reason:</span> ' +
+        escapeHtml(row.reason) + '</span>';
+    }
+
+    var datesLine = '';
+    if (row.type === 'temp' && (row.start_date || row.end_date)) {
+      var s = row.start_date ? escapeHtml(row.start_date) : '?';
+      var e = row.end_date   ? escapeHtml(row.end_date)   : '?';
+      datesLine =
+        '<div class="roster-card-line2">' +
+          '<span class="roster-card-chip"><span class="label">Dates:</span> ' +
+            s + ' → ' + e +
+          '</span>' +
+        '</div>';
+    }
+
+    var buildingsChip = row.building_names
+      ? '<span class="roster-card-chip"><span class="label">Buildings:</span> ' +
+          escapeHtml(row.building_names) + '</span>'
+      : '';
+
+    var actionsBlock = '';
+    if (typeof opts.rowActions === 'function') {
+      var actionHtml = opts.rowActions(row) || '';
+      if (actionHtml) {
+        actionsBlock = '<span class="roster-card-actions">' + actionHtml + '</span>';
+      }
+    }
+
+    var detailLine = (callingChip || buildingsChip)
+      ? '<div class="roster-card-line2">' + callingChip + buildingsChip + '</div>'
+      : '';
+
+    var cardClasses = 'roster-card type-' + escapeHtml(row.type);
+    if (opts.preview === 'remove') cardClasses += ' preview-remove';
+    if (row.removal_pending)       cardClasses += ' has-removal-pending';
+
+    return '<div class="' + cardClasses + '" data-seat-id="' + escapeHtml(row.seat_id || '') + '">' +
+      '<div class="roster-card-line1">' +
+        '<span class="roster-card-badges">' +
+          typeBadge + expiryBadge + removalBadge + scopeChip +
+        '</span>' +
+        memberHtml +
+        actionsBlock +
+      '</div>' +
+      datesLine +
+      detailLine +
+    '</div>';
+  }
+
   function toast(msg, kind) {
     var host = document.getElementById('toast-host');
     if (!host) {

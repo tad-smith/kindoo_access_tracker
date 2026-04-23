@@ -86,9 +86,8 @@
         rowsBySeatId[resp.rows[i].seat_id] = resp.rows[i];
       }
 
-      $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
+      $('roster-table-host').innerHTML = renderRosterCards(resp.rows, {
         emptyMsg: 'No seats assigned to this ward yet. Run the importer (a Kindoo Manager has an Import page) or submit a request from "New Kindoo Request".',
-        actionsHeader: 'Remove',
         rowActions: function (row) {
           // Auto rows are not removable via this app — auto seats track LCR
           // callings; remove the calling in LCR and the next import deletes

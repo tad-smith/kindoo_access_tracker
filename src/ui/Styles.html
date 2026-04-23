@@ -683,6 +683,90 @@
     border-radius: 6px;
   }
 
+  /* TASKS.md #2 — card-per-row layout for the five primary roster pages.
+     Stacked with no gaps (shared bottom border), tight vertical padding
+     so the visual density matches a table row. Flex-row inside each
+     card: badges + member + labeled chips + action strip sit inline on
+     wide viewports, wrap onto a continuation line on narrow ones. */
+  .roster-cards {
+    background: #fff;
+    border: 1px solid #d8dbe4;
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 0.92em;
+  }
+  .roster-card {
+    padding: 6px 10px;
+    border-bottom: 1px solid #eef0f5;
+  }
+  .roster-cards .roster-card:last-child { border-bottom: none; }
+  .roster-card.type-auto   { background: #fafbff; }
+  .roster-card.type-manual { background: #ffffff; }
+  .roster-card.type-temp   { background: #fff8ea; }
+  .roster-card-line1 {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  .roster-card-line2 {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 2px;
+    padding-left: 4px;
+    color: #4b5266;
+    font-size: 0.95em;
+  }
+  .roster-card-badges {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .roster-card-member {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    min-width: 0;
+  }
+  .roster-card-name {
+    font-weight: 600;
+    color: #1d2333;
+  }
+  .roster-card-chip {
+    color: #4b5266;
+    white-space: nowrap;
+  }
+  .roster-card-chip .label {
+    color: #6b7280;
+    font-size: 0.88em;
+    margin-right: 2px;
+  }
+  .roster-card-scope code {
+    background: #eef0f5;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.9em;
+  }
+  .roster-card-actions {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .roster-card.preview-remove {
+    text-decoration: line-through;
+    color: #a61128;
+  }
+  .roster-card.preview-remove .roster-badge { text-decoration: none; }
+  .roster-card.preview-remove .roster-card-line1::before {
+    content: "⌫";
+    color: #a61128;
+    margin-right: 4px;
+  }
+  .roster-card.has-removal-pending { background: #fdf3f5; }
+
   /* Ward Rosters dropdown page + post-Chunk-10.6 multi-ward bishopric
      Roster picker. Same shape on both so the dropdown-plus-label reads
      identically. Explicit `.hidden` override because the generic
@@ -743,6 +827,32 @@
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 10px;
     margin-bottom: 14px;
+  }
+
+  /* Stake-wide seat utilization bar on All Seats — full-width, sits
+     between the filter row and the per-scope summary cards, visible
+     only when no scope filter is applied. Bar visual reuses the
+     .dashboard-util-bar / .dashboard-util-fill from the Dashboard
+     utilization card. */
+  .overall-utilization-host:empty { display: none; }
+  .overall-utilization {
+    background: #fff;
+    border: 1px solid #d8dbe4;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+  }
+  .overall-utilization-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 0.92em;
+    color: #4b5266;
+    margin-bottom: 6px;
+  }
+  .overall-utilization-label {
+    font-weight: 600;
+    color: #1d2333;
   }
   .all-seats-summary-card {
     background: #fff;
@@ -809,31 +919,30 @@
   .duplicate-warning-host:empty { display: none; }
 
   /* My Requests table. */
-  .my-requests-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: #fff;
-    border: 1px solid #d8dbe4;
-    border-radius: 6px;
-    overflow: hidden;
-    font-size: 0.92em;
-    margin-top: 6px;
+  /* MyRequests timestamps footer — Requested/Resolved anchor the
+     bottom of the card, rendered smaller + more muted than the other
+     line2s so they read as metadata rather than primary content. */
+  .roster-card-timestamps {
+    color: #6b7280;
+    font-size: 0.85em;
   }
-  .my-requests-table th, .my-requests-table td {
-    padding: 8px 10px;
-    text-align: left;
-    border-bottom: 1px solid #eef0f5;
-    vertical-align: top;
-  }
-  .my-requests-table th {
-    background: #f3f5fa;
-    font-weight: 600;
-    color: #4b5266;
-  }
-  .my-requests-table tr.status-row-pending td   { background: #ffffff; }
-  .my-requests-table tr.status-row-complete td  { background: #f3fbf4; }
-  .my-requests-table tr.status-row-rejected td  { background: #fdf3f5; }
-  .my-requests-table tr.status-row-cancelled td { background: #f5f5f7; color: #6b7280; }
+
+  /* My Requests cards — status-driven backgrounds, layout shared with
+     .roster-card / .roster-card-line1 / .roster-card-line2. Mirrors
+     the RequestsQueue .queue-card-status-* convention so the two
+     request-oriented pages read consistently. */
+  .my-request-card.status-row-pending   { background: #ffffff; }
+  .my-request-card.status-row-complete  { background: #f3fbf4; }
+  .my-request-card.status-row-rejected  { background: #fdf3f5; }
+  .my-request-card.status-row-cancelled { background: #f5f5f7; color: #6b7280; }
+
+  /* Request-type badges — share the roster-badge shape; colours track
+     the roster type semantics: add_manual ≈ manual (amber), add_temp
+     ≈ temp (light amber), remove ≈ danger-ish so it's legible as a
+     destructive intent. */
+  .badge-request-add_manual { background: #ffe3c2; color: #7a4400; }
+  .badge-request-add_temp   { background: #fde4a1; color: #6b4a00; }
+  .badge-request-remove     { background: #f8d7da; color: #a61128; }
 
   .status-badge {
     display: inline-block;
@@ -1390,28 +1499,68 @@
     align-items: center;
   }
   .audit-log-pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
-  .audit-log-table {
-    width: 100%;
-    border-collapse: collapse;
+  /* TASKS.md #2: card-per-row layout for Audit Log. Stacked with no
+     gap between cards (shared bottom border), tight vertical padding
+     to read as dense table rows. `<details>` expansion lives inside
+     the card so the before/after diff reveals inline. */
+  .audit-log-cards {
     background: #fff;
     border: 1px solid #d8dbe4;
     border-radius: 6px;
     overflow: hidden;
     font-size: 0.9em;
   }
-  .audit-log-table th, .audit-log-table td {
-    padding: 8px 10px;
-    text-align: left;
+  .audit-card {
+    padding: 6px 10px;
     border-bottom: 1px solid #eef0f5;
-    vertical-align: top;
   }
-  .audit-log-table th {
-    background: #f3f5fa;
-    font-weight: 600;
+  .audit-log-cards .audit-card:last-child { border-bottom: none; }
+  .audit-card-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .audit-card-ts {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
     color: #4b5266;
   }
-  .audit-log-table td.td-ts { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .audit-log-table td.td-actor { word-break: break-word; max-width: 220px; }
+  .audit-card-actor { word-break: break-word; }
+  .audit-card-entity code {
+    background: #eef0f5;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.9em;
+  }
+  .audit-card-entity-id {
+    color: #6b7280;
+    font-size: 0.85em;
+  }
+  .audit-card-summary {
+    color: #4b5266;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .audit-card-note {
+    padding: 2px 8px;
+    background: #fff8ea;
+    border-left: 3px solid #b76d00;
+    border-radius: 3px;
+    font-size: 0.88em;
+    color: #5c4100;
+  }
+  .audit-card-diff {
+    /* Full-width so it wraps onto its own line inside the flex row. */
+    flex: 0 0 100%;
+  }
+  .audit-card-diff summary {
+    cursor: pointer;
+    color: #1f3a93;
+    font-size: 0.85em;
+    user-select: none;
+  }
+  .audit-card-diff[open] summary { color: #1d2333; }
   .audit-log-actor-automated {
     background: #e0e7ff;
     color: #1f3a93;
@@ -1434,30 +1583,6 @@
   .audit-action-request { background: #d6ecdc; color: #1d6a33; }
   .audit-action-system  { background: #f8d7da; color: #a61128; }
   .audit-action-import  { background: #fde4a1; color: #6b4a00; }
-  .audit-row-diff {
-    margin-top: 6px;
-  }
-  .audit-row-diff summary {
-    cursor: pointer;
-    color: #1f3a93;
-    font-size: 0.88em;
-    user-select: none;
-  }
-  .audit-row-diff[open] summary { color: #1d2333; }
-  .audit-row-summary-inline {
-    margin-top: 2px;
-    font-size: 0.88em;
-    color: #4b5266;
-  }
-  .audit-row-note {
-    margin-top: 4px;
-    padding: 4px 8px;
-    background: #fff8ea;
-    border-left: 3px solid #b76d00;
-    border-radius: 3px;
-    font-size: 0.88em;
-    color: #5c4100;
-  }
   .audit-diff-table {
     width: 100%;
     border-collapse: collapse;
@@ -1513,19 +1638,15 @@
     .nav-link { padding: 8px 10px; font-size: 0.9em; }
 
     /* Let long tables scroll horizontally inside their container rather
-       than forcing the whole page to scroll. */
-    .roster-table,
-    .audit-log-table,
-    .config-table,
-    .my-requests-table {
+       than forcing the whole page to scroll. The roster + audit-log +
+       my-requests views are card-stacked and wrap natively, so they're
+       not in the list. */
+    .config-table {
       display: block;
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
     }
-    .roster-table thead,
-    .audit-log-table thead,
-    .config-table thead,
-    .my-requests-table thead { position: sticky; top: 0; }
+    .config-table thead { position: sticky; top: 0; }
 
     .all-seats-filters,
     .queue-filters,
