@@ -7,8 +7,9 @@ A Google Apps Script web app that manages Kindoo door-access seat assignments ac
 1. `docs/spec.md` — live source of truth for what the system does **now**.
 2. The **latest** `docs/changelog/chunk-N-*.md` — what the most recent chunk shipped and why the spec moved.
 3. `docs/build-plan.md` — what chunk comes next. Each has an "Explicitly deferred to later chunks" fence; respect it.
-4. `docs/open-questions.md` — active ambiguities and the `[RESOLVED]` trail.
-5. `docs/architecture.md` — numbered design decisions (D1, D2, …). Cite them in commit messages when overriding one.
+4. `docs/TASKS.md` — deferred follow-up tasks the user has flagged between chunks. Small stuff, but persistent across sessions.
+5. `docs/open-questions.md` — active ambiguities and the `[RESOLVED]` trail.
+6. `docs/architecture.md` — numbered design decisions (D1, D2, …). Cite them in commit messages when overriding one.
 
 ## Non-negotiable conventions
 
