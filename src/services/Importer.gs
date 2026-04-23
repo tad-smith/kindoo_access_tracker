@@ -30,6 +30,14 @@
 //   - A row that's unchanged in the source produces zero AuditLog entries —
 //     only import_start / import_end brackets are always written.
 //
+// person_name is NOT part of the hash (LCR name edits shouldn't churn
+// seats), so the diff has a third branch: for (scope, calling, email)
+// rows present in both current and desired, compare person_name and emit
+// an in-place update when it drifts. One AuditLog `update` row per
+// change. Rationale: a stake gains a lot of value from names appearing
+// on rosters without having to delete and re-create every seat when a
+// person's legal name is corrected in LCR.
+//
 // Writes are batched. ~250 seats on a fresh install would otherwise hit
 // Apps Script's 6-minute execution cap with per-row appendRow calls
 // (~150 ms each). One setValues per tab per run keeps us well under.
@@ -166,6 +174,7 @@ function Importer_runImportCore_(opts, startedMs) {
         triggeredBy:    triggeredBy,
         inserted:       result.inserted,
         deleted:        result.deleted,
+        updated_names:  result.updatedNames,
         access_added:   result.accessAdded,
         access_removed: result.accessRemoved,
         skipped_tabs:   result.skippedTabs,
@@ -176,7 +185,8 @@ function Importer_runImportCore_(opts, startedMs) {
 
     Logger.log('[Importer] completed in ' + (elapsedMs / 1000).toFixed(1) +
                's — ' + result.inserted + ' inserts, ' + result.deleted +
-               ' deletes, ' + result.accessAdded + ' access+, ' +
+               ' deletes, ' + result.updatedNames + ' name updates, ' +
+               result.accessAdded + ' access+, ' +
                result.accessRemoved + ' access-');
 
     return {
@@ -184,6 +194,7 @@ function Importer_runImportCore_(opts, startedMs) {
       summary:        summary,
       inserted:       result.inserted,
       deleted:        result.deleted,
+      updated_names:  result.updatedNames,
       access_added:   result.accessAdded,
       access_removed: result.accessRemoved,
       warnings:       result.warnings,
@@ -392,10 +403,11 @@ function Importer_runImport_(opts, startedMs) {
   // We only touch Seats rows with type='auto' — manual/temp rows are owned
   // by the Chunk-6/7 request flow. Access rows have no type discriminator;
   // the importer owns the whole tab.
-  var seatsToInsert = [];   // rows for Seats_bulkInsertAuto
-  var seatsToDelete = [];   // [{ hash, before }]
-  var accessToInsert = [];  // [{ email, scope, calling }]
-  var accessToDelete = [];  // [{ email, scope, calling, before }]
+  var seatsToInsert = [];       // rows for Seats_bulkInsertAuto
+  var seatsToDelete = [];       // [{ hash, before }]
+  var seatsToUpdateName = [];   // [{ hash, before, newName }]
+  var accessToInsert = [];      // [{ email, scope, calling }]
+  var accessToDelete = [];      // [{ email, scope, calling, before }]
 
   for (var scope1 in scopesSeen) {
     var currentAuto = Seats_getAutoByScope(scope1);
@@ -407,6 +419,19 @@ function Importer_runImport_(opts, startedMs) {
     for (var h in desiredSeats) {
       if (!currentHashes[h]) {
         seatsToInsert.push(desiredSeats[h]);
+      } else {
+        // Same (scope, calling, email) in both — diff the one mutable
+        // attribute the importer owns: person_name. Treat null/undefined
+        // on either side as '' to avoid spurious updates on first runs.
+        var curName = currentHashes[h].person_name == null ? '' : String(currentHashes[h].person_name);
+        var newName = desiredSeats[h].person_name == null ? '' : String(desiredSeats[h].person_name);
+        if (curName !== newName) {
+          seatsToUpdateName.push({
+            hash:    h,
+            before:  currentHashes[h],
+            newName: newName
+          });
+        }
       }
     }
     for (var h2 in currentHashes) {
@@ -473,6 +498,26 @@ function Importer_runImport_(opts, startedMs) {
     });
   }
 
+  // In-place person_name updates for rows whose (scope, calling, email)
+  // is unchanged but whose display name has drifted in LCR. One audit
+  // `update` row per change; the before/after carry the full Seat shape
+  // so the Audit-Log page renders a normal field-by-field diff.
+  var updatedNames = 0;
+  for (var un = 0; un < seatsToUpdateName.length; un++) {
+    var u = seatsToUpdateName[un];
+    var res = Seats_updateAutoName(u.hash, u.newName, 'Importer');
+    if (!res) continue; // defensive — another writer beat us
+    updatedNames++;
+    auditEntries.push({
+      actor_email: 'Importer',
+      action:      'update',
+      entity_type: 'Seat',
+      entity_id:   res.after.seat_id,
+      before:      res.before,
+      after:       res.after
+    });
+  }
+
   for (var ad = 0; ad < accessToDelete.length; ad++) {
     var adRow = accessToDelete[ad];
     var deletedA = Access_delete(adRow.email, adRow.scope, adRow.calling);
@@ -509,6 +554,7 @@ function Importer_runImport_(opts, startedMs) {
   return {
     inserted:       insertedSeats.length,
     deleted:        seatsToDelete.length,
+    updatedNames:   updatedNames,
     accessAdded:    accessToInsert.length,
     accessRemoved:  accessToDelete.length,
     warnings:       warnings,
@@ -531,26 +577,32 @@ function Importer_parseTab_(tab, prefix, scope, templateIndex, buildingDefault,
   //   Col A  Organization
   //   Col B  Forwarding Email
   //   Col C  Position          (may sit anywhere — find by header name)
-  //   Col D  Personal Email(s) (must be column D, but exact header text
+  //   Col D  Name              (literal header text "Name"; comma-delimited
+  //                             list on multi-person callings, paired with
+  //                             emails by position in the E+ cells)
+  //   Col E  Personal Email(s) (must be column E, but exact header text
   //                             varies: "Personal Email", "Personal Email(s)",
   //                             "Personal Emails", sometimes followed by a
   //                             "Note: …" instruction block). We verify the
   //                             header contains the phrase "Personal Email"
   //                             rather than an exact match.
-  //   Col E+ additional email cells for multi-person callings; header text
+  //   Col F+ additional email cells for multi-person callings; header text
   //          in those columns is free-form and is ignored.
   // Header row isn't always row 1 — sheets may have a title / instructions
   // block above the real headers. Scan the top 5 rows for the first row
-  // that contains both "Position" (anywhere) AND a Col D header that
-  // begins with "Personal Email" (with any trailing variation).
+  // that contains "Position" anywhere AND a Col D header of literally
+  // "Name" AND a Col E header that begins with "Personal Email" (with any
+  // trailing variation).
   var headerRowIdx = -1;
   var posIdx = -1;
-  var emailIdx = 3; // Col D — verified by the check below, not assumed blind
+  var nameIdx = 3;  // Col D — verified by the check below, not assumed blind
+  var emailIdx = 4; // Col E — ditto
   var scanLimit = Math.min(values.length, 5);
   for (var sr = 0; sr < scanLimit; sr++) {
     var p = Importer_findHeader_(values[sr], 'Position');
     if (p === -1) continue;
     if (values[sr].length <= emailIdx) continue;
+    if (!Importer_looksLikeNameHeader_(values[sr][nameIdx])) continue;
     if (!Importer_looksLikePersonalEmailHeader_(values[sr][emailIdx])) continue;
     headerRowIdx = sr;
     posIdx = p;
@@ -565,9 +617,10 @@ function Importer_parseTab_(tab, prefix, scope, templateIndex, buildingDefault,
       r1Preview.push(JSON.stringify(values[0][pc]));
     }
     warnings.push('Tab "' + tab.getName() + '" header row not found ' +
-      '(expected a row within the top 5 that has "Position" anywhere and ' +
-      '"Personal Email" — with any trailing variation — in column D). ' +
-      'Row 1 starts with: [' + r1Preview.join(', ') + ']. Skipping tab.');
+      '(expected a row within the top 5 that has "Position" anywhere, ' +
+      '"Name" in column D, and "Personal Email" — with any trailing variation — ' +
+      'in column E). Row 1 starts with: [' + r1Preview.join(', ') +
+      ']. Skipping tab.');
     return { seats: [], access: [] };
   }
 
@@ -606,6 +659,14 @@ function Importer_parseTab_(tab, prefix, scope, templateIndex, buildingDefault,
     var tpl = Importer_templateMatch_(templateIndex, callingName);
     if (!tpl) continue;  // not in curation layer — skip silently (I-6)
 
+    // Collect names from the Col D cell — comma-delimited on multi-person
+    // callings. Order is significant: names[i] is paired with emails[i]
+    // below. An empty cell yields an empty list; overflow (more emails
+    // than names) falls back to '' for the extras rather than failing
+    // the row — the name is a display-only convenience and a missing one
+    // shouldn't cost us the seat.
+    var names = Importer_splitNames_(row[nameIdx]);
+
     // Collect emails: Personal Email(s) cell + every non-blank cell to
     // its right. A cell may contain a bracketed Gmail override such as
     //   "first.last@example.org [GoogleAccount: firstlast@gmail.com]"
@@ -625,11 +686,12 @@ function Importer_parseTab_(tab, prefix, scope, templateIndex, buildingDefault,
     // the whole tab collapse in the caller because the hash is the key.
     for (var ei = 0; ei < emails.length; ei++) {
       var email = emails[ei];
+      var personName = ei < names.length ? names[ei] : '';
       var hash = Utils_hashRow(scope, callingName, email);
       seats.push({
         scope:           scope,
         person_email:    email,
-        person_name:     '', // callings sheet has no dedicated name column in this layout
+        person_name:     personName,
         calling_name:    callingName,
         source_row_hash: hash,
         building_names:  buildingDefault
@@ -650,7 +712,7 @@ function Importer_findHeader_(headers, name) {
   return -1;
 }
 
-// Is the given cell value plausibly the Col D "Personal Email(s)" header?
+// Is the given cell value plausibly the Col E "Personal Email(s)" header?
 // LCR exports vary the exact text ("Personal Email", "Personal Email(s)",
 // "Personal Emails", sometimes followed by a \n-delimited "Note: ..."
 // instruction block that bleeds into the header cell). Accept any cell
@@ -659,6 +721,36 @@ function Importer_looksLikePersonalEmailHeader_(cell) {
   if (cell == null) return false;
   var s = String(cell).trim().toLowerCase();
   return s.indexOf('personal email') !== -1;
+}
+
+// Is the given cell value the Col D "Name" header? LCR's export uses the
+// literal text "Name" — the check is case-insensitive and trimmed to
+// match the tolerance style of the Personal Email header check, but we
+// insist on an exact match rather than a substring so a cell like
+// "Organization Name" in a non-callings sheet doesn't accidentally satisfy it.
+function Importer_looksLikeNameHeader_(cell) {
+  if (cell == null) return false;
+  return String(cell).trim().toLowerCase() === 'name';
+}
+
+// Split a Name cell into an ordered list of display names. LCR writes
+// multi-person callings as a comma-delimited list in the single cell, so
+// names[i] pairs with emails[i] in the row. Trims each element and drops
+// empties; a blank cell returns []. Commas inside a quoted suffix like
+// "Smith, Jr." are NOT handled specifically — if that shape shows up in
+// practice we'll revisit (LCR's export convention is "First Last" so it
+// should be rare).
+function Importer_splitNames_(cell) {
+  if (cell == null) return [];
+  var s = String(cell).trim();
+  if (!s) return [];
+  var parts = s.split(',');
+  var out = [];
+  for (var i = 0; i < parts.length; i++) {
+    var t = parts[i].trim();
+    if (t) out.push(t);
+  }
+  return out;
 }
 
 // Extract the email to use for sign-in / role resolution from an LCR
@@ -777,6 +869,38 @@ function Importer_test_extractEmailFromCell() {
   return 'All ' + cases.length + ' extractEmailFromCell cases passed.';
 }
 
+// Runnable smoke test — Kindoo Admin → Run Importer name-split tests.
+function Importer_test_splitNames() {
+  var cases = [
+    { in: 'Alice Smith',            out: ['Alice Smith'] },
+    { in: '  Alice Smith  ',        out: ['Alice Smith'] },
+    { in: 'Alice, Bob',             out: ['Alice', 'Bob'] },
+    { in: 'Alice Smith, Bob Jones, Carol Nguyen',
+                                    out: ['Alice Smith', 'Bob Jones', 'Carol Nguyen'] },
+    { in: 'Alice,,Bob',             out: ['Alice', 'Bob'] },  // double comma drops empty
+    { in: 'Alice,  ,Bob',           out: ['Alice', 'Bob'] },
+    { in: '',                       out: [] },
+    { in: '   ',                    out: [] },
+    { in: null,                     out: [] },
+    { in: undefined,                out: [] }
+  ];
+  var fails = [];
+  for (var i = 0; i < cases.length; i++) {
+    var got = Importer_splitNames_(cases[i].in);
+    var ok = JSON.stringify(got) === JSON.stringify(cases[i].out);
+    var line = (ok ? 'PASS' : 'FAIL') +
+      ' splitNames(' + JSON.stringify(cases[i].in) + ') -> ' +
+      JSON.stringify(got) +
+      (ok ? '' : ' (expected ' + JSON.stringify(cases[i].out) + ')');
+    Logger.log(line);
+    if (!ok) fails.push(line);
+  }
+  if (fails.length > 0) {
+    throw new Error(fails.length + ' splitNames FAIL(s):\n' + fails.join('\n'));
+  }
+  return 'All ' + cases.length + ' splitNames cases passed.';
+}
+
 // Build a lookup index over a calling template. `calling_name` entries
 // containing the `*` wildcard turn into regex patterns; plain entries stay
 // on the fast-path exact-match map. Exact matches always take priority
@@ -848,6 +972,10 @@ function Importer_buildSummary_(result, elapsedMs, errMsg) {
     result.inserted + ' insert' + (result.inserted === 1 ? '' : 's'),
     result.deleted + ' delete' + (result.deleted === 1 ? '' : 's')
   ];
+  if (result.updatedNames > 0) {
+    parts.push(result.updatedNames + ' name update' +
+               (result.updatedNames === 1 ? '' : 's'));
+  }
   if (result.accessAdded > 0 || result.accessRemoved > 0) {
     parts.push(result.accessAdded + ' access+/' + result.accessRemoved + ' access-');
   }

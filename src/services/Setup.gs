@@ -206,6 +206,7 @@ function onOpen() {
     .addItem('Run base64url tests', 'Utils_test_base64Url')
     .addItem('Run Importer email-cell tests', 'Importer_test_extractEmailFromCell')
     .addItem('Run Importer wildcard tests', 'Importer_test_wildcardMatch')
+    .addItem('Run Importer name-split tests', 'Importer_test_splitNames')
     .addItem('Run forbidden-path tests', 'ApiManager_test_forbidden')
     .addToUi();
 }

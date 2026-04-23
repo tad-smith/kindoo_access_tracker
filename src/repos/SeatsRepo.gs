@@ -5,6 +5,9 @@
 //   - Seats_getAutoByScope(scope)    — filter to type=auto (diff input)
 //   - Seats_bulkInsertAuto(rows)     — batched append for import inserts
 //   - Seats_deleteByHash(hash)       — single-row delete by source_row_hash
+//   - Seats_updateAutoName(hash, …)  — in-place person_name update for an
+//                                       auto row (Name-column change,
+//                                       post-Chunk-10.6)
 //
 // Chunk 5 adds the read side for roster pages:
 //   - Seats_getAll()                 — full scan used by manager AllSeats
@@ -331,6 +334,60 @@ function Seats_deleteById(seatId) {
     var before = Seats_rowToObject_(data[i]);
     sheet.deleteRow(i + 1);
     return before;
+  }
+  return null;
+}
+
+// Update person_name (and last_modified_*) on a single auto row identified
+// by source_row_hash. Used by the importer's in-place name-update pass:
+// when LCR supplies a newer display name for a (scope, calling, email) that
+// already exists in Seats, we mutate in place rather than churning the
+// row via delete + insert (which would change seat_id and noisily rotate
+// the audit trail). Returns { before, after } on success, null when no
+// row matches the hash (defensive — another writer may have beaten us).
+// Refuses non-auto rows loudly; manual/temp rows don't carry a
+// source_row_hash so a hit there would itself be a bug.
+function Seats_updateAutoName(hash, newName, actor) {
+  if (!hash) throw new Error('Seats_updateAutoName: hash required');
+  if (!actor) throw new Error('Seats_updateAutoName: actor required');
+  var key = String(hash);
+  var sheet = Seats_sheet_();
+  var data = sheet.getDataRange().getValues();
+  if (data.length === 0) return null;
+  Seats_assertHeaders_(data[0]);
+  var hashCol = 6;  // 0-based source_row_hash
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][hashCol]) !== key) continue;
+    var before = Seats_rowToObject_(data[i]);
+    if (before.type !== 'auto') {
+      throw new Error('Seats_updateAutoName: row with hash "' + key +
+        '" is type=' + before.type + ', expected auto');
+    }
+    var now = new Date();
+    var after = {
+      seat_id:          before.seat_id,
+      scope:            before.scope,
+      type:             before.type,
+      person_email:     before.person_email,
+      person_name:      newName == null ? '' : String(newName),
+      calling_name:     before.calling_name,
+      source_row_hash:  before.source_row_hash,
+      reason:           before.reason,
+      start_date:       before.start_date,
+      end_date:         before.end_date,
+      building_names:   before.building_names,
+      created_by:       before.created_by,
+      created_at:       before.created_at,
+      last_modified_by: String(actor),
+      last_modified_at: now
+    };
+    sheet.getRange(i + 1, 1, 1, SEATS_HEADERS_.length).setValues([[
+      after.seat_id, after.scope, after.type, after.person_email, after.person_name,
+      after.calling_name, after.source_row_hash, after.reason, after.start_date,
+      after.end_date, after.building_names, after.created_by, after.created_at,
+      after.last_modified_by, after.last_modified_at
+    ]]);
+    return { before: before, after: after };
   }
   return null;
 }

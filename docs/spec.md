@@ -185,8 +185,9 @@ Both paths — manual Import Now and weekly trigger — run the same code, acqui
 - Col A: `Organization` (ignored).
 - Col B: `Forwarding Email` (ignored).
 - Col C: `Position` — not required to be column C exactly; the importer finds the column by header name anywhere in the top 5 rows (a title / instructions block may live above the real headers, which is common in LCR exports).
-- Col D: the personal-email column. Header text varies by export (`Personal Email`, `Personal Email(s)`, `Personal Emails`, sometimes followed by an explanatory `Note: …` block bleeding into the same cell). The importer **requires the column-D header to contain `personal email` (case-insensitive)** as a sanity check, but does not require an exact match.
-- Col E and rightward: additional email cells for multi-person callings. Header text in these columns is free-form and ignored.
+- Col D: `Name` (literal header text, case-insensitive trimmed). Display name(s) for the person(s) in the calling; on multi-person callings the cell holds a comma-delimited list. `names[i]` pairs with `emails[i]` (see Col E+); overflow emails fall back to an empty `person_name`. The importer populates `Seats.person_name` from this column.
+- Col E: the personal-email column. Header text varies by export (`Personal Email`, `Personal Email(s)`, `Personal Emails`, sometimes followed by an explanatory `Note: …` block bleeding into the same cell). The importer **requires the column-E header to contain `personal email` (case-insensitive)** as a sanity check, but does not require an exact match.
+- Col F and rightward: additional email cells for multi-person callings. Header text in these columns is free-form and ignored.
 
 **`Position` format**:
 - Ward tabs: 2-letter prefix (matching the `ward_code`), a space, then the calling name. Example: `CO Bishop` in the Cordera tab. The importer strips the prefix before matching against `WardCallingTemplate.calling_name`.
@@ -194,12 +195,12 @@ Both paths — manual Import Now and weekly trigger — run the same code, acqui
 
 **Per tab:**
 
-1. Find the header row (top 5 rows, contains `Position`). Read data rows below it. On ward tabs, strip the 2-letter `<CODE> ` prefix from `Position` to get the calling name; on the Stake tab, use `Position` verbatim.
-2. Collect the email cell (column D) + any non-blank cells to its right.
-3. For each `(calling, email)` pair where calling matches a row in the appropriate template (`WardCallingTemplate` for ward tabs, `StakeCallingTemplate` for the Stake tab). Template `calling_name` values may contain a `*` wildcard standing for "any run of characters"; see data-model.md "Wildcard patterns" for the matching rules (exact wins over wildcard, Sheet order wins among wildcards):
-   - Compute `source_row_hash = hash(scope, calling, email)`.
-   - If no matching auto-seat exists in `Seats`, insert a new row (`type=auto`); write `AuditLog` entry.
-   - If it exists, no change.
+1. Find the header row (top 5 rows, contains `Position`, `Name` in column D, and a column-E header that contains `personal email`). Read data rows below it. On ward tabs, strip the 2-letter `<CODE> ` prefix from `Position` to get the calling name; on the Stake tab, use `Position` verbatim.
+2. Split the Name cell (Col D) on `,` into an ordered list of display names (trim each, drop empties). Collect the email cell (column E) + any non-blank cells to its right. Pair `names[i]` with `emails[i]` by position; overflow emails fall back to an empty display name.
+3. For each `(calling, email, name)` triple where calling matches a row in the appropriate template (`WardCallingTemplate` for ward tabs, `StakeCallingTemplate` for the Stake tab). Template `calling_name` values may contain a `*` wildcard standing for "any run of characters"; see data-model.md "Wildcard patterns" for the matching rules (exact wins over wildcard, Sheet order wins among wildcards):
+   - Compute `source_row_hash = hash(scope, calling, email)`. (Name is deliberately NOT in the hash — LCR name edits shouldn't churn seats.)
+   - If no matching auto-seat exists in `Seats`, insert a new row (`type=auto`) carrying the display name; write `AuditLog` insert entry.
+   - If a matching auto-seat exists but its `person_name` differs from the freshly-read name, update `person_name` in place and write one `AuditLog` `update` entry (the seat_id and all other fields are preserved).
    - If the template row has `give_app_access=true`, upsert into `Access` (`email`, `scope`, `calling`); write `AuditLog` entry on change.
 4. Delete any existing auto-seat for this scope not seen in the current import; write `AuditLog` entry per row.
 5. Delete any `Access` row for this scope whose `(email, calling)` pair wasn't seen; write `AuditLog` entry.

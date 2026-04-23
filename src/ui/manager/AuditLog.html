@@ -204,6 +204,7 @@
       var bits = [];
       if (after.inserted       != null) bits.push(after.inserted       + ' ins');
       if (after.deleted        != null) bits.push(after.deleted        + ' del');
+      if (after.updated_names)          bits.push(after.updated_names  + ' name upd');
       if (after.access_added   != null) bits.push(after.access_added   + ' access+');
       if (after.access_removed != null) bits.push(after.access_removed + ' access-');
       if (after.elapsed_ms     != null) bits.push(after.elapsed_ms     + 'ms');
