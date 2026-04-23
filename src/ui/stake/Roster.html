@@ -14,7 +14,7 @@
 <section class="roster-page">
   <div class="roster-header">
     <h1>Stake Roster</h1>
-    <span class="roster-scope-label">Stake pool</span>
+    <span class="roster-scope-label">Stake</span>
   </div>
   <div id="utilization-host"></div>
   <div id="roster-table-host"><div class="empty-state">Loading roster…</div></div>
@@ -55,7 +55,7 @@
         rowsBySeatId[resp.rows[i].seat_id] = resp.rows[i];
       }
       $('roster-table-host').innerHTML = renderRosterTable(resp.rows, {
-        emptyMsg: 'No seats in the stake pool yet. Run the importer or submit a request from "New Kindoo Request".',
+        emptyMsg: 'No stake seats yet. Run the importer or submit a request from "New Kindoo Request".',
         actionsHeader: 'Remove',
         rowActions: function (row) {
           if (row.type === 'auto') return '';

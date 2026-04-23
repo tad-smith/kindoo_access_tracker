@@ -250,11 +250,19 @@ Is "My Requests" only the requests *you* submitted, or all pending requests for 
 
 **Best guess:** Strictly what you submitted. A bishopric counsellor's page shows their own requests, not the bishop's.
 
-### R-5 `[P1]` `building_names` on a new request
+### R-5 `[RESOLVED 2026-04-22]` `building_names` on a new request
 
-Requester form has a `comment` field for multi-building notes; `building_names` is set to the ward default (the ward's `building_name`) on insert. Managers adjust after the fact via inline edit on the All Seats page. Confirm this is the intended flow.
+Requester form has a `comment` field for multi-building notes; managers adjust `building_names` on the inserted Seat. Confirm this is the intended flow.
 
-**Best guess:** Yes, exactly that. The bishopric form intentionally doesn't expose a building picker (per the spec's out-of-scope list).
+**Resolution.** The flow differs by scope:
+
+- **Bishopric submits:** form hides the building selector. `Requests.building_names` stored empty. On manager Complete, the dialog pre-ticks the ward's default `building_name` (from `Wards.building_name`); the manager can adjust.
+- **Stake submits:** form shows a building checkbox group (every `Buildings.building_name`). At-least-one tick is **required** on submit (client + server guards). `Requests.building_names` carries the comma-separated selection. On manager Complete, the dialog pre-ticks what the requester chose; the manager can adjust.
+- **Both scopes:** the manager's Complete dialog enforces at-least-one ticked before Confirm enables; `RequestsService_complete` re-checks server-side. Managers can also adjust post-insert via the All Seats inline edit.
+
+`remove` requests carry no buildings (no Seat is inserted).
+
+Landed in the post-Chunk-10.6 polish pass; a new `building_names` column was added to the `Requests` tab at position 10. See spec.md §5 and data-model.md Tab 9.
 
 ### R-6 `[RESOLVED 2026-04-19]` Manager self-approval
 

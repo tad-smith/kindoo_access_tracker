@@ -86,6 +86,28 @@ function RequestsService_submit(args) {
   var reason = String(draft.reason || '').trim();
   if (!reason) throw new Error('Reason is required.');
 
+  // building_names — the requester's pick of which Buildings the
+  // person needs access to (multi-select in NewRequest.html).
+  //
+  // Scope rules:
+  //   - stake: REQUIRED non-empty on add_manual / add_temp. Stake has
+  //     no ward default, so if the requester doesn't pick we'd be
+  //     stuck handing the manager an empty selection. Client-side
+  //     check in NewRequest is the UX; this server-side check is
+  //     authoritative (hand-crafted rpcs can't bypass).
+  //   - bishopric: empty allowed — RequestsService_complete falls
+  //     back to the ward's default building at complete time.
+  //   - remove: no buildings (no Seat inserted); force-empty even
+  //     if the client sent something.
+  var buildingNames = '';
+  if (type !== 'remove') {
+    buildingNames = String(draft.building_names || '').trim();
+    if (buildingNames) RequestsService_validateBuildings_(buildingNames);
+    if (args.scope === 'stake' && !buildingNames) {
+      throw new Error('At least one building is required for stake requests.');
+    }
+  }
+
   var startDate = '';
   var endDate   = '';
   if (type === 'add_temp') {
@@ -153,6 +175,7 @@ function RequestsService_submit(args) {
     comment:          String(draft.comment || '').trim(),
     start_date:       startDate,
     end_date:         endDate,
+    building_names:   buildingNames,
     status:           'pending',
     requester_email:  Utils_cleanEmail(args.requesterPrincipal.email),
     requested_at:     Utils_nowTs(),
@@ -223,23 +246,27 @@ function RequestsService_complete(managerPrincipal, requestId, overrides) {
   // type guard) throw BEFORE we update the Request row — keeps the Sheet
   // state consistent if anything goes wrong mid-flow.
   //
-  // building_names resolution (per data-model.md Tab 8: "Defaults to the
-  // ward's `building_name` on insert; editable by managers"):
-  //   1. If the caller passed `overrides.building_names`, use it
-  //      verbatim — that's the Chunk-6 confirmation dialog letting the
-  //      manager pick which building(s) this seat belongs to before
-  //      commit. Comma-separated string; empty string is allowed
-  //      (manager can leave it blank and edit via AllSeats later).
-  //   2. Otherwise fall back to the ward's default building_name. Stake-
-  //      scope requests have no ward row, so they fall through to ''.
+  // building_names resolution:
+  //   1. If the caller passed `overrides.building_names` (Chunk-6
+  //      confirmation dialog — manager's final choice), use it verbatim.
+  //   2. Else if the requester stored a selection on the request row,
+  //      use that (added post-Chunk-10.6 for the stake scope, which has
+  //      no ward default).
+  //   3. Else fall back to the ward's default building_name. Stake-scope
+  //      requests with no requester selection fall through to ''.
   //
-  // Validation: each submitted building_name (if any) must exist in
-  // Buildings. We check against Buildings_getAll to catch typos / stale
-  // UI state (a building deleted between list-load and confirm).
+  // Validation: each submitted building_name must exist in Buildings.
+  // Empty string is REJECTED on complete — the manager's dialog enforces
+  // "at least one ticked" before Confirm enables, and the server repeats
+  // the check so a hand-crafted rpc can't sneak through. (remove requests
+  // don't insert a Seat; the check is skipped for them.)
   var managerEmail = managerPrincipal.email;
   var buildingNames;
   if (overrides && overrides.building_names !== undefined && overrides.building_names !== null) {
     buildingNames = String(overrides.building_names);
+    RequestsService_validateBuildings_(buildingNames);
+  } else if (req.building_names) {
+    buildingNames = String(req.building_names);
     RequestsService_validateBuildings_(buildingNames);
   } else {
     buildingNames = '';
@@ -248,6 +275,17 @@ function RequestsService_complete(managerPrincipal, requestId, overrides) {
       if (ward && ward.building_name) buildingNames = ward.building_name;
     }
   }
+  // At-least-one rule. A trimmed empty string means every token was
+  // blank (or there were no tokens at all). Throws a clear user-facing
+  // error — the manager sees it as a toast on the queue page.
+  var trimmedBuildings = buildingNames
+    .split(',').map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.length > 0; });
+  if (trimmedBuildings.length === 0) {
+    throw new Error('At least one building is required to complete this request. ' +
+      'Pick one or more in the confirmation dialog.');
+  }
+  buildingNames = trimmedBuildings.join(',');
   var seatRow = {
     seat_id:          Utils_uuid(),
     scope:            req.scope,

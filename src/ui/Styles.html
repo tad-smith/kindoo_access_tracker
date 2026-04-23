@@ -675,14 +675,22 @@
     border-radius: 6px;
   }
 
-  /* Ward Rosters dropdown page. */
-  .ward-rosters-page .ward-select-row {
+  /* Ward Rosters dropdown page + post-Chunk-10.6 multi-ward bishopric
+     Roster picker. Same shape on both so the dropdown-plus-label reads
+     identically. Explicit `.hidden` override because the generic
+     `.hidden { display: none }` rule (line 22) has equal specificity
+     but is declared earlier, so `display: flex` below would otherwise
+     win and leave a "hidden" picker visible — matches the same
+     pattern used by the modal rows. */
+  .ward-select-row {
     display: flex;
     gap: 10px;
     align-items: center;
     margin: 14px 0 18px;
   }
-  .ward-rosters-page select {
+  .ward-select-row.hidden { display: none; }
+  .ward-rosters-page select,
+  .roster-page .ward-select-row select {
     padding: 6px 8px;
     font-family: inherit;
     font-size: inherit;

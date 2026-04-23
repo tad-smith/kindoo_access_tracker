@@ -44,25 +44,33 @@
     else if (__r.type === 'stake')     __isStake     = true;
     else if (__r.type === 'manager')   __isManager   = true;
   }
-  // Ordered link list. For a bishopric user the action-oriented
-  // tabs (New Kindoo Request + My Requests) come first, with the
-  // reference-oriented Ward Roster at the end — bishoprics open the
-  // app primarily to act, not to browse the roster, so leading with
-  // the request surfaces is the right emphasis. Stake users keep
-  // their roster-first order (Stake Roster + Ward Rosters precede
-  // the shared request block). Manager links stay last regardless.
-  // On a multi-role user the order is: stake rosters → shared
-  // requests → bishopric roster → manager links.
+  // Ordered link list. Action-oriented tabs (New Kindoo Request +
+  // My Requests) come first for any request-capable principal, then
+  // reference-oriented rosters. Rationale: users open the app
+  // primarily to submit a request, not to browse their ward's roster.
+  //
+  // "Ward Roster" (the bishopric-scoped page) is suppressed entirely
+  // when the principal also holds a stake role — a stake member's
+  // ward roster is already visible via Ward Rosters (the stake view
+  // onto any ward), so the bishopric-only entry would be redundant
+  // and visually cluttered. Bishopric-WITHOUT-stake users still see
+  // it as the single roster surface their role permits.
+  //
+  // Manager links stay last regardless. On a multi-role user the
+  // order is: shared requests → stake rosters → bishopric roster
+  // (only when not also stake) → manager links.
   var __links = [];
-  if (__isStake) {
-    __links.push({ page: 'stake/roster',       label: 'Stake Roster' });
-    __links.push({ page: 'stake/ward-rosters', label: 'Ward Rosters' });
-  }
   if (__isBishopric || __isStake) {
     __links.push({ page: 'new', label: 'New Kindoo Request' });
     __links.push({ page: 'my',  label: 'My Requests' });
   }
-  if (__isBishopric) __links.push({ page: 'bishopric/roster',   label: 'Ward Roster' });
+  if (__isStake) {
+    __links.push({ page: 'stake/roster',       label: 'Stake Roster' });
+    __links.push({ page: 'stake/ward-rosters', label: 'Ward Rosters' });
+  }
+  if (__isBishopric && !__isStake) {
+    __links.push({ page: 'bishopric/roster', label: 'Ward Roster' });
+  }
   if (__isManager) {
     __links.push({ page: 'mgr/dashboard', label: 'Dashboard' });
     __links.push({ page: 'mgr/queue',     label: 'Requests Queue' });

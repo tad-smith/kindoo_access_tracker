@@ -195,7 +195,7 @@ function EmailService_notifyManagersOverCap(pools, source) {
 
 function EmailService_overCapPoolLine_(pool) {
   var label = pool.scope === 'stake'
-    ? 'Stake Pool'
+    ? 'Stake'
     : ('Ward ' + pool.scope + (pool.ward_name ? ' (' + pool.ward_name + ')' : ''));
   return label + ': ' + pool.count + ' / ' + pool.cap +
     ' (over by ' + pool.over_by + ')';
@@ -326,7 +326,7 @@ function EmailService_seatsLink_() {
 
 function EmailService_scopeLabel_(scope) {
   if (!scope) return '(unknown scope)';
-  if (scope === 'stake') return 'Stake Pool';
+  if (scope === 'stake') return 'Stake';
   // Look up ward_name for a prettier label; fall back to the code if the
   // Wards tab doesn't have it (deleted / never seeded).
   try {

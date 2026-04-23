@@ -106,10 +106,36 @@ function Rosters_buildContext_() {
     Logger.log('[Rosters] Requests tab missing — treating as no pending removes.');
   }
 
+  // Seat counts for stake-portion math. `stake_seat_cap` is the total
+  // Kindoo license limit across the entire stake; the "stake portion"
+  // shown on stake-facing displays is the capacity left for stake-scope
+  // use after wards have taken their share:
+  //
+  //     stake_portion_cap = stake_seat_cap - wardSeatsCount
+  //
+  // `Rosters_buildSummary_` for scope 'stake' uses this as the cap
+  // (numerator stays the stake-scope row count) so the utilization bar
+  // on Stake Roster, the Dashboard's stake row, the AllSeats stake
+  // summary, and the over-cap detection all report the stake
+  // presidency's own allocation. Over-cap fires when stake-scope >
+  // stake_portion_cap, which is mathematically equivalent to
+  // total_seats > stake_seat_cap but reads naturally as "stake is N
+  // over its portion". Ward-scoped summaries are unchanged.
+  //
+  // Seats_getAll is CacheService-memoized (Chunk 10.5), so the read is
+  // cheap on warm cache.
+  var allSeats = Seats_getAll();
+  var stakeSeatsCount = 0;
+  for (var si = 0; si < allSeats.length; si++) {
+    if (String(allSeats[si].scope || '') === ROSTERS_STAKE_SCOPE_) stakeSeatsCount++;
+  }
+  var wardSeatsCount = allSeats.length - stakeSeatsCount;
+
   return {
     today:                 Utils_todayIso(),
     wardsByCode:           byCode,
     stakeSeatCap:          (rawCap == null || rawCap === '') ? null : Number(rawCap),
+    wardSeatsCount:        wardSeatsCount,
     pendingRemovesByScope: pendingRemovesByScope
   };
 }
@@ -203,29 +229,83 @@ function Rosters_strCmp_(a, b) {
 //                        a diagnostic 'Ward <code>' fallback if the ward
 //                        row was deleted but seats remain (shouldn't
 //                        happen; Wards_delete has no cascade today).
-//   seat_cap          — number or null when Wards is missing a cap
-//   total_seats       — count of rows in this scope (auto + manual + temp,
-//                        incl. past-end-date temps per Chunk-5 "Utilization
-//                        math includes every seat row regardless of type")
+//   seat_cap          — For a ward: the configured per-ward cap, or
+//                        null when unset. For the stake: the STAKE
+//                        PORTION cap — what's left of the total license
+//                        after wards have taken their share
+//                        (`stake_seat_cap - wardSeatsCount`, clamped to
+//                        0; null when `stake_seat_cap` is unset).
+//   total_seats       — Count of rows in this scope (auto + manual +
+//                        temp, incl. past-end-date temps per Chunk-5
+//                        "Utilization math includes every seat row
+//                        regardless of type"). For stake this is the
+//                        stake-scope sub-pool count — NOT the stake-
+//                        wide total — so paired with the portion cap
+//                        it reads as "stake presidency's allocation vs
+//                        their own assignments".
 //   utilization_pct   — total_seats / seat_cap, or 0 when cap missing
-//   over_cap          — boolean; true iff seat_cap > 0 AND total_seats > cap
+//   over_cap          — boolean; true iff seat_cap > 0 AND total_seats > cap.
+//                        For stake this fires iff ward usage + stake-
+//                        scope usage > total license, expressed in
+//                        portion terms.
 function Rosters_buildSummary_(scope, totalSeats, ctx) {
   var cap, wardName;
   if (scope === ROSTERS_STAKE_SCOPE_) {
-    cap = ctx.stakeSeatCap;
     wardName = 'Stake';
+    var licenseCap = (ctx && ctx.stakeSeatCap != null) ? Number(ctx.stakeSeatCap) : null;
+    if (licenseCap == null || isNaN(licenseCap)) {
+      cap = null;
+    } else {
+      // Stake portion = total license - wards' current seats. Clamp at
+      // 0 so display never shows a negative cap; in that edge case
+      // every stake-scope seat counts as over.
+      var wards = (ctx && typeof ctx.wardSeatsCount === 'number') ? ctx.wardSeatsCount : 0;
+      cap = Math.max(0, licenseCap - wards);
+    }
   } else {
     var ward = ctx.wardsByCode ? ctx.wardsByCode[scope] : null;
     cap = ward ? (ward.seat_cap == null ? null : Number(ward.seat_cap)) : null;
     wardName = ward ? ward.ward_name : ('Ward ' + scope);
   }
   var utilization = (cap && cap > 0) ? totalSeats / cap : 0;
-  var overCap = cap != null && cap > 0 && totalSeats > cap;
+  // Stake edge case: if the portion cap clamped to 0 AND any stake-
+  // scope seats exist, that's an over-cap condition (wards have
+  // consumed the whole license and stake-scope is bleeding past it).
+  // Fall-through to the generic > check otherwise.
+  var overCap = cap != null && (
+    (cap === 0 && totalSeats > 0 && scope === ROSTERS_STAKE_SCOPE_) ||
+    (cap > 0 && totalSeats > cap)
+  );
   return {
     scope:           scope,
     ward_name:       wardName,
     seat_cap:        cap,
     total_seats:     totalSeats,
+    utilization_pct: utilization,
+    over_cap:        overCap
+  };
+}
+
+// Stake summary in TOTAL-vs-LICENSE terms (as opposed to the stake-
+// portion view Rosters_buildSummary_ returns). Used by the manager
+// Dashboard's Utilization card, which wants full seat counts across
+// the whole stake so managers see license-level pressure at a glance.
+// Other stake-facing views (Stake Roster, AllSeats stake card, Import
+// banner, over-cap email) stay on the portion math.
+//
+//   total_seats = every seat in the system
+//   seat_cap    = stake_seat_cap (license limit; null when unset)
+//   over_cap    = total_seats > license
+function Rosters_buildStakeTotalSummary_(allSeatsCount, ctx) {
+  var licenseCap = (ctx && ctx.stakeSeatCap != null) ? Number(ctx.stakeSeatCap) : null;
+  if (licenseCap != null && isNaN(licenseCap)) licenseCap = null;
+  var utilization = (licenseCap && licenseCap > 0) ? allSeatsCount / licenseCap : 0;
+  var overCap = licenseCap != null && licenseCap > 0 && allSeatsCount > licenseCap;
+  return {
+    scope:           ROSTERS_STAKE_SCOPE_,
+    ward_name:       'Stake',
+    seat_cap:        licenseCap,
+    total_seats:     allSeatsCount,
     utilization_pct: utilization,
     over_cap:        overCap
   };

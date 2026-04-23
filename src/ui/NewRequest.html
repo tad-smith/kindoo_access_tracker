@@ -70,6 +70,21 @@
       </label>
     </div>
 
+    <!-- Building selector. Shown only for stake scope — stake requests
+         have no ward default, so the requester must pick which
+         building(s) the person needs access to. Required on submit:
+         NewRequest blocks the submit if nothing is ticked, and
+         RequestsService_submit repeats the check server-side.
+         Bishopric requests fall through to the ward's assigned
+         building (managed at Complete time) and don't render this row. -->
+    <div class="form-row hidden" id="buildings-row">
+      <div class="label"><strong>Buildings this person will access</strong> (at least one required)</div>
+      <div id="buildings-list" class="cm-buildings-list"></div>
+      <div class="cm-buildings-hint">
+        Tick every building this person will need access to.
+      </div>
+    </div>
+
     <div id="duplicate-warning-host" class="duplicate-warning-host"></div>
 
     <div class="form-actions">
@@ -89,6 +104,12 @@
   // but a listMy with no filter is a fine shape — we just ignore the rows.
   var allowedScopes = [];
   var selectedScope = '';
+  // Buildings catalogue. Shipped alongside the scopes list so we render
+  // checkboxes on stake-scope requests. Stake has no ward default, so
+  // the requester tells the manager which building(s) the person needs;
+  // empty selection is allowed on submit (manager can pick at Complete,
+  // with a server-enforced "at least one" rule).
+  var buildingsCatalogue = [];
 
   function setupScopeSelector() {
     var host = $('scope-selector-host');
@@ -102,6 +123,7 @@
           'Only those roles may submit new requests.</div>';
         $('submit-btn').disabled = true;
       }
+      syncBuildingsVisibility();
       return;
     }
     // Multi-role: dropdown.
@@ -116,13 +138,59 @@
     host.innerHTML = html;
     $('f-scope').addEventListener('change', function () {
       selectedScope = this.value;
+      syncBuildingsVisibility();
       checkDuplicate();
     });
+    syncBuildingsVisibility();
+  }
+
+  // Stake-only for now (per the follow-up pass after Chunk 10.6). A
+  // bishopric request falls through to the ward's default building,
+  // set at Complete time; no selector needed.
+  function syncBuildingsVisibility() {
+    var row = $('buildings-row');
+    if (!row) return;
+    var show = (selectedScope === 'stake');
+    row.classList.toggle('hidden', !show);
+    if (show) renderBuildingsList();
+  }
+
+  function renderBuildingsList() {
+    var host = $('buildings-list');
+    if (!host) return;
+    if (!buildingsCatalogue || buildingsCatalogue.length === 0) {
+      host.innerHTML = '<div class="cm-buildings-empty">' +
+        'No buildings configured yet. Submit without a selection; a ' +
+        'Kindoo Manager will pick one at completion time.</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < buildingsCatalogue.length; i++) {
+      var b = buildingsCatalogue[i];
+      html +=
+        '<label class="cm-building-row">' +
+          '<input type="checkbox" name="building" value="' + escapeHtml(b) + '"> ' +
+          escapeHtml(b) +
+        '</label>';
+    }
+    host.innerHTML = html;
+  }
+
+  function selectedBuildings() {
+    var host = $('buildings-list');
+    if (!host) return [];
+    var checks = host.querySelectorAll('input[type="checkbox"]');
+    var out = [];
+    for (var i = 0; i < checks.length; i++) {
+      if (checks[i].checked) out.push(checks[i].value);
+    }
+    return out;
   }
 
   function init() {
     rpc('ApiRequests_listMy').then(function (resp) {
-      allowedScopes = resp.scopes || [];
+      allowedScopes      = resp.scopes     || [];
+      buildingsCatalogue = resp.buildings  || [];
       setupScopeSelector();
     }).catch(function (err) {
       $('scope-selector-host').innerHTML =
@@ -206,15 +274,27 @@
   function onSubmit(ev) {
     ev.preventDefault();
     var btn = $('submit-btn');
+    // Stake requests require at least one building. Client-side gate;
+    // RequestsService_submit repeats the check so a hand-crafted rpc
+    // can't sneak through. Bishopric submits don't render the selector
+    // and fall through (server allows empty building_names for them).
+    var picked = selectedBuildings();
+    if (selectedScope === 'stake' && picked.length === 0) {
+      toast('Tick at least one building this person needs access to.', 'error');
+      return;
+    }
     btn.disabled = true;
     var draft = {
-      type:         $('f-type').value,
-      target_email: ($('f-target-email').value || '').trim(),
-      target_name:  ($('f-target-name').value || '').trim(),
-      reason:       ($('f-reason').value || '').trim(),
-      comment:      ($('f-comment').value || '').trim(),
-      start_date:   ($('f-start-date') ? $('f-start-date').value : '') || '',
-      end_date:     ($('f-end-date')   ? $('f-end-date').value   : '') || ''
+      type:           $('f-type').value,
+      target_email:   ($('f-target-email').value || '').trim(),
+      target_name:    ($('f-target-name').value || '').trim(),
+      reason:         ($('f-reason').value || '').trim(),
+      comment:        ($('f-comment').value || '').trim(),
+      start_date:     ($('f-start-date') ? $('f-start-date').value : '') || '',
+      end_date:       ($('f-end-date')   ? $('f-end-date').value   : '') || '',
+      // Only stake scope renders the selector today; for other scopes
+      // the checkbox group is hidden and selectedBuildings() is [].
+      building_names: picked.join(',')
     };
     rpc('ApiRequests_submit', draft, selectedScope).then(function (resp) {
       toast('Request submitted.', 'success');

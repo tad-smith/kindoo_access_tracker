@@ -71,8 +71,9 @@
         <div class="label"><strong>Buildings assigned to this seat:</strong></div>
         <div id="cm-buildings-list" class="cm-buildings-list"></div>
         <div class="cm-buildings-hint">
-          Defaults to the ward's configured building. Untick to remove, or
-          tick additional buildings this person needs access to.
+          Pre-ticked with the requester's choice (stake) or the ward's
+          configured building (bishopric). Adjust as needed — at least
+          one must be ticked before you can complete.
         </div>
       </div>
       <div class="form-actions">
@@ -145,12 +146,28 @@
     return ward && ward.building_name ? ward.building_name : '';
   }
 
+  // What buildings should be pre-ticked for this request?
+  //   1. If the requester stored a selection on submit, use that (stake
+  //      scope, via the post-10.6 building-selector on NewRequest).
+  //   2. Otherwise fall back to the ward's default (bishopric scope).
+  //   3. Stake with no requester selection → [] (manager picks from
+  //      scratch; the "at least one" rule below forces a choice before
+  //      Confirm).
+  function preselectedBuildingsFor(req) {
+    var raw = String(req.building_names || '').trim();
+    if (raw) {
+      return raw.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+    }
+    var def = defaultBuildingFor(req.scope);
+    return def ? [def] : [];
+  }
+
   // Build a "what this seat will look like after complete" preview row.
   // Matches the Rosters_mapRow_ shape so rosterRowHtml can render it.
-  // building_names shows the ward's default so the preview accurately
+  // building_names shows whatever's pre-selected (requester's choice
+  // for stake, ward default for bishopric) so the preview accurately
   // reflects what'll land in the Seats tab if the manager accepts the
-  // default on the confirmation dialog. Stake scope has no ward default
-  // and renders empty.
+  // defaults on the confirmation dialog.
   function previewSeatRow(req) {
     return {
       seat_id:        '',
@@ -162,7 +179,7 @@
       reason:         req.reason || '',
       start_date:     req.start_date || '',
       end_date:       req.end_date || '',
-      building_names: defaultBuildingFor(req.scope),
+      building_names: preselectedBuildingsFor(req).join(', '),
       expiry_badge:   ''
     };
   }
@@ -434,21 +451,24 @@
     } else {
       buildingsRow.classList.remove('hidden');
       // Building checkboxes — every Buildings.building_name as a
-      // checkbox, with the ward's default pre-ticked (nothing for
-      // stake). Empty catalogue (no Buildings configured yet) surfaces
-      // a hint rather than a blank area.
-      var defaultBuilding = defaultBuildingFor(req.scope);
+      // checkbox. Pre-tick state follows preselectedBuildingsFor:
+      // requester's own selection (stake scope) wins over the ward
+      // default (bishopric scope). Empty catalogue (no Buildings
+      // configured yet) surfaces a hint.
+      var preselected = {};
+      var preList = preselectedBuildingsFor(req);
+      for (var pi = 0; pi < preList.length; pi++) preselected[preList[pi]] = true;
       var listHost = $('cm-buildings-list');
       if (buildingsCatalogue.length === 0) {
         listHost.innerHTML =
           '<div class="cm-buildings-empty">No Buildings configured. ' +
-          'Add buildings via Configuration to assign them here, or proceed ' +
-          'with no buildings and edit this seat later on All Seats.</div>';
+          'Add buildings via Configuration first — at least one is ' +
+          'required to complete this request.</div>';
       } else {
         var html = '';
         for (var i = 0; i < buildingsCatalogue.length; i++) {
           var b = buildingsCatalogue[i];
-          var checked = b === defaultBuilding ? ' checked' : '';
+          var checked = preselected[b] ? ' checked' : '';
           html +=
             '<label class="cm-building-row">' +
               '<input type="checkbox" value="' + escapeHtml(b) + '"' + checked + '> ' +
@@ -457,13 +477,35 @@
         }
         listHost.innerHTML = html;
       }
+      // At-least-one enforcement (client side — server repeats the
+      // check). Wire a change listener on every checkbox so Confirm
+      // toggles as the manager edits the selection.
+      Array.prototype.forEach.call(
+        listHost.querySelectorAll('input[type="checkbox"]'),
+        function (cb) { cb.addEventListener('change', syncCompleteConfirmEnabled); }
+      );
     }
 
     $('complete-modal').setAttribute('data-request-id', reqId);
     $('complete-modal').setAttribute('data-request-type', req.type);
     $('complete-modal').classList.remove('hidden');
-    $('cm-confirm-btn').disabled = false;
     $('cm-confirm-btn').textContent = isRemove ? 'Confirm and delete seat' : 'Confirm and complete';
+    syncCompleteConfirmEnabled();
+  }
+
+  // Confirm is enabled for remove (no buildings needed) and for add
+  // flows only when at least one building checkbox is ticked. Called
+  // on every checkbox change and once on dialog open.
+  function syncCompleteConfirmEnabled() {
+    var modal = $('complete-modal');
+    if (!modal) return;
+    var reqType = modal.getAttribute('data-request-type');
+    var btn = $('cm-confirm-btn');
+    if (reqType === 'remove') {
+      btn.disabled = false;
+      return;
+    }
+    btn.disabled = currentBuildingSelection().length === 0;
   }
 
   function closeCompleteModal() {

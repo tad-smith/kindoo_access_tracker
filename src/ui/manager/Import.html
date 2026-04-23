@@ -114,7 +114,7 @@
     }
     list.innerHTML = pools.map(function (p) {
       var label = p.scope === 'stake'
-        ? 'Stake Pool'
+        ? 'Stake'
         : ('Ward ' + esc(p.scope) +
            (p.ward_name ? ' (' + esc(p.ward_name) + ')' : ''));
       // Deep link to the filtered mgr/seats view. The AllSeats page reads

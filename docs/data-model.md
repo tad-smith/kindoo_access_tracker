@@ -34,7 +34,7 @@ Key/value pairs. The primary "knobs" the app reads on startup.
 | --- | --- | --- |
 | `stake_name` | string | Display name, used in emails and page chrome. Seeded via bootstrap wizard. |
 | `callings_sheet_id` | string | Google Sheet ID for the weekly import source. Seeded via bootstrap wizard. |
-| `stake_seat_cap` | number | Max seats in the stake pool. Seeded via bootstrap wizard. |
+| `stake_seat_cap` | number | Total Kindoo license limit across the ENTIRE stake — every ward's seats PLUS every stake-pool seat counts against it. Two display styles across the app: (1) the manager **Dashboard** utilization card's stake row shows `total_seats_across_everything / stake_seat_cap` (full license view — managers see pressure at a glance); (2) every other stake-facing surface (Stake Roster utilization bar, AllSeats stake summary, Import over-cap banner, over-cap email) shows the **stake portion**: numerator = stake-scope sub-pool count, denominator = `stake_seat_cap - sum(ward seats)` clamped ≥ 0, so the bar reads as "stake presidency's allocation vs their assignments". Over-cap triggers are mathematically identical (both forms fire when stake + wards > license); the difference is display only. Ward caps (`Wards.seat_cap`) stay per-ward. Seeded via bootstrap wizard. |
 | `bootstrap_admin_email` | string | Seeded manually in the Sheet before first deploy. |
 | `main_url` | string | Web-app URL of the **Main** deployment (`executeAs: USER_DEPLOYING`). Used by `Identity_serve` as the redirect target after signing the session token, and by the client for "clean URL" redirects after token consumption. Seeded manually after first deploy. Format: `https://script.google.com/macros/s/<MAIN_DEPLOYMENT_ID>/exec`. |
 | `identity_url` | string | Web-app URL of the **Identity** deployment (`executeAs: USER_ACCESSING`). Used by `Main.doGet` to detect "this request is hitting Identity, dispatch to `Identity_serve`" and by the Login button as the navigation target. Seeded manually after the Identity deployment is created. Format: `https://script.google.com/macros/s/<IDENTITY_DEPLOYMENT_ID>/exec`. |
@@ -243,6 +243,7 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 | `comment` | string | Free text (e.g. multi-building notes on adds, removal context). |
 | `start_date` | ISO date | Temp only. |
 | `end_date` | ISO date | Temp only. |
+| `building_names` | string | Comma-separated `Buildings.building_name` tokens — the requester's pick of which buildings the person will access. Stake-scope submits render a building checkbox group in NewRequest.html and **require at least one ticked** (client-side gate + server-side check in `RequestsService_submit`). Bishopric-scope submits hide the selector and store an empty string; the manager's Complete dialog pre-ticks the ward's default `building_name` instead. Remove submits force the field empty. `RequestsService_complete` re-enforces at-least-one on the resolved list before the Seat is inserted, so a hand-crafted rpc bypassing the UI still can't commit an empty selection. |
 | `status` | enum | `pending` / `complete` / `rejected` / `cancelled`. |
 | `requester_email` | string | Lowercased. |
 | `requested_at` | timestamp | |
@@ -253,13 +254,13 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 
 ### Example rows
 
-| request_id | type | scope | target_email | target_name | reason | comment | start_date | end_date | status | requester_email | requested_at | completer_email | completed_at | rejection_reason | completion_note |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `r1…` | `add_manual` | `CO` | `frank@example.org` | `Frank Pierce` | `Youth activity coordinator` | `Needs access on Tuesdays after 6pm.` | | | `complete` | `alice@example.org` | `2026-04-10 17:55:11` | `bob@example.org` | `2026-04-10 19:03:02` | | |
-| `r2…` | `add_temp` | `CO` | `guest@example.com` | `Mark Long` | `Visiting facilities crew` | | `2026-04-20` | `2026-04-27` | `pending` | `alice@example.org` | `2026-04-18 13:45:20` | | | | |
-| `r3…` | `remove` | `CO` | `frank@example.org` | `Frank Pierce` | `No longer serving in that capacity` | | | | `pending` | `alice@example.org` | `2026-04-19 09:00:00` | | | | |
-| `r4…` | `add_manual` | `stake` | `grace@example.org` | `Grace Woo` | `Stake activity chair` | | | | `rejected` | `pat@example.org` | `2026-04-15 11:30:00` | `bob@example.org` | `2026-04-16 08:12:55` | `Stake pool full — please resubmit after next quarter.` | |
-| `r5…` | `remove` | `CO` | `mark@example.org` | `Mark Long` | `Done with assignment` | | | | `complete` | `alice@example.org` | `2026-04-22 09:10:00` | `bob@example.org` | `2026-04-22 10:02:14` | | `Seat already removed at completion time (no-op).` |
+| request_id | type | scope | target_email | target_name | reason | comment | start_date | end_date | building_names | status | requester_email | requested_at | completer_email | completed_at | rejection_reason | completion_note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `r1…` | `add_manual` | `CO` | `frank@example.org` | `Frank Pierce` | `Youth activity coordinator` | `Needs access on Tuesdays after 6pm.` | | | | `complete` | `alice@example.org` | `2026-04-10 17:55:11` | `bob@example.org` | `2026-04-10 19:03:02` | | |
+| `r2…` | `add_temp` | `CO` | `guest@example.com` | `Mark Long` | `Visiting facilities crew` | | `2026-04-20` | `2026-04-27` | | `pending` | `alice@example.org` | `2026-04-18 13:45:20` | | | | |
+| `r3…` | `remove` | `CO` | `frank@example.org` | `Frank Pierce` | `No longer serving in that capacity` | | | | | `pending` | `alice@example.org` | `2026-04-19 09:00:00` | | | | |
+| `r4…` | `add_manual` | `stake` | `grace@example.org` | `Grace Woo` | `Stake activity chair` | | | | `Stake Center,Foothills Bldg` | `rejected` | `pat@example.org` | `2026-04-15 11:30:00` | `bob@example.org` | `2026-04-16 08:12:55` | `Stake pool full — please resubmit after next quarter.` | |
+| `r5…` | `remove` | `CO` | `mark@example.org` | `Mark Long` | `Done with assignment` | | | | | `complete` | `alice@example.org` | `2026-04-22 09:10:00` | `bob@example.org` | `2026-04-22 10:02:14` | | `Seat already removed at completion time (no-op).` |
 
 ---
 

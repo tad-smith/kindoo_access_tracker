@@ -23,6 +23,16 @@
     <h1>Ward Roster</h1>
     <span class="roster-scope-label" id="roster-scope-label"></span>
   </div>
+  <!-- Multi-ward bishopric: populated by init when allowed_wards has
+       more than one entry. Hidden for the common single-ward case.
+       Uses inline `display:none` so no CSS specificity surprise can
+       leave it visible (the `.ward-select-row` rule sets `display:
+       flex` which beats the `.hidden` utility on equal specificity
+       / later-cascade grounds — inline style trumps both). -->
+  <div id="ward-select-row" class="ward-select-row" style="display:none">
+    <label for="ward-select">Ward:</label>
+    <select id="ward-select"></select>
+  </div>
   <div id="utilization-host"></div>
   <div id="roster-table-host"><div class="empty-state">Loading roster…</div></div>
 
@@ -57,14 +67,19 @@
 
   var rowsBySeatId = {};
   var currentScope = '';
+  var wardPickerWired = false;
 
   function refresh() {
     $('roster-table-host').innerHTML = '<div class="empty-state">Loading roster…</div>';
-    rpc('ApiBishopric_roster').then(function (resp) {
+    // currentScope is the active ward selection (empty on first load —
+    // server picks the first allowed ward). Post-Chunk-10.6 polish: a
+    // multi-ward bishopric can pick via the Ward dropdown.
+    rpc('ApiBishopric_roster', currentScope || null).then(function (resp) {
       currentScope = resp.summary.scope;
       $('roster-scope-label').textContent =
         resp.summary.ward_name + ' (' + resp.summary.scope + ')';
       $('utilization-host').innerHTML = renderUtilizationBar(resp.summary);
+      setupWardPicker(resp.allowed_wards || [], resp.selected_scope || currentScope);
 
       rowsBySeatId = {};
       for (var i = 0; i < resp.rows.length; i++) {
@@ -103,6 +118,37 @@
       $('roster-table-host').innerHTML =
         '<div class="error">Could not load roster: ' + escapeHtml(msg) + '</div>';
     });
+  }
+
+  // Render the ward-switcher on responses with more than one allowed
+  // ward. Single-ward principals (the common case) never see the row.
+  // Wiring is idempotent — first call populates + attaches the change
+  // listener; subsequent refresh() calls just re-sync the selection.
+  function setupWardPicker(allowedWards, selectedScope) {
+    var row = $('ward-select-row');
+    var sel = $('ward-select');
+    if (!row || !sel) return;
+    if (allowedWards.length <= 1) {
+      row.style.display = 'none';
+      return;
+    }
+    // Clear the inline `display:none` so the CSS rule (display:flex)
+    // kicks back in.
+    row.style.display = '';
+    if (!wardPickerWired) {
+      var html = '';
+      for (var i = 0; i < allowedWards.length; i++) {
+        html += '<option value="' + escapeHtml(allowedWards[i].scope) + '">' +
+                  escapeHtml(allowedWards[i].label) + '</option>';
+      }
+      sel.innerHTML = html;
+      sel.addEventListener('change', function () {
+        currentScope = this.value;
+        refresh();
+      });
+      wardPickerWired = true;
+    }
+    sel.value = selectedScope;
   }
 
   function openRemoveModal(seatId) {

@@ -95,14 +95,18 @@ function Router_pick(requestedPage, principal) {
 // manager work. Nav shows the union of links so the other roles are still
 // one click away.
 //
-// Chunk 10 landed the manager Dashboard and swapped the default here from
-// 'mgr/seats' to 'mgr/dashboard'. The post-bootstrap redirect
-// (ApiBootstrap_complete → Config.main_url) naturally lands the admin on
-// the Dashboard through this default.
+// RULE: the default page for a role is ALWAYS that role's leftmost nav
+// tab in ui/Nav.html. If you reorder nav, update this fn to match. The
+// alternative (picking a "most-important" page) lands the active-
+// highlight in the middle or right of the nav, which reads as "I
+// clicked something" rather than "I just arrived". Current mapping:
+//   manager   → mgr/dashboard (leftmost manager tab)
+//   stake     → new (leftmost stake tab — "New Kindoo Request")
+//   bishopric → new (leftmost bishopric tab — "New Kindoo Request")
 function Router_defaultPageFor_(principal) {
   if (Router_hasRole_(principal, 'manager'))   return 'mgr/dashboard';
-  if (Router_hasRole_(principal, 'stake'))     return 'stake/roster';
-  if (Router_hasRole_(principal, 'bishopric')) return 'bishopric/roster';
+  if (Router_hasRole_(principal, 'stake'))     return 'new';
+  if (Router_hasRole_(principal, 'bishopric')) return 'new';
   return 'mgr/dashboard'; // unreachable — no-roles branch above short-circuits first
 }
 

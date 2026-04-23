@@ -1168,8 +1168,12 @@ function ApiManager_dashboard(token) {
     countsByScope[sc] = (countsByScope[sc] || 0) + 1;
   }
   var utilization = [];
-  // Stake pool first (mirrors the All Seats page convention).
-  var stakeSummary = Rosters_buildSummary_('stake', countsByScope['stake'] || 0, ctx);
+  // Stake first (mirrors the All Seats page convention). Dashboard
+  // shows the STAKE-WIDE total (every seat in every ward plus every
+  // stake-pool seat) against the full stake_seat_cap license — not
+  // the stake-portion view other stake-facing surfaces use. Managers
+  // want license-level pressure at a glance.
+  var stakeSummary = Rosters_buildStakeTotalSummary_(seats.length, ctx);
   utilization.push(ApiManager_dashboard_summaryToUtil_(stakeSummary));
   // Every configured ward, alphabetical by ward_code.
   var wards = Wards_getAll();

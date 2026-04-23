@@ -220,16 +220,25 @@ function Importer_runImportCore_(opts, startedMs) {
 // Runs after Importer_runImport's main lock has released — a read-only
 // scan over Seats + Wards + Config.stake_seat_cap. Returns an array of
 // over-cap pool descriptors (empty array if every pool is at or under its
-// cap). One pool per ward that's over; one more entry for the stake pool
-// if it's over.
+// cap). One pool per ward that's over; one more entry for the stake if
+// its portion is over.
 //
 // Utilization counts every row in Seats regardless of type, matching
 // Chunk 5's Rosters summary math — an over-cap condition caused by a
 // lingering (un-expired) temp seat is accurate: the seat still holds a
 // license until the expiry trigger next removes it.
 //
+// Stake semantics (same as services/Rosters.gs): `stake_seat_cap` is the
+// total Kindoo license; the stake's PORTION of that is what's left
+// after wards take their share (`stake_seat_cap - wardSeatsCount`).
+// Over-cap for the stake fires when the stake-scope count exceeds that
+// portion — mathematically equivalent to `seats.length >
+// stake_seat_cap`, but expressed in portion terms so the manager email
+// and Import-page banner read "Stake: 40 / 20 (over by 20)" instead of
+// the less intuitive "Stake: 220 / 200". Ward caps stay per-ward.
+//
 // Pool shape:
-//   { scope: 'CO' | 'stake', ward_name: 'Cordera 1st Ward' | 'Stake Pool',
+//   { scope: 'CO' | 'stake', ward_name: 'Cordera 1st Ward' | 'Stake',
 //     cap: 20, count: 21, over_by: 1 }
 // ---------------------------------------------------------------------------
 function Importer_computeOverCaps_() {
@@ -265,14 +274,18 @@ function Importer_computeOverCaps_() {
     }
   }
   if (stakeCap != null && !isNaN(stakeCap) && stakeCap > 0) {
-    var stakeN = counts['stake'] || 0;
-    if (stakeN > stakeCap) {
+    // Stake portion cap = total license - wards' current seats.
+    // Clamped at 0; when clamped, any stake-scope > 0 is over.
+    var stakeScopeN = counts['stake'] || 0;
+    var wardSeatsN  = seats.length - stakeScopeN;
+    var portionCap  = Math.max(0, stakeCap - wardSeatsN);
+    if (stakeScopeN > portionCap) {
       over.push({
         scope:     'stake',
-        ward_name: 'Stake Pool',
-        cap:       stakeCap,
-        count:     stakeN,
-        over_by:   stakeN - stakeCap
+        ward_name: 'Stake',
+        cap:       portionCap,
+        count:     stakeScopeN,
+        over_by:   stakeScopeN - portionCap
       });
     }
   }

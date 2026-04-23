@@ -183,6 +183,41 @@ function Auth_findBishopricRole(principal) {
   return null;
 }
 
+// Post-Chunk-10.6: counterpart to Auth_findBishopricRole for principals
+// who hold MULTIPLE bishopric roles (a member of more than one ward's
+// bishopric — rare but possible). Returns every bishopric ward the
+// principal has access to, with a display-ready label matching the
+// Auth_requestableScopes shape:
+//
+//   [ { scope: 'CO', label: 'Ward CO — Cordera 1st Ward' }, ... ]
+//
+// Consumed by ApiBishopric_roster so a multi-ward principal can pick
+// which ward's roster to view (mirrors the scope picker on NewRequest
+// for multi-ward / bishopric+stake users).
+//
+// Order follows principal.roles (declaration order from
+// Auth_resolveRoles, which iterates Access rows in sheet order).
+function Auth_bishopricWards(principal) {
+  if (!principal || !principal.roles) return [];
+  var out = [];
+  var seen = {};
+  var wardsByCode = null;
+  for (var i = 0; i < principal.roles.length; i++) {
+    var r = principal.roles[i];
+    if (!r || r.type !== 'bishopric' || !r.wardId || seen[r.wardId]) continue;
+    if (wardsByCode === null) {
+      wardsByCode = {};
+      var wards = Wards_getAll();
+      for (var w = 0; w < wards.length; w++) wardsByCode[wards[w].ward_code] = wards[w];
+    }
+    var ward = wardsByCode[r.wardId];
+    var label = ward ? ('Ward ' + r.wardId + ' — ' + ward.ward_name) : ('Ward ' + r.wardId);
+    out.push({ scope: r.wardId, label: label });
+    seen[r.wardId] = true;
+  }
+  return out;
+}
+
 // Chunk 6: returns the list of scopes for which this principal may submit
 // requests, with display-ready labels. Consumed by the consolidated
 // ApiRequests_* endpoints:
@@ -197,7 +232,7 @@ function Auth_findBishopricRole(principal) {
 // Returned shape (matches the NewRequest / MyRequests UI contract):
 //   [
 //     { type: 'ward',  scope: 'CO',    label: 'Ward CO' },
-//     { type: 'stake', scope: 'stake', label: 'Stake Pool' }
+//     { type: 'stake', scope: 'stake', label: 'Stake' }
 //   ]
 //
 // Order matches Nav's role priority (bishopric → stake), so the UI's
@@ -238,7 +273,7 @@ function Auth_requestableScopes(principal) {
   for (var j = 0; j < principal.roles.length; j++) {
     var r2 = principal.roles[j];
     if (r2 && r2.type === 'stake' && !seenStake) {
-      out.push({ type: 'stake', scope: 'stake', label: 'Stake Pool' });
+      out.push({ type: 'stake', scope: 'stake', label: 'Stake' });
       seenStake = true;
     }
   }

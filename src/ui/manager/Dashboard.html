@@ -207,7 +207,7 @@
       var p = pools[i];
       var href = pageHref('mgr/seats', { ward: p.scope });
       var label = p.scope === 'stake'
-        ? 'Stake Pool'
+        ? 'Stake'
         : ('Ward ' + p.scope + (p.ward_name ? ' (' + p.ward_name + ')' : ''));
       list += '<li>' +
         '<strong>' + escapeHtml(label) + '</strong>: ' +

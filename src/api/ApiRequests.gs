@@ -119,10 +119,20 @@ function ApiRequests_listMy(token, scope) {
     return bx - ax;
   });
 
+  // Post-Chunk-10.6: the NewRequest page uses this response to
+  // populate a building-name checkbox group (stake scope only today,
+  // may extend to bishopric later). Shipped on every listMy call so
+  // NewRequest doesn't need a second round-trip at init. The list is
+  // role-blind (any authenticated principal sees the full Buildings
+  // catalogue — it's not sensitive) and small enough at target scale
+  // that MyRequests.html ignoring it is cheap.
+  var buildings = Buildings_getAll().map(function (b) { return b.building_name; });
+
   return {
     scopes:         allowedScopes,
     rows:           out,
-    selected_scope: filterScope
+    selected_scope: filterScope,
+    buildings:      buildings
   };
 }
 

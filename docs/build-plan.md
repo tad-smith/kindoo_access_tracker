@@ -228,7 +228,7 @@ _Proof 6 — failure modes_
 - [x] Implement `ui/manager/AllSeats.html` — full roster with `ward`/`building`/`type` filters; per-scope summary cards with utilization bars above the filtered table; deep-link filter state via URL query params (read server-side from `Main.doGet`, forwarded into `QUERY_PARAMS` on the client).
 - [x] Rebuild `ui/Nav.html` as real role-aware navigation — role union of links, active-page highlight, rendered by `Router_pick` as `navHtml` alongside `pageHtml`.
 - [x] Add sign-out button to the topbar (`ui/Layout.html`) — clears `sessionStorage.jwt` and reloads top to bare `MAIN_URL`.
-- [x] Delete `ui/Hello.html`; `Router_pick` returns role defaults on empty/unrecognised `?p=` (manager → `mgr/seats`, stake → `stake/roster`, bishopric → `bishopric/roster`; highest-privilege role wins on multi-role principals).
+- [x] Delete `ui/Hello.html`; `Router_pick` returns role defaults on empty/unrecognised `?p=` (manager → `mgr/seats`, stake → `stake/roster`, bishopric → `bishopric/roster`; highest-privilege role wins on multi-role principals). _Defaults evolved after Chunk 5: Chunk 10 flipped manager → `mgr/dashboard`; post-Chunk-10.6 polish moved stake → `new` and bishopric → `new` so the default matches each role's leftmost nav tab._
 - [x] Add Chunk-5 CSS to `ui/Styles.html` (nav, utilization bars, roster table, badges, AllSeats filter row + summary cards). Add `escapeHtml` / `renderUtilizationBar` / `renderRosterTable` / `rosterRowHtml` helpers to `ui/ClientUtils.html` so the four read-side UIs share rendering.
 
 **Acceptance criteria**
@@ -239,7 +239,7 @@ _Proof 6 — failure modes_
 - Utilization bar renders `total_seats / seat_cap`; when `total_seats > seat_cap` the bar colour flips and the label shows an "OVER CAP" flag (e.g. 21/20). Cap-unset scopes render a neutral "N seats (cap unset)" label with no bar.
 - Temp seats with `end_date <= today` render an "expired" / "expires today" badge (Chunk-8 expiry trigger will delete them; until then the badge signals why utilization is high).
 - Nav highlights the current page via `?p=`; sign-out link clears `sessionStorage.jwt` and returns to Login. Nav hides every link for unbuilt chunks (New Request / My Requests / Requests Queue / Dashboard / Audit Log).
-- Visiting `/exec` with an empty or unrecognised `?p=` routes to the principal's role default. Post-bootstrap completion (Chunk 4 `ApiBootstrap_complete` → redirect to Main URL) lands the admin on `mgr/seats` (manager default) rather than a 404.
+- Visiting `/exec` with an empty or unrecognised `?p=` routes to the principal's role default. Post-bootstrap completion (Chunk 4 `ApiBootstrap_complete` → redirect to Main URL) lands the admin on `mgr/seats` (manager default at Chunk 5 — later flipped to `mgr/dashboard` in Chunk 10) rather than a 404.
 
 **Out of scope**
 
