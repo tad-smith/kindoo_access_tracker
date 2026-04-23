@@ -53,6 +53,18 @@
       </div>
     </main>
 
+    <!-- Offscreen staging area for background-preloaded panes. Panes
+         attached here run their inline <script> blocks (an HTML-spec
+         requirement — scripts in a fully-detached node never execute),
+         so their page_<X>_init rpcs fire and populate the DOM. When
+         the user navigates to the preloaded tab, navigateTo's
+         appendChild on #content re-parents the pane, which implicitly
+         removes it from staging. Kept outside #app so it can't be
+         seen / focused / scrolled-to even if aria tooling bypasses
+         the visibility rule. -->
+    <div id="preload-staging" aria-hidden="true"
+         style="position:absolute; left:-10000px; top:0; width:1px; height:1px; overflow:hidden; pointer-events:none;"></div>
+
     <footer class="version-stamp" title="Deployed source version. Compare against KINDOO_VERSION_ in src/core/Version.gs to detect a stale deployment.">
       v: <?= app_version ?>
     </footer>
@@ -517,6 +529,84 @@
           // same entry point as intra-app-nav pages; identical state
           // regardless of how the page was reached.
           callPageInit(currentPageId, pageModel, currentQueryParams, initialPane);
+
+          // Background preload. Fire the init rpcs for the role's
+          // most-likely next tabs so first visit is an instant
+          // cache-hit attach instead of incurring ~1s of rpc round-
+          // trip. Yielded via setTimeout so the initial page's own
+          // init rpc (which is racing on the same Apps Script
+          // backend) gets the first slot on the network.
+          setTimeout(function () {
+            preloadPanesForRole_(principal, currentPageId);
+          }, 0);
+        }
+
+        // Build the target pane, attach it to the offscreen
+        // #preload-staging container, rehydrate its scripts (which
+        // defines window.page_<X>_init — HTML spec: inline <script>
+        // elements only execute when connected to a Document, so
+        // preload has to attach somewhere, not stay detached), call
+        // init, and stash the reference into cachedPanes. The next
+        // navigateTo to this pageId will find the cache and skip
+        // re-init — data already in the pane's DOM. appendChild on
+        // #content implicitly re-parents the pane out of staging,
+        // so nothing extra to undo. Safe to call multiple times;
+        // re-entrancy is guarded by the cachedPanes[pageId] check.
+        // Empty queryParams: preloaded panes are for the "no filter"
+        // default view only. A deep-link with filter params will
+        // miss the cache and build fresh (correct behaviour —
+        // unfiltered data can't safely render a filtered view).
+        function preloadPane_(pageId) {
+          if (cachedPanes[pageId]) return;
+          if (pageBundle[pageId] == null) return;
+          var staging = $('preload-staging');
+          if (!staging) return;  // defensive — shell markup drift
+          var pane = buildPane_(pageId);
+          staging.appendChild(pane);
+          rehydrateScripts(pane);
+          var pageModel = { principal: currentPrincipal, current_page: pageId };
+          callPageInit(pageId, pageModel, {}, pane);
+          cachedPanes[pageId] = { pane: pane, queryParams: {} };
+        }
+
+        // Per-role list of tabs to preload. Chosen by "likely next
+        // click after the initial page": requesters go to MyRequests;
+        // stake principals also hit the stake rosters + ward rosters
+        // dropdown; bishopric-only users see their ward roster;
+        // managers live in the Requests Queue.
+        //
+        // Deliberately does NOT preload every role-allowed tab — some
+        // (Dashboard, All Seats, Audit Log, Import) are heavier reads
+        // and less-frequently-revisited, and paying their rpc cost up
+        // front on every login would hurt time-to-interactive for the
+        // initial page.
+        function preloadPanesForRole_(principal, initialPageId) {
+          if (!navReady || !principal || !principal.roles) return;
+          var isBishopric = false, isStake = false, isManager = false;
+          for (var i = 0; i < principal.roles.length; i++) {
+            var r = principal.roles[i];
+            if      (r.type === 'bishopric') isBishopric = true;
+            else if (r.type === 'stake')     isStake     = true;
+            else if (r.type === 'manager')   isManager   = true;
+          }
+          var queue = [];
+          function enqueue(p) {
+            if (!p || p === initialPageId) return;
+            if (queue.indexOf(p) !== -1) return;
+            queue.push(p);
+          }
+          if (isBishopric || isStake) enqueue('my');
+          if (isStake) {
+            enqueue('stake/roster');
+            enqueue('stake/ward-rosters');
+          }
+          // Nav.html suppresses the bishopric Ward Roster link when
+          // the user also holds stake (Ward Rosters covers it). Match
+          // that rule here so we don't warm a tab the nav doesn't
+          // surface.
+          if (isBishopric && !isStake) enqueue('bishopric/roster');
+          if (isManager) enqueue('mgr/queue');
+          for (var j = 0; j < queue.length; j++) preloadPane_(queue[j]);
         }
 
         function rehydrateScripts(root) {

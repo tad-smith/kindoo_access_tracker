@@ -515,6 +515,22 @@ Alternative considered: `eval` / `new Function(scriptText)` on each swap. Reject
 
 Pages that DON'T export an init fn (`NotAuthorized`, `SetupInProgress`, `BootstrapWizard`) are reached only through the initial bootstrap path and have no intra-app nav surface. The shell's `callPageInit` is a no-op when the function isn't defined.
 
+### Background preload
+
+After the initial page renders, `Layout.html` yields via `setTimeout(fn, 0)` and preloads a role-picked shortlist of other tabs in offscreen panes — builds each pane, **attaches it to a hidden `#preload-staging` container positioned 10000px off-screen** (an HTML-spec requirement: inline `<script>` elements only execute when their parent is connected to a Document, so a fully-detached pane's init fn would never be defined and the `Loading…` placeholder would stick forever), rehydrates its scripts, calls `page_<X>_init` with an empty `queryParams`, and stores the pane reference in `cachedPanes`. When the user later clicks the nav link, `navigateTo`'s `appendChild` on `#content` re-parents the pane out of staging (HTML `appendChild` auto-removes from the previous parent) and skips init — data already in the pane's DOM. First-click latency drops from one Apps Script rpc round-trip (~1 s) to a DOM attach (single-digit ms).
+
+Preload list by role (deliberately a shortlist, not every role-allowed tab — heavier reads like Dashboard / AllSeats / AuditLog / Import stay cold so paying their rpc cost up front doesn't delay the initial render):
+
+| Role | Preloaded tabs (minus the initial page) |
+| --- | --- |
+| Bishopric (without stake) | `my`, `bishopric/roster` |
+| Stake | `my`, `stake/roster`, `stake/ward-rosters` |
+| Manager | `mgr/queue` |
+
+Multi-role principals get the union. Preload honours the Nav.html rule that suppresses the bishopric Ward Roster link when the user also holds stake (Ward Rosters covers it) — otherwise we'd warm a tab the nav doesn't surface.
+
+Cache model: preloaded panes store with `queryParams: {}`. A subsequent nav-click with empty params finds the cache; a nav-click with filter params (dashboard deep-link, queue filter) misses and builds fresh — correct, because unfiltered prefetched data can't safely render a filtered view.
+
 ### Memory-leak discipline
 
 Two allowed patterns for per-page event listeners:
