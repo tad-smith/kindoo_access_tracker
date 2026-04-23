@@ -19,8 +19,8 @@
     <button class="config-tab-btn active" data-tab="wards">Wards</button>
     <button class="config-tab-btn"        data-tab="buildings">Buildings</button>
     <button class="config-tab-btn"        data-tab="kindooManagers">Kindoo Managers</button>
-    <button class="config-tab-btn"        data-tab="wardTemplate">Ward Calling Template</button>
-    <button class="config-tab-btn"        data-tab="stakeTemplate">Stake Calling Template</button>
+    <button class="config-tab-btn"        data-tab="wardTemplate">Auto Ward Callings</button>
+    <button class="config-tab-btn"        data-tab="stakeTemplate">Auto Stake Callings</button>
     <button class="config-tab-btn"        data-tab="config">Config (key/value)</button>
   </div>
 
@@ -101,8 +101,8 @@
       wards:          renderWards,
       buildings:      renderBuildings,
       kindooManagers: renderKindooManagers,
-      wardTemplate:   function () { renderTemplate('wardTemplate', 'Ward'); },
-      stakeTemplate:  function () { renderTemplate('stakeTemplate', 'Stake'); },
+      wardTemplate:   function () { renderTemplate('wardTemplate'); },
+      stakeTemplate:  function () { renderTemplate('stakeTemplate'); },
       config:         renderConfig
     };
     renderers[name]();
@@ -386,7 +386,7 @@
   // ---------------------------------------------------------------------------
   // Templates (ward + stake share this renderer)
   // ---------------------------------------------------------------------------
-  function renderTemplate(tabName, label) {
+  function renderTemplate(tabName) {
     var rows = state[tabName].rows;
     var rpcUpsert = tabName === 'wardTemplate' ? 'ApiManager_wardTemplateUpsert'  : 'ApiManager_stakeTemplateUpsert';
     var rpcDelete = tabName === 'wardTemplate' ? 'ApiManager_wardTemplateDelete'  : 'ApiManager_stakeTemplateDelete';
@@ -413,7 +413,7 @@
       'Wildcard rows are compared in the order you list them.' +
       '</p>';
     if (rows.length === 0) {
-      html += '<div class="empty-state">No ' + esc(label) + ' template rows yet. Add one below.</div>';
+      html += '<div class="empty-state">No callings yet. Add one below.</div>';
     } else {
       html += '<table class="config-table"><thead><tr>' +
         '<th>calling_name</th><th>give_app_access</th>' +
@@ -431,7 +431,7 @@
       html += '</tbody></table>';
     }
     html +=
-      '<div class="add-row-form"><h3>Add a ' + esc(label) + ' calling</h3><div class="form-grid" style="grid-template-columns:160px 1fr;">' +
+      '<div class="add-row-form"><h3>Add a calling</h3><div class="form-grid" style="grid-template-columns:160px 1fr;">' +
       '<label>calling_name</label><input type="text" id="' + idPrefix + 'name" placeholder="e.g. Bishop  or  Stake High Councilor*">' +
       '<label>give_app_access</label><div><input type="checkbox" id="' + idPrefix + 'access"></div>' +
       '</div><div class="form-actions"><button class="btn" id="' + idPrefix + 'btn">Add calling</button></div></div>';

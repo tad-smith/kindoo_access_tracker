@@ -149,10 +149,8 @@
     var html = '';
     for (var i = 0; i < summaries.length; i++) {
       var s = summaries[i];
-      var sub = (s.scope === 'stake' ? 'Stake' : 'ward_code: ' + s.scope);
       html += '<div class="all-seats-summary-card">' +
         '<div class="scope-label">' + escapeHtml(s.ward_name) + '</div>' +
-        '<div class="scope-sub">' + escapeHtml(sub) + '</div>' +
         renderUtilizationBar(s) +
         '</div>';
     }
