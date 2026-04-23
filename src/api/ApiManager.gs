@@ -483,13 +483,126 @@ function ApiManager_importStatus(token) {
 }
 
 // ===========================================================================
-// Access — read-only manager view of importer-owned tab
+// Access — manager view of the Access tab, jointly owned by the importer
+// (source='importer') and Kindoo Managers (source='manual'). TASKS.md #1.
+//
+// The importer's rows come and go with the callings sheet; the manager's
+// rows survive imports. Both write paths share the same uniqueness
+// constraint: (canonical_email, scope, calling). Role resolution
+// (Auth_resolveRoles → Access_getByEmail) treats both sources identically
+// — a manual row grants the same roles as an importer row.
 // ===========================================================================
 
 function ApiManager_accessList(token) {
   var principal = Auth_principalFrom(token);
   Auth_requireRole(principal, 'manager');
   return Access_getAll();
+}
+
+// Insert a source='manual' Access row. The `calling` field carries a
+// free-text reason ("Covering bishop — temporary") rather than an actual
+// calling name — the UI labels it "reason" to make that clear; the
+// underlying column name stays `calling` so the composite PK shape and
+// every downstream consumer (audit trail, role resolution, entity_id)
+// are identical to importer rows.
+//
+// Rejects if ANY existing row (importer or manual) already occupies the
+// composite key, so the operator doesn't end up with two identical rows
+// they can't tell apart. Scope must be 'stake' or a configured
+// Wards.ward_code; this guard is here rather than in the repo because
+// the repo stays pure single-tab (architecture.md §7).
+function ApiManager_accessInsertManual(token, row) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  if (!row) throw new Error('Row required.');
+  var email = Utils_cleanEmail(row.email);
+  if (!email) throw new Error('Email is required.');
+  var scope = String(row.scope == null ? '' : row.scope);
+  if (!scope) throw new Error('Scope is required.');
+  var calling = String(row.calling == null ? '' : row.calling).trim();
+  if (!calling) throw new Error('Reason is required.');
+
+  // Scope must be 'stake' or a known ward_code — otherwise role
+  // resolution would grant an unreachable role (or none at all).
+  if (scope !== 'stake') {
+    var wards = Wards_getAll();
+    var known = false;
+    for (var w = 0; w < wards.length; w++) {
+      if (wards[w].ward_code === scope) { known = true; break; }
+    }
+    if (!known) throw new Error('Unknown scope "' + scope + '" — must be "stake" or a configured ward_code.');
+  }
+
+  return Lock_withLock(function () {
+    // Collision check against ALL current rows (B1 decision in TASKS.md #1):
+    // an existing manual or importer row with the same composite key
+    // blocks the insert. Canonical-email compare so a Gmail dot/+suffix
+    // variant of an existing row also blocks.
+    var all = Access_getAll();
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].scope !== scope) continue;
+      if (all[i].calling !== calling) continue;
+      if (!Utils_emailsEqual(all[i].email, email)) continue;
+      throw new Error('A row already exists for (' + email + ', ' + scope + ', ' + calling + ').');
+    }
+    var inserted = Access_insert({ email: email, scope: scope, calling: calling, source: 'manual' });
+    AuditRepo_write({
+      actor_email: principal.email,
+      action:      'insert',
+      entity_type: 'Access',
+      entity_id:   inserted.email + '|' + inserted.scope + '|' + inserted.calling,
+      before:      null,
+      after:       inserted
+    });
+    return inserted;
+  });
+}
+
+// Delete a source='manual' Access row. Refuses importer rows — they're
+// owned by the callings sheet and would be recreated on the next import
+// anyway. The UI hides the delete button on importer rows; this check is
+// defense in depth.
+function ApiManager_accessDeleteManual(token, email, scope, calling) {
+  var principal = Auth_principalFrom(token);
+  Auth_requireRole(principal, 'manager');
+  var typedEmail = Utils_cleanEmail(email);
+  if (!typedEmail) throw new Error('Email is required.');
+  var scopeKey = String(scope == null ? '' : scope);
+  if (!scopeKey) throw new Error('Scope is required.');
+  var callingKey = String(calling == null ? '' : calling);
+  if (!callingKey) throw new Error('Reason is required.');
+
+  return Lock_withLock(function () {
+    // Pre-check source so we return a clean error without having already
+    // mutated the sheet. A parallel importer run between check and delete
+    // can't change source from manual → importer (the importer only
+    // inserts, and the manual row's composite key blocks its insert
+    // anyway), so this TOCTOU is benign.
+    var all = Access_getAll();
+    var found = null;
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].scope !== scopeKey) continue;
+      if (all[i].calling !== callingKey) continue;
+      if (!Utils_emailsEqual(all[i].email, typedEmail)) continue;
+      found = all[i];
+      break;
+    }
+    if (!found) throw new Error('No matching Access row found.');
+    if (found.source !== 'manual') {
+      throw new Error('Only manual rows can be deleted here. This row comes from the callings-sheet importer.');
+    }
+    var deleted = Access_delete(typedEmail, scopeKey, callingKey);
+    if (!deleted) throw new Error('Row vanished between check and delete.');
+    AuditRepo_write({
+      actor_email: principal.email,
+      action:      'delete',
+      entity_type: 'Access',
+      entity_id:   deleted.email + '|' + deleted.scope + '|' + deleted.calling,
+      before:      deleted,
+      after:       null
+    });
+    return deleted;
+  });
 }
 
 // ===========================================================================

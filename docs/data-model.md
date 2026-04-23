@@ -178,22 +178,26 @@ Same columns as `WardCallingTemplate`, but applied only to the `Stake` tab of th
 
 ## Tab 7 — `Access`
 
-Populated and maintained by the Importer. **Not edited by hand.** Visible to Kindoo Managers only.
+Jointly owned by the Importer (`source='importer'`) and Kindoo Managers (`source='manual'`, added from the Access page). Visible to Kindoo Managers only.
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `email` | string | Lowercased. |
+| `email` | string | Stored as typed; canonicalised-on-the-fly via `Utils_emailsEqual` for equality. |
 | `scope` | string | `ward_code` or `"stake"`. |
-| `calling` | string | The calling that granted access. Someone holding two access-granting callings in the same scope has two rows. |
+| `calling` | string | For importer rows: the calling that granted access (someone holding two access-granting callings in the same scope has two rows). For manual rows: a free-text reason the manager typed (e.g. "Covering bishop — temporary"). Shared column because the composite PK `(canonical_email, scope, calling)` applies identically. |
+| `source` | enum | `"importer"` or `"manual"`. Empty cells read as `"importer"` (TASKS.md #1 migration: existing rows predate the column). |
+
+Uniqueness is on the composite PK regardless of source. The importer skips insert if the key is already occupied by any row (importer or manual), and the manager UI rejects a manual insert that collides with an existing row. Deletes from the manager UI are limited to `source='manual'` rows.
 
 ### Example rows
 
-| email | scope | calling |
-| --- | --- | --- |
-| `alice@example.org` | `CO` | `Bishop` |
-| `dave@example.org` | `CO` | `First Counselor` |
-| `emily@example.org` | `CO` | `Second Counselor` |
-| `pat@example.org` | `stake` | `Stake President` |
+| email | scope | calling | source |
+| --- | --- | --- | --- |
+| `alice@example.org` | `CO` | `Bishop` | `importer` |
+| `dave@example.org` | `CO` | `First Counselor` | `importer` |
+| `emily@example.org` | `CO` | `Second Counselor` | `importer` |
+| `pat@example.org` | `stake` | `Stake President` | `importer` |
+| `carol@example.org` | `GE` | `Covering bishop — temporary` | `manual` |
 
 ---
 

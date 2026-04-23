@@ -208,10 +208,12 @@ calling_name	give_app_access
 Headers:
 
 ```
-email	scope	calling
+email	scope	calling	source
 ```
 
-Leave empty — the importer populates this tab.
+Leave empty. `source='importer'` rows are populated by the importer; `source='manual'` rows are added from the manager Access page in-app.
+
+**Migration note (existing installs predating TASKS.md #1):** if this tab originally had 3 columns, append `source` as column D by hand. Existing rows' empty `source` cells read as `importer` at the code boundary; no backfill of existing rows is required.
 
 ### Tab 8 — `Seats`
 

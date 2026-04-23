@@ -1,16 +1,27 @@
 <!--
-  Manager Access page (Chunk 3). Read-only table of the Access tab.
+  Manager Access page (Chunk 3 + TASKS.md #1).
 
-  Access rows are importer-owned (spec §3.1, open-questions.md A-6). There
-  is no edit path; the weekly import (or the Import Now button on the
-  sibling page) is the only way rows change. Sort is stable by scope then
-  calling so related rows cluster.
+  The Access tab is jointly owned:
+    - source='importer' rows come from the callings-sheet importer and
+      come and go with LCR truth. They're read-only here; editing would
+      just be overwritten on the next import.
+    - source='manual' rows are inserted by a Kindoo Manager to grant app
+      access to someone whose calling doesn't appear in the templates
+      (e.g. covering-bishop overrides, stake-exec overflow). They survive
+      imports and can be deleted from this page.
+
+  The `calling` column does double duty: for importer rows it's the
+  literal calling name; for manual rows the manager types a free-text
+  reason that goes into the same column. The UI labels the input
+  "Reason" when adding, and renders the value verbatim in the table.
 -->
 <section class="access-page">
   <h1>Access</h1>
   <p class="access-intro">
     Everyone the app considers signed-in-eligible, with the callings that
-    grant their access. Populated by the importer; not editable here.
+    grant their access. The importer maintains <code>source=importer</code>
+    rows from the callings sheet; <code>source=manual</code> rows are added
+    below and survive imports.
   </p>
 
   <div class="access-toolbar">
@@ -24,11 +35,30 @@
   </div>
 
   <div id="access-table-host"><div class="empty-state">Loading access rows…</div></div>
+
+  <div class="add-row-form" id="add-manual-form-host">
+    <h3>Add manual access</h3>
+    <p class="access-intro">
+      Grant app access to someone whose calling isn't in the templates.
+      The reason is free-text (e.g. "Covering bishop — temporary") and
+      replaces the calling name for display + audit purposes.
+    </p>
+    <div class="form-grid" style="grid-template-columns:120px 1fr;">
+      <label>Email</label>
+      <input type="email" id="add-manual-email" placeholder="alice@example.com">
+      <label>Scope</label>
+      <select id="add-manual-scope"></select>
+      <label>Reason</label>
+      <input type="text" id="add-manual-calling" placeholder="e.g. Covering bishop — temporary">
+    </div>
+    <div class="form-actions">
+      <button class="btn" id="add-manual-btn">Add manual access</button>
+    </div>
+  </div>
 </section>
 
 <script>
 (function () {
-  // Chunk 10.6: pane-scoped $.
   var __pane = null;
   function $(id) { return (__pane || document).querySelector('#' + id); }
   function esc(s) {
@@ -37,7 +67,7 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  var state = { rows: [] };
+  var state = { rows: [], wards: [] };
 
   function render() {
     var filter = $('scope-filter').value;
@@ -49,41 +79,77 @@
       return a.email < b.email ? -1 : a.email > b.email ? 1 : 0;
     });
 
+    var manualCount = 0;
+    for (var m = 0; m < rows.length; m++) if (rows[m].source === 'manual') manualCount++;
     $('access-count').textContent =
       rows.length + ' row' + (rows.length === 1 ? '' : 's') +
-      (filter ? ' in ' + filter : '');
+      (filter ? ' in ' + filter : '') +
+      ' (' + manualCount + ' manual)';
 
     if (rows.length === 0) {
       $('access-table-host').innerHTML =
         '<div class="empty-state">No access rows for the current filter. ' +
-        'Run the importer from the Import page to populate this tab.</div>';
+        'Run the importer from the Import page to populate importer-sourced rows, ' +
+        'or add a manual row below.</div>';
       return;
     }
 
     var html = '<table class="config-table"><thead><tr>' +
-      '<th>Scope</th><th>Calling</th><th>Email</th></tr></thead><tbody>';
+      '<th>Scope</th><th>Calling / reason</th><th>Email</th>' +
+      '<th>Source</th><th class="row-actions">Actions</th>' +
+      '</tr></thead><tbody>';
     for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var isManual = r.source === 'manual';
+      var badge = isManual
+        ? '<span class="access-source-badge access-source-manual">manual</span>'
+        : '<span class="access-source-badge access-source-importer">importer</span>';
+      var actions = isManual
+        ? '<button class="btn btn-danger" ' +
+            'data-del-email="'   + esc(r.email)   + '" ' +
+            'data-del-scope="'   + esc(r.scope)   + '" ' +
+            'data-del-calling="' + esc(r.calling) + '">Delete</button>'
+        : '';
       html += '<tr>' +
-        '<td><code>' + esc(rows[i].scope) + '</code></td>' +
-        '<td>' + esc(rows[i].calling) + '</td>' +
-        '<td>' + esc(rows[i].email) + '</td>' +
+        '<td><code>' + esc(r.scope) + '</code></td>' +
+        '<td>' + esc(r.calling) + '</td>' +
+        '<td>' + esc(r.email) + '</td>' +
+        '<td>' + badge + '</td>' +
+        '<td class="row-actions">' + actions + '</td>' +
         '</tr>';
     }
     html += '</tbody></table>';
     $('access-table-host').innerHTML = html;
+
+    // Wire per-row delete buttons.
+    var host = $('access-table-host');
+    Array.prototype.forEach.call(host.querySelectorAll('button[data-del-email]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var email   = btn.getAttribute('data-del-email');
+        var scope   = btn.getAttribute('data-del-scope');
+        var calling = btn.getAttribute('data-del-calling');
+        if (!confirm('Remove manual access for ' + email + ' in ' + scope + '?\n(' + calling + ')')) return;
+        btn.disabled = true;
+        rpc('ApiManager_accessDeleteManual', email, scope, calling).then(function () {
+          toast('Manual access removed.', 'success');
+          load();
+        }).catch(function (err) {
+          btn.disabled = false;
+          toast(err.message || String(err), 'error');
+        });
+      });
+    });
   }
 
   function buildScopeFilter() {
     var scopes = {};
     for (var i = 0; i < state.rows.length; i++) scopes[state.rows[i].scope] = true;
     var ordered = Object.keys(scopes).sort(function (a, b) {
-      // Put "stake" at the top for scanning; wards alphabetical.
       if (a === 'stake') return -1;
       if (b === 'stake') return 1;
       return a < b ? -1 : a > b ? 1 : 0;
     });
     var sel = $('scope-filter');
-    // Keep "All" option at index 0.
     sel.length = 1;
     for (var j = 0; j < ordered.length; j++) {
       var opt = document.createElement('option');
@@ -93,10 +159,36 @@
     }
   }
 
+  // Add-form scope dropdown: "stake" pinned first, then every configured
+  // ward_code. Rebuilds from state.wards on each load so a newly-added
+  // ward on the Config page shows up next time the manager revisits
+  // Access.
+  function buildAddScopeDropdown() {
+    var sel = $('add-manual-scope');
+    sel.innerHTML = '';
+    var stakeOpt = document.createElement('option');
+    stakeOpt.value = 'stake';
+    stakeOpt.textContent = 'Stake';
+    sel.appendChild(stakeOpt);
+    for (var i = 0; i < state.wards.length; i++) {
+      var w = state.wards[i];
+      var opt = document.createElement('option');
+      opt.value = w.ward_code;
+      opt.textContent = w.ward_name + ' (' + w.ward_code + ')';
+      sel.appendChild(opt);
+    }
+  }
+
   function load() {
-    rpc('ApiManager_accessList').then(function (rows) {
-      state.rows = rows || [];
+    // Two reads in parallel; the UI doesn't need to serialise them and
+    // the cache makes the second call cheap (Chunk 10.5).
+    var pAccess = rpc('ApiManager_accessList');
+    var pWards  = rpc('ApiManager_wardsList');
+    Promise.all([pAccess, pWards]).then(function (results) {
+      state.rows  = results[0] || [];
+      state.wards = results[1] || [];
       buildScopeFilter();
+      buildAddScopeDropdown();
       render();
     }).catch(function (err) {
       $('access-table-host').innerHTML =
@@ -105,13 +197,33 @@
     });
   }
 
-  // Exported entry point (Chunk 10.6). Called by Layout.html after the
-  // page's HTML is injected — both on initial-load and on intra-app
-  // nav (the latter serves HTML from the client-side pageBundle, so
-  // init is the first server rpc per tab click).
+  function handleAdd() {
+    var row = {
+      email:   $('add-manual-email').value.trim(),
+      scope:   $('add-manual-scope').value,
+      calling: $('add-manual-calling').value.trim()
+    };
+    if (!row.email)   { toast('Email is required.', 'warn');  return; }
+    if (!row.scope)   { toast('Scope is required.', 'warn');  return; }
+    if (!row.calling) { toast('Reason is required.', 'warn'); return; }
+    var btn = $('add-manual-btn');
+    btn.disabled = true;
+    rpc('ApiManager_accessInsertManual', row).then(function () {
+      toast('Manual access added.', 'success');
+      $('add-manual-email').value = '';
+      $('add-manual-calling').value = '';
+      load();
+    }).catch(function (err) {
+      toast(err.message || String(err), 'error');
+    }).then(function () {
+      btn.disabled = false;
+    });
+  }
+
   window.page_mgr_access_init = function (pageModel, queryParams, pane) {
     __pane = pane;
     $('scope-filter').addEventListener('change', render);
+    $('add-manual-btn').addEventListener('click', handleAdd);
     load();
   };
 })();

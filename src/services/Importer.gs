@@ -26,7 +26,9 @@
 //     `alicesmith@gmail.com` in the next hash to the same value — zero
 //     inserts, zero deletes on the "unchanged" run.
 //   - Access diff keys on (canonical_email, scope, calling). Same stability
-//     property.
+//     property. Inserts skip on composite-key collision with any existing
+//     row regardless of source; delete-not-seen is scoped to source='importer'
+//     so manual rows (TASKS.md #1) survive every import.
 //   - A row that's unchanged in the source produces zero AuditLog entries —
 //     only import_start / import_end brackets are always written.
 //
@@ -406,8 +408,8 @@ function Importer_runImport_(opts, startedMs) {
   var seatsToInsert = [];       // rows for Seats_bulkInsertAuto
   var seatsToDelete = [];       // [{ hash, before }]
   var seatsToUpdateName = [];   // [{ hash, before, newName }]
-  var accessToInsert = [];      // [{ email, scope, calling }]
-  var accessToDelete = [];      // [{ email, scope, calling, before }]
+  var accessToInsert = [];      // [{ email, scope, calling, source:'importer' }]
+  var accessToDelete = [];      // [{ email, scope, calling, before }] — importer rows only
 
   for (var scope1 in scopesSeen) {
     var currentAuto = Seats_getAutoByScope(scope1);
@@ -440,26 +442,37 @@ function Importer_runImport_(opts, startedMs) {
       }
     }
 
+    // Two views of the current Access rows for this scope (TASKS.md #1):
+    //   - currentAccessKeysAll — every row, used for insert dedup so the
+    //     importer never creates a duplicate composite-key row alongside
+    //     a manual row the operator already placed.
+    //   - currentAccessKeysImporter — source='importer' rows only, used
+    //     for the delete-not-seen step so manual rows survive imports.
+    // Manual rows are invisible to the importer: they neither block
+    // reconciliation (we'd insert a new importer row if the key is free)
+    // nor get reaped when a calling disappears from the template.
     var currentAccess = Access_getByScope(scope1);
-    var currentAccessKeys = {};
+    var currentAccessKeysAll      = {};
+    var currentAccessKeysImporter = {};
     for (var cax = 0; cax < currentAccess.length; cax++) {
       var cRow = currentAccess[cax];
       var cKey = Utils_normaliseEmail(cRow.email) + '|' + cRow.calling;
-      currentAccessKeys[cKey] = cRow;
+      currentAccessKeysAll[cKey] = cRow;
+      if (cRow.source === 'importer') currentAccessKeysImporter[cKey] = cRow;
     }
     var desiredAccess = desiredAccessByScope[scope1];
     for (var ak in desiredAccess) {
-      if (!currentAccessKeys[ak]) {
+      if (!currentAccessKeysAll[ak]) {
         accessToInsert.push(desiredAccess[ak]);
       }
     }
-    for (var ak2 in currentAccessKeys) {
+    for (var ak2 in currentAccessKeysImporter) {
       if (!desiredAccess[ak2]) {
         accessToDelete.push({
-          email:   currentAccessKeys[ak2].email,
-          scope:   currentAccessKeys[ak2].scope,
-          calling: currentAccessKeys[ak2].calling,
-          before:  currentAccessKeys[ak2]
+          email:   currentAccessKeysImporter[ak2].email,
+          scope:   currentAccessKeysImporter[ak2].scope,
+          calling: currentAccessKeysImporter[ak2].calling,
+          before:  currentAccessKeysImporter[ak2]
         });
       }
     }
@@ -697,7 +710,7 @@ function Importer_parseTab_(tab, prefix, scope, templateIndex, buildingDefault,
         building_names:  buildingDefault
       });
       if (tpl.give_app_access) {
-        access.push({ email: email, scope: scope, calling: callingName });
+        access.push({ email: email, scope: scope, calling: callingName, source: 'importer' });
       }
     }
   }

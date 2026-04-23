@@ -21,7 +21,7 @@ const SETUP_TAB_DEFS_ = [
   { name: 'StakeCallingTemplate',
     headers: ['calling_name', 'give_app_access'] },
   { name: 'Access',
-    headers: ['email', 'scope', 'calling'] },
+    headers: ['email', 'scope', 'calling', 'source'] },
   { name: 'Seats',
     headers: ['seat_id', 'scope', 'type', 'member_email', 'member_name',
               'calling_name', 'source_row_hash', 'reason', 'start_date',

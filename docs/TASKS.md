@@ -6,20 +6,21 @@ Format per task: a short imperative title, then **Why / what**, **Decisions to m
 
 ---
 
-## 1. Preserve manually-inserted Access rows through imports
+## 1. Preserve manually-inserted Access rows through imports [DONE 2026-04-23]
 
 **Why / what.** The importer currently owns the entire `Access` tab — any row not produced by the current import run gets deleted (see `spec.md` §3.2 "Not manually edited" and §8 step 5). We want to support manual Access entries that survive imports, so a Kindoo Manager can grant app access to someone whose calling doesn't appear in the templates (or who doesn't hold a calling at all).
 
-**Decisions to make before coding.**
-- How do we distinguish manual from importer-inserted rows? Candidates:
-  - New `source` column (`'importer' | 'manual'`). Cleanest. Requires a schema migration on the live Sheet (add column to `Access` tab; update `ACCESS_HEADERS_` in `AccessRepo.gs`).
-  - Sentinel empty `calling` value for manual rows. No schema change, but collides with the existing repo contract and breaks the `(email, scope, calling)` diff key.
-  - Maintain a parallel `ManualAccess` tab. Adds a tab but keeps `Access` as-is.
-- Does the spec flip from "importer-owned" to "jointly owned"? (§3.2 needs a full rewrite either way.)
-- UI surface: the manager Access page is read-only today. We'd need inline add / remove affordances and a server endpoint.
-- Audit trail: manual inserts should carry `actor_email = <manager>`, not `'Importer'`.
+**What shipped.** Added `source` as a fourth column to the `Access` tab with values `'importer' | 'manual'`. The importer stamps every insert as `source='importer'` and scopes its delete-not-seen step to `source='importer'` rows only; `source='manual'` rows are invisible to the importer. The insert dedup check still considers ALL rows (regardless of source) so the importer will never create a duplicate composite-key row alongside an existing manual row — the B1 decision. Role resolution (`Auth_resolveRoles` → `Access_getByEmail`) is untouched: a manual row grants the same roles as an importer row.
 
-**Files likely touched.** `src/repos/AccessRepo.gs`, `src/services/Importer.gs` (diff logic needs to skip manual rows on the delete-not-seen step), `src/api/ApiManager.gs`, `src/ui/manager/Access.html` (currently read-only), `src/services/Setup.gs` (header row), `docs/spec.md` §3.2 + §8, `docs/data-model.md` Access tab, `docs/sheet-setup.md` (if adding a column).
+The manager Access page grew write affordances: source badge column, Delete button on manual rows (rejected server-side for importer rows as defense in depth), and an "Add manual access" form at the bottom with email / scope dropdown / reason free-text. For manual rows the `calling` column holds a free-text reason (A1) rather than a literal calling name — same column, same composite PK, UI labels it "Reason".
+
+Two new endpoints: `ApiManager_accessInsertManual(token, row)` and `ApiManager_accessDeleteManual(token, email, scope, calling)`. Both take `Lock_withLock`, write one AuditLog row with `actor_email = principal.email` (not `'Importer'`), and enforce their invariants: insert rejects composite-key collisions against any existing row; delete rejects non-manual rows with a clean error. Scope is validated against `Wards_getAll()` + `'stake'` on insert so a typo can't create an unreachable role grant.
+
+**Migration.** Zero data-migration. The header bump to 4 columns causes a loud `Access header drift at column 4: expected "source", got "…"` error on first read after deploy. Operator adds `source` as column D header by hand. Existing rows' empty `source` cells map to `'importer'` via `Access_normaliseSource_` at the read boundary. Fresh installs (via `setupSheet`) get the 4-col header seeded directly.
+
+**Decisions locked in.** A1 (free-text reason in the shared `calling` column), B1 (importer no-ops on PK collision with any existing row, preserving manual provenance), C1 (UI allows deleting manual rows only).
+
+**Files touched.** `src/repos/AccessRepo.gs`, `src/services/Importer.gs`, `src/api/ApiManager.gs`, `src/ui/manager/Access.html`, `src/ui/Styles.html`, `src/services/Setup.gs`, `docs/spec.md` (§3.1 Access entry + §8 step 5), `docs/data-model.md` Tab 7, `docs/sheet-setup.md` Tab 7.
 
 ---
 
@@ -39,23 +40,26 @@ Format per task: a short imperative title, then **Why / what**, **Decisions to m
 
 ---
 
-## 3. Drop `ward_code` from All Seats summary cards
+## 3. Drop `ward_code` from All Seats summary cards [DONE 2026-04-23]
 
 **Why / what.** The per-scope summary cards on the manager All Seats page currently display the `ward_code` alongside the ward name. The ward name alone is enough; the code is noise.
+
+**What shipped.** The `scope-sub` line (rendering "ward_code: XX" for wards, "Stake" for the stake pool) is gone from `renderSummaries` in `src/ui/manager/AllSeats.html`; ward_name is the only per-scope label. The orphaned `.all-seats-summary-card .scope-sub` CSS rule was deleted from `src/ui/Styles.html` and the `.scope-label` rule's bottom-margin was bumped from 4px → 6px to keep the spacing to the utilization bar consistent. No server-side change — `summaries[].scope` still carries the ward code, just unused in the card.
 
 **Files likely touched.** `src/ui/manager/AllSeats.html` (and check whether the code surfaces through `ApiManager_allSeats` / `services/Rosters.gs` vs. rendered client-side — the fix goes wherever the card template is).
 
 ---
 
-## 4. Rename Config UI labels: calling templates → "Auto ... Callings"
+## 4. Rename Config UI labels: calling templates → "Auto ... Callings" [DONE 2026-04-23 — UI labels only]
 
 **Why / what.** On the manager Configuration page, the two calling-template section labels should read:
 - "Ward Calling Template" → **"Auto Ward Callings"**
 - "Stake Calling Template" → **"Auto Stake Callings"**
 
-**Decisions to make before coding.**
-- UI label only, or also rename the underlying sheet tab names (`WardCallingTemplate` / `StakeCallingTemplate`)?
-- Safer default: UI label only. The tab-name rename would be a live-Sheet migration + `TABS_` in `Setup.gs` + every `Templates_getAll('ward'|'stake')` callsite that maps `'ward'/'stake'` to the old tab names. Confirm with user before escalating.
-- If the user wants the full rename, update `docs/spec.md` §3.1, `docs/data-model.md` section headings, and `docs/sheet-setup.md` tab list.
+**What shipped.** UI-label-only rename in `src/ui/manager/Config.html` (not `Configuration.html` — the file is `Config.html`). The two `config-tab-btn` labels now read "Auto Ward Callings" / "Auto Stake Callings". The `label` argument that `renderTemplate` inlined into "No <label> template rows yet" / "Add a <label> calling" was removed (the new labels made those constructions awkward — "No Auto Ward Callings template rows yet"); the surrounding tab already names the template, so the empty-state now reads "No callings yet. Add one below." and the add-form heading reads "Add a calling." Sheet tab names (`WardCallingTemplate` / `StakeCallingTemplate`) and every server-side callsite (`Setup.gs`, `TemplatesRepo.gs`, `Importer.gs`) are untouched. Spec / data-model / sheet-setup docs still reference the existing tab names, which is consistent with a UI-only rename.
 
-**Files likely touched.** `src/ui/manager/Configuration.html` (UI labels). If full rename: `src/services/Setup.gs`, `src/repos/TemplatesRepo.gs`, `src/services/Importer.gs` (callsites), docs as above.
+**Decisions made.**
+- UI label only (the TASKS.md "safer default"). Full sheet-tab rename was not confirmed by the user and would have been a live-Sheet migration.
+- If the user later wants the full rename: update `docs/spec.md` §3.1, `docs/data-model.md` section headings, `docs/sheet-setup.md` tab list, plus `src/services/Setup.gs`, `src/repos/TemplatesRepo.gs`, `src/services/Importer.gs` callsites.
+
+**Files touched.** `src/ui/manager/Config.html` only.

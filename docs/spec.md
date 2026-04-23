@@ -59,10 +59,12 @@ Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for
 
 - Same columns as above; applies to the Stake tab of the callings sheet.
 
-**`Access`** — populated by the importer; visible only to Kindoo Managers.
+**`Access`** — jointly owned by the importer and Kindoo Managers; visible only to Kindoo Managers.
 
-- Columns: `email`, `scope` (`ward_code` or `"stake"`), `calling`.
-- Maintained automatically from callings whose template row has `give_app_access=true`. Not manually edited.
+- Columns: `email`, `scope` (`ward_code` or `"stake"`), `calling`, `source` (`"importer"` or `"manual"`).
+- `source='importer'` rows come from the callings sheet — populated from callings whose template row has `give_app_access=true`, deleted when the corresponding template row or calling disappears.
+- `source='manual'` rows are inserted by a Kindoo Manager from the Access page to grant app access to someone whose calling isn't in the templates (e.g. covering-bishop overrides, stake-exec overflow). They survive imports — the importer's delete-not-seen step ignores `source='manual'`. For manual rows, `calling` holds a free-text reason the manager typed rather than a literal calling name; the column is shared because the composite PK `(canonical_email, scope, calling)` and every downstream consumer (audit trail, role resolution) apply identically regardless of source.
+- Uniqueness is on the composite PK regardless of source: a manual insert whose key already exists (importer or manual) is rejected server-side. Deletes from the manager UI are limited to `source='manual'` — importer rows are owned by the callings sheet and would be recreated on the next import anyway.
 
 ### 3.2 Operational tabs
 
@@ -201,9 +203,9 @@ Both paths — manual Import Now and weekly trigger — run the same code, acqui
    - Compute `source_row_hash = hash(scope, calling, email)`. (Name is deliberately NOT in the hash — LCR name edits shouldn't churn seats.)
    - If no matching auto-seat exists in `Seats`, insert a new row (`type=auto`) carrying the display name; write `AuditLog` insert entry.
    - If a matching auto-seat exists but its `member_name` differs from the freshly-read name, update `member_name` in place and write one `AuditLog` `update` entry (the seat_id and all other fields are preserved).
-   - If the template row has `give_app_access=true`, upsert into `Access` (`email`, `scope`, `calling`); write `AuditLog` entry on change.
+   - If the template row has `give_app_access=true`, upsert into `Access` with `source='importer'` (`email`, `scope`, `calling`, `source`); write `AuditLog` entry on change. Insert is skipped if the composite key `(canonical_email, scope, calling)` is already occupied by any row (importer or manual) — manual rows block importer re-inserts silently.
 4. Delete any existing auto-seat for this scope not seen in the current import; write `AuditLog` entry per row.
-5. Delete any `Access` row for this scope whose `(email, calling)` pair wasn't seen; write `AuditLog` entry.
+5. Delete any `Access` row for this scope whose `(email, calling)` pair wasn't seen **and whose `source='importer'`**; write `AuditLog` entry. Manual rows (`source='manual'`) are invisible to this step — they're owned by the Kindoo Manager who inserted them and survive every import.
 
 **Cap interaction**: imports always apply — LCR truth wins. After every import run (manual or weekly-trigger), the importer runs a read-only over-cap detection pass. For each ward it compares the seats in that ward's scope against `Wards.seat_cap` (counting every row regardless of `type`, matching Chunk 5's utilization math). For the stake it compares the stake-scope sub-pool count against the **stake portion** of the total license: `portion_cap = Config.stake_seat_cap - sum(ward seats)`. Over-cap fires iff stake-scope + ward seats exceeds the license — expressed in portion terms so the over-cap email and Import-page banner read "Stake: 40 / 20 (over by 20)" rather than "Stake: 220 / 200". `stake_seat_cap` is the Kindoo license limit on the whole stake; the portion is the stake presidency's own headroom after wards have taken their share. A scope with no configured cap (or a cap ≤ 0) is skipped. If any pool is over, the importer persists a snapshot into `Config.last_over_caps_json`, writes one `over_cap_warning` AuditLog row (one row per run, not per pool), and emails active Kindoo Managers best-effort — see §9. A run with no over-caps persists an empty snapshot (`[]`) so the manager Import page's red banner clears the next time a resolved condition is imported. The over-cap detection runs AFTER the import's main lock releases, in a separate tiny lock of its own — the import lock stays scoped to the diff-and-apply work.
 
