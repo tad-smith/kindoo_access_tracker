@@ -25,7 +25,7 @@
 // submit — requester creates a new add_manual / add_temp request.
 //
 // draft shape:
-//   { type, target_email, target_name?, reason, comment?, start_date?, end_date? }
+//   { type, member_email, member_name?, reason, comment?, start_date?, end_date? }
 //
 // Server returns:
 //   { request, warning? }
@@ -161,8 +161,8 @@ function ApiRequests_cancel(token, requestId) {
 }
 
 // ---------------------------------------------------------------------------
-// checkDuplicate — returns any existing active seats whose person_email
-// canonicalises to targetEmail in the given scope.
+// checkDuplicate — returns any existing active seats whose member_email
+// canonicalises to memberEmail in the given scope.
 //
 // Warns, never blocks. The client-side NewRequest page surfaces the
 // result so the requester can see what's already there before submitting;
@@ -176,10 +176,10 @@ function ApiRequests_cancel(token, requestId) {
 // Returns:
 //   { exists: bool, existing: [ <rosterRow>, ... ], scope: '<resolved>' }
 // ---------------------------------------------------------------------------
-function ApiRequests_checkDuplicate(token, targetEmail, scope) {
+function ApiRequests_checkDuplicate(token, memberEmail, scope) {
   var principal = Auth_principalFrom(token);
   var resolvedScope = ApiRequests_resolveScope_(principal, scope);
-  var email = Utils_cleanEmail(targetEmail);
+  var email = Utils_cleanEmail(memberEmail);
   if (!email) return { exists: false, existing: [], scope: resolvedScope };
 
   var seats = Seats_getActiveByScopeAndEmail(resolvedScope, email);
@@ -228,8 +228,8 @@ function ApiRequests_shapeForClient_(req) {
     request_id:          req.request_id,
     type:                req.type,
     scope:               req.scope,
-    target_email:        req.target_email,
-    target_name:         req.target_name,
+    member_email:        req.member_email,
+    member_name:         req.member_name,
     reason:              req.reason,
     comment:             req.comment,
     start_date:          req.start_date,

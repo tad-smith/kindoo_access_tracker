@@ -773,7 +773,7 @@ function ApiManager_listRequests(token, filters) {
     }
     if (rd.type === 'remove') {
       rd.duplicate_existing = [];
-      var rmMatches = Seats_getActiveByScopeAndEmail(rd.scope, rd.target_email);
+      var rmMatches = Seats_getActiveByScopeAndEmail(rd.scope, rd.member_email);
       var match = null;
       for (var mm = 0; mm < rmMatches.length; mm++) {
         if (rmMatches[mm].type !== 'auto') { match = rmMatches[mm]; break; }
@@ -791,7 +791,7 @@ function ApiManager_listRequests(token, filters) {
     } else {
       rd.current_seat = null;
       rd.current_seat_status = '';
-      var existing = Seats_getActiveByScopeAndEmail(rd.scope, rd.target_email);
+      var existing = Seats_getActiveByScopeAndEmail(rd.scope, rd.member_email);
       rd.duplicate_existing = existing.map(function (s) { return Rosters_mapRow_(s, today); });
     }
   }
@@ -875,7 +875,7 @@ function ApiManager_rejectRequest(token, requestId, rejectionReason) {
 
 // Inline seat edit on the manager All Seats page. Fields editable by the
 // manager:
-//   - person_name, reason, building_names   (always)
+//   - member_name, reason, building_names   (always)
 //   - start_date, end_date                  (temp seats only; repo guards)
 // Everything else is immutable (auto seats are fully locked — the repo
 // throws). Patch is handed to Seats_update, which does the immutable-field
@@ -890,7 +890,7 @@ function ApiManager_updateSeat(token, seatId, patch) {
   // failure mode narrow (client can't accidentally fabricate a
   // `scope: 'stake'` patch by typo).
   var narrowed = {};
-  if (patch && patch.person_name    !== undefined) narrowed.person_name    = patch.person_name;
+  if (patch && patch.member_name    !== undefined) narrowed.member_name    = patch.member_name;
   if (patch && patch.reason         !== undefined) narrowed.reason         = patch.reason;
   if (patch && patch.building_names !== undefined) narrowed.building_names = patch.building_names;
   if (patch && patch.start_date     !== undefined) narrowed.start_date     = patch.start_date;
@@ -925,8 +925,8 @@ function ApiManager_shapeRequestForClient_(req) {
     request_id:       req.request_id,
     type:             req.type,
     scope:            req.scope,
-    target_email:     req.target_email,
-    target_name:      req.target_name,
+    member_email:     req.member_email,
+    member_name:      req.member_name,
     reason:           req.reason,
     comment:          req.comment,
     start_date:       req.start_date,

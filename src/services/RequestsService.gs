@@ -46,11 +46,11 @@
 //
 // Validates the draft shape:
 //   - type ∈ {add_manual, add_temp, remove}
-//   - target_email present and non-empty
+//   - member_email present and non-empty
 //   - reason present (required by spec §3.2 for all types)
 //   - if add_temp: start_date + end_date both ISO YYYY-MM-DD, end ≥ start
 //   - if remove (Chunk 7):
-//       - target must correspond to an active manual/temp seat in the
+//       - member must correspond to an active manual/temp seat in the
 //         scope (open-questions.md R-3: auto seats can't be removed via
 //         this path; that's an LCR change).
 //       - no other pending remove request for the same (scope, email)
@@ -72,15 +72,24 @@ function RequestsService_submit(args) {
     throw new Error('Invalid request type "' + type + '" — must be add_manual, add_temp, or remove.');
   }
 
-  var targetEmail = Utils_cleanEmail(draft.target_email);
-  if (!targetEmail) throw new Error('Target email is required.');
+  var memberEmail = Utils_cleanEmail(draft.member_email);
+  if (!memberEmail) throw new Error('Member email is required.');
   // Minimal sanity check — a "looks like an email" gate so we don't let a
   // comma-separated list or obvious typo into a pending row. We don't do
   // full RFC5322 because the submitted string is a communication target,
   // not a lookup key (Utils_emailsEqual handles canonicalisation at the
   // comparison boundary).
-  if (targetEmail.indexOf('@') < 1 || targetEmail.indexOf('@') === targetEmail.length - 1) {
-    throw new Error('Target email "' + targetEmail + '" does not look like a valid address.');
+  if (memberEmail.indexOf('@') < 1 || memberEmail.indexOf('@') === memberEmail.length - 1) {
+    throw new Error('Member email "' + memberEmail + '" does not look like a valid address.');
+  }
+
+  // Member name is required for add_manual / add_temp (matches the
+  // required rule on the New Request form). `remove` requests don't
+  // surface a name field in the UI — member_name is carried through
+  // from the source seat on the server side, so skip the check there.
+  var memberName = String(draft.member_name || '').trim();
+  if (type !== 'remove' && !memberName) {
+    throw new Error('Member name is required.');
   }
 
   var reason = String(draft.reason || '').trim();
@@ -129,9 +138,9 @@ function RequestsService_submit(args) {
   // the X on already-pending rows, but a stale roster page or a crafted
   // rpc could still attempt the submit).
   if (type === 'remove') {
-    var matches = Seats_getActiveByScopeAndEmail(args.scope, targetEmail);
+    var matches = Seats_getActiveByScopeAndEmail(args.scope, memberEmail);
     if (matches.length === 0) {
-      throw new Error('No active seat for ' + targetEmail + ' in scope ' + args.scope +
+      throw new Error('No active seat for ' + memberEmail + ' in scope ' + args.scope +
         '. The roster page may be stale — refresh and try again.');
     }
     // open-questions.md R-3: auto seats are importer-owned. Filter them
@@ -141,25 +150,25 @@ function RequestsService_submit(args) {
       if (matches[m].type !== 'auto') removable.push(matches[m]);
     }
     if (removable.length === 0) {
-      throw new Error('Cannot remove an auto seat for ' + targetEmail +
+      throw new Error('Cannot remove an auto seat for ' + memberEmail +
         ' — auto seats come from the callings sheet. Update the calling in LCR; ' +
         'the next import will remove the seat.');
     }
     // If a person somehow holds multiple manual/temp seats in the same
     // scope, the request shape can't say which one to remove (no seat_id
-    // on the wire — the request's natural key is (scope, target_email)).
+    // on the wire — the request's natural key is (scope, member_email)).
     // Refuse the submit loudly until a multi-seat removal UX exists.
     // At target scale this should never fire; if it does, the manager
     // can clean up via the AllSeats inline edit / future hand-edit path
     // before the request goes through.
     if (removable.length > 1) {
-      throw new Error('Multiple removable seats found for ' + targetEmail + ' in ' +
+      throw new Error('Multiple removable seats found for ' + memberEmail + ' in ' +
         args.scope + ' (' + removable.length + ' rows). The request flow can\'t ' +
         'choose between them — ask a Kindoo Manager to resolve the duplicates first.');
     }
-    var existingPending = Requests_getPendingRemoveByScopeAndEmail(args.scope, targetEmail);
+    var existingPending = Requests_getPendingRemoveByScopeAndEmail(args.scope, memberEmail);
     if (existingPending) {
-      throw new Error('A removal request for ' + targetEmail + ' in ' + args.scope +
+      throw new Error('A removal request for ' + memberEmail + ' in ' + args.scope +
         ' is already pending (request ' + existingPending.request_id + ').');
     }
   }
@@ -169,8 +178,8 @@ function RequestsService_submit(args) {
     request_id:       requestId,
     type:             type,
     scope:            String(args.scope),
-    target_email:     targetEmail,
-    target_name:      String(draft.target_name || '').trim(),
+    member_email:     memberEmail,
+    member_name:      memberName,
     reason:           reason,
     comment:          String(draft.comment || '').trim(),
     start_date:       startDate,
@@ -290,8 +299,8 @@ function RequestsService_complete(managerPrincipal, requestId, overrides) {
     seat_id:          Utils_uuid(),
     scope:            req.scope,
     type:             req.type === 'add_manual' ? 'manual' : 'temp',
-    person_email:     req.target_email,    // stored as typed (D4)
-    person_name:      req.target_name || '',
+    member_email:     req.member_email,    // stored as typed (D4)
+    member_name:      req.member_name || '',
     reason:           req.reason || '',
     start_date:       req.start_date || '',
     end_date:         req.end_date   || '',
@@ -350,7 +359,7 @@ function RequestsService_complete(managerPrincipal, requestId, overrides) {
 function RequestsService_completeRemove_(managerPrincipal, req) {
   var managerEmail = managerPrincipal.email;
   var seat = null;
-  var matches = Seats_getActiveByScopeAndEmail(req.scope, req.target_email);
+  var matches = Seats_getActiveByScopeAndEmail(req.scope, req.member_email);
   // Skip auto rows defensively: a remove against an auto seat is rejected
   // at submit, but if a calling change between submit and complete turned
   // the only matching seat into an auto-only result, treat it as already-

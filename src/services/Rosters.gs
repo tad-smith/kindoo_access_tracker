@@ -52,7 +52,7 @@ function Rosters_buildResponseFromSeats_(scope, seats, ctx) {
     // badge off so the UI doesn't surface a misleading "removal pending"
     // on an importer-owned row even if a stale request snuck in somehow.
     mapped.removal_pending = (mapped.type !== 'auto') &&
-      pendingRemoveEmails[Utils_normaliseEmail(mapped.person_email)] === true;
+      pendingRemoveEmails[Utils_normaliseEmail(mapped.member_email)] === true;
     rows.push(mapped);
   }
   Rosters_sortRows_(rows);
@@ -94,7 +94,7 @@ function Rosters_buildContext_() {
       if (pr.type !== 'remove') continue;
       var sc = pr.scope || '';
       if (!pendingRemovesByScope[sc]) pendingRemovesByScope[sc] = {};
-      pendingRemovesByScope[sc][Utils_normaliseEmail(pr.target_email)] = true;
+      pendingRemovesByScope[sc][Utils_normaliseEmail(pr.member_email)] = true;
     }
   } catch (e) {
     var msg = e && e.message ? e.message : String(e);
@@ -164,8 +164,8 @@ function Rosters_mapRow_(seat, today) {
     seat_id:          seat.seat_id,
     scope:            seat.scope,
     type:             seat.type,
-    person_email:     seat.person_email,
-    person_name:      seat.person_name,
+    member_email:     seat.member_email,
+    member_name:      seat.member_name,
     calling_name:     seat.calling_name,
     reason:           seat.reason,
     start_date:       seat.start_date,
@@ -188,10 +188,10 @@ function Rosters_mapRow_(seat, today) {
 //   1. auto first, manual next, temp last (utilization intuition: auto =
 //      auditable callings; manual = explicit ward decisions; temp =
 //      time-boxed and the one the user actually needs to see expiring).
-//   2. within auto: by calling_name, tiebreak person_name.
-//   3. within manual: by person_name, tiebreak person_email.
+//   2. within auto: by calling_name, tiebreak member_name.
+//   3. within manual: by member_name, tiebreak member_email.
 //   4. within temp: by end_date asc (soonest-expiring first), tiebreak
-//      person_name. Blank end_date sorts last.
+//      member_name. Blank end_date sorts last.
 function Rosters_sortRows_(rows) {
   var typeOrder = { auto: 0, manual: 1, temp: 2 };
   rows.sort(function (a, b) {
@@ -200,17 +200,17 @@ function Rosters_sortRows_(rows) {
     if (ta !== tb) return ta - tb;
     if (a.type === 'auto') {
       return Rosters_strCmp_(a.calling_name, b.calling_name) ||
-             Rosters_strCmp_(a.person_name,  b.person_name);
+             Rosters_strCmp_(a.member_name,  b.member_name);
     }
     if (a.type === 'manual') {
-      return Rosters_strCmp_(a.person_name,  b.person_name) ||
-             Rosters_strCmp_(a.person_email, b.person_email);
+      return Rosters_strCmp_(a.member_name,  b.member_name) ||
+             Rosters_strCmp_(a.member_email, b.member_email);
     }
     if (a.type === 'temp') {
       var ae = a.end_date ? String(a.end_date) : '\uFFFF';
       var be = b.end_date ? String(b.end_date) : '\uFFFF';
       return Rosters_strCmp_(ae, be) ||
-             Rosters_strCmp_(a.person_name, b.person_name);
+             Rosters_strCmp_(a.member_name, b.member_name);
     }
     return 0;
   });

@@ -5,7 +5,7 @@
 //   - Seats_getAutoByScope(scope)    — filter to type=auto (diff input)
 //   - Seats_bulkInsertAuto(rows)     — batched append for import inserts
 //   - Seats_deleteByHash(hash)       — single-row delete by source_row_hash
-//   - Seats_updateAutoName(hash, …)  — in-place person_name update for an
+//   - Seats_updateAutoName(hash, …)  — in-place member_name update for an
 //                                       auto row (Name-column change,
 //                                       post-Chunk-10.6)
 //
@@ -19,9 +19,9 @@
 //   - Seats_getActiveByScopeAndEmail — duplicate-check lookup (req → seat)
 //   - Seats_insert(row)              — manual/temp insert on request complete
 //   - Seats_update(seat_id, patch)   — inline edit of manual/temp fields
-//                                       (person_name, reason, building_names,
+//                                       (member_name, reason, building_names,
 //                                        and dates on temp). scope, type,
-//                                        seat_id, person_email are immutable.
+//                                        seat_id, member_email are immutable.
 //                                       auto rows are still importer-owned;
 //                                       the UI does not expose an edit
 //                                       affordance on them.
@@ -40,7 +40,7 @@
 // emits per-row AuditLog entries bracketed by import_start / import_end.
 
 const SEATS_HEADERS_ = [
-  'seat_id', 'scope', 'type', 'person_email', 'person_name',
+  'seat_id', 'scope', 'type', 'member_email', 'member_name',
   'calling_name', 'source_row_hash', 'reason', 'start_date',
   'end_date', 'building_names', 'created_by', 'created_at',
   'last_modified_by', 'last_modified_at'
@@ -76,7 +76,7 @@ function Seats_getAutoByScope(scope) {
 // setValues collapses that to one network round-trip).
 //
 // Each input must carry:
-//   scope, person_email, person_name, calling_name, source_row_hash
+//   scope, member_email, member_name, calling_name, source_row_hash
 // Optional: building_names (default '')
 // Fills: seat_id, type='auto', reason='', start_date='', end_date='',
 //        created_by='Importer', created_at=now, last_modified_by='Importer',
@@ -100,8 +100,8 @@ function Seats_bulkInsertAuto(rows) {
       seat_id:          Utils_uuid(),
       scope:            String(r.scope),
       type:             'auto',
-      person_email:     Utils_cleanEmail(r.person_email),
-      person_name:      r.person_name == null ? '' : String(r.person_name),
+      member_email:     Utils_cleanEmail(r.member_email),
+      member_name:      r.member_name == null ? '' : String(r.member_name),
       calling_name:     r.calling_name == null ? '' : String(r.calling_name),
       source_row_hash:  String(r.source_row_hash),
       reason:           '',
@@ -115,7 +115,7 @@ function Seats_bulkInsertAuto(rows) {
     };
     materialised.push(seat);
     values.push([
-      seat.seat_id, seat.scope, seat.type, seat.person_email, seat.person_name,
+      seat.seat_id, seat.scope, seat.type, seat.member_email, seat.member_name,
       seat.calling_name, seat.source_row_hash, seat.reason, seat.start_date,
       seat.end_date, seat.building_names, seat.created_by, seat.created_at,
       seat.last_modified_by, seat.last_modified_at
@@ -140,7 +140,7 @@ function Seats_getById(seatId) {
 }
 
 // Chunk 6: duplicate-check. Returns every seat in the given scope whose
-// person_email canonicalises to the supplied email. Used by
+// member_email canonicalises to the supplied email. Used by
 // ApiRequests_checkDuplicate and RequestsQueue's server-side duplicate
 // warning — "active" here means "in the tab right now" (no soft-delete
 // in the schema, per spec §3.2 — rows are inserted on add, deleted on
@@ -151,14 +151,14 @@ function Seats_getActiveByScopeAndEmail(scope, email) {
   var rows = Seats_getByScope(scopeKey);
   var out = [];
   for (var i = 0; i < rows.length; i++) {
-    if (Utils_emailsEqual(rows[i].person_email, email)) out.push(rows[i]);
+    if (Utils_emailsEqual(rows[i].member_email, email)) out.push(rows[i]);
   }
   return out;
 }
 
 // Chunk 6: manual / temp insert. Caller (RequestsService_complete) provides
 // the full row shape — seat_id (UUID), scope, type ('manual' | 'temp'),
-// person_email / person_name / reason / start_date / end_date /
+// member_email / member_name / reason / start_date / end_date /
 // building_names / created_by / last_modified_by. The repo fills
 // created_at / last_modified_at from the server clock and validates
 // type ∈ {manual, temp} (auto rows are the importer's responsibility via
@@ -192,8 +192,8 @@ function Seats_insert(row) {
     seat_id:          String(row.seat_id),
     scope:            String(row.scope),
     type:             String(row.type),
-    person_email:     Utils_cleanEmail(row.person_email),
-    person_name:      row.person_name == null ? '' : String(row.person_name),
+    member_email:     Utils_cleanEmail(row.member_email),
+    member_name:      row.member_name == null ? '' : String(row.member_name),
     calling_name:     '',       // manual/temp never carry a calling
     source_row_hash:  '',       // manual/temp never have a hash
     reason:           row.reason == null ? '' : String(row.reason),
@@ -206,7 +206,7 @@ function Seats_insert(row) {
     last_modified_at: modAt
   };
   sheet.appendRow([
-    seat.seat_id, seat.scope, seat.type, seat.person_email, seat.person_name,
+    seat.seat_id, seat.scope, seat.type, seat.member_email, seat.member_name,
     seat.calling_name, seat.source_row_hash, seat.reason, seat.start_date,
     seat.end_date, seat.building_names, seat.created_by, seat.created_at,
     seat.last_modified_by, seat.last_modified_at
@@ -215,17 +215,17 @@ function Seats_insert(row) {
 }
 
 // Chunk 6: manager inline edit. Mutable fields:
-//   - person_name            (always)
+//   - member_name            (always)
 //   - reason                 (always — required for manual/temp per spec)
 //   - building_names         (always)
 //   - start_date, end_date   (only when row.type === 'temp')
 //   - last_modified_by       (caller provides; typically managerPrincipal.email)
 //
-// Immutable: seat_id, scope, type, person_email, calling_name,
+// Immutable: seat_id, scope, type, member_email, calling_name,
 // source_row_hash, created_by, created_at. Changing any of them means a
 // different seat; the right path is delete (Seats_deleteById, Chunk 7)
 // + insert. Refusing here defends the audit trail (a patch that looked
-// like `{person_email: 'new@example.com'}` would turn a seat into a new
+// like `{member_email: 'new@example.com'}` would turn a seat into a new
 // person silently).
 //
 // auto rows refuse every patch — they're importer-owned and would be
@@ -253,7 +253,7 @@ function Seats_update(seatId, patch) {
     // Refuse immutable-field patches loudly rather than silently ignoring them —
     // a client bug that thinks it's renaming a person should surface, not
     // look successful.
-    var immutable = ['seat_id', 'scope', 'type', 'person_email',
+    var immutable = ['seat_id', 'scope', 'type', 'member_email',
                      'calling_name', 'source_row_hash',
                      'created_by', 'created_at'];
     for (var m = 0; m < immutable.length; m++) {
@@ -285,8 +285,8 @@ function Seats_update(seatId, patch) {
       seat_id:          before.seat_id,
       scope:            before.scope,
       type:             before.type,
-      person_email:     before.person_email,
-      person_name:      patch.person_name    !== undefined ? (patch.person_name    == null ? '' : String(patch.person_name))    : before.person_name,
+      member_email:     before.member_email,
+      member_name:      patch.member_name    !== undefined ? (patch.member_name    == null ? '' : String(patch.member_name))    : before.member_name,
       calling_name:     before.calling_name,
       source_row_hash:  before.source_row_hash,
       reason:           patch.reason         !== undefined ? (patch.reason         == null ? '' : String(patch.reason))         : before.reason,
@@ -299,7 +299,7 @@ function Seats_update(seatId, patch) {
       last_modified_at: now
     };
     sheet.getRange(i + 1, 1, 1, SEATS_HEADERS_.length).setValues([[
-      after.seat_id, after.scope, after.type, after.person_email, after.person_name,
+      after.seat_id, after.scope, after.type, after.member_email, after.member_name,
       after.calling_name, after.source_row_hash, after.reason, after.start_date,
       after.end_date, after.building_names, after.created_by, after.created_at,
       after.last_modified_by, after.last_modified_at
@@ -338,7 +338,7 @@ function Seats_deleteById(seatId) {
   return null;
 }
 
-// Update person_name (and last_modified_*) on a single auto row identified
+// Update member_name (and last_modified_*) on a single auto row identified
 // by source_row_hash. Used by the importer's in-place name-update pass:
 // when LCR supplies a newer display name for a (scope, calling, email) that
 // already exists in Seats, we mutate in place rather than churning the
@@ -368,8 +368,8 @@ function Seats_updateAutoName(hash, newName, actor) {
       seat_id:          before.seat_id,
       scope:            before.scope,
       type:             before.type,
-      person_email:     before.person_email,
-      person_name:      newName == null ? '' : String(newName),
+      member_email:     before.member_email,
+      member_name:      newName == null ? '' : String(newName),
       calling_name:     before.calling_name,
       source_row_hash:  before.source_row_hash,
       reason:           before.reason,
@@ -382,7 +382,7 @@ function Seats_updateAutoName(hash, newName, actor) {
       last_modified_at: now
     };
     sheet.getRange(i + 1, 1, 1, SEATS_HEADERS_.length).setValues([[
-      after.seat_id, after.scope, after.type, after.person_email, after.person_name,
+      after.seat_id, after.scope, after.type, after.member_email, after.member_name,
       after.calling_name, after.source_row_hash, after.reason, after.start_date,
       after.end_date, after.building_names, after.created_by, after.created_at,
       after.last_modified_by, after.last_modified_at
@@ -450,8 +450,8 @@ function Seats_rowToObject_(row) {
     seat_id:          String(row[0]),
     scope:            String(row[1] == null ? '' : row[1]),
     type:             String(row[2] == null ? '' : row[2]),
-    person_email:     Utils_cleanEmail(String(row[3] == null ? '' : row[3])),
-    person_name:      String(row[4] == null ? '' : row[4]),
+    member_email:     Utils_cleanEmail(String(row[3] == null ? '' : row[3])),
+    member_name:      String(row[4] == null ? '' : row[4]),
     calling_name:     String(row[5] == null ? '' : row[5]),
     source_row_hash:  String(row[6] == null ? '' : row[6]),
     reason:           String(row[7] == null ? '' : row[7]),

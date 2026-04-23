@@ -133,9 +133,9 @@
     return '<tr class="' + trClasses + '" data-seat-id="' + escapeHtml(row.seat_id || '') + '">' +
       scopeCell +
       '<td>' + typeBadge + expiryBadge + removalBadge + '</td>' +
-      '<td>' + escapeHtml(row.person_name || '') + '<br>' +
-        '<span class="roster-email" title="' + escapeHtml(row.person_email) + '">' +
-          escapeHtml(row.person_email) + '</span></td>' +
+      '<td>' + escapeHtml(row.member_name || '') + '<br>' +
+        '<span class="roster-email" title="' + escapeHtml(row.member_email) + '">' +
+          escapeHtml(row.member_email) + '</span></td>' +
       '<td>' + callingOrReason + '</td>' +
       '<td>' + datesCell + '</td>' +
       '<td>' + escapeHtml(row.building_names || '') + '</td>' +
@@ -156,7 +156,7 @@
     }
     var headers = '';
     if (opts.showScope) headers += '<th>Scope</th>';
-    headers += '<th>Type</th><th>Person</th><th>Calling / Reason</th>' +
+    headers += '<th>Type</th><th>Member</th><th>Calling / Reason</th>' +
                '<th>Dates</th><th>Buildings</th>';
     if (typeof opts.rowActions === 'function') {
       headers += '<th>' + escapeHtml(opts.actionsHeader || '') + '</th>';

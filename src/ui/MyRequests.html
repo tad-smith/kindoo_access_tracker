@@ -9,7 +9,7 @@
       (empty string on the wire).
 
   Row rendering: a small, purpose-built table — not rosterRowHtml. The
-  columns are request-ish (requested_at, status, target, reason, dates)
+  columns are request-ish (requested_at, status, member, reason, dates)
   rather than seat-ish. Status badges color the row the same way the
   roster badges color seat types (consistent visual language).
 
@@ -77,8 +77,8 @@
         (row.start_date && row.end_date ? ' → ' : '') +
         (row.end_date || '');
     }
-    var target = (row.target_name ? escapeHtml(row.target_name) + '<br>' : '') +
-      '<span class="roster-email">' + escapeHtml(row.target_email) + '</span>';
+    var member = (row.member_name ? escapeHtml(row.member_name) + '<br>' : '') +
+      '<span class="roster-email">' + escapeHtml(row.member_email) + '</span>';
     var actions = '';
     if (row.status === 'pending') {
       actions = '<button class="btn btn-secondary" data-act="cancel" data-request-id="' +
@@ -97,7 +97,7 @@
       '<td>' + escapeHtml(row.requested_at || '') + '</td>' +
       '<td><code>' + escapeHtml(row.scope) + '</code></td>' +
       '<td>' + escapeHtml(typeLabel(type)) + '</td>' +
-      '<td>' + target + '</td>' +
+      '<td>' + member + '</td>' +
       '<td>' + escapeHtml(row.reason || '') + '</td>' +
       '<td>' + dates + '</td>' +
       '<td>' + statusBadge(row.status) + '</td>' +
@@ -112,7 +112,7 @@
       return;
     }
     var html = '<table class="my-requests-table"><thead><tr>' +
-      '<th>Requested</th><th>Scope</th><th>Type</th><th>Target</th>' +
+      '<th>Requested</th><th>Scope</th><th>Type</th><th>Member</th>' +
       '<th>Reason</th><th>Dates</th><th>Status</th><th></th>' +
       '</tr></thead><tbody>';
     for (var i = 0; i < rows.length; i++) html += rowHtml(rows[i]);

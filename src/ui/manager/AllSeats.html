@@ -13,7 +13,7 @@
   cross-origin restriction from the HtmlService iframe (see
   open-questions.md A-8).
 
-  Chunk 6 adds inline edit for manual/temp rows (person_name, reason,
+  Chunk 6 adds inline edit for manual/temp rows (member_name, reason,
   building_names; plus start_date/end_date on temp). Auto rows are not
   editable — they're importer-owned and would be overwritten on the
   next Import Now run. The edit button only appears on manual/temp
@@ -70,7 +70,7 @@
           <label>Email (immutable)<br><input type="text" id="se-email" readonly></label>
         </div>
         <div class="form-row">
-          <label>Person name<br><input type="text" id="se-person-name"></label>
+          <label>Member name<br><input type="text" id="se-member-name"></label>
         </div>
         <div class="form-row">
           <label>Reason<br><textarea id="se-reason" rows="2"></textarea></label>
@@ -201,8 +201,8 @@
     }
     $('se-scope').value       = row.scope || '';
     $('se-type').value        = row.type  || '';
-    $('se-email').value       = row.person_email || '';
-    $('se-person-name').value = row.person_name  || '';
+    $('se-email').value       = row.member_email || '';
+    $('se-member-name').value = row.member_name  || '';
     $('se-reason').value      = row.reason       || '';
     $('se-buildings').value   = row.building_names || '';
     var isTemp = row.type === 'temp';
@@ -258,7 +258,7 @@
       if (!seatId) return;
       var row = currentRowsById[seatId];
       var patch = {
-        person_name:    $('se-person-name').value,
+        member_name:    $('se-member-name').value,
         reason:         $('se-reason').value,
         building_names: $('se-buildings').value
       };

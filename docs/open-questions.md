@@ -175,7 +175,7 @@ Surfaced 2026-04-20. The real LCR-exported callings sheet's column-D header text
 
 So a cell may contain e.g. `first.last@workplace.com [GoogleAccount: flast@gmail.com]` — the real email the user will sign in with is inside the brackets. The importer as currently written (Chunk 3) runs `Utils_cleanEmail` on the whole cell (trim only), which preserves the bracket syntax literally. Consequences:
 
-- `Seats.person_email` and `Access.email` store the bracket-laden string rather than the gmail address.
+- `Seats.member_email` and `Access.email` store the bracket-laden string rather than the gmail address.
 - `source_row_hash` is computed over the canonicalised bracket string, so it's stable across runs (no phantom delta), but it doesn't match the canonical form the user's session token will carry when they sign in — they'd fail role resolution.
 
 **Best guess:** if a cell contains `[GoogleAccount: X]`, extract `X` as the email to use for both storage and hashing; also emit the full bracket-stripped address (the non-Google part) as an additional email if useful? Or prefer the GoogleAccount unconditionally since that's what sign-in uses. Needs a pass in a follow-up chunk (3.1 bugfix or roll into Chunk 4/6 where manual requests land).
@@ -205,7 +205,7 @@ Confirmed to be a real problem in the LCR data. **Ship v1 with Gmail-aware compa
 - `Utils_hashRow(scope, calling, email)` — the importer's `source_row_hash` is computed on the canonical email so it's stable across format wobbles in the callings sheet (per D5).
 
 **Where the typed form is used (everything else):**
-- All email *cells* in the Sheet: `KindooManagers.email`, `Access.email`, `Seats.person_email`, `Requests.{target,requester,completer}_email`, `AuditLog.actor_email`, `Config.bootstrap_admin_email`. The repo `_insert` / `_update` paths call `Utils_cleanEmail` (trim only) and write the trimmed-but-otherwise-untouched value.
+- All email *cells* in the Sheet: `KindooManagers.email`, `Access.email`, `Seats.member_email`, `Requests.{member,requester,completer}_email`, `AuditLog.actor_email`, `Config.bootstrap_admin_email`. The repo `_insert` / `_update` paths call `Utils_cleanEmail` (trim only) and write the trimmed-but-otherwise-untouched value.
 - The `email` claim signed into the HMAC session token by `Identity_serve`. `Auth_signSessionToken` no longer calls `Utils_normaliseEmail`. `Auth_verifySessionToken` returns the email as it was signed.
 - `principal.email` flowing through the API layer and into `AuditLog.actor_email` — the user sees their own typed address in audit history, not a normalised one.
 
@@ -232,11 +232,11 @@ The note column added in Chunk 7 means we never overload `rejection_reason`; the
 
 Sources of the race covered: (a) two managers completing duplicate remove requests near-simultaneously (the duplicate-pending guard in `RequestsService_submit` makes (a) rare, but possible if a stale roster smuggled past the client check); (b) Chunk 8's daily expiry trigger removing a temp seat between submit and Complete; (c) belt-and-braces against a defensive Sheet hand-edit. (See `chunk-7-removals.md` "Decisions made" for the storage-column choice rationale and the tested behaviour.)
 
-### R-2 `[P1]` Race: complete `add_manual` when the target already has a manual seat
+### R-2 `[P1]` Race: complete `add_manual` when the member already has a manual seat
 
 Between submission and completion, another manager might complete a duplicate request. When the second request is completed, should we insert a second `Seats` row, merge, or reject?
 
-**Best guess:** At completion time, if an active seat already exists for `(scope, target_email)`, flip the request to `complete` but skip the `Seats` insert, and note "already present — request closed without change" in an audit row. Emailing the requester that it's "done" is truthful.
+**Best guess:** At completion time, if an active seat already exists for `(scope, member_email)`, flip the request to `complete` but skip the `Seats` insert, and note "already present — request closed without change" in an audit row. Emailing the requester that it's "done" is truthful.
 
 ### R-3 `[P1]` Can you request a `remove` against an `auto` seat?
 

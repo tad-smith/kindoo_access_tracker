@@ -3,12 +3,12 @@
 
   Shows all pending requests across every scope, filterable by
   ward + type. Per request, renders:
-    - metadata (type, scope, target, requester, reason, comment,
+    - metadata (type, scope, member, requester, reason, comment,
       submitted at, dates when add_temp)
     - "what the Seats row will look like post-complete" preview, using
       the Chunk-5 rosterRowHtml so the preview matches what the
       manager sees on AllSeats / bishopric Roster.
-    - Duplicate warning inline if target_email already has active
+    - Duplicate warning inline if member_email already has active
       seats in the request's scope (reuses the server's duplicate
       preview — same check the client-side NewRequest uses).
     - Complete button (confirms first) → ApiManager_completeRequest
@@ -173,8 +173,8 @@
       seat_id:        '',
       scope:          req.scope,
       type:           req.type === 'add_manual' ? 'manual' : 'temp',
-      person_email:   req.target_email || '',
-      person_name:    req.target_name || '',
+      member_email:   req.member_email || '',
+      member_name:    req.member_name || '',
       calling_name:   '',
       reason:         req.reason || '',
       start_date:     req.start_date || '',
@@ -196,7 +196,7 @@
     if (isPending && !isRemove && req.duplicate_existing && req.duplicate_existing.length > 0) {
       dupBlock =
         '<div class="duplicate-warning">' +
-          '<strong>Duplicate:</strong> target already has ' +
+          '<strong>Duplicate:</strong> member already has ' +
           req.duplicate_existing.length + ' active seat' +
           (req.duplicate_existing.length === 1 ? '' : 's') +
           ' in <code>' + escapeHtml(req.scope) + '</code>.' +
@@ -300,9 +300,9 @@
         '<span class="queue-card-scope"><code>' + escapeHtml(req.scope) + '</code></span>' +
         '<span class="queue-card-submitted">Submitted ' + escapeHtml(req.requested_at || '') + '</span>' +
       '</div>' +
-      '<div class="queue-field"><span class="label">Target:</span> ' +
-        (req.target_name ? escapeHtml(req.target_name) + ' — ' : '') +
-        '<span class="roster-email">' + escapeHtml(req.target_email) + '</span>' +
+      '<div class="queue-field"><span class="label">Member:</span> ' +
+        (req.member_name ? escapeHtml(req.member_name) + ' — ' : '') +
+        '<span class="roster-email">' + escapeHtml(req.member_email) + '</span>' +
       '</div>' +
       '<div class="queue-field"><span class="label">Requester:</span> ' +
         '<span class="roster-email">' + escapeHtml(req.requester_email) + '</span></div>' +
@@ -413,9 +413,9 @@
     var summaryHtml =
       '<div class="queue-field"><span class="label">Type:</span> ' + escapeHtml(req.type) + '</div>' +
       '<div class="queue-field"><span class="label">Scope:</span> <code>' + escapeHtml(req.scope) + '</code></div>' +
-      '<div class="queue-field"><span class="label">Target:</span> ' +
-        (req.target_name ? escapeHtml(req.target_name) + ' — ' : '') +
-        '<span class="roster-email">' + escapeHtml(req.target_email) + '</span></div>' +
+      '<div class="queue-field"><span class="label">Member:</span> ' +
+        (req.member_name ? escapeHtml(req.member_name) + ' — ' : '') +
+        '<span class="roster-email">' + escapeHtml(req.member_email) + '</span></div>' +
       '<div class="queue-field"><span class="label">Reason:</span> ' + escapeHtml(req.reason || '') + '</div>' +
       (req.comment ? '<div class="queue-field"><span class="label">Comment:</span> ' + escapeHtml(req.comment) + '</div>' : '') +
       (dates ? '<div class="queue-field"><span class="label">Dates:</span> ' + dates + '</div>' : '');

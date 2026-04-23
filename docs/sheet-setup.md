@@ -218,7 +218,7 @@ Leave empty — the importer populates this tab.
 Headers (15 columns):
 
 ```
-seat_id	scope	type	person_email	person_name	calling_name	source_row_hash	reason	start_date	end_date	building_names	created_by	created_at	last_modified_by	last_modified_at
+seat_id	scope	type	member_email	member_name	calling_name	source_row_hash	reason	start_date	end_date	building_names	created_by	created_at	last_modified_by	last_modified_at
 ```
 
 ### Tab 9 — `Requests`
@@ -226,7 +226,7 @@ seat_id	scope	type	person_email	person_name	calling_name	source_row_hash	reason	
 Headers (15 columns):
 
 ```
-request_id	type	scope	target_email	target_name	reason	comment	start_date	end_date	status	requester_email	requested_at	completer_email	completed_at	rejection_reason
+request_id	type	scope	member_email	member_name	reason	comment	start_date	end_date	status	requester_email	requested_at	completer_email	completed_at	rejection_reason
 ```
 
 ### Tab 10 — `AuditLog`

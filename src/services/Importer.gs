@@ -30,9 +30,9 @@
 //   - A row that's unchanged in the source produces zero AuditLog entries —
 //     only import_start / import_end brackets are always written.
 //
-// person_name is NOT part of the hash (LCR name edits shouldn't churn
+// member_name is NOT part of the hash (LCR name edits shouldn't churn
 // seats), so the diff has a third branch: for (scope, calling, email)
-// rows present in both current and desired, compare person_name and emit
+// rows present in both current and desired, compare member_name and emit
 // an in-place update when it drifts. One AuditLog `update` row per
 // change. Rationale: a stake gains a lot of value from names appearing
 // on rosters without having to delete and re-create every seat when a
@@ -335,7 +335,7 @@ function Importer_runImport_(opts, startedMs) {
 
   // Process each matched tab once; collect desired state per scope before
   // touching the Sheet.
-  //   desiredSeatsByScope[scope]  = { hash -> { scope, person_email, person_name, calling_name, source_row_hash, building_names } }
+  //   desiredSeatsByScope[scope]  = { hash -> { scope, member_email, member_name, calling_name, source_row_hash, building_names } }
   //   desiredAccessByScope[scope] = { canonical_email|calling -> { email (typed), scope, calling } }
   //   scopesSeen = the set of scopes we actually processed (tabs whose name
   //                matched Wards or "Stake"). Scopes NOT in this set keep
@@ -421,10 +421,10 @@ function Importer_runImport_(opts, startedMs) {
         seatsToInsert.push(desiredSeats[h]);
       } else {
         // Same (scope, calling, email) in both — diff the one mutable
-        // attribute the importer owns: person_name. Treat null/undefined
+        // attribute the importer owns: member_name. Treat null/undefined
         // on either side as '' to avoid spurious updates on first runs.
-        var curName = currentHashes[h].person_name == null ? '' : String(currentHashes[h].person_name);
-        var newName = desiredSeats[h].person_name == null ? '' : String(desiredSeats[h].person_name);
+        var curName = currentHashes[h].member_name == null ? '' : String(currentHashes[h].member_name);
+        var newName = desiredSeats[h].member_name == null ? '' : String(desiredSeats[h].member_name);
         if (curName !== newName) {
           seatsToUpdateName.push({
             hash:    h,
@@ -498,7 +498,7 @@ function Importer_runImport_(opts, startedMs) {
     });
   }
 
-  // In-place person_name updates for rows whose (scope, calling, email)
+  // In-place member_name updates for rows whose (scope, calling, email)
   // is unchanged but whose display name has drifted in LCR. One audit
   // `update` row per change; the before/after carry the full Seat shape
   // so the Audit-Log page renders a normal field-by-field diff.
@@ -686,12 +686,12 @@ function Importer_parseTab_(tab, prefix, scope, templateIndex, buildingDefault,
     // the whole tab collapse in the caller because the hash is the key.
     for (var ei = 0; ei < emails.length; ei++) {
       var email = emails[ei];
-      var personName = ei < names.length ? names[ei] : '';
+      var memberName = ei < names.length ? names[ei] : '';
       var hash = Utils_hashRow(scope, callingName, email);
       seats.push({
         scope:           scope,
-        person_email:    email,
-        person_name:     personName,
+        member_email:    email,
+        member_name:     memberName,
         calling_name:    callingName,
         source_row_hash: hash,
         building_names:  buildingDefault

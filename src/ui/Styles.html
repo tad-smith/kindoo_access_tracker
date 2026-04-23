@@ -771,6 +771,10 @@
 
   .new-request-form .form-row { margin-bottom: 14px; }
   .new-request-form .form-row.temp-only { display: flex; gap: 14px; }
+  /* Generic `.hidden { display: none }` (line 22) has lower specificity
+     than the flex rule above, so add an explicit override — same pattern
+     as .ward-select-row.hidden. */
+  .new-request-form .form-row.temp-only.hidden { display: none; }
   .new-request-form label { color: #4b5266; font-size: 0.92em; }
   .new-request-form input[type="text"],
   .new-request-form input[type="email"],
@@ -1017,6 +1021,7 @@
   .seat-edit-modal-inner h2 { margin: 0 0 12px; font-size: 1.15em; }
   .seat-edit-modal-inner .form-row { margin-bottom: 10px; }
   .seat-edit-modal-inner .form-row.temp-only { display: flex; gap: 14px; }
+  .seat-edit-modal-inner .form-row.temp-only.hidden { display: none; }
   .seat-edit-modal-inner label { color: #4b5266; font-size: 0.9em; }
   .seat-edit-modal-inner input[type="text"],
   .seat-edit-modal-inner input[type="date"],

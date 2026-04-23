@@ -206,8 +206,8 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 | `seat_id` | UUID | Unique. |
 | `scope` | string | `ward_code` or `"stake"`. |
 | `type` | enum | `auto` / `manual` / `temp`. |
-| `person_email` | string | Lowercased. |
-| `person_name` | string | For display; filled from request or from callings sheet if available. |
+| `member_email` | string | Lowercased. |
+| `member_name` | string | For display; filled from request or from callings sheet if available. |
 | `calling_name` | string | Auto only; blank for manual/temp. |
 | `source_row_hash` | string | Auto only; SHA-256 of `scope|calling|canonical_email` (email canonicalised per the conventions section). Used by importer to detect same-row-across-runs, resilient to Gmail dot/`+suffix` variants. |
 | `reason` | string | Free text. Required for manual/temp; blank for auto. |
@@ -221,7 +221,7 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 
 ### Example rows
 
-| seat_id | scope | type | person_email | person_name | calling_name | source_row_hash | reason | start_date | end_date | building_names | created_by | created_at | last_modified_by | last_modified_at |
+| seat_id | scope | type | member_email | member_name | calling_name | source_row_hash | reason | start_date | end_date | building_names | created_by | created_at | last_modified_by | last_modified_at |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `7b3f…-a1e2` | `CO` | `auto` | `alice@example.org` | `Alice Nguyen` | `Bishop` | `a9f3…` | | | | `Stake Center` | `Importer` | `2026-04-19 03:02:11` | `Importer` | `2026-04-19 03:02:11` |
 | `c14a…-3e11` | `CO` | `manual` | `frank@example.org` | `Frank Pierce` | | | `Youth activity coordinator — needs weeknight access` | | | `Stake Center` | `alice@example.org` | `2026-04-10 18:22:04` | `bob@example.org` | `2026-04-11 09:11:30` |
@@ -237,8 +237,8 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 | `request_id` | UUID | Unique. |
 | `type` | enum | `add_manual` / `add_temp` / `remove`. |
 | `scope` | string | `ward_code` or `"stake"`. |
-| `target_email` | string | The person being added/removed. Lowercased. |
-| `target_name` | string | For display. |
+| `member_email` | string | The person being added/removed. Lowercased. |
+| `member_name` | string | For display. |
 | `reason` | string | Required for all types. |
 | `comment` | string | Free text (e.g. multi-building notes on adds, removal context). |
 | `start_date` | ISO date | Temp only. |
@@ -254,7 +254,7 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 
 ### Example rows
 
-| request_id | type | scope | target_email | target_name | reason | comment | start_date | end_date | building_names | status | requester_email | requested_at | completer_email | completed_at | rejection_reason | completion_note |
+| request_id | type | scope | member_email | member_name | reason | comment | start_date | end_date | building_names | status | requester_email | requested_at | completer_email | completed_at | rejection_reason | completion_note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `r1…` | `add_manual` | `CO` | `frank@example.org` | `Frank Pierce` | `Youth activity coordinator` | `Needs access on Tuesdays after 6pm.` | | | | `complete` | `alice@example.org` | `2026-04-10 17:55:11` | `bob@example.org` | `2026-04-10 19:03:02` | | |
 | `r2…` | `add_temp` | `CO` | `guest@example.com` | `Mark Long` | `Visiting facilities crew` | | `2026-04-20` | `2026-04-27` | | `pending` | `alice@example.org` | `2026-04-18 13:45:20` | | | | |
@@ -292,10 +292,10 @@ One row per state-changing event. Append-only.
 
 | timestamp | actor_email | action | entity_type | entity_id | before_json | after_json |
 | --- | --- | --- | --- | --- | --- | --- |
-| `2026-04-10 17:55:11` | `alice@example.org` | `submit_request` | `Request` | `r1…` | | `{"type":"add_manual","scope":"cordera-1st","target_email":"frank@example.org",...}` |
+| `2026-04-10 17:55:11` | `alice@example.org` | `submit_request` | `Request` | `r1…` | | `{"type":"add_manual","scope":"cordera-1st","member_email":"frank@example.org",...}` |
 | `2026-04-10 19:03:02` | `bob@example.org` | `complete_request` | `Request` | `r1…` | `{"status":"pending",...}` | `{"status":"complete",...}` |
 | `2026-04-10 19:03:02` | `bob@example.org` | `insert` | `Seat` | `c14a…-3e11` | | `{"seat_id":"c14a…","scope":"cordera-1st","type":"manual",...}` |
 | `2026-04-19 03:02:08` | `Importer` | `import_start` | `Config` | `last_import_at` | | `{"scope":"all"}` |
-| `2026-04-19 03:02:10` | `Importer` | `insert` | `Seat` | `7b3f…-a1e2` | | `{"type":"auto","scope":"cordera-1st","person_email":"alice@example.org","calling_name":"Bishop",...}` |
+| `2026-04-19 03:02:10` | `Importer` | `insert` | `Seat` | `7b3f…-a1e2` | | `{"type":"auto","scope":"cordera-1st","member_email":"alice@example.org","calling_name":"Bishop",...}` |
 | `2026-04-19 03:02:11` | `Importer` | `import_end` | `Config` | `last_import_at` | | `{"inserted":3,"deleted":1,"access_changes":2,"over_cap":[]}` |
 | `2026-04-28 03:00:00` | `ExpiryTrigger` | `auto_expire` | `Seat` | `8d91…-92b0` | `{"seat_id":"8d91…","type":"temp","end_date":"2026-04-27",...}` | |

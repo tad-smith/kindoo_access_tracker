@@ -1,7 +1,7 @@
 // CRUD for the Requests tab (pending / complete / rejected / cancelled).
 //
 // `request_id` is a system-generated UUID PK (architecture.md D3); callers
-// never see or choose it. Emails (target_email, requester_email,
+// never see or choose it. Emails (member_email, requester_email,
 // completer_email) are stored AS TYPED (trim only) per architecture.md D4;
 // equality via Utils_emailsEqual.
 //
@@ -37,7 +37,7 @@
 
 const REQUESTS_HEADERS_ = [
   'request_id', 'type', 'scope',
-  'target_email', 'target_name',
+  'member_email', 'member_name',
   'reason', 'comment',
   'start_date', 'end_date',
   'building_names',
@@ -49,7 +49,7 @@ const REQUESTS_HEADERS_ = [
 ];
 
 // Fields Requests_update will accept. The rest of a request row (type,
-// scope, target, reason, requester, requested_at, dates) is IMMUTABLE once
+// scope, member, reason, requester, requested_at, dates) is IMMUTABLE once
 // inserted — changing any of them would rewrite history. If a requester
 // changes their mind they cancel and submit a new request; if a manager
 // needs a different add, they reject with reason and wait for a resubmit.
@@ -128,7 +128,7 @@ function Requests_getByRequesterAndScope(email, scope) {
 }
 
 // Chunk 7: lookup the (at most one) pending `remove` request matching
-// (scope, target_email). Used by:
+// (scope, member_email). Used by:
 //   - RequestsService_submit('remove', …) to refuse duplicate submits.
 //   - Rosters_buildResponseForScope to flag the row's `removal_pending`
 //     badge so the X/trashcan can render disabled.
@@ -148,7 +148,7 @@ function Requests_getPendingRemoveByScopeAndEmail(scope, email) {
     if (r.status !== 'pending') continue;
     if (r.type !== 'remove') continue;
     if (r.scope !== scopeKey) continue;
-    if (Utils_emailsEqual(r.target_email, email)) return r;
+    if (Utils_emailsEqual(r.member_email, email)) return r;
   }
   return null;
 }
@@ -188,7 +188,7 @@ function Requests_insert(row) {
   var toWrite = Requests_normaliseInput_(row);
   sheet.appendRow([
     toWrite.request_id, toWrite.type, toWrite.scope,
-    toWrite.target_email, toWrite.target_name,
+    toWrite.member_email, toWrite.member_name,
     toWrite.reason, toWrite.comment,
     toWrite.start_date, toWrite.end_date,
     toWrite.building_names,
@@ -234,8 +234,8 @@ function Requests_update(requestId, patch) {
       request_id:       before.request_id,
       type:             before.type,
       scope:            before.scope,
-      target_email:     before.target_email,
-      target_name:      before.target_name,
+      member_email:     before.member_email,
+      member_name:      before.member_name,
       reason:           before.reason,
       comment:          before.comment,
       start_date:       before.start_date,
@@ -251,7 +251,7 @@ function Requests_update(requestId, patch) {
     };
     sheet.getRange(i + 1, 1, 1, REQUESTS_HEADERS_.length).setValues([[
       after.request_id, after.type, after.scope,
-      after.target_email, after.target_name,
+      after.member_email, after.member_name,
       after.reason, after.comment,
       after.start_date, after.end_date,
       after.building_names,
@@ -300,8 +300,8 @@ function Requests_rowToObject_(row) {
     request_id:       String(row[0]),
     type:             String(row[1] == null ? '' : row[1]),
     scope:            String(row[2] == null ? '' : row[2]),
-    target_email:     Utils_cleanEmail(String(row[3] == null ? '' : row[3])),
-    target_name:      String(row[4] == null ? '' : row[4]),
+    member_email:     Utils_cleanEmail(String(row[3] == null ? '' : row[3])),
+    member_name:      String(row[4] == null ? '' : row[4]),
     reason:           String(row[5] == null ? '' : row[5]),
     comment:          String(row[6] == null ? '' : row[6]),
     start_date:       Utils_formatIsoDate(row[7]),
@@ -322,8 +322,8 @@ function Requests_normaliseInput_(row) {
     request_id:       String(row.request_id),
     type:             String(row.type),
     scope:            String(row.scope),
-    target_email:     Utils_cleanEmail(row.target_email),
-    target_name:      row.target_name == null ? '' : String(row.target_name),
+    member_email:     Utils_cleanEmail(row.member_email),
+    member_name:      row.member_name == null ? '' : String(row.member_name),
     reason:           row.reason == null ? '' : String(row.reason),
     comment:          row.comment == null ? '' : String(row.comment),
     start_date:       Utils_formatIsoDate(row.start_date),

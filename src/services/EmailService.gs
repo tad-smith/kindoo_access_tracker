@@ -30,7 +30,7 @@
 
 // Subject-line convention:
 //   - Start with "[Kindoo Access]" for trivial inbox filtering.
-//   - Name the actor (requester or nothing) and target where helpful.
+//   - Name the actor (requester or nothing) and member where helpful.
 //   - Carry the scope so a manager scanning their inbox can triage
 //     which ward the change is in without opening.
 
@@ -48,18 +48,18 @@ function EmailService_notifyManagersNewRequest(request, requesterPrincipal) {
   var requesterLabel = requesterPrincipal && requesterPrincipal.email
     ? requesterPrincipal.email
     : (request.requester_email || 'a requester');
-  var targetLabel = EmailService_personLabel_(request.target_name, request.target_email);
+  var memberLabel = EmailService_personLabel_(request.member_name, request.member_email);
   var typeLabel = EmailService_typeLabel_(request.type);
   var isRemove = request.type === 'remove';
   var verb = isRemove ? 'requested removal of' : ('submitted a new ' + typeLabel + ' request for');
 
   var subject = '[Kindoo Access] New request from ' + requesterLabel + ' (' + scopeLabel + ')';
   var lines = [
-    requesterLabel + ' ' + verb + ' ' + targetLabel + '.',
+    requesterLabel + ' ' + verb + ' ' + memberLabel + '.',
     '',
     'Scope: ' + scopeLabel,
     'Type: ' + typeLabel,
-    'Target: ' + targetLabel,
+    'Member: ' + memberLabel,
     'Reason: ' + (request.reason || '(none)')
   ];
   if (request.comment) lines.push('Comment: ' + request.comment);
@@ -81,7 +81,7 @@ function EmailService_notifyRequesterCompleted(request, managerPrincipal, seat) 
   }
 
   var scopeLabel = EmailService_scopeLabel_(request.scope);
-  var targetLabel = EmailService_personLabel_(request.target_name, request.target_email);
+  var memberLabel = EmailService_personLabel_(request.member_name, request.member_email);
   var typeLabel = EmailService_typeLabel_(request.type);
   var managerLabel = managerPrincipal && managerPrincipal.email ? managerPrincipal.email : 'a Kindoo Manager';
   var isRemove = request.type === 'remove';
@@ -90,13 +90,13 @@ function EmailService_notifyRequesterCompleted(request, managerPrincipal, seat) 
   // "completed" / "removed" rather than always "completed".
   var subjectVerb = isRemove ? 'has been processed' : 'has been completed';
   var subject = '[Kindoo Access] Your ' + (isRemove ? 'removal request' : 'request') +
-    ' for ' + (request.target_email || 'a user') + ' ' + subjectVerb;
+    ' for ' + (request.member_email || 'a user') + ' ' + subjectVerb;
   var leadVerb = isRemove ? 'processed your removal request for' : ('marked your ' + typeLabel + ' request for');
   var lines = [
-    managerLabel + ' ' + leadVerb + ' ' + targetLabel + (isRemove ? '.' : ' as complete.'),
+    managerLabel + ' ' + leadVerb + ' ' + memberLabel + (isRemove ? '.' : ' as complete.'),
     '',
     'Scope: ' + scopeLabel,
-    'Target: ' + targetLabel
+    'Member: ' + memberLabel
   ];
   if (request.type === 'add_temp' && seat) {
     lines.push('Start: ' + (seat.start_date || '(unset)'));
@@ -123,7 +123,7 @@ function EmailService_notifyRequesterRejected(request, managerPrincipal, reason)
   }
 
   var scopeLabel = EmailService_scopeLabel_(request.scope);
-  var targetLabel = EmailService_personLabel_(request.target_name, request.target_email);
+  var memberLabel = EmailService_personLabel_(request.member_name, request.member_email);
   var typeLabel = EmailService_typeLabel_(request.type);
   var managerLabel = managerPrincipal && managerPrincipal.email ? managerPrincipal.email : 'a Kindoo Manager';
   var isRemove = request.type === 'remove';
@@ -131,10 +131,10 @@ function EmailService_notifyRequesterRejected(request, managerPrincipal, reason)
   var subject = '[Kindoo Access] Your ' + (isRemove ? 'removal request' : 'request') + ' was rejected';
   var leadVerb = isRemove ? 'rejected your removal request for' : ('rejected your ' + typeLabel + ' request for');
   var lines = [
-    managerLabel + ' ' + leadVerb + ' ' + targetLabel + '.',
+    managerLabel + ' ' + leadVerb + ' ' + memberLabel + '.',
     '',
     'Scope: ' + scopeLabel,
-    'Target: ' + targetLabel,
+    'Member: ' + memberLabel,
     'Rejection reason: ' + (reason || '(none provided)'),
     ''
   ];
@@ -209,7 +209,7 @@ function EmailService_notifyManagersCancelled(request, requesterPrincipal) {
   }
 
   var scopeLabel = EmailService_scopeLabel_(request.scope);
-  var targetLabel = EmailService_personLabel_(request.target_name, request.target_email);
+  var memberLabel = EmailService_personLabel_(request.member_name, request.member_email);
   var typeLabel = EmailService_typeLabel_(request.type);
   var requesterLabel = requesterPrincipal && requesterPrincipal.email
     ? requesterPrincipal.email
@@ -221,10 +221,10 @@ function EmailService_notifyManagersCancelled(request, requesterPrincipal) {
     ? 'cancelled their pending removal request for'
     : ('cancelled their pending ' + typeLabel + ' request for');
   var lines = [
-    requesterLabel + ' ' + leadVerb + ' ' + targetLabel + '.',
+    requesterLabel + ' ' + leadVerb + ' ' + memberLabel + '.',
     '',
     'Scope: ' + scopeLabel,
-    'Target: ' + targetLabel,
+    'Member: ' + memberLabel,
     'Original reason: ' + (request.reason || '(none)'),
     '',
     'No action is needed. Queue: ' + EmailService_managerLink_()

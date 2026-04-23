@@ -87,16 +87,16 @@
       toast('Seat not found in the current view.', 'error');
       return;
     }
-    var personLine = (row.person_name ? escapeHtml(row.person_name) + ' — ' : '') +
-      '<span class="roster-email">' + escapeHtml(row.person_email) + '</span>';
-    $('rm-title').innerHTML = 'Remove access for ' + (row.person_name ? escapeHtml(row.person_name) : escapeHtml(row.person_email)) + '?';
+    var memberLine = (row.member_name ? escapeHtml(row.member_name) + ' — ' : '') +
+      '<span class="roster-email">' + escapeHtml(row.member_email) + '</span>';
+    $('rm-title').innerHTML = 'Remove access for ' + (row.member_name ? escapeHtml(row.member_name) : escapeHtml(row.member_email)) + '?';
     var dates = '';
     if (row.type === 'temp') {
       dates = '<div class="queue-field"><span class="label">Dates:</span> ' +
         escapeHtml(row.start_date || '?') + ' → ' + escapeHtml(row.end_date || '?') + '</div>';
     }
     $('rm-summary').innerHTML =
-      '<div class="queue-field"><span class="label">Person:</span> ' + personLine + '</div>' +
+      '<div class="queue-field"><span class="label">Member:</span> ' + memberLine + '</div>' +
       '<div class="queue-field"><span class="label">Type:</span> ' + escapeHtml(row.type) + '</div>' +
       '<div class="queue-field"><span class="label">Reason on file:</span> ' +
         escapeHtml(row.reason || '(none)') + '</div>' +
@@ -141,8 +141,8 @@
       }
       var draft = {
         type:         'remove',
-        target_email: row.person_email,
-        target_name:  row.person_name || '',
+        member_email: row.member_email,
+        member_name:  row.member_name || '',
         reason:       reason
       };
       $('rm-submit-btn').disabled = true;

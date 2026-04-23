@@ -213,7 +213,7 @@
     }
     if (row.action === 'auto_expire' && before) {
       return 'expired temp seat for ' +
-        (before.person_name || before.person_email || '(unknown)') +
+        (before.member_name || before.member_email || '(unknown)') +
         (before.end_date ? ' (end ' + before.end_date + ')' : '');
     }
     if (row.action === 'reinstall_triggers' && after && after.result && after.result.message) {
@@ -232,9 +232,9 @@
 
   function topKeysSummary_(obj) {
     if (!obj || typeof obj !== 'object') return String(obj);
-    // Pick a couple of "person-identifying" keys if they exist; fall
+    // Pick a couple of "member-identifying" keys if they exist; fall
     // back to the first 3 keys otherwise.
-    var prefs = ['person_name', 'person_email', 'target_email', 'email',
+    var prefs = ['member_name', 'member_email', 'email',
                  'building_name', 'ward_code', 'calling_name', 'scope'];
     var seen = {};
     var bits = [];

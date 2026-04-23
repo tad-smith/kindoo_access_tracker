@@ -14,8 +14,8 @@
       re-runs the duplicate check against the new scope.
 
   Duplicate check behaviour: calls ApiRequests_checkDuplicate on
-  target-email blur (debounced a little) and on scope change. If
-  existing seats exist for (scope, target_email), renders them inline
+  member-email blur (debounced a little) and on scope change. If
+  existing seats exist for (scope, member_email), renders them inline
   via ClientUtils rosterRowHtml. This WARNS — it does NOT block. The
   user can still submit; the manager applies judgment at complete time.
 
@@ -37,15 +37,24 @@
       </label>
     </div>
 
-    <div class="form-row">
-      <label>Target email<br>
-        <input type="email" id="f-target-email" required placeholder="person@example.com">
+    <div class="form-row temp-only hidden" id="temp-fields">
+      <label>Start date<br>
+        <input type="date" id="f-start-date">
+      </label>
+      <label>End date<br>
+        <input type="date" id="f-end-date">
       </label>
     </div>
 
     <div class="form-row">
-      <label>Target name<br>
-        <input type="text" id="f-target-name" placeholder="Display name">
+      <label>Member email (required)<br>
+        <input type="email" id="f-member-email" required placeholder="person@example.com">
+      </label>
+    </div>
+
+    <div class="form-row">
+      <label>Member name (required)<br>
+        <input type="text" id="f-member-name" required placeholder="Display name">
       </label>
     </div>
 
@@ -58,15 +67,6 @@
     <div class="form-row">
       <label>Comment<br>
         <textarea id="f-comment" rows="2" placeholder="Anything the manager should know — e.g. multi-building access, special access hours."></textarea>
-      </label>
-    </div>
-
-    <div class="form-row temp-only hidden" id="temp-fields">
-      <label>Start date<br>
-        <input type="date" id="f-start-date">
-      </label>
-      <label>End date<br>
-        <input type="date" id="f-end-date">
       </label>
     </div>
 
@@ -222,7 +222,7 @@
   var dupTimer = null;
 
   function checkDuplicate() {
-    var email = ($('f-target-email').value || '').trim();
+    var email = ($('f-member-email').value || '').trim();
     var host = $('duplicate-warning-host');
     if (!email || !selectedScope) {
       host.innerHTML = '';
@@ -259,7 +259,7 @@
   window.page_new_init = function (pageModel, queryParams, pane) {
     __pane = pane;
     $('f-type').addEventListener('change', syncTempFieldsToType);
-    $('f-target-email').addEventListener('blur', function () {
+    $('f-member-email').addEventListener('blur', function () {
       if (dupTimer) clearTimeout(dupTimer);
       dupTimer = setTimeout(checkDuplicate, 0);
     });
@@ -286,8 +286,8 @@
     btn.disabled = true;
     var draft = {
       type:           $('f-type').value,
-      target_email:   ($('f-target-email').value || '').trim(),
-      target_name:    ($('f-target-name').value || '').trim(),
+      member_email:   ($('f-member-email').value || '').trim(),
+      member_name:    ($('f-member-name').value || '').trim(),
       reason:         ($('f-reason').value || '').trim(),
       comment:        ($('f-comment').value || '').trim(),
       start_date:     ($('f-start-date') ? $('f-start-date').value : '') || '',
