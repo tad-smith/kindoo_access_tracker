@@ -16,9 +16,28 @@
 | F6 | **`users/{uid}` collection** alongside Firebase Auth's built-in user record. Minimal `{email, lastSignIn, displayName?}` doc; Cloud Function trigger refreshes contents on every sign-in. | Stable per-user record we can extend (custom claims trigger, future per-user prefs). The built-in `auth().getUser(uid)` record alone is fine but isn't queryable from Firestore. |
 | F7 | **Per-request role resolution; no custom claims for v1.** Read `kindooManagers` + `access` per request. Cache layer (deferred from Apps Script Chunk 10.5) added later only if measured need. | Custom claims add a 1-hour-staleness footnote on role removals plus extra plumbing (a Cloud Function on role-change events). Per-request lookup against doc-keyed collections is a single Firestore read; not a bottleneck at this scale. |
 | F8 | **Two Firebase projects: `kindoo-staging` and `kindoo-prod`.** Cloud Run, Firestore, and Hosting deploy to either based on `FIREBASE_PROJECT` env; same code, different data. | Standard practice; lets the migration script rehearse against a snapshot in staging without risking production. |
-| F9 | **Repo layout side-by-side during migration.** New code under `firebase/` (subdirs `client/`, `server/`, `shared/`, `functions/`, `scripts/`); existing `src/` and `identity-project/` untouched until Phase 10's cutover. | Keeps the live app deployable for rollback throughout. Phase 10 retires `src/` and `identity-project/`; their git history is preserved. |
+| F9 | **Repo layout side-by-side during migration.** New code under `firebase/` (subdirs `client/`, `server/`, `shared/`, `infra/`, `scripts/`); existing `src/` and `identity-project/` untouched until Phase 10's cutover. | Keeps the live app deployable for rollback throughout. Phase 10 retires `src/` and `identity-project/`; their git history is preserved. |
 | F10 | **Security rules at stake-scope only; API enforces roles.** Rules ensure an authenticated user has *some* membership in `stakeId` to read `stakes/{stakeId}/{document=**}`. Fine-grained role enforcement (bishopric-only-own-ward, etc.) lives in the API layer, as today. | Defense-in-depth via duplicated rule logic isn't worth the maintenance burden when the only Firestore client is the Cloud Run server (also enforced by rules: client SDK reads from Firestore are not used). Revisit if a direct-Firestore client is ever introduced. |
 | F11 | **Tests are non-negotiable; CI gates every PR.** Every phase ships with unit + integration tests (and E2E where applicable) covering the phase's acceptance criteria. No phase merges without green CI. Vitest for unit + integration, `@firebase/rules-unit-testing` for rules, supertest for HTTP, Playwright for E2E. Apps Script's loose `Utils_test_*` discipline is explicitly *not* the model. | Past pain on the Apps Script side: integration bugs surfaced only at user-facing-flow time, when context was warm but the bug was several chunks old. Testing rigor up front makes each phase independently shippable, which is what makes the 12-phase migration tractable. |
+| F12 | **HTTP only, no SSL.** The app is served over plain http at `kindoo.csnorth.org`; no cert provisioning, no https redirect. | This is an internal Church-membership-gated app, not a public-facing service. Sign-in itself happens in a Google-hosted https popup (Firebase Auth), and Google Sign-In state is stored in the browser's IndexedDB. The app origin being http adds browser warnings but does not meaningfully expand the attack surface given the threat model. Avoiding SSL eliminates cert-provisioning complexity at cutover and any future cert-renewal surprises. Revisit if a future browser change breaks auth SDKs on http origins, or if this app is ever repurposed outside the stake. |
+| F13 | **Cold starts accepted; no scheduled warm-up.** Cloud Run `min-instances=0` always. First request after >15 minutes of idle pays a ~2-4 second cold start. | Cloud Run's default idle timeout is 15 minutes — instances stay warm for 15 minutes after the last request, then shut down. At our volume (1-2 requests/week outside Sundays, bursty Sunday clusters), users hit roughly 3-5 cold starts per week total. A 3-second wait on an internal volunteer app is tolerable. Scheduled warm-up via Cloud Scheduler + Cloud Run Admin API PATCH is a documented GCP pattern and can be added post-cutover as a pure infra change with no code impact — the runbook `docs/runbooks/enable-warm-instances.md` documents the approach so it's ready if needed. Trigger for reconsidering: consistent user complaints about >5-second Sunday-morning loads. |
+
+## Team composition
+
+Work is done direct-to-main by Tad in collaboration with four Claude Code subagents defined in `.claude/agents/`:
+
+| Teammate | Primary directory | Also owns |
+|---|---|---|
+| `server-engineer` | `firebase/server/` | — |
+| `client-engineer` | `firebase/client/` | — |
+| `infra-engineer` | `firebase/infra/` | `firebase/{firebase.json, firestore.rules, firestore.indexes.json}`, `firebase/scripts/`, `docs/runbooks/` |
+| `docs-keeper` | `docs/` (excluding `docs/runbooks/`) | root `CLAUDE.md`, `firebase/*/CLAUDE.md` files, `TASKS.md` / `BUGS.md` structure |
+
+Shared: `firebase/shared/` is touched by both `server-engineer` and `client-engineer` as needed; coordination happens via `TASKS.md` entries.
+
+Tests live with the code that produces them — `server-engineer` writes server tests under `firebase/server/test/`; `client-engineer` writes client tests under `firebase/client/test/`. No dedicated test teammate.
+
+Work-in-flight and defects tracked in root-level `TASKS.md` and `BUGS.md`. Any teammate appends freely; `docs-keeper` owns the structure and archives resolved entries.
 
 ## Testing strategy
 
@@ -113,10 +132,10 @@ _Repo layout_
   ```
   firebase/
   ├── client/         # Vite + TS frontend
-  ├── server/         # Express + TS backend (Cloud Run)
+  ├── server/         # Express + TS backend (Cloud Run); Scheduler-invoked endpoints live here as regular Express routes under /api/internal/*
   ├── shared/         # types and pure functions shared between client and server
-  ├── functions/      # Cloud Scheduler-invoked endpoints (lives inside server/ or split — TBD in this phase)
-  ├── scripts/        # one-off scripts (data migration, custom-claims helpers, etc.)
+  ├── infra/          # GCP/Firebase infrastructure config (see Phase 1 Observability + Backup/DR sub-tasks for directory shape)
+  ├── scripts/        # one-off scripts (data migration, maintenance, ops)
   ├── firebase.json   # Hosting + emulator config + rewrites
   ├── firestore.rules # security rules (stub in this phase, real in Phase 3)
   ├── firestore.indexes.json
@@ -149,6 +168,29 @@ _Local emulators_
 - [ ] Add a top-level `npm run dev` that runs (in parallel): Firebase emulators, Cloud Run server (against emulator Firestore), and Vite dev server. One command, all green.
 - [ ] `.env.local` template documenting the env vars (`FIREBASE_PROJECT`, `FIRESTORE_EMULATOR_HOST`, etc.).
 
+_Deploy pipeline_
+
+- [ ] `npm run deploy:staging` and `npm run deploy:prod` scripts that: build server image → push to Artifact Registry → deploy Cloud Run → build client → deploy Hosting.
+- [ ] CI runs tests on every PR (see Test infrastructure below); deploys are still operator-triggered (`npm run deploy:*`) for now.
+
+_Observability foundations_
+
+- [ ] Cloud Logging captures Cloud Run request logs and Firestore operation logs automatically. Log-based metric definitions live in `firebase/infra/metrics/`: `5xx_count_by_route`, `firestore_rules_denied_count`, `auth_verification_failures`. Additional metrics (`importer_duration`, `expiry_duration`) land in Phase 8.
+- [ ] Cloud Monitoring alert policies live in `firebase/infra/alerts/` and land alongside the features they monitor, all with Tad's email as destination:
+  - Phase 1: 5xx rate > 1/minute sustained for 5 minutes.
+  - Phase 4: auth verification failures > 5/hour (possible token-replay or misconfig).
+  - Phase 8: Importer didn't complete within 10 minutes of Scheduler fire.
+  - Phase 8: Expiry didn't complete within 5 minutes of Scheduler fire. Silent expiry failure is the highest-cost observability gap — lingering temp seats are invisible until someone notices a member still has access they shouldn't.
+- [ ] Google Cloud Error Reporting (built-in, zero config) handles unhandled-exception tracking. No Sentry for v1.
+- [ ] `docs/runbooks/observability.md` documents metric definitions, alert thresholds, and how to add a new metric/alert.
+
+_Backup and disaster recovery_
+
+- [ ] Firestore Point-in-Time Recovery (PITR) enabled on `kindoo-prod` from Phase 1. Retains all writes for 7 days; any timestamp within the window is restorable via `gcloud firestore export --snapshot-time=<ts>`. Enable via `gcloud firestore databases update --database='(default)' --enable-pitr`. Zero ongoing cost.
+- [ ] Scheduled Firestore export: Cloud Scheduler job weekly (Sundays 02:00 America/Denver) → GCS bucket `gs://kindoo-prod-backups/YYYY-MM-DD/`. Bucket has a 90-day lifecycle rule. Storage cost: pennies/month at our volume. Config scripts live in `firebase/infra/backup/`.
+- [ ] `docs/runbooks/restore.md` covers three restore scenarios: PITR restore to a new Firestore database (for point-in-time recovery within the 7-day window), full restore from GCS export (for >7-day recovery or full DR), and partial restore of one collection via `gcloud firestore import --collection-ids=...`.
+- [ ] Post-cutover, the source LCR Sheet is no longer a backup. Explicitly called out in the Phase 10 cutover runbook.
+
 _Test infrastructure (per F11)_
 
 - [ ] Vitest configured for `client`, `server`, `shared`; shared base config (`vitest.base.ts`).
@@ -161,11 +203,6 @@ _Test infrastructure (per F11)_
 - [ ] `firebase emulators:exec` wrapper for CI: starts emulators, runs the test command, tears down.
 - [ ] Coverage reporter: vitest c8 → `coverage/` (gitignored). Per-suite report on every run (no fixed threshold; per F11).
 - [ ] `.github/workflows/test.yml`: runs lint + typecheck + test:unit + test:integration + test:rules + test:e2e + build on every push and PR. Failing step blocks the workflow.
-
-_Deploy pipeline_
-
-- [ ] `npm run deploy:staging` and `npm run deploy:prod` scripts that: build server image → push to Artifact Registry → deploy Cloud Run → build client → deploy Hosting.
-- [ ] CI runs tests on every PR (see Test infrastructure above); deploys are still operator-triggered (`npm run deploy:*`) for now.
 
 **Tests**
 
@@ -215,7 +252,7 @@ _CI_
 
 **Dependencies:** Phase 1.
 
-**Six proofs (mirroring `build-plan.md` Chunk 1's structure)**
+**Seven proofs (mirroring `build-plan.md` Chunk 1's structure)**
 
 1. **Login page loads.** Visiting the app while signed out shows a "Sign in with Google" button. No errors.
 2. **Sign-in produces a Firebase ID token.** Clicking the button triggers `signInWithPopup`; the client receives an ID token via `onIdTokenChanged`. The token is a real Firebase JWT (3 segments, signed by Google).
@@ -223,6 +260,7 @@ _CI_
 4. **Role resolver against Firestore.** `Auth_resolveRoles(stakeId, email)` reads `stakes/csnorth/kindooManagers` and `stakes/csnorth/access` and returns the union of roles for the verified email. Email canonicalization (D4) preserved — `Utils_emailsEqual` ported to TS.
 5. **Hello page renders with email + roles.** A Phase-2-only `pages/hello.ts` shows email + roles. Deleted in Phase 6 when real roster pages land. (Mirrors Chunk 1's disposable `Hello.html`.)
 6. **Failure modes correct.** No token → login. Token valid but no roles → `NotAuthorized`. Token tampered or signed by wrong key → 401, client clears stored token and shows login.
+7. **Firebase Auth on http origin.** Per F12 the app is served over http. Firebase Auth's popup runs in a Google-hosted https context, and IndexedDB persistence works on http origins today. Proof 7 is a deliberate early verification: sign in against the http staging origin, refresh the page, confirm the session persists. If a browser change has broken Auth SDKs on http since this plan was written, we want to know on day one of Phase 2, not mid-Phase-7. Document the result in `docs/changelog/phase-2.md`.
 
 **Sub-tasks**
 
@@ -231,6 +269,7 @@ _CI_
 - [ ] Client: Firebase SDK setup (`initializeApp` with project config); `auth.ts` module exporting `signIn()`, `signOut()`, `getIdToken()`, `onIdTokenChanged(cb)`.
 - [ ] Client: `rpc.ts` typed fetch wrapper. Auto-injects `Authorization: Bearer <token>`. Auto-retries once on 401 by forcing a token refresh via `getIdToken(true)`. Surfaces server-side error messages as toasts (preserves the existing pattern).
 - [ ] Server: Express auth middleware that calls `admin.auth().verifyIdToken(token)`; injects `req.principal`; throws 401 on bad token.
+- [ ] Server: auth middleware uses Firebase Admin SDK's `verifyIdToken`, which automatically accepts emulator-signed tokens when the `FIREBASE_AUTH_EMULATOR_HOST` env var is set on the process. The env var must be plumbed to every process that runs `verifyIdToken`: the emulator harness (set by `firebase emulators:start` / `emulators:exec`), the Cloud Run test-local process, and CI runners invoking supertest. `firebase/server/src/bootstrap.ts` logs a warning at startup if the env var is set while `NODE_ENV=production` — a prod deploy with this env var set would accept forged tokens.
 - [ ] Server: `Auth_resolveRoles(stakeId, email)` — reads `stakes/{stakeId}/kindooManagers` and `stakes/{stakeId}/access` with email-as-doc-ID lookups (one round-trip per collection at the canonical email).
 - [ ] Server: minimal `kindooManagersRepo` and `accessRepo` with `getAll()` and `getByEmail(email)` only — full CRUD lands in Phase 3.
 - [ ] Shared: port `Utils_emailsEqual`, `Utils_normaliseEmail`, `Utils_canonicalEmail`, `Utils_cleanEmail` to TS in `shared/email.ts`. Unit tests carry over from `Utils_test_*` (port to vitest or jest).
@@ -260,6 +299,9 @@ _Integration (Auth + Firestore emulators + supertest)_
   - Tampered token → 401.
   - Token signed by wrong project → 401.
   - Expired token → 401 (with the documented refresh-then-retry behaviour at the rpc layer).
+  - Emulator-signed token with `FIREBASE_AUTH_EMULATOR_HOST` set on the server process → accepted.
+  - Emulator-signed token with `FIREBASE_AUTH_EMULATOR_HOST` unset → rejected as 401 (confirms prod configuration rejects emulator tokens).
+  - Server startup with `FIREBASE_AUTH_EMULATOR_HOST` set AND `NODE_ENV=production` → startup log emits warning (verified via log capture).
 - [ ] `Auth_resolveRoles(stakeId, email)`:
   - Email in `kindooManagers` only → `[{type:'manager'}]`.
   - Email in `access` with `scope='stake'` only → `[{type:'stake'}]`.
@@ -278,7 +320,7 @@ _E2E (Playwright)_
 - [ ] Sign out → returns to login; subsequent rpc call → 401.
 - [ ] Hand-invalidated token in browser storage → next rpc → 401 → client clears state, returns to login (Proof 6).
 
-The six Phase-2 proofs each map to one or more tests above; no proof is "verified manually" — every one is a passing `it()` block.
+The seven Phase-2 proofs each map to one or more tests above; no proof is "verified manually" — every one is a passing `it()` block.
 
 **Acceptance criteria**
 
@@ -305,6 +347,7 @@ The six Phase-2 proofs each map to one or more tests above; no proof is "verifie
 - `signInWithPopup` is blocked by some browsers in incognito mode and by some popup blockers. Acceptable for v1; document in the user-facing FAQ. `signInWithRedirect` is the fallback if it becomes a real issue.
 - `verifyIdToken` makes a network call to fetch Google's signing keys — cached internally by the Admin SDK with the right TTL, so subsequent calls are cheap. No need to add our own cache.
 - The `onIdTokenChanged` listener fires not only on sign-in/sign-out but also every hour on auto-refresh. Make sure the rpc layer reads the *current* token via `getIdToken()` rather than a stale captured value.
+- Browsers are progressively restricting non-secure-context features. Firebase Auth, IndexedDB persistence, and `signInWithPopup` all currently work on http origins, but this is worth a quick verification in Proof 7 before committing to F12. If any piece fails, file in BUGS.md and escalate to Tad — F12 may need reconsideration.
 
 ---
 
@@ -353,6 +396,7 @@ _AuditLog discipline preserved_
 - [ ] Automated actors `"Importer"` and `"ExpiryTrigger"` preserved as literal strings.
 - [ ] `before_json` / `after_json` are stored as Firestore objects (not JSON strings) since Firestore handles nested objects natively. The `_json` suffix is dropped from field names; the new field names are `before` and `after`.
 - [ ] AuditLog read uses ID-based ordering (newest-first by reverse ID lex sort) so the manager Audit Log page doesn't need a separate timestamp index.
+- [ ] Firestore TTL policy: 365 days. Every audit doc carries a `ttl` field (`Timestamp`) set at write time to `now + 365 days`. Firestore's built-in TTL deletes docs whose `ttl` is in the past (within ~24h of expiration). Configure via `gcloud firestore fields ttls update ttl --collection-group=auditLog`. At our write volume, indefinite retention would be fine in absolute terms, but 365 days keeps operational history meaningful without unbounded growth and avoids privacy questions about retaining member email addresses in audit context indefinitely.
 
 _Composite-key uniqueness on Access_
 
@@ -402,6 +446,17 @@ _Security rules_
   ```
 - [ ] All writes are forbidden at the rules layer — only the Cloud Run server (using Admin SDK) can write. This matches the F10 stance.
 - [ ] Rules tests via `@firebase/rules-unit-testing` + vitest. At minimum: authenticated non-member can't read; member can read own stake's docs; non-server can't write.
+
+_Composite indexes_
+
+- [ ] Only `auditLog` needs server-side filtering and pagination; its volume justifies composite indexes. Every other collection is small enough (12 wards × small seat counts × a handful of requests per week) that loading the full collection and filtering in-memory in the server is simpler and cheaper than maintaining composite indexes.
+- [ ] Indexes enumerated in `firestore.indexes.json` for `auditLog`:
+  - `(action ASC, __name__ DESC)` — filter by action type, newest first.
+  - `(entity_type ASC, __name__ DESC)` — filter by entity type, newest first.
+  - `(actor_email ASC, __name__ DESC)` — filter by actor, newest first.
+  - Date-range filtering piggybacks on `__name__` since doc IDs are `<ISO ts>_<uuid>` and sort lexicographically by timestamp. No separate `timestamp` field index needed.
+- [ ] Every other collection — `seats`, `requests`, `kindooManagers`, `access`, `wards`, `buildings`, `templates` — loads fully into the server and filters in-memory. No composite indexes.
+- [ ] New queries that would otherwise need a composite index must first be evaluated against the "load-full-collection" alternative. Default is in-memory filtering; composite indexes require a measured justification.
 
 _Per-request memo (replaces `Sheet_getTab`)_
 
@@ -936,15 +991,42 @@ _Expiry service_
 
 _Endpoints_
 
-- [ ] `POST /api/internal/import` and `POST /api/internal/expiry` — invocable only by Cloud Scheduler (verified via OIDC token signed by Scheduler's service account) or manually by the manager via the existing Phase-7 wired UI (which authenticates as the manager).
-- [ ] Two distinct entry shapes: scheduler-triggered (loops over all stakes, runs only those whose configured hour matches) vs manager-triggered (single stakeId from the request).
+- [ ] `POST /api/internal/import` and `POST /api/internal/expiry` — Cloud Run routes protected by Cloud Run's built-in auth (service deployed with `--no-allow-unauthenticated`). Cloud Run verifies the OIDC token before the request reaches Express; Express middleware reads `x-goog-authenticated-user-email` (injected by Cloud Run when auth succeeds) and asserts it matches the expected scheduler-invoker SA email — defense-in-depth against any other caller inside the project with a valid OIDC token.
+- [ ] Manager-invoked equivalents (`POST /api/stakes/:stakeId/manager/importerRun`) use the regular user auth middleware — no OIDC, just the manager's Firebase ID token — reaching the same underlying service functions.
+- [ ] Two distinct entry shapes: scheduler-triggered (loops over all stakes, runs only those whose configured hour matches the current hour) vs manager-triggered (single stakeId from the request path).
+
+_Scheduler → Cloud Run authentication (three-piece setup)_
+
+All three must line up or you get an opaque 401:
+
+1. **Cloud Run service**: deployed with `--no-allow-unauthenticated`. Without this flag, the service is publicly invocable and OIDC verification is skipped at the platform layer — a silent security hole that passes local tests.
+
+2. **Dedicated service account**: `scheduler-invoker@<project>.iam.gserviceaccount.com`. Granted `roles/run.invoker` on the Cloud Run service only (not project-wide). Separate from the Cloud Run runtime SA — the runtime SA needs Firestore and Secret Manager access but doesn't need to invoke itself.
+
+3. **Cloud Scheduler job**: HTTP target, POST method, OIDC token auth using the scheduler-invoker SA, **audience = Cloud Run service URL root** (`https://kindoo-server-<hash>-uc.a.run.app`), NOT the full endpoint path. Audience mismatch is the most common failure mode and produces a 401 with no useful server-side log.
+
+Manual test recipe (verify before deploying a Scheduler job):
+
+```bash
+SERVICE_URL=https://kindoo-server-<hash>-uc.a.run.app
+TOKEN=$(gcloud auth print-identity-token \
+  --impersonate-service-account=scheduler-invoker@<project>.iam.gserviceaccount.com \
+  --audiences="$SERVICE_URL")
+curl -X POST "$SERVICE_URL/api/internal/expiry" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+A 200 response confirms the auth chain; any other status means one of the three pieces is wrong.
+
+Runbook: `docs/runbooks/scheduler-auth.md` — the three-piece checklist, the manual-test recipe above, and troubleshooting for the three canonical failure modes (audience mismatch → check Scheduler job config; missing invoker role → check IAM binding on the Cloud Run service; forgot `--no-allow-unauthenticated` → check Cloud Run service config).
 
 _Cloud Scheduler jobs_
 
-- [ ] **Single-job-loops-over-stakes pattern from day 1** even though there's only one stake. Avoids a Phase-11 refactor and keeps the free-tier quota (3 Scheduler jobs) intact regardless of stake count.
-- [ ] Job 1: hourly fire of `POST /api/internal/expiry`. The endpoint reads each stake's `expiry_hour`; runs expiry for stakes whose `expiry_hour == currentHour`.
-- [ ] Job 2: hourly fire of `POST /api/internal/import`. The endpoint reads each stake's `import_day`+`import_hour`; runs import for stakes where both match the current day-of-week and hour.
-- [ ] Acknowledged trade-off: hourly fires for expiry/import means up to 24×7 / 168 wakeups per week even for one stake. At Cloud Scheduler's free-tier (3 jobs unlimited fires), free. At Cloud Run free tier (2M req/month), trivial. Cleaner than per-stake jobs.
+- [ ] **Single-job-loops-over-stakes pattern from day 1**, even with one stake. Avoids a Phase-11 refactor; keeps the Scheduler free quota (3 jobs) intact regardless of stake count.
+- [ ] Job 1 — hourly fire of `POST /api/internal/expiry`. Endpoint reads each stake's `expiry_hour`; runs expiry for stakes where `expiry_hour == currentHour`.
+- [ ] Job 2 — hourly fire of `POST /api/internal/import`. Endpoint reads each stake's `import_day` + `import_hour`; runs import for stakes where both match the current day-of-week and hour.
+- [ ] Acknowledged trade-off: hourly fires mean up to 168 wakeups/week even for one stake. At Scheduler free tier (3 jobs, unlimited fires) and Cloud Run free tier (2M req/month), trivial.
 
 _Manual triggers_
 
@@ -1141,10 +1223,11 @@ _Cutover (production maintenance window)_
 - [ ] Run migration script against `kindoo-prod` Firebase project + the live Sheet.
 - [ ] Verify counts match.
 - [ ] Smoke test as each role on `kindoo-prod.web.app` (the default Hosting URL — DNS hasn't flipped yet).
-- [ ] DNS flip: `kindoo.csnorth.org` CNAME flips from the Cloudflare Worker target → Firebase Hosting verification target. Cloudflare Worker keeps the rule but it's now bypassed.
-- [ ] Wait for DNS propagation (Cloudflare TTL — minutes).
-- [ ] Verify Firebase Hosting custom-domain SSL provisioning succeeded.
-- [ ] Smoke test on `kindoo.csnorth.org`.
+_DNS flip_
+
+- [ ] `kindoo.csnorth.org` DNS record flips from the Cloudflare Worker target to Firebase Hosting's target. Cloudflare Worker keeps the rule but is now bypassed.
+- [ ] Per F12 (HTTP only, no SSL): the custom domain is served over http. No SSL cert is provisioned for `kindoo.csnorth.org`; no https redirect is configured in `firebase.json`. Users accessing `https://kindoo.csnorth.org` will see a browser warning — that's expected and documented in the in-app FAQ.
+- [ ] Verify immediately after flip: `curl -v http://kindoo.csnorth.org/api/health` returns the expected JSON; site loads in a browser over http; sign-in popup (Google's https) completes and persists back to the app.
 - [ ] Re-enable write access on the Sheet (Viewers can become Editors again — the Sheet is no longer the source of truth but stays human-readable for archive purposes).
 
 _Post-cutover monitoring_
@@ -1165,6 +1248,7 @@ _Doc updates_
 
 - [ ] `docs/spec.md` — auth section rewritten (Firebase Auth, Cloud Run, Firestore); stack section rewritten; concurrency section rewritten (transactions instead of script lock).
 - [ ] `docs/architecture.md` — D2, D6, D7, D10 superseded; new Firebase decisions added with new D-numbers (continue the sequence).
+- [ ] `docs/data-model.md` — rewrite for Firestore shape. Key changes to capture: doc-ID conventions (composite keys on Access, canonical emails on KindooManagers, slugged IDs on Buildings, `<ISO ts>_<uuid>` on AuditLog); `Config` tab collapse into the `stakes/{stakeId}` parent doc's fields; `auditLog` shape change (nested `before`/`after` objects rather than JSON strings, plus the `ttl` field and 365-day policy); source-row-hash preserved; composite-index enumeration for `auditLog`.
 - [ ] `docs/build-plan.md` Chunk 11 marked `[SUPERSEDED — Firebase Hosting handles custom domain natively, see firebase-migration.md Phase 10]`.
 - [ ] `docs/changelog/chunk-11-cloudflare.md` — never created; instead a `docs/changelog/firebase-cutover.md` entry summarizes Phases 1–10.
 - [ ] Identity project README archived under `docs/archive/identity-project-readme.md` for historical reference (the secret-rotation runbook is no longer relevant but the auth-pivot narrative is good context).
@@ -1207,7 +1291,7 @@ _Cutover (manual, during the maintenance window)_
 - [ ] Pre-cutover: Sheet read-only confirmed; Apps Script web app archived.
 - [ ] Migration script run against `kindoo-prod`; counts verified.
 - [ ] Smoke as each role on `kindoo-prod.web.app`.
-- [ ] DNS flip; SSL provisioning verified; smoke on `kindoo.csnorth.org`.
+- [ ] DNS flip; http loads verified (per F12, no SSL); smoke on `kindoo.csnorth.org`.
 - [ ] 24h monitoring: error rate < threshold (set during rehearsal); no rules-denied spikes.
 
 Coverage gate: integration tests pass against the real production-snapshot fixture before the cutover window opens. No manual cutover step is taken before the rehearsal in staging is fully green.
