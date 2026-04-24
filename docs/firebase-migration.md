@@ -146,7 +146,8 @@ _Repo layout_
 
 _Server skeleton (Cloud Run)_
 
-- [ ] Express + TS app with one endpoint: `GET /api/health` → `{ version, builtAt, env }`.
+- [ ] Express + TS app with one endpoint: `GET /api/health` → `{ version, builtAt, env }`. **Anonymous; mounted before any auth middleware.** This is the only anonymous endpoint in the entire app — Phase 5's cold-start warm-up ping depends on it being reachable without a token, and Phases 2/4/8 mount auth in front of every other route. Document the mounting order with an inline comment in `server/src/app.ts` so a future refactor doesn't accidentally hide `/api/health` behind auth.
+- [ ] Cloud Run service deploys with `--allow-unauthenticated` (platform layer is open; Express middleware gates every route except `/api/health`). Required so the warm-up ping reaches the service before any sign-in happens. Locked in by F12 + Phase 8's two-piece OIDC architecture; do not flip back to `--no-allow-unauthenticated` without revisiting the warm-up design.
 - [ ] Dockerfile (multi-stage: build TS, copy `dist/` to slim Node runtime image). Node 22 LTS.
 - [ ] `npm run dev:server` runs locally on port 8080 against the Firestore emulator.
 - [ ] Stamp build version (`firebase/server/src/version.ts`) at build time via a script (mirrors `scripts/stamp-version.js`).
@@ -652,6 +653,12 @@ _Project structure_
 - [ ] `firebase/client/src/pages/` — one module per page; each exports `init(model, queryParams)` and optional `teardown()`.
 - [ ] `firebase/client/src/styles/` — plain CSS (port `Styles.html`); split into `base.css`, `nav.css`, `roster.css`, `dashboard.css`, etc.
 
+_Cold-start warm-up ping_
+
+- [ ] At the very top of `firebase/client/src/main.ts`, before any imports that touch Firebase Auth: `fetch('/api/health', { method: 'GET', credentials: 'omit' }).catch(() => {});` with an inline comment explaining the rationale: fires the warm-up request before the auth flow begins so Cloud Run's cold-start spin-up (~2–4 s) overlaps with the user's 8–20 s Google sign-in flow, making the F13 cold-start trade-off invisible to users on Sunday-morning first loads.
+- [ ] Dependencies: requires Cloud Run to be deployed with `--allow-unauthenticated` (per Phase 8) and `/api/health` to live outside the auth middleware so an anonymous GET succeeds. The ping is fire-and-forget — response body ignored, failures swallowed.
+- [ ] Per F13 + the `client-engineer` invariant on rpc-wrapper-only fetches, this is the **single documented exception** to "rpc wrapper is the only fetch to authenticated endpoints." The inline code comment cites both.
+
 _Auth + rpc_
 
 - [ ] `auth/firebase.ts` — initializeApp + onIdTokenChanged + signIn / signOut helpers.
@@ -733,6 +740,7 @@ _E2E (Playwright)_
 - [ ] Direct deep-link: open `localhost:5173/?p=hello` cold → bootstraps + lands on hello.
 - [ ] Mobile viewport (375×667): no horizontal scroll; nav usable; topbar legible.
 - [ ] Topbar shows email after sign-in; version stamp visible; sign-out button works.
+- [ ] Cold-start warm-up ping: Playwright network interception confirms `GET /api/health` fires on initial page load BEFORE any sign-in interaction and BEFORE Firebase Auth state initialization (verified by request ordering — the warm-up request must precede any `accounts.google.com` or Firebase Auth SDK network activity). Anonymous request (no `Authorization` header). Failure of the `/api/health` request must not block the sign-in flow.
 
 Coverage gate: every render helper in `client/src/lib/` has at least one unit test; every E2E listed above has a passing Playwright spec.
 
@@ -991,19 +999,17 @@ _Expiry service_
 
 _Endpoints_
 
-- [ ] `POST /api/internal/import` and `POST /api/internal/expiry` — Cloud Run routes protected by Cloud Run's built-in auth (service deployed with `--no-allow-unauthenticated`). Cloud Run verifies the OIDC token before the request reaches Express; Express middleware reads `x-goog-authenticated-user-email` (injected by Cloud Run when auth succeeds) and asserts it matches the expected scheduler-invoker SA email — defense-in-depth against any other caller inside the project with a valid OIDC token.
+- [ ] `POST /api/internal/import` and `POST /api/internal/expiry` — **authenticated** like every endpoint except `/api/health`. Express middleware verifies an OIDC bearer token via `google-auth-library`'s `OAuth2Client.verifyIdToken`: signature against Google's public keys, `audience === CLOUD_RUN_SERVICE_URL`, `payload.email === SCHEDULER_INVOKER_SA_EMAIL`, and `payload.email_verified === true`. Unauthenticated requests are rejected with 403 in middleware before the route handler runs. The Cloud Run service is deployed `--allow-unauthenticated` so the platform layer does not gate — required so the client's Phase-5 warm-up ping reaches `/api/health` anonymously — but Express still gates every route except `/api/health`.
 - [ ] Manager-invoked equivalents (`POST /api/stakes/:stakeId/manager/importerRun`) use the regular user auth middleware — no OIDC, just the manager's Firebase ID token — reaching the same underlying service functions.
 - [ ] Two distinct entry shapes: scheduler-triggered (loops over all stakes, runs only those whose configured hour matches the current hour) vs manager-triggered (single stakeId from the request path).
 
-_Scheduler → Cloud Run authentication (three-piece setup)_
+_Scheduler → Cloud Run authentication (two-piece setup)_
 
-All three must line up or you get an opaque 401:
+Both must line up or Express middleware rejects with 403:
 
-1. **Cloud Run service**: deployed with `--no-allow-unauthenticated`. Without this flag, the service is publicly invocable and OIDC verification is skipped at the platform layer — a silent security hole that passes local tests.
+1. **Dedicated service account**: `scheduler-invoker@<project>.iam.gserviceaccount.com`. Express middleware reads `SCHEDULER_INVOKER_SA_EMAIL` from env and compares against `payload.email` on the verified OIDC token. `roles/run.invoker` on this SA is **optional** — Cloud Run doesn't consult IAM since the service is `--allow-unauthenticated`; all enforcement happens in Express. The SA still needs to exist so its OIDC tokens are issuable, and stays separate from the Cloud Run runtime SA (which needs Firestore + Secret Manager access).
 
-2. **Dedicated service account**: `scheduler-invoker@<project>.iam.gserviceaccount.com`. Granted `roles/run.invoker` on the Cloud Run service only (not project-wide). Separate from the Cloud Run runtime SA — the runtime SA needs Firestore and Secret Manager access but doesn't need to invoke itself.
-
-3. **Cloud Scheduler job**: HTTP target, POST method, OIDC token auth using the scheduler-invoker SA, **audience = Cloud Run service URL root** (`https://kindoo-server-<hash>-uc.a.run.app`), NOT the full endpoint path. Audience mismatch is the most common failure mode and produces a 401 with no useful server-side log.
+2. **Cloud Scheduler job**: HTTP target, POST method, OIDC token auth using the scheduler-invoker SA, **audience = Cloud Run service URL root** (`https://kindoo-server-<hash>-uc.a.run.app`), NOT the full endpoint path. Audience mismatch is the most common failure mode and produces a 403 from Express middleware.
 
 Manual test recipe (verify before deploying a Scheduler job):
 
@@ -1017,9 +1023,9 @@ curl -X POST "$SERVICE_URL/api/internal/expiry" \
   -H "Content-Type: application/json"
 ```
 
-A 200 response confirms the auth chain; any other status means one of the three pieces is wrong.
+A 200 response confirms the auth chain; any other status means one piece is wrong.
 
-Runbook: `docs/runbooks/scheduler-auth.md` — the three-piece checklist, the manual-test recipe above, and troubleshooting for the three canonical failure modes (audience mismatch → check Scheduler job config; missing invoker role → check IAM binding on the Cloud Run service; forgot `--no-allow-unauthenticated` → check Cloud Run service config).
+Runbook: `docs/runbooks/scheduler-auth.md` — the two-piece checklist, the manual-test recipe above, and troubleshooting for the canonical failure modes (audience mismatch → check Scheduler job audience matches Cloud Run service URL root; SA email mismatch → check `SCHEDULER_INVOKER_SA_EMAIL` env var on Cloud Run matches the SA the Scheduler job uses; middleware bypassed on `/api/internal/*` → check Express route mounting and that the OIDC middleware is applied before the route handler).
 
 _Cloud Scheduler jobs_
 

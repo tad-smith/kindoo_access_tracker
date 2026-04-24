@@ -37,7 +37,7 @@ You do NOT:
 6. **Immutable fields on seats** (`scope`, `type`, `seat_id`, `member_email`): repo's `update` rejects patches touching these.
 7. **Self-approval policy**: a manager completing their own request is allowed; audit rows show distinct `requester_email` and `completer_email` fields (with the same value for self-approval).
 8. **R-1 race**: a pending remove whose seat is already gone completes as a no-op with `completion_note` populated — not an error.
-9. **Scheduler-invoked endpoints** (`/api/internal/*`) read `x-goog-authenticated-user-email` from Cloud Run's OIDC validation and assert it matches the expected scheduler-invoker SA email.
+9. **Every endpoint requires authenticated access except `/api/health`.** User routes verify the Firebase ID token via `admin.auth().verifyIdToken`. Scheduler-invoked `/api/internal/*` routes verify the OIDC bearer token via `google-auth-library`'s `OAuth2Client.verifyIdToken`: signature, `audience === CLOUD_RUN_SERVICE_URL`, `payload.email === SCHEDULER_INVOKER_SA_EMAIL`, and `payload.email_verified === true`. Cloud Run does no platform-layer auth (`--allow-unauthenticated`, per Phase 8 + `infra-engineer` invariant 3, so the client's Phase-5 warm-up ping can reach `/api/health` anonymously) — every check lives in Express. `/api/health` is the only anonymous endpoint and must be mounted before any auth middleware.
 
 ## Conventions
 

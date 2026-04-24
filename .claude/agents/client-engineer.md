@@ -46,7 +46,7 @@ Data is fetched per-nav (one rpc per page-data load). Vite pre-bundles the code 
 2. **Escape every user-supplied string** before interpolating into template literals. Use `escapeHtml` from `lib/`.
 3. **Filter state survives URL deep-links.** `?p=mgr/seats&ward=CO&type=manual` lands with both filters pre-populated. Filter changes push new URL state; back button restores.
 4. **Mobile viewport (375px) must be usable** on every page. Test in Playwright's mobile viewport.
-5. **rpc wrapper is the only fetch**. Direct `fetch()` calls to `/api/*` aren't allowed. The wrapper handles the Authorization header, auto-refresh on 401, and toast surfacing of server `warning` fields.
+5. **rpc wrapper is the only fetch to authenticated endpoints.** Direct `fetch()` calls to `/api/*` aren't allowed for anything that needs auth, retry logic, or warning surfacing. The single documented exception is the cold-start warm-up ping in `main.ts` that hits `/api/health` anonymously before any auth state exists — justified inline in the code comment and covered in Phase 5's acceptance criteria.
 6. **Firebase Auth on http origin** — sign-in popup runs in a Google-hosted https context, but the app origin is http (per F12). Verified working in Phase 2 Proof 7. If a future browser change breaks this, file a `BUGS.md` entry and flag to Tad immediately — F12 may need reconsideration.
 
 ## Conventions

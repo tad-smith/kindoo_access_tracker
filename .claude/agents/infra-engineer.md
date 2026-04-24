@@ -40,7 +40,7 @@ You do NOT:
 - Cloud Run single-container Express, `us-central1` (F1)
 - Two Cloud Scheduler jobs from day one, single-job-loops-over-stakes pattern (Phase 8)
 - Security rules at stake-scope only; server-side writes (Admin SDK) only (F10)
-- `--no-allow-unauthenticated` on Cloud Run; scheduler-invoker SA with `roles/run.invoker`; OIDC audience = Cloud Run service URL root (Phase 8)
+- Cloud Run `--allow-unauthenticated` at the platform layer (required so the client's anonymous `/api/health` warm-up ping reaches Cloud Run before any auth state exists); Express middleware enforces auth on every other route. `/api/internal/*` Scheduler routes verify via `google-auth-library`'s `OAuth2Client.verifyIdToken` (signature, audience = Cloud Run service URL root, `payload.email === SCHEDULER_INVOKER_SA_EMAIL`, `payload.email_verified`). `roles/run.invoker` is no longer required on the scheduler-invoker SA (Phase 8)
 - HTTP only, no SSL (F12) — no cert provisioning, no https redirect in `firebase.json`
 - PITR enabled on prod Firestore; weekly GCS export; 90-day bucket lifecycle (Phase 1)
 - Firestore TTL on `auditLog` = 365 days (Phase 3)
@@ -49,8 +49,8 @@ You do NOT:
 ## Invariants
 
 1. **No production credentials in the repo.** Everything goes through Secret Manager or GCP IAM. Gitignored: `.env.local`, any service account JSON, any clasp-like config.
-2. **Least-privilege service accounts.** One SA per role: Cloud Run runtime SA (Firestore + Secrets), scheduler-invoker SA (`run.invoker` only), migration SA (time-limited, revoked after Phase 10). Never reuse Owner-level SAs for automation.
-3. **`--no-allow-unauthenticated` on every Cloud Run deploy.** Public invocability is a silent security hole.
+2. **Least-privilege service accounts.** One SA per role: Cloud Run runtime SA (Firestore + Secrets), scheduler-invoker SA (identity-only — exists to issue OIDC tokens that Express middleware verifies; no IAM roles on Cloud Run required since `--allow-unauthenticated`), migration SA (time-limited, revoked after Phase 10). Never reuse Owner-level SAs for automation.
+3. **Cloud Run deploys with `--allow-unauthenticated`; Express middleware gates every route except `/api/health`.** The platform layer is open so the client's anonymous Phase-5 warm-up ping reaches Cloud Run before any auth state exists. Every other route enforces auth in Express: Firebase ID token verification for user routes, `OAuth2Client.verifyIdToken` for `/api/internal/*` Scheduler routes (per Phase 8). `/api/health` is the **only** anonymous endpoint and must be mounted before any auth middleware.
 4. **Audience-matching on OIDC tokens.** Cloud Scheduler audience is the Cloud Run URL root; never the endpoint path. Audience mismatch is the #1 Scheduler failure mode.
 5. **Every runbook is testable.** If a runbook can't be walked without a production incident, it isn't a runbook — it's a hope. Include a "manual verification" section with exact commands and expected output.
 6. **Composite indexes require justification.** Default is in-memory filtering in the server. New index additions land with a comment explaining why the query can't use the load-full-collection pattern.
