@@ -1,5 +1,7 @@
 # Firebase migration plan
 
+> **Status: paused (2026-04-24).** The Apps Script implementation continues to run in production; the port is being deferred until real-world usage gives a clearer picture of whether the pain points (auth complexity, no-API workarounds, deployer-as-actor identity gymnastics) actually justify a 2–3 week rewrite. This document is preserved as planning artifact — every decision and trade-off below stands ready to resume from. The four subagent definitions originally at `.claude/agents/` have moved to `.claude/agents/firebase/` so Claude Code's auto-discovery doesn't surface them while we're working on the Apps Script side. Move them back if/when this plan reactivates.
+
 12 phases, each independently reviewable and shippable. Migrates the Apps Script implementation to Firebase **and** lifts the data model to multi-tenant in one continuous arc — Phases 1–10 port the existing single-stake app to Firebase (with the data already shaped for multi-tenancy), Phases 11–12 expose the multi-tenant surface so additional stakes can be onboarded. The Apps Script app stays in production through the end of Phase 10; cutover is a single maintenance window in Phase 10. Phase B (11+12) lands after cutover.
 
 `docs/build-plan.md` is the build trail for the Apps Script implementation and stays as historical record. `docs/spec.md` describes behaviour and is updated in lockstep with each phase that changes it (the auth and routing sections take the biggest hits, in Phases 2, 5, and 11). `docs/architecture.md` gets substantially rewritten across Phases 1–4; sections that survive verbatim (request lifecycle state machine, audit-log shape, role union model, email policy) are explicitly left untouched.
@@ -24,7 +26,7 @@
 
 ## Team composition
 
-Work is done direct-to-main by Tad in collaboration with four Claude Code subagents defined in `.claude/agents/`:
+Work is done direct-to-main by Tad in collaboration with four Claude Code subagents in `.claude/agents/firebase/` (moved out of the auto-discovery path while the migration is paused — see the status banner above):
 
 | Teammate | Primary directory | Also owns |
 |---|---|---|
