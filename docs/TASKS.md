@@ -71,3 +71,25 @@ Migrated `manager/AuditLog.html` inline: replaced its custom `<tr>`-based `rowHt
 - If the user later wants the full rename: update `docs/spec.md` §3.1, `docs/data-model.md` section headings, `docs/sheet-setup.md` tab list, plus `src/services/Setup.gs`, `src/repos/TemplatesRepo.gs`, `src/services/Importer.gs` callsites.
 
 **Files touched.** `src/ui/manager/Config.html` only.
+
+---
+
+## 5. Rebuild the Dashboard screen
+
+**Why / what.** The manager Dashboard (the default landing for the `manager` role) needs a redesign. Today it's five cards per `spec.md` §5.3: pending-request counts, recent activity, per-scope utilization, over-cap warnings, and last-operations timestamps, all driven by a single `ApiManager_dashboard` rpc. The user has flagged this as wanting a rebuild; the *what* of the rebuild is still open.
+
+**Decisions to make before coding.**
+- Which cards stay, which go, and what replaces them. Is the goal more-dense (more signals per screen), less-dense (a focused "what needs attention right now" landing), or a different shape entirely (e.g., a feed of events rather than counts + bars)?
+- New data the server needs to shape. The current dashboard is one round-trip; a rebuild that needs new aggregates (e.g., request-type breakdown over time, per-requester throughput, expiry forecast) might need additions to `ApiManager_dashboard` or a new endpoint.
+- Interaction model. Today every tile deep-links into a filtered downstream page. Keep that pattern? Add inline drill-down / expand-in-place?
+- Mobile layout. Current grid is `repeat(auto-fit, minmax(300px, 1fr))` and collapses to single-column at ≤ 640px. If the new design changes card size / count, confirm it still reads at ~375px.
+
+**Files likely touched.** `src/ui/manager/Dashboard.html`, `src/api/ApiManager.gs` (`ApiManager_dashboard` aggregate + any new fields), `src/services/Rosters.gs` (if the new utilization view needs a different summary shape), `src/ui/Styles.html` (`.dashboard-*` rules), `docs/spec.md` §5.3, `docs/architecture.md` (the utilization-math section near the `Rosters_buildContext_` reuse note), and a changelog entry if the rebuild is substantial enough to warrant its own chunk.
+
+---
+
+## 6. Use OAuth to try and get rid of the Apps Script warning
+
+---
+
+## 7. Fix the remove button on Roster screens
