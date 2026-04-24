@@ -79,7 +79,7 @@ Repro steps / observed vs expected / context.
 4. Update `architecture.md` if a new invariant or decision landed. New decisions get new D-numbers (continue the existing sequence).
 5. Update `data-model.md` if any collection shape or doc-ID convention changed.
 6. Update relevant `CLAUDE.md` files if conventions changed.
-7. Write `docs/changelog/<phase-number>-<short-name>.md` with:
+7. Write `docs/changelog/phase-N-<slug>.md` (kebab-case slug, e.g. `phase-1-skeleton-emulators.md`) using `docs/changelog/template.md` as the starting shape, with:
    - What changed (bullet summary)
    - Why (trade-offs and alternatives considered)
    - What didn't change that you'd expect to (non-changes are load-bearing)
