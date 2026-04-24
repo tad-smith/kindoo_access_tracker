@@ -5,9 +5,6 @@
   ward + type. Per request, renders:
     - metadata (type, scope, member, requester, reason, comment,
       submitted at, dates when add_temp)
-    - "what the Seats row will look like post-complete" preview, using
-      the Chunk-5 rosterRowHtml so the preview matches what the
-      manager sees on AllSeats / bishopric Roster.
     - Duplicate warning inline if member_email already has active
       seats in the request's scope (reuses the server's duplicate
       preview — same check the client-side NewRequest uses).
@@ -100,8 +97,8 @@
   var populatedFilterOpts = false;
 
   // Captured from every listRequests response so the Complete-confirmation
-  // dialog + the seat-preview rendering know the full buildings catalogue
-  // and each ward's default building. Keyed lookups below.
+  // dialog knows the full buildings catalogue and each ward's default
+  // building. Keyed lookups below.
   var wardsByCode = {};         // ward_code → { ward_name, building_name }
   var buildingsCatalogue = [];  // list of building_name strings
   var rowsByRequestId = {};     // request_id → request row (for modal payload)
@@ -162,36 +159,12 @@
     return def ? [def] : [];
   }
 
-  // Build a "what this seat will look like after complete" preview row.
-  // Matches the Rosters_mapRow_ shape so rosterRowHtml can render it.
-  // building_names shows whatever's pre-selected (requester's choice
-  // for stake, ward default for bishopric) so the preview accurately
-  // reflects what'll land in the Seats tab if the manager accepts the
-  // defaults on the confirmation dialog.
-  function previewSeatRow(req) {
-    return {
-      seat_id:        '',
-      scope:          req.scope,
-      type:           req.type === 'add_manual' ? 'manual' : 'temp',
-      member_email:   req.member_email || '',
-      member_name:    req.member_name || '',
-      calling_name:   '',
-      reason:         req.reason || '',
-      start_date:     req.start_date || '',
-      end_date:       req.end_date || '',
-      building_names: preselectedBuildingsFor(req).join(', '),
-      expiry_badge:   ''
-    };
-  }
-
   function requestCardHtml(req) {
     var isPending = req.status === 'pending';
     var isRemove  = req.type === 'remove';
 
     // duplicate_existing only matters for add_manual / add_temp (managers
-    // use it to spot a person already seated). For remove, the analogous
-    // signal is current_seat — we render the live row that will be
-    // deleted, or an "already removed (no-op)" indicator if it's gone.
+    // use it to spot a person already seated).
     var dupBlock = '';
     if (isPending && !isRemove && req.duplicate_existing && req.duplicate_existing.length > 0) {
       dupBlock =
@@ -216,49 +189,13 @@
         escapeHtml(req.comment) + '</div>'
       : '';
 
-    // Preview + action buttons only render on pending rows. Terminal
-    // rows get a resolved-summary block (status badge, who resolved
-    // it, when, and the rejection reason when applicable) plus a
-    // disabled/absent action row.
-    var previewBlock = '';
+    // Action buttons only render on pending rows. Terminal rows get a
+    // resolved-summary block (status badge, who resolved it, when, and
+    // the rejection reason when applicable) plus a disabled/absent
+    // action row.
     var actionsBlock = '';
     var resolvedBlock = '';
     if (isPending) {
-      if (isRemove) {
-        if (req.current_seat_status === 'removable' && req.current_seat) {
-          previewBlock =
-            '<div class="queue-field queue-preview">' +
-              '<div class="label">Seat to delete on Complete:</div>' +
-              renderRosterTable([req.current_seat], { emptyMsg: '', preview: 'remove' }) +
-            '</div>';
-        } else if (req.current_seat_status === 'auto_only') {
-          previewBlock =
-            '<div class="queue-field queue-preview">' +
-              '<div class="noop-warning">' +
-                '<strong>Only an LCR-managed seat remains</strong> — no manual/temp seat to delete. ' +
-                'Complete will close the request without changing the roster (the auto seat stays; ' +
-                'remove the calling in LCR if access should end).' +
-              '</div>' +
-            '</div>';
-        } else {
-          // current_seat_status === 'none' (R-1 race) — also covers an
-          // older queue payload missing the status field.
-          previewBlock =
-            '<div class="queue-field queue-preview">' +
-              '<div class="noop-warning">' +
-                '<strong>Seat already removed.</strong> ' +
-                'Complete is a no-op — the request will close without deleting anything ' +
-                '(the requester still gets a completion email noting that nothing changed).' +
-              '</div>' +
-            '</div>';
-        }
-      } else {
-        previewBlock =
-          '<div class="queue-field queue-preview">' +
-            '<div class="label">Seat preview (what will be created on Complete):</div>' +
-            renderRosterTable([previewSeatRow(req)], { emptyMsg: '' }) +
-          '</div>';
-      }
       actionsBlock =
         '<div class="queue-card-actions">' +
           '<button class="btn"            data-act="complete">Mark Complete</button>' +
@@ -310,7 +247,6 @@
       commentLine +
       datesLine +
       dupBlock +
-      previewBlock +
       resolvedBlock +
       actionsBlock +
     '</div>';
