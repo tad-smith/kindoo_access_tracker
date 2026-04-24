@@ -213,7 +213,7 @@ email	scope	calling	source
 
 Leave empty. `source='importer'` rows are populated by the importer; `source='manual'` rows are added from the manager Access page in-app.
 
-**Migration note (existing installs predating TASKS.md #1):** if this tab originally had 3 columns, append `source` as column D by hand. Existing rows' empty `source` cells read as `importer` at the code boundary; no backfill of existing rows is required.
+**Migration note (existing installs predating TASKS.md #1):** if this tab originally had 3 columns, the 4th `source` header can be added either by running **Kindoo Admin → Setup sheet…** (the post-TASKS.md-#1 `setupSheet` auto-repairs missing trailing header columns; watch for a `REPAIRED Access (added 1 missing header: source)` line in the log) or by typing it in column D by hand. Existing rows' empty `source` cells read as `importer` at the code boundary; no backfill of existing rows is required.
 
 ### Tab 8 — `Seats`
 

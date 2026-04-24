@@ -105,25 +105,54 @@ function Setup_ensureTab_(ss, def, report) {
     report.push('CREATED  ' + def.name + '  (' + def.headers.length + ' cols)');
     return;
   }
-  // Existing tab — verify headers byte-for-byte.
+  // Existing tab — inspect the header row up to max(actual, canonical)
+  // so trailing additions (the usual schema-bump case — new column at
+  // the end of the canonical list) are visible as empty cells.
   var lastCol = Math.max(sheet.getLastColumn(), def.headers.length);
   var existing = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  var driftCol = -1;
+
+  // Per-column classification:
+  //   match   → existing[h] is exactly the canonical name. OK.
+  //   missing → existing[h] is empty. Auto-repair by writing the
+  //             canonical name into the cell. Safe because existing
+  //             data rows carry no values beyond the previous last
+  //             column, and every repo's read boundary tolerates an
+  //             empty cell as the zero value (see e.g. Access source
+  //             → 'importer' fallback in AccessRepo).
+  //   drift   → existing[h] is non-empty and differs from canonical.
+  //             Real drift: a rename, a reorder, or a stray value.
+  //             We refuse to touch and ask the operator to fix by
+  //             hand — auto-correcting this risks misaligning data.
+  var missing = [];
   for (var h = 0; h < def.headers.length; h++) {
-    if (String(existing[h]) !== def.headers[h]) {
-      driftCol = h;
-      break;
-    }
-  }
-  if (driftCol >= 0) {
-    var msg = 'HEADER DRIFT in ' + def.name + ' at column ' + (driftCol + 1) +
-      ': expected "' + def.headers[driftCol] +
-      '", got "' + String(existing[driftCol]) + '". Fix by hand; setupSheet refuses to touch this tab.';
+    var cur = String(existing[h] == null ? '' : existing[h]);
+    if (cur === def.headers[h]) continue;
+    if (cur === '') { missing.push(h); continue; }
+    var msg = 'HEADER DRIFT in ' + def.name + ' at column ' + (h + 1) +
+      ': expected "' + def.headers[h] +
+      '", got "' + cur + '". Fix by hand; setupSheet refuses to touch this tab.';
     Logger.log(msg);
     report.push('SKIP     ' + def.name + '  (header drift — see log)');
     return;
   }
-  report.push('OK       ' + def.name);
+
+  if (missing.length === 0) {
+    report.push('OK       ' + def.name);
+    return;
+  }
+
+  // Auto-repair the missing headers. Each cell is written individually
+  // so non-contiguous gaps are handled correctly (setValues with a
+  // range is tempting but would need to round-trip the other cells).
+  for (var m = 0; m < missing.length; m++) {
+    sheet.getRange(1, missing[m] + 1)
+      .setValue(def.headers[missing[m]])
+      .setFontWeight('bold');
+  }
+  if (sheet.getFrozenRows() < 1) sheet.setFrozenRows(1);
+  var names = missing.map(function (c) { return def.headers[c]; }).join(', ');
+  report.push('REPAIRED ' + def.name + '  (added ' + missing.length +
+    ' missing header' + (missing.length === 1 ? '' : 's') + ': ' + names + ')');
 }
 
 function Setup_seedConfig_(ss, report) {

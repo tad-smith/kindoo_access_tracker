@@ -556,21 +556,24 @@ _Proof 6 — failure modes_
 
 **Dependencies:** a stable deploy from Chunk 10 (the Chunk 10.5 / 10.6 performance work is independent of Chunk 11 and can ship before OR after; ordering was "10.5, 10.6, then 11" because the performance gap was felt before the custom-domain need).
 
+**Auth-pattern note.** This chunk was originally drafted for the Google-Sign-In + OAuth Client ID stack. That path was abandoned in Chunk 1 for the two-deployment Session+HMAC pattern (see `open-questions.md` A-8 and `changelog/chunk-1-scaffolding.md`). With HMAC-signed session tokens there's no OAuth client to allowlist and no GSI redirect to worry about — the custom-domain work is a plain reverse proxy plus a one-Config-cell update. The sub-tasks and acceptance criteria below reflect the shipped auth stack, not the original plan.
+
 **Sub-tasks**
 
-- [ ] Write a Cloudflare Worker that proxies `kindoo.csnorth.org/*` to the `/exec` URL, preserving query strings.
-- [ ] Configure DNS: CNAME `kindoo` → workers DNS target, proxied.
-- [ ] Bind the worker to `kindoo.csnorth.org/*` via Workers Routes.
-- [ ] Add `https://kindoo.csnorth.org` to the OAuth Client ID's Authorized JavaScript origins (GSI will reject from an un-allowlisted origin).
-- [ ] Full login flow test end-to-end through the custom domain.
-- [ ] If OAuth redirect is broken through the proxy, fall back to a Redirect Rule (302) to the `/exec` URL (documented in architecture.md §11). Note: GSI is popup/One-Tap-based and does not use the server-side OAuth redirect, so this failure mode is orthogonal to the GSI path.
+- [ ] Write a Cloudflare Worker that proxies `kindoo.csnorth.org/*` to Main's `/exec` URL, forwarding method, query string, and body on the request and streaming the response back unchanged. ~20 lines of JS; the Identity deployment is NOT proxied (it stays on its `script.google.com` URL since it's a separate personal-account project).
+- [ ] Configure DNS: CNAME `kindoo` → the Cloudflare-provided Workers target, proxied (orange cloud on) so Workers Routes can intercept.
+- [ ] Bind the worker to `kindoo.csnorth.org/*` via Workers Routes on the `csnorth.org` zone.
+- [ ] Update `Config.main_url` in the Sheet from the raw `https://script.google.com/macros/s/<scriptId>/exec` form to `https://kindoo.csnorth.org`. Identity's post-sign-in redirect lands the top frame at `Config.main_url + ?token=…`, so if this isn't updated users end up back on `script.google.com` after signing in instead of the custom domain. `Config.identity_url` stays unchanged — the Identity deployment is untouched by this chunk.
+- [ ] Full login flow test end-to-end through the custom domain: each role visits `https://kindoo.csnorth.org`, clicks Sign in with Google, lands back on `https://kindoo.csnorth.org/?token=…` via Identity's redirect, `doGet` verifies the HMAC and drops the token into `sessionStorage`.
 
 **Acceptance criteria**
 
-- Each role loads, signs in, and navigates successfully via `kindoo.csnorth.org`.
-- Deep links (e.g., `kindoo.csnorth.org/?p=mgr/queue`) preserve their query string after auth redirect.
+- Each role loads, signs in, and navigates successfully via `kindoo.csnorth.org`. No references to `script.google.com/macros/s/...` visible in the address bar after sign-in.
+- Deep links (e.g., `kindoo.csnorth.org/?p=mgr/queue`) preserve their query string through the worker → Apps Script round-trip AND through the Identity sign-in redirect round-trip.
+- `google.script.run` rpc continues to work from inside the iframe (the iframe's origin stays on `*.googleusercontent.com` — only the top frame moves to the custom domain, so no rpc plumbing change is needed).
 
 **Out of scope**
 
 - SSL management (Cloudflare handles automatically on the free tier).
 - Staging subdomain (deploy additional workers if needed).
+- Proxying the Identity deployment — keeping it on the `script.google.com` URL is fine since users only see it briefly during the sign-in redirect. Proxying it would require a second worker + a second DNS record for no UX gain.
