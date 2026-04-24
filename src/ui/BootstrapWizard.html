@@ -218,15 +218,21 @@
       '</div>';
     if (canFinish) {
       $('wizard-complete-btn').addEventListener('click', function () {
-        if (!confirm('Finish setup? After this, the wizard is one-shot — ' +
-                     'further edits go through the normal Configuration page.')) return;
-        $('wizard-complete-btn').disabled = true;
-        // Flush all pending across all steps in order before completing.
-        commitPendingForStep(2)
-          .then(function () { return commitPendingForStep(3); })
-          .then(function () { return commitPendingForStep(4); })
-          .then(function () { return rpc('ApiBootstrap_complete'); })
-          .then(function (resp) {
+        kdConfirm({
+          title:        'Finish setup?',
+          body:         'After this, the wizard is one-shot — further edits go through the normal Configuration page.',
+          confirmLabel: 'Finish setup',
+          cancelLabel:  'Keep editing',
+          confirmKind:  'success'
+        }).then(function (ok) {
+          if (!ok) return;
+          $('wizard-complete-btn').disabled = true;
+          // Flush all pending across all steps in order before completing.
+          commitPendingForStep(2)
+            .then(function () { return commitPendingForStep(3); })
+            .then(function () { return commitPendingForStep(4); })
+            .then(function () { return rpc('ApiBootstrap_complete'); })
+            .then(function (resp) {
             // Clear pending so beforeunload doesn't prompt on the redirect.
             pending = { buildings: [], wards: [], managers: [] };
             var target = (resp && resp.redirect) || (typeof MAIN_URL === 'string' ? MAIN_URL : '');
@@ -247,6 +253,7 @@
             toast(err.message, 'error');
             render();  // redraw so unsaved counts reflect any partial commit
           });
+        });
       });
     }
   }
@@ -356,19 +363,35 @@
           building_name: tr.querySelector('input[data-field="building_name"]').value.trim(),
           address:       tr.querySelector('input[data-field="address"]').value
         };
-        if (patch.building_name !== key) {
-          if (!confirm('Renaming building from "' + key + '" to "' + patch.building_name + '" will break references in Wards. Continue?')) return;
+        function doSave() {
+          rpc('ApiBootstrap_buildingsUpsert', patch).then(function (resp) {
+            state = resp; toast('Saved.', 'success'); render();
+          }).catch(function (err) { toast(err.message, 'error'); });
         }
-        rpc('ApiBootstrap_buildingsUpsert', patch).then(function (resp) {
-          state = resp; toast('Saved.', 'success'); render();
-        }).catch(function (err) { toast(err.message, 'error'); });
+        if (patch.building_name !== key) {
+          kdConfirm({
+            title:        'Rename building?',
+            body:         'Renaming from "' + key + '" to "' + patch.building_name + '" will break references in Wards.',
+            confirmLabel: 'Rename building',
+            confirmKind:  'danger'
+          }).then(function (ok) { if (ok) doSave(); });
+        } else {
+          doSave();
+        }
       });
       tr.querySelector('button[data-act="delete"]').addEventListener('click', function () {
         var key = tr.getAttribute('data-key');
-        if (!confirm('Delete building "' + key + '"?')) return;
-        rpc('ApiBootstrap_buildingsDelete', key).then(function (resp) {
-          state = resp; toast('Deleted.', 'success'); render();
-        }).catch(function (err) { toast(err.message, 'error'); });
+        kdConfirm({
+          title:        'Delete building "' + key + '"?',
+          body:         'Any Ward assigned to this building will be orphaned.',
+          confirmLabel: 'Delete building',
+          confirmKind:  'danger'
+        }).then(function (ok) {
+          if (!ok) return;
+          rpc('ApiBootstrap_buildingsDelete', key).then(function (resp) {
+            state = resp; toast('Deleted.', 'success'); render();
+          }).catch(function (err) { toast(err.message, 'error'); });
+        });
       });
     });
     Array.prototype.forEach.call($('wizard-panel').querySelectorAll('tr[data-pending]'), function (tr) {
@@ -478,19 +501,35 @@
           building_name: tr.querySelector('select[data-field="building_name"]').value,
           seat_cap:      Number(tr.querySelector('input[data-field="seat_cap"]').value)
         };
-        if (patch.ward_code !== key) {
-          if (!confirm('Renaming ward_code from "' + key + '" to "' + patch.ward_code + '" will break references downstream. Continue?')) return;
+        function doSave() {
+          rpc('ApiBootstrap_wardsUpsert', patch).then(function (resp) {
+            state = resp; toast('Saved.', 'success'); render();
+          }).catch(function (err) { toast(err.message, 'error'); });
         }
-        rpc('ApiBootstrap_wardsUpsert', patch).then(function (resp) {
-          state = resp; toast('Saved.', 'success'); render();
-        }).catch(function (err) { toast(err.message, 'error'); });
+        if (patch.ward_code !== key) {
+          kdConfirm({
+            title:        'Rename ward_code?',
+            body:         'Renaming from "' + key + '" to "' + patch.ward_code + '" will break references downstream.',
+            confirmLabel: 'Rename ward',
+            confirmKind:  'danger'
+          }).then(function (ok) { if (ok) doSave(); });
+        } else {
+          doSave();
+        }
       });
       tr.querySelector('button[data-act="delete"]').addEventListener('click', function () {
         var key = tr.getAttribute('data-key');
-        if (!confirm('Delete ward "' + key + '"?')) return;
-        rpc('ApiBootstrap_wardsDelete', key).then(function (resp) {
-          state = resp; toast('Deleted.', 'success'); render();
-        }).catch(function (err) { toast(err.message, 'error'); });
+        kdConfirm({
+          title:        'Delete ward "' + key + '"?',
+          body:         'This cannot be undone.',
+          confirmLabel: 'Delete ward',
+          confirmKind:  'danger'
+        }).then(function (ok) {
+          if (!ok) return;
+          rpc('ApiBootstrap_wardsDelete', key).then(function (resp) {
+            state = resp; toast('Deleted.', 'success'); render();
+          }).catch(function (err) { toast(err.message, 'error'); });
+        });
       });
     });
     Array.prototype.forEach.call($('wizard-panel').querySelectorAll('tr[data-pending]'), function (tr) {
@@ -608,10 +647,17 @@
       if (delBtn) {
         delBtn.addEventListener('click', function () {
           var key = tr.getAttribute('data-key');
-          if (!confirm('Delete Kindoo Manager "' + key + '"?')) return;
-          rpc('ApiBootstrap_kindooManagersDelete', key).then(function (resp) {
-            state = resp; toast('Deleted.', 'success'); render();
-          }).catch(function (err) { toast(err.message, 'error'); });
+          kdConfirm({
+            title:        'Delete Kindoo Manager?',
+            body:         'Remove "' + key + '" from the Kindoo Managers list.',
+            confirmLabel: 'Delete manager',
+            confirmKind:  'danger'
+          }).then(function (ok) {
+            if (!ok) return;
+            rpc('ApiBootstrap_kindooManagersDelete', key).then(function (resp) {
+              state = resp; toast('Deleted.', 'success'); render();
+            }).catch(function (err) { toast(err.message, 'error'); });
+          });
         });
       }
     });

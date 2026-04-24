@@ -13,7 +13,6 @@
 -->
 <section class="roster-page">
   <div class="roster-header">
-    <h1>Stake Roster</h1>
     <span class="roster-scope-label">Stake</span>
   </div>
   <div id="utilization-host"></div>
@@ -58,9 +57,7 @@
         emptyMsg: 'No stake seats yet. Run the importer or submit a request from "New Kindoo Request".',
         rowActions: function (row) {
           if (row.type === 'auto') return '';
-          if (row.removal_pending) {
-            return '<span class="remove-disabled" title="A removal request is already pending for this row">⌫</span>';
-          }
+          if (row.removal_pending) return '';
           return '<button class="btn btn-icon btn-remove" data-seat-remove="' +
             escapeHtml(row.seat_id) + '" title="Request removal of this seat">⌫</button>';
         }

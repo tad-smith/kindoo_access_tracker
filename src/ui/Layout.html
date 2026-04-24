@@ -37,7 +37,7 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="brand">Kindoo Access Tracker</div>
+      <div class="brand" id="brand">Kindoo Access Tracker</div>
       <div class="topbar-right">
         <div class="user-meta" id="user-meta"></div>
         <button id="signout-btn" class="signout-btn hidden" type="button">Sign out</button>
@@ -105,6 +105,14 @@
           show($('signout-btn'));
         }
 
+        // Swap the topbar brand to Config.stake_name when the bootstrap
+        // response carries one; revert to the app name on sign-out /
+        // error paths so a stale stake name can't bleed across sessions.
+        var BRAND_DEFAULT_ = 'Kindoo Access Tracker';
+        function setBrand(name) {
+          $('brand').textContent = (name && String(name).length) ? String(name) : BRAND_DEFAULT_;
+        }
+
         function setNav(html) {
           var host = $('nav-host');
           if (html && html.length) {
@@ -139,6 +147,7 @@
           hide($('content'));
           show($('login-container'));
           setUserMeta(null);
+          setBrand(null);
           setNav('');
           var link = $('signin-link');
           var errEl = $('login-error');
@@ -484,7 +493,7 @@
           navigateTo(pageId, queryParams, { skipPushState: true });
         });
 
-        function showContent(html, principal, navHtml, pageId, pageModel, bundle) {
+        function showContent(html, principal, navHtml, pageId, pageModel, bundle, stakeName) {
           // Wrap the initial page's HTML in a tab-pane div so it
           // matches the structure navigateTo produces and can be
           // detached-cached on the first nav-away. The pageBundle
@@ -509,6 +518,7 @@
           show($('content'));
           hide($('login-container'));
           setUserMeta(principal);
+          setBrand(stakeName);
           setNav(navHtml || '');
           currentPrincipal   = principal;
           currentPageId      = pageId || '';
@@ -631,6 +641,7 @@
           show($('content'));
           hide($('login-container'));
           setUserMeta(null);
+          setBrand(null);
           setNav('');
         }
 
@@ -675,7 +686,7 @@
           rpc('ApiShared_bootstrap', requestedPage).then(function (resp) {
             var initialPageId = (resp && resp.pageModel && resp.pageModel.current_page) || '';
             showContent(resp.pageHtml, resp.principal, resp.navHtml,
-              initialPageId, resp.pageModel, resp.pageBundle);
+              initialPageId, resp.pageModel, resp.pageBundle, resp.stake_name);
           }).catch(function (err) {
             var msg = (err && err.message) ? err.message : String(err);
             if (msg.indexOf('AuthExpired') !== -1 || msg.indexOf('AuthInvalid') !== -1) {

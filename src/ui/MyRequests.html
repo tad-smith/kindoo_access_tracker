@@ -21,7 +21,6 @@
   hint — click either to see the reason / completion_note.
 -->
 <section class="my-requests-page">
-  <h1>My Requests</h1>
   <div id="scope-filter-host"></div>
   <div id="my-requests-host"><div class="empty-state">Loading your requests…</div></div>
 </section>
@@ -115,7 +114,7 @@
 
     var actions = '';
     if (row.status === 'pending') {
-      actions = '<button class="btn btn-secondary" data-act="cancel" data-request-id="' +
+      actions = '<button class="btn btn-danger" data-act="cancel" data-request-id="' +
         escapeHtml(row.request_id) + '">Cancel</button>';
     } else if (row.status === 'rejected' && row.rejection_reason) {
       actions = '<span class="rejection-reason-hint" title="' +
@@ -186,27 +185,39 @@
       function (btn) {
         btn.addEventListener('click', function () {
           var reqId = btn.getAttribute('data-request-id');
-          if (!confirm('Cancel this pending request?')) return;
-          btn.disabled = true;
-          rpc('ApiRequests_cancel', reqId).then(function (resp) {
-            toast('Request cancelled.', 'success');
-            if (resp && resp.warning) toast(resp.warning, 'warn');
-            load();
-          }).catch(function (err) {
-            toast(err.message || String(err), 'error');
-            btn.disabled = false;
+          kdConfirm({
+            title:        'Cancel this request?',
+            body:         'The request will be withdrawn. You can submit a new one any time.',
+            confirmLabel: 'Cancel request',
+            cancelLabel:  'Keep it',
+            confirmKind:  'danger'
+          }).then(function (ok) {
+            if (!ok) return;
+            btn.disabled = true;
+            rpc('ApiRequests_cancel', reqId).then(function (resp) {
+              toast('Request cancelled.', 'success');
+              if (resp && resp.warning) toast(resp.warning, 'warn');
+              load();
+            }).catch(function (err) {
+              toast(err.message || String(err), 'error');
+              btn.disabled = false;
+            });
           });
         });
       }
     );
 
-    // Reveal rejection reason on hover (mobile doesn't have hover, but
-    // click also works on mobile). Click opens an alert with the reason.
+    // Reveal rejection reason on click (mobile has no hover, so the
+    // title-attribute tooltip is unreachable there — the modal is both
+    // the mobile affordance and a larger-viewport convenience).
     Array.prototype.forEach.call(
       $('my-requests-host').querySelectorAll('.rejection-reason-hint'),
       function (el) {
         el.addEventListener('click', function () {
-          alert(el.getAttribute('title') || '(no reason given)');
+          kdAlert({
+            title: 'Rejection reason',
+            body:  el.getAttribute('title') || '(no reason given)'
+          });
         });
       }
     );
@@ -216,7 +227,10 @@
       $('my-requests-host').querySelectorAll('.completion-note-hint'),
       function (el) {
         el.addEventListener('click', function () {
-          alert(el.getAttribute('title') || '(no note)');
+          kdAlert({
+            title: 'Completion note',
+            body:  el.getAttribute('title') || '(no note)'
+          });
         });
       }
     );

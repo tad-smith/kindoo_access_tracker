@@ -21,7 +21,6 @@
   cross-origin iframe limitation as AllSeats; see open-questions.md A-8).
 -->
 <section class="queue-page">
-  <h1>Requests Queue</h1>
   <p class="queue-intro">Pending add_manual and add_temp requests across
     every scope. Mark Complete after mirroring the change in Kindoo;
     Reject with a reason if the request shouldn't be honored. Switch
@@ -198,8 +197,8 @@
     if (isPending) {
       actionsBlock =
         '<div class="queue-card-actions">' +
-          '<button class="btn"            data-act="complete">Mark Complete</button>' +
-          '<button class="btn btn-danger" data-act="reject">Reject</button>' +
+          '<button class="btn btn-success" data-act="complete">Mark Complete</button>' +
+          '<button class="btn btn-danger"  data-act="reject">Reject</button>' +
         '</div>';
     } else {
       var resolverLine = '';
@@ -287,29 +286,38 @@
         }
         if (rejectBtn) {
           rejectBtn.addEventListener('click', function () {
-            var reason = prompt('Rejection reason (required):');
-            if (reason == null) return; // cancelled
-            reason = String(reason).trim();
-            if (!reason) {
-              toast('A rejection reason is required.', 'error');
-              return;
-            }
-            this.disabled = true;
-            rpc('ApiManager_rejectRequest', reqId, reason).then(function (resp) {
-              toast('Request rejected.', 'success');
-              if (resp && resp.warning) toast(resp.warning, 'warn');
-              // Chunk 10.6: request state affects Dashboard counts,
-              // My Requests, Audit Log, and potentially All Seats
-              // (on a complete — not here, but the pattern stays
-              // consistent across reject/complete). Nuke every
-              // cached tab so the next visit reflects fresh state.
-              if (typeof window.invalidateAllPages === 'function') {
-                window.invalidateAllPages();
+            var btnRef = this;
+            kdPrompt({
+              title:        'Reject this request?',
+              body:         'The requester will see the reason on their My Requests page. A reason is required.',
+              placeholder:  'e.g. Ward over cap — please resubmit next quarter.',
+              confirmLabel: 'Reject request',
+              cancelLabel:  'Keep pending',
+              confirmKind:  'danger'
+            }).then(function (reason) {
+              if (reason == null) return; // cancelled
+              reason = String(reason).trim();
+              if (!reason) {
+                toast('A rejection reason is required.', 'error');
+                return;
               }
-              load();
-            }).catch(function (err) {
-              toast(err.message || String(err), 'error');
-              load();
+              btnRef.disabled = true;
+              rpc('ApiManager_rejectRequest', reqId, reason).then(function (resp) {
+                toast('Request rejected.', 'success');
+                if (resp && resp.warning) toast(resp.warning, 'warn');
+                // Chunk 10.6: request state affects Dashboard counts,
+                // My Requests, Audit Log, and potentially All Seats
+                // (on a complete — not here, but the pattern stays
+                // consistent across reject/complete). Nuke every
+                // cached tab so the next visit reflects fresh state.
+                if (typeof window.invalidateAllPages === 'function') {
+                  window.invalidateAllPages();
+                }
+                load();
+              }).catch(function (err) {
+                toast(err.message || String(err), 'error');
+                load();
+              });
             });
           });
         }

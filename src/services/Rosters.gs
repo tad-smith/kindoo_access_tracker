@@ -55,7 +55,7 @@ function Rosters_buildResponseFromSeats_(scope, seats, ctx) {
       pendingRemoveEmails[Utils_normaliseEmail(mapped.member_email)] === true;
     rows.push(mapped);
   }
-  Rosters_sortRows_(rows);
+  Rosters_sortRows_(rows, scope, ctx);
   var summary = Rosters_buildSummary_(scope, rows.length, ctx);
   return { summary: summary, rows: rows };
 }
@@ -136,7 +136,13 @@ function Rosters_buildContext_() {
     wardsByCode:           byCode,
     stakeSeatCap:          (rawCap == null || rawCap === '') ? null : Number(rawCap),
     wardSeatsCount:        wardSeatsCount,
-    pendingRemovesByScope: pendingRemovesByScope
+    pendingRemovesByScope: pendingRemovesByScope,
+    // Calling-template position indexes — power the auto-row sort
+    // (seat.calling_name → template sheet-row position; unmatched seats
+    // sort to the bottom of the auto block). Same match semantics as
+    // the importer: exact beats wildcard, first-listed wildcard wins.
+    wardTemplateIndex:     Rosters_templatePositionIndex_('ward'),
+    stakeTemplateIndex:    Rosters_templatePositionIndex_('stake')
   };
 }
 
@@ -172,6 +178,11 @@ function Rosters_mapRow_(seat, today) {
     end_date:         seat.end_date,
     building_names:   seat.building_names,
     created_at:       Utils_formatDateTime(seat.created_at),
+    // Numeric insertion-time, preserved for Rosters_sortRows_ (the
+    // formatted string uses a human format that doesn't sort lexically —
+    // `3:45pm` vs `10:30am`). Exposed on the row so future client sorts
+    // can reuse it.
+    created_at_ms:    (seat.created_at instanceof Date) ? seat.created_at.getTime() : 0,
     last_modified_at: Utils_formatDateTime(seat.last_modified_at),
     expiry_badge:     badge,
     // Default false; Rosters_buildResponseFromSeats_ overrides with true
@@ -185,35 +196,86 @@ function Rosters_mapRow_(seat, today) {
 
 // Sort rule — identical on every roster so the three UIs can share a
 // renderer without re-sorting:
-//   1. auto first, manual next, temp last (utilization intuition: auto =
-//      auditable callings; manual = explicit ward decisions; temp =
-//      time-boxed and the one the user actually needs to see expiring).
-//   2. within auto: by calling_name, tiebreak member_name.
-//   3. within manual: by member_name, tiebreak member_email.
-//   4. within temp: by end_date asc (soonest-expiring first), tiebreak
-//      member_name. Blank end_date sorts last.
-function Rosters_sortRows_(rows) {
+//   1. auto first, manual next, temp last.
+//   2. within auto: by the seat's calling_name's position in the
+//      configured CallingTemplate for this scope (stake uses
+//      StakeCallingTemplate; every ward uses WardCallingTemplate). Exact
+//      template rows beat wildcard rows (same match rule as the
+//      importer). Seats whose calling_name matches no template row sort
+//      to the END of the auto block. Tiebreak within a position:
+//      member_name.
+//   3. within manual & temp: by insertion date (created_at asc).
+//      Tiebreak: member_name.
+// `scope` + `ctx` let the auto sort pick the right template index; a
+// missing ctx degrades gracefully (every auto row ties on position and
+// falls through to member_name order).
+function Rosters_sortRows_(rows, scope, ctx) {
   var typeOrder = { auto: 0, manual: 1, temp: 2 };
+  var tplIdx = null;
+  if (ctx) {
+    tplIdx = (String(scope) === ROSTERS_STAKE_SCOPE_)
+      ? ctx.stakeTemplateIndex
+      : ctx.wardTemplateIndex;
+  }
   rows.sort(function (a, b) {
     var ta = typeOrder[a.type] == null ? 99 : typeOrder[a.type];
     var tb = typeOrder[b.type] == null ? 99 : typeOrder[b.type];
     if (ta !== tb) return ta - tb;
+
     if (a.type === 'auto') {
-      return Rosters_strCmp_(a.calling_name, b.calling_name) ||
-             Rosters_strCmp_(a.member_name,  b.member_name);
+      var pa = tplIdx ? Rosters_templatePosition_(tplIdx, a.calling_name) : 0;
+      var pb = tplIdx ? Rosters_templatePosition_(tplIdx, b.calling_name) : 0;
+      if (pa !== pb) {
+        // Guard against Infinity - Infinity = NaN: handle unmatched
+        // explicitly so two unmatched rows don't return NaN and
+        // destabilise V8's sort.
+        if (pa === Infinity) return 1;
+        if (pb === Infinity) return -1;
+        return pa - pb;
+      }
+      return Rosters_strCmp_(a.member_name, b.member_name);
     }
-    if (a.type === 'manual') {
-      return Rosters_strCmp_(a.member_name,  b.member_name) ||
-             Rosters_strCmp_(a.member_email, b.member_email);
-    }
-    if (a.type === 'temp') {
-      var ae = a.end_date ? String(a.end_date) : '\uFFFF';
-      var be = b.end_date ? String(b.end_date) : '\uFFFF';
-      return Rosters_strCmp_(ae, be) ||
-             Rosters_strCmp_(a.member_name, b.member_name);
-    }
-    return 0;
+
+    // manual + temp: insertion order (oldest first). created_at_ms is
+    // zero when the cell was blank; zero sorts first which is the only
+    // reasonable answer for "unknown insertion time" (practically none
+    // of these exist -- every write path stamps a Date).
+    var am = Number(a.created_at_ms) || 0;
+    var bm = Number(b.created_at_ms) || 0;
+    if (am !== bm) return am - bm;
+    return Rosters_strCmp_(a.member_name, b.member_name);
   });
+}
+
+// Template position lookup (same match rules as Importer_templateMatch_):
+// exact match wins; otherwise the first wildcard row whose pattern
+// matches. Returns Infinity when no template row matches, so unmatched
+// autos sort to the bottom of the auto block in Rosters_sortRows_.
+function Rosters_templatePositionIndex_(kind) {
+  var rows = Templates_getAll(kind);
+  var exact = {};
+  var wildcards = [];
+  for (var i = 0; i < rows.length; i++) {
+    var name = rows[i].calling_name;
+    if (!name) continue;
+    if (name.indexOf('*') === -1) {
+      exact[name] = i;
+    } else {
+      wildcards.push({ position: i, regex: Importer_wildcardToRegex_(name) });
+    }
+  }
+  return { exact: exact, wildcards: wildcards };
+}
+
+function Rosters_templatePosition_(index, callingName) {
+  var name = callingName == null ? '' : String(callingName);
+  if (name && Object.prototype.hasOwnProperty.call(index.exact, name)) {
+    return index.exact[name];
+  }
+  for (var i = 0; i < index.wildcards.length; i++) {
+    if (index.wildcards[i].regex.test(name)) return index.wildcards[i].position;
+  }
+  return Infinity;
 }
 
 function Rosters_strCmp_(a, b) {

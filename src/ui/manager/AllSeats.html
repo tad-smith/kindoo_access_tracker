@@ -24,7 +24,6 @@
   build-plan Chunk 5 "Out of scope: Server-side pagination").
 -->
 <section class="all-seats-page">
-  <h1>All Seats</h1>
   <p class="roster-scope-label">Full roster across every scope.</p>
 
   <div class="all-seats-filters">
@@ -214,7 +213,7 @@
       }
     });
 
-    // Wire edit buttons after the table is in the DOM.
+    // Wire edit buttons after the cards are in the DOM.
     var host = $('roster-table-host');
     Array.prototype.forEach.call(host.querySelectorAll('button[data-seat-edit]'), function (btn) {
       btn.addEventListener('click', function () {

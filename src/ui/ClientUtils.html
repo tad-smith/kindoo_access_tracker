@@ -165,7 +165,8 @@
     for (var i = 0; i < rows.length; i++) {
       body += rosterRowHtml(rows[i], opts);
     }
-    return '<table class="roster-table"><thead><tr>' + headers +
+    var cls = 'roster-table' + (opts.wrapperClass ? ' ' + opts.wrapperClass : '');
+    return '<table class="' + cls + '"><thead><tr>' + headers +
            '</tr></thead><tbody>' + body + '</tbody></table>';
   }
 
@@ -188,7 +189,8 @@
         escapeHtml(opts.emptyMsg || 'No seats in this roster.') +
         '</div>';
     }
-    var html = '<div class="roster-cards">';
+    var cls = 'roster-cards' + (opts.wrapperClass ? ' ' + opts.wrapperClass : '');
+    var html = '<div class="' + cls + '">';
     for (var i = 0; i < rows.length; i++) {
       html += rosterCardHtml(rows[i], opts);
     }
@@ -291,6 +293,180 @@
       datesLine +
       detailLine +
     '</div>';
+  }
+
+  // Themed replacements for the browser's native confirm() / alert() /
+  // prompt() dialogs. Returns a Promise so callers can chain off the
+  // user's choice without mutating a synchronous control-flow branch.
+  //
+  //   kdConfirm({title, body, confirmLabel, cancelLabel, confirmKind})
+  //     → Promise<boolean>      true = confirmed, false = cancelled.
+  //   kdAlert  ({title, body, confirmLabel})
+  //     → Promise<void>         resolves when the user dismisses.
+  //   kdPrompt ({title, body, placeholder, initialValue,
+  //              confirmLabel, cancelLabel, confirmKind})
+  //     → Promise<string|null>  string = submitted, null = cancelled.
+  //
+  // confirmKind is 'primary' (default), 'success', or 'danger' and maps
+  // to the matching .btn variant so destructive actions read red, green
+  // for completions, etc. Escape cancels; Enter confirms (when focus
+  // isn't in a textarea); backdrop click cancels; focus is restored to
+  // the element that opened the modal on close.
+  function kdModal_(opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      var overlay = document.createElement('div');
+      overlay.className = 'kd-modal';
+
+      var inner = document.createElement('div');
+      inner.className = 'kd-modal-inner';
+
+      if (opts.title) {
+        var h2 = document.createElement('h2');
+        h2.className = 'kd-modal-title';
+        h2.textContent = opts.title;
+        inner.appendChild(h2);
+      }
+
+      if (opts.body) {
+        var body = document.createElement('div');
+        body.className = 'kd-modal-body';
+        // Preserve embedded newlines (a few call sites pass multi-line
+        // messages) without letting caller-supplied HTML interpolate —
+        // every segment is a Text node.
+        var lines = String(opts.body).split('\n');
+        for (var i = 0; i < lines.length; i++) {
+          if (i > 0) body.appendChild(document.createElement('br'));
+          body.appendChild(document.createTextNode(lines[i]));
+        }
+        inner.appendChild(body);
+      }
+
+      var input = null;
+      if (opts.variant === 'prompt') {
+        var row = document.createElement('div');
+        row.className = 'kd-modal-prompt-row';
+        input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'kd-modal-prompt-input';
+        if (opts.placeholder) input.placeholder = opts.placeholder;
+        if (opts.initialValue) input.value = opts.initialValue;
+        row.appendChild(input);
+        inner.appendChild(row);
+      }
+
+      var actions = document.createElement('div');
+      actions.className = 'form-actions';
+
+      var cancelBtn = null;
+      if (opts.variant !== 'alert') {
+        cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'btn btn-secondary';
+        cancelBtn.textContent = opts.cancelLabel || 'Cancel';
+        actions.appendChild(cancelBtn);
+      }
+
+      var confirmBtn = document.createElement('button');
+      confirmBtn.type = 'button';
+      var kind = opts.confirmKind || 'primary';
+      var kindClass = kind === 'danger'  ? ' btn-danger'
+                    : kind === 'success' ? ' btn-success'
+                    : '';
+      confirmBtn.className = 'btn' + kindClass;
+      confirmBtn.textContent = opts.confirmLabel || 'OK';
+      actions.appendChild(confirmBtn);
+
+      inner.appendChild(actions);
+      overlay.appendChild(inner);
+      document.body.appendChild(overlay);
+
+      var trigger = document.activeElement;
+      function cleanup(result) {
+        document.removeEventListener('keydown', onKey, true);
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        if (trigger && typeof trigger.focus === 'function') {
+          try { trigger.focus(); } catch (_) {}
+        }
+        resolve(result);
+      }
+
+      function onKey(ev) {
+        if (ev.key === 'Escape') {
+          ev.preventDefault();
+          cleanup(opts.variant === 'prompt' ? null
+               : opts.variant === 'alert'  ? undefined
+               : false);
+        } else if (ev.key === 'Enter' && ev.target && ev.target.tagName !== 'TEXTAREA') {
+          ev.preventDefault();
+          confirmBtn.click();
+        }
+      }
+
+      confirmBtn.addEventListener('click', function () {
+        if (opts.variant === 'prompt') cleanup(input.value);
+        else if (opts.variant === 'alert') cleanup();
+        else cleanup(true);
+      });
+      if (cancelBtn) cancelBtn.addEventListener('click', function () {
+        cleanup(opts.variant === 'prompt' ? null : false);
+      });
+      overlay.addEventListener('click', function (ev) {
+        if (ev.target === overlay) {
+          cleanup(opts.variant === 'prompt' ? null
+               : opts.variant === 'alert'  ? undefined
+               : false);
+        }
+      });
+
+      document.addEventListener('keydown', onKey, true);
+
+      // Focus policy: prompt → the input. Destructive confirm → the
+      // Cancel button (so an accidental Enter doesn't delete). Anything
+      // else → the confirm button.
+      setTimeout(function () {
+        if (input) { input.focus(); input.select(); }
+        else if (kind === 'danger' && cancelBtn) cancelBtn.focus();
+        else confirmBtn.focus();
+      }, 0);
+    });
+  }
+
+  function kdConfirm(opts) {
+    opts = opts || {};
+    return kdModal_({
+      variant:      'confirm',
+      title:        opts.title,
+      body:         opts.body,
+      confirmLabel: opts.confirmLabel,
+      cancelLabel:  opts.cancelLabel,
+      confirmKind:  opts.confirmKind
+    });
+  }
+
+  function kdAlert(opts) {
+    opts = opts || {};
+    return kdModal_({
+      variant:      'alert',
+      title:        opts.title,
+      body:         opts.body,
+      confirmLabel: opts.confirmLabel || 'OK',
+      confirmKind:  opts.confirmKind
+    });
+  }
+
+  function kdPrompt(opts) {
+    opts = opts || {};
+    return kdModal_({
+      variant:      'prompt',
+      title:        opts.title,
+      body:         opts.body,
+      placeholder:  opts.placeholder,
+      initialValue: opts.initialValue,
+      confirmLabel: opts.confirmLabel,
+      cancelLabel:  opts.cancelLabel,
+      confirmKind:  opts.confirmKind
+    });
   }
 
   function toast(msg, kind) {

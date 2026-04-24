@@ -16,8 +16,6 @@
   "Reason" when adding, and renders the value verbatim in the table.
 -->
 <section class="access-page">
-  <h1>Access</h1>
-
   <div class="access-toolbar">
     <label>
       Scope:
@@ -88,10 +86,14 @@
       return;
     }
 
-    var html = '<table class="config-table"><thead><tr>' +
+    // PART2 §3 — render the desktop table AND a parallel card stack;
+    // CSS picks which is visible at 899px. Both trees carry the same
+    // data-del-* attributes so one delegated-listener pass wires them.
+    var tableHtml = '<table class="config-table responsive-table-desktop"><thead><tr>' +
       '<th>Scope</th><th>Calling / reason</th><th>Email</th>' +
       '<th>Source</th><th class="row-actions">Actions</th>' +
       '</tr></thead><tbody>';
+    var cardsHtml = '<div class="roster-cards responsive-cards-phone">';
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
       var isManual = r.source === 'manual';
@@ -104,16 +106,37 @@
             'data-del-scope="'   + esc(r.scope)   + '" ' +
             'data-del-calling="' + esc(r.calling) + '">Delete</button>'
         : '';
-      html += '<tr>' +
+      tableHtml += '<tr>' +
         '<td><code>' + esc(r.scope) + '</code></td>' +
         '<td>' + esc(r.calling) + '</td>' +
         '<td>' + esc(r.email) + '</td>' +
         '<td>' + badge + '</td>' +
         '<td class="row-actions">' + actions + '</td>' +
         '</tr>';
+      // Importer rows render without an actions block — matches the
+      // "hide, not disable" rule from the previous refactor.
+      var cardActions = isManual
+        ? '<span class="roster-card-actions">' + actions + '</span>'
+        : '';
+      cardsHtml += '<div class="roster-card">' +
+        '<div class="roster-card-line1">' +
+          '<span class="roster-card-badges">' + badge +
+            '<span class="roster-card-chip roster-card-scope"><code>' + esc(r.scope) + '</code></span>' +
+          '</span>' +
+          '<span class="roster-card-member">' +
+            '<span class="roster-email" title="' + esc(r.email) + '">' + esc(r.email) + '</span>' +
+          '</span>' +
+          cardActions +
+        '</div>' +
+        '<div class="roster-card-line2">' +
+          '<span class="roster-card-chip"><span class="label">Calling / reason:</span> ' +
+            esc(r.calling) + '</span>' +
+        '</div>' +
+        '</div>';
     }
-    html += '</tbody></table>';
-    $('access-table-host').innerHTML = html;
+    tableHtml += '</tbody></table>';
+    cardsHtml += '</div>';
+    $('access-table-host').innerHTML = tableHtml + cardsHtml;
 
     // Wire per-row delete buttons.
     var host = $('access-table-host');
@@ -122,20 +145,27 @@
         var email   = btn.getAttribute('data-del-email');
         var scope   = btn.getAttribute('data-del-scope');
         var calling = btn.getAttribute('data-del-calling');
-        if (!confirm('Remove manual access for ' + email + ' in ' + scope + '?\n(' + calling + ')')) return;
-        btn.disabled = true;
-        rpc('ApiManager_accessDeleteManual', email, scope, calling).then(function () {
-          toast('Manual access removed.', 'success');
-          // Access mutations affect role resolution + write AuditLog
-          // rows, so drop every cached SPA pane — next visit to AllSeats
-          // / Dashboard / Audit Log reflects the change.
-          if (typeof window.invalidateAllPages === 'function') {
-            window.invalidateAllPages();
-          }
-          load();
-        }).catch(function (err) {
-          btn.disabled = false;
-          toast(err.message || String(err), 'error');
+        kdConfirm({
+          title:        'Remove manual access?',
+          body:         email + ' in ' + scope + '\n(' + calling + ')',
+          confirmLabel: 'Remove access',
+          confirmKind:  'danger'
+        }).then(function (ok) {
+          if (!ok) return;
+          btn.disabled = true;
+          rpc('ApiManager_accessDeleteManual', email, scope, calling).then(function () {
+            toast('Manual access removed.', 'success');
+            // Access mutations affect role resolution + write AuditLog
+            // rows, so drop every cached SPA pane — next visit to AllSeats
+            // / Dashboard / Audit Log reflects the change.
+            if (typeof window.invalidateAllPages === 'function') {
+              window.invalidateAllPages();
+            }
+            load();
+          }).catch(function (err) {
+            btn.disabled = false;
+            toast(err.message || String(err), 'error');
+          });
         });
       });
     });

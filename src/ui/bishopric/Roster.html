@@ -20,7 +20,6 @@
 -->
 <section class="roster-page">
   <div class="roster-header">
-    <h1>Ward Roster</h1>
     <span class="roster-scope-label" id="roster-scope-label"></span>
   </div>
   <!-- Multi-ward bishopric: populated by init when allowed_wards has
@@ -93,12 +92,7 @@
           // callings; remove the calling in LCR and the next import deletes
           // the seat. Render an empty cell.
           if (row.type === 'auto') return '';
-          if (row.removal_pending) {
-            // Disabled-X with explanatory tooltip. Visually distinct from
-            // an enabled X so the user understands why their click does
-            // nothing.
-            return '<span class="remove-disabled" title="A removal request is already pending for this row">⌫</span>';
-          }
+          if (row.removal_pending) return '';
           return '<button class="btn btn-icon btn-remove" data-seat-remove="' +
             escapeHtml(row.seat_id) + '" title="Request removal of this seat">⌫</button>';
         }

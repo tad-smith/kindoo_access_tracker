@@ -30,6 +30,12 @@ function ApiShared_bootstrap(token, requestedPage) {
   var _startedMs = Date.now();
   var principal = Auth_principalFrom(token);
 
+  // Stake name for the topbar brand. Read unconditionally so the wizard
+  // and the post-setup shell share the same code path; an empty value
+  // makes the client keep the "Kindoo Access Tracker" fallback.
+  var stakeName = '';
+  try { stakeName = String(Config_get('stake_name') || ''); } catch (e) {}
+
   // Setup-complete gate. Config.setup_complete is coerced to boolean by
   // ConfigRepo; a missing or empty cell comes back as null and is treated
   // as "not complete" (fresh install).
@@ -41,11 +47,12 @@ function ApiShared_bootstrap(token, requestedPage) {
       var wiz = HtmlService.createTemplateFromFile('ui/BootstrapWizard');
       wiz.principal = principal;
       return {
-        principal: principal,
-        template:  'ui/BootstrapWizard',
-        pageModel: { principal: principal },
-        pageHtml:  wiz.evaluate().getContent(),
-        navHtml:   ''
+        principal:  principal,
+        stake_name: stakeName,
+        template:   'ui/BootstrapWizard',
+        pageModel:  { principal: principal },
+        pageHtml:   wiz.evaluate().getContent(),
+        navHtml:    ''
       };
     }
     // Signed in but not the bootstrap admin, and setup isn't done.
@@ -53,11 +60,12 @@ function ApiShared_bootstrap(token, requestedPage) {
     sip.email       = principal.email;
     sip.admin_email = adminEmail;
     return {
-      principal: principal,
-      template:  'ui/SetupInProgress',
-      pageModel: { email: principal.email, admin_email: adminEmail },
-      pageHtml:  sip.evaluate().getContent(),
-      navHtml:   ''
+      principal:  principal,
+      stake_name: stakeName,
+      template:   'ui/SetupInProgress',
+      pageModel:  { email: principal.email, admin_email: adminEmail },
+      pageHtml:   sip.evaluate().getContent(),
+      navHtml:    ''
     };
   }
 
@@ -78,6 +86,7 @@ function ApiShared_bootstrap(token, requestedPage) {
     ' took ' + (Date.now() - _startedMs) + 'ms');
   return {
     principal:   principal,
+    stake_name:  stakeName,
     template:    routed.template,
     pageModel:   routed.pageModel,
     pageHtml:    routed.pageHtml,
