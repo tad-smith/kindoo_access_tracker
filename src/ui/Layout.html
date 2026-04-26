@@ -89,6 +89,14 @@
       // Example: mgr/seats reads QUERY_PARAMS.ward / .type / .building to
       // pre-populate its filter dropdowns.
       var QUERY_PARAMS    = <?!= JSON.stringify(query_params || {}) ?>;
+      // Chunk 11.2: the first-time-login-instructions flag, bridged
+      // from the wrapper origin (kindoo.csnorth.org) via the &xinst=1
+      // URL param read by Main.doGet. The iframe origin's localStorage
+      // doesn't reliably persist (n-<hash> rotates per Apps Script
+      // execution; third-party storage may be partitioned), so the
+      // authoritative flag lives at the wrapper origin and we just
+      // consume the rendered snapshot here.
+      var INSTRUCTIONS_SEEN = <?!= JSON.stringify(instructions_seen || false) ?>;
     </script>
     <?!= include('ui/ClientUtils') ?>
     <script>
@@ -146,24 +154,22 @@
           });
         })();
 
-        // Chunk 11.2: first-time-instructions overlay state. The flag
-        // is per-browser (localStorage at the iframe's
-        // googleusercontent.com origin — isolated from the wrapper
-        // origin, which is what we want), and V1-versioned so a future
-        // redesign can re-show instructions to all users without a
-        // migration. localStorage access is wrapped in try/catch so a
-        // privacy-mode-disabled browser degrades to "instructions every
-        // login" rather than throwing.
-        var INSTRUCTIONS_FLAG_KEY_ = 'kindooLoginInstructionsV1Seen';
-
+        // Chunk 11.2: first-time-instructions overlay state lives
+        // entirely at the wrapper origin (kindoo.csnorth.org) — the
+        // iframe never writes the flag. The wrapper sets a cookie at
+        // the moment a ?token= query lands at its origin (i.e., the
+        // user just completed sign-in), reads the cookie on every
+        // subsequent load, and bridges the boolean into the iframe via
+        // &xinst=1 on the URL. Main.doGet consumes the param and
+        // injects template.instructions_seen, which lands here as the
+        // INSTRUCTIONS_SEEN global. The iframe just reads the
+        // server-rendered value and toggles the overlay; the dismiss
+        // buttons hide the overlay for this session but don't try to
+        // persist anything from the iframe. The "first successful
+        // sign-in" moment is the canonical "user has seen the
+        // instructions play out" signal.
         function getLoginInstructionsFlag_() {
-          try { return localStorage.getItem(INSTRUCTIONS_FLAG_KEY_); }
-          catch (e) { return null; }
-        }
-
-        function setLoginInstructionsFlag_() {
-          try { localStorage.setItem(INSTRUCTIONS_FLAG_KEY_, '1'); }
-          catch (e) { /* silent — overlay shows next time */ }
+          return INSTRUCTIONS_SEEN ? '1' : null;
         }
 
         function showInstructionsOverlay_() {
@@ -194,14 +200,20 @@
         }
 
         // Wire the overlay's two action handlers once at boot. Both
-        // routes set the flag — even on auth failure, the user has SEEN
-        // the instructions and showing them again would imply the failure
-        // was their fault.
+        // routes hide the overlay for the rest of this session. The
+        // primary "Got it, sign me in" path additionally drives the
+        // sign-in flow; the wrapper at kindoo.csnorth.org sets the
+        // instructions-seen cookie when the user lands back with a
+        // ?token=, so the overlay stays hidden across future visits
+        // once the user has actually completed sign-in once. The
+        // skip path doesn't persist (it just hides for now) — if the
+        // user dismisses without signing in, the cookie is never set
+        // and the overlay shows again next visit, which is the
+        // correct behaviour ("user hasn't completed the flow yet").
         (function wireInstructionsActions_() {
           var ack = $('instructions-acknowledge');
           if (ack) {
             ack.addEventListener('click', function () {
-              setLoginInstructionsFlag_();
               hideInstructionsOverlay_();
               startSignIn_();
             });
@@ -210,7 +222,6 @@
           if (skip) {
             skip.addEventListener('click', function (e) {
               e.preventDefault();
-              setLoginInstructionsFlag_();
               hideInstructionsOverlay_();
             });
           }

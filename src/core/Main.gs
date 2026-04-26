@@ -51,28 +51,41 @@ function doGet(e) {
   // via ?p=mgr/seats&ward=CO&type=manual. Since the iframe can't read
   // the top-frame's query string (cross-origin), we forward the rest of
   // the query params as a typed JSON blob to the client via Layout. We
-  // strip three reserved keys ('p' is Layout's page dispatch; 'token'
+  // strip four reserved keys ('p' is Layout's page dispatch; 'token'
   // is the one-shot auth hand-off from Identity and already consumed
   // above; 'redirect' is the Chunk-11.1 wrapper-layer round-trip param
   // that the wrapper sanitizes off the iframe URL before this doGet
-  // sees it — but we strip here as defense-in-depth in case a hostile
-  // request hits /exec directly with a crafted ?redirect=) — every
-  // other param passes through untouched.
+  // sees it; 'xinst' is the Chunk-11.2 wrapper → iframe bridge for
+  // the first-time-login-instructions flag — we read it just below
+  // and inject the boolean into the Layout template) — every other
+  // param passes through untouched. The first three are stripped as
+  // defense-in-depth in case a hostile request hits /exec directly
+  // with a crafted query.
   var queryParams = {};
   for (var k in params) {
     if (!params.hasOwnProperty(k)) continue;
-    if (k === 'p' || k === 'token' || k === 'redirect') continue;
+    if (k === 'p' || k === 'token' || k === 'redirect' || k === 'xinst') continue;
     queryParams[k] = String(params[k] == null ? '' : params[k]);
   }
+
+  // Chunk 11.2: the wrapper's own localStorage holds the
+  // first-time-login-instructions flag (the iframe origin's
+  // localStorage is unreliable across visits — n-<hash> rotates per
+  // Apps Script execution, and third-party storage may be partitioned).
+  // The wrapper bridges the flag to the iframe via &xinst=1 on the
+  // URL; we read it here and inject the boolean into the Layout
+  // template so showLogin can decide whether to render the overlay.
+  var instructionsSeen = (String(params.xinst || '') === '1');
 
   var template = HtmlService.createTemplateFromFile('ui/Layout');
   template.identity_url   = identityUrl;
   template.main_url       = mainUrl;
   template.injected_token = injectedToken;
   template.injected_error = injectedError;
-  template.requested_page = requestedPage;
-  template.query_params   = queryParams;
-  template.app_version    = Version_get();
+  template.requested_page    = requestedPage;
+  template.query_params      = queryParams;
+  template.instructions_seen = instructionsSeen;
+  template.app_version       = Version_get();
   return template.evaluate()
     .setTitle('Kindoo Access Tracker')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
