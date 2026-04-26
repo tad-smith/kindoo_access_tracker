@@ -827,14 +827,93 @@ Adding a `sandbox` attribute would *further* restrict the iframe; we want the de
 
 ### Why the wrapper carries (a tiny bit of) JavaScript
 
-The wrapper origin's query string would otherwise be invisible to the iframe — GitHub Pages serves the static HTML regardless of `?…`, and the `<iframe src="…">` value is fixed at parse time. Two flows depend on the iframe seeing the wrapper's query string:
+The wrapper origin's query string would otherwise be invisible to the iframe — GitHub Pages serves the static HTML regardless of `?…`, and the `<iframe src="…">` value is fixed at parse time. The wrapper's inline script does two things, both same-origin DOM only (no `postMessage`, no listeners attached, runs once at page load):
 
-1. **Direct-load deep links from the wrapper origin.** `https://kindoo.csnorth.org/?p=mgr/seats&ward=CO` should land an already-signed-in user on the All Seats page with the ward filter pre-applied. Without the forwarder the iframe loads `/exec` with no `?p=`, so the user lands on their default page instead.
-2. **Post-sign-in token landing.** `Config.main_url` is the wrapper origin (`https://kindoo.csnorth.org`); Identity redirects the top frame to `MAIN_URL + '?token=…'` after sign-in. The wrapper reloads, the JS forwards the `?token=…` into the iframe `src`, and Main's `doGet` reads the token from `e.parameter.token` exactly as it would on a raw `/exec` URL.
+1. **Forward the wrapper origin's query string into the iframe `src`.** Whether the user arrived cold with a deep link (`?p=mgr/seats&ward=CO`) or post-auth (`?token=…&redirect=…`), the iframe needs to see those params so Main's `doGet` can route correctly.
 
-The forwarder is intentionally one same-origin DOM read (`window.location.search`) plus one same-origin DOM write (`iframe.src`) — no `postMessage`, no cross-origin messaging, no listeners attached. It runs once at page load. The iframe's no-query case (the common path: a return visit by a signed-in user with no `?…` on the wrapper URL) skips the JS entirely so the iframe doesn't reload.
+2. **Strip the post-auth `?token=` off the user-visible URL** (Chunk 11.1). When the wrapper detects a `token` in its own query, it routes the token into the iframe `src` only and `history.replaceState`'s the wrapper's URL to a clean form (`/` or `/?<original-deep-link>`). The token stays inside Apps Script's nested-iframe structure where it isn't user-visible; the address bar shows just the deep-link query.
 
-Pre-sign-in deep-linking has a remaining gap: a fresh sign-in initiated from a deep link still loses the `?p=` because the auth round-trip itself doesn't preserve it (Identity's redirect carries only `?token=…`). Closing that requires teaching the Login link to pass the page parameter through to Identity (e.g. as a `next` query arg) and Identity to echo it back. That's an auth-flow change — deferred outside Chunk 11; tracked under `docs/build-plan.md` Chunk 11 "Out of scope" and `docs/open-questions.md` CF-2.
+Detail of the auth-URL round-trip — including the `redirect` param's encoding chain and the wrapper's sanitization rules — lives in the next subsection. Pre-Chunk-11.1, the wrapper did only step (1) and the iframe-side bootstrap did `window.top.location.replace(MAIN_URL)` to clean the address bar via a full top-frame reload — a workaround that left `?token=…` visible until the reload completed and dropped any deep-link query through the auth round-trip.
+
+### Auth URL polish — Chunk 11.1
+
+The Chunk 11 wrapper delivered the pretty domain and removed the Apps Script banner but left two UX warts:
+
+- The HMAC token sat in the user-visible address bar as `?token=…` for the rest of the session, until the iframe-side `window.top.location.replace(MAIN_URL)` reload eventually cleaned it. Aesthetically poor; minor (the token is in `sessionStorage` anyway and is single-use, so browser-history capture isn't a real escalation), but visible.
+- A wrapper-origin deep link (`https://kindoo.csnorth.org/?p=mgr/seats&ward=CO`) opened pre-sign-in lost its `?p=` through the auth round-trip — Identity's redirect carried only `?token=…` and threw the original query away. The user landed on their role default after auth, not the deep-linked page.
+
+Chunk 11.1 closes both with three coordinated changes (no token / verification logic touched):
+
+#### 1. Login link carries a `redirect` param
+
+`Layout.html`'s `buildIdentityUrl_()` helper, called from `showLogin()`, reconstructs the original deep-link query from the server-injected `REQUESTED_PAGE` + `QUERY_PARAMS` globals:
+
+```js
+var inner = new URLSearchParams();
+if (REQUESTED_PAGE) inner.set('p', REQUESTED_PAGE);
+for (var k in QUERY_PARAMS) inner.set(k, String(QUERY_PARAMS[k]));
+// 'token' and 'redirect' filtered out as defense.
+var redirectStr = inner.toString();   // e.g. "p=mgr%2Fseats&ward=CO"
+link.href = IDENTITY_URL + '?redirect=' + encodeURIComponent(redirectStr);
+```
+
+The double-encoding (`URLSearchParams.toString()` once + `encodeURIComponent()` again) is what survives travel as a query-param value through two URL-context boundaries (Identity's URL, then Continue's redirect URL). Empty REQUESTED_PAGE + empty QUERY_PARAMS → no `&redirect=` appended; Identity treats a missing redirect as the no-deep-link case.
+
+The Login page can't read its own `window.location.search` to source the deep-link params: the iframe's `window.location` carries Apps Script's internal params (`?createOAuthDialog=true&…`), not our `?p=`. The deep-link params reach the iframe only via server-side template injection (Main's `doGet` reads `e.parameter`, populates `template.requested_page` and `template.query_params`), so reconstructing from the injected globals is the only path.
+
+#### 2. Identity round-trips the `redirect` param verbatim
+
+`identity-project/Code.gs`'s `doGet(e)` reads `e.parameter.redirect`, signs the HMAC token as before, and includes the redirect in the Continue link's destination URL:
+
+```js
+var redirect = mainUrl + '?token=' + encodeURIComponent(token);
+if (rawRedirect) redirect += '&redirect=' + encodeURIComponent(rawRedirect);
+```
+
+Identity makes no claims about the `redirect` value — it's opaque here. The HMAC token is the auth; the `redirect` carries no security claims and gets sanitized on arrival by the wrapper.
+
+#### 3. Wrapper extracts + sanitizes + replaceStates
+
+The wrapper at `kindoo.csnorth.org` lands at `/?token=<HMAC>&redirect=<encoded>`. The inline script:
+
+```js
+var topParams = new URLSearchParams(window.location.search);
+var token = topParams.get('token');
+if (!token) { iframe.src = BASE + window.location.search; return; }
+
+var rawRedirect = topParams.get('redirect') || '';
+var redirectParams = new URLSearchParams(rawRedirect);
+redirectParams.delete('token');     // never round-trip the token
+redirectParams.delete('redirect');  // never re-nest
+
+var iframeParams = new URLSearchParams();
+iframeParams.set('token', token);
+redirectParams.forEach(function (value, key) { iframeParams.set(key, value); });
+iframe.src = BASE + '?' + iframeParams.toString();
+
+var cleanedQuery = redirectParams.toString();
+history.replaceState({}, '', '/' + (cleanedQuery ? '?' + cleanedQuery : ''));
+```
+
+Two destinations from one input:
+
+- **Iframe URL** carries the token (so Main's `Auth_verifySessionToken` runs server-side as today) plus the cleaned deep-link query. Iframe URL isn't user-visible — it's inside Apps Script's nested-iframe structure on `*.googleusercontent.com`.
+- **Wrapper URL** loses the token and any `redirect`, keeps the deep-link query. User-visible address bar reads `kindoo.csnorth.org/?p=mgr/seats&ward=CO`.
+
+#### Sanitization contract
+
+The wrapper's `delete('token')` and `delete('redirect')` on the decoded redirect are defense-in-depth: a hostile URL like `?token=<good>&redirect=token%3D<malicious>` is parsed as `redirect={token: '<malicious>'}` after URLSearchParams decoding, but the deletes drop it before it can reach the iframe URL or the address bar. The legitimate token from the outer `?token=` position is the only token that survives. `delete('redirect')` similarly defends against `?redirect=redirect%3D<another>` recursive nesting.
+
+`Main.gs`'s `doGet` independently strips `'redirect'` from the `query_params` map (alongside the existing `'p'` and `'token'` strip), so even if a hostile request hits `/exec` directly with a crafted `?redirect=`, no app code sees the param. Belt-and-braces.
+
+#### No iframe-side replaceState
+
+The pre-write design considered an iframe-side `history.replaceState` to drop `?token=` from the iframe's URL too. Investigation found the iframe's `window.location` carries Apps Script's internal params, not our `?token=` — so there's nothing to clean at that layer. The wrapper-side replaceState is sufficient. The pre-Chunk-11.1 `window.top.location.replace(MAIN_URL)` was specifically a top-frame reload (not a `replaceState`); Chunk 11.1 drops it because the wrapper has already cleaned the user-visible URL by the time the iframe boots.
+
+#### What this leaves open
+
+- **Continue click on Identity** — still required by the iframe-sandbox user-activation rule for cross-origin top-frame navigation. Out of scope.
+- **Direct-`/exec` URL access** — if an operator hits the raw `script.google.com/.../exec?token=…` URL (bypassing the wrapper), the address bar shows the token until they manually navigate elsewhere. The pre-Chunk-11.1 `window.top.location.replace(MAIN_URL)` would have re-navigated top to the wrapper, which would then not see a token in its query (the redirect strips it) — so the old behavior for direct access was "force a redirect to the wrapper and then forget you ever signed in here". Chunk 11.1's drop of that reload means direct-access users see the token in the URL bar. Acceptable: direct access is operator-only per Chunk 11; operators can copy the URL out before sign-in and not lose anything.
 
 ### `ALLOWALL` on every `doGet` HtmlOutput
 

@@ -146,6 +146,52 @@
           });
         })();
 
+        // Build the Identity URL with a `redirect` param that carries the
+        // current deep-link query (REQUESTED_PAGE + QUERY_PARAMS, server-
+        // injected from Main.doGet). Identity round-trips the redirect
+        // through to its Continue page; the wrapper extracts and applies
+        // it after auth so a deep-linked URL pasted pre-sign-in preserves
+        // its destination through the round-trip. Chunk 11.1.
+        //
+        // The redirect string is the inner URLSearchParams `.toString()`
+        // (already URL-encoded by URLSearchParams), then `encodeURIComponent`'d
+        // again because it travels as the value of a `redirect=` param on
+        // the Identity URL — that's the standard double-encoding for
+        // round-tripping a query string through a query-string boundary.
+        // Empty REQUESTED_PAGE + empty QUERY_PARAMS → no `&redirect=`
+        // appended; Identity treats a missing redirect as the no-deep-link
+        // case.
+        function buildIdentityUrl_() {
+          if (!IDENTITY_URL) return '';
+          var inner = new URLSearchParams();
+          // Prefer window.location.search when it carries our `p` key —
+          // Chunk 10.6's pushState writes the user's current in-app page
+          // (and any filter state) into the iframe's URL, so re-auth
+          // mid-session preserves the page the user was actually on,
+          // not the one they cold-loaded with. On initial render the
+          // iframe's URL has Apps Script's internal params (no `p`),
+          // so we fall back to the server-injected REQUESTED_PAGE +
+          // QUERY_PARAMS globals.
+          var winParams = new URLSearchParams(window.location.search);
+          if (winParams.has('p')) {
+            winParams.forEach(function (value, key) {
+              if (key === 'token' || key === 'redirect') return;
+              inner.set(key, value);
+            });
+          } else {
+            if (REQUESTED_PAGE) inner.set('p', REQUESTED_PAGE);
+            for (var k in QUERY_PARAMS) {
+              if (!Object.prototype.hasOwnProperty.call(QUERY_PARAMS, k)) continue;
+              if (k === 'token' || k === 'redirect') continue;
+              inner.set(k, QUERY_PARAMS[k] == null ? '' : String(QUERY_PARAMS[k]));
+            }
+          }
+          var redirectStr = inner.toString();
+          if (!redirectStr) return IDENTITY_URL;
+          var sep = IDENTITY_URL.indexOf('?') === -1 ? '?' : '&';
+          return IDENTITY_URL + sep + 'redirect=' + encodeURIComponent(redirectStr);
+        }
+
         function showLogin(errMsg) {
           hide($('content'));
           show($('login-container'));
@@ -157,10 +203,11 @@
           if (link) {
             if (IDENTITY_URL) {
               // IDENTITY_URL points at the personal-account Identity
-              // project's /exec — see identity-project/README.md. No
-              // query-param dispatch needed: that project's doGet always
-              // runs the sign-in flow.
-              link.href = IDENTITY_URL;
+              // project's /exec — see identity-project/README.md. The
+              // helper appends `&redirect=<encoded>` carrying the current
+              // deep-link query (Chunk 11.1) so post-sign-in routing
+              // lands the user where they intended.
+              link.href = buildIdentityUrl_();
               link.style.pointerEvents = '';
               link.style.opacity = '';
             } else {
@@ -709,19 +756,21 @@
           // Just landed from the Identity deployment with a verified token?
           if (INJECTED_TOKEN) {
             sessionStorage.setItem('jwt', INJECTED_TOKEN);
-            if (MAIN_URL) {
-              // Try to strip ?token= from the address bar by re-navigating
-              // top to bare MAIN_URL. Modern browsers can silently block
-              // programmatic top-frame navigation from inside an iframe
-              // without recent user activation, and we can't detect that
-              // from script. So always proceed to render the app
-              // afterwards — if the replace succeeded, the navigation
-              // discards the render in flight (no harm); if it was
-              // blocked, the app renders with ?token= lingering in the
-              // URL (cosmetic, not security — the token lives in
-              // sessionStorage and is single-use anyway).
-              try { window.top.location.replace(MAIN_URL); } catch (e) {}
-            }
+            // Pre-Chunk-11.1 this branch did
+            // `window.top.location.replace(MAIN_URL)` to strip ?token=
+            // from the user-visible address bar by force-reloading the
+            // top frame. Chunk 11.1 closes that need: the wrapper at
+            // kindoo.csnorth.org runs an inline script that intercepts
+            // the post-auth landing URL, routes the token into the
+            // iframe URL only (where it is not user-visible inside
+            // Apps Script's nested-iframe structure), and history.
+            // replaceState's the wrapper's URL to the original deep-link
+            // query (or '/' when there was none). By the time we run
+            // here, the address bar is already clean; no top-frame
+            // navigation needed. Iframe-side replaceState is also
+            // a no-op because the iframe's window.location.search
+            // carries Apps Script's internal params, not our ?token=.
+            // See docs/changelog/chunk-11.1-auth-url-polish.md.
             proceedWithToken();
             return;
           }

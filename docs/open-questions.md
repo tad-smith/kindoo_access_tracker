@@ -375,15 +375,15 @@ Pre-Chunk-11 best guess (preserved as discovery trail): try a Cloudflare Worker 
 
 See `architecture.md` §11 and `docs/changelog/chunk-11-custom-domain.md` (when it lands) for the full rationale.
 
-### CF-2 `[P2]` Deep-link preservation through the Identity round-trip
+### CF-2 `[RESOLVED 2026-04-25 — Chunk 11.1]` Deep-link preservation through the Identity round-trip
 
-Original wording: "Worker must forward query strings." With the iframe wrapper there's no proxy. Updated state of the world after Chunk 11:
+Original wording: "Worker must forward query strings." With the iframe wrapper there's no proxy. Pre-Chunk-11.1 state of the world (preserved as discovery trail):
 
-- **In-app deep-links (Chunk 10.6) work** — they happen post-bootstrap inside the iframe and never touch the wrapper.
-- **Wrapper-origin direct-load deep-links for already-signed-in users work** — `website/index.html` carries a six-line same-origin query-string forwarder that copies `window.location.search` into the iframe `src` before navigation. Same forwarder is what makes the post-sign-in `?token=…` landing reach Main's `doGet`.
-- **Wrapper-origin direct-load deep-links followed by a fresh sign-in lose `?p=`.** Identity's redirect carries only `?token=…`; the original page parameter doesn't survive the round-trip.
+- In-app deep-links (Chunk 10.6) worked — they happened post-bootstrap inside the iframe and never touched the wrapper.
+- Wrapper-origin direct-load deep-links for already-signed-in users worked — the wrapper's six-line query-string forwarder (Chunk 11) copied `window.location.search` into the iframe `src`.
+- **Wrapper-origin direct-load deep-links followed by a fresh sign-in lost `?p=`.** Identity's redirect carried only `?token=…`; the original page parameter didn't survive the round-trip.
 
-**Best guess (still open):** Closing the pre-sign-in case requires an auth-flow change — teach the Login link to pass `?next=<pageId>&…` (or similar) through to Identity, and Identity to echo it back into the post-sign-in redirect. Small change but it touches the auth contract, so deferred until there's a real-usage signal that anyone hits this. The in-app and already-signed-in paths cover the realistic deep-link use cases (sharing URLs to teammates who are already in the app).
+**Resolution.** Chunk 11.1 added a `redirect` round-trip: Login builds the Identity URL with `&redirect=<encoded original query>`; Identity passes it through verbatim onto the Continue link; the wrapper extracts on arrival, sanitizes (drops nested `token`/`redirect`), routes the token into the iframe URL only, and `history.replaceState`s the wrapper URL to the original deep-link query. See `architecture.md` §11 "Auth URL polish — Chunk 11.1" and `docs/changelog/chunk-11.1-auth-url-polish.md` for the encoding chain and sanitization contract.
 
 ### CF-3 `[P2]` Iframe-embed durability against future browser changes
 

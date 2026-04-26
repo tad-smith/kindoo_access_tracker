@@ -51,13 +51,17 @@ function doGet(e) {
   // via ?p=mgr/seats&ward=CO&type=manual. Since the iframe can't read
   // the top-frame's query string (cross-origin), we forward the rest of
   // the query params as a typed JSON blob to the client via Layout. We
-  // strip the two reserved keys ('p' is Layout's page dispatch; 'token'
+  // strip three reserved keys ('p' is Layout's page dispatch; 'token'
   // is the one-shot auth hand-off from Identity and already consumed
-  // above) — every other param passes through untouched.
+  // above; 'redirect' is the Chunk-11.1 wrapper-layer round-trip param
+  // that the wrapper sanitizes off the iframe URL before this doGet
+  // sees it — but we strip here as defense-in-depth in case a hostile
+  // request hits /exec directly with a crafted ?redirect=) — every
+  // other param passes through untouched.
   var queryParams = {};
   for (var k in params) {
     if (!params.hasOwnProperty(k)) continue;
-    if (k === 'p' || k === 'token') continue;
+    if (k === 'p' || k === 'token' || k === 'redirect') continue;
     queryParams[k] = String(params[k] == null ? '' : params[k]);
   }
 

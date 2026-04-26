@@ -603,4 +603,67 @@ _Proof 6 — failure modes_
 - DNS migration off Squarespace. Squarespace stays the DNS host; we add one CNAME and that's it.
 - A Cloudflare Worker or Worker proxy. Retained as a documented fallback in `open-questions.md` CF-1 if a future browser change makes iframe-embed untenable.
 - OAuth verification submission to Google. Tracked separately in `docs/TASKS.md` #6.
-- **Pre-sign-in wrapper-origin deep-link preservation.** The wrapper's six-line query-string forwarder closes the *already-signed-in* case (the iframe sees the wrapper origin's `?…` on the first load). The pre-sign-in case still loses `?p=` because Identity's redirect carries only `?token=…` — the auth round-trip itself doesn't preserve any other query params. Closing this would require teaching the Login link to pass the page parameter through to Identity (e.g. as a `next` query arg) and Identity to echo it back in its post-sign-in redirect. Auth-flow change; deferred outside this chunk. In-app deep links (Dashboard cards, over-cap banner, Audit Log filter URLs) are unaffected because those are post-bootstrap iframe-internal navigations.
+- **Pre-sign-in wrapper-origin deep-link preservation.** The wrapper's six-line query-string forwarder closes the *already-signed-in* case (the iframe sees the wrapper origin's `?…` on the first load). The pre-sign-in case still loses `?p=` because Identity's redirect carries only `?token=…` — the auth round-trip itself doesn't preserve any other query params. Closing this would require teaching the Login link to pass the page parameter through to Identity (e.g. as a `next` query arg) and Identity to echo it back in its post-sign-in redirect. Auth-flow change; deferred outside this chunk. In-app deep links (Dashboard cards, over-cap banner, Audit Log filter URLs) are unaffected because those are post-bootstrap iframe-internal navigations. **Closed by Chunk 11.1.**
+
+---
+
+## Chunk 11.1 — Auth URL polish + deep-link preservation `[DONE — see docs/changelog/chunk-11.1-auth-url-polish.md]`
+
+**Goal:** the address bar at `https://kindoo.csnorth.org` is clean throughout the session (no `?token=…` ever lingers), and a wrapper-origin deep link (e.g. `https://kindoo.csnorth.org/?p=mgr/seats&ward=CO`) survives the auth round-trip — a user pasting that URL while signed-out completes the auth flow and lands on the filtered AllSeats page, not the default Dashboard.
+
+**Dependencies:** Chunk 11 (custom-domain wrapper). Closes the two known UX warts that Chunk 11 left open: (a) `?token=` visible in the address bar after auth (chunk-11 changelog "Trade-offs accepted"; the user-visible address-bar URL was `…/?token=eyJhbGc…` for the whole session), and (b) pre-sign-in deep-link `?p=` lost through the auth round-trip (Chunk 11 "Out of scope" + open-questions.md CF-2 pre-Chunk-11.1 wording).
+
+### Architectural shape
+
+Three coordinated changes, each small. The wrapper does the heavy lifting on the user-visible URL; Identity round-trips an opaque `redirect` query param; Layout drops the now-defunct top-frame reload.
+
+**Round-trip path.** A deep link `kindoo.csnorth.org/?p=mgr/seats&ward=CO` opened pre-sign-in:
+
+1. **Wrapper** (`website/index.html`) reads `window.location.search`. No `token` present → forwards the search verbatim into the iframe `src`.
+2. **Iframe** (Apps Script `Main.doGet`) reads `?p=mgr/seats&ward=CO`, sees no token → renders `Login.html`. `REQUESTED_PAGE='mgr/seats'`, `QUERY_PARAMS={ward:'CO'}` are server-injected via Layout.
+3. **Login click**: Layout builds the Identity URL with `redirect=` carrying the original deep-link params reconstructed from `REQUESTED_PAGE` + `QUERY_PARAMS` (URLSearchParams encode → encodeURIComponent the result for double-encoding through the URL boundary).
+4. **Identity** receives `e.parameter.redirect`, signs token, builds the Continue link as `<main_url>?token=<HMAC>&redirect=<encoded>`. Empty redirect = link omits `&redirect=`.
+5. **Top-frame nav** lands the wrapper at `kindoo.csnorth.org/?token=<HMAC>&redirect=<encoded>`.
+6. **Wrapper** sees `token` in its search → extracts both, decodes redirect into a `URLSearchParams`, **strips any nested `token` or `redirect`** (defense against hostile redirect values), builds two destinations:
+   - `iframe.src = <exec>?token=<HMAC>&<cleanedQuery>` — token stays in the iframe URL (not user-visible inside Apps Script's nested-iframe structure) so Main's server-side `Auth_verifySessionToken` runs as today.
+   - `history.replaceState({}, '', '/?<cleanedQuery>')` — the **wrapper's** URL becomes `kindoo.csnorth.org/?p=mgr/seats&ward=CO`, no token visible.
+7. **Iframe** loads `<exec>?token=<HMAC>&p=mgr/seats&ward=CO`; Main's `doGet` injects `INJECTED_TOKEN`, `REQUESTED_PAGE='mgr/seats'`, `QUERY_PARAMS={ward:'CO'}`.
+8. **Layout boot** stores `INJECTED_TOKEN` in `sessionStorage.jwt`, **drops the existing `window.top.location.replace(MAIN_URL)` reload** (the wrapper has already cleaned the user-visible URL — the reload was the pre-Chunk-11.1 way to do that), proceeds straight to `proceedWithToken()` → `ApiShared_bootstrap('mgr/seats')`.
+
+**No-deep-link case** (`kindoo.csnorth.org/`) follows the same path with empty redirect throughout: Identity's Continue link omits `&redirect=`; wrapper sees `?token=…` only; cleanedQuery is `''`; wrapper replaceStates to `/`; iframe URL is `<exec>?token=…`; Layout proceeds to default landing.
+
+**Why no iframe-side replaceState.** The brief sketched a belt-and-braces iframe-side `replaceState` to drop `?token=` from the iframe URL too. Investigation found that the iframe's `window.location.search` carries Apps Script's own internal params (`?createOAuthDialog=true&…`), not our `?token=` — Apps Script wraps `HtmlService` output in a nested iframe at `*.googleusercontent.com` whose URL is Apps Script's, not the URL we requested. The user-visible URL is the wrapper's; the wrapper's `replaceState` covers everything that matters. Iframe-side replaceState would be a no-op.
+
+### Sub-tasks
+
+- [x] **`website/index.html`** — replace the static `<iframe src=…>` with a script that reads `window.location.search`. No `token` → set iframe `src` to `<base> + search` (deep-link cold-load pass-through). Token present → extract, decode the `redirect` param, build a `URLSearchParams` with `token` and `redirect` keys deleted (sanitization), set iframe `src` to `<base>?token=<token>&<cleanedQuery>`, and `history.replaceState({}, '', '/' + (cleanedQuery ? '?'+cleanedQuery : ''))` to clean the wrapper's URL. ~25 lines, no external deps.
+- [x] **`src/ui/Layout.html`** (signin-link href construction in `showLogin()`) — when setting `link.href`, append `&redirect=<encoded>` where the encoded value is the inner URLSearchParams (`p`, plus all `QUERY_PARAMS` keys minus `token`/`redirect` for defense) `.toString()` then `encodeURIComponent`'d for double-encoding. Empty REQUESTED_PAGE + empty QUERY_PARAMS → no `&redirect=` appended. Replaced with the helper function `buildIdentityUrl_()` (also reads `window.location.search` post-pushState — see "Smart source detection" in the changelog — so re-auth mid-session preserves the user's *current* in-app page, not just their cold-load page).
+- [x] **`src/ui/Layout.html`** (boot's `INJECTED_TOKEN` branch) — dropped the `window.top.location.replace(MAIN_URL)` call (the wrapper now handles user-visible URL cleaning). Store token in sessionStorage, fall straight through to `proceedWithToken()`. The pre-Chunk-11.1 reload was a workaround for the address-bar `?token=`; the wrapper's replaceState is the new mechanism.
+- [x] **`identity-project/Code.gs`** (`doGet`) — changed signature from `doGet()` to `doGet(e)`. Reads `e.parameter.redirect` (default `''`). Appends `&redirect=<encodeURIComponent(rawRedirect)>` to the Continue URL when non-empty. Empty redirect = no extra param. The Identity project is not pushed via clasp; the operator copy-pastes the changed `Code.gs` into the Apps Script editor for that project.
+- [x] **`src/core/Main.gs`** (`doGet` reserved-keys strip) — added `'redirect'` to the `if (k === 'p' || k === 'token') continue;` guard so a stray `redirect` param can never leak into `QUERY_PARAMS`. Defense-in-depth; the wrapper sanitizes upstream, but a hostile direct-`/exec`-URL request could still attempt to inject one.
+- [x] **`docs/architecture.md` §11** — added "Auth URL polish — Chunk 11.1" subsection: round-trip path, wrapper's two responsibilities (forward / extract+sanitize+replaceState), Identity's pass-through role, why no iframe-side replaceState, sanitization contract (drop `token`, drop nested `redirect`). Pre-existing "Why the wrapper carries (a tiny bit of) JavaScript" subsection summarised to mention both Chunk 11 and Chunk 11.1 responsibilities.
+- [x] **`docs/open-questions.md` CF-2** — flipped status from `[P2]` to `[RESOLVED 2026-04-25 — Chunk 11.1]`. Moved the open-question text to a discovery trail; the deep-link gap is closed.
+- [x] **Walked verification cases** (10 cases — see the changelog's "Edge cases tested" section). Browser-side smoke test pending operator deploy.
+- [x] **Wrote `docs/changelog/chunk-11.1-auth-url-polish.md`** following the established pattern.
+
+### Acceptance criteria
+
+1. **Cold no-params:** `kindoo.csnorth.org/` → auth → Dashboard. Address bar throughout: clean, never shows `?token=…` for any visible duration.
+2. **Cold deep-link:** `kindoo.csnorth.org/?p=mgr/seats&ward=CO` (fresh incognito, no jwt) → auth → lands on filtered AllSeats. Address bar after auth: `kindoo.csnorth.org/?p=mgr/seats&ward=CO`, no token.
+3. **Warm in-app deep-link:** Dashboard card click → pushState updates URL → page renders. (Pre-existing Chunk 10.6 behavior; verify nothing broke.)
+4. **Token never visible:** in cases (1)–(2) the address bar may flash `?token=…` for a sub-100ms window between the top-frame nav from Identity and the wrapper's replaceState. Verify it's gone within ~100ms (one paint cycle); ideally not visible at all if the wrapper script runs before the first paint.
+5. **Hostile redirect — embedded token:** `kindoo.csnorth.org/?token=<good>&redirect=token%3D<malicious>` → wrapper's sanitizer drops the nested `token`; final URL is `/`; sessionStorage holds the legitimate token from the outer position.
+6. **Hostile redirect — nested redirect:** `kindoo.csnorth.org/?token=<good>&redirect=redirect%3D<another>` → wrapper drops the nested `redirect`; final URL is `/`; no recursion.
+7. **Empty redirect param:** Identity's Continue link with `&redirect=` (or omitted entirely) → wrapper handles both; no JS error; default landing.
+8. **Direct-`/exec` deep links** (the operator-only fallback) continue to work via Apps Script's existing `?p=` query handling. Server-side `Main.doGet` reads `?p` and renders the same page; the wrapper isn't in the path. Pre-Chunk-11.1 behavior, unchanged.
+9. **Expired token mid-session with deep-link:** simulate by manually expiring `sessionStorage.jwt` in DevTools while on a deep-linked page; click an in-app link that triggers an rpc; rpc returns `AuthExpired`; client clears jwt and triggers re-login; verify the deep-link destination is preserved through the re-auth round-trip.
+10. **All Chunks 1–11 acceptance criteria still pass.** Full walkthrough.
+
+### Out of scope
+
+- **Removing the Continue click on Identity.** Required by the iframe-sandbox user-activation rule for cross-origin top-frame navigation; no Chunk-11.1-side change closes it. (Chunk 11 "Out of scope".)
+- **CSRF / state parameter on the redirect.** The redirect param is opaque to Identity and only consumed by Main's wrapper; the HMAC token is the auth, the redirect carries no security claims. Adding state would be premature.
+- **Persisting redirect across multiple failed auth attempts.** A user who hits a deep link, fails to sign in, then tries again from a different starting point doesn't carry the original redirect. Acceptable.
+- **Token signing / verification logic.** Untouched; the chunk is purely URL plumbing.
+- **Direct-iframe-URL sharing optimization.** A user who shares the raw `googleusercontent.com` iframe URL bypasses the wrapper. Existing Chunk 11 edge case; not optimized.
+- **Top-frame URL update on intra-app filter changes.** Chunk 10.6 already handles in-app navigation via iframe-side `pushState`; the top-frame URL still doesn't reflect every filter change. Out of scope.

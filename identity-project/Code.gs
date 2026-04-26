@@ -43,10 +43,19 @@
 const IDENTITY_TOKEN_TTL_S_ = 3600;       // 1 hour, matches Main
 const IDENTITY_MIN_SECRET_LEN_ = 32;
 
-function doGet() {
+function doGet(e) {
   var props = PropertiesService.getScriptProperties();
   var secret = props.getProperty('session_secret');
   var mainUrl = props.getProperty('main_url');
+
+  // Chunk 11.1: opaque pass-through of a `redirect` query param. The
+  // Login button on Main builds the Identity URL with
+  // `&redirect=<encoded original query>`; we round-trip that value
+  // verbatim onto the Continue link so the wrapper at Main can restore
+  // the user's deep-link destination after auth. Identity makes no
+  // claims about the value's meaning — it's opaque here. The wrapper
+  // strips any nested `token`/`redirect` on arrival.
+  var rawRedirect = (e && e.parameter && e.parameter.redirect) || '';
 
   if (!secret || secret.length < IDENTITY_MIN_SECRET_LEN_) {
     return Identity_errPage_(
@@ -87,6 +96,12 @@ function doGet() {
   var token = Identity_signToken_(email, secret);
   var sep = mainUrl.indexOf('?') === -1 ? '?' : '&';
   var redirect = mainUrl + sep + 'token=' + encodeURIComponent(token);
+  if (rawRedirect) {
+    // The redirect value is already encoded once (URLSearchParams output
+    // from Login.html); encodeURIComponent here adds the second encoding
+    // that survives travel as a query-param value on the Continue URL.
+    redirect += '&redirect=' + encodeURIComponent(rawRedirect);
+  }
 
   // Tiny page whose only job is to navigate the top frame back to Main.
   // <base target="_top"> + window.top.location.replace keeps the redirect
