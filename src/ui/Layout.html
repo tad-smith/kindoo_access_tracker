@@ -37,7 +37,10 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="brand" id="brand">Kindoo Access Tracker</div>
+      <div class="brand" id="brand">
+        <img class="brand-icon" src="https://kindoo.csnorth.org/images/favicon-32x32.png" width="32" height="32" alt="" aria-hidden="true">
+        <span id="brand-text">Kindoo Access Tracker</span>
+      </div>
       <div class="topbar-right">
         <div class="user-meta" id="user-meta"></div>
         <button id="signout-btn" class="signout-btn hidden" type="button">Sign out</button>
@@ -110,7 +113,7 @@
         // error paths so a stale stake name can't bleed across sessions.
         var BRAND_DEFAULT_ = 'Kindoo Access Tracker';
         function setBrand(name) {
-          $('brand').textContent = (name && String(name).length) ? String(name) : BRAND_DEFAULT_;
+          $('brand-text').textContent = (name && String(name).length) ? String(name) : BRAND_DEFAULT_;
         }
 
         function setNav(html) {
