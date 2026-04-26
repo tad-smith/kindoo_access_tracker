@@ -13,7 +13,7 @@
   wrapper page — which we no longer load at the top frame.
 
   The inline script does three things, all same-origin DOM only on this
-  origin (no cross-origin messaging out — only postMessage receive):
+  origin:
 
     1. Forwards the wrapper's query string to the iframe src, so deep
        links (?p=mgr/seats&ward=CO) reach Main's doGet whether the user
@@ -29,17 +29,24 @@
        it isn't user-visible), and the original deep-link query is
        restored.
 
-    3. Holds the authoritative storage for the Chunk-11.2 first-time-
-       login-instructions flag. The iframe origin's localStorage doesn't
-       reliably persist (n-<hash>-script.googleusercontent.com rotates
-       per Apps Script execution; third-party storage may also be
-       partitioned by the browser), so the flag lives at the wrapper
-       origin and is bridged into the iframe via &xinst=1 on the URL,
-       and back out via a postMessage from the iframe on overlay
-       dismissal.
+    3. Holds the Chunk-11.2 first-time-login-instructions flag at the
+       wrapper origin (kindoo.csnorth.org), as a plain document.cookie
+       value. The iframe's *.googleusercontent.com origin can't reliably
+       persist storage across visits (n-<hash> rotates per Apps Script
+       execution; third-party storage may also be partitioned), so the
+       flag lives here. Critically: the cookie is WRITTEN exactly once,
+       at the moment the wrapper sees a ?token= in its own URL — i.e.,
+       Identity's post-auth Continue redirect just landed. That's the
+       definitive "user has completed sign-in at least once" signal,
+       and it's the only signal the wrapper needs. The iframe never
+       writes the cookie (no postMessage bridge to maintain). On every
+       subsequent load, the wrapper reads the cookie and bridges the
+       value into the iframe via &xinst=1, which Main.doGet consumes
+       and injects into Layout as INSTRUCTIONS_SEEN — the iframe just
+       reads a server-rendered boolean and toggles the overlay.
 
   See docs/runbooks/chunk-11-custom-domain.md for the deploy steps and
-  docs/changelog/chunk-11.2-first-time-instructions.md for the bridge
+  docs/changelog/chunk-11.2-first-time-instructions.md for the cookie
   mechanism.
 -->
 <html lang="en">
@@ -62,31 +69,35 @@
   <script>
     (function () {
       var BASE = 'https://script.google.com/macros/s/AKfycbz6bJUZ5q9RMh8pjk2H2v5-LWGFRXDmutIfgBnMr27GlzKbGZi6Rv3Ga88GzitDr9QP_g/exec';
-      var INSTRUCTIONS_FLAG_KEY = 'kindooLoginInstructionsV1Seen';
+      var INSTRUCTIONS_FLAG = 'kindooLoginInstructionsV1Seen';
+      var INSTRUCTIONS_FLAG_MAX_AGE = 60 * 60 * 24 * 365 * 5; // 5 years
       var iframe = document.getElementById('app');
 
-      // Iframe → wrapper bridge: persist the instructions-seen flag on
-      // overlay dismissal. The iframe origin rotates per Apps Script
-      // execution and may also be subject to third-party storage
-      // partitioning, so its own localStorage doesn't survive a
-      // navigation. We accept messages from any *.googleusercontent.com
-      // subdomain (the exact host varies); the message's blast radius is
-      // a single boolean key in our own localStorage, so the abuse
-      // surface is negligible.
-      window.addEventListener('message', function (event) {
-        if (!event || typeof event.origin !== 'string') return;
-        if (!/\.googleusercontent\.com$/i.test(event.origin)) return;
-        var data = event.data;
-        if (data && data.type === 'kindooInstructionsSeen' && data.v === 1) {
-          try { localStorage.setItem(INSTRUCTIONS_FLAG_KEY, '1'); }
-          catch (e) { /* localStorage unavailable; flag won't persist */ }
+      function readInstructionsFlag() {
+        var cookies = (document.cookie || '').split(';');
+        var prefix = INSTRUCTIONS_FLAG + '=';
+        for (var i = 0; i < cookies.length; i++) {
+          var c = cookies[i].replace(/^\s+/, '');
+          if (c.indexOf(prefix) === 0) return c.substring(prefix.length);
         }
-      });
+        return null;
+      }
+
+      function writeInstructionsFlag() {
+        try {
+          document.cookie = INSTRUCTIONS_FLAG + '=1' +
+            '; Path=/' +
+            '; Max-Age=' + INSTRUCTIONS_FLAG_MAX_AGE +
+            '; SameSite=Lax; Secure';
+        } catch (e) { /* cookie write failed; overlay shows next visit */ }
+      }
 
       // Build the iframe URL. Three branches: empty search (bare visit),
       // no-token search (cold deep-link forward), token+redirect (post-
       // auth: extract, sanitize, separate iframe URL from wrapper URL
-      // via replaceState).
+      // via replaceState — and at the same moment, set the
+      // instructions-seen cookie since the user just completed sign-in
+      // for the first time in this browser).
       var search = window.location.search;
       var iframeParams;
 
@@ -99,10 +110,12 @@
           // Cold deep-link: forward the wrapper's query verbatim.
           iframeParams = new URLSearchParams(search.slice(1));
         } else {
-          // Post-auth landing. Decode the redirect param, sanitize it,
-          // then route token + cleanedQuery into the iframe URL and
-          // clean the wrapper's URL so the address bar shows only the
-          // deep-link params (or '/' when the redirect was empty).
+          // Post-auth landing. The user just completed sign-in — this is
+          // the moment to mark the instructions as seen. Idempotent: a
+          // user who lands here a second time just refreshes the cookie's
+          // expiry, which is fine.
+          writeInstructionsFlag();
+
           var rawRedirect = topParams.get('redirect') || '';
           var redirectParams = new URLSearchParams(rawRedirect);
           redirectParams.delete('token');     // never round-trip the token
@@ -122,12 +135,9 @@
       // Append the instructions-seen bridge. Strip any inbound xinst
       // defensively (the wrapper is the source of truth — never trust an
       // incoming xinst from a deep-link or post-auth redirect), then set
-      // from the wrapper's own localStorage.
+      // from the wrapper's own cookie.
       iframeParams.delete('xinst');
-      var seen = false;
-      try { seen = localStorage.getItem(INSTRUCTIONS_FLAG_KEY) === '1'; }
-      catch (e) { /* localStorage unavailable; default to false (show overlay) */ }
-      if (seen) iframeParams.set('xinst', '1');
+      if (readInstructionsFlag() === '1') iframeParams.set('xinst', '1');
 
       var qs = iframeParams.toString();
       iframe.src = BASE + (qs ? '?' + qs : '');
