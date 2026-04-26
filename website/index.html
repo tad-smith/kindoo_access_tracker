@@ -12,8 +12,8 @@
   banner is hidden, because the banner lives in script.google.com's outer
   wrapper page — which we no longer load at the top frame.
 
-  Inline script (~25 lines) does two things — both same-origin DOM only,
-  no postMessage / no cross-origin messaging:
+  The inline script does three things, all same-origin DOM only on this
+  origin (no cross-origin messaging out — only postMessage receive):
 
     1. Forwards the wrapper's query string to the iframe src, so deep
        links (?p=mgr/seats&ward=CO) reach Main's doGet whether the user
@@ -29,9 +29,18 @@
        it isn't user-visible), and the original deep-link query is
        restored.
 
+    3. Holds the authoritative storage for the Chunk-11.2 first-time-
+       login-instructions flag. The iframe origin's localStorage doesn't
+       reliably persist (n-<hash>-script.googleusercontent.com rotates
+       per Apps Script execution; third-party storage may also be
+       partitioned by the browser), so the flag lives at the wrapper
+       origin and is bridged into the iframe via &xinst=1 on the URL,
+       and back out via a postMessage from the iframe on overlay
+       dismissal.
+
   See docs/runbooks/chunk-11-custom-domain.md for the deploy steps and
-  docs/changelog/chunk-11.1-auth-url-polish.md for this script's design
-  rationale.
+  docs/changelog/chunk-11.2-first-time-instructions.md for the bridge
+  mechanism.
 -->
 <html lang="en">
 <head>
@@ -53,41 +62,75 @@
   <script>
     (function () {
       var BASE = 'https://script.google.com/macros/s/AKfycbz6bJUZ5q9RMh8pjk2H2v5-LWGFRXDmutIfgBnMr27GlzKbGZi6Rv3Ga88GzitDr9QP_g/exec';
+      var INSTRUCTIONS_FLAG_KEY = 'kindooLoginInstructionsV1Seen';
       var iframe = document.getElementById('app');
+
+      // Iframe → wrapper bridge: persist the instructions-seen flag on
+      // overlay dismissal. The iframe origin rotates per Apps Script
+      // execution and may also be subject to third-party storage
+      // partitioning, so its own localStorage doesn't survive a
+      // navigation. We accept messages from any *.googleusercontent.com
+      // subdomain (the exact host varies); the message's blast radius is
+      // a single boolean key in our own localStorage, so the abuse
+      // surface is negligible.
+      window.addEventListener('message', function (event) {
+        if (!event || typeof event.origin !== 'string') return;
+        if (!/\.googleusercontent\.com$/i.test(event.origin)) return;
+        var data = event.data;
+        if (data && data.type === 'kindooInstructionsSeen' && data.v === 1) {
+          try { localStorage.setItem(INSTRUCTIONS_FLAG_KEY, '1'); }
+          catch (e) { /* localStorage unavailable; flag won't persist */ }
+        }
+      });
+
+      // Build the iframe URL. Three branches: empty search (bare visit),
+      // no-token search (cold deep-link forward), token+redirect (post-
+      // auth: extract, sanitize, separate iframe URL from wrapper URL
+      // via replaceState).
       var search = window.location.search;
+      var iframeParams;
 
       if (!search) {
-        iframe.src = BASE;
-        return;
+        iframeParams = new URLSearchParams();
+      } else {
+        var topParams = new URLSearchParams(search);
+        var token = topParams.get('token');
+        if (!token) {
+          // Cold deep-link: forward the wrapper's query verbatim.
+          iframeParams = new URLSearchParams(search.slice(1));
+        } else {
+          // Post-auth landing. Decode the redirect param, sanitize it,
+          // then route token + cleanedQuery into the iframe URL and
+          // clean the wrapper's URL so the address bar shows only the
+          // deep-link params (or '/' when the redirect was empty).
+          var rawRedirect = topParams.get('redirect') || '';
+          var redirectParams = new URLSearchParams(rawRedirect);
+          redirectParams.delete('token');     // never round-trip the token
+          redirectParams.delete('redirect');  // never re-nest
+
+          iframeParams = new URLSearchParams();
+          iframeParams.set('token', token);
+          redirectParams.forEach(function (value, key) {
+            iframeParams.set(key, value);
+          });
+
+          var cleanedQuery = redirectParams.toString();
+          history.replaceState({}, '', '/' + (cleanedQuery ? '?' + cleanedQuery : ''));
+        }
       }
 
-      var topParams = new URLSearchParams(search);
-      var token = topParams.get('token');
+      // Append the instructions-seen bridge. Strip any inbound xinst
+      // defensively (the wrapper is the source of truth — never trust an
+      // incoming xinst from a deep-link or post-auth redirect), then set
+      // from the wrapper's own localStorage.
+      iframeParams.delete('xinst');
+      var seen = false;
+      try { seen = localStorage.getItem(INSTRUCTIONS_FLAG_KEY) === '1'; }
+      catch (e) { /* localStorage unavailable; default to false (show overlay) */ }
+      if (seen) iframeParams.set('xinst', '1');
 
-      if (!token) {
-        // Cold deep-link: forward the wrapper's query verbatim.
-        iframe.src = BASE + search;
-        return;
-      }
-
-      // Post-auth landing. Decode the redirect param, sanitize it, then
-      // route token + cleanedQuery into the iframe URL and clean the
-      // wrapper's URL so the address bar shows only the deep-link params
-      // (or '/' when the redirect was empty).
-      var rawRedirect = topParams.get('redirect') || '';
-      var redirectParams = new URLSearchParams(rawRedirect);
-      redirectParams.delete('token');     // never round-trip the token
-      redirectParams.delete('redirect');  // never re-nest
-
-      var iframeParams = new URLSearchParams();
-      iframeParams.set('token', token);
-      redirectParams.forEach(function (value, key) {
-        iframeParams.set(key, value);
-      });
-      iframe.src = BASE + '?' + iframeParams.toString();
-
-      var cleanedQuery = redirectParams.toString();
-      history.replaceState({}, '', '/' + (cleanedQuery ? '?' + cleanedQuery : ''));
+      var qs = iframeParams.toString();
+      iframe.src = BASE + (qs ? '?' + qs : '');
     })();
   </script>
 </body>
