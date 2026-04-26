@@ -1187,6 +1187,106 @@
     justify-content: flex-end;
   }
 
+  /* Chunk 11.2: first-time-login instructions overlay. Backdrop +
+     centered card matching the .complete-modal family aesthetic but
+     with a wider modal (the long copy + two screenshots fit awkwardly
+     in 560px) and internal scroll for the content. Two action paths
+     at the bottom: primary button "Got it, sign me in" and a subtle
+     skip-link "Skip instructions next time" (both set the
+     localStorage flag; only the primary triggers the auth flow).
+     See ui/Login.html and Layout.html's INSTRUCTIONS_FLAG_KEY_ for
+     wiring. */
+  .instructions-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(29, 35, 51, 0.55);
+    z-index: 1300;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 32px 16px;
+    overflow-y: auto;
+  }
+  .instructions-modal {
+    background: #fff;
+    border-radius: 8px;
+    padding: 24px 28px;
+    width: min(720px, 100%);
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    color: var(--kd-fg-1);
+  }
+  .instructions-title {
+    margin: 0 0 4px;
+    font-size: 1.35em;
+    color: var(--kd-primary);
+  }
+  .instructions-subhead {
+    margin: 0 0 16px;
+    font-size: 1em;
+    font-weight: 500;
+    color: var(--kd-fg-2);
+  }
+  .instructions-steps {
+    margin: 0 0 18px;
+    padding-left: 22px;
+    line-height: 1.5;
+    color: var(--kd-fg-1);
+  }
+  .instructions-steps li { margin-bottom: 6px; }
+  .instructions-warning-heading {
+    margin: 18px 0 6px;
+    font-size: 1em;
+    font-weight: 600;
+    color: var(--kd-fg-1);
+  }
+  .instructions-warning-body {
+    margin: 0 0 18px;
+    line-height: 1.5;
+    color: var(--kd-fg-2);
+  }
+  .instructions-figure {
+    margin: 0 0 18px;
+    padding: 12px;
+    background: var(--kd-surface-alt);
+    border: 1px solid var(--kd-border-soft);
+    border-radius: 6px;
+  }
+  .instructions-screenshot {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+    border: 1px solid var(--kd-border);
+  }
+  .instructions-figure figcaption {
+    margin-top: 8px;
+    font-size: 0.9em;
+    color: var(--kd-fg-2);
+  }
+  .instructions-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 8px;
+    padding-top: 14px;
+    border-top: 1px solid var(--kd-border-soft);
+    flex-wrap: wrap;
+  }
+  .instructions-go-btn {
+    /* Adopt .btn but bump padding slightly so the action button feels
+       weighty against the long copy above it. */
+    padding: 10px 18px;
+    font-size: 1em;
+  }
+  .instructions-skip-link {
+    color: var(--kd-fg-2);
+    font-size: 0.9em;
+    text-decoration: none;
+  }
+  .instructions-skip-link:hover { text-decoration: underline; }
+
   /* Complete-confirmation modal (RequestsQueue). Overlay + centered
      card; Buildings checkbox group lets the manager adjust the seat's
      building_names before commit. */
@@ -1918,11 +2018,15 @@
     .complete-modal,
     .seat-edit-modal,
     .remove-modal,
-    .kd-modal { padding: 12px; }
+    .kd-modal,
+    .instructions-overlay { padding: 12px; }
     .complete-modal-inner,
     .seat-edit-modal-inner,
     .remove-modal-inner,
-    .kd-modal-inner { padding: 16px 14px; }
+    .kd-modal-inner,
+    .instructions-modal { padding: 16px 14px; }
+    .instructions-modal { max-height: calc(100vh - 24px); }
+    .instructions-title { font-size: 1.2em; }
 
     /* Dashboard cards — force single column reliably at ~375px. */
     .dashboard-grid { grid-template-columns: 1fr; }

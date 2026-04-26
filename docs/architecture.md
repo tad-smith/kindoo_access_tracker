@@ -928,6 +928,18 @@ Sites in this codebase (audited Chunk 11):
 
 `Router.gs` and `ApiShared.gs` construct `HtmlTemplate` objects but extract `.getContent()` strings and inline them into the parent Layout's `HtmlOutput` — they never return a standalone `HtmlOutput`, so the parent's ALLOWALL covers them. The `include()` helper in `Main.gs` likewise returns a string.
 
+### First-time-login instructions (Chunk 11.2)
+
+`Login.html` carries a one-time-per-browser instructions overlay that walks new users through the three consent-style screens between Sign-In and the app: Apps Script's *"Unverified"* warning (the page that displays the `(Unverified)` label and the **Review Permissions** button), Google's OAuth scope consent (a normal permissions screen showing only the email scope), and Identity's Continue page. The overlay shows screenshots of the first two screens (served from `https://kindoo.csnorth.org/images/{review-permissions,auth-scopes}.png`) and an honest note explaining that the "Unverified" warning on the first screen means *not publicly listed*, not *unsafe*.
+
+**Gating.** A localStorage key, `kindooLoginInstructionsV1Seen`, scoped to the iframe's `*.googleusercontent.com` origin. `showLogin()` checks the key on every render and shows or hides the overlay. localStorage at the iframe origin is isolated from the wrapper origin — that's the correct scope; a user signing in via the same browser/account/origin combo really has seen the overlay before. A user who logs in on Chrome desktop and later opens on Chrome iOS will see the overlay there too (different device experience; correct).
+
+**V1 versioning.** The flag key includes `V1`. A future redesign of the auth flow significant enough to warrant re-prompting all users bumps the key to `V2` — no migration needed; old `V1Seen` entries become irrelevant.
+
+**Two action paths, both flag-setting.** "Got it, sign me in" sets the flag, hides the overlay, and triggers `startSignIn_()` (a programmatic `.click()` on the existing `#signin-link` anchor — Chunk 11.1's `buildIdentityUrl_()` populated its `href` with the redirect-param round-trip, so deep-link preservation flows through both code paths identically). "Skip instructions next time" sets the flag and just hides the overlay; the user reads at their own pace, then clicks the regular Sign-In button. Both routes set the flag because the user has *seen* the instructions; auth failure on retry preserves the flag so we don't imply the failure was their fault.
+
+**Defensive localStorage access.** Reads and writes are wrapped in `try`/`catch`. Browsers in private-mode-with-storage-disabled, or extensions that block `localStorage`, degrade to "instructions every login" (functionally correct — the flag never persists, but the auth flow still works).
+
 ### `Config.main_url`
 
 Post-cutover, `Config.main_url` holds `https://kindoo.csnorth.org` rather than the raw Main `/exec` URL. Identity's redirect (`Identity_serve` in `identity-project/Code.gs`) reads `main_url` from its own Script Properties — which **must be updated to the same value** at cutover, or Identity will keep landing the user on the raw `/exec` URL after sign-in.

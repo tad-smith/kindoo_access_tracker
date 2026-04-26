@@ -667,3 +667,56 @@ Three coordinated changes, each small. The wrapper does the heavy lifting on the
 - **Token signing / verification logic.** Untouched; the chunk is purely URL plumbing.
 - **Direct-iframe-URL sharing optimization.** A user who shares the raw `googleusercontent.com` iframe URL bypasses the wrapper. Existing Chunk 11 edge case; not optimized.
 - **Top-frame URL update on intra-app filter changes.** Chunk 10.6 already handles in-app navigation via iframe-side `pushState`; the top-frame URL still doesn't reflect every filter change. Out of scope.
+
+---
+
+## Chunk 11.2 — First-time login instructions `[DONE — see docs/changelog/chunk-11.2-first-time-instructions.md]`
+
+**Goal:** soften the first-login experience. New users hit three consent-style screens before reaching the app — Apps Script's *"Unverified"* warning (the one that prominently displays the `(Unverified)` label), Google's OAuth scope consent (a normal permissions list showing only the email scope), then Identity's Continue page. The first one is the unsettling screen the explainer needs to address. A one-time-per-browser instruction overlay on Login walks the user through the flow with both first-time screenshots and an honest note explaining the warning, gates the Sign-In click behind a "Got it" acknowledgment, and skips entirely on subsequent visits.
+
+**Dependencies:** Chunk 11.1 (the Sign-In flow this chunk wraps).
+
+### Architectural shape
+
+- **Overlay markup lives in `Login.html`**, inside the `#login-container` so it's automatically hidden when login isn't shown. Overlay element starts with `class="instructions-overlay hidden"`; the global `.hidden` rule keeps it `display: none` until JS opts in.
+- **localStorage gate.** Key `kindooLoginInstructionsV1Seen`, scoped to the iframe origin (`*.googleusercontent.com`). Read on every `showLogin()` call: if `'1'`, leave hidden; otherwise un-hide. The V1 suffix lets a future redesign re-show to all users without writing a migration. Wrapped in try/catch so privacy-mode-disabled storage degrades to "instructions every login" (acceptable).
+- **Per-browser, not per-user.** A user who logs in on Chrome desktop sees the overlay again on Chrome iOS. Correct: it's genuinely a different device experience.
+- **Two action paths, both set the flag.** "Got it, sign me in" sets the flag and triggers `startSignIn_()` (which programmatically clicks the existing `#signin-link` anchor — its `href` was set by Chunk 11.1's `buildIdentityUrl_()`, so the redirect-param round-trip continues unchanged). "Skip instructions next time" sets the flag and just hides the overlay; the user reads at their own pace, then clicks the regular Sign-In button. Auth failure preserves the flag (the user has *seen* the instructions; showing again on retry would imply the failure was their fault).
+- **Screenshots load cross-origin** from the wrapper's GitHub-Pages-served `https://kindoo.csnorth.org/images/{review-permissions,auth-scopes}.png`. Plain `<img src=…>` from inside the iframe; no CORS friction since image display doesn't require explicit headers.
+- **Sign-In click path is the same for both routes.** `buildIdentityUrl_()` (Chunk 11.1) produces the Identity URL with the `&redirect=…` round-trip param; the anchor's `<base target="_top">` ensures the click navigates the top frame. Programmatic `link.click()` from the "Got it" handler propagates user activation through the synchronous call so the cross-origin top-frame nav isn't blocked.
+
+### Sub-tasks
+
+- [x] **`src/ui/Login.html`** — added the overlay markup after the `<section class="login">` block. Structure: `<div id="instructions-overlay" class="instructions-overlay hidden">` → `<div class="instructions-modal" role="dialog">` → `<h2>` (header) + `<h3>` (subhead) + `<ol>` (**five** numbered steps — the prompt's six-step draft minus the "Google will show you an account picker" step, dropped post-implementation since most stake users only have a single Google account and the picker is self-explanatory when it does appear) + `<h4>` (warning section heading) + `<p>` (Unverified-warning note, referencing **Step 2** — Apps Script's prominent "this app isn't verified" interstitial — as the page where the user first encounters the warning) + two `<figure>` + `<figcaption>` blocks for the screenshots (Step 2 caption mentions the `(Unverified)` warning + `Review Permissions`; Step 3 caption is neutral, just `Continue` on the permissions screen) + `<div class="instructions-actions">` with the "Got it" button (`#instructions-acknowledge`, class `btn`) and the "Skip instructions next time" link (`#instructions-skip`, class `instructions-skip-link`). Image `src` URLs are absolute (`https://kindoo.csnorth.org/images/…`); `alt` text is descriptive (specific phrasing in the changelog).
+- [x] **`src/ui/Layout.html`** — added JS for the localStorage helpers (`getLoginInstructionsFlag_`/`setLoginInstructionsFlag_`, both try/catch-wrapped); a `startSignIn_()` helper (programmatic click on `#signin-link`); event listeners on `#instructions-acknowledge` (set flag, hide overlay, sign in) and `#instructions-skip` (preventDefault, set flag, hide overlay) wired once at boot via the `wireInstructionsActions_()` IIFE; the `showLogin()` function extended with a final conditional block that toggles the overlay's `.hidden` class based on the flag. The flag key constant `INSTRUCTIONS_FLAG_KEY_ = 'kindooLoginInstructionsV1Seen'` lives at the top of the IIFE.
+- [x] **`src/ui/Styles.html`** — added `.instructions-overlay`, `.instructions-modal`, `.instructions-title`, `.instructions-subhead`, `.instructions-steps`, `.instructions-warning-heading`, `.instructions-warning-body`, `.instructions-figure` + `.instructions-screenshot`, `.instructions-actions`, `.instructions-go-btn`, `.instructions-skip-link`. Mobile breakpoint extended to fold `.instructions-overlay` / `.instructions-modal` into the existing modal-tightening rule. Modal `max-height: calc(100vh - 64px)` with internal `overflow-y: auto`. Screenshots `max-width: 100%; height: auto`. Buttons use existing `.btn` class.
+- [x] **`docs/architecture.md`** §11 — short addendum between the ALLOWALL audit and the `Config.main_url` description noting the overlay, the localStorage scope (iframe origin), the V1-versioned key, the two action paths, and the defensive try/catch.
+- [x] **Walked verification cases** (14 cases — see the changelog's "Edge cases tested" section). Browser-side smoke test pending operator deploy.
+- [x] **Wrote `docs/changelog/chunk-11.2-first-time-instructions.md`** following the established pattern.
+
+### Acceptance criteria
+
+1. **First-time user (fresh incognito)** visiting Login sees the overlay with both screenshots and the Unverified explainer.
+2. **First-time user clicks "Got it, sign me in":** flag set; auth flow proceeds (Chunk 11.1 redirect handling unchanged).
+3. **First-time user clicks "Skip instructions next time":** flag set; overlay dismissed; regular Sign-In button visible and functional underneath.
+4. **Returning user (flag present):** no overlay; regular Sign-In button immediately available.
+5. **After acknowledge-and-sign-in, on next visit (same browser):** overlay does NOT appear.
+6. **After clearing localStorage, on next visit:** overlay appears again.
+7. **Different browser / device:** overlay appears (per-browser flag is correct).
+8. **Auth failure after dismissal:** returns to Login; overlay does NOT appear (flag persists by design).
+9. **localStorage disabled in browser:** overlay appears every time (acceptable degraded behavior).
+10. **Both screenshot images load** via `https://kindoo.csnorth.org/images/{review-permissions,auth-scopes}.png` (200 each, render in modal).
+11. **Screen reader experience:** alt text descriptive, heading hierarchy h2 → h3 → h4, `role="dialog"` on modal, button labels make sense.
+12. **Mobile viewport (375px):** modal scales, screenshots scale via `max-width: 100%`, content scrolls if needed (`max-height: 90vh`), buttons stay tappable.
+13. **Deep-link with auth required + first-time user:** paste `kindoo.csnorth.org/?p=mgr/seats&ward=CO`, see overlay, acknowledge, complete the auth flow, land on filtered AllSeats. Confirms Chunk 11.1's redirect preservation works through the new overlay flow.
+14. **All Chunks 1–11.1 acceptance criteria still pass.**
+
+### Out of scope
+
+- Refactoring the Sign-In code path beyond extracting `startSignIn_()`.
+- "Remember me" or other auth options.
+- Instructions on other pages (Login is the only pre-auth surface).
+- Versioning beyond V1.
+- Analytics or tracking on dismissal.
+- Internationalization.
+- **Pursuing Google OAuth verification.** Separate concern, weeks of work, would remove the Unverified label entirely. Stays optional — tracked in `docs/TASKS.md` history (#6 was closed by Chunk 11's banner removal, but OAuth verification could still close the first-time-consent-prompt friction this chunk papers over).

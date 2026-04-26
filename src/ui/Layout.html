@@ -146,6 +146,76 @@
           });
         })();
 
+        // Chunk 11.2: first-time-instructions overlay state. The flag
+        // is per-browser (localStorage at the iframe's
+        // googleusercontent.com origin — isolated from the wrapper
+        // origin, which is what we want), and V1-versioned so a future
+        // redesign can re-show instructions to all users without a
+        // migration. localStorage access is wrapped in try/catch so a
+        // privacy-mode-disabled browser degrades to "instructions every
+        // login" rather than throwing.
+        var INSTRUCTIONS_FLAG_KEY_ = 'kindooLoginInstructionsV1Seen';
+
+        function getLoginInstructionsFlag_() {
+          try { return localStorage.getItem(INSTRUCTIONS_FLAG_KEY_); }
+          catch (e) { return null; }
+        }
+
+        function setLoginInstructionsFlag_() {
+          try { localStorage.setItem(INSTRUCTIONS_FLAG_KEY_, '1'); }
+          catch (e) { /* silent — overlay shows next time */ }
+        }
+
+        function showInstructionsOverlay_() {
+          var overlay = $('instructions-overlay');
+          if (overlay) {
+            overlay.classList.remove('hidden');
+            overlay.setAttribute('aria-hidden', 'false');
+          }
+        }
+
+        function hideInstructionsOverlay_() {
+          var overlay = $('instructions-overlay');
+          if (overlay) {
+            overlay.classList.add('hidden');
+            overlay.setAttribute('aria-hidden', 'true');
+          }
+        }
+
+        // Trigger the top-frame nav via the existing #signin-link anchor.
+        // The anchor's href was set in showLogin() via buildIdentityUrl_(),
+        // and Layout.html's <base target="_top"> ensures the click
+        // navigates the top frame. Programmatic .click() preserves the
+        // user-activation gesture from the button click that called us,
+        // so the cross-origin top-frame nav isn't blocked.
+        function startSignIn_() {
+          var link = $('signin-link');
+          if (link && link.href) link.click();
+        }
+
+        // Wire the overlay's two action handlers once at boot. Both
+        // routes set the flag — even on auth failure, the user has SEEN
+        // the instructions and showing them again would imply the failure
+        // was their fault.
+        (function wireInstructionsActions_() {
+          var ack = $('instructions-acknowledge');
+          if (ack) {
+            ack.addEventListener('click', function () {
+              setLoginInstructionsFlag_();
+              hideInstructionsOverlay_();
+              startSignIn_();
+            });
+          }
+          var skip = $('instructions-skip');
+          if (skip) {
+            skip.addEventListener('click', function (e) {
+              e.preventDefault();
+              setLoginInstructionsFlag_();
+              hideInstructionsOverlay_();
+            });
+          }
+        })();
+
         // Build the Identity URL with a `redirect` param that carries the
         // current deep-link query (REQUESTED_PAGE + QUERY_PARAMS, server-
         // injected from Main.doGet). Identity round-trips the redirect
@@ -222,6 +292,18 @@
             }
           }
           if (errEl) errEl.textContent = errMsg || '';
+
+          // Chunk 11.2: show the first-time-instructions overlay if the
+          // user hasn't seen it before in this browser. Returning users
+          // (flag === '1') see only the section above with the regular
+          // Sign-In button. Any failure path (auth expired, auth invalid,
+          // identity_url unconfigured) preserves the flag — we don't
+          // re-prompt instructions on retry.
+          if (getLoginInstructionsFlag_() !== '1') {
+            showInstructionsOverlay_();
+          } else {
+            hideInstructionsOverlay_();
+          }
         }
 
         // ---------------------------------------------------------
