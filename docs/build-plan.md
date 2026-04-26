@@ -558,7 +558,7 @@ _Proof 6 — failure modes_
 
 **Architectural pivot from the pre-chunk plan.** The original Chunk 11 plan was a Cloudflare Worker proxying `kindoo.csnorth.org/*` to the Main `/exec` URL. That delivers the pretty URL but does **not** remove the *"This application was created by a Google Apps Script user"* banner — the banner lives in the outer wrapper page Apps Script serves from `script.google.com`, which a transparent proxy ships through unchanged.
 
-**The iframe-embed approach removes the banner.** A static `docs/index.html` on GitHub Pages contains a full-viewport iframe pointing at the Main `/exec` URL. Both `doGet` deployments (Main + Identity) set `setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)` on every HtmlOutput return path so the cross-origin embed is permitted. The top frame at `kindoo.csnorth.org` is the static wrapper (no banner-bearing chrome at all); the wrapper iframe loads the Apps Script `/exec` directly. Net effect: pretty URL AND no banner.
+**The iframe-embed approach removes the banner.** A static `website/index.html` deployed to GitHub Pages (via the Actions workflow at `.github/workflows/pages.yml`) contains a full-viewport iframe pointing at the Main `/exec` URL. Both `doGet` deployments (Main + Identity) set `setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)` on every HtmlOutput return path so the cross-origin embed is permitted. The top frame at `kindoo.csnorth.org` is the static wrapper (no banner-bearing chrome at all); the wrapper iframe loads the Apps Script `/exec` directly. Net effect: pretty URL AND no banner.
 
 **Auth-pattern note.** This chunk was originally drafted for a Google-Sign-In + OAuth Client ID stack. That path was abandoned in Chunk 1 for the two-deployment Session+HMAC pattern (see `open-questions.md` A-8 and `changelog/chunk-1-scaffolding.md`). With HMAC-signed session tokens there's no OAuth client to allowlist and no GSI redirect to worry about — the auth flow's Continue-click on Identity remains required by the iframe-sandbox user-activation rule, but no OAuth Client ID configuration changes are needed for the wrapper. `src/ui/Login.html` is a plain anchor; no `google.accounts` JS library is used anywhere.
 
@@ -571,7 +571,7 @@ _Proof 6 — failure modes_
 
   No other code path returns a standalone `HtmlOutput`: `Router.gs` and `ApiShared.gs` extract `.getContent()` strings and inline them into the parent Layout's HtmlOutput; `include()` returns a string. The parent Layout's ALLOWALL covers them transitively.
 
-- [x] **`docs/index.html`** — static wrapper page (GitHub Pages serves it). Single self-contained file, no analytics, no external dependencies. Full-viewport iframe with `allow="clipboard-read; clipboard-write"` for the Chunk-5 "Copy link" affordance. Iframe `src` placeholder `AKfycb_REPLACE_ME` swapped to the Main `/exec` URL during the runbook's Step 6. Carries a six-line same-origin query-string forwarder (explained in `architecture.md` §11) so deep links and the post-sign-in `?token=…` landing both reach Main's `doGet`.
+- [x] **`website/index.html`** — static wrapper page (GitHub Pages serves it via the workflow at `.github/workflows/pages.yml`). Single self-contained file, no analytics, no external dependencies. Full-viewport iframe with `allow="clipboard-read; clipboard-write"` for the Chunk-5 "Copy link" affordance. Iframe `src` placeholder `AKfycb_REPLACE_ME` swapped to the Main `/exec` URL during the runbook's Step 6. Carries a six-line same-origin query-string forwarder (explained in `architecture.md` §11) so deep links and the post-sign-in `?token=…` landing both reach Main's `doGet`. Sibling `website/CNAME` preserves the custom domain in the published artifact.
 
 - [x] **`docs/runbooks/chunk-11-custom-domain.md`** — operator runbook covering every external-system step (DNS, GitHub Pages, Apps Script push, wrapper URL replace, `Config.main_url` flip) in order, with verification points and rollback notes per step.
 
@@ -580,7 +580,7 @@ _Proof 6 — failure modes_
 - [x] Squarespace DNS — CNAME `kindoo → <github-username>.github.io` (no other zone changes; MX / SPF / DKIM / DMARC for Workspace mail untouched).
 - [x] GitHub Pages — enable from `main:/docs`, custom domain `kindoo.csnorth.org`, Enforce HTTPS (Let's Encrypt cert auto-provisioned).
 - [x] Push the latest `main` to the Apps Script Main project via `clasp` (`npm run push`) and Deploy → New version on the **existing** Main deployment (preserves the `/exec` URL). Repeat copy-paste-and-deploy on the Identity project (which is not in `clasp`'s push set).
-- [x] Replace `docs/index.html`'s placeholder iframe `src` with the actual Main `/exec` URL; commit + push.
+- [x] Replace `website/index.html`'s placeholder iframe `src` with the actual Main `/exec` URL; commit + push.
 - [x] Update `Config.main_url` in the bound Sheet (read-only in the manager UI per `CONFIG_PROTECTED_KEYS_`; the operator edits the cell directly) from the raw `/exec` URL to `https://kindoo.csnorth.org`. Mirror the same change in the Identity project's `main_url` Script Property.
 
 ### Acceptance criteria

@@ -3,7 +3,8 @@
 > **What this delivers.** `https://kindoo.csnorth.org` loads the app with no
 > "This application was created by a Google Apps Script user" banner.
 >
-> **How.** A static `docs/index.html` page on GitHub Pages contains a
+> **How.** A static `website/index.html` page deployed to GitHub Pages
+> (via the Actions workflow at `.github/workflows/pages.yml`) contains a
 > full-viewport iframe pointing at the Main Apps Script `/exec` URL. Both
 > Apps Script `doGet` deployments (Main and Identity) already set
 > `HtmlService.XFrameOptionsMode.ALLOWALL` on every return path (verified
@@ -38,10 +39,14 @@ Before any external-system change, sanity-check the repo state:
       for `Code.gs` (one on the success return at line 117, one in the
       shared `Identity_errPage_` helper at line 154 that all three error
       branches funnel through).
-- [ ] `docs/index.html` exists, contains the `AKfycb_REPLACE_ME` iframe
-      `src` placeholder, and includes the same-origin query-string
+- [ ] `website/index.html` exists, contains the `AKfycb_REPLACE_ME`
+      iframe `src` placeholder, and includes the same-origin query-string
       forwarder `<script>` block (so deep links and post-sign-in
       `?token=…` landings flow through to Main's `doGet`).
+- [ ] `website/CNAME` exists and contains `kindoo.csnorth.org` on a
+      single line.
+- [ ] `.github/workflows/pages.yml` exists and points at `./website` as
+      the artifact source.
 
 If any of these fail, stop and resolve before proceeding.
 
@@ -101,33 +106,54 @@ Both should return empty (no record yet).
 
 ## Step 2 — Enable GitHub Pages on `kindoo_access_tracker`
 
-**What.** Configure GitHub Pages to serve `docs/` from the `main`
-branch at the custom domain `kindoo.csnorth.org`.
+**What.** Configure GitHub Pages to deploy the wrapper page via the
+GitHub Actions workflow at `.github/workflows/pages.yml`, with the
+custom domain `kindoo.csnorth.org`.
+
+> **Why GitHub Actions and not "Deploy from a branch"?** Branch-deploy
+> mode supports only `/` (repo root) or `/docs` as the source folder
+> per GitHub's docs. We wanted website resources tracked in their own
+> directory (`website/`), so the deploy mode is "GitHub Actions"
+> instead. The workflow uploads `./website` as the published artifact.
+>
+> Earlier in this project's history (Chunk 11 cutover), the deploy
+> was branch-based at `main:/docs`. The reorganisation to `website/`
+> + GitHub Actions landed shortly after; if you're reading this for
+> the first deploy of a fresh fork, follow the steps below as
+> written and skip the migration note.
 
 **How.**
 
 1. On GitHub, open `Settings → Pages` for the `kindoo_access_tracker`
    repo.
-2. **Source:** branch = `main`, folder = `/docs`. Save.
+2. **Build and deployment → Source:** select **GitHub Actions** (not
+   "Deploy from a branch"). The workflow at
+   `.github/workflows/pages.yml` will be the deployer; no branch /
+   folder selection is needed.
 3. **Custom domain:** enter `kindoo.csnorth.org`. Save.
-   GitHub will run a DNS check immediately and warn that the host
-   doesn't resolve — that's expected; we add the CNAME in Step 3.
+   GitHub will run a DNS check immediately and warn if the host
+   doesn't resolve — that's expected; the CNAME is added in Step 3.
 4. **Enforce HTTPS:** leave UNCHECKED for now. The checkbox is
    greyed-out until the certificate provisions, which can't happen
    until DNS resolves. We come back to this in Step 4.
-5. Saving the custom domain creates a `docs/CNAME` file on `main`
-   containing `kindoo.csnorth.org`. Pull or refresh local `main` so
-   subsequent commits include it.
 
 **Verify.**
 
-- `Settings → Pages` shows the custom domain entered, with a yellow /
-  red banner about DNS not resolving.
-- `git pull` then `cat docs/CNAME` shows `kindoo.csnorth.org` on a
-  single line.
+- `Settings → Pages` shows **Source: GitHub Actions** and the custom
+  domain entered, with a yellow / red banner about DNS not resolving.
+- `cat website/CNAME` shows `kindoo.csnorth.org` on a single line. (The
+  CNAME is committed in the repo; with "GitHub Actions" source mode,
+  GitHub does NOT auto-commit a CNAME file — that's a branch-deploy
+  behavior. The file at `website/CNAME` is what the published artifact
+  carries forward to preserve the custom domain.)
+- The Actions tab shows no Pages-deploy run yet (the workflow hasn't
+  been triggered until either an actual push under `website/**` or a
+  manual `workflow_dispatch`).
 
-**Rollback.** `Settings → Pages → unset custom domain` and revert the
-auto-created `docs/CNAME` file.
+**Rollback.** `Settings → Pages → unset custom domain`. Reverting the
+source mode back to "Deploy from a branch" only makes sense if you
+also move `website/index.html` + `website/CNAME` back to `docs/`.
+Cleaner: keep the workflow.
 
 ---
 
@@ -256,7 +282,7 @@ deployment.
 
 ## Step 6 — Replace the placeholder iframe `src` with the real Main URL
 
-**What.** Edit `docs/index.html`, replace the placeholder iframe `src`
+**What.** Edit `website/index.html`, replace the placeholder iframe `src`
 with the actual Main `/exec` URL, commit, push.
 
 **How.**
@@ -268,16 +294,18 @@ with the actual Main `/exec` URL, commit, push.
    ```sh
    sed -i '' \
      "s|https://script.google.com/macros/s/AKfycb_REPLACE_ME/exec|<MAIN_EXEC_URL>|" \
-     docs/index.html
+     website/index.html
    ```
    (Or open the file in an editor and replace by hand. Place the URL
    inline; the file is short.)
-3. `git diff docs/index.html` — confirm the only change is the
+3. `git diff website/index.html` — confirm the only change is the
    `src=` URL.
-4. `git add docs/index.html` and commit with message
+4. `git add website/index.html` and commit with message
    `Chunk 11: replace wrapper iframe src with Main /exec URL`.
 5. `git push origin main`.
-6. GitHub Pages redeploys automatically; takes ~1–2 minutes.
+6. The `pages.yml` workflow runs on push (path filter matches
+   `website/**`); deploy completes in ~1–2 minutes. Watch the Actions
+   tab if you want to confirm the run succeeded.
 
 **Verify.**
 
@@ -296,11 +324,11 @@ with the actual Main `/exec` URL, commit, push.
   request URL is `…/exec?p=mgr/seats` — the wrapper's same-origin
   forwarder copied the query string into the iframe `src`. If the
   request URL is just `…/exec` (no `?p=`), the JS forwarder didn't
-  run; check Console for errors and confirm `docs/index.html`
+  run; check Console for errors and confirm `website/index.html`
   contains the `<script>` block.
 
-**Rollback.** Revert the `docs/index.html` commit on `main` and push;
-GitHub Pages restores the placeholder. The wrapper is broken (iframe
+**Rollback.** Revert the `website/index.html` commit on `main` and push;
+the workflow redeploys the placeholder. The wrapper is broken (iframe
 fails to load) but `kindoo.csnorth.org` itself stays up.
 
 ---
@@ -530,8 +558,8 @@ If Chunk 11 has shipped fully but a problem surfaces post-cutover:
    URL. Wait up to 60 seconds for the Config cache to expire. Users
    are now back on the unwrapped `/exec` experience — the banner is
    visible but the app works.
-2. **Optionally** revert `docs/index.html` to the placeholder by
-   reverting the Step 6 commit; GitHub Pages redeploys in ~2 minutes.
+2. **Optionally** revert `website/index.html` to the placeholder by
+   reverting the Step 6 commit; the workflow redeploys in ~2 minutes.
    `https://kindoo.csnorth.org` will then 404 inside the iframe but
    the wrapper page itself still loads.
 3. **Squarespace CNAME** can stay in place — pointing `kindoo` at
@@ -568,7 +596,7 @@ post-`Config.main_url` cutover).
 If the redeploy doesn't fix the 403, escalate to one of:
 
 - **Confirm Main's deployment URL in the wrapper matches `Config.main_url`'s
-  pre-cutover value.** Open `docs/index.html` and the Apps Script editor
+  pre-cutover value.** Open `website/index.html` and the Apps Script editor
   → Deploy → Manage deployments. The iframe `src` should be the active
   Main deployment's `/exec` URL. A wrapper iframe pointing at a
   different (older or new-but-unintended) deployment URL would explain

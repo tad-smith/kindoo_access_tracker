@@ -768,7 +768,7 @@ Chunk 10 added two new system-managed Config keys (`last_expiry_at`, `last_expir
 
 ## 11. Custom domain — iframe wrapper on GitHub Pages
 
-`https://kindoo.csnorth.org` is served by a static `docs/index.html` page hosted on **GitHub Pages** out of the `kindoo_access_tracker` repo. The page contains a single full-viewport iframe whose `src` is the Main Apps Script `/exec` URL. Both `doGet` deployments (Main + Identity) call `setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)` on every HtmlOutput they return, which permits cross-origin iframe embedding from the wrapper.
+`https://kindoo.csnorth.org` is served by a static `website/index.html` page hosted on **GitHub Pages** out of the `kindoo_access_tracker` repo, deployed via the GitHub Actions workflow at `.github/workflows/pages.yml` (the Pages source mode is "GitHub Actions", not the simpler "Deploy from a branch" mode — branch-deploy supports only `/` or `/docs` as source folders, and we wanted website resources tracked in their own directory). The page contains a single full-viewport iframe whose `src` is the Main Apps Script `/exec` URL. Both `doGet` deployments (Main + Identity) call `setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)` on every HtmlOutput they return, which permits cross-origin iframe embedding from the wrapper.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -790,9 +790,9 @@ The pre-Chunk-11 plan was a Cloudflare Worker proxying `kindoo.csnorth.org/*` to
 
 The iframe-embed approach removes the banner because **the top frame never loads the `script.google.com` wrapper page at all** — the wrapper iframe at `kindoo.csnorth.org` loads the Main `/exec` directly, which Apps Script wraps in *its* iframe (the user-content iframe on `*.googleusercontent.com`), and the user-visible chrome is the wrapper page's chrome (i.e. nothing — the wrapper is a 100%-viewport iframe). One step further out, one less wrapper page, no banner.
 
-### `docs/index.html`
+### `website/index.html`
 
-A minimal self-contained HTML file. No analytics, no external dependencies. Full-viewport iframe, `clipboard-read; clipboard-write` allowed for the Chunk-5 "Copy link" affordance. The only JavaScript on the page is a six-line same-origin query-string forwarder — explained below.
+A minimal self-contained HTML file. No analytics, no external dependencies. Full-viewport iframe, `clipboard-read; clipboard-write` allowed for the Chunk-5 "Copy link" affordance. The only JavaScript on the page is a six-line same-origin query-string forwarder — explained below. Sibling `website/CNAME` carries `kindoo.csnorth.org` so the published artifact preserves the custom domain.
 
 ```html
 <!DOCTYPE html>
