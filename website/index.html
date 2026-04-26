@@ -2,7 +2,7 @@
 <!--
   Kindoo Access Tracker — custom-domain wrapper.
 
-  Hosted on GitHub Pages, served at https://kindoo.csnorth.org. The single
+  Hosted on GitHub Pages, served at https://kindoo.csnorth.org. A single
   full-viewport iframe loads the Main Apps Script /exec deployment, which
   must be served with HtmlService.XFrameOptionsMode.ALLOWALL on every
   doGet return path (Main.gs + identity-project/Code.gs).
@@ -12,15 +12,26 @@
   banner is hidden, because the banner lives in script.google.com's outer
   wrapper page — which we no longer load at the top frame.
 
-  The only JavaScript here is a same-origin query-string forwarder: it
-  copies window.location.search into the iframe's src so that deep links
-  (e.g. ?p=mgr/seats&ward=CO) and the post-sign-in ?token=... handed back
-  by Identity's redirect both reach Main's doGet. No postMessage, no
-  cross-origin messaging — purely a same-origin DOM read + write before
-  the iframe's first navigation completes.
+  Inline script (~25 lines) does two things — both same-origin DOM only,
+  no postMessage / no cross-origin messaging:
+
+    1. Forwards the wrapper's query string to the iframe src, so deep
+       links (?p=mgr/seats&ward=CO) reach Main's doGet whether the user
+       arrived cold or post-sign-in.
+
+    2. After auth, when the wrapper lands at /?token=<HMAC>&redirect=<encoded>
+       (Identity's Continue redirect target), extracts the token and the
+       redirect, sanitizes the redirect (drops any nested 'token' or
+       'redirect' to defend against hostile values), routes the token
+       into the iframe URL only, and history.replaceState's the wrapper's
+       URL to /?<cleanedQuery>. Result: the address bar never shows the
+       token (it stays inside Apps Script's nested-iframe structure where
+       it isn't user-visible), and the original deep-link query is
+       restored.
 
   See docs/runbooks/chunk-11-custom-domain.md for the deploy steps and
-  docs/changelog/chunk-11-custom-domain.md for the rationale.
+  docs/changelog/chunk-11.1-auth-url-polish.md for this script's design
+  rationale.
 -->
 <html lang="en">
 <head>
@@ -38,19 +49,45 @@
   </style>
 </head>
 <body>
-  <iframe
-    src="https://script.google.com/macros/s/AKfycbz6bJUZ5q9RMh8pjk2H2v5-LWGFRXDmutIfgBnMr27GlzKbGZi6Rv3Ga88GzitDr9QP_g/exec"
-    title="Kindoo Access Tracker"
-    allow="clipboard-read; clipboard-write"
-  ></iframe>
+  <iframe id="app" title="Kindoo Access Tracker" allow="clipboard-read; clipboard-write"></iframe>
   <script>
-    // Forward the wrapper origin's query string into the iframe src so
-    // ?p=… deep links and the ?token=… post-sign-in landing both flow
-    // through to Main's doGet. Same-origin only.
     (function () {
-      if (!window.location.search) return;
-      var iframe = document.querySelector('iframe');
-      if (iframe) iframe.src = iframe.src.split('?')[0] + window.location.search;
+      var BASE = 'https://script.google.com/macros/s/AKfycbz6bJUZ5q9RMh8pjk2H2v5-LWGFRXDmutIfgBnMr27GlzKbGZi6Rv3Ga88GzitDr9QP_g/exec';
+      var iframe = document.getElementById('app');
+      var search = window.location.search;
+
+      if (!search) {
+        iframe.src = BASE;
+        return;
+      }
+
+      var topParams = new URLSearchParams(search);
+      var token = topParams.get('token');
+
+      if (!token) {
+        // Cold deep-link: forward the wrapper's query verbatim.
+        iframe.src = BASE + search;
+        return;
+      }
+
+      // Post-auth landing. Decode the redirect param, sanitize it, then
+      // route token + cleanedQuery into the iframe URL and clean the
+      // wrapper's URL so the address bar shows only the deep-link params
+      // (or '/' when the redirect was empty).
+      var rawRedirect = topParams.get('redirect') || '';
+      var redirectParams = new URLSearchParams(rawRedirect);
+      redirectParams.delete('token');     // never round-trip the token
+      redirectParams.delete('redirect');  // never re-nest
+
+      var iframeParams = new URLSearchParams();
+      iframeParams.set('token', token);
+      redirectParams.forEach(function (value, key) {
+        iframeParams.set(key, value);
+      });
+      iframe.src = BASE + '?' + iframeParams.toString();
+
+      var cleanedQuery = redirectParams.toString();
+      history.replaceState({}, '', '/' + (cleanedQuery ? '?' + cleanedQuery : ''));
     })();
   </script>
 </body>
