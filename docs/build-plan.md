@@ -550,7 +550,7 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 11 — Custom domain via iframe wrapper
+## Chunk 11 — Custom domain via iframe wrapper `[DONE — see docs/changelog/chunk-11-custom-domain.md]`
 
 **Goal:** `https://kindoo.csnorth.org` serves the app **with no Apps Script banner**.
 
@@ -577,11 +577,11 @@ _Proof 6 — failure modes_
 
 ### Operator-driven deliverables (executed via the runbook)
 
-- [ ] Squarespace DNS — CNAME `kindoo → <github-username>.github.io` (no other zone changes; MX / SPF / DKIM / DMARC for Workspace mail untouched).
-- [ ] GitHub Pages — enable from `main:/docs`, custom domain `kindoo.csnorth.org`, Enforce HTTPS (Let's Encrypt cert auto-provisioned).
-- [ ] Push the latest `main` to the Apps Script Main project via `clasp` (`npm run push`) and Deploy → New version on the **existing** Main deployment (preserves the `/exec` URL). Repeat copy-paste-and-deploy on the Identity project (which is not in `clasp`'s push set).
-- [ ] Replace `docs/index.html`'s placeholder iframe `src` with the actual Main `/exec` URL; commit + push.
-- [ ] Update `Config.main_url` in the bound Sheet (read-only in the manager UI per `CONFIG_PROTECTED_KEYS_`; the operator edits the cell directly) from the raw `/exec` URL to `https://kindoo.csnorth.org`. Mirror the same change in the Identity project's `main_url` Script Property.
+- [x] Squarespace DNS — CNAME `kindoo → <github-username>.github.io` (no other zone changes; MX / SPF / DKIM / DMARC for Workspace mail untouched).
+- [x] GitHub Pages — enable from `main:/docs`, custom domain `kindoo.csnorth.org`, Enforce HTTPS (Let's Encrypt cert auto-provisioned).
+- [x] Push the latest `main` to the Apps Script Main project via `clasp` (`npm run push`) and Deploy → New version on the **existing** Main deployment (preserves the `/exec` URL). Repeat copy-paste-and-deploy on the Identity project (which is not in `clasp`'s push set).
+- [x] Replace `docs/index.html`'s placeholder iframe `src` with the actual Main `/exec` URL; commit + push.
+- [x] Update `Config.main_url` in the bound Sheet (read-only in the manager UI per `CONFIG_PROTECTED_KEYS_`; the operator edits the cell directly) from the raw `/exec` URL to `https://kindoo.csnorth.org`. Mirror the same change in the Identity project's `main_url` Script Property.
 
 ### Acceptance criteria
 
