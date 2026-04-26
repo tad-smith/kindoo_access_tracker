@@ -363,17 +363,50 @@ If `KindooManagers` has no `active=true` rows, over-cap emails silently go nowhe
 
 ---
 
-## Cloudflare Worker
+## Custom domain (originally Cloudflare Worker; pivoted to iframe wrapper in Chunk 11)
 
-### CF-1 `[P0]` OAuth redirect through the Worker
+### CF-1 `[RESOLVED 2026-04-25 — pivoted to iframe-embed wrapper, not a Worker proxy]` Banner removal needed an iframe wrapper, not a transparent proxy
 
-Apps Script web apps redirect through `accounts.google.com` and expect to land back on `script.google.com/.../exec`. Transparent proxy (as in our planned Worker) may cause the round trip to break, landing the user on the `script.google.com` URL instead of `kindoo.csnorth.org`. Numerous reports of this happening on Stack Overflow.
+Pre-Chunk-11 best guess (preserved as discovery trail): try a Cloudflare Worker as a transparent proxy, fall back to a 302 redirect if OAuth round-trip breaks. The premise was that the Worker would deliver the pretty URL.
 
-**Best guess:** Try the full-proxy approach first. If broken, fall back to a Redirect Rule (302) — the address bar shows `script.google.com` after the first hop, but auth works. Alternative: wait for OAuth sign-in completes and then server-side rewrite redirects — complex and fragile.
+**Discovery during Chunk 11 design.** A transparent Worker proxy delivers the pretty URL but does **not** remove the *"This application was created by a Google Apps Script user"* banner. The banner lives in the outer wrapper page Apps Script serves from `script.google.com`, which the proxy ships through unchanged. Stripping the banner from the proxy would require modifying HTML in flight (brittle, breaks any time Apps Script's wrapper page changes).
 
-### CF-2 `[P2]` Deep-link preservation
+**Resolution.** Pivoted to an iframe-embed wrapper: a static `docs/index.html` on GitHub Pages contains a full-viewport iframe pointing at the Main `/exec` URL. Both `doGet` deployments set `setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)` to permit the embed. Top frame is the static wrapper (no banner-bearing chrome at all); the wrapper iframe loads Apps Script directly. Pretty URL AND no banner. Cloudflare is not in the picture — DNS stays at Squarespace, the only added record is a `CNAME kindoo → <github-username>.github.io`. The OAuth-redirect concern that motivated this section's original wording doesn't apply: there's no OAuth client (the auth flow is HMAC session tokens per A-8), and Identity's `window.top.location.replace(MAIN_URL + '?token=…')` runs as a top-frame navigation that Apps Script's iframe sandbox handles fine — the wrapper origin doesn't intercept it.
 
-Worker must forward query strings. Trivial — covered in the Worker code sketched in architecture.md.
+See `architecture.md` §11 and `docs/changelog/chunk-11-custom-domain.md` (when it lands) for the full rationale.
+
+### CF-2 `[P2]` Deep-link preservation through the Identity round-trip
+
+Original wording: "Worker must forward query strings." With the iframe wrapper there's no proxy. Updated state of the world after Chunk 11:
+
+- **In-app deep-links (Chunk 10.6) work** — they happen post-bootstrap inside the iframe and never touch the wrapper.
+- **Wrapper-origin direct-load deep-links for already-signed-in users work** — `docs/index.html` carries a six-line same-origin query-string forwarder that copies `window.location.search` into the iframe `src` before navigation. Same forwarder is what makes the post-sign-in `?token=…` landing reach Main's `doGet`.
+- **Wrapper-origin direct-load deep-links followed by a fresh sign-in lose `?p=`.** Identity's redirect carries only `?token=…`; the original page parameter doesn't survive the round-trip.
+
+**Best guess (still open):** Closing the pre-sign-in case requires an auth-flow change — teach the Login link to pass `?next=<pageId>&…` (or similar) through to Identity, and Identity to echo it back into the post-sign-in redirect. Small change but it touches the auth contract, so deferred until there's a real-usage signal that anyone hits this. The in-app and already-signed-in paths cover the realistic deep-link use cases (sharing URLs to teammates who are already in the app).
+
+### CF-3 `[P2]` Iframe-embed durability against future browser changes
+
+The wrapper relies on cross-origin iframe embedding being permitted with `X-Frame-Options: ALLOWALL`. Browsers periodically tighten cross-origin iframe behaviour (third-party cookie partitioning, Storage Access API, Cross-Origin-Embedder-Policy / Cross-Origin-Opener-Policy enforcement). The current architecture is resilient because:
+
+- The HMAC session token is held in `sessionStorage`, which is partitioned per iframe-origin and unaffected by third-party cookie restrictions.
+- The auth round-trip only touches Google's first-party session at `accounts.google.com` / `script.google.com`, where the user is already signed in.
+- The wrapper itself does no cross-origin `postMessage` — it's a static HTML page with one iframe.
+
+But the surface area is non-zero. If a future Chrome / Safari / Firefox change makes embedded sign-in flows unusable (e.g. requiring Storage Access API prompts the user can't reasonably approve), the documented fallback is to drop iframe-embed and accept the banner — `Config.main_url` reverts to the raw `/exec` URL, the `docs/index.html` becomes a redirect rather than a wrapper, and we accept the banner. Cloudflare-Worker-as-transparent-proxy is the second-fallback if even the redirect approach has UX problems.
+
+**Best guess:** No action needed today; revisit if user reports point at a browser-policy regression. Track here so the path forward is documented.
+
+### CF-4 `[P2]` GitHub Pages as the wrapper host
+
+GitHub Pages is fine for a static HTML page at the scale we operate. Risks worth naming:
+
+- **GitHub Pages reliability.** ~99.9% historically; outages would take the wrapper down (the raw `/exec` URL still works, so this is a UX degradation not an outage).
+- **Lock-in.** None to speak of — the wrapper is one HTML file; migrating to Cloudflare Pages, Netlify, or any S3-class static host is a 5-minute exercise. The DNS record at Squarespace is the only piece that points at GitHub specifically.
+- **HTTPS cert auto-renewal.** GitHub provisions and renews via Let's Encrypt automatically. If renewal fails (rare), the operator gets a GitHub Pages email warning; manual remediation is one click in `Settings → Pages`.
+- **Future need for server-side wrapper logic.** If we ever need to gate the wrapper origin (auth check, rate limiting, A/B), GitHub Pages can't host it — at that point the wrapper migrates to Cloudflare Pages + Worker or similar. Not a current need.
+
+**Best guess:** Stay on GitHub Pages until a concrete reason to move surfaces.
 
 ---
 

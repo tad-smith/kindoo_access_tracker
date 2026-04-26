@@ -766,23 +766,110 @@ The `last_expiry_at` / `last_expiry_summary` Config keys are written by `Expiry_
 
 Chunk 10 added two new system-managed Config keys (`last_expiry_at`, `last_expiry_summary`). Pre-Chunk-10, the read-only keys list in `ConfigRepo` was called `CONFIG_IMPORTER_KEYS_` — a misnomer once the Expiry service started writing its own last-run stamps. Chunk 10 renamed it to `CONFIG_SYSTEM_KEYS_` ("owned by any background process") and retained `Config_isImporterKey(key)` as a backward-compat alias for the Chunk-2 ApiManager callers. The manager Configuration UI shows the read-only keys under a `system-managed` badge instead of the old `importer-owned`.
 
-## 11. Cloudflare Worker
+## 11. Custom domain — iframe wrapper on GitHub Pages
 
-Final chunk. The Apps Script web app URL is `https://script.google.com/a/macros/<DOMAIN>/s/<SCRIPT_ID>/exec` (or the personal variant). A Worker bound to `kindoo.csnorth.org/*` does:
+`https://kindoo.csnorth.org` is served by a static `docs/index.html` page hosted on **GitHub Pages** out of the `kindoo_access_tracker` repo. The page contains a single full-viewport iframe whose `src` is the Main Apps Script `/exec` URL. Both `doGet` deployments (Main + Identity) call `setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)` on every HtmlOutput they return, which permits cross-origin iframe embedding from the wrapper.
 
-```js
-export default {
-  async fetch(request) {
-    const src = new URL(request.url);
-    const target = new URL('https://script.google.com/macros/s/<SCRIPT_ID>/exec');
-    target.search = src.search; // preserve query string
-    const proxied = new Request(target.toString(), request);
-    return fetch(proxied, { redirect: 'follow' });
-  }
-}
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Top frame: https://kindoo.csnorth.org   (GitHub Pages, static)  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ Wrapper iframe: https://script.google.com/.../exec        │  │
+│  │  (Apps Script's own internal iframe still wraps the Main  │  │
+│  │   doGet output on n-<hash>-script.googleusercontent.com)  │  │
+│  │  ┌─────────────────────────────────────────────────────┐  │  │
+│  │  │ Layout.html — the actual app                        │  │  │
+│  │  └─────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Known risk** (flagged in open-questions.md): Apps Script web apps perform OAuth redirects through `accounts.google.com` and expect to land back on the `script.google.com` URL. A transparent proxy may break the round trip. If we hit that, Chunk 11 likely pivots to just CNAME + a Cloudflare Redirect Rule (302) to the `/exec` URL — we lose the pretty URL in the address bar after the first hop, but auth still works.
+### Why this shape (and not a Cloudflare Worker proxy)
+
+The pre-Chunk-11 plan was a Cloudflare Worker proxying `kindoo.csnorth.org/*` to the Main `/exec` URL. That approach delivers a pretty URL in the address bar but does **not** remove the *"This application was created by a Google Apps Script user"* banner. The banner lives in the outer wrapper page Apps Script serves from `script.google.com`; a transparent proxy ships that page through unchanged. Stripping it would require modifying HTML in flight (brittle, breaks any time Apps Script adjusts its wrapper).
+
+The iframe-embed approach removes the banner because **the top frame never loads the `script.google.com` wrapper page at all** — the wrapper iframe at `kindoo.csnorth.org` loads the Main `/exec` directly, which Apps Script wraps in *its* iframe (the user-content iframe on `*.googleusercontent.com`), and the user-visible chrome is the wrapper page's chrome (i.e. nothing — the wrapper is a 100%-viewport iframe). One step further out, one less wrapper page, no banner.
+
+### `docs/index.html`
+
+A minimal self-contained HTML file. No analytics, no external dependencies. Full-viewport iframe, `clipboard-read; clipboard-write` allowed for the Chunk-5 "Copy link" affordance. The only JavaScript on the page is a six-line same-origin query-string forwarder — explained below.
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kindoo Access Tracker</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    iframe { width: 100%; height: 100%; border: 0; display: block; }
+  </style>
+</head>
+<body>
+  <iframe
+    src="https://script.google.com/macros/s/<MAIN_SCRIPT_ID>/exec"
+    title="Kindoo Access Tracker"
+    allow="clipboard-read; clipboard-write"
+  ></iframe>
+  <script>
+    (function () {
+      if (!window.location.search) return;
+      var iframe = document.querySelector('iframe');
+      if (iframe) iframe.src = iframe.src.split('?')[0] + window.location.search;
+    })();
+  </script>
+</body>
+</html>
+```
+
+Adding a `sandbox` attribute would *further* restrict the iframe; we want the default permissions, just full-screen layout. Omitted.
+
+### Why the wrapper carries (a tiny bit of) JavaScript
+
+The wrapper origin's query string would otherwise be invisible to the iframe — GitHub Pages serves the static HTML regardless of `?…`, and the `<iframe src="…">` value is fixed at parse time. Two flows depend on the iframe seeing the wrapper's query string:
+
+1. **Direct-load deep links from the wrapper origin.** `https://kindoo.csnorth.org/?p=mgr/seats&ward=CO` should land an already-signed-in user on the All Seats page with the ward filter pre-applied. Without the forwarder the iframe loads `/exec` with no `?p=`, so the user lands on their default page instead.
+2. **Post-sign-in token landing.** `Config.main_url` is the wrapper origin (`https://kindoo.csnorth.org`); Identity redirects the top frame to `MAIN_URL + '?token=…'` after sign-in. The wrapper reloads, the JS forwards the `?token=…` into the iframe `src`, and Main's `doGet` reads the token from `e.parameter.token` exactly as it would on a raw `/exec` URL.
+
+The forwarder is intentionally one same-origin DOM read (`window.location.search`) plus one same-origin DOM write (`iframe.src`) — no `postMessage`, no cross-origin messaging, no listeners attached. It runs once at page load. The iframe's no-query case (the common path: a return visit by a signed-in user with no `?…` on the wrapper URL) skips the JS entirely so the iframe doesn't reload.
+
+Pre-sign-in deep-linking has a remaining gap: a fresh sign-in initiated from a deep link still loses the `?p=` because the auth round-trip itself doesn't preserve it (Identity's redirect carries only `?token=…`). Closing that requires teaching the Login link to pass the page parameter through to Identity (e.g. as a `next` query arg) and Identity to echo it back. That's an auth-flow change — deferred outside Chunk 11; tracked under `docs/build-plan.md` Chunk 11 "Out of scope" and `docs/open-questions.md` CF-2.
+
+### `ALLOWALL` on every `doGet` HtmlOutput
+
+`HtmlService.XFrameOptionsMode.ALLOWALL` removes the `X-Frame-Options` header that would otherwise be `SAMEORIGIN`, which browsers use to refuse cross-origin iframe embedding. The call must be applied to the `HtmlOutput` returned from each `doGet`, not to the upstream `HtmlTemplate`. If a `doGet` has multiple return paths (success, error fallbacks), every path's `HtmlOutput` must call it — a missed return path manifests as a blank/refused iframe in the wrapper, not as a script error.
+
+Sites in this codebase (audited Chunk 11):
+
+| File | `doGet` location | Return paths covered |
+| --- | --- | --- |
+| `src/core/Main.gs` | line 14 | One return, line 72–75 — `template.evaluate().setTitle(…).addMetaTag(…).setXFrameOptionsMode(ALLOWALL)`. |
+| `identity-project/Code.gs` | line 46 | One success return (line 115–117) + three error returns funneled through `Identity_errPage_` (line 152–154). All four set ALLOWALL. |
+
+`Router.gs` and `ApiShared.gs` construct `HtmlTemplate` objects but extract `.getContent()` strings and inline them into the parent Layout's `HtmlOutput` — they never return a standalone `HtmlOutput`, so the parent's ALLOWALL covers them. The `include()` helper in `Main.gs` likewise returns a string.
+
+### `Config.main_url`
+
+Post-cutover, `Config.main_url` holds `https://kindoo.csnorth.org` rather than the raw Main `/exec` URL. Identity's redirect (`Identity_serve` in `identity-project/Code.gs`) reads `main_url` from its own Script Properties — which **must be updated to the same value** at cutover, or Identity will keep landing the user on the raw `/exec` URL after sign-in.
+
+`Config.identity_url` is unchanged. Identity stays on `script.google.com`; the user briefly sees its URL during the Continue click, then the top frame navigates back to `https://kindoo.csnorth.org/?token=…`.
+
+### Trade-offs
+
+- **Top-frame back button leaves the app.** Chunk 10.6's `pushState`/`popstate` work happens inside the wrapper iframe (which inherits Apps Script's own internal iframe layer); the top frame's history stack contains only `kindoo.csnorth.org` and whatever the user came from. Top-frame back navigates away from the app. Accepted: users do not typically use browser-back in this app.
+- **Continue click on Identity remains.** The auth flow still requires a user-activation gesture for the cross-origin top-frame navigation from inside Apps Script's iframe sandbox. Wrapping changes nothing about that requirement.
+- **Two iframe boundaries.** `kindoo.csnorth.org` (wrapper) → `script.google.com/.../exec` (Apps Script's own outer iframe context, briefly) → `n-<hash>-script.googleusercontent.com` (the user-content iframe where Main's HTML actually runs). The Chunk 10.6 pushState writes happen at the innermost frame, the wrapper iframe loads the middle frame, and the top frame is static. All cross-origin writes that the app needs (`window.top.location.replace` for the auth round-trip) are still possible — they navigate the *top* frame regardless of how deep the iframe nesting is.
+- **Third-party cookie restrictions.** Browsers (notably Safari ITP, Firefox Total Cookie Protection, and Chrome's tracking-protection rollout) are progressively partitioning third-party cookies. The app uses **`sessionStorage`** for the HMAC token (Chunk 1, A-8) — `sessionStorage` is partitioned per-iframe-origin and unaffected by third-party cookie restrictions. The auth flow's only cross-origin-cookie touch point is Google's first-party session at `accounts.google.com` / `script.google.com`, which the user is already signed into; iframing doesn't change that. If a future browser change breaks the embedded sign-in flow, the fallback is to drop iframe-embed and accept the banner — the wrapper is a layer that can be peeled off without touching app code. Tracked in `open-questions.md` CF-1.
+- **GitHub Pages as host.** Hosting is one-CNAME, one-static-file simple. If the static page ever needs to grow (e.g. a maintenance message during a deploy window), GitHub Pages handles HTML/CSS/JS without server-side logic. If we ever need server-side logic at the wrapper origin (auth gating, rate limiting, A/B), the wrapper migrates to Cloudflare Pages or a Worker — independent of any app-side change.
+
+### Why GitHub Pages over a Cloudflare Worker
+
+- **Free, no Cloudflare account needed** — the operator already manages DNS at Squarespace; adding a Cloudflare account would add an organisation to administer for no functional gain at this scale.
+- **No proxy in the request path** — fewer moving parts, no proxy-side configuration to drift, no Worker bundle to redeploy when the wrapper HTML changes (the file is in the repo; a `git push` is the deploy).
+- **Static HTML is the simplest possible thing.** If the wrapper page itself is the layer that breaks, "the iframe didn't load" is trivially diagnosable from DevTools.
+
+Cloudflare retained as a fallback option in the `open-questions.md` entry — if a future browser change makes iframe-embed untenable, swapping to a CNAME at Cloudflare + Workers Routes proxying the `/exec` URL is the documented pivot.
 
 ## 12. What lives where, quick reference
 

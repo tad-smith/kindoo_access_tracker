@@ -550,30 +550,57 @@ _Proof 6 — failure modes_
 
 ---
 
-## Chunk 11 — Cloudflare Worker + custom domain
+## Chunk 11 — Custom domain via iframe wrapper
 
-**Goal:** `https://kindoo.csnorth.org` serves the app.
+**Goal:** `https://kindoo.csnorth.org` serves the app **with no Apps Script banner**.
 
 **Dependencies:** a stable deploy from Chunk 10 (the Chunk 10.5 / 10.6 performance work is independent of Chunk 11 and can ship before OR after; ordering was "10.5, 10.6, then 11" because the performance gap was felt before the custom-domain need).
 
-**Auth-pattern note.** This chunk was originally drafted for the Google-Sign-In + OAuth Client ID stack. That path was abandoned in Chunk 1 for the two-deployment Session+HMAC pattern (see `open-questions.md` A-8 and `changelog/chunk-1-scaffolding.md`). With HMAC-signed session tokens there's no OAuth client to allowlist and no GSI redirect to worry about — the custom-domain work is a plain reverse proxy plus a one-Config-cell update. The sub-tasks and acceptance criteria below reflect the shipped auth stack, not the original plan.
+**Architectural pivot from the pre-chunk plan.** The original Chunk 11 plan was a Cloudflare Worker proxying `kindoo.csnorth.org/*` to the Main `/exec` URL. That delivers the pretty URL but does **not** remove the *"This application was created by a Google Apps Script user"* banner — the banner lives in the outer wrapper page Apps Script serves from `script.google.com`, which a transparent proxy ships through unchanged.
 
-**Sub-tasks**
+**The iframe-embed approach removes the banner.** A static `docs/index.html` on GitHub Pages contains a full-viewport iframe pointing at the Main `/exec` URL. Both `doGet` deployments (Main + Identity) set `setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)` on every HtmlOutput return path so the cross-origin embed is permitted. The top frame at `kindoo.csnorth.org` is the static wrapper (no banner-bearing chrome at all); the wrapper iframe loads the Apps Script `/exec` directly. Net effect: pretty URL AND no banner.
 
-- [ ] Write a Cloudflare Worker that proxies `kindoo.csnorth.org/*` to Main's `/exec` URL, forwarding method, query string, and body on the request and streaming the response back unchanged. ~20 lines of JS; the Identity deployment is NOT proxied (it stays on its `script.google.com` URL since it's a separate personal-account project).
-- [ ] Configure DNS: CNAME `kindoo` → the Cloudflare-provided Workers target, proxied (orange cloud on) so Workers Routes can intercept.
-- [ ] Bind the worker to `kindoo.csnorth.org/*` via Workers Routes on the `csnorth.org` zone.
-- [ ] Update `Config.main_url` in the Sheet from the raw `https://script.google.com/macros/s/<scriptId>/exec` form to `https://kindoo.csnorth.org`. Identity's post-sign-in redirect lands the top frame at `Config.main_url + ?token=…`, so if this isn't updated users end up back on `script.google.com` after signing in instead of the custom domain. `Config.identity_url` stays unchanged — the Identity deployment is untouched by this chunk.
-- [ ] Full login flow test end-to-end through the custom domain: each role visits `https://kindoo.csnorth.org`, clicks Sign in with Google, lands back on `https://kindoo.csnorth.org/?token=…` via Identity's redirect, `doGet` verifies the HMAC and drops the token into `sessionStorage`.
+**Auth-pattern note.** This chunk was originally drafted for a Google-Sign-In + OAuth Client ID stack. That path was abandoned in Chunk 1 for the two-deployment Session+HMAC pattern (see `open-questions.md` A-8 and `changelog/chunk-1-scaffolding.md`). With HMAC-signed session tokens there's no OAuth client to allowlist and no GSI redirect to worry about — the auth flow's Continue-click on Identity remains required by the iframe-sandbox user-activation rule, but no OAuth Client ID configuration changes are needed for the wrapper. `src/ui/Login.html` is a plain anchor; no `google.accounts` JS library is used anywhere.
 
-**Acceptance criteria**
+### Apps Script-side deliverables (in this repo)
 
-- Each role loads, signs in, and navigates successfully via `kindoo.csnorth.org`. No references to `script.google.com/macros/s/...` visible in the address bar after sign-in.
-- Deep links (e.g., `kindoo.csnorth.org/?p=mgr/queue`) preserve their query string through the worker → Apps Script round-trip AND through the Identity sign-in redirect round-trip.
-- `google.script.run` rpc continues to work from inside the iframe (the iframe's origin stays on `*.googleusercontent.com` — only the top frame moves to the custom domain, so no rpc plumbing change is needed).
+- [x] **`setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)` on every `doGet` HtmlOutput return path.** Audited in Phase 1: already applied. Sites covered:
+  - `src/core/Main.gs:75` (Main `doGet`, single return path).
+  - `identity-project/Code.gs:117` (Identity success return).
+  - `identity-project/Code.gs:154` (`Identity_errPage_` helper, covers all three error returns — missing-secret, missing-main_url, empty-email).
 
-**Out of scope**
+  No other code path returns a standalone `HtmlOutput`: `Router.gs` and `ApiShared.gs` extract `.getContent()` strings and inline them into the parent Layout's HtmlOutput; `include()` returns a string. The parent Layout's ALLOWALL covers them transitively.
 
-- SSL management (Cloudflare handles automatically on the free tier).
-- Staging subdomain (deploy additional workers if needed).
-- Proxying the Identity deployment — keeping it on the `script.google.com` URL is fine since users only see it briefly during the sign-in redirect. Proxying it would require a second worker + a second DNS record for no UX gain.
+- [x] **`docs/index.html`** — static wrapper page (GitHub Pages serves it). Single self-contained file, no analytics, no external dependencies. Full-viewport iframe with `allow="clipboard-read; clipboard-write"` for the Chunk-5 "Copy link" affordance. Iframe `src` placeholder `AKfycb_REPLACE_ME` swapped to the Main `/exec` URL during the runbook's Step 6. Carries a six-line same-origin query-string forwarder (explained in `architecture.md` §11) so deep links and the post-sign-in `?token=…` landing both reach Main's `doGet`.
+
+- [x] **`docs/runbooks/chunk-11-custom-domain.md`** — operator runbook covering every external-system step (DNS, GitHub Pages, Apps Script push, wrapper URL replace, `Config.main_url` flip) in order, with verification points and rollback notes per step.
+
+### Operator-driven deliverables (executed via the runbook)
+
+- [ ] Squarespace DNS — CNAME `kindoo → <github-username>.github.io` (no other zone changes; MX / SPF / DKIM / DMARC for Workspace mail untouched).
+- [ ] GitHub Pages — enable from `main:/docs`, custom domain `kindoo.csnorth.org`, Enforce HTTPS (Let's Encrypt cert auto-provisioned).
+- [ ] Push the latest `main` to the Apps Script Main project via `clasp` (`npm run push`) and Deploy → New version on the **existing** Main deployment (preserves the `/exec` URL). Repeat copy-paste-and-deploy on the Identity project (which is not in `clasp`'s push set).
+- [ ] Replace `docs/index.html`'s placeholder iframe `src` with the actual Main `/exec` URL; commit + push.
+- [ ] Update `Config.main_url` in the bound Sheet (read-only in the manager UI per `CONFIG_PROTECTED_KEYS_`; the operator edits the cell directly) from the raw `/exec` URL to `https://kindoo.csnorth.org`. Mirror the same change in the Identity project's `main_url` Script Property.
+
+### Acceptance criteria
+
+- Each role loads `https://kindoo.csnorth.org`, signs in, lands back on `https://kindoo.csnorth.org` (NOT `script.google.com`) with the app rendering.
+- The *"This application was created by a Google Apps Script user"* banner is **not visible** anywhere in the rendered viewport.
+- **In-app deep links work.** Once a user is in the app, every Chunk-5 / 10.6 deep-link (Dashboard cards, over-cap banner, Audit Log filter URLs) functions identically to pre-Chunk-11 — those operate inside the iframe's own URL and history stack, untouched by the wrapper.
+- **Wrapper-origin direct-load deep links work for already-signed-in users.** The wrapper's six-line same-origin query-string forwarder copies `window.location.search` into the iframe `src` before the iframe's first navigation completes. So `https://kindoo.csnorth.org/?p=mgr/seats&ward=CO` opened in a tab where `sessionStorage.jwt` is already set (e.g. an open browser session) lands on All Seats with the ward filter pre-applied. (The forwarder also makes the post-sign-in `?token=…` flow work — Identity's redirect lands on the wrapper URL, the wrapper reloads, the JS forwards the token through to the iframe's `/exec` request.)
+- **Pre-sign-in deep links don't preserve `?p=`** through the auth round-trip — Identity's redirect carries only `?token=…`. Closing this requires an auth-flow change to teach Identity to echo a `next` page-parameter back. Out of scope for Chunk 11.
+- Chunk 10.6 in-app navigation (`pushState` inside the iframe) continues to work: clicking nav links swaps content client-side; in-app browser back / forward navigates within the iframe's history. Top-frame back leaves the app — accepted trade-off.
+- `google.script.run` rpc continues to work from inside the iframe (iframe origin stays on `*.googleusercontent.com` — only the top frame moves to the custom domain).
+- Multi-user test passes: a manager and a bishopric (separate Google accounts, separate incognito windows) both sign in and reach their default page through the wrapper.
+- Workspace email + Google Groups still work post-DNS-change (the runbook's Step 10 verifies this).
+
+### Out of scope
+
+- HTTPS provisioning is GitHub Pages' job (Let's Encrypt, automatic). No cert management on our side.
+- A staging wrapper at a different subdomain. Could ship as a duplicate `docs/staging.html` if needed; not required for v1.
+- Modifying the Apps Script auth flow to remove the Continue-click on Identity. Out of scope — the click is required by the iframe sandbox's user-activation rule for cross-origin top-frame nav.
+- DNS migration off Squarespace. Squarespace stays the DNS host; we add one CNAME and that's it.
+- A Cloudflare Worker or Worker proxy. Retained as a documented fallback in `open-questions.md` CF-1 if a future browser change makes iframe-embed untenable.
+- OAuth verification submission to Google. Tracked separately in `docs/TASKS.md` #6.
+- **Pre-sign-in wrapper-origin deep-link preservation.** The wrapper's six-line query-string forwarder closes the *already-signed-in* case (the iframe sees the wrapper origin's `?…` on the first load). The pre-sign-in case still loses `?p=` because Identity's redirect carries only `?token=…` — the auth round-trip itself doesn't preserve any other query params. Closing this would require teaching the Login link to pass the page parameter through to Identity (e.g. as a `next` query arg) and Identity to echo it back in its post-sign-in redirect. Auth-flow change; deferred outside this chunk. In-app deep links (Dashboard cards, over-cap banner, Audit Log filter URLs) are unaffected because those are post-bootstrap iframe-internal navigations.

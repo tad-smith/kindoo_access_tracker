@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<!--
+  Kindoo Access Tracker — custom-domain wrapper.
+
+  Hosted on GitHub Pages, served at https://kindoo.csnorth.org. The single
+  full-viewport iframe loads the Main Apps Script /exec deployment, which
+  must be served with HtmlService.XFrameOptionsMode.ALLOWALL on every
+  doGet return path (Main.gs + identity-project/Code.gs).
+
+  Net effect: users see kindoo.csnorth.org in the address bar and the
+  Apps Script "This application was created by a Google Apps Script user"
+  banner is hidden, because the banner lives in script.google.com's outer
+  wrapper page — which we no longer load at the top frame.
+
+  The only JavaScript here is a same-origin query-string forwarder: it
+  copies window.location.search into the iframe's src so that deep links
+  (e.g. ?p=mgr/seats&ward=CO) and the post-sign-in ?token=... handed back
+  by Identity's redirect both reach Main's doGet. No postMessage, no
+  cross-origin messaging — purely a same-origin DOM read + write before
+  the iframe's first navigation completes.
+
+  See docs/runbooks/chunk-11-custom-domain.md for the deploy steps and
+  docs/changelog/chunk-11-custom-domain.md for the rationale.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kindoo Access Tracker</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    iframe { width: 100%; height: 100%; border: 0; display: block; }
+  </style>
+</head>
+<body>
+  <iframe
+    src="https://script.google.com/macros/s/AKfycb_REPLACE_ME/exec"
+    title="Kindoo Access Tracker"
+    allow="clipboard-read; clipboard-write"
+  ></iframe>
+  <script>
+    // Forward the wrapper origin's query string into the iframe src so
+    // ?p=… deep links and the ?token=… post-sign-in landing both flow
+    // through to Main's doGet. Same-origin only.
+    (function () {
+      if (!window.location.search) return;
+      var iframe = document.querySelector('iframe');
+      if (iframe) iframe.src = iframe.src.split('?')[0] + window.location.search;
+    })();
+  </script>
+</body>
+</html>
