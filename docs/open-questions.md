@@ -408,6 +408,18 @@ GitHub Pages is fine for a static HTML page at the scale we operate. Risks worth
 
 **Best guess:** Stay on GitHub Pages until a concrete reason to move surfaces.
 
+### CF-5 `[P2]` `clasp push` ≠ deployment update — easy to skip the editor "New version" step
+
+**Discovery (post-Chunk-11 cutover).** Right after the Chunk 11 runbook ran cleanly through Step 10, `https://kindoo.csnorth.org` opened in a freshly-cleared incognito window started returning a Google *"We're sorry, but you do not have access to this page"* 403 inside the wrapper iframe. The 403 was identical to the page Apps Script's `ANYONE` deployment gate serves to signed-out users, so the initial diagnosis pointed at the gate firing inside the iframe (the gate's redirect to `accounts.google.com` cannot render because Google's sign-in page sets its own `X-Frame-Options`). Proposed fix: switch Main's `webapp.access` from `ANYONE` to `ANYONE_ANONYMOUS`.
+
+**What actually fixed it.** Just redeploying — Apps Script editor → Deploy → Manage deployments → Edit existing Main deployment → New version. No manifest change. No source change. The runbook's Step 5 already documented this procedure, but it's easy to read as a no-op when no code change is being made for the chunk: ALLOWALL was already in source from Chunk 1/2, so the operator can plausibly conclude the deploy half of Step 5 isn't needed. It is — `clasp push` updates the script source, but the live `/exec` deployment continues to serve whatever version was last associated with it. Only the editor-side "New version" step bumps the deployment.
+
+**Why it surfaced post-Step-10 specifically.** Steps 7 / 9 / 10 all tested in incognito sessions that became Google-signed-in mid-test (after Identity ran the user through the Google sign-in). Subsequent loads in those same sessions hit the iframe with the user already Google-signed-in, so even an old deployed version that did the same thing in a slightly stale way still rendered the app's Login page. A truly clean incognito (one that has never signed into Google in the session) plus a stale deployed version is the case the runbook didn't cover.
+
+**The fix is now in the runbook.** `docs/runbooks/chunk-11-custom-domain.md` Troubleshooting section names "redeploy a new version of the existing Main deployment" as the first thing to try when the wrapper iframe shows a 403. The two distinguishable cases (deployment-out-of-sync vs. ANYONE-gate-fires-on-signed-out-user) render the same Google 403 page in the iframe, so the runbook orders the fixes by reversibility: redeploy first; only if that fails consider the manifest change.
+
+**Best guess:** No code change needed — this is operational lore. The runbook's Troubleshooting section is the load-bearing artifact. Future operators who change *anything* on the Apps Script side (source, manifest, OAuth scopes, time zone, anything) need to remember the editor-side "New version" step is part of the operation, not a separate optional follow-up. Generally true for any clasp-managed Apps Script project, not specific to this app.
+
 ---
 
 ## Sheet drift

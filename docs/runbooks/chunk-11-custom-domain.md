@@ -543,6 +543,70 @@ The cutover is fully reversible at the `main_url` step alone — Steps
 HTML, ALLOWALL was always there). The only behaviour-affecting step
 is Step 8.
 
+## Troubleshooting
+
+### Symptom: `https://kindoo.csnorth.org` shows a Google
+*"We're sorry, but you do not have access to this page"* 403 inside the iframe
+
+**First thing to try: redeploy a new version of the existing Main
+deployment.** Apps Script editor → Deploy → Manage deployments → Edit
+the existing active Main deployment → Deploy → New version. Preserves
+the `/exec` URL. This resolves the most common class of cause —
+**the live deployment is serving an older version of the source code
+than `npm run push` synced.** `clasp push` updates the script source
+in the project; it does *not* bump the live `/exec` deployment to
+that source. Only the editor-side "New version" step does that. It is
+easy to read Step 5 of this runbook as a no-op when ALLOWALL "is
+already in the code" and skip the editor half — leaving the live
+deployment pinned to whatever version was last associated with it.
+
+After redeploying, re-test in a freshly-opened incognito window. The
+iframe should now render the app's Login page (or, for an
+already-Google-signed-in user, deep-link straight to the role default
+post-`Config.main_url` cutover).
+
+If the redeploy doesn't fix the 403, escalate to one of:
+
+- **Confirm Main's deployment URL in the wrapper matches `Config.main_url`'s
+  pre-cutover value.** Open `docs/index.html` and the Apps Script editor
+  → Deploy → Manage deployments. The iframe `src` should be the active
+  Main deployment's `/exec` URL. A wrapper iframe pointing at a
+  different (older or new-but-unintended) deployment URL would explain
+  divergent behaviour.
+- **Confirm ALLOWALL is on the live deployment.** Open the raw Main
+  `/exec` URL directly in a browser, DevTools → Network → top-level
+  document response → response headers should NOT include
+  `X-Frame-Options`. If it shows `X-Frame-Options: DENY` or
+  `SAMEORIGIN`, the deployed version predates ALLOWALL — the redeploy
+  is the fix; if redeploy didn't take, check that the editor's
+  "Manage deployments" actually saved the new version (the dialog can
+  be cancelled mid-way).
+- **Last resort, change Main's `webapp.access` to `ANYONE_ANONYMOUS`.**
+  In `src/appsscript.json`, change `"access": "ANYONE"` to
+  `"access": "ANYONE_ANONYMOUS"`. Push + redeploy. Removes the
+  Apps-Script-side Google-sign-in gate entirely; the HMAC token flow
+  remains the actual authentication. This is the right fix only if
+  the 403 is genuinely the gate firing on a signed-out user inside
+  the iframe (the gate's redirect to `accounts.google.com` cannot
+  render in an iframe — Google's sign-in page sets its own
+  `X-Frame-Options`). If a redeploy of current source fixes the
+  problem, the manifest change is unnecessary.
+
+### Symptom: iframe loads but the post-sign-in `?token=…` doesn't reach Main
+
+`Config.main_url` is the wrapper origin AND Identity's `main_url` Script
+Property must be the wrapper origin. If only one of the two was updated
+in Step 8, Identity's redirect lands on whichever URL the Script Property
+holds — which may be the raw `/exec`, breaking the round-trip. Fix: set
+both. Apps Script editor for the Identity project → Project Settings →
+Script Properties → confirm `main_url = https://kindoo.csnorth.org`.
+
+### See also
+
+- `docs/open-questions.md` CF-5 — the `clasp push` ≠ deployment
+  update gotcha, recorded so future operators can find this fix
+  quickly without rediscovering it.
+
 ## After verification
 
 When Step 9 + 10 pass cleanly, return to Claude with the verification
