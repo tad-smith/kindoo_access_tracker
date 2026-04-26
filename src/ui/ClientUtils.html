@@ -243,10 +243,10 @@
     var callingChip = '';
     if (row.type === 'auto' && row.calling_name) {
       callingChip = '<span class="roster-card-chip"><span class="label">Calling:</span> ' +
-        escapeHtml(row.calling_name) + '</span>';
+        '<span class="roster-card-calling">' + escapeHtml(row.calling_name) + '</span></span>';
     } else if ((row.type === 'manual' || row.type === 'temp') && row.reason) {
       callingChip = '<span class="roster-card-chip"><span class="label">Reason:</span> ' +
-        escapeHtml(row.reason) + '</span>';
+        '<span class="roster-card-reason">' + escapeHtml(row.reason) + '</span></span>';
     }
 
     var datesLine = '';
