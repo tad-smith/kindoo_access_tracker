@@ -1,0 +1,53 @@
+# 5xx-rate
+#
+# Phase 1 alert per docs/firebase-migration.md "Observability foundations".
+#
+# Fires when any Cloud Function returns 5xx > 1/minute sustained for 5
+# minutes. At our request volume this should be effectively zero in
+# normal operation; any sustained 5xx pattern is a real regression.
+#
+# REQUIRES: Operator task B1 (real Firebase projects) AND the
+# notification channel for Tad's email created in the project.
+# Substitute the actual channel resource name into `notificationChannels`
+# below before applying.
+#
+# To apply (in both projects):
+#
+#   gcloud alpha monitoring policies create \
+#     --project=kindoo-prod \
+#     --policy-from-file=infra/monitoring/alerts/5xx-rate.yaml
+
+displayName: 'Cloud Functions 5xx rate exceeded'
+documentation:
+  content: |
+    A Cloud Function in this project has been returning 5xx responses at
+    a rate > 1 per minute for the past 5 minutes.
+
+    Investigate at:
+      https://console.cloud.google.com/monitoring/alerting
+
+    Common causes:
+      - Bug in a recently-deployed function (check recent deploys)
+      - Downstream dependency (Sheets API, Resend) returning errors
+      - Quota or rate-limit hit
+  mimeType: text/markdown
+combiner: OR
+conditions:
+  - displayName: '5xx rate > 1/min for 5min'
+    conditionThreshold:
+      filter: |
+        metric.type="cloudfunctions.googleapis.com/function/execution_count" AND
+        metric.labels.status!="ok"
+      aggregations:
+        - alignmentPeriod: 60s
+          perSeriesAligner: ALIGN_RATE
+      comparison: COMPARISON_GT
+      thresholdValue: 1
+      duration: 300s
+      trigger:
+        count: 1
+# Substitute actual channel resource names post-B1:
+notificationChannels:
+  - 'projects/PROJECT_ID/notificationChannels/CHANNEL_ID'
+alertStrategy:
+  autoClose: 86400s

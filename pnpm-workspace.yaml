@@ -1,0 +1,16 @@
+# pnpm workspace manifest. Lists every package directory pnpm should treat
+# as a workspace member. Glob patterns expand at install-time; missing dirs
+# are silently ignored, so it's fine for `apps/*` to currently contain only
+# `apps/web/`.
+#
+# The legacy Apps Script source under `src/` and `identity-project/` is NOT
+# a workspace member — those directories have no package.json and are
+# managed by the root-level clasp scripts (preserved verbatim in the root
+# package.json).
+packages:
+  - 'apps/*'
+  - 'functions'
+  - 'firestore'
+  - 'packages/*'
+  - 'e2e'
+  - 'infra'

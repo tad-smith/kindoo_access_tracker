@@ -80,9 +80,28 @@ Direct-to-main. No PRs.
 - Deploy-breaking change → update both `infra/scripts/deploy-*.sh` AND `infra/runbooks/deploy.md`.
 - New Cloud Scheduler job, new Secret Manager secret, new IAM role → document in the relevant runbook.
 
+## Definition of done — run before reporting complete
+
+For every task that touches code or config, before declaring "done":
+
+```bash
+pnpm typecheck                                # tsc -b across the monorepo
+pnpm lint                                     # prettier + per-workspace lints
+# If you wrote shell scripts:
+bash infra/scripts/<script>.sh --dry-run      # at minimum verify it parses
+```
+
+All must be clean. If lint fails:
+1. Auto-fix formatting: `pnpm exec prettier --write <files-you-touched>`
+2. Re-run until clean
+
+Report shipping state as "all gates green," **never** as "lint failures pending — operator can fix."
+
+**Bootstrap exception (Phase 1 only):** if `pnpm install` hasn't run yet when you're invoked, the verification commands aren't available. Write configs and scripts that match `.prettierrc.json` defaults — single quotes (or double for JSON keys), trailing commas where allowed, 100-char lines, 2-space indent — and call out in your report that prettier should be run after install. This exception does NOT apply from Phase 2 onward.
+
 ## Source of truth
 
-- `docs/firebase-migration.md` locked-in decisions (F1–F15) define the infra shape.
+- `docs/firebase-migration.md` locked-in decisions (F1–F17) define the infra shape.
 - `infra/runbooks/` is your primary documentation output; keep it current.
 - GCP console is always more authoritative than any script — if a script thinks it deployed something and the console disagrees, the console wins.
 - `infra/CLAUDE.md` — local conventions.

@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "kindoo-staging",
+    "staging": "kindoo-staging",
+    "prod": "kindoo-prod"
+  }
+}

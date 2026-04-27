@@ -1,0 +1,30 @@
+# firestore-rules-denied-count
+#
+# Counts Firestore requests rejected by security rules. A non-zero rate
+# means either: (1) a client is trying to do something it shouldn't, or
+# (2) a legitimate query was deployed without a corresponding rule
+# update. Either way, worth investigating.
+#
+# Defined in Phase 1; useful from the moment real rules land in Phase 3.
+#
+# REQUIRES: Operator task B1 (real Firebase projects) before this metric
+# has signal — until then there's no Firestore traffic to deny.
+#
+# To apply (in both projects):
+#
+#   gcloud logging metrics create firestore-rules-denied-count \
+#     --project=kindoo-prod \
+#     --description="Firestore requests denied by security rules" \
+#     --log-filter='resource.type="firestore.googleapis.com/Database" AND
+#       protoPayload.status.code=7'
+#
+# (status.code=7 is PERMISSION_DENIED in Google's gRPC status codes.)
+
+name: firestore-rules-denied-count
+description: Firestore requests denied by security rules (PERMISSION_DENIED)
+filter: |
+  resource.type="firestore.googleapis.com/Database" AND
+  protoPayload.status.code=7
+metricKind: DELTA
+valueType: INT64
+unit: '1'

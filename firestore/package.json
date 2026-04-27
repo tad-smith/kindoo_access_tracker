@@ -1,0 +1,17 @@
+{
+  "name": "@kindoo/firestore-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-kindoo 'pnpm exec vitest run'",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-kindoo 'pnpm exec vitest run'",
+    "test:rules:no-emulator": "vitest run",
+    "lint": "prettier --check tests",
+    "typecheck": "tsc -b"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "vitest": "^2.1.8"
+  }
+}

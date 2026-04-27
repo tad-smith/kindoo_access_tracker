@@ -95,3 +95,58 @@ The "warning" referred to the *"This application was created by a Google Apps Sc
 ---
 
 ## 7. Fix the remove button on Roster screens
+
+---
+
+# Firebase migration follow-ups
+
+Tasks surfaced during the Firebase monorepo migration (Phases 1+). These follow the agent-spec `[T-NN]` format from `.claude/agents/docs-keeper.md` rather than the numbered Apps Script-era format above. Future migration follow-ups should be appended here in the same shape; pre-migration entries above are kept in their original style.
+
+## [T-01] Reconcile `stamp-version.js` with workspace `version.ts` shape
+Status: open
+Owner: @backend-engineer (functions side) + @web-engineer (web side)
+Phase: 1 → due before Phase 4 staging deploy
+
+`infra/scripts/stamp-version.js` writes `VERSION` + `BUILT_AT`, but the Phase 1 workspace authors created `version.ts` files exporting `KINDOO_WEB_VERSION` / `KINDOO_FUNCTIONS_VERSION` per the migration-plan task spec. No runtime failure today because the stamper only runs at deploy time, which is itself blocked on T-03 (B1). Pick one of: (a) rename per-workspace `version.ts` → `buildInfo.ts` and update the stamper + tests + consumers to align with the existing stamper output, or (b) extend `stamp-version.js` to also emit the per-workspace `KINDOO_*_VERSION` constants. Settle before the first staging deploy under Phase 4 acceptance.
+
+## [T-02] Document `firebase-tools` standalone-binary footgun in deploy runbook
+Status: open
+Owner: @infra-engineer
+Phase: 1 → cross-cutting
+
+The standalone pkg-bundled `firebase` binary at `/usr/local/bin/firebase` (282 MB; embedded old Node) cannot `require()` ESM packages, so `firebase emulators:exec` breaks any ESM script (e.g., Vitest 2.x). The npm-installed firebase-tools is a small Node shim and works. Add a warning section to `infra/runbooks/deploy.md` (and any local-dev runbook the operator follows) telling operators to install firebase-tools via npm and to never `pnpm install -g firebase-tools` with sudo (corrupts `~/.npm`).
+
+## [T-03] Operator setup B1 — Firebase projects, billing, service accounts, IAM
+Status: open
+Owner: @tad
+Phase: 1 → due before Phase 4 staging deploy
+
+Real Firebase project creation, billing enablement, service-account provisioning, and IAM. Deferred during Phase 1 by the operator. Blocks the first staging deploy that exercises Phase 1 acceptance criteria; does not block local-emulator dev, which is why Phase 1 closed without it. Spec: `docs/firebase-migration.md` B1.
+
+## [T-04] Operator setup B2 — domain registration + Resend domain verification
+Status: open
+Owner: @tad
+Phase: 1 → due before Phase 9
+
+New TLD TBD; Resend chosen as the email vendor. Doesn't block Phase 1 emulator-local work; needed before Phase 9 ships email triggers in earnest. Spec: `docs/firebase-migration.md` B2 + F16.
+
+## [T-05] Operator setup B4 — LCR Sheet sharing protocol for importer
+Status: open
+Owner: @tad
+Phase: 1 → due before Phase 8
+
+Grant view access on the LCR callings sheet to the importer service account that lands with Phase 8. Doesn't block earlier phases. Spec: `docs/firebase-migration.md` B4.
+
+## [T-06] Restart Claude Code so named engineering agents become dispatchable
+Status: open
+Owner: @tad
+Phase: 1 → cross-cutting
+
+The new `.claude/agents/{web-engineer,backend-engineer,infra-engineer,docs-keeper}.md` definitions plus the Definition-of-Done update only load at session start. Until Tad restarts Claude Code, the Agent tool can't dispatch them by name (Phase 1's parallel agents had to use `general-purpose`). Phase 2 onward expects the named agents.
+
+## [T-07] Vite `apps/web` chunk-size warning >500 KB
+Status: open
+Owner: @web-engineer
+Phase: 1 → fixed by Phase 4
+
+Firebase SDK is the bulk of the bundle. Phase 4's TanStack Router file-based routing + code-splitting work will fix it. No action required during Phases 2–3.

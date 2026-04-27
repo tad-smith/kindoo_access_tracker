@@ -1,0 +1,30 @@
+{
+  "name": "@kindoo/functions",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./lib/index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "serve": "firebase emulators:start --only functions,firestore,auth",
+    "shell": "firebase functions:shell",
+    "test": "vitest run",
+    "test:unit": "vitest run --include 'src/**/*.test.ts'",
+    "test:integration": "vitest run --include 'tests/**/*.test.ts'",
+    "lint": "prettier --check src",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@kindoo/shared": "workspace:*",
+    "firebase-admin": "^13.0.2",
+    "firebase-functions": "^6.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "firebase-functions-test": "^3.4.0",
+    "vitest": "^2.1.8"
+  }
+}

@@ -71,6 +71,26 @@ Direct-to-main. No PRs.
 - Behavioural change that affects `spec.md` → tag `@docs-keeper`.
 - Schema migration script work → coordinate with `infra-engineer` who owns the script; you provide schema knowledge.
 
+## Definition of done — run before reporting complete
+
+For every task, before declaring "done":
+
+```bash
+# Whichever workspaces you touched:
+pnpm --filter @kindoo/shared typecheck && pnpm --filter @kindoo/shared lint && pnpm --filter @kindoo/shared test
+pnpm --filter @kindoo/functions typecheck && pnpm --filter @kindoo/functions lint && pnpm --filter @kindoo/functions test
+pnpm --filter @kindoo/firestore-tests typecheck && pnpm --filter @kindoo/firestore-tests lint && pnpm --filter @kindoo/firestore-tests test
+```
+
+All three (typecheck, lint, test) must be clean per workspace touched. If any fail:
+1. Auto-fix formatting: `pnpm --filter <workspace> exec prettier --write src tests`
+2. Fix typecheck or test failures by editing code
+3. Re-run verification until clean
+
+Report shipping state as "lint + typecheck + tests all green," **never** as "lint failures pending — operator can fix." If a failure is structural (e.g., emulator dependency missing locally), say so explicitly in your report rather than implying clean.
+
+**Bootstrap exception (Phase 1 only):** if `pnpm install` hasn't run yet when you're invoked, the verification commands aren't available. Write code that matches `.prettierrc.json` defaults — single quotes, trailing commas, 100-char lines, 2-space indent, semicolons — and call out in your report that prettier should be run after install. This exception does NOT apply from Phase 2 onward.
+
 ## Source of truth
 
 - `docs/spec.md` — what the system does (live).

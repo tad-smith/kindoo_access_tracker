@@ -1,0 +1,35 @@
+{
+  "name": "@kindoo/web",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Kindoo Access Tracker SPA. React 19 + TypeScript + Vite + Firebase SDK direct-to-Firestore. Phase 1 ships a placeholder smoketest route; full app lands across Phases 4-10 of the Firebase migration.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "lint": "prettier --check src test",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "^1.95.5",
+    "firebase": "^11.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "reactfire": "^4.2.3"
+  },
+  "devDependencies": {
+    "@tanstack/router-plugin": "^1.95.5",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}

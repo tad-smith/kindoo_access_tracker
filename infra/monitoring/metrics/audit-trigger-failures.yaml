@@ -1,0 +1,34 @@
+# audit-trigger-failures
+#
+# Counts errors logged by the audit fan-in Cloud Function trigger. Defined
+# in Phase 1; activated by alert(s) once Phase 8 lands the trigger itself.
+#
+# REQUIRES: Operator task B1 (real Firebase projects + Cloud Functions
+# deployed) before this metric has any signal to count. Until then this
+# file documents the intended filter and command.
+#
+# To apply (in both projects):
+#
+#   gcloud logging metrics create audit-trigger-failures \
+#     --project=kindoo-prod \
+#     --description="Audit fan-in trigger failures (auditTrigger function exceptions)" \
+#     --log-filter='resource.type="cloud_function" AND
+#       resource.labels.function_name="auditTrigger" AND
+#       severity>=ERROR'
+#
+#   gcloud logging metrics create audit-trigger-failures \
+#     --project=kindoo-staging \
+#     --description="Audit fan-in trigger failures (auditTrigger function exceptions)" \
+#     --log-filter='resource.type="cloud_function" AND
+#       resource.labels.function_name="auditTrigger" AND
+#       severity>=ERROR'
+
+name: audit-trigger-failures
+description: Audit fan-in trigger failures (auditTrigger function exceptions)
+filter: |
+  resource.type="cloud_function" AND
+  resource.labels.function_name="auditTrigger" AND
+  severity>=ERROR
+metricKind: DELTA
+valueType: INT64
+unit: '1'

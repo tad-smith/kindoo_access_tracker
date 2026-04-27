@@ -73,6 +73,28 @@ Direct-to-main. No PRs.
 - New Cloud Function needed → `TASKS.md` entry tagged `@backend-engineer`.
 - Behavioural change that affects `spec.md` → tag `@docs-keeper`.
 
+## Definition of done — run before reporting complete
+
+For every task, before declaring "done":
+
+```bash
+pnpm --filter @kindoo/web typecheck
+pnpm --filter @kindoo/web lint
+pnpm --filter @kindoo/web test
+# If you touched e2e/, also:
+pnpm --filter @kindoo/e2e typecheck
+pnpm --filter @kindoo/e2e lint
+```
+
+All four (or six) must be clean. If any fail:
+1. Auto-fix formatting: `pnpm --filter @kindoo/web exec prettier --write src test`
+2. Fix typecheck or test failures by editing code
+3. Re-run verification until clean
+
+Report shipping state as "lint + typecheck + tests all green," **never** as "lint failures pending — operator can fix." If a failure is structural (e.g., upstream workspace not yet wired), say so explicitly in your report rather than implying clean.
+
+**Bootstrap exception (Phase 1 only):** if `pnpm install` hasn't run yet when you're invoked, the verification commands aren't available. Write code that matches `.prettierrc.json` defaults — single quotes, trailing commas, 100-char lines, 2-space indent, semicolons — and call out in your report that prettier should be run after install. This exception does NOT apply from Phase 2 onward.
+
 ## Source of truth
 
 - `docs/spec.md` — runtime behaviour the user sees.

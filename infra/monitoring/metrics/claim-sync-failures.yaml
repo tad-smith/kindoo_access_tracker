@@ -1,0 +1,31 @@
+# claim-sync-failures
+#
+# Counts errors logged by the three custom-claims sync triggers
+# (syncAccessClaims, syncManagersClaims, syncSuperadminClaims). Defined
+# in Phase 1; activated once Phase 2 lands the triggers themselves.
+#
+# REQUIRES: Operator task B1 (real Firebase projects + Cloud Functions
+# deployed) before this metric has any signal to count.
+#
+# To apply (in both projects):
+#
+#   gcloud logging metrics create claim-sync-failures \
+#     --project=kindoo-prod \
+#     --description="Custom-claims sync trigger failures" \
+#     --log-filter='resource.type="cloud_function" AND
+#       (resource.labels.function_name="syncAccessClaims" OR
+#        resource.labels.function_name="syncManagersClaims" OR
+#        resource.labels.function_name="syncSuperadminClaims") AND
+#       severity>=ERROR'
+
+name: claim-sync-failures
+description: Custom-claims sync trigger failures (syncAccessClaims, syncManagersClaims, syncSuperadminClaims)
+filter: |
+  resource.type="cloud_function" AND
+  (resource.labels.function_name="syncAccessClaims" OR
+   resource.labels.function_name="syncManagersClaims" OR
+   resource.labels.function_name="syncSuperadminClaims") AND
+  severity>=ERROR
+metricKind: DELTA
+valueType: INT64
+unit: '1'

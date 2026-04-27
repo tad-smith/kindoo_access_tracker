@@ -1,0 +1,127 @@
+# CI for the Firebase monorepo. Runs on every push to main and on every
+# PR. Lints, type-checks, runs all four test layers (unit, rules,
+# integration, e2e), and verifies a production build succeeds.
+#
+# Source-of-truth: this file lives at infra/ci/workflows/test.yml and is
+# mirrored to .github/workflows/test.yml (GitHub Actions only reads from
+# .github/workflows/). The mirror is committed verbatim — keep them in
+# sync.
+#
+# Continue-on-error: each step except the final `build` runs even if a
+# previous test layer fails, so the developer sees every red flag at
+# once instead of fixing one and re-pushing to find the next.
+#
+# Note: as of Phase 1 most of these test scripts are no-ops (the
+# workspaces don't define them yet — `pnpm -r test` is vacuously green
+# when no workspace has a test script). That's fine; the workflow is
+# laying tracks for Phases 2+ to hang real tests on.
+
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# We only need read access to the source. No deploy permissions —
+# operator-triggered deploys via pnpm deploy:staging / :prod.
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The remaining steps each set continue-on-error: true so we collect
+      # every failure in a single run; the final `Verify all checks
+      # passed` step inspects each step's outcome and fails the workflow
+      # if any did. This costs us a small amount of duplicated noise but
+      # makes red-CI-roundtrip cheaper.
+
+      - name: Lint
+        id: lint
+        run: pnpm lint
+        continue-on-error: true
+
+      - name: Typecheck
+        id: typecheck
+        run: pnpm typecheck
+        continue-on-error: true
+
+      - name: Unit tests
+        id: unit
+        run: pnpm test:unit
+        continue-on-error: true
+
+      - name: Rules tests
+        id: rules
+        # Rules tests must run inside `firebase emulators:exec` so the
+        # Firestore + Auth emulators are up while @firebase/rules-unit-
+        # testing connects. This step uses `npx --yes firebase-tools` to
+        # avoid making firebase-tools a global devDependency at the root
+        # — backend-engineer's workspace should pin a local version when
+        # rules tests actually exist.
+        run: npx --yes firebase-tools emulators:exec --only firestore,auth "pnpm test:rules"
+        continue-on-error: true
+
+      - name: Integration tests
+        id: integration
+        run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions "pnpm test:integration"
+        continue-on-error: true
+
+      - name: E2E tests
+        id: e2e
+        run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions,hosting "pnpm test:e2e"
+        continue-on-error: true
+
+      - name: Build
+        id: build
+        run: pnpm build
+
+      - name: Verify all checks passed
+        # Fail the workflow if any earlier continue-on-error step failed.
+        # `build` doesn't have continue-on-error, so its failure already
+        # fails the workflow without this gate.
+        if: always()
+        run: |
+          fail=0
+          for outcome in \
+            "${{ steps.lint.outcome }}" \
+            "${{ steps.typecheck.outcome }}" \
+            "${{ steps.unit.outcome }}" \
+            "${{ steps.rules.outcome }}" \
+            "${{ steps.integration.outcome }}" \
+            "${{ steps.e2e.outcome }}" \
+            "${{ steps.build.outcome }}"; do
+            if [[ "$outcome" == "failure" ]]; then
+              fail=1
+            fi
+          done
+          if [[ "$fail" -eq 1 ]]; then
+            echo "One or more checks failed. See step outcomes above."
+            exit 1
+          fi
+          echo "All checks passed."

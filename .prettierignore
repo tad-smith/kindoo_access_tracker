@@ -1,0 +1,33 @@
+# Apps Script source — managed by clasp, formatting conventions differ
+# from the Firebase port's prettier config. These will be deleted at
+# Phase 11 cutover; until then they should be left alone.
+src/
+identity-project/
+scripts/
+website/
+
+# Build artifacts
+apps/*/dist/
+functions/lib/
+functions/dist/
+coverage/
+playwright-report/
+test-results/
+
+# Firebase local state
+.firebase/
+
+# Generated files
+**/version.ts
+
+# Lockfiles
+pnpm-lock.yaml
+package-lock.json
+
+# Vendored / third-party
+node_modules/
+
+# Markdown is hand-formatted (carefully-written specs, changelog entries,
+# CLAUDE.md files). Prettier on markdown causes format-thrash without value
+# for this project's conventions. Re-evaluate if a markdown linter is wanted later.
+**/*.md

@@ -2,7 +2,8 @@
   "name": "kindoo-access-tracker",
   "version": "0.1.0",
   "private": true,
-  "description": "Google Apps Script web app for managing Kindoo door-access seat assignments across a stake of The Church of Jesus Christ of Latter-day Saints.",
+  "description": "Kindoo door-access tracker. Apps Script app under src/ and identity-project/ runs in production until Phase 11 cutover; Firebase monorepo under apps/, functions/, firestore/, packages/, e2e/, infra/ is built in parallel.",
+  "packageManager": "pnpm@9.15.0",
   "scripts": {
     "login": "clasp login",
     "logout": "clasp logout",
@@ -12,15 +13,37 @@
     "pull": "clasp pull",
     "open": "clasp open",
     "open:web": "clasp open --webapp",
-    "deploy": "clasp deploy",
+    "deploy:apps-script": "clasp deploy",
     "deployments": "clasp deployments",
     "logs": "clasp logs",
-    "status": "clasp status"
+    "status": "clasp status",
+    "dev": "firebase emulators:start --import=.firebase/emulator-data --export-on-exit=.firebase/emulator-data",
+    "test": "pnpm -r --if-present test",
+    "test:unit": "pnpm -r --if-present test:unit",
+    "test:integration": "pnpm -r --if-present test:integration",
+    "test:rules": "pnpm -r --if-present test:rules",
+    "test:e2e": "pnpm -r --if-present test:e2e",
+    "build": "pnpm -r --if-present build",
+    "lint": "pnpm -r --if-present lint && prettier --check .",
+    "typecheck": "tsc -b",
+    "deploy:staging": "bash infra/scripts/deploy-staging.sh",
+    "deploy:prod": "bash infra/scripts/deploy-prod.sh"
   },
   "devDependencies": {
-    "@google/clasp": "^2.4.2"
+    "@google/clasp": "^2.4.2",
+    "concurrently": "^9.1.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "reactfire>firebase": "11",
+        "@firebase/rules-unit-testing>firebase": "11"
+      }
+    }
   }
 }
