@@ -7,5 +7,5 @@
 // what's in this file, your /exec deployment is serving stale code (use
 // Apps Script editor → Deploy → Manage deployments → Edit → New version
 // → Deploy to update it).
-const KINDOO_VERSION_ = "2026-04-26T03:50:23.158Z";
+const KINDOO_VERSION_ = "2026-04-26T08:20:06.106Z";
 function Version_get() { return KINDOO_VERSION_; }
