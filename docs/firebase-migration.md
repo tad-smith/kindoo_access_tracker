@@ -1,12 +1,12 @@
 # Firebase migration plan
 
-> **Status: ACTIVE (2026-04-27).** Migration committed; goal is to ship as quickly as possible. Target arc: 5–7 weeks full-time, 2–3 months part-time with Claude Code agents. Currently in **pre-Phase-1 gating** — stakeholder sign-offs on behaviour changes, tooling decisions, agent definitions, operator setup with DNS lead time. **Companion document: [`docs/firebase-alt-schema.md`](firebase-alt-schema.md)** — data model, rules, and indexes. Apps Script implementation continues to run in production until Phase 11 cutover.
+> **Status: ACTIVE (2026-04-27).** Migration committed; goal is to ship as quickly as possible. Target arc: 5–7 weeks full-time, 2–3 months part-time with Claude Code agents. Currently in **pre-Phase-1 gating** — stakeholder sign-offs on behaviour changes, tooling decisions, agent definitions, operator setup with DNS lead time. **Companion document: [`docs/firebase-schema.md`](firebase-schema.md)** — data model, rules, and indexes. Apps Script implementation continues to run in production until Phase 11 cutover.
 >
 > **History:** an earlier version of this plan ("Cloud Run + Express") was superseded on 2026-04-27 after architectural exploration concluded that direct-to-Firestore with custom claims was a better fit at this scale. Git history preserves the prior plan if needed.
 
 13 phases across two arcs. Phases 1–11 port the Apps Script app to Firebase as a single-stake deployment. Phase 12 (single-stake cutover) ends Phase A. Phase 13 lifts the data model to multi-stake and exposes a platform-superadmin surface as Phase B. The Apps Script app remains in production through the end of Phase 11; cutover is one maintenance window. Phase B lands later if/when a second stake is in scope.
 
-The companion `docs/firebase-alt-schema.md` is the authoritative description of the data model, rules, and indexes — this plan references it rather than duplicating. `docs/spec.md` describes runtime behaviour and is updated in lockstep with each phase that changes it. `docs/architecture.md` gets substantially rewritten across Phases 2–4; sections that survive verbatim (request lifecycle state machine, audit-log shape, role union model, email policy) are explicitly left untouched.
+The companion `docs/firebase-schema.md` is the authoritative description of the data model, rules, and indexes — this plan references it rather than duplicating. `docs/spec.md` describes runtime behaviour and is updated in lockstep with each phase that changes it. `docs/architecture.md` gets substantially rewritten across Phases 2–4; sections that survive verbatim (request lifecycle state machine, audit-log shape, role union model, email policy) are explicitly left untouched.
 
 ## Architecture summary
 
@@ -27,7 +27,7 @@ The pure-client + minimal-Cloud-Functions approach trades a centralised service 
 | F2 | **React 19 + TypeScript strict + Vite + TanStack Router + TanStack Query + reactfire + Zustand + react-hook-form + zod + shadcn-ui (Radix + Tailwind) + vite-plugin-pwa.** Monorepo via pnpm workspaces. Tests via Vitest + React Testing Library + Playwright + `@firebase/rules-unit-testing`. Locked in 2026-04-27. | Industry-standard stack for 10x-scale apps; user has explicitly chosen this as the learning vehicle. The cost (bundle ~150 KB gz vs ~30 KB vanilla) is acceptable for the future-proofing and pattern-transferability. |
 | F3 | **Custom claims for role resolution.** Triggers on `access`/`kindooManagers`/`platformSuperadmins` writes update claims; `revokeRefreshTokens` forces refresh. Up to ~1 hour staleness on idle sessions; <2s on active. | Makes role checks free in rules (no `get()` calls); single doc lookup at sign-in is enough to know everything; staleness window is acceptable for this app. Replaces F7's per-request resolution from the prior plan. |
 | F4 | **`userIndex/{canonicalEmail}` top-level collection** maps canonical email → Firebase Auth uid. Written by `auth.user().onCreate`; read by claim-sync triggers. | Bridges Firestore's canonical-email-as-doc-id keying with Firebase Auth's uid keying. Lookup-by-canonical-email is otherwise impossible (Firebase Auth's `getUserByEmail` matches typed form, not canonical). |
-| F5 | **Canonical-email-as-doc-id for `seats` and `access`.** One doc per (stake, member). Drops UUIDs and `source_row_hash`. | Stable, human-readable entity_id improves audit log UX; removes a class of denormalization. See `docs/firebase-alt-schema.md` §4.5–4.6. |
+| F5 | **Canonical-email-as-doc-id for `seats` and `access`.** One doc per (stake, member). Drops UUIDs and `source_row_hash`. | Stable, human-readable entity_id improves audit log UX; removes a class of denormalization. See `docs/firebase-schema.md` §4.5–4.6. |
 | F6 | **Seat collisions handled by `duplicate_grants[]` flag**, importer applies stake>ward priority. Duplicates are informational, not counted in utilization. | Per user's design preference: rare cross-scope collisions get flagged for manager reconciliation but don't pollute the accounting model. |
 | F7 | **Access split-ownership at the field level** — `importer_callings` (Admin-SDK only) + `manual_grants` (manager-writable). Composite-key uniqueness becomes structurally impossible rather than rule-enforced. | Replaces today's `source` column with field-level segregation. Rules enforce the split with one-line `diff().affectedKeys().hasOnly(...)` check. |
 | F8 | **Audit log via Cloud Function triggers** (Option A) writing to a flat `auditLog` collection per stake. Eventually consistent (~<1s). Nightly reconciliation job catches any gaps. | Conventional pattern; simpler client code; Admin-SDK paths (importer/expiry) fan in audit identically to client paths. Option B (embedded history with `getAfter()`) considered and parked — its atomicity advantage covered <50% of audit volume due to Admin-SDK rule bypass. |
@@ -419,7 +419,7 @@ _E2E (Playwright)_
 
 ## Phase 3 — Firestore schema + security rules + indexes
 
-**Goal:** All collections defined per `docs/firebase-alt-schema.md`. Rules complete, deny-by-default with explicit allows. All composite indexes declared. Rules tests cover every collection's read/write paths. The data layer is locked in for everything Phase 4+ will build on.
+**Goal:** All collections defined per `docs/firebase-schema.md`. Rules complete, deny-by-default with explicit allows. All composite indexes declared. Rules tests cover every collection's read/write paths. The data layer is locked in for everything Phase 4+ will build on.
 
 **Owner:** backend-engineer.
 
@@ -429,17 +429,17 @@ _E2E (Playwright)_
 
 _Schema_
 
-- [ ] `packages/shared/src/types/` — TS types for every collection per `firebase-alt-schema.md` §§3–4: `Stake`, `Ward`, `Building`, `KindooManager`, `Access`, `Seat`, `Request`, `WardCallingTemplate`, `StakeCallingTemplate`, `AuditLog`, `UserIndex`, `PlatformSuperadmin`, `PlatformAuditLog`.
+- [ ] `packages/shared/src/types/` — TS types for every collection per `firebase-schema.md` §§3–4: `Stake`, `Ward`, `Building`, `KindooManager`, `Access`, `Seat`, `Request`, `WardCallingTemplate`, `StakeCallingTemplate`, `AuditLog`, `UserIndex`, `PlatformSuperadmin`, `PlatformAuditLog`.
 - [ ] `packages/shared/src/schemas/` — zod schemas matching the types, used for validation in both client forms and Cloud Function input.
 
 _Rules_
 
-- [ ] `firestore/firestore.rules` — implementation per `firebase-alt-schema.md` §6, deny-by-default with explicit allows per collection. Helpers: `isManager`, `isStakeMember`, `bishopricWardOf`, `isAnyMember`, `isPlatformSuperadmin`, `lastActorMatchesAuth`. Cross-doc invariant: `tiedToRequestCompletion` for seat creation.
+- [ ] `firestore/firestore.rules` — implementation per `firebase-schema.md` §6, deny-by-default with explicit allows per collection. Helpers: `isManager`, `isStakeMember`, `bishopricWardOf`, `isAnyMember`, `isPlatformSuperadmin`, `lastActorMatchesAuth`. Cross-doc invariant: `tiedToRequestCompletion` for seat creation.
 - [ ] Inline comments explaining `getAfter()` use, the `lastActor` integrity check, and the importer/manual split-ownership.
 
 _Indexes_
 
-- [ ] `firestore/firestore.indexes.json` — composite indexes per `firebase-alt-schema.md` §5.1.
+- [ ] `firestore/firestore.indexes.json` — composite indexes per `firebase-schema.md` §5.1.
 - [ ] TTL field configured on `auditLog` collection group via `gcloud firestore fields ttls update`.
 
 _Helpers and conventions_
@@ -626,7 +626,7 @@ _E2E (Playwright)_
 - [ ] `features/manager/dashboard/` — Five cards (Pending counts, Recent Activity, Utilization, Warnings, Last Operations); each card is its own live query; deep-links to downstream pages.
 - [ ] `features/manager/allSeats/` — Full roster; ward / building / type filters via URL search params; per-scope summary cards with utilization bars; total-utilization bar when scope filter is "All".
 - [ ] `features/manager/auditLog/` — Filter panel (action, entity_type, entity_id, member, actor, date range); pagination via cursor; per-row collapsed summary + `<details>` diff. New filter: by `member_canonical` for cross-collection per-user view.
-- [ ] `features/manager/access/` — Read view (importer + manual rendered as one card per user with importer/manual visually split per `firebase-alt-schema.md` §4.5 rendering note). Write actions land in Phase 7.
+- [ ] `features/manager/access/` — Read view (importer + manual rendered as one card per user with importer/manual visually split per `firebase-schema.md` §4.5 rendering note). Write actions land in Phase 7.
 - [ ] `features/myRequests/` — Live; cancel button on pending; rejection reason on rejected; multi-role scope filter.
 - [ ] Delete `routes/_authed/hello.tsx`.
 - [ ] Update `Nav.tsx` to expose all read-side pages.
@@ -704,7 +704,7 @@ _Request lifecycle_
 - [ ] `features/requests/components/NewRequestForm.tsx` — `add_manual` / `add_temp` form. Scope selector for multi-role principals. Building checkboxes for stake scope. Duplicate-warning inline (live query against `seats/{member_canonical}` to detect existing seat). Member-name required client- + server-side. react-hook-form + zod.
 - [ ] `features/myRequests/` — cancel mutation.
 - [ ] `features/manager/queue/` — Mark Complete dialog + Reject dialog. CompleteDialog with Buildings checkbox group, at-least-one-required gate (client + server).
-- [ ] Mark Complete transaction: writes seat doc + flips request, atomically. Per `firebase-alt-schema.md` §6 rules.
+- [ ] Mark Complete transaction: writes seat doc + flips request, atomically. Per `firebase-schema.md` §6 rules.
 - [ ] Reject transaction: flips request, with reason.
 - [ ] Cancel transaction: flips request to cancelled, requester only.
 
@@ -919,7 +919,7 @@ _Audit triggers (the unified pattern)_
 
 - [ ] `functions/src/triggers/auditTrigger.ts` — single parameterized trigger. Fires on writes to `stakes/{sid}/{collection}/{docId}` for `collection in ['seats', 'requests', 'access', 'kindooManagers']` and on the parent `stakes/{sid}` doc. Reads before/after, computes action, writes audit row with deterministic ID `{writeTime}_{collection}_{docId}` for idempotency.
 - [ ] Helper `denormalizeMember`: pulls `member_canonical` from the after-state when present, falling back to before-state for delete; absent for system actions.
-- [ ] Helper `pickAction(before, after, collection)`: maps state transitions to action vocabulary per `firebase-alt-schema.md` §4.10.
+- [ ] Helper `pickAction(before, after, collection)`: maps state transitions to action vocabulary per `firebase-schema.md` §4.10.
 
 _Nightly reconciliation_
 
@@ -1232,7 +1232,7 @@ _Doc updates_
 
 - [ ] `docs/spec.md` — auth section rewritten (Firebase Auth + custom claims); stack section rewritten; concurrency section rewritten (Firestore transactions).
 - [ ] `docs/architecture.md` — D2, D6, D7, D10 superseded; new Firebase decisions documented.
-- [ ] `docs/data-model.md` — rewritten for Firestore schema; redirects to `firebase-alt-schema.md` as the primary reference.
+- [ ] `docs/data-model.md` — rewritten for Firestore schema; redirects to `firebase-schema.md` as the primary reference.
 - [ ] `docs/build-plan.md` Chunk 11 marked `[SUPERSEDED — Firebase Hosting handles custom domain natively, see firebase-migration.md Phase 11]`.
 - [ ] `docs/changelog/firebase-cutover.md` summarizes Phases 1–11.
 - [ ] Identity project README archived under `docs/archive/identity-project-readme.md`.
@@ -1352,7 +1352,7 @@ Same shape as the prior plan's Phase 11 + 12 test sections, adapted for direct F
 
 ## Open questions
 
-The full list of open questions, sorted by weight, lives in `docs/firebase-alt-schema.md` §8. The summary:
+The full list of open questions, sorted by weight, lives in `docs/firebase-schema.md` §8. The summary:
 
 - **Q1 (meta):** Whether to migrate at all — Apps Script keeps running until this is settled.
 - **Q2–Q4 (behavioural changes from current spec):** Duplicate manual/temp seats blocked vs warned; multi-calling auto seats collapsed; stake-priority makes stake-presidency members invisible on ward rosters.

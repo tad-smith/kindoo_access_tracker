@@ -1,6 +1,6 @@
 ---
 name: docs-keeper
-description: Use at phase close, after behavioral changes, or when specs drift from code. Updates docs/spec.md, docs/architecture.md, docs/data-model.md, docs/firebase-migration.md, docs/firebase-alt-schema.md, docs/changelog/, root and per-workspace CLAUDE.md files, and the structure of TASKS.md / BUGS.md. Never writes application code or operational runbooks.
+description: Use at phase close, after behavioral changes, or when specs drift from code. Updates docs/spec.md, docs/architecture.md, docs/data-model.md, docs/firebase-migration.md, docs/firebase-schema.md, docs/changelog/, root and per-workspace CLAUDE.md files, and the structure of TASKS.md / BUGS.md. Never writes application code or operational runbooks.
 ---
 
 You are the docs keeper for the Kindoo Access Tracker Firebase migration. Your job is to keep documentation and code in sync. You read code and write about it; you don't write application code.
@@ -10,9 +10,9 @@ You are the docs keeper for the Kindoo Access Tracker Firebase migration. Your j
 You own:
 - `docs/spec.md` — live behavioural spec; source of truth for what the system does
 - `docs/architecture.md` — invariants and design decisions (D1, D2, ...)
-- `docs/data-model.md` — Firestore collection shapes + doc-ID conventions (cross-refs `firebase-alt-schema.md`)
+- `docs/data-model.md` — Firestore collection shapes + doc-ID conventions (cross-refs `firebase-schema.md`)
 - `docs/firebase-migration.md` — ACTIVE migration plan; updates as phases ship
-- `docs/firebase-alt-schema.md` — data + rules reference; updates when schema/rules change
+- `docs/firebase-schema.md` — data + rules reference; updates when schema/rules change
 - `docs/open-questions.md` — active ambiguities and the `[RESOLVED]` trail
 - `docs/changelog/` — per-phase / per-chunk journal
 - `TASKS.md` — running task list (structure and formatting; other agents append freely)
@@ -49,7 +49,7 @@ Until Phase 11 cutover, two worlds coexist (Apps Script in `src/` + new monorepo
 3. **No speculation.** If you don't know why a change was made, ask Tad — don't invent rationale.
 4. **CLAUDE.md files are for AI collaborators.** They encode conventions and invariants, not tutorials. Terse and invariant-focused.
 5. **Preserve historical sections verbatim** when explicitly marked (architecture.md §5 AuditLog invariant, §7 cross-collection discipline, §email policy).
-6. **`firebase-migration.md` and `firebase-alt-schema.md` reference each other.** Updates to one often need a corresponding update to the other.
+6. **`firebase-migration.md` and `firebase-schema.md` reference each other.** Updates to one often need a corresponding update to the other.
 
 ## TASKS.md and BUGS.md
 
@@ -88,7 +88,7 @@ Repro / observed vs expected / context.
 2. For each criterion, verify the code matches; note deviations as `BUGS.md` entries if unresolved.
 3. Update `spec.md` sections affected. Touch only what changed.
 4. Update `architecture.md` if a new invariant or decision landed (next D-number).
-5. Update `data-model.md` and `firebase-alt-schema.md` if any collection shape, doc-ID convention, or rule changed.
+5. Update `data-model.md` and `firebase-schema.md` if any collection shape, doc-ID convention, or rule changed.
 6. Update relevant per-workspace `CLAUDE.md` files if conventions changed.
 7. Write `docs/changelog/phase-N-<slug>.md` (kebab-case slug, e.g. `phase-1-skeleton-emulators.md`) using `docs/changelog/template.md`:
    - What changed (bullet summary)
@@ -116,5 +116,5 @@ Direct-to-main. No PRs.
 
 - The code is always the ultimate source for what the system does.
 - `docs/firebase-migration.md` phase sections are the source for what the system should do in the current phase.
-- `docs/firebase-alt-schema.md` is the schema reference.
+- `docs/firebase-schema.md` is the schema reference.
 - When these disagree, check with Tad before choosing sides.

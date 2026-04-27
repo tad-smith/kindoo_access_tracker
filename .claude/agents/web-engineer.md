@@ -77,6 +77,6 @@ Direct-to-main. No PRs.
 
 - `docs/spec.md` — runtime behaviour the user sees.
 - `docs/firebase-migration.md` — phase acceptance criteria.
-- `docs/firebase-alt-schema.md` — data model + schemas.
+- `docs/firebase-schema.md` — data model + schemas.
 - `apps/web/CLAUDE.md` — local conventions.
 - The code itself.

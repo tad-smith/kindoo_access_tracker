@@ -1,6 +1,6 @@
-# Firebase alternative architecture — schema reference
+# Firebase data model + security rules
 
-> **Status: ACTIVE schema reference (2026-04-27).** This is the data model + rules surface for the Firebase migration committed to on 2026-04-27. See [`docs/firebase-migration.md`](firebase-migration.md) for the phase plan. Migration target: as quickly as possible (5–7 weeks full-time / 2–3 months part-time). Apps Script implementation continues to run in production until Phase 11 cutover.
+> **Status: ACTIVE (2026-04-27).** Authoritative schema and rules reference for the Firebase migration committed to on 2026-04-27. See [`docs/firebase-migration.md`](firebase-migration.md) for the phase plan. Migration target: as quickly as possible (5–7 weeks full-time / 2–3 months part-time). Apps Script implementation continues to run in production until Phase 11 cutover.
 
 ## 1. Architecture overview
 

@@ -10,9 +10,9 @@ Spec, architecture, decisions, runbooks-summaries, changelog. The narrative laye
 docs/
 ├── spec.md                        # live source of truth for runtime behaviour
 ├── architecture.md                # numbered design decisions (D1, D2, ...)
-├── data-model.md                  # data shape (current); cross-refs firebase-alt-schema.md post-cutover
+├── data-model.md                  # data shape (current); cross-refs firebase-schema.md post-cutover
 ├── firebase-migration.md          # ACTIVE migration plan
-├── firebase-alt-schema.md         # data + rules reference for the migration
+├── firebase-schema.md         # data + rules reference for the migration
 ├── open-questions.md              # active ambiguities + [RESOLVED] trail
 ├── build-plan.md                  # Apps Script chunk plan (historical post-cutover)
 ├── sheet-setup.md                 # Apps Script Sheet schema (historical post-cutover)
@@ -30,14 +30,14 @@ docs/
 - **Spec changes happen in lockstep with code changes.** Same commit. Never let `spec.md` describe yesterday's design.
 - **Architecture decisions are numbered** (D1, D2, ...). Cite them in commit messages when overriding one.
 - **Per-phase changelog entries** follow `changelog/template.md`. Migration phase entries: `phase-N-<slug>.md`.
-- **Cross-doc references are explicit** — e.g., "see `firebase-alt-schema.md` §6". Avoid vague pointers like "see the architecture doc."
+- **Cross-doc references are explicit** — e.g., "see `firebase-schema.md` §6". Avoid vague pointers like "see the architecture doc."
 - **Open questions get [RESOLVED YYYY-MM-DD] trails** when closed; original wording preserved.
 
 ## Don't
 
 - **Don't write code.** You don't own `apps/`, `functions/`, `firestore/`, `infra/`. You convert their decisions into doc updates.
 - **Don't create new top-level docs without checking** if existing ones cover the topic.
-- **Don't let `firebase-migration.md` and `firebase-alt-schema.md` drift.** They reference each other; updates to one often need a corresponding update.
+- **Don't let `firebase-migration.md` and `firebase-schema.md` drift.** They reference each other; updates to one often need a corresponding update.
 - **Don't archive resolved items prematurely.** Resolved-and-recent stays in the doc with a [RESOLVED] tag; archived only when stale.
 
 ## Boundaries

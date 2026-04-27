@@ -25,7 +25,7 @@ tests/                             # one test file per match block
 ## Conventions
 
 - **Helper functions at top.** `isAuthed`, `authedCanonical`, `isManager`, `isStakeMember`, `bishopricWardOf`, `isAnyMember`, `isPlatformSuperadmin`, `lastActorMatchesAuth`. Defined once; reused.
-- **Match blocks in canonical order** matching `docs/firebase-alt-schema.md` §§3–4. (userIndex → platformSuperadmins → platformAuditLog → stakes → wards → buildings → kindooManagers → access → seats → requests → templates → auditLog.)
+- **Match blocks in canonical order** matching `docs/firebase-schema.md` §§3–4. (userIndex → platformSuperadmins → platformAuditLog → stakes → wards → buildings → kindooManagers → access → seats → requests → templates → auditLog.)
 - **Inline comments explain non-obvious rules** — `getAfter()` use, split-ownership on access, the `lastActor` integrity check.
 - **Composite indexes carry comments** about which query (in `apps/web/` or `functions/`) requires them. When the query is removed, the index can be too.
 - **Tests in `tests/` mirror the rules structure.** One test file per match block. Synthetic auth tokens via the Auth emulator helper.

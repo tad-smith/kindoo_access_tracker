@@ -26,7 +26,7 @@ Until Phase 11 cutover, this repo holds **both** the live Apps Script app AND th
 ## Start each session by reading
 
 1. `docs/firebase-migration.md` — **ACTIVE migration plan**; what phase is current.
-2. `docs/firebase-alt-schema.md` — data model + rules for the migration target.
+2. `docs/firebase-schema.md` — data model + rules for the migration target.
 3. `docs/spec.md` — live source of truth for runtime behaviour (Apps Script reality until Phase 11).
 4. The latest `docs/changelog/phase-N-*.md` (or `chunk-N-*.md` for legacy) — what shipped most recently.
 5. `docs/TASKS.md` — cross-workspace work-in-flight.
