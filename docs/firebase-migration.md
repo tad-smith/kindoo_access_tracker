@@ -1,1570 +1,1363 @@
 # Firebase migration plan
 
-> **Status: paused (2026-04-24).** The Apps Script implementation continues to run in production; the port is being deferred until real-world usage gives a clearer picture of whether the pain points (auth complexity, no-API workarounds, deployer-as-actor identity gymnastics) actually justify a 2–3 week rewrite. This document is preserved as planning artifact — every decision and trade-off below stands ready to resume from. The four subagent definitions originally at `.claude/agents/` have moved to `.claude/agents/firebase/` so Claude Code's auto-discovery doesn't surface them while we're working on the Apps Script side. Move them back if/when this plan reactivates.
+> **Status: ACTIVE (2026-04-27).** Migration committed; goal is to ship as quickly as possible. Target arc: 5–7 weeks full-time, 2–3 months part-time with Claude Code agents. Currently in **pre-Phase-1 gating** — stakeholder sign-offs on behaviour changes, tooling decisions, agent definitions, operator setup with DNS lead time. **Companion document: [`docs/firebase-alt-schema.md`](firebase-alt-schema.md)** — data model, rules, and indexes. Apps Script implementation continues to run in production until Phase 11 cutover.
+>
+> **History:** an earlier version of this plan ("Cloud Run + Express") was superseded on 2026-04-27 after architectural exploration concluded that direct-to-Firestore with custom claims was a better fit at this scale. Git history preserves the prior plan if needed.
 
-12 phases, each independently reviewable and shippable. Migrates the Apps Script implementation to Firebase **and** lifts the data model to multi-tenant in one continuous arc — Phases 1–10 port the existing single-stake app to Firebase (with the data already shaped for multi-tenancy), Phases 11–12 expose the multi-tenant surface so additional stakes can be onboarded. The Apps Script app stays in production through the end of Phase 10; cutover is a single maintenance window in Phase 10. Phase B (11+12) lands after cutover.
+13 phases across two arcs. Phases 1–11 port the Apps Script app to Firebase as a single-stake deployment. Phase 12 (single-stake cutover) ends Phase A. Phase 13 lifts the data model to multi-stake and exposes a platform-superadmin surface as Phase B. The Apps Script app remains in production through the end of Phase 11; cutover is one maintenance window. Phase B lands later if/when a second stake is in scope.
 
-`docs/build-plan.md` is the build trail for the Apps Script implementation and stays as historical record. `docs/spec.md` describes behaviour and is updated in lockstep with each phase that changes it (the auth and routing sections take the biggest hits, in Phases 2, 5, and 11). `docs/architecture.md` gets substantially rewritten across Phases 1–4; sections that survive verbatim (request lifecycle state machine, audit-log shape, role union model, email policy) are explicitly left untouched.
+The companion `docs/firebase-alt-schema.md` is the authoritative description of the data model, rules, and indexes — this plan references it rather than duplicating. `docs/spec.md` describes runtime behaviour and is updated in lockstep with each phase that changes it. `docs/architecture.md` gets substantially rewritten across Phases 2–4; sections that survive verbatim (request lifecycle state machine, audit-log shape, role union model, email policy) are explicitly left untouched.
+
+## Architecture summary
+
+- **Identity:** Firebase Authentication (Google sign-in only).
+- **Authorization:** Custom claims on the auth token, set by Cloud Function triggers on role-data writes.
+- **Data path (reads + writes):** Client uses Firestore JS SDK directly; rules enforce access. No Cloud Run, no Express, no per-request server-side code.
+- **Server compute:** Cloud Functions for: weekly importer (Sheets API), daily temp-seat expiry, email send (SendGrid), audit-log fan-in, custom-claims sync, nightly reconciliation.
+- **Hosting:** Firebase Hosting serves the static SPA build with auto-provisioned HTTPS.
+- **Real-time:** `onSnapshot` listeners on shared-attention pages (Queue, Roster, MyRequests, Dashboard); request-response everywhere else.
+
+The pure-client + minimal-Cloud-Functions approach trades a centralised service layer for: zero cold starts on the request path, simpler operational footprint, lower cost (free tier covers it), and a structurally simpler audit-log story that doesn't require duplicating logic in rules.
 
 ## Locked-in decisions
 
 | # | Decision | Rationale |
 | --- | --- | --- |
-| F1 | **Cloud Run + Express, single container.** ~50 endpoints all served from one Express app behind a Cloud Run service. | Shared middleware (auth, transactions, logging, error handling) is a one-line `app.use`; per-endpoint Cloud Functions would be 50× the boilerplate with no benefit at this scale. Free quota covers it. |
-| F2 | **Vanilla TypeScript + Vite on the client.** TS modules with a small `render(html)` helper; per-page `init(model, queryParams)` / optional `teardown()` functions; client-side nav with History API (preserves Chunk 10.6's UX). No React/Svelte/Solid. | Today's `ClientUtils.html` is already template-string rendering with shared helpers. Porting to TS modules + render helpers is a short step; adding a framework rewrites every page for ergonomic wins that don't justify the cost at 14 pages with no complex state. |
-| F3 | **TypeScript on both sides.** Shared `types/` package between client and server; Firestore Admin SDK has excellent type support; rpc layer end-to-end-typed. | Replaces the column-header-tuple / header-drift safety net (which TS types subsume). Catches schema drift at build time instead of first read. |
-| F4 | **Domain stays `kindoo.csnorth.org` for now.** Multi-stake URLs will read awkwardly (`kindoo.csnorth.org/csnorth/mgr/seats`), but switching to a tenant-neutral domain later is one DNS change + one Firebase Hosting custom-domain swap — no code change. | User accepted this trade-off explicitly. Re-evaluate before onboarding the second real stake. |
-| F5 | **Big-bang cutover during a maintenance window.** Migration script Saturday morning; sanity-check; flip DNS Saturday afternoon; monitor Sunday. Apps Script stays live as rollback for ~one week, then retires. | 1–2 requests/week; no dual-writes worth the complexity. |
-| F6 | **`users/{uid}` collection** alongside Firebase Auth's built-in user record. Minimal `{email, lastSignIn, displayName?}` doc; Cloud Function trigger refreshes contents on every sign-in. | Stable per-user record we can extend (custom claims trigger, future per-user prefs). The built-in `auth().getUser(uid)` record alone is fine but isn't queryable from Firestore. |
-| F7 | **Per-request role resolution; no custom claims for v1.** Read `kindooManagers` + `access` per request. Cache layer (deferred from Apps Script Chunk 10.5) added later only if measured need. | Custom claims add a 1-hour-staleness footnote on role removals plus extra plumbing (a Cloud Function on role-change events). Per-request lookup against doc-keyed collections is a single Firestore read; not a bottleneck at this scale. |
-| F8 | **Two Firebase projects: `kindoo-staging` and `kindoo-prod`.** Cloud Run, Firestore, and Hosting deploy to either based on `FIREBASE_PROJECT` env; same code, different data. | Standard practice; lets the migration script rehearse against a snapshot in staging without risking production. |
-| F9 | **Repo layout side-by-side during migration.** New code under `firebase/` (subdirs `client/`, `server/`, `shared/`, `infra/`, `scripts/`); existing `src/` and `identity-project/` untouched until Phase 10's cutover. | Keeps the live app deployable for rollback throughout. Phase 10 retires `src/` and `identity-project/`; their git history is preserved. |
-| F10 | **Security rules at stake-scope only; API enforces roles.** Rules ensure an authenticated user has *some* membership in `stakeId` to read `stakes/{stakeId}/{document=**}`. Fine-grained role enforcement (bishopric-only-own-ward, etc.) lives in the API layer, as today. | Defense-in-depth via duplicated rule logic isn't worth the maintenance burden when the only Firestore client is the Cloud Run server (also enforced by rules: client SDK reads from Firestore are not used). Revisit if a direct-Firestore client is ever introduced. |
-| F11 | **Tests are non-negotiable; CI gates every PR.** Every phase ships with unit + integration tests (and E2E where applicable) covering the phase's acceptance criteria. No phase merges without green CI. Vitest for unit + integration, `@firebase/rules-unit-testing` for rules, supertest for HTTP, Playwright for E2E. Apps Script's loose `Utils_test_*` discipline is explicitly *not* the model. | Past pain on the Apps Script side: integration bugs surfaced only at user-facing-flow time, when context was warm but the bug was several chunks old. Testing rigor up front makes each phase independently shippable, which is what makes the 12-phase migration tractable. |
-| F12 | **HTTP only, no SSL.** The app is served over plain http at `kindoo.csnorth.org`; no cert provisioning, no https redirect. | This is an internal Church-membership-gated app, not a public-facing service. Sign-in itself happens in a Google-hosted https popup (Firebase Auth), and Google Sign-In state is stored in the browser's IndexedDB. The app origin being http adds browser warnings but does not meaningfully expand the attack surface given the threat model. Avoiding SSL eliminates cert-provisioning complexity at cutover and any future cert-renewal surprises. Revisit if a future browser change breaks auth SDKs on http origins, or if this app is ever repurposed outside the stake. |
-| F13 | **Cold starts accepted; no scheduled warm-up.** Cloud Run `min-instances=0` always. First request after >15 minutes of idle pays a ~2-4 second cold start. | Cloud Run's default idle timeout is 15 minutes — instances stay warm for 15 minutes after the last request, then shut down. At our volume (1-2 requests/week outside Sundays, bursty Sunday clusters), users hit roughly 3-5 cold starts per week total. A 3-second wait on an internal volunteer app is tolerable. Scheduled warm-up via Cloud Scheduler + Cloud Run Admin API PATCH is a documented GCP pattern and can be added post-cutover as a pure infra change with no code impact — the runbook `docs/runbooks/enable-warm-instances.md` documents the approach so it's ready if needed. Trigger for reconsidering: consistent user complaints about >5-second Sunday-morning loads. |
+| F1 | **Direct-to-Firestore client; no Cloud Run; no Express.** Cloud Functions only for triggers + scheduled jobs + email send. | Eliminates per-request cold starts; halves the moving-parts count; Firestore Security Rules + custom claims carry the auth/authz that an Express middleware stack would otherwise carry. At our request volume (1–2/week per spec.md §1), the serverless trigger costs are zero. |
+| F2 | **React 19 + TypeScript strict + Vite + TanStack Router + TanStack Query + reactfire + Zustand + react-hook-form + zod + shadcn-ui (Radix + Tailwind) + vite-plugin-pwa.** Monorepo via pnpm workspaces. Tests via Vitest + React Testing Library + Playwright + `@firebase/rules-unit-testing`. Locked in 2026-04-27. | Industry-standard stack for 10x-scale apps; user has explicitly chosen this as the learning vehicle. The cost (bundle ~150 KB gz vs ~30 KB vanilla) is acceptable for the future-proofing and pattern-transferability. |
+| F3 | **Custom claims for role resolution.** Triggers on `access`/`kindooManagers`/`platformSuperadmins` writes update claims; `revokeRefreshTokens` forces refresh. Up to ~1 hour staleness on idle sessions; <2s on active. | Makes role checks free in rules (no `get()` calls); single doc lookup at sign-in is enough to know everything; staleness window is acceptable for this app. Replaces F7's per-request resolution from the prior plan. |
+| F4 | **`userIndex/{canonicalEmail}` top-level collection** maps canonical email → Firebase Auth uid. Written by `auth.user().onCreate`; read by claim-sync triggers. | Bridges Firestore's canonical-email-as-doc-id keying with Firebase Auth's uid keying. Lookup-by-canonical-email is otherwise impossible (Firebase Auth's `getUserByEmail` matches typed form, not canonical). |
+| F5 | **Canonical-email-as-doc-id for `seats` and `access`.** One doc per (stake, member). Drops UUIDs and `source_row_hash`. | Stable, human-readable entity_id improves audit log UX; removes a class of denormalization. See `docs/firebase-alt-schema.md` §4.5–4.6. |
+| F6 | **Seat collisions handled by `duplicate_grants[]` flag**, importer applies stake>ward priority. Duplicates are informational, not counted in utilization. | Per user's design preference: rare cross-scope collisions get flagged for manager reconciliation but don't pollute the accounting model. |
+| F7 | **Access split-ownership at the field level** — `importer_callings` (Admin-SDK only) + `manual_grants` (manager-writable). Composite-key uniqueness becomes structurally impossible rather than rule-enforced. | Replaces today's `source` column with field-level segregation. Rules enforce the split with one-line `diff().affectedKeys().hasOnly(...)` check. |
+| F8 | **Audit log via Cloud Function triggers** (Option A) writing to a flat `auditLog` collection per stake. Eventually consistent (~<1s). Nightly reconciliation job catches any gaps. | Conventional pattern; simpler client code; Admin-SDK paths (importer/expiry) fan in audit identically to client paths. Option B (embedded history with `getAfter()`) considered and parked — its atomicity advantage covered <50% of audit volume due to Admin-SDK rule bypass. |
+| F9 | **Two Firebase projects: `kindoo-staging` and `kindoo-prod`.** Same code, different data. | Standard practice; lets the migration script rehearse against a snapshot in staging without risking production. |
+| F10 | **HTTPS via Firebase Hosting auto-provisioned certs.** Required for PWA service workers. | Free with Hosting; eliminates the prior plan's F12 trade-off (HTTP-only). |
+| F11 | **PWA from day one via `vite-plugin-pwa`.** Service worker, manifest, install prompt all configured early. Push via FCM lands in Phase 10. | User specifically requested PWA-readiness as a long-term capability. Building this in early is cheaper than retrofitting. |
+| F12 | **Big-bang cutover** during a maintenance window. Apps Script stays as rollback for ~one week, then retires. | 1–2 requests/week; no dual-writes worth the complexity. Same as prior plan. |
+| F13 | **Tests are non-negotiable; CI gates every PR.** Vitest (unit + integration), `@firebase/rules-unit-testing` (rules), Playwright (E2E), React Testing Library (component). No phase merges without green CI. | Past pain on the Apps Script side: integration bugs surfaced only at user-facing-flow time. Rigor up front makes each phase independently shippable. |
+| F14 | **Repo layout side-by-side during migration.** New code in monorepo at repo root (`apps/web/`, `functions/`, `firestore/`, `packages/shared/`, `infra/`, `e2e/`); existing `src/` and `identity-project/` untouched until Phase 11's cutover. | Keeps the live app deployable for rollback throughout. Phase 11 retires `src/` and `identity-project/`; their git history is preserved. |
+| F15 | **`stakeId` parameterized from day one.** Even though there's only one stake (`csnorth`) for v1, every collection path and rule takes `{stakeId}` as a path segment. Phase B is then a routing change, not a data refactor. | Prior plan's lesson learned. The hardcoded `csnorth` constant is consolidated in one place (`apps/web/src/lib/constants.ts`) so Phase B is grep-and-fix. |
+| F16 | **Email via Resend** (100/day free tier; 3000/month). Domain verification via DKIM CNAME + DMARC TXT records (~10 min setup, no significant DNS lead time). Locked in 2026-04-27. | Resend has the cleanest developer experience among free transactional-email vendors at this scale. SendGrid (originally proposed) and Brevo are equivalent fallbacks if needed; vendor swap is a Cloud Function wrapper change of ~30 lines. |
+| F17 | **Custom domain on a new TLD (TBD by user)**, used for both Firebase Hosting custom URL AND Resend email "From" branding. ~$10/year. The legacy `kindoo.csnorth.org` GitHub-Pages-iframe-wrapper URL is decommissioned at Phase 11 cutover (decision on whether to redirect or take down deferred to runbook). Locked in 2026-04-27. | User explicitly chose a fresh domain over staying on `kindoo.csnorth.org`. Same domain serves both app + email keeps DNS records consolidated. |
 
 ## Team composition
 
-Work is done direct-to-main by Tad in collaboration with four Claude Code subagents in `.claude/agents/firebase/` (moved out of the auto-discovery path while the migration is paused — see the status banner above):
+Work is done by Tad in collaboration with **four Claude Code subagents**:
 
-| Teammate | Primary directory | Also owns |
+| Teammate | Owns | Coordinates with |
 |---|---|---|
-| `server-engineer` | `firebase/server/` | — |
-| `client-engineer` | `firebase/client/` | — |
-| `infra-engineer` | `firebase/infra/` | `firebase/{firebase.json, firestore.rules, firestore.indexes.json}`, `firebase/scripts/`, `docs/runbooks/` |
-| `docs-keeper` | `docs/` (excluding `docs/runbooks/`) | root `CLAUDE.md`, `firebase/*/CLAUDE.md` files, `TASKS.md` / `BUGS.md` structure |
+| `web-engineer` | `apps/web/`, `e2e/` | backend-engineer for shared schemas, rules changes, new indexes |
+| `backend-engineer` | `functions/`, `firestore/` (rules + indexes) — merged from prior plan's separate functions and rules roles | web-engineer for query shapes; infra for deploys |
+| `infra-engineer` | `infra/`, `firebase.json`, `.firebaserc`, deploy scripts, secret management, runbooks | Everyone (deploys touch every workspace) |
+| `docs-keeper` | `docs/`, root `CLAUDE.md`, per-workspace `CLAUDE.md` *structure* | All — converts decisions into doc updates |
 
-Shared: `firebase/shared/` is touched by both `server-engineer` and `client-engineer` as needed; coordination happens via `TASKS.md` entries.
+Three engineering agents (`web`, `backend`, `infra`) plus `docs-keeper` was deliberately chosen over the prior plan's four-engineer split. Rules and Cloud Functions are sufficiently related (both are server-side Firebase concerns sharing the same Admin SDK + emulator mental model) that one agent owns both effectively. Splitting them only earns its keep at larger team sizes.
 
-Tests live with the code that produces them — `server-engineer` writes server tests under `firebase/server/test/`; `client-engineer` writes client tests under `firebase/client/test/`. No dedicated test teammate.
+Shared touchpoints:
+- **`packages/shared/`** is touched by both `web-engineer` and `backend-engineer`. Coordination via `TASKS.md`.
+- **`firestore/firestore.indexes.json`** — when `web-engineer` adds a query needing a composite index, they PR the index alongside the query and tag `backend-engineer` for review.
+- **`firestore/firestore.rules`** — only `backend-engineer` modifies. Other agents propose rule changes via `TASKS.md` with a test case.
 
-Work-in-flight and defects tracked in root-level `TASKS.md` and `BUGS.md`. Any teammate appends freely; `docs-keeper` owns the structure and archives resolved entries.
+`TASKS.md` and `BUGS.md` at repo root, append-only by any agent; `docs-keeper` owns structure and archives resolved entries weekly.
 
 ## Testing strategy
 
-The Apps Script version's testing was loose — a handful of `Utils_test_*` functions plus manual walkthroughs at the end of each chunk. The Firebase port runs much tighter. Every phase ships with tests covering its acceptance criteria; no phase ships without green CI. The migration is long and sequential; tests are how we catch regressions a phase later instead of three phases later.
+Tighter than the Apps Script implementation's `Utils_test_*` pattern. Every phase ships with tests covering its acceptance criteria; no phase ships without green CI.
 
 ### Test stack
 
 | Layer | Tooling | Lands in | What it covers |
 | --- | --- | --- | --- |
-| Unit | **vitest** | Phase 1 onward | Pure functions: email canon, hashing, principal helpers, render helpers, validation, error mapping. Run in milliseconds; constant feedback. |
-| Repo / data layer | **vitest + Firestore emulator** | Phase 3 onward | Each repo's CRUD against a real emulator (cleared between tests); transactions; composite-key uniqueness; audit-row-in-same-tx invariant; canonical-email lookup. |
-| Security rules | **`@firebase/rules-unit-testing`** | Phase 3 onward | Authenticated / anon scenarios against `firestore.rules`; cross-stake denial; client-side write denial. |
-| HTTP integration | **vitest + supertest + emulators** | Phase 4 onward | Per endpoint: happy-path, forbidden (wrong role), validation error, self-approval, R-1 race, audit-row emission. Express mounted in-process — no port binding. |
-| Frontend unit | **vitest + jsdom** | Phase 5 onward | Render helpers, form validation, rpc client (URL building, auth header injection, retry-on-401, warning surfacing). |
-| End-to-end | **Playwright** | Phase 5 onward | Browser drives the locally-running app against the emulator suite. One smoke per role per phase, expanded as new flows land. |
-| Migration script | **vitest + emulator + Sheets fixture** | Phase 10 | Per-collection transformation, determinism, idempotency, diff-helper detection of synthetic mismatches. |
+| Unit | **vitest** | Phase 1 onward | Pure functions: email canon, hashing, validation, render helpers |
+| Component | **vitest + jsdom + React Testing Library** | Phase 4 onward | React components in isolation; behaviour, not implementation |
+| Hooks | **vitest + Firestore emulator + reactfire** | Phase 5 onward | Custom hooks (`useRequestsQueue`, mutations) against a real emulator |
+| Security rules | **`@firebase/rules-unit-testing`** | Phase 3 onward | Per-rule scenarios with synthetic auth tokens; cross-stake denial; client-write denial |
+| Cloud Functions | **vitest + emulators** | Phase 2 onward | Triggers and scheduled functions against emulator state |
+| End-to-end | **Playwright** | Phase 4 onward | Full sign-in + multi-page workflows against the local emulator stack |
+| Migration script | **vitest + emulator + Sheets fixture** | Phase 11 | Per-collection transformation, idempotency, diff-helper |
 
 ### Conventions
 
-- **One test file per source file** under `test/` mirroring `src/` paths. (`server/src/services/Importer.ts` → `server/test/services/Importer.test.ts`.)
-- **Test names describe behaviour, not implementation**. `it('rejects a remove when only an auto seat exists for the member')`, not `it('throws on auto type')`.
-- **Each test sets up its own state**. No shared mutable fixtures. Use factories in `test/fixtures/` (`makeStake()`, `makeKindooManager()`, `makePendingRequest()`).
-- **Emulator state cleared between tests** via `clearFirestoreData` in `beforeEach`. Test runs are completely isolated; order-independence verified by `vitest --shuffle`.
-- **No mocks for Firestore.** The emulator is the test database. Mocks lie about transaction semantics, batched-write atomicity, and rule evaluation; the emulator doesn't.
-- **Supertest hits the real Express app** mounted in-process (not bound to a port) — full middleware stack including auth, error mapping, transaction wrappers.
-- **Auth tokens in tests** generated via the Auth emulator's `signInWithCustomToken` for tests, or via test helpers that mint emulator-signed tokens for any email.
-- **E2E uses Playwright headless** in CI; headed for local debugging via `npm run test:e2e:headed`.
-- **Coverage measured by vitest's built-in c8** (line + branch). Reported per phase. **No fixed numeric threshold** — coverage targets are gameable; the per-phase `**Tests**` subsection is the actual gate.
-- **Test data builders, not fixtures-on-disk.** Programmatic construction via factories beats JSON files for refactor resilience.
+- **Tests colocated with code** in `tests/` folders within each feature (`apps/web/src/features/*/tests/`) or workspace.
+- **Test names describe behaviour, not implementation.** `it('shows pending requests in FIFO order')`, not `it('renders list')`.
+- **Each test sets up its own state** via factories (`makeStake()`, `makeKindooManager()`, `makePendingRequest()`).
+- **Emulator state cleared between tests** via `clearFirestoreData` in `beforeEach`.
+- **No mocks for Firestore.** Emulator is the test database. Mocks lie about transaction semantics, batched-write atomicity, and rule evaluation; the emulator doesn't.
+- **Auth tokens via Auth emulator's `signInWithCustomToken`** for tests; helpers under `apps/web/test/lib/auth.ts`.
+- **E2E uses Playwright headless** in CI; headed for local debugging via `pnpm test:e2e:headed`.
+- **No fixed coverage threshold.** Per-phase **Tests** subsection is the actual gate.
 
 ### CI
 
-GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push and every PR:
+GitHub Actions workflow at `infra/ci/workflows/test.yml` runs on every push and PR:
 
-1. `npm ci` — workspace install.
-2. `npm run lint` — eslint + prettier --check.
-3. `npm run typecheck` — `tsc --noEmit` across all packages.
-4. `npm run test:unit` — vitest, no emulators.
-5. `npm run test:integration` — vitest + emulators (`firebase emulators:exec --only firestore,auth -- npm run test:integration:run`).
-6. `npm run test:rules` — rules-unit-testing.
-7. `npm run test:e2e` — Playwright against emulators + locally-built Cloud Run image + Vite preview.
-8. `npm run build` — production builds verify.
+1. `pnpm install` — workspace install.
+2. `pnpm lint` — eslint + prettier --check across all workspaces.
+3. `pnpm typecheck` — `tsc -b` (project references) across the monorepo.
+4. `pnpm test:unit` — vitest, no emulators.
+5. `pnpm test:integration` — vitest + emulators.
+6. `pnpm test:rules` — rules-unit-testing.
+7. `pnpm test:e2e` — Playwright against emulators + locally-built app.
+8. `pnpm build` — production builds verify across workspaces.
 
-A failing step blocks the PR. No `--no-verify`, no skipping; if a test is wrong, fix the test, don't bypass the gate.
+A failing step blocks the PR. No `--no-verify`; if a test is wrong, fix the test.
 
-### Per-phase test discipline
+## Repo layout
 
-Each phase below has a **Tests** subsection enumerating the specific test cases that prove the phase's acceptance criteria. The subsection is **non-exhaustive** — it lists the must-haves; additional tests are welcome where useful. Acceptance criteria implicitly include "all tests in this phase's Tests subsection pass" and "no prior-phase tests regress."
-
-A phase is not shippable if any of its enumerated tests are missing or failing, even if the feature works manually. The `**Tests**` subsection is part of the contract.
-
-## Dependency overview
+Side-by-side during migration. Existing `src/` and `identity-project/` untouched until Phase 11.
 
 ```
-1 Project skeleton + emulators
- └─ 2 Firebase Auth + principal resolution
-     └─ 3 Firestore repos + security rules
-         └─ 4 API layer (Express)
-             └─ 5 Frontend SPA shell + auth flow
-                 └─ 6 Page ports — read-side
-                     └─ 7 Page ports — write-side
-                         ├─ 8 Importer + Expiry on Cloud Scheduler
-                         └─ 9 Email via SendGrid
-                              └─ 10 Data migration + cutover  ◄─── end of Phase A
-                                   └─ 11 Stake routing
-                                        └─ 12 Platform superadmin + stake picker
+kindoo/
+├── apps/web/                      # SPA — web-engineer
+│   ├── src/
+│   │   ├── routes/                # TanStack Router file-based routes
+│   │   ├── features/              # One folder per domain (seats, requests, access, manager, etc.)
+│   │   ├── components/            # Cross-feature shared UI
+│   │   ├── lib/                   # firebase init, principal hook, toast
+│   │   └── styles/
+│   ├── public/
+│   ├── index.html
+│   ├── vite.config.ts
+│   ├── package.json
+│   └── CLAUDE.md
+│
+├── functions/                     # Cloud Functions — backend-engineer
+│   ├── src/
+│   │   ├── triggers/
+│   │   ├── scheduled/
+│   │   ├── callable/
+│   │   ├── services/
+│   │   └── lib/
+│   ├── tests/
+│   └── CLAUDE.md
+│
+├── firestore/                     # Rules + indexes — backend-engineer
+│   ├── firestore.rules
+│   ├── firestore.indexes.json
+│   ├── tests/
+│   └── CLAUDE.md
+│
+├── packages/shared/               # Shared types + zod schemas — co-owned
+│   ├── src/types/
+│   ├── src/schemas/
+│   ├── src/canonicalEmail.ts
+│   └── CLAUDE.md
+│
+├── infra/                         # Deploy + scripts + runbooks — infra-engineer
+│   ├── scripts/
+│   ├── runbooks/
+│   ├── ci/workflows/
+│   └── CLAUDE.md
+│
+├── e2e/                           # Playwright — web-engineer
+│   ├── tests/
+│   ├── fixtures/
+│   └── playwright.config.ts
+│
+├── docs/                          # Spec, architecture — docs-keeper
+│   └── CLAUDE.md
+│
+├── src/                           # Apps Script Main — RETIRED in Phase 11
+├── identity-project/              # Apps Script Identity — RETIRED in Phase 11
+│
+├── firebase.json
+├── .firebaserc
+├── pnpm-workspace.yaml
+├── package.json
+├── tsconfig.base.json
+├── CLAUDE.md
+├── TASKS.md
+└── BUGS.md
 ```
 
-Phases 4 and 5 can develop in parallel if you have two devs (server endpoints + client shell are independent). Phases 8 and 9 are independent and can develop in parallel after 7. Everything else is strictly sequential.
+## Phase dependency overview
+
+```
+1 Project skeleton + monorepo + emulators
+ └─ 2 Firebase Auth + custom claims + sync triggers
+     └─ 3 Firestore schema + security rules + indexes
+         ├─ 4 Web SPA shell + auth flow
+         │   ├─ 5 Read-side pages
+         │   │   └─ 6 Write-side pages — request lifecycle
+         │   │       └─ 7 Manager admin pages + bootstrap wizard
+         │   │           └─ 10 PWA + push notifications
+         │   │               └─ 11 Data migration + cutover  ◄─── end of Phase A
+         │   │                   └─ 12 Multi-stake (Phase B)
+         │   └─ 8 Importer + Expiry + audit triggers
+         │       └─ 9 Email triggers via SendGrid
+         └─ (rules + indexes serve everything below)
+```
+
+Phase 5 → 6 → 7 is web-engineer's serial path. Phase 8 → 9 is backend-engineer's serial path. Once Phase 4 ships, both arcs run in parallel until they converge for Phase 10. Phase 11 is everyone-on-deck for the cutover window.
 
 ---
 
-## Phase 1 — Project skeleton + emulators
+## Phase 1 — Project skeleton + monorepo + emulators
 
-**Goal:** A deployable Firebase project that responds to "hello, world" through the full stack: Vite-built TS client served by Hosting, calling an Express endpoint on Cloud Run, which reads a single doc from Firestore. Local development via emulators works end-to-end.
+**Goal:** A deployable Firebase project that runs end-to-end through the full stack — Vite-built React + TS client served by Hosting, reading a single doc from Firestore via the SDK. Local development via emulators works. CI runs lint + typecheck + tests on every PR.
+
+**Owner:** infra-engineer (skeleton); web-engineer (Vite + React stub); backend-engineer (Functions + emulator config). Phase 1 is the only phase where all engineering agents land code together — after this they parallelize.
 
 **Dependencies:** none.
 
-**Sub-tasks**
+### Sub-tasks
 
 _GCP / Firebase project setup_
 
-- [ ] Create two Firebase projects: `kindoo-staging` and `kindoo-prod`. Both enable Blaze (pay-as-you-go) with a $1/month budget alert.
-- [ ] Enable required services on both projects: Firestore (Native mode), Authentication, Hosting, Cloud Run, Cloud Scheduler, Sheets API, Secret Manager.
-- [ ] Create one service account per project (`kindoo-app@<project>.iam.gserviceaccount.com`) with roles: Firestore Service Agent, Secret Manager Secret Accessor, Cloud Run Invoker (for Scheduler → Cloud Run auth in Phase 8). Grant Cloud Run service account permission to invoke itself for internal endpoint calls.
-- [ ] Reserve Firestore database in the lowest-latency region (`us-central1` matches existing script timezone bias).
+- [ ] Create two Firebase projects: `kindoo-staging` and `kindoo-prod`. Both Blaze plan with $1/month budget alert.
+- [ ] Enable services on both: Firestore (Native mode), Authentication, Hosting, Cloud Functions, Cloud Scheduler, Cloud Messaging (FCM), Sheets API, Secret Manager.
+- [ ] Service account `kindoo-app@<project>.iam.gserviceaccount.com` with roles: Firestore Service Agent, Secret Manager Secret Accessor, Cloud Run Invoker (Cloud Functions 2nd-gen runs on Cloud Run under the hood).
+- [ ] Reserve Firestore database in `us-central1` (matches stake script timezone bias).
 
-_Repo layout_
+_Repo layout (per F14)_
 
-- [ ] Create `firebase/` at repo root, alongside the unchanged `src/` and `identity-project/` (per F9).
-- [ ] Subdirectory shape:
-  ```
-  firebase/
-  ├── client/         # Vite + TS frontend
-  ├── server/         # Express + TS backend (Cloud Run); Scheduler-invoked endpoints live here as regular Express routes under /api/internal/*
-  ├── shared/         # types and pure functions shared between client and server
-  ├── infra/          # GCP/Firebase infrastructure config (see Phase 1 Observability + Backup/DR sub-tasks for directory shape)
-  ├── scripts/        # one-off scripts (data migration, maintenance, ops)
-  ├── firebase.json   # Hosting + emulator config + rewrites
-  ├── firestore.rules # security rules (stub in this phase, real in Phase 3)
-  ├── firestore.indexes.json
-  └── package.json    # workspace root
-  ```
-- [ ] Use npm workspaces (or pnpm) to keep `client`, `server`, `shared` as one install. `shared` is a workspace dependency of both client and server.
-- [ ] TS strict mode in every package; one shared `tsconfig.base.json`.
+- [ ] Create monorepo at repo root: `apps/web/`, `functions/`, `firestore/`, `packages/shared/`, `infra/`, `e2e/`. Existing `src/` and `identity-project/` left in place.
+- [ ] `pnpm-workspace.yaml`, root `package.json`, `tsconfig.base.json`.
+- [ ] TS strict mode in every workspace; one shared `tsconfig.base.json`; project references for cross-workspace deps.
+- [ ] Per-workspace `CLAUDE.md` skeletons describing local conventions.
 
-_Server skeleton (Cloud Run)_
+_Web client skeleton_
 
-- [ ] Express + TS app with one endpoint: `GET /api/health` → `{ version, builtAt, env }`. **Anonymous; mounted before any auth middleware.** This is the only anonymous endpoint in the entire app — Phase 5's cold-start warm-up ping depends on it being reachable without a token, and Phases 2/4/8 mount auth in front of every other route. Document the mounting order with an inline comment in `server/src/app.ts` so a future refactor doesn't accidentally hide `/api/health` behind auth.
-- [ ] Cloud Run service deploys with `--allow-unauthenticated` (platform layer is open; Express middleware gates every route except `/api/health`). Required so the warm-up ping reaches the service before any sign-in happens. Locked in by F12 + Phase 8's two-piece OIDC architecture; do not flip back to `--no-allow-unauthenticated` without revisiting the warm-up design.
-- [ ] Dockerfile (multi-stage: build TS, copy `dist/` to slim Node runtime image). Node 22 LTS.
-- [ ] `npm run dev:server` runs locally on port 8080 against the Firestore emulator.
-- [ ] Stamp build version (`firebase/server/src/version.ts`) at build time via a script (mirrors `scripts/stamp-version.js`).
+- [ ] Vite + React 19 + TS app with one route: hello page that reads `stakes/_smoketest/hello` from Firestore.
+- [ ] TanStack Router scaffolded; placeholder route.
+- [ ] reactfire `<FirestoreProvider>` wired up at `App.tsx`.
+- [ ] `pnpm dev:web` runs Vite dev server on port 5173.
+- [ ] Build output to `apps/web/dist/` for Hosting to serve.
 
-_Client skeleton (Vite)_
+_Functions skeleton_
 
-- [ ] Vite + TS app with one page: index.html with a `<script type="module">` that fetches `/api/health` and renders the JSON.
-- [ ] `npm run dev:client` runs Vite dev server on port 5173.
-- [ ] Build output goes to `firebase/client/dist/` for Hosting to serve.
+- [ ] One callable function: `hello` returns `{ version, builtAt, env }`. Anonymous-callable for the smoketest only; real functions land in Phase 2.
+- [ ] `pnpm dev:functions` runs against the emulator.
+- [ ] Build version stamped at build time via `infra/scripts/stamp-version.js`.
 
-_Hosting + rewrite_
+_Firestore skeleton_
 
-- [ ] `firebase.json` rewrites: `/api/**` → Cloud Run service `kindoo-server`; everything else → `index.html` (SPA fallback).
-- [ ] Hosting site name aligned to the project (`kindoo-prod.web.app` is the default URL pre-domain-flip).
+- [ ] `firestore/firestore.rules` stub: `allow read, write: if false;` (locked down; opens up phase by phase).
+- [ ] `firestore/firestore.indexes.json` empty.
+- [ ] Rules tests scaffold using `@firebase/rules-unit-testing`.
 
-_Local emulators_
+_Hosting + emulators_
 
-- [ ] `firebase emulators:start` brings up Firestore + Auth + Hosting emulators.
-- [ ] Add a top-level `npm run dev` that runs (in parallel): Firebase emulators, Cloud Run server (against emulator Firestore), and Vite dev server. One command, all green.
-- [ ] `.env.local` template documenting the env vars (`FIREBASE_PROJECT`, `FIRESTORE_EMULATOR_HOST`, etc.).
+- [ ] `firebase.json` configured for Hosting, Functions, Firestore, Auth emulators.
+- [ ] `pnpm dev` runs all emulators + Vite + Functions in parallel. One command, all green.
+- [ ] `.env.local` template documenting env vars.
 
 _Deploy pipeline_
 
-- [ ] `npm run deploy:staging` and `npm run deploy:prod` scripts that: build server image → push to Artifact Registry → deploy Cloud Run → build client → deploy Hosting.
-- [ ] CI runs tests on every PR (see Test infrastructure below); deploys are still operator-triggered (`npm run deploy:*`) for now.
+- [ ] `infra/scripts/deploy-staging.sh` and `deploy-prod.sh`: build web → deploy Hosting; build functions → deploy.
+- [ ] CI runs tests on every PR; deploys remain operator-triggered.
 
 _Observability foundations_
 
-- [ ] Cloud Logging captures Cloud Run request logs and Firestore operation logs automatically. Log-based metric definitions live in `firebase/infra/metrics/`: `5xx_count_by_route`, `firestore_rules_denied_count`, `auth_verification_failures`. Additional metrics (`importer_duration`, `expiry_duration`) land in Phase 8.
-- [ ] Cloud Monitoring alert policies live in `firebase/infra/alerts/` and land alongside the features they monitor, all with Tad's email as destination:
-  - Phase 1: 5xx rate > 1/minute sustained for 5 minutes.
-  - Phase 4: auth verification failures > 5/hour (possible token-replay or misconfig).
-  - Phase 8: Importer didn't complete within 10 minutes of Scheduler fire.
-  - Phase 8: Expiry didn't complete within 5 minutes of Scheduler fire. Silent expiry failure is the highest-cost observability gap — lingering temp seats are invisible until someone notices a member still has access they shouldn't.
-- [ ] Google Cloud Error Reporting (built-in, zero config) handles unhandled-exception tracking. No Sentry for v1.
-- [ ] `docs/runbooks/observability.md` documents metric definitions, alert thresholds, and how to add a new metric/alert.
+- [ ] Cloud Logging captures Functions logs automatically.
+- [ ] Log-based metric definitions live in `infra/monitoring/metrics/`: `audit_trigger_failures`, `claim_sync_failures`, `firestore_rules_denied_count`. Additional metrics (`importer_duration`, `expiry_duration`) land in Phase 8.
+- [ ] Alert policies in `infra/monitoring/alerts/`, all to Tad's email:
+  - Phase 1: any function 5xx > 1/minute for 5 minutes.
+  - Phase 8: importer didn't complete within 10 minutes of scheduler fire.
+  - Phase 8: expiry didn't complete within 5 minutes of fire.
+- [ ] Google Cloud Error Reporting enabled.
+- [ ] `infra/runbooks/observability.md` documents metrics + how to add one.
 
-_Backup and disaster recovery_
+_Backup and DR_
 
-- [ ] Firestore Point-in-Time Recovery (PITR) enabled on `kindoo-prod` from Phase 1. Retains all writes for 7 days; any timestamp within the window is restorable via `gcloud firestore export --snapshot-time=<ts>`. Enable via `gcloud firestore databases update --database='(default)' --enable-pitr`. Zero ongoing cost.
-- [ ] Scheduled Firestore export: Cloud Scheduler job weekly (Sundays 02:00 America/Denver) → GCS bucket `gs://kindoo-prod-backups/YYYY-MM-DD/`. Bucket has a 90-day lifecycle rule. Storage cost: pennies/month at our volume. Config scripts live in `firebase/infra/backup/`.
-- [ ] `docs/runbooks/restore.md` covers three restore scenarios: PITR restore to a new Firestore database (for point-in-time recovery within the 7-day window), full restore from GCS export (for >7-day recovery or full DR), and partial restore of one collection via `gcloud firestore import --collection-ids=...`.
-- [ ] Post-cutover, the source LCR Sheet is no longer a backup. Explicitly called out in the Phase 10 cutover runbook.
+- [ ] Firestore Point-in-Time Recovery (PITR) enabled on `kindoo-prod` from Phase 1. 7-day window.
+- [ ] Scheduled Firestore export: weekly Sunday 02:00 → `gs://kindoo-prod-backups/YYYY-MM-DD/`. 90-day lifecycle.
+- [ ] `infra/runbooks/restore.md`: PITR restore, full GCS-export restore, partial collection restore.
 
-_Test infrastructure (per F11)_
+_Test infrastructure (per F13)_
 
-- [ ] Vitest configured for `client`, `server`, `shared`; shared base config (`vitest.base.ts`).
-- [ ] Test scripts: `test:unit`, `test:integration`, `test:rules`, `test:e2e`, `test:all`. Top-level `npm test` runs all five.
-- [ ] `@firebase/rules-unit-testing` installed; helper module `firebase/test/lib/rules.ts` for mounting `firestore.rules` in tests (consumed in Phase 3; scaffolded here).
-- [ ] supertest installed; helper `firebase/test/lib/app.ts` mounts the Express app in-process for tests (consumed in Phase 4; scaffolded here).
-- [ ] Auth emulator helper `firebase/test/lib/auth.ts`: `signInAs(email, claims?)` returns a token usable by supertest; cleanup helper.
-- [ ] Firestore emulator helper `firebase/test/lib/firestore.ts`: `clearAll()`, `seed(stakeId, fixtures)`, factory functions stubbed.
-- [ ] Playwright installed; one smoke spec under `firebase/test/e2e/smoke.spec.ts` proving the Vite + Express + emulator stack runs end-to-end headless.
-- [ ] `firebase emulators:exec` wrapper for CI: starts emulators, runs the test command, tears down.
-- [ ] Coverage reporter: vitest c8 → `coverage/` (gitignored). Per-suite report on every run (no fixed threshold; per F11).
-- [ ] `.github/workflows/test.yml`: runs lint + typecheck + test:unit + test:integration + test:rules + test:e2e + build on every push and PR. Failing step blocks the workflow.
+- [ ] Vitest configured per workspace; shared base config.
+- [ ] `pnpm test:unit`, `test:integration`, `test:rules`, `test:e2e`, `test:all`.
+- [ ] `@firebase/rules-unit-testing` installed; helper at `firestore/tests/lib/rules.ts`.
+- [ ] Auth + Firestore emulator helpers at `apps/web/test/lib/`.
+- [ ] Playwright installed; smoke spec at `e2e/tests/smoke.spec.ts`.
+- [ ] Coverage via vitest c8 → `coverage/` (gitignored).
+- [ ] `infra/ci/workflows/test.yml` runs lint + typecheck + tests on every push/PR.
 
-**Tests**
-
-This phase establishes the test infrastructure that every later phase consumes; the tests here are smoke-level proof the framework works end-to-end.
+### Tests
 
 _Unit_
 
-- [ ] `version.ts` returns the stamped build timestamp in ISO format.
-- [ ] Trivial pure-fn import test (e.g. `shared/email.ts`'s skeleton) — proves vitest + workspace TS imports resolve correctly.
+- [ ] `version.ts` returns the stamped build timestamp.
+- [ ] `packages/shared/src/canonicalEmail.ts` skeleton against fixture inputs.
 
 _Integration_
 
-- [ ] `GET /api/health` returns `{ version, builtAt, env }` with the expected shape (supertest against the in-process Express app).
-- [ ] Firestore Admin SDK reads a seeded doc (`stakes/_smoketest/hello`) from the emulator inside a supertest call.
+- [ ] `hello` callable returns the expected shape (vitest against in-process emulator).
+- [ ] Firestore Admin SDK reads a seeded doc (`stakes/_smoketest/hello`) from emulator.
 
 _E2E_
 
-- [ ] Playwright smoke: Vite-served `index.html` loads at `localhost:5173`, fetches `/api/health` (proxied to local Express against the emulator), and renders the JSON. Headless Chromium.
+- [ ] Playwright smoke: Vite-served page loads at `localhost:5173`, fetches the hello doc, renders it.
 
 _CI_
 
-- [ ] `.github/workflows/test.yml` runs lint + typecheck + test:unit + test:integration + test:e2e + build on push; a contrived failing test in any layer blocks the workflow (verified before merging Phase 1).
+- [ ] `.github/workflows/test.yml` runs the full pipeline on push; a contrived failing test in any layer blocks the workflow.
 
-**Acceptance criteria**
+### Acceptance criteria
 
-- `npm run dev` starts emulators, Vite, and Express; opening localhost:5173 fetches `/api/health` from the local Express and renders the JSON.
-- `npm run deploy:staging` deploys both Hosting and Cloud Run; the staging URL responds to `/api/health` with the correct version stamp.
-- A test doc seeded into the staging Firestore (`stakes/csnorth/_smoketest/hello`) is readable from Express via the Admin SDK.
-- `tsc --noEmit` clean across `client`, `server`, `shared`.
-- Emulator state directory is gitignored; no production credentials in the repo.
-- `kindoo-prod` Firestore is empty (no data until Phase 10).
+- `pnpm dev` brings up emulators + Vite + Functions; opening `localhost:5173` reads + renders the smoketest doc.
+- `pnpm deploy:staging` deploys Hosting + Functions; staging URL works.
+- A test doc seeded into staging Firestore is readable from the deployed web app.
+- `tsc -b` clean across all workspaces.
+- CI passes on a clean PR.
+- `kindoo-prod` Firestore is empty (no data until Phase 11).
 
-**Out of scope (deferred to later phases)**
+### Out of scope
 
-- Authentication — Phase 2.
-- Real Firestore data model — Phase 3.
-- Any actual API endpoints beyond `/api/health` — Phase 4.
-- Frontend beyond the smoketest page — Phase 5.
-- Cloudflare Worker — Firebase Hosting will handle the custom domain natively in Phase 10. `build-plan.md` Chunk 11 is superseded.
-- CI / GitHub Actions — local scripts work for the migration timeframe; CI is post-cutover polish.
+- Real authentication — Phase 2.
+- Real schema or rules — Phase 3.
+- Any real page beyond the smoketest — Phase 4+.
 
 ---
 
-## Phase 2 — Firebase Auth + principal resolution
+## Phase 2 — Firebase Auth + custom claims + sync triggers
 
-**Goal:** Sign-in works end-to-end. After clicking "Sign in with Google," the user's verified identity reaches the server, the server resolves their roles against Firestore, and they land on a "Hello, [email] — you are role X" page (or `NotAuthorized`).
+**Goal:** Sign-in works end-to-end. After clicking "Sign in with Google," the user's verified identity reaches the client, the `onAuthUserCreate` trigger writes `userIndex/{canonical}`, claim-sync triggers seed custom claims from any pre-existing role data, and the client renders a Hello page showing the user's email + decoded role claims.
+
+**Owner:** backend-engineer (functions + Auth config); web-engineer (Auth UI + principal hook).
 
 **Dependencies:** Phase 1.
 
-**Seven proofs (mirroring `build-plan.md` Chunk 1's structure)**
+### Seven proofs (per spec.md §4 lineage from Apps Script Chunk 1)
 
 1. **Login page loads.** Visiting the app while signed out shows a "Sign in with Google" button. No errors.
-2. **Sign-in produces a Firebase ID token.** Clicking the button triggers `signInWithPopup`; the client receives an ID token via `onIdTokenChanged`. The token is a real Firebase JWT (3 segments, signed by Google).
-3. **Server verifies the token.** Every request to `/api/*` carries `Authorization: Bearer <id_token>`; Express middleware calls `admin.auth().verifyIdToken(token)`. Tampered tokens reject with 401; expired tokens reject (the client SDK auto-refreshes, so this should be rare).
-4. **Role resolver against Firestore.** `Auth_resolveRoles(stakeId, email)` reads `stakes/csnorth/kindooManagers` and `stakes/csnorth/access` and returns the union of roles for the verified email. Email canonicalization (D4) preserved — `Utils_emailsEqual` ported to TS.
-5. **Hello page renders with email + roles.** A Phase-2-only `pages/hello.ts` shows email + roles. Deleted in Phase 6 when real roster pages land. (Mirrors Chunk 1's disposable `Hello.html`.)
-6. **Failure modes correct.** No token → login. Token valid but no roles → `NotAuthorized`. Token tampered or signed by wrong key → 401, client clears stored token and shows login.
-7. **Firebase Auth on http origin.** Per F12 the app is served over http. Firebase Auth's popup runs in a Google-hosted https context, and IndexedDB persistence works on http origins today. Proof 7 is a deliberate early verification: sign in against the http staging origin, refresh the page, confirm the session persists. If a browser change has broken Auth SDKs on http since this plan was written, we want to know on day one of Phase 2, not mid-Phase-7. Document the result in `docs/changelog/phase-2.md`.
+2. **Sign-in produces a Firebase ID token.** Clicking triggers `signInWithPopup`; the client receives an ID token via `onIdTokenChanged`.
+3. **Server verifies the token.** Custom claims are checked in rules via `request.auth.token.stakes[stakeId].*`. Tampered tokens reject; expired tokens auto-refresh via the SDK.
+4. **`onAuthUserCreate` writes `userIndex`.** First sign-in creates `userIndex/{canonical}` with `{uid, typedEmail, lastSignIn}`.
+5. **Claim sync seeds initial claims.** If the user's canonical email already exists in `kindooManagers/` or `access/`, the trigger sets the corresponding stakes claims at creation time and revokes refresh tokens so the next request picks them up.
+6. **Hello page renders email + decoded roles.** A Phase-2-only `pages/hello.tsx` reads claims via `usePrincipal()`. Deleted in Phase 5.
+7. **Failure modes correct.** No token → login. Token valid but no claims → NotAuthorized. Token tampered → 401, client clears state, returns to login.
 
-**Sub-tasks**
+### Sub-tasks
 
-- [ ] Enable Google sign-in provider in Firebase Auth console (both projects).
-- [ ] Authorized domains: `localhost`, `kindoo-staging.web.app`, `kindoo-prod.web.app`, eventually `kindoo.csnorth.org` (Phase 10).
-- [ ] Client: Firebase SDK setup (`initializeApp` with project config); `auth.ts` module exporting `signIn()`, `signOut()`, `getIdToken()`, `onIdTokenChanged(cb)`.
-- [ ] Client: `rpc.ts` typed fetch wrapper. Auto-injects `Authorization: Bearer <token>`. Auto-retries once on 401 by forcing a token refresh via `getIdToken(true)`. Surfaces server-side error messages as toasts (preserves the existing pattern).
-- [ ] Server: Express auth middleware that calls `admin.auth().verifyIdToken(token)`; injects `req.principal`; throws 401 on bad token.
-- [ ] Server: auth middleware uses Firebase Admin SDK's `verifyIdToken`, which automatically accepts emulator-signed tokens when the `FIREBASE_AUTH_EMULATOR_HOST` env var is set on the process. The env var must be plumbed to every process that runs `verifyIdToken`: the emulator harness (set by `firebase emulators:start` / `emulators:exec`), the Cloud Run test-local process, and CI runners invoking supertest. `firebase/server/src/bootstrap.ts` logs a warning at startup if the env var is set while `NODE_ENV=production` — a prod deploy with this env var set would accept forged tokens.
-- [ ] Server: `Auth_resolveRoles(stakeId, email)` — reads `stakes/{stakeId}/kindooManagers` and `stakes/{stakeId}/access` with email-as-doc-ID lookups (one round-trip per collection at the canonical email).
-- [ ] Server: minimal `kindooManagersRepo` and `accessRepo` with `getAll()` and `getByEmail(email)` only — full CRUD lands in Phase 3.
-- [ ] Shared: port `Utils_emailsEqual`, `Utils_normaliseEmail`, `Utils_canonicalEmail`, `Utils_cleanEmail` to TS in `shared/email.ts`. Unit tests carry over from `Utils_test_*` (port to vitest or jest).
-- [ ] Shared: port `Auth_requireRole`, `Auth_requireWardScope`, `Auth_findBishopricRole`, `Auth_requestableScopes` to TS in `shared/principal.ts`.
-- [ ] Server: Cloud Function trigger on `auth.user().onCreate` (and a fallback first-API-call check) that writes `users/{uid}` with `{email, displayName, lastSignIn}`. Updates `lastSignIn` on every authenticated request (cheap; debounced if needed).
-- [ ] Client: `pages/login.ts`, `pages/hello.ts`, `pages/notAuthorized.ts`. Topbar shell with email + sign-out button.
-- [ ] Seed staging Firestore manually via the Firebase console or a small script: one `stakes/csnorth` doc + one `stakes/csnorth/kindooManagers/<your-canonical-email>` doc. Just enough to prove role resolution.
+_Firebase Auth setup_
 
-**Tests**
+- [ ] Enable Google sign-in provider in both Firebase projects.
+- [ ] Authorized domains: `localhost`, `kindoo-staging.web.app`, `kindoo-prod.web.app`, `kindoo.csnorth.org` (last one Phase 11).
 
-The six proofs from `build-plan.md` Chunk 1 are restated here as automated tests, not manual walkthroughs. Plus middleware coverage and email-canonicalization regressions ported from `Utils_test_*`.
+_Web client_
+
+- [ ] `apps/web/src/lib/firebase.ts` — `initializeApp` with project config + emulator detection.
+- [ ] `apps/web/src/features/auth/` — `useAuth()` hook wrapping reactfire's `useUser`; `signIn()`, `signOut()`.
+- [ ] `apps/web/src/lib/principal.ts` — `usePrincipal()` returns `{ email, canonical, isManager, isStakeMember, bishopricWards, isPlatformSuperadmin }` derived from token claims.
+- [ ] **Force token refresh on first sign-in completion** — call `getIdToken(true)` after `signInWithPopup` resolves so claims are picked up before the first authenticated read.
+- [ ] `apps/web/src/features/auth/pages/login.tsx`, `notAuthorized.tsx`. Topbar with email + sign-out.
+- [ ] Phase-2 placeholder: `apps/web/src/features/auth/pages/hello.tsx` showing email + decoded claims.
+
+_Custom claims schema_
+
+- [ ] Defined in `packages/shared/src/types/auth.ts`:
+  ```typescript
+  export type CustomClaims = {
+    canonical: string;
+    isPlatformSuperadmin?: boolean;
+    stakes?: Record<string, { manager: boolean; stake: boolean; wards: string[] }>;
+  };
+  ```
+
+_Cloud Functions_
+
+- [ ] `functions/src/triggers/onAuthUserCreate.ts` — writes `userIndex/{canonical}`; checks `kindooManagers/` and `access/` for pre-existing role data; seeds claims if any; revokes refresh tokens.
+- [ ] `functions/src/triggers/syncAccessClaims.ts` — fires on `stakes/{sid}/access/{canonical}` writes; recomputes `stakes[sid].stake` + `stakes[sid].wards`; calls `setCustomUserClaims` + `revokeRefreshTokens`.
+- [ ] `functions/src/triggers/syncManagersClaims.ts` — fires on `stakes/{sid}/kindooManagers/{canonical}` writes; toggles `stakes[sid].manager`.
+- [ ] `functions/src/triggers/syncSuperadminClaims.ts` — fires on `platformSuperadmins/{canonical}` writes; toggles `isPlatformSuperadmin`. (Skeleton; superadmin set is empty in v1.)
+- [ ] `functions/src/lib/canonicalEmail.ts` — re-exports from `packages/shared`.
+- [ ] Helper `functions/src/lib/uidLookup.ts` — `uidForCanonical(canonical)` reads `userIndex` then falls back to `getUserByEmail`.
+
+_Shared (per F2 monorepo)_
+
+- [ ] `packages/shared/src/canonicalEmail.ts` — port of `Utils_normaliseEmail` to TS. Cases: lowercase + Gmail dot-strip + `+suffix`-strip + `googlemail.com` → `gmail.com` fold.
+- [ ] `packages/shared/src/types/auth.ts` — claims type, principal type.
+
+_Rules (Phase 2 increment)_
+
+- [ ] `userIndex/{canonical}`: `read` if `request.auth.uid == resource.data.uid`; `write` server-only.
+
+_Seed data (staging)_
+
+- [ ] Manually via Firebase console or `infra/scripts/seed-staging.ts`: one `stakes/csnorth` parent doc + one `stakes/csnorth/kindooManagers/{your-canonical}` doc. Just enough to prove role resolution.
+
+### Tests
 
 _Unit_
 
-- [ ] `Utils_normaliseEmail`: cases ported from existing Apps Script tests — `Alice.Smith@Gmail.com`, `alicesmith+church@googlemail.com`, `alice@csnorth.org` (dots retained on non-Gmail), `  Bob@Foo.COM  `, googlemail.com → gmail.com folding.
-- [ ] `Utils_emailsEqual`: typed-form variants → equal; different addresses → not equal; case + whitespace boundary cases.
-- [ ] `Utils_canonicalEmail`: round-trip is one-way (canonical doesn't reverse to typed — intentional).
-- [ ] `Auth_requireRole`: matcher hits → returns; no match → throws `Forbidden`.
-- [ ] `Auth_requireWardScope`: bishopric of own ward → ok; manager → ok; stake → ok; bishopric of other ward → `Forbidden`; no roles → `Forbidden`.
-- [ ] `Auth_findBishopricRole`, `Auth_requestableScopes`: per their existing Apps Script behaviour.
+- [ ] `canonicalEmail`: `Alice.Smith@Gmail.com`, `alicesmith+church@googlemail.com`, `alice@csnorth.org`, whitespace edges, `googlemail.com` → `gmail.com` folding.
+- [ ] `usePrincipal` derives the right shape from various claim fixtures (no claims, manager-only, multi-role).
 
-_Integration (Auth + Firestore emulators + supertest)_
+_Integration (Auth + Firestore emulators)_
 
-- [ ] Auth middleware:
-  - Valid token → `req.principal` populated; pass-through to handler.
-  - Missing `Authorization` header → 401.
-  - Tampered token → 401.
-  - Token signed by wrong project → 401.
-  - Expired token → 401 (with the documented refresh-then-retry behaviour at the rpc layer).
-  - Emulator-signed token with `FIREBASE_AUTH_EMULATOR_HOST` set on the server process → accepted.
-  - Emulator-signed token with `FIREBASE_AUTH_EMULATOR_HOST` unset → rejected as 401 (confirms prod configuration rejects emulator tokens).
-  - Server startup with `FIREBASE_AUTH_EMULATOR_HOST` set AND `NODE_ENV=production` → startup log emits warning (verified via log capture).
-- [ ] `Auth_resolveRoles(stakeId, email)`:
-  - Email in `kindooManagers` only → `[{type:'manager'}]`.
-  - Email in `access` with `scope='stake'` only → `[{type:'stake'}]`.
-  - Email in `access` with `scope='CO'` only → `[{type:'bishopric', wardId:'CO'}]`.
-  - Email in all three → union (3 roles).
-  - Email canonicalization variant (`a.b+x@gmail.com` registered, lookup with `ab@gmail.com`) → resolves identically.
-  - No matches → empty array.
-- [ ] `users/{uid}` write:
-  - First sign-in writes `{email, lastSignIn, displayName?}`.
-  - Second sign-in updates `lastSignIn` only.
-  - Doc is keyed on `auth.uid`, not email (verified via emulator inspection).
+- [ ] `onAuthUserCreate` writes `userIndex/{canonical}` with correct shape.
+- [ ] `onAuthUserCreate` seeds claims if pre-existing `kindooManagers/{canonical}` exists; verified via emulator inspection.
+- [ ] `syncAccessClaims`: write to `access/{canonical}` with stake scope → `stakes.csnorth.stake = true`; with ward scope → `stakes.csnorth.wards = [wardCode]`; doc deletion → claim cleared.
+- [ ] `syncAccessClaims` calls `revokeRefreshTokens` (verified via Auth emulator's revoke listener).
+- [ ] Email canonicalization variant (`a.b+x@gmail.com` registered, lookup with `ab@gmail.com`) → resolves identically.
+- [ ] `userIndex` collision (two distinct uids canonicalising the same) → second write fails or surfaces an alert.
 
 _E2E (Playwright)_
 
-- [ ] Sign in via Auth emulator → bootstrap call succeeds → Hello page renders email + roles.
-- [ ] Sign out → returns to login; subsequent rpc call → 401.
-- [ ] Hand-invalidated token in browser storage → next rpc → 401 → client clears state, returns to login (Proof 6).
+- [ ] Sign in via Auth emulator → bootstrap → Hello page renders email + roles. (All seven proofs.)
+- [ ] Sign out → returns to login; subsequent rpc-equivalent (Firestore SDK call) → 401-equivalent (PERMISSION_DENIED on a read attempt).
+- [ ] Manually mutate access doc → next page-fetch cycle reflects updated roles.
 
-The seven Phase-2 proofs each map to one or more tests above; no proof is "verified manually" — every one is a passing `it()` block.
+### Acceptance criteria
 
-**Acceptance criteria**
+- All seven proofs pass against staging.
+- `stakeId='csnorth'` is the only stake. Constant lives in `apps/web/src/lib/constants.ts`.
+- Apps Script Identity project is **NOT** yet decommissioned — stays as the prod auth source until Phase 11.
+- Refreshing the page mid-session keeps the user signed in.
+- A user not in any role data lands on NotAuthorized.
 
-- All six proofs pass against the staging Firebase project.
-- `stakeId='csnorth'` is hardcoded in the API layer (passed to repos as first arg). The constant is consolidated in one place (`server/src/constants.ts`) so Phase 11 can grep-and-fix.
-- Email canonicalization tests pass (the existing `Utils_test_*` cases ported).
-- Sign-out clears the client-side Firebase Auth state and returns to the login page.
-- Refreshing the page mid-session keeps you signed in (Firebase Auth persists in IndexedDB by default).
-- The `users/{uid}` doc gets written on first sign-in and updated on subsequent sign-ins.
-- A user not in `kindooManagers` and not in `access` lands on `NotAuthorized`.
-- Apps Script Identity project is **NOT** yet deleted — it stays as the prod auth source until Phase 10. The Firebase auth flow runs only against staging.
+### Out of scope
 
-**Out of scope**
-
-- Real role-based pages — Phase 6/7.
-- Multi-stake principal shape (`memberships` map) — Phase 11.
-- Platform superadmin — Phase 12.
-- Firestore writes — Phase 3.
-- Custom claims — deferred indefinitely per F7.
-- Production cutover — Phase 10. Staging only in this phase.
-
-**Non-obvious concerns to watch**
-
-- `signInWithPopup` is blocked by some browsers in incognito mode and by some popup blockers. Acceptable for v1; document in the user-facing FAQ. `signInWithRedirect` is the fallback if it becomes a real issue.
-- `verifyIdToken` makes a network call to fetch Google's signing keys — cached internally by the Admin SDK with the right TTL, so subsequent calls are cheap. No need to add our own cache.
-- The `onIdTokenChanged` listener fires not only on sign-in/sign-out but also every hour on auto-refresh. Make sure the rpc layer reads the *current* token via `getIdToken()` rather than a stale captured value.
-- Browsers are progressively restricting non-secure-context features. Firebase Auth, IndexedDB persistence, and `signInWithPopup` all currently work on http origins, but this is worth a quick verification in Proof 7 before committing to F12. If any piece fails, file in BUGS.md and escalate to Tad — F12 may need reconsideration.
+- Real role-based pages — Phase 5+.
+- Multi-stake principal shape — Phase 12.
+- Platform superadmin UI — Phase 12 (trigger skeleton lands here).
 
 ---
 
-## Phase 3 — Firestore repos + security rules
+## Phase 3 — Firestore schema + security rules + indexes
 
-**Goal:** All ten collections exist under `stakes/csnorth/` with the multi-tenant shape locked in. Every repo has full CRUD with TS types. Every write wraps in a Firestore transaction. AuditLog discipline is preserved (caller passes `actor_email`; one audit row inside the same transaction). Security rules enforce stake-scope at the rule layer.
+**Goal:** All collections defined per `docs/firebase-alt-schema.md`. Rules complete, deny-by-default with explicit allows. All composite indexes declared. Rules tests cover every collection's read/write paths. The data layer is locked in for everything Phase 4+ will build on.
+
+**Owner:** backend-engineer.
 
 **Dependencies:** Phase 2.
 
-**Document-ID conventions** (locked in here, used everywhere downstream)
+### Sub-tasks
 
-| Collection | Doc ID | Notes |
-| --- | --- | --- |
-| `stakes/{stakeId}` | human-readable slug | `csnorth`, `someother` |
-| `stakes/{stakeId}/wards/{wardCode}` | natural key (2-letter `ward_code`) | matches LCR tab name; same as today |
-| `stakes/{stakeId}/buildings/{buildingId}` | URL-safe slug derived from `building_name` | one-time slugify; `building_name` field carries display form |
-| `stakes/{stakeId}/kindooManagers/{canonicalEmail}` | canonical email | lookup is a doc-get, not a query |
-| `stakes/{stakeId}/access/{canonicalEmail}__{scope}__{calling}` | composite key, `__`-separated, calling URL-encoded | enforces composite-PK uniqueness via doc existence |
-| `stakes/{stakeId}/seats/{seatId}` | UUID (Firestore-auto) | `seat_id` field carries the same value for client compat |
-| `stakes/{stakeId}/requests/{requestId}` | UUID | same as seats |
-| `stakes/{stakeId}/auditLog/{ts_uuid}` | `<ISO ts>_<uuid suffix>` | sortable by ID; eliminates need for a `timestamp` index for newest-first |
-| `stakes/{stakeId}/templates/ward/callings/{callingName}` | natural key, URL-encoded | `*` wildcard in the name preserved verbatim |
-| `stakes/{stakeId}/templates/stake/callings/{callingName}` | same | |
+_Schema_
 
-The `Config` tab collapses into the `stakes/{stakeId}` document's fields — `stake_name`, `callings_sheet_id`, `stake_seat_cap`, `bootstrap_admin_email`, `setup_complete`, `expiry_hour`, `import_day`, `import_hour`, `notifications_enabled`, `last_over_caps_json`, `last_import_at`, `last_import_summary`, `last_expiry_at`, `last_expiry_summary`. Read access becomes a single doc-get instead of a tab scan.
+- [ ] `packages/shared/src/types/` — TS types for every collection per `firebase-alt-schema.md` §§3–4: `Stake`, `Ward`, `Building`, `KindooManager`, `Access`, `Seat`, `Request`, `WardCallingTemplate`, `StakeCallingTemplate`, `AuditLog`, `UserIndex`, `PlatformSuperadmin`, `PlatformAuditLog`.
+- [ ] `packages/shared/src/schemas/` — zod schemas matching the types, used for validation in both client forms and Cloud Function input.
 
-**Sub-tasks**
+_Rules_
 
-_Transaction helper (replaces `Lock_withLock`)_
+- [ ] `firestore/firestore.rules` — implementation per `firebase-alt-schema.md` §6, deny-by-default with explicit allows per collection. Helpers: `isManager`, `isStakeMember`, `bishopricWardOf`, `isAnyMember`, `isPlatformSuperadmin`, `lastActorMatchesAuth`. Cross-doc invariant: `tiedToRequestCompletion` for seat creation.
+- [ ] Inline comments explaining `getAfter()` use, the `lastActor` integrity check, and the importer/manual split-ownership.
 
-- [ ] `server/src/db/withTransaction.ts` — wraps `db.runTransaction(async (tx) => {...})` with logging, error normalization, and a uniform retry policy. Inside the transaction the caller does reads then writes; AuditLog write is one of the writes.
-- [ ] Provide a `TransactionContext` type that bundles `tx`, the principal, and the stakeId so repos don't need to thread args three deep.
-- [ ] Document the read-then-write contract in a README — Firestore transactions require reads before any write, and writes are buffered until commit. This is structurally different from `LockService.getScriptLock` and worth a dedicated short doc.
+_Indexes_
 
-_Repos (one TS module per collection)_
+- [ ] `firestore/firestore.indexes.json` — composite indexes per `firebase-alt-schema.md` §5.1.
+- [ ] TTL field configured on `auditLog` collection group via `gcloud firestore fields ttls update`.
 
-- [ ] `server/src/repos/stakeRepo.ts` — read/update the parent stake doc (replaces `ConfigRepo`).
-- [ ] `wardsRepo.ts`, `buildingsRepo.ts`, `kindooManagersRepo.ts`, `accessRepo.ts`, `seatsRepo.ts`, `requestsRepo.ts`, `auditRepo.ts`, `templatesRepo.ts`.
-- [ ] Each repo exports typed read functions (`getAll(stakeId)`, `getById(stakeId, id)`, `getByScope(stakeId, scope)`, etc.) and typed write functions (`insert(tx, stakeId, row)`, `update(tx, stakeId, id, patch)`, `delete(tx, stakeId, id)`).
-- [ ] Read functions take an optional `tx?` argument so they can compose inside a transaction.
-- [ ] All types in `shared/types/<entity>.ts` so client and server share the wire shape.
+_Helpers and conventions_
 
-_AuditLog discipline preserved_
+- [ ] `packages/shared/src/buildingSlug.ts` — slugify helper for building doc IDs.
+- [ ] `packages/shared/src/auditId.ts` — generates `<ISO ts>_<uuid>` deterministic audit IDs.
 
-- [ ] `auditRepo.ts#write(tx, stakeId, {actor_email, action, entity_type, entity_id, before, after})` — caller passes `actor_email` explicitly; no environment fallback (preserves architecture.md §5 invariant).
-- [ ] Automated actors `"Importer"` and `"ExpiryTrigger"` preserved as literal strings.
-- [ ] `before_json` / `after_json` are stored as Firestore objects (not JSON strings) since Firestore handles nested objects natively. The `_json` suffix is dropped from field names; the new field names are `before` and `after`.
-- [ ] AuditLog read uses ID-based ordering (newest-first by reverse ID lex sort) so the manager Audit Log page doesn't need a separate timestamp index.
-- [ ] Firestore TTL policy: 365 days. Every audit doc carries a `ttl` field (`Timestamp`) set at write time to `now + 365 days`. Firestore's built-in TTL deletes docs whose `ttl` is in the past (within ~24h of expiration). Configure via `gcloud firestore fields ttls update ttl --collection-group=auditLog`. At our write volume, indefinite retention would be fine in absolute terms, but 365 days keeps operational history meaningful without unbounded growth and avoids privacy questions about retaining member email addresses in audit context indefinitely.
+_Per-doc shape verification_
 
-_Composite-key uniqueness on Access_
+- [ ] No repos in this architecture (client uses Firestore SDK directly), but a thin **typed-doc-helper** layer in `apps/web/src/lib/docs.ts` exports typed `doc(...)` and `collection(...)` references with the right path for each collection. Web-engineer consumes; backend-engineer mirrors in functions if needed.
 
-- [ ] `accessRepo.makeId(canonical_email, scope, calling)` → URL-encoded composite key. Insert is a transactional `tx.create(docRef)` which throws `ALREADY_EXISTS` on collision — preserves the architecture.md / TASKS.md #1 rule that any insert (importer or manual) blocks any other insert at the composite key.
-- [ ] Source field (`importer` | `manual`) preserved exactly; importer's delete-not-seen step scopes to `source='importer'` only.
-
-_Cross-tab invariants_
-
-- [ ] Stay at the API layer (Phase 4), not the repo. Repo files have zero cross-collection awareness — same discipline as `architecture.md` §7.
-
-_Email canonicalization (D4) preserved_
-
-- [ ] All repos that touch emails (kindooManagers, access, seats, requests) accept emails as-typed and canonicalize internally for lookups + composite-key construction. The typed form lands in fields; the canonical form lands in doc IDs (where applicable).
-
-_Source-row hashing (D5) preserved_
-
-- [ ] `shared/hash.ts#hashRow(scope, calling, canonical_email)` — port the existing `Utils_hashRow` to TS using `crypto.createHash('sha256')`.
-
-_Security rules_
-
-- [ ] `firestore.rules`:
-  ```
-  rules_version = '2';
-  service cloud.firestore {
-    match /databases/{database}/documents {
-      function isAuthed() { return request.auth != null; }
-      function hasMembership(stakeId) {
-        return isAuthed() && (
-          exists(/databases/$(database)/documents/stakes/$(stakeId)/kindooManagers/$(canonical(request.auth.token.email)))
-          || existsAccessForUser(stakeId)
-        );
-      }
-      // ... helpers ...
-      match /stakes/{stakeId} {
-        allow read:  if hasMembership(stakeId);
-        allow write: if false;  // server-only via Admin SDK
-      }
-      match /stakes/{stakeId}/{document=**} {
-        allow read:  if hasMembership(stakeId);
-        allow write: if false;
-      }
-      match /users/{uid} {
-        allow read, write: if request.auth.uid == uid;
-      }
-    }
-  }
-  ```
-- [ ] All writes are forbidden at the rules layer — only the Cloud Run server (using Admin SDK) can write. This matches the F10 stance.
-- [ ] Rules tests via `@firebase/rules-unit-testing` + vitest. At minimum: authenticated non-member can't read; member can read own stake's docs; non-server can't write.
-
-_Composite indexes_
-
-- [ ] Only `auditLog` needs server-side filtering and pagination; its volume justifies composite indexes. Every other collection is small enough (12 wards × small seat counts × a handful of requests per week) that loading the full collection and filtering in-memory in the server is simpler and cheaper than maintaining composite indexes.
-- [ ] Indexes enumerated in `firestore.indexes.json` for `auditLog`:
-  - `(action ASC, __name__ DESC)` — filter by action type, newest first.
-  - `(entity_type ASC, __name__ DESC)` — filter by entity type, newest first.
-  - `(actor_email ASC, __name__ DESC)` — filter by actor, newest first.
-  - Date-range filtering piggybacks on `__name__` since doc IDs are `<ISO ts>_<uuid>` and sort lexicographically by timestamp. No separate `timestamp` field index needed.
-- [ ] Every other collection — `seats`, `requests`, `kindooManagers`, `access`, `wards`, `buildings`, `templates` — loads fully into the server and filters in-memory. No composite indexes.
-- [ ] New queries that would otherwise need a composite index must first be evaluated against the "load-full-collection" alternative. Default is in-memory filtering; composite indexes require a measured justification.
-
-_Per-request memo (replaces `Sheet_getTab`)_
-
-- [ ] Not needed in the same form — Firestore reads aren't expensive enough to memoize per-request. Skip.
-
-**Tests**
-
-Per-repo coverage plus rules-emulator scenarios. The composite-key uniqueness on Access is the main correctness invariant and gets explicit tests across multiple paths.
+### Tests
 
 _Unit_
 
-- [ ] `accessRepo.makeId(canonical, scope, calling)`: deterministic; URL-encoded; collisions impossible across distinct inputs.
-- [ ] `shared/hash.ts#hashRow(scope, calling, canonical_email)`: matches Apps Script's `Utils_hashRow` for ten known fixture inputs (regression guard for importer stability across the migration).
-- [ ] `Utils_todayIso(tz)`: returns the same string the Apps Script version returned for fixed Date inputs (regression guard for expiry).
-- [ ] Building-name slugifier: `Cordera Building` → `cordera-building`; deterministic; collision detection where applicable.
+- [ ] zod schema parses for representative documents in each collection. Round-trip via `schema.parse(seedDoc)`.
+- [ ] `auditId` generator: deterministic; sortable by reverse lex; no collisions for synthetic distinct inputs.
+- [ ] `buildingSlug`: `'Cordera Building'` → `'cordera-building'`; deterministic.
 
-_Repo (Firestore emulator, one suite per repo)_
+_Rules (rules-unit-testing) — every collection_
 
-For each repo (stakeRepo, wardsRepo, buildingsRepo, kindooManagersRepo, accessRepo, seatsRepo, requestsRepo, auditRepo, templatesRepo):
-- [ ] CRUD round-trip: insert → read → update → read → delete → read-empty.
-- [ ] Insert wraps a transaction; verified by checking AuditLog row written in the same `runTransaction` callback.
-- [ ] Update is partial (only specified fields change; other fields preserved).
-- [ ] Delete removes only the targeted doc.
+- [ ] **Top-level:** anon read `userIndex` denied; authenticated user read own → ok; read other → denied. Same for `platformSuperadmins`, `platformAuditLog`.
+- [ ] **`stakes/{sid}` parent doc:** member can read; manager can update with `lastActor` matching; non-member denied; superadmin can create; nobody can delete.
+- [ ] **`wards`, `buildings`:** any member of stake can read; only manager can write.
+- [ ] **`kindooManagers`:** manager can read + write; non-manager denied.
+- [ ] **`access`:**
+  - Manager can read.
+  - Non-manager denied.
+  - Manager creates new doc with manual_grants only → ok.
+  - Manager update touches only `manual_grants` → ok.
+  - Manager update tries to mutate `importer_callings` → denied (split-ownership).
+  - Manager deletes doc with both maps empty → ok; with content → denied.
+- [ ] **`seats`:**
+  - Manager reads any.
+  - Bishopric reads own ward's seats; other ward's denied.
+  - Stake member reads stake-scope seats.
+  - Manager creates manual seat tied to a request transitioning to complete in same tx → ok.
+  - Manager creates manual seat without request linkage → denied.
+  - Manager updates allowed fields only → ok; immutable field change denied.
+  - Manager deletes seat with non-empty `duplicate_grants` → denied.
+- [ ] **`requests`:**
+  - Manager reads any.
+  - Requester reads own.
+  - Bishopric reads own-ward requests.
+  - Stake member reads stake-scope requests.
+  - Submit with `pending` status, requester matching auth, member_name present (for add types) → ok.
+  - Submit with bad scope (not requester's) → denied.
+  - Cancel by original requester → ok; by another user → denied.
+  - Complete by manager → ok; by non-manager → denied.
+  - Reject without reason → denied.
+  - Update non-pending → denied (terminal states one-way).
+  - Delete → always denied.
+- [ ] **`wardCallingTemplates`, `stakeCallingTemplates`:** manager-only read + write.
+- [ ] **`auditLog`:** manager reads; all writes denied (server-only).
 
-Repo-specific:
-- [ ] `accessRepo`: composite-key insert collision throws; second insert with `source='manual'` against existing `source='importer'` row blocks (B1 invariant); insert with email variant (`a.b+x@gmail.com`) collides with `ab@gmail.com` row (canonical-key D4).
-- [ ] `seatsRepo`: `bulkInsertAuto` ordering preserved; `getActiveByScopeAndEmail` returns only `manual`/`temp` for that scope+email; immutable fields (`scope`, `type`, `seat_id`, `member_email`) rejected on update.
-- [ ] `requestsRepo`: status transition guard (only listed fields mutable); `pending` is the only legal starting state.
-- [ ] `auditRepo`: doc IDs sortable by reverse lex (newest-first); `before`/`after` stored as nested objects (not JSON strings).
-- [ ] `kindooManagersRepo`: lookup by typed-form variant resolves to the canonical-keyed doc.
-- [ ] `stakeRepo`: partial `update` of any single field doesn't clobber peer fields; `setup_complete=true` audit row written by the API layer (verified end-to-end in Phase 4).
+_Cross-stake denial_
 
-_Rules (rules-unit-testing)_
+- [ ] User with claims for stake A trying to read any doc under stake B → denied (covered by `isAnyMember(stakeId)` checks evaluating false).
 
-- [ ] Anonymous read of `stakes/csnorth/seats/{any}` → denied.
-- [ ] Authenticated user with no `kindooManagers` or `access` membership → read denied.
-- [ ] Authenticated stake member → reads succeed across every subcollection.
-- [ ] Authenticated user signed into stake A, attempting read of stake B → denied.
-- [ ] Authenticated client-side write to any stake doc or subcollection → denied (server-only).
-- [ ] User reads own `users/{uid}` → ok.
-- [ ] User reads other `users/{otherUid}` → denied.
-- [ ] Both `get` and `list` operations covered (Firestore evaluates rules separately per operation).
+### Acceptance criteria
 
-Coverage gate: every repo function listed in `firebase/server/src/repos/index.ts` has at least one passing test.
+- Every collection defined; every rules path tested.
+- Composite-key uniqueness on access (manager can't insert duplicate manual_grant for same scope+reason) — tested via emulator.
+- Email canonicalization tests pass for typed-form variants.
+- Cross-stake reads forbidden.
+- Type-check clean; no `any` in shared types.
+- Staging Firestore still empty except for Phase-2 seeds.
 
-**Acceptance criteria**
+### Out of scope
 
-- All ten collections defined; each repo passes its unit-test suite.
-- Every write wraps in a Firestore transaction.
-- Every write emits an AuditLog doc inside the same transaction.
-- Composite-key uniqueness on Access verified by emulator test (insert collision throws).
-- Email canonicalization: dot/`+suffix` variants resolve to the same `kindooManagers` doc (verified via test against staging).
-- Security-rule tests pass: anon can't read; cross-stake reads forbidden; client-side writes forbidden.
-- All staging data still empty except for the seed from Phase 2.
-- Type-check clean; no `any` in repo signatures.
-
-**Out of scope**
-
-- API layer wiring — Phase 4.
-- Cache layer (the equivalent of Apps Script Chunk 10.5) — defer until measured need on Firebase.
-- Real data — Phase 10.
-- Frontend integration — Phase 6/7.
-
-**Open question to resolve before starting Phase 3**
-
-- **Buildings doc-ID slugging.** Today `building_name` is the natural PK and is referenced verbatim from `wards.building_name`, `seats.building_names`, etc. As a Firestore doc ID, `building_name` may contain spaces or punctuation that need encoding. Two options: (a) slugify on write (`Cordera Building` → `cordera-building`) and add a `building_name` display field; or (b) URL-encode the natural key as the doc ID. (a) is cleaner; (b) requires zero refactor of cross-references. Recommend (a). Confirm with user before starting.
-
----
-
-## Phase 4 — API layer (Express)
-
-**Goal:** Every Apps Script API endpoint has an Express equivalent. The HTTP shape mirrors the current `google.script.run` shape closely enough that the frontend port (Phases 5–7) is mechanical.
-
-**Dependencies:** Phase 3.
-
-**Sub-tasks**
-
-_Express app structure_
-
-- [ ] `server/src/app.ts` — Express setup: JSON body parsing, CORS (allow Hosting origin), global middleware stack.
-- [ ] `server/src/middleware/auth.ts` — verifies Firebase ID token; resolves `Auth_principalFrom(stakeId, token)`; attaches `req.principal` and `req.stakeId`.
-- [ ] `server/src/middleware/error.ts` — converts thrown errors to JSON responses. Mapping: `Forbidden` → 403, `NotFound` → 404, `BadRequest` → 400, `Conflict` → 409, anything else → 500 with logged stack.
-- [ ] `server/src/middleware/log.ts` — request log line per endpoint with elapsed ms, principal email, status code.
-- [ ] One Express router per `api/` namespace: `apiShared`, `apiBishopric`, `apiStake`, `apiRequests`, `apiManager`.
-
-_URL convention_
-
-- [ ] `POST /api/stakes/:stakeId/<resource>/<action>` for action-style endpoints (`POST /api/stakes/csnorth/manager/requests/complete`).
-- [ ] `GET /api/stakes/:stakeId/<resource>` for reads.
-- [ ] Body for inputs (replaces positional rpc args).
-- [ ] JSON for everything; no form posts.
-- [ ] `:stakeId` is `csnorth` everywhere from the client until Phase 11; the path param exists from day 1 so Phase 11 doesn't have to refactor every route.
-
-_Endpoint port (one section per existing API file)_
-
-- [ ] **ApiShared**: `POST /api/stakes/:stakeId/shared/bootstrap` (returns `{principal, pageBundle?, currentPageModel}`). Page bundle is JSON page-models, not HTML strings (client owns rendering — see Phase 5).
-- [ ] **ApiBishopric**: `GET /api/stakes/:stakeId/bishopric/roster`. Scope derived from `principal`, not from a request param (preserves the spoof guard).
-- [ ] **ApiStake**: `GET /api/stakes/:stakeId/stake/roster`, `GET /api/stakes/:stakeId/stake/wardRoster?wardCode=X`, `GET /api/stakes/:stakeId/stake/wards`.
-- [ ] **ApiRequests** (consolidated, bishopric OR stake): `POST /api/stakes/:stakeId/requests/submit`, `GET /api/stakes/:stakeId/requests/listMy?scope?`, `POST /api/stakes/:stakeId/requests/cancel`, `GET /api/stakes/:stakeId/requests/checkDuplicate?memberEmail=&scope=`.
-- [ ] **ApiManager**: every `ApiManager_*` endpoint from `src/api/ApiManager.gs` gets a route. ~30 endpoints — list maintained in `firebase/server/src/routes/manager.ts`.
-
-_Service-layer port_
-
-- [ ] `server/src/services/RequestsService.ts` — `submit`, `complete`, `reject`, `cancel`. Logic preserved verbatim from `RequestsService.gs`; transaction wraps each.
-- [ ] `server/src/services/Rosters.ts` — shared row mapper + per-scope utilization math.
-- [ ] `server/src/services/Bootstrap.ts` — wizard state machine endpoints. Logic preserved.
-- [ ] `server/src/services/Importer.ts`, `Expiry.ts` — skeleton only this phase; real implementations Phase 8.
-- [ ] `server/src/services/EmailService.ts` — stubbed (logs `[EmailService] would send: {to, subject, body}` to stdout); real SendGrid integration Phase 9. The function signatures match the existing `notifyManagersNewRequest` etc. so Phase 7 can wire them up correctly.
-- [ ] `server/src/services/TriggersService.ts` — Cloud Scheduler integration; skeleton only this phase, real Phase 8.
-
-_Test suite_
-
-- [ ] `firebase/server/test/<endpoint>.test.ts` — supertest + Firestore emulator. Per endpoint: at least one happy-path + one forbidden-path + one validation-error case.
-- [ ] Port the `ApiManager_test_forbidden` discipline as test cases (CO bishopric fails stake-scope; CO bishopric fails GE-scope; etc.).
-- [ ] `npm run test:server` runs the full suite against the emulator.
-
-**Tests**
-
-End-to-end HTTP coverage via supertest. Each endpoint gets a happy-path + a forbidden-path; high-stakes endpoints (request lifecycle, manager queue) get more. The `ApiManager_test_forbidden` discipline from the Apps Script side ports as a structured suite.
-
-_Unit (mocked repos for service-layer isolation; integration tests cover the real wiring)_
-
-- [ ] `RequestsService.submit`: validates draft (member name required for add types; not for remove); rejects remove with no active manual/temp seat; rejects duplicate pending remove for same scope+email.
-- [ ] `RequestsService.complete`: asserts `status==='pending'`; on remove with missing seat → R-1 no-op completion path with `completion_note` populated.
-- [ ] `RequestsService.reject`: requires non-empty reason; asserts pending.
-- [ ] `RequestsService.cancel`: requires principal email matches `requester_email` (canonical-equal); asserts pending.
-- [ ] Error-mapping middleware: `Forbidden`/`NotFound`/`BadRequest`/`Conflict`/unknown → 403/404/400/409/500; 500 logs the stack but doesn't leak it in the response body.
-
-_Integration (supertest + Firestore + Auth emulators)_
-
-For every endpoint listed in `firebase/server/src/routes/*.ts`:
-- [ ] Happy path: signed in as the right role → 200 + expected response shape.
-- [ ] Forbidden: signed in as a wrong role → 403 with `Forbidden` message.
-- [ ] Validation error: missing required field → 400 with field-specific message.
-
-Endpoint-specific:
-- [ ] `POST /api/stakes/csnorth/requests/submit` (add_manual) for a seat-less member → 200 + pending row written + audit row in same transaction.
-- [ ] Same for a member already with a seat → still 200 (warning not block) + duplicate flagged in response.
-- [ ] `POST /api/stakes/csnorth/manager/requests/complete`:
-  - Pending add_manual → 200 + Seat inserted + Request flipped + 2 audit rows.
-  - Pending remove with seat present → 200 + Seat deleted + Request flipped + 2 audit rows.
-  - Pending remove with seat already gone (R-1) → 200 + Request flipped + `completion_note` set + 1 audit row.
-  - Already-complete request → 409 with "no longer pending (current status: complete)".
-- [ ] `POST /api/stakes/csnorth/manager/requests/reject`: empty reason → 400; valid → 200 + audit.
-- [ ] `POST /api/stakes/csnorth/requests/cancel`:
-  - Original requester cancels own pending → 200.
-  - Different user → 403.
-  - Manager cancelling someone else's request → 403 (managers reject rather than cancel).
-- [ ] `POST /api/stakes/csnorth/manager/seats/update`: manual/temp row → 200; auto row → 400 ("auto seats are importer-owned"); immutable field in patch → 400.
-- [ ] Self-approval policy: manager-and-bishopric submits + completes own request → both 200; audit shows distinct `requester_email` and `completer_email` fields (with the same value).
-- [ ] Email-service stub invoked with expected payload shape per endpoint (verified via spy).
-- [ ] `warning` field surfaces on response when stub email-service throws.
-- [ ] `ApiManager_test_forbidden` ports: CO bishopric fails stake-scope reads; CO bishopric fails GE-scope reads; CO bishopric passes CO-scope reads; manager-only role fails `Auth_findBishopricRole` → null.
-
-Coverage gate: every endpoint in `firebase/server/src/routes/*.ts` has at least one happy + one forbidden test before the phase ships.
-
-**Acceptance criteria**
-
-- Every Chunk 1–10 acceptance criterion that involves a server-side API path has a passing Express test.
-- All write endpoints use transactions.
-- Forbidden tests: each endpoint rejects when the principal lacks the required role (HTTP 403).
-- AuditLog gets a row for every write; verified by transaction post-conditions in tests.
-- Email service is invoked but stubbed; the API contract for `warning` field on partial failures is preserved.
-- Self-approval policy preserved (manager completing their own request is allowed, audit shows distinct submitter / completer).
-- R-1 race for remove preserved (no-op completion with `completion_note`).
-- Importer and Expiry endpoints exist with skeleton handlers that 501 (or invoke a stub) — real implementations land in Phase 8.
-
-**Out of scope**
-
-- Frontend wiring — Phase 5/6/7.
-- Real importer/expiry implementations — Phase 8.
-- Real email sending — Phase 9.
-- Stake-id from URL versus hardcoded — Phase 11. The path param is in place; the client just always passes `csnorth`.
+- Web client wiring — Phase 4+.
+- Real data — Phase 11.
+- Cloud Function business logic (importer, expiry, email) — Phases 8/9.
 
 ---
 
-## Phase 5 — Frontend SPA shell + auth flow
+## Phase 4 — Web SPA shell + auth flow + first page
 
-**Goal:** A Vite + TS client that handles sign-in, holds the Firebase Auth ID token, calls the rpc layer with auth headers, and renders a Layout shell with Nav and a content slot. One placeholder page proves the loop works end-to-end against the real Express backend.
+**Goal:** A complete React SPA shell — sign-in, layout with topbar + nav, content slot, client-side routing. One placeholder page (`hello`, surfaced through the shell) proves the loop works against real Firestore + Auth. The app feels like an SPA.
 
-**Dependencies:** Phase 2 (auth) + Phase 4 (`bootstrap` endpoint exists). Can develop in parallel with Phase 4 if a stub `bootstrap` is built first.
+**Owner:** web-engineer.
 
-**Sub-tasks**
+**Dependencies:** Phase 2 (auth) + Phase 3 (rules permit reads).
 
-_Project structure_
+### Sub-tasks
 
-- [ ] `firebase/client/src/main.ts` — entry point.
-- [ ] `firebase/client/src/auth/` — Firebase Auth wrappers.
-- [ ] `firebase/client/src/rpc/` — fetch wrapper + typed endpoint helpers.
-- [ ] `firebase/client/src/router/` — client-side routing (History API).
-- [ ] `firebase/client/src/layout/` — shell, nav, topbar, toast.
-- [ ] `firebase/client/src/lib/` — render helpers (escapeHtml, renderUtilizationBar, renderRosterCards, etc.).
-- [ ] `firebase/client/src/pages/` — one module per page; each exports `init(model, queryParams)` and optional `teardown()`.
-- [ ] `firebase/client/src/styles/` — plain CSS (port `Styles.html`); split into `base.css`, `nav.css`, `roster.css`, `dashboard.css`, etc.
+_Stack wiring_
 
-_Cold-start warm-up ping_
-
-- [ ] At the very top of `firebase/client/src/main.ts`, before any imports that touch Firebase Auth: `fetch('/api/health', { method: 'GET', credentials: 'omit' }).catch(() => {});` with an inline comment explaining the rationale: fires the warm-up request before the auth flow begins so Cloud Run's cold-start spin-up (~2–4 s) overlaps with the user's 8–20 s Google sign-in flow, making the F13 cold-start trade-off invisible to users on Sunday-morning first loads.
-- [ ] Dependencies: requires Cloud Run to be deployed with `--allow-unauthenticated` (per Phase 8) and `/api/health` to live outside the auth middleware so an anonymous GET succeeds. The ping is fire-and-forget — response body ignored, failures swallowed.
-- [ ] Per F13 + the `client-engineer` invariant on rpc-wrapper-only fetches, this is the **single documented exception** to "rpc wrapper is the only fetch to authenticated endpoints." The inline code comment cites both.
-
-_Auth + rpc_
-
-- [ ] `auth/firebase.ts` — initializeApp + onIdTokenChanged + signIn / signOut helpers.
-- [ ] `rpc/client.ts` — `rpc<TReq, TRes>(path, body): Promise<TRes>`. Auto-injects Bearer token. Auto-retries once on 401 by forcing token refresh. Surfaces server's `warning` field as a toast. Type-safe via shared types.
-- [ ] `rpc/endpoints.ts` — typed wrappers per endpoint: `Bishopric_roster()`, `Manager_dashboard()`, etc. Each wrapper knows its URL path and types.
+- [ ] TanStack Router with file-based routes under `apps/web/src/routes/`.
+- [ ] TanStack Query provider at root.
+- [ ] reactfire `<FirebaseAppProvider>`, `<FirestoreProvider>`, `<AuthProvider>` at root.
+- [ ] Zustand for cross-page state (toast queue, modal stack).
 
 _Routing_
 
-- [ ] `router/router.ts` — History API; reads `?p=<page>&...`. Intercepts `<a data-page="...">` clicks. `pushState` per nav, `popstate` for back/forward. URL convention preserves the existing `?p=mgr/seats&ward=CO` shape so deep links from emails / bookmarks survive.
-- [ ] Filter-state forwarding: query params survive nav (preserves Chunk 10.6's contract).
+- [ ] Authed-route group `_authed/` that gates on `usePrincipal().isAuthenticated`.
+- [ ] Per-role authed-route subgroups: `_authed/manager/`, `_authed/bishopric/`, `_authed/stake/`.
+- [ ] `routes/index.tsx` — route default per principal: manager → `/manager/dashboard`, stake → `/stake/new`, bishopric → `/bishopric/new`. Multi-role → highest priority's leftmost tab. Matches today's spec §5 default-landing rule.
+- [ ] URL convention preserves `?p=…&ward=…` deep-links: TanStack Router's `validateSearch` per route uses zod schemas in `packages/shared/src/schemas/`.
 
-_Layout shell_
+_Layout_
 
-- [ ] `layout/shell.ts` — renders topbar (email + version + sign-out), Nav, content slot. Stable across navigation; only content slot swaps.
-- [ ] `layout/nav.ts` — role-aware nav links generated from the principal's roles. Active page highlighted.
-- [ ] `layout/toast.ts` — toast helper preserving the existing `info`/`warn`/`error` types.
+- [ ] `apps/web/src/components/layout/Shell.tsx` — topbar (email + version + sign-out + stake selector slot), Nav, content slot. Stable across navigation.
+- [ ] `Nav.tsx` — role-aware links generated from principal claims. Active route highlighted.
+- [ ] `Toast.tsx` — toast container + helper.
+- [ ] `Dialog.tsx` — accessible modal primitive (focus-trap, ESC-close, ARIA).
 
-_Page bundle pattern_
+_Render helpers (port from Apps Script `ClientUtils.html`)_
 
-- [ ] On bootstrap, server returns `{principal, allowedPages: [...], currentPage: {id, model}, queryParams}`. Client owns rendering for every page (no server-side HTML).
-- [ ] Per-page module shape:
-  ```ts
-  // pages/manager/dashboard.ts
-  export interface DashboardModel { /* ... */ }
-  export function init(model: DashboardModel, queryParams: URLSearchParams): TeardownFn | void {
-    document.querySelector('#content')!.innerHTML = render(model);
-    // wire listeners; return optional teardown for cancelable resources
-  }
-  ```
-- [ ] Nav clicks: client-side dispatch — call the page's `init(model)` with a freshly-fetched model (one rpc per page-data load); content swap is synchronous after data arrives. (Differs from Apps Script Chunk 10.6 which pre-bundled HTML at bootstrap; the TS version pre-bundles only the page CODE via Vite, and fetches data per nav. Cleaner; data freshness wins over a saved rpc.)
-- [ ] Shared loading state: `<div class="empty-state">Loading…</div>` placeholder while the page-data rpc is in flight.
-
-_ClientUtils equivalents_
-
-- [ ] Port to `lib/`:
-  - `escapeHtml`, `formatDate`, `formatDateTime`
-  - `renderUtilizationBar`
-  - `renderRosterTable`, `renderRosterCards`
-  - `rosterRowHtml`, `rosterCardHtml`
-  - `renderEmptyState`
+- [ ] `apps/web/src/lib/render/` — `formatDate`, `formatDateTime`, `escapeHtml` (typed via tagged template), `renderUtilizationBar`, `EmptyState`, `LoadingSpinner`.
 - [ ] All TS, all typed.
 
 _Styles_
 
-- [ ] Port `Styles.html` to plain CSS. Mechanical translation; keep selectors and values identical so the visual result is unchanged.
-- [ ] Vite handles CSS imports per-module if useful; otherwise one global stylesheet is fine.
+- [ ] Port `Styles.html` to plain CSS under `apps/web/src/styles/`. Mechanical translation; preserve selectors and values so visuals match.
+- [ ] Mobile-first; CSS modules per feature where useful.
 
 _Placeholder page_
 
-- [ ] `pages/hello.ts` (Phase 2's hello, now rendered through the shell). Deleted in Phase 6.
+- [ ] `routes/_authed/hello.tsx` — Phase-2's hello, now rendered through the shell. Deleted in Phase 5.
 
-**Tests**
+_Token refresh choreography_
 
-Frontend shell + auth flow. Render helpers unit-tested in jsdom; user-visible flow E2E-tested via Playwright.
+- [ ] After `signInWithPopup` resolves, force `getIdToken(true)` before the first authenticated query — ensures fresh claims on the first read.
+- [ ] Listen to `onIdTokenChanged` for hourly auto-refresh and `revokeRefreshTokens`-driven refreshes; re-render principal-dependent UI.
 
-_Unit (vitest + jsdom)_
+### Tests
 
-- [ ] `escapeHtml` against XSS-y inputs (`<script>`, `<>"&'`, mixed cases).
-- [ ] `formatDate` / `formatDateTime` against fixed Date inputs in script tz; null/undefined renders as empty string.
-- [ ] `renderUtilizationBar`: under cap → blue class; ≥90% → amber; over cap → red + OVER CAP label; cap unset → neutral text only, no bar.
-- [ ] `renderRosterCards` / `renderRosterTable`: empty state shown when rows empty; row count matches input; opts (`showScope`, `rowActions`, `preview`) propagate.
-- [ ] `rpc.ts`:
-  - Builds correct URL path and method.
-  - Attaches `Authorization: Bearer <token>` from current `getIdToken()`.
-  - On 401 → calls `getIdToken(true)` and retries once; second 401 → throws.
-  - On 4xx with `error` field → throws with that message.
-  - On 200 with `warning` field → returns data + invokes toast handler with warning.
-  - On network failure → throws with a recognizable error type.
-- [ ] `router.ts`:
-  - `pushState` on intra-app nav clicks; URL reflects new page+params.
-  - `popstate` triggers re-render with restored params.
-  - Direct deep-link with `?p=foo&ward=CO` parses both into `queryParams`.
+_Unit (vitest + jsdom + React Testing Library)_
+
+- [ ] `escapeHtml` against XSS-y inputs.
+- [ ] `formatDate` against fixed Date inputs in stake tz; null renders as empty.
+- [ ] `renderUtilizationBar`: under cap → blue; ≥90% → amber; over cap → red + "OVER CAP" label.
+- [ ] `Shell` renders email + sign-out button.
+- [ ] `Nav` renders role-appropriate links; active link highlighted.
+- [ ] `Toast` queue: enqueue + dismiss + auto-dismiss after timeout.
+- [ ] `Dialog` focus-trap + ESC behaviour (RTL + jsdom).
+
+_Hooks_
+
+- [ ] `usePrincipal` returns the right shape from token-claim fixtures.
 
 _E2E (Playwright)_
 
-- [ ] Sign-in flow: Auth emulator → click Sign In → popup completes → token issued → bootstrap rpc → Hello page renders within the shell.
-- [ ] Sign-out: click Sign Out → returns to login; sessionStorage cleared.
-- [ ] Browser back / forward across 3+ nav clicks: forward through pages, back, forward — content matches each step.
-- [ ] Direct deep-link: open `localhost:5173/?p=hello` cold → bootstraps + lands on hello.
+- [ ] Sign-in flow: Auth emulator → click Sign In → popup completes → token issued → bootstrap reads → hello page renders within shell.
+- [ ] Sign-out clears state and returns to login.
+- [ ] Browser back/forward across nav clicks: forward through pages, back, forward — content matches.
+- [ ] Direct deep-link `localhost:5173/?p=hello` → bootstraps + lands on hello.
 - [ ] Mobile viewport (375×667): no horizontal scroll; nav usable; topbar legible.
-- [ ] Topbar shows email after sign-in; version stamp visible; sign-out button works.
-- [ ] Cold-start warm-up ping: Playwright network interception confirms `GET /api/health` fires on initial page load BEFORE any sign-in interaction and BEFORE Firebase Auth state initialization (verified by request ordering — the warm-up request must precede any `accounts.google.com` or Firebase Auth SDK network activity). Anonymous request (no `Authorization` header). Failure of the `/api/health` request must not block the sign-in flow.
 
-Coverage gate: every render helper in `client/src/lib/` has at least one unit test; every E2E listed above has a passing Playwright spec.
+### Acceptance criteria
 
-**Acceptance criteria**
-
-- Sign-in flow works: button click → popup → token issued → bootstrap call succeeds → hello page renders inside the shell.
+- Sign-in works end-to-end; hello page renders inside the shell.
 - Sign-out clears state and returns to login.
-- 401 from server triggers automatic token refresh; if refresh fails, returns to login.
-- Layout shell stable across navigation (no full page reload on nav clicks).
-- Browser back/forward work for in-app navigation.
-- Direct deep-link works (refreshing on `?p=hello` re-bootstraps and lands on the hello page).
-- Topbar shows correct email; version stamp visible.
-- Mobile viewport (375px) usable.
-- `tsc --noEmit` clean across client.
-- Build (`npm run build:client`) produces `firebase/client/dist/` deployable to Hosting.
+- 401-equivalent triggers automatic token refresh; if refresh fails, returns to login.
+- Layout shell stable across navigation.
+- Browser back/forward work.
+- Direct deep-link works.
+- Topbar shows correct email + version stamp.
+- Mobile (375px) usable.
+- `tsc -b` clean.
+- Build (`pnpm build:web`) produces deployable `apps/web/dist/`.
 
-**Out of scope**
+### Out of scope
 
-- Any real page beyond `hello` — Phase 6+.
-- Filter-state URL rewrite on filter change (Phase 6 if a page needs it).
+- Any real page beyond hello — Phase 5+.
+- PWA shell (manifest, SW) — Phase 10.
 - Stake selector UI — Phase 12.
-- Stake switcher in topbar — Phase 12.
-
-**Non-obvious concerns to watch**
-
-- `signInWithPopup` returns a promise; on success the `onIdTokenChanged` listener fires. The bootstrap rpc should wait for the token to be available before calling — race-condition-prone if you bootstrap on page load before sign-in completes.
-- `getIdToken()` is async and may force-refresh; callers must `await` it. The rpc helper's auto-injection handles this; direct callers should not exist.
-- Vite's dev server proxies `/api/**` to the local Cloud Run via the dev script. Production goes through Hosting's `firebase.json` rewrite. Two different paths to the same backend; document.
 
 ---
 
-## Phase 6 — Page ports — read-side
+## Phase 5 — Read-side pages
 
-**Goal:** Every read-only page from Apps Script renders correctly on Firebase against real Firestore data, with behaviour preservation. No new features; no UI redesigns.
+**Goal:** Every read-only page from the Apps Script app renders correctly on Firebase against real Firestore data. No new features; no UI redesigns. Live updates via reactfire on shared-attention pages (Queue, Roster, MyRequests, Dashboard).
+
+**Owner:** web-engineer.
+
+**Dependencies:** Phase 4.
+
+### Sub-tasks (one feature folder per page family)
+
+- [ ] `features/bishopric/` — Roster (live), MyRequests (live), Ward dropdown for multi-ward counsellors.
+- [ ] `features/stake/` — Roster (live), Ward Rosters (read-only browse).
+- [ ] `features/manager/dashboard/` — Five cards (Pending counts, Recent Activity, Utilization, Warnings, Last Operations); each card is its own live query; deep-links to downstream pages.
+- [ ] `features/manager/allSeats/` — Full roster; ward / building / type filters via URL search params; per-scope summary cards with utilization bars; total-utilization bar when scope filter is "All".
+- [ ] `features/manager/auditLog/` — Filter panel (action, entity_type, entity_id, member, actor, date range); pagination via cursor; per-row collapsed summary + `<details>` diff. New filter: by `member_canonical` for cross-collection per-user view.
+- [ ] `features/manager/access/` — Read view (importer + manual rendered as one card per user with importer/manual visually split per `firebase-alt-schema.md` §4.5 rendering note). Write actions land in Phase 7.
+- [ ] `features/myRequests/` — Live; cancel button on pending; rejection reason on rejected; multi-role scope filter.
+- [ ] Delete `routes/_authed/hello.tsx`.
+- [ ] Update `Nav.tsx` to expose all read-side pages.
+
+_Live data pattern_
+
+- [ ] Each shared-attention page uses `useFirestoreCollectionData` (reactfire). Re-renders automatically on snapshot.
+- [ ] Manager Dashboard fans in 5 parallel queries; `isLoading` is "any of them loading."
+- [ ] Audit Log uses TanStack Query for cursor-based pagination (NOT live; pagination doesn't compose with live).
+
+### Tests
+
+_Unit (RTL)_
+
+For each page:
+- [ ] Empty state: zero results → "No seats / no requests / no entries" rendering.
+- [ ] One-row state: row markup correct, action affordances per role.
+- [ ] Full-fixture state: row counts match input.
+
+Page-specific:
+- [ ] `manager/dashboard`: five cards render with all-empty model and with all-populated model.
+- [ ] `manager/auditLog`: pagination state ("Showing 11–20 of 87"); `<details>` expands diff; `complete_request` rows surface `completion_note` inline.
+- [ ] `manager/allSeats`: filter row stacks at 375px; per-scope summary cards render; total-utilization bar shown when scope filter is "All".
+- [ ] `bishopric/roster`: ward-dropdown rendered iff principal has multiple bishopric wards.
+- [ ] `manager/access`: importer rows read-only; manual rows have delete affordance (writes Phase 7).
+
+_Hook tests_
+
+- [ ] `useRequestsQueue` (consumed by Phase 6 too): correct query shape per filter combo.
+- [ ] `useSeatsForScope`: correct filter applied; only readable docs returned (verified via emulator + auth tokens).
+
+_E2E (Playwright)_
+
+For each read page:
+- [ ] Sign in as appropriate role → navigate → renders without error against emulator-seeded data.
+- [ ] Filter via URL deep-link (`?ward=CO&type=manual`) → both filters pre-populated.
+- [ ] Mobile viewport → no horizontal scroll.
+
+Page-specific:
+- [ ] `manager/auditLog`: Next/Prev paginates; counter updates.
+- [ ] `manager/dashboard`: deep-links land on correct downstream page with filter state preserved.
+- [ ] Multi-ward bishopric: switching ward dropdown re-renders other ward's roster.
+- [ ] Live update verification: open Queue in two browser sessions; submit a request from one; second updates within 1s.
+
+### Acceptance criteria
+
+- Every Chunk 5 / Chunk 10 acceptance criterion for read paths passes against Firestore data populated from a recent Sheet snapshot.
+- Filter state survives URL deep-links.
+- Pagination on Audit Log works.
+- Dashboard cards render across empty / one-ward / all-wards states.
+- Mobile usable across all pages.
+- Live updates work on Queue, Roster, MyRequests, Dashboard.
+- `tsc -b` clean.
+
+### Out of scope
+
+- Write paths — Phase 6.
+- Bootstrap wizard — Phase 7.
+- Inline edits on All Seats — Phase 7.
+
+---
+
+## Phase 6 — Write-side pages — request lifecycle
+
+**Goal:** Full request lifecycle works end-to-end. Submit → Manager Queue → Mark Complete / Reject. Cancel flow. Removal flow. All transactions atomic; all rules paths verified.
+
+**Owner:** web-engineer (forms + mutations + dialogs); backend-engineer (any rule changes that surface during testing).
 
 **Dependencies:** Phase 5.
 
-**Sub-tasks (one per page)**
+### Sub-tasks
 
-- [ ] `pages/bishopric/roster.ts` — ward roster, utilization bar, multi-ward dropdown for bishopric counsellors with multiple ward roles, "removal pending" badges.
-- [ ] `pages/stake/roster.ts` — stake pool roster, utilization bar.
-- [ ] `pages/stake/wardRosters.ts` — dropdown + read-only ward roster.
-- [ ] `pages/manager/allSeats.ts` — full roster with ward / building / type filters; per-scope summary cards with utilization bars; total-seat utilization bar when scope is "All"; deep-link filter state via URL.
-- [ ] `pages/manager/dashboard.ts` — five cards (Pending, Recent Activity, Utilization, Warnings, Last Operations); single rpc for the aggregate; deep-links into Queue / Audit Log / AllSeats / Import.
-- [ ] `pages/manager/auditLog.ts` — filter panel (deep-link via URL params), Next/Prev pagination, per-row collapsed summary + `<details>` diff. `complete_request` rows surface `completion_note` inline.
-- [ ] `pages/manager/access.ts` — read view (importer-sourced + manual); write actions land in Phase 7.
-- [ ] `pages/myRequests.ts` — requester's own request list; cancel button on pending rows; rejection reason on rejected; multi-role scope filter.
-- [ ] Delete `pages/hello.ts` (was Phase-2 placeholder).
-- [ ] Update `nav.ts` to expose all read-side pages.
+_Request lifecycle_
 
-**Tests**
+- [ ] `features/requests/components/NewRequestForm.tsx` — `add_manual` / `add_temp` form. Scope selector for multi-role principals. Building checkboxes for stake scope. Duplicate-warning inline (live query against `seats/{member_canonical}` to detect existing seat). Member-name required client- + server-side. react-hook-form + zod.
+- [ ] `features/myRequests/` — cancel mutation.
+- [ ] `features/manager/queue/` — Mark Complete dialog + Reject dialog. CompleteDialog with Buildings checkbox group, at-least-one-required gate (client + server).
+- [ ] Mark Complete transaction: writes seat doc + flips request, atomically. Per `firebase-alt-schema.md` §6 rules.
+- [ ] Reject transaction: flips request, with reason.
+- [ ] Cancel transaction: flips request to cancelled, requester only.
 
-Read-side pages: each page's render helper unit-tested with synthetic models; each page E2E-tested against emulator-seeded data.
+_Removal flow_
 
-_Unit (vitest + jsdom, per page)_
+- [ ] X / trashcan on manual+temp roster rows (bishopric Roster + stake Roster + manager All Seats).
+- [ ] Remove modal with required reason field.
+- [ ] "Removal pending" badge once submitted.
+- [ ] R-1 race handling: client tx checks seat existence inside the transaction; if absent, request flips with `completion_note` and only one audit row is generated (because no seat write happened).
+- [ ] **Note:** Phase 8's `removeSeatOnRequestComplete` Cloud Function handles the Admin-SDK-side delete that's needed for non-R-1 normal removes (since rules' `seats.delete` can't see the linked request). Phase 6 wires the request-flip; Phase 8 wires the seat delete.
 
-For each page (`bishopric/roster`, `stake/roster`, `stake/wardRosters`, `manager/allSeats`, `manager/dashboard`, `manager/auditLog`, `manager/access`, `myRequests`):
-- [ ] Render with empty state (no seats, no requests, etc.) → expected empty-state HTML.
-- [ ] Render with one row → row markup correct, action affordances per role.
-- [ ] Render with full fixture → no exceptions, expected counts.
+_Optimistic UX_
 
-Page-specific:
-- [ ] `manager/dashboard`: five cards render with all-empty model (zero pending, no activity, no wards configured, no warnings, never-run ops); same with all-populated model.
-- [ ] `manager/auditLog`: pagination state reflected in counter ("Showing 11–20 of 87"); `<details>` expansion in row HTML; `complete_request` rows surface `completion_note` inline.
-- [ ] `manager/allSeats`: filter row stacks at 375px; per-scope summary cards render; total-utilization bar shown when scope filter is "All" and `stake_seat_cap` is set.
-- [ ] `bishopric/roster`: ward-dropdown rendered iff principal has multiple bishopric ward roles.
+- [ ] All mutations rely on Firestore SDK's local cache for optimistic rendering. Errors surface as toasts; cache rolls back automatically on rules rejection.
 
-_Integration_
+### Tests
 
-- [ ] Each read endpoint returns a model matching its TS interface in `shared/types/` (verified by an `expectTypeOf` runtime check or zod schema parse on response).
+_Unit_
 
-_E2E (Playwright, per page)_
+- [ ] `NewRequestForm` validation: member name required for add types; building required for stake scope; date validity for add_temp.
+- [ ] CompleteDialog: Confirm enabled when ≥1 building ticked; disabled otherwise.
 
-For each read page:
-- [ ] Sign in as the appropriate role → navigate to the page → renders without error against emulator-seeded data.
-- [ ] Filter via URL deep-link (e.g. `?p=mgr/seats&ward=CO`) → both filters pre-populated.
-- [ ] Mobile viewport (375px) → no horizontal page scroll; tables scroll within their container.
+_Integration (Firestore emulator)_
 
-Page-specific E2E:
-- [ ] `manager/auditLog`: Next/Prev paginates correctly; counter updates.
-- [ ] `manager/dashboard`: deep-links land on the correct downstream page with correct filter state pre-applied.
-- [ ] Multi-ward bishopric: switching the ward dropdown re-renders the other ward's roster.
-- [ ] Stake `wardRosters`: dropdown selection re-fetches and renders.
+- [ ] `submit add_manual` for seat-less member → request written with pending status, audit row appears (via trigger; Phase 8) within ~1s.
+- [ ] `submit add_manual` for member already with a seat → still 200 (warning, not block); duplicate warning surfaced in form.
+- [ ] `Mark Complete add_manual` → seat created, request flipped, both audit rows present.
+- [ ] `Mark Complete add_temp` → temp seat created with dates; request flipped.
+- [ ] `Mark Complete remove with seat present` → seat deleted via Phase 8 trigger, request flipped.
+- [ ] `Mark Complete remove with seat already gone` (R-1) → request flipped with `completion_note`; only one audit row.
+- [ ] `Mark Complete already-completed` (concurrent) → 409-equivalent: tx fails, error toast.
+- [ ] `Reject` empty reason → form-validation error; non-empty → request flips with reason.
+- [ ] `Cancel` by original requester → ok; by other user → denied at rule level.
+- [ ] Manager attempts complete on non-pending → denied.
+- [ ] Self-approval: manager-and-bishopric submits + completes own request → both audit rows show distinct `requester_canonical` and `completer_canonical` (with same value).
+- [ ] Submit `remove` for member with only an auto seat → client-tx pre-check rejects with friendly error; doesn't reach Firestore.
 
-Coverage gate: every read-side page has unit (render) + E2E (smoke) coverage.
+_E2E (Playwright)_
 
-**Acceptance criteria**
+End-to-end happy paths:
+- [ ] Bishopric submits add_manual for new member → manager queue updates live → manager opens CompleteDialog → confirms → bishopric roster shows new seat → email-trigger stub invoked twice (submit + complete).
+- [ ] Stake submits add_temp with two buildings ticked → manager completes → seat created with both buildings; `end_date` persists.
+- [ ] Bishopric clicks X on manual seat → modal → submits remove with reason → "removal pending" badge appears live → manager completes → seat gone from roster.
+- [ ] Bishopric submits add_manual → cancels from MyRequests → status flips live to cancelled.
+- [ ] Manager rejects pending request with reason → MyRequests shows rejected + reason live.
 
-- Every Chunk 5 / Chunk 10 acceptance criterion for read paths passes against Firestore data populated from a recent Sheet snapshot.
-- Filter state survives URL deep-links (e.g. `?p=mgr/seats&ward=CO&type=manual` lands with both filters pre-populated).
-- Pagination on Audit Log works (Next / Prev counters update; "Showing 1–N of M" hint accurate).
-- Dashboard cards render with empty state, with one ward, with all wards.
-- Mobile (375px) usable across all pages.
-- Card rendering matches the post-TASKS.md-#2 behaviour (no nested table-in-table; cards have shared border, tight padding).
-- `tsc --noEmit` clean.
+Edge paths:
+- [ ] Multi-role principal sees scope dropdown; submitting against a scope they don't own → server denies (rule check).
+- [ ] Concurrent action: two managers both click Mark Complete; second sees 409 toast.
 
-**Out of scope**
+Coverage gate: every flow in `spec.md` §6 has an E2E.
 
-- Write paths — Phase 7.
+### Acceptance criteria
+
+- Full happy path `add_manual` end-to-end with live updates.
+- Full happy path `add_temp` end-to-end with dates persisted.
+- Full happy path `remove` with live "removal pending" badge.
+- Reject and cancel paths end-to-end.
+- Duplicate warning shows when submitting against existing seat.
+- All audit rows appear within ~1s of write (Phase 8 trigger).
+- Self-approval policy preserved.
+- Auto-seat removal blocked at rule level.
+- R-1 race for remove preserved.
+
+### Out of scope
+
 - Bootstrap wizard — Phase 7.
-- Inline edits on AllSeats — Phase 7.
-
-**Non-obvious concerns to watch**
-
-- The `?p=mgr/seats` deep-link contract assumes a single pageId-to-route mapping. Preserve it exactly for muscle memory + bookmarks.
-- `ApiManager_dashboard`'s aggregate response shape is consumed by the Dashboard page in five places. Don't reshape during port — keep the wire shape identical and refactor later if needed.
+- Manager admin pages (Configuration, inline-edit, Access write actions, Import) — Phase 7.
+- Real email sends — Phase 9.
+- Importer / Expiry — Phase 8.
 
 ---
 
-## Phase 7 — Page ports — write-side
+## Phase 7 — Manager admin pages + bootstrap wizard
 
-**Goal:** Every write-bearing page works on Firebase. The full request lifecycle (submit → manager queue → complete / reject / cancel) is exercised end-to-end. Bootstrap wizard runs against the new stack (still scoped to `csnorth`).
+**Goal:** Every manager admin surface works. Configuration page edits all the editable tables. Inline edit on All Seats. Access page write actions. Bootstrap wizard runs end-to-end. Reconcile flow for seat collisions.
+
+**Owner:** web-engineer.
 
 **Dependencies:** Phase 6.
 
-**Sub-tasks**
+### Sub-tasks
 
-_Request lifecycle pages_
+_Manager Configuration_
 
-- [ ] `pages/newRequest.ts` — add_manual / add_temp form, scope selector for multi-role principals, building checkboxes for stake scope, duplicate-warning inline, member-name required client- + server-side.
-- [ ] `pages/myRequests.ts` cancel action.
-- [ ] `pages/manager/requestsQueue.ts` — filter by state (Pending / Complete) / ward / type; pending cards with metadata + duplicate warning + Mark Complete / Reject; resolved cards with resolver / timestamp / rejection-reason.
-- [ ] Mark Complete dialog with Buildings checkbox group + at-least-one-required gate (client + server).
+- [ ] `features/manager/configuration/` — Wards, Buildings, KindooManagers, WardCallingTemplate, StakeCallingTemplate, Config-key fields. One sub-page per editable table; CRUD via Firestore SDK direct writes.
+- [ ] Triggers panel: list scheduled triggers + "Reinstall triggers" button (no-op on Firebase since triggers are platform-managed; show explanatory message).
 
-_Manager admin pages_
+_Manager Access write actions_
 
-- [ ] `pages/manager/configuration.ts` — every editable table (Wards, Buildings, KindooManagers, WardCallingTemplate, StakeCallingTemplate, Config-key fields).
-- [ ] `pages/manager/access.ts` write actions — Add Manual Access form + Delete on manual rows.
-- [ ] `pages/manager/import.ts` — Import Now button, status display, over-cap banner. (Importer endpoint is a stub at Phase 7; real impl Phase 8.)
-- [ ] `pages/manager/allSeats.ts` inline edit — member_name, reason, building_names; plus dates on temp.
-- [ ] Configuration page Triggers panel (list + reinstall) — endpoints work but the Cloud Scheduler integration is stub-only until Phase 8.
+- [ ] Add Manual Access form — adds entry to `manual_grants[scope]` array via Firestore `arrayUnion`.
+- [ ] Delete on manual rows — removes specific grant via `arrayRemove`.
+- [ ] Importer rows read-only.
 
-_Bishopric / Stake removal flow_
+_Manager Import page_
 
-- [ ] X / trashcan on manual+temp rows.
-- [ ] Remove modal with required reason field.
-- [ ] "Removal pending" badge.
-- [ ] R-1 race handling preserved.
+- [ ] "Import Now" button → calls `runImportNow` callable (Phase 8 wires the function; Phase 7 wires the UI).
+- [ ] Status display: last import time + summary.
+- [ ] Over-cap banner: reads `last_over_caps_json` from stake doc.
+
+_Inline edit on All Seats_
+
+- [ ] Edit button on manual/temp rows only.
+- [ ] Editable: `member_name`, `reason`, `building_names`, `start_date`, `end_date` (temp).
+- [ ] Immutable: `scope`, `type`, `member_canonical`, `seat_id` (= doc.id), all `created_*` fields.
+- [ ] Auto rows have no edit affordance.
+
+_Reconcile flow for seat duplicate_grants_
+
+- [ ] Badge on any seat with `duplicate_grants.length > 0`.
+- [ ] Reconcile dialog: radio-button list over `[primary, ...duplicate_grants]`. Manager picks "real" grant.
+- [ ] On confirm: rewrite seat doc with chosen grant as primary, empty `duplicate_grants`, recomputed `scope`. One audit row.
 
 _Bootstrap wizard_
 
-- [ ] `pages/bootstrap/wizard.ts` — multi-step UI; each step persists immediately; resumable.
+- [ ] `features/bootstrap/` — multi-step wizard.
 - [ ] Step 1: stake fields (name, callings_sheet_id, stake_seat_cap).
-- [ ] Step 2: at least one Building.
-- [ ] Step 3: at least one Ward.
-- [ ] Step 4: additional Kindoo Managers (optional).
-- [ ] Complete-Setup: flips `setup_complete=true`, audits, redirects.
-- [ ] Bootstrap-admin auto-add as first KindooManager preserved.
-- [ ] Setup-complete gate at the bootstrap rpc level (mirrors the Apps Script `ApiShared_bootstrap` gate).
-- [ ] `pages/setupInProgress.ts` — distinct from `notAuthorized`.
+- [ ] Step 2: ≥1 Building.
+- [ ] Step 3: ≥1 Ward.
+- [ ] Step 4: additional Kindoo Managers (optional). Bootstrap admin auto-added on first wizard load.
+- [ ] Complete-Setup: flips `setup_complete=true`, calls `installScheduledJobs` callable (Phase 8 stub), audits, redirects.
+- [ ] Setup-complete gate: client checks stake doc; if `setup_complete=false` and `auth.email == bootstrap_admin_email`, route to wizard ignoring `?p=`. If `setup_complete=false` and not the bootstrap admin → SetupInProgress page.
+- [ ] **`features/auth/pages/setupInProgress.tsx`** — distinct from NotAuthorized.
+- [ ] One-shot wizard: every wizard mutation has a rule-level check that `stake.setup_complete === false`. Once flipped, the wizard's writes are denied.
 
 _Toast / error UX_
 
-- [ ] Server-thrown errors (Forbidden, Conflict, BadRequest) surface as toasts with the server's message verbatim.
-- [ ] Best-effort warnings (`warning` field on success responses) surface as warn-toasts.
+- [ ] Server-thrown errors (rule denials, transaction failures) surface as toasts with the error's message.
+- [ ] Best-effort warnings (e.g., email-send failure piggybacked on response) surface as warn-toasts.
 
-**Tests**
-
-Write paths exercise the full transaction discipline. E2E covers every user-visible workflow end-to-end including emails (stubbed in Phase 7; real send tested in Phase 9).
+### Tests
 
 _Unit_
 
-- [ ] Form-validation logic in `pages/newRequest.ts`: member name required for add types; building required for stake scope; date validity for add_temp.
-- [ ] `pages/manager/requestsQueue.ts` Mark Complete dialog: Confirm enabled when ≥1 building ticked; disabled otherwise.
-- [ ] Bootstrap wizard step gating: Complete-Setup enabled iff steps 1-3 are valid.
+- [ ] Form validation in NewRequestForm, CompleteDialog, Reconcile dialog, every Configuration sub-form.
+- [ ] Bootstrap wizard step gating: Complete-Setup enabled iff steps 1–3 valid.
 
-_Integration (supertest; mostly already covered in Phase 4 — re-run against any new endpoints)_
+_Integration_
 
-- [ ] Bootstrap endpoints' setup-complete gate: each `ApiBootstrap_*` rejects post-setup; non-admin during setup → 403.
-- [ ] Manager Configuration CRUD: every editable table.
-- [ ] Inline seat edit: manual/temp row updates persist + audit; auto row → 400.
-- [ ] Manual access insert: composite-key collision → 409; valid → 200 + audit.
-- [ ] Manual access delete: importer-source row → 400; manual row → 200 + audit.
+- [ ] Manager Configuration CRUD: every editable table — write succeeds; unauthorized writes denied.
+- [ ] Inline seat edit: manual/temp updates persist; auto row → no edit possible (UI affordance absent + rule denial if hand-crafted).
+- [ ] Manual access add: composite-key collision (same scope + same reason) → client-tx rejects with friendly error.
+- [ ] Manual access delete: importer-source field protected; manager can't touch importer_callings.
+- [ ] Reconcile: swap primary with duplicate → seat doc rewritten correctly; `scope` reflects new primary.
 
-_E2E (Playwright, per workflow)_
-
-End-to-end happy paths:
-- [ ] Bishopric submits add_manual for new member → manager queue shows the request → manager completes (default building pre-ticked) → bishopric roster shows the new seat → email-service stub invoked twice (submit + complete) with expected payloads.
-- [ ] Stake submits add_temp with two buildings ticked → manager completes → seat created with both buildings → end_date persists.
-- [ ] Bishopric clicks X on a manual seat → modal → submits remove with reason → "removal pending" badge appears → manager completes → seat gone from roster.
-- [ ] Bishopric submits add_manual → cancels from MyRequests → status flips to cancelled → manager email stub invoked.
-- [ ] Manager rejects a pending request with a reason → MyRequests shows rejected + reason → email stub invoked.
-
-Edge paths:
-- [ ] Self-approval: manager-and-bishopric submits add_manual → completes own request → both audit rows show the same email in `requester_email` and `completer_email`.
-- [ ] R-1 race: pending remove → seat hand-deleted via repo → manager Complete → completion succeeds with `completion_note` set; email body surfaces the note.
-- [ ] Submit remove for member with only an auto seat → server 400 with "auto seats are LCR-managed" wording.
-- [ ] Submit duplicate pending remove → 400 with duplicate-pending wording.
-- [ ] Manager attempts complete on already-completed request (concurrent action) → 409 with "no longer pending" wording.
+_E2E (Playwright)_
 
 Bootstrap wizard:
-- [ ] Fresh stake (`setup_complete=false`) signed in as bootstrap admin → wizard renders.
+- [ ] Fresh stake (`setup_complete=false`), bootstrap admin signs in → wizard renders.
 - [ ] Walk all 4 steps → Complete → setup_complete=true → audit row written → redirect to manager default page.
-- [ ] Resume mid-wizard: refresh during step 3 → wizard re-renders at step 3.
-- [ ] Non-admin during setup → SetupInProgress page (not NotAuthorized).
-- [ ] Post-setup, hand-crafted call to `ApiBootstrap_*` → 403.
+- [ ] Resume mid-wizard: refresh during step 3 → wizard re-renders at step 3 (state reads from Firestore).
+- [ ] Non-admin during setup → SetupInProgress (not NotAuthorized).
+- [ ] Post-setup, hand-crafted wizard write → rule denial.
 
-Toast UX:
-- [ ] Server-thrown error message renders verbatim in toast.
-- [ ] `warning` on success response → warn-toast.
+Reconcile:
+- [ ] Seat with `duplicate_grants` shows badge → click Reconcile → dialog → pick → seat updates → badge gone.
 
-Coverage gate: every flow in `spec.md` §6 (request lifecycle) has an E2E.
+### Acceptance criteria
 
-**Acceptance criteria**
-
-- Full happy path `add_manual`: bishopric submits → email arrives (stubbed in Phase 7; real Phase 9) → manager completes → seat appears in Firestore → bishopric email arrives.
-- Full happy path `add_temp`: same plus dates persist on the seat.
-- Full happy path `remove`: bishopric submits → badge appears → manager completes → seat deleted.
-- Reject path: row flipped to `rejected`, reason captured.
-- Cancel path: pending row flipped to `cancelled`.
-- Duplicate warning shows when submitting against an existing active seat.
-- Bootstrap wizard runs end-to-end against a fresh staging `stakes/csnorth` doc with `setup_complete=false`.
+- Bootstrap wizard runs end-to-end against a fresh staging `stakes/csnorth` doc.
 - Manager Configuration CRUD against every editable table.
 - Inline edit of seats works.
-- All audit rows present in Firestore for every write.
-- Self-approval policy preserved.
-- Auto-seat removal blocked at server.
-- R-1 race for remove (already-removed seat → no-op completion with note).
-- All read-side acceptance criteria from Phase 6 still pass.
+- Manual access add/delete works.
+- Reconcile flow works for seat duplicate_grants.
+- All Phase 6 read-side and write-side acceptance criteria still pass.
 
-**Out of scope**
+### Out of scope
 
 - Importer + Expiry real implementations — Phase 8.
 - Email real sends — Phase 9.
-- Multi-stake — Phase 11+.
-- Stake-id from URL — Phase 11.
 
 ---
 
-## Phase 8 — Importer + Expiry on Cloud Scheduler
+## Phase 8 — Importer + Expiry + audit triggers
 
-**Goal:** The weekly callings-sheet import and the daily temp-seat expiry run on schedule, executed by Cloud Scheduler against Cloud Run endpoints, with per-stake config respected.
+**Goal:** All scheduled and event-driven Cloud Functions land. Weekly importer reads the LCR Sheet and applies diff to Firestore; daily expiry trims temp seats; audit triggers fan in audit rows for every entity write; nightly reconciliation catches gaps.
 
-**Dependencies:** Phase 4 (skeleton endpoints exist) + Phase 7 (Manager Import page exists for manual triggering and surfaces results).
+**Owner:** backend-engineer.
 
-**Sub-tasks**
+**Dependencies:** Phase 3 (rules + indexes) for the data model; Phase 7 (manager UI) for the "Import Now" button to invoke.
+
+### Sub-tasks
 
 _Importer service_
 
-- [ ] `server/src/services/Importer.ts` — full port of `Importer.gs`. Logic preserved verbatim:
-  - Per-tab parsing (header row in top 5 rows, `Position` / `Name` / Personal Email / RHS columns)
-  - Ward-tab prefix stripping; Stake-tab verbatim
-  - Calling matching against templates (incl. wildcard rules)
-  - Source-row hashing
-  - Diff against existing auto-seats (insert / delete / update-name)
-  - Diff against existing Access rows (importer-sourced only; manual rows untouched)
-  - Per-row audit; `import_start` / `import_end` brackets
-  - Updates `last_import_at`, `last_import_summary` on the stake doc
-  - Over-cap detection in a follow-up pass; persisted snapshot to `last_over_caps_json`; one `over_cap_warning` audit row; best-effort email
+- [ ] `functions/src/services/Importer.ts` — port of `Importer.gs` logic per `spec.md` §8 with the new data model:
+  - Per-tab parsing (header row in top 5 rows, `Position` / `Name` / Personal Email + RHS columns).
+  - Ward-tab prefix stripping; Stake-tab verbatim.
+  - Calling matching against templates including `*` wildcards.
+  - **No `source_row_hash`** — doc IDs are reconstructed directly (`access/{canonical}` and `seats/{canonical}`).
+  - Diff against existing access docs: `importer_callings[scope]` replaced wholesale per tab (split-ownership). `manual_grants` left alone.
+  - Diff against existing seat docs: callings-list growth/shrink; primary scope determined by stake>ward priority, then alphabetical ward_code; cross-scope auto findings go to `duplicate_grants`. Promotion-on-empty-callings: if primary auto callings → empty AND a manual/temp duplicate exists, promote it.
+  - Per-row audit (via Phase 8 audit trigger; importer code doesn't write audit directly).
+  - Updates `last_import_at`, `last_import_summary` on stake doc.
+  - Over-cap detection in a follow-up pass; persists snapshot to `stakes.{sid}.last_over_caps_json`; emails best-effort (Phase 9).
 - [ ] Sheets API integration via `googleapis` npm package using the Cloud Run service account.
-- [ ] Operator runbook entry: "Granting the importer service account view access on the LCR sheet" — file → share → add `kindoo-app@<project>.iam.gserviceaccount.com` as Viewer.
+- [ ] Operator runbook: `infra/runbooks/granting-importer-sheet-access.md` — file → share → add `kindoo-app@<project>.iam.gserviceaccount.com` as Viewer.
 
 _Expiry service_
 
-- [ ] `server/src/services/Expiry.ts` — full port. Scans `stakes/{stakeId}/seats` for `type=temp AND end_date < today (in stake's tz)`; deletes; per-row audit; `actor_email='ExpiryTrigger'`; updates `last_expiry_at`, `last_expiry_summary`.
+- [ ] `functions/src/services/Expiry.ts` — scans `stakes/{sid}/seats` for `type=='temp' AND end_date < today (in stake.timezone)`; deletes; Phase-8 audit trigger fires `auto_expire` audit row.
+- [ ] If a temp seat with `duplicate_grants` would be deleted: only the primary is cleared; if a non-temp duplicate exists, promote it.
 
-_Endpoints_
+_Cloud Functions endpoints_
 
-- [ ] `POST /api/internal/import` and `POST /api/internal/expiry` — **authenticated** like every endpoint except `/api/health`. Express middleware verifies an OIDC bearer token via `google-auth-library`'s `OAuth2Client.verifyIdToken`: signature against Google's public keys, `audience === CLOUD_RUN_SERVICE_URL`, `payload.email === SCHEDULER_INVOKER_SA_EMAIL`, and `payload.email_verified === true`. Unauthenticated requests are rejected with 403 in middleware before the route handler runs. The Cloud Run service is deployed `--allow-unauthenticated` so the platform layer does not gate — required so the client's Phase-5 warm-up ping reaches `/api/health` anonymously — but Express still gates every route except `/api/health`.
-- [ ] Manager-invoked equivalents (`POST /api/stakes/:stakeId/manager/importerRun`) use the regular user auth middleware — no OIDC, just the manager's Firebase ID token — reaching the same underlying service functions.
-- [ ] Two distinct entry shapes: scheduler-triggered (loops over all stakes, runs only those whose configured hour matches the current hour) vs manager-triggered (single stakeId from the request path).
+- [ ] `functions/src/scheduled/runImporter.ts` — Cloud Scheduler hourly fire. Loops over all stakes whose `import_day` + `import_hour` match the current day-of-week + hour. Skips stakes with `setup_complete=false`.
+- [ ] `functions/src/scheduled/runExpiry.ts` — Cloud Scheduler hourly fire. Loops over all stakes whose `expiry_hour` matches the current hour.
+- [ ] `functions/src/callable/runImportNow.ts` — manager-invoked. Auth via the manager's Firebase ID token; verifies role via Admin SDK lookup against `kindooManagers/`. Calls importer for one stake.
+- [ ] `functions/src/callable/installScheduledJobs.ts` — bootstrap-wizard Complete-Setup invokes; idempotent (Cloud Scheduler jobs are platform-managed).
 
-_Scheduler → Cloud Run authentication (two-piece setup)_
+_Audit triggers (the unified pattern)_
 
-Both must line up or Express middleware rejects with 403:
+- [ ] `functions/src/triggers/auditTrigger.ts` — single parameterized trigger. Fires on writes to `stakes/{sid}/{collection}/{docId}` for `collection in ['seats', 'requests', 'access', 'kindooManagers']` and on the parent `stakes/{sid}` doc. Reads before/after, computes action, writes audit row with deterministic ID `{writeTime}_{collection}_{docId}` for idempotency.
+- [ ] Helper `denormalizeMember`: pulls `member_canonical` from the after-state when present, falling back to before-state for delete; absent for system actions.
+- [ ] Helper `pickAction(before, after, collection)`: maps state transitions to action vocabulary per `firebase-alt-schema.md` §4.10.
 
-1. **Dedicated service account**: `scheduler-invoker@<project>.iam.gserviceaccount.com`. Express middleware reads `SCHEDULER_INVOKER_SA_EMAIL` from env and compares against `payload.email` on the verified OIDC token. `roles/run.invoker` on this SA is **optional** — Cloud Run doesn't consult IAM since the service is `--allow-unauthenticated`; all enforcement happens in Express. The SA still needs to exist so its OIDC tokens are issuable, and stays separate from the Cloud Run runtime SA (which needs Firestore + Secret Manager access).
+_Nightly reconciliation_
 
-2. **Cloud Scheduler job**: HTTP target, POST method, OIDC token auth using the scheduler-invoker SA, **audience = Cloud Run service URL root** (`https://kindoo-server-<hash>-uc.a.run.app`), NOT the full endpoint path. Audience mismatch is the most common failure mode and produces a 403 from Express middleware.
-
-Manual test recipe (verify before deploying a Scheduler job):
-
-```bash
-SERVICE_URL=https://kindoo-server-<hash>-uc.a.run.app
-TOKEN=$(gcloud auth print-identity-token \
-  --impersonate-service-account=scheduler-invoker@<project>.iam.gserviceaccount.com \
-  --audiences="$SERVICE_URL")
-curl -X POST "$SERVICE_URL/api/internal/expiry" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json"
-```
-
-A 200 response confirms the auth chain; any other status means one piece is wrong.
-
-Runbook: `docs/runbooks/scheduler-auth.md` — the two-piece checklist, the manual-test recipe above, and troubleshooting for the canonical failure modes (audience mismatch → check Scheduler job audience matches Cloud Run service URL root; SA email mismatch → check `SCHEDULER_INVOKER_SA_EMAIL` env var on Cloud Run matches the SA the Scheduler job uses; middleware bypassed on `/api/internal/*` → check Express route mounting and that the OIDC middleware is applied before the route handler).
+- [ ] `functions/src/scheduled/reconcileAuditGaps.ts` — Cloud Scheduler nightly. For each stake, compares `auditLog` entry counts against entity-collection write counts (read from per-entity metadata or via lightweight scan); pages on >1% gap.
 
 _Cloud Scheduler jobs_
 
-- [ ] **Single-job-loops-over-stakes pattern from day 1**, even with one stake. Avoids a Phase-11 refactor; keeps the Scheduler free quota (3 jobs) intact regardless of stake count.
-- [ ] Job 1 — hourly fire of `POST /api/internal/expiry`. Endpoint reads each stake's `expiry_hour`; runs expiry for stakes where `expiry_hour == currentHour`.
-- [ ] Job 2 — hourly fire of `POST /api/internal/import`. Endpoint reads each stake's `import_day` + `import_hour`; runs import for stakes where both match the current day-of-week and hour.
-- [ ] Acknowledged trade-off: hourly fires mean up to 168 wakeups/week even for one stake. At Scheduler free tier (3 jobs, unlimited fires) and Cloud Run free tier (2M req/month), trivial.
+- [ ] Single-job-loops-over-stakes pattern from day one (per F15, parameterizing for Phase 12). Two scheduler jobs total: `runImporter` hourly, `runExpiry` hourly. `reconcileAuditGaps` is a third (nightly). All three within Cloud Scheduler's free tier.
 
-_Manual triggers_
+_Remove-completion handler_
 
-- [ ] Manager Import page's "Import Now" button → `POST /api/stakes/:stakeId/manager/importerRun`. Returns synchronously when import completes.
-- [ ] Manager Configuration "Reinstall triggers" button → no-op on Firebase (the Cloud Scheduler jobs are stake-agnostic and managed in deploy infra). Show a non-error message: "Triggers are managed at the platform level on Firebase; per-stake schedules are picked up from the stake config on the next hourly fire."
+- [ ] `functions/src/triggers/removeSeatOnRequestComplete.ts` — fires on `stakes/{sid}/requests/{rid}` writes. When status flips to `complete` AND `type=='remove'` AND a corresponding seat exists, deletes the seat via Admin SDK. Audit trigger fires `delete_seat` audit row from this Admin SDK write. (This is the deletion that Phase 6's transaction couldn't do cleanly because rules' `delete` operations don't have access to incoming data.)
 
-_AuditLog discipline preserved_
-
-- [ ] Per-row audits, import_start/import_end brackets, automated-actor strings, `triggeredBy` field on bracket payloads (`weekly-trigger` for scheduled, `<manager email>` for manual).
-
-**Tests**
-
-Importer logic is the most algorithmically complex code in the project. Heavy unit coverage on parsing + diff math; integration tests use a fixture LCR sheet (Sheets API mocked) to cover full cycles.
+### Tests
 
 _Unit_
 
-- [ ] Tab-parser:
-  - Header row found in row 1 vs row 3 vs row 5; `Position` / `Name` columns located; `Personal Email` column-E validation.
-  - Multi-name cell split on `,` with trim; overflow emails fall back to empty `member_name`.
-  - Ward-tab prefix stripped (`CO Bishop` → `Bishop`); Stake-tab prefix preserved.
-- [ ] Calling-template matching:
-  - Exact match wins.
-  - Wildcard match (`*` standing for any run) per data-model.md rules.
-  - Sheet-order priority among multiple wildcard matches.
-  - No-match returns null.
-- [ ] Source-row hashing: stable across email-format wobbles (`First.Last@gmail.com` and `firstlast@gmail.com` produce the same hash).
-- [ ] Diff logic:
-  - Fresh seats (in source, not in DB) → insert plan.
-  - Stale seats (in DB, not in source) → delete plan.
-  - Unchanged seats → no-op plan.
-  - Name change only → update-name plan (seat_id preserved).
-- [ ] Over-cap math:
-  - Ward seat_count vs `wards.seat_cap`.
-  - Stake portion-cap = `stake_seat_cap - sum(ward seats)`.
-  - Cap of 0 or unset → skipped.
-- [ ] Hourly Scheduler dispatch: stake with `expiry_hour=3` matches at hour 3 only; same for `import_day` + `import_hour`.
+- [ ] Tab parser: header row in row 1 vs 3 vs 5; `Position` / `Name` columns located; `Personal Email` column-E validation.
+- [ ] Multi-name cell split: comma-delimited with trim; overflow emails fall back to empty `member_name`.
+- [ ] Ward-tab prefix stripping (`CO Bishop` → `Bishop`); Stake-tab verbatim.
+- [ ] Calling-template matching: exact wins; wildcard with `*`; sheet-order priority among wildcards; no-match returns null.
+- [ ] Priority math: stake outranks any ward; among wards, alphabetical ascending. Cross-scope auto findings go to duplicate_grants.
+- [ ] Over-cap math: ward seat_count vs `wards.seat_cap`; stake portion-cap = `stake_seat_cap - sum(ward seats)`.
+- [ ] Hourly Scheduler dispatch: stake with `expiry_hour=3` runs at hour 3 only; same for `import_day` + `import_hour`.
 
-_Integration (Firestore emulator + Sheets API mocked with fixture data)_
+_Integration (Firestore emulator + Sheets API mocked)_
 
-- [ ] Full importer cycle against a fixture LCR sheet → expected Seats + Access + AuditLog state.
-- [ ] Idempotency: second run with no source changes → zero diffs, only `import_start`/`import_end` audit rows.
+- [ ] Full importer cycle against fixture LCR sheet → expected access + seats + auditLog state.
+- [ ] Idempotency: second run with no source changes → zero diffs (just `import_start`/`import_end` audit rows).
 - [ ] Source change (one email swap) → exactly one delete + one insert per row affected.
-- [ ] Removed calling from template → matching auto-seats deleted.
-- [ ] `give_app_access=true` template row → Access row inserted.
-- [ ] Manual Access row (`source='manual'`) survives import; importer skips its composite key.
-- [ ] Per-row audits emitted with `actor_email='Importer'`; bracket rows carry `triggeredBy`.
-- [ ] Over-cap detection: persists snapshot to `stakes/{stakeId}.last_over_caps_json`; emits one `over_cap_warning` audit row; resolved condition clears snapshot to `[]`.
-- [ ] Expiry:
-  - Temp seat with `end_date < today` → deleted; one audit row with `actor_email='ExpiryTrigger'`, `action='auto_expire'`, `before_json` populated, `after_json` empty.
-  - Temp seat with `end_date == today` → NOT deleted.
-  - Auto seat with `end_date < today` → NOT deleted (only temp affected).
-  - Two consecutive runs → second run is a no-op (no rows to expire).
-- [ ] Stake with `setup_complete=false` skipped by both jobs.
-- [ ] Concurrent-run guard: hand-crafted simultaneous expiry + manual import for the same stake → second invocation either waits or returns a clean "already running" message; no double-write.
+- [ ] Removed calling from template → matching auto-seats deleted (or callings list shrunk).
+- [ ] Manual access row survives import; `manual_grants` untouched.
+- [ ] Per-row audits emitted with `actor_canonical='Importer'`.
+- [ ] Over-cap detection: persists snapshot; emits `over_cap_warning` audit row; resolved condition clears snapshot.
+- [ ] Multi-calling person: importer adds second calling → seat doc's `callings[]` grows, no duplicate doc.
+- [ ] Cross-scope person (stake + ward): primary is stake (priority); ward goes to `duplicate_grants`.
+- [ ] Promotion: auto callings disappear, manual duplicate exists → promoted to primary.
+- [ ] Expiry: temp seat with `end_date < today` → deleted + `auto_expire` audit row.
+- [ ] Expiry: temp seat with `end_date == today` → NOT deleted.
+- [ ] Two consecutive expiry runs: second is no-op.
+- [ ] Stake with `setup_complete=false` → skipped by both jobs.
+- [ ] Concurrent run guard: hand-crafted simultaneous expiry + manual import → second invocation waits or returns "already running".
+
+Audit trigger coverage:
+- [ ] Every audited collection's write produces an audit row within 1s.
+- [ ] Idempotency: trigger retry produces same audit row (same deterministic ID).
+- [ ] Admin SDK writes (importer) produce audit rows with `actor_canonical='Importer'`.
+- [ ] Expiry writes produce `actor_canonical='ExpiryTrigger'`.
+- [ ] `member_canonical` denormalized correctly across collections.
+
+Reconciliation:
+- [ ] Synthetic gap (delete one audit row, leave the entity) → reconciliation alert fires.
+- [ ] No gap → quiet.
 
 _E2E (Playwright)_
 
 - [ ] Manager clicks "Import Now" → status updates → over-cap banner appears if applicable + clears on next clean run.
-- [ ] Configuration page `import_day` / `import_hour` save → toast warning explains how schedule pickup works on Firebase.
+- [ ] Configuration `import_day` / `import_hour` change persists.
+- [ ] Live audit log entries appear after import run.
 
-Coverage gate: every diff plan branch has at least one fixture test; every over-cap math branch covered.
+Coverage gate: every diff plan branch has at least one fixture test.
 
-**Acceptance criteria**
+### Acceptance criteria
 
-- Daily expiry runs at the configured hour (per stake's `expiry_hour`) and deletes expired temp seats; AuditLog rows present.
-- Weekly import runs at the configured day/hour; per-row audits, `import_start` / `import_end`, over-cap snapshot persisted, over-cap audit row written if applicable.
-- Over-cap email sends best-effort (Phase 9 makes it real; for now stubbed → log only).
-- Manual "Import Now" works from the UI.
-- Idempotent: running twice with no source changes produces zero diffs.
-- Service account has Sheets API view scope on the LCR sheet (operator runbook entry).
-- Single-stake configuration matches Apps Script behaviour 1:1.
+- Daily expiry runs at the configured hour; deletes expired temps; audit rows present.
+- Weekly import runs at configured day/hour; per-row audits, `import_start` / `import_end`, over-cap snapshot persisted.
+- Manual "Import Now" works.
+- Idempotent: running twice with no source changes → zero diffs.
+- Service account has Sheets API view scope on LCR sheet.
+- Single-stake configuration matches Apps Script behaviour 1:1 (with the documented schema-driven differences).
+- Audit trigger fires for every entity write within 1s.
+- Reconciliation job runs nightly; alerts on gaps.
 
-**Out of scope**
+### Out of scope
 
-- Per-stake Scheduler jobs (single-job-loop is the v1 stance).
+- Per-stake Scheduler jobs (single-loop pattern).
 - Real email sending — Phase 9.
-- Per-stake `tz` configuration (everyone is `America/Denver` for v1; Phase-12 onboarding can address per-stake tz if needed).
-
-**Non-obvious concerns to watch**
-
-- The Sheets API client treats date cells differently from `SpreadsheetApp` — verify date parsing matches.
-- A stake with `setup_complete=false` should be skipped by both jobs (no import, no expiry — there's nothing to act on).
-- The hourly fire pattern means a manual "Import Now" can race with an automatic run that fires at the same hour. Acquire a per-stake transaction lock or a sentinel doc to serialize.
+- Per-stake `tz` handling beyond `America/Denver` for v1.
 
 ---
 
-## Phase 9 — Email via SendGrid
+## Phase 9 — Email triggers via Resend
 
-**Goal:** All five notification types send real emails through SendGrid.
+**Goal:** All five notification types send real emails through Resend, fired by Firestore triggers on relevant entity changes.
 
-**Dependencies:** Phase 7 (write paths invoke email) + Phase 8 (importer over-cap email).
+**Owner:** backend-engineer.
 
-**Sub-tasks**
+**Dependencies:** Phase 6 (request lifecycle invokes notifications) + Phase 8 (importer over-cap email) + the new domain (per F17) registered and verified with Resend.
 
-- [ ] Sign up SendGrid free tier (100 emails/day — comfortably above the 1–2 requests/week × ~2 emails per request).
-- [ ] Verify sender domain — DKIM/SPF on `csnorth.org` (or configure a `noreply.csnorth.org` subdomain to keep apex DNS untouched). Operator step.
-- [ ] SendGrid API key in Secret Manager (`projects/<id>/secrets/sendgrid_api_key`); Cloud Run reads via env var injection.
-- [ ] `server/src/services/Email.ts` — typed wrappers for the five notification types, mirroring `EmailService.gs`:
+### Sub-tasks
+
+- [ ] Resend free-tier signup (100/day, 3000/month).
+- [ ] Verify the new domain (per F17) in Resend's dashboard — adds a DKIM CNAME + DMARC TXT to the registrar's DNS panel. Wait 5–60 min for propagation. See `infra/runbooks/resend-domain-setup.md`.
+- [ ] Resend API key in Secret Manager (`projects/<project>/secrets/resend_api_key`); Cloud Functions reads via env var injection.
+- [ ] `functions/src/services/EmailService.ts` — typed wrappers for the five notification types per spec.md §9 table, using the Resend SDK:
   - `notifyManagersNewRequest(stake, request)`
   - `notifyRequesterCompleted(stake, request)`
   - `notifyRequesterRejected(stake, request)`
   - `notifyManagersCancelled(stake, request)`
   - `notifyManagersOverCap(stake, pools, source)`
-- [ ] Plain-text bodies (preserve Apps Script `MailApp` shape); no HTML templates for v1.
-- [ ] "From" address: `<stake_name> — Kindoo Access <noreply@csnorth.org>` (display name from `stake.stake_name`).
-- [ ] Best-effort discipline: SendGrid errors don't fail the underlying request; surface the failure as a `warning` field on the response (preserves the existing API contract).
-- [ ] `notifications_enabled` kill switch on the stake doc — `false` skips every send and logs only.
-- [ ] Wire up the over-cap email from Phase 8.
-- [ ] Test via SendGrid sandbox mode + real send to one verified inbox.
+- [ ] Plain-text bodies (preserve current shape).
+- [ ] "From" address: `<stake.stake_name> — Kindoo Access <noreply@<new-domain>>` (display name from `stake.stake_name`; domain from F17).
+- [ ] `notifications_enabled` kill-switch on stake doc — `false` skips every send and logs only.
+- [ ] Firestore triggers that invoke email service:
+  - [ ] `functions/src/triggers/notifyOnRequestWrite.ts` — fires on requests writes; matches lifecycle transition; calls appropriate notification.
+  - [ ] `functions/src/triggers/notifyOnOverCap.ts` — fires on stake doc writes when `last_over_caps_json` goes from empty to non-empty.
+- [ ] Best-effort discipline: Resend errors logged and surfaced as audit-log entries with action `email_send_failed`; don't fail the underlying entity write.
+- [ ] R-1 completion email body surfaces `completion_note` per spec §9.
 
-**Tests**
-
-SendGrid wrapper coverage. CI uses a mocked client; real sends are tested manually (one per type) during phase ship.
+### Tests
 
 _Unit_
 
-- [ ] Body-template renderer for each of 5 notification types against synthetic request + stake fixtures:
-  - Subject contains stake name + (where applicable) member email + request type.
-  - Body contains link back to `?p=mgr/queue` (or `?p=my` per spec.md §9 table).
+- [ ] Body-template renderer per notification type against synthetic fixtures:
+  - Subject contains stake name + member email + request type.
+  - Body contains link back to `?p=mgr/queue` or `?p=my` per spec.md §9 table.
   - Type-aware lead verb: `add_manual` → "submitted a new manual-add request"; `remove` → "requested removal of"; `add_temp` → "requested temp access for".
-  - R-1 completion email: body surfaces a `Note:` line with `completion_note`.
+  - R-1 completion email: body surfaces `Note:` line.
   - Over-cap email: lists each over-cap pool with counts + cap + over-by + deep link.
 
-_Integration (SendGrid client mocked)_
+_Integration (Resend client mocked)_
 
-- [ ] `notifyManagersNewRequest` invoked → SendGrid `send()` called with the correct payload shape (to, from, subject, body).
-- [ ] All 5 notification types similarly verified.
-- [ ] `notifications_enabled=false` on the stake doc → no `send()` call; one log line emitted with the would-be recipients.
-- [ ] SendGrid 5xx → wrapper catches; warning string returned to API layer; underlying API request still returns 200 with `warning` field.
-- [ ] SendGrid network timeout → same behaviour.
-- [ ] Per-stake "From" display: `<stake_name> — Kindoo Access <noreply@…>` (display name from `stake.stake_name`).
+- [ ] `notifyOnRequestWrite` invokes Resend `emails.send()` with correct payload shape on submit, complete, reject, cancel.
+- [ ] `notifyOnOverCap` fires on transition; doesn't fire on continuing-overcap (last_over_caps_json change only).
+- [ ] `notifications_enabled=false` → no `send()` call; one log line emitted.
+- [ ] Resend 5xx → wrapper catches; audit row with `email_send_failed`.
+- [ ] Resend network timeout → same.
+- [ ] Per-stake "From" display.
 
 _Manual (during phase ship; not CI-gated)_
 
 - [ ] One real send per notification type to a verified inbox.
 - [ ] DKIM passes on Gmail (no "via" disclaimer).
-- [ ] Send to a known-bad address → SendGrid logs the bounce; our code logs the warning; no app crash.
+- [ ] Send to known-bad address → Resend logs the bounce; our code logs warning; no crash.
 
-Coverage gate: every notification type has a body-template unit test + a mocked-send integration test.
-
-**Acceptance criteria**
+### Acceptance criteria
 
 - Each of five notification types delivers to a real Gmail inbox in testing.
-- DKIM passes (no Gmail "via" disclaimer).
-- SendGrid 5xx / network failure doesn't fail the underlying write; warning surfaces in the response and toast appears client-side.
-- Kill switch works (`notifications_enabled=false` → no sends, log only).
-- Subject lines and body shapes match the existing five email templates exactly.
+- DKIM passes.
+- Resend failure doesn't fail underlying write.
+- Kill switch works.
+- Subject lines and body shapes match the existing five email templates.
 
-**Out of scope**
+### Out of scope
 
-- Per-stake "From" address (one platform sender for v1; per-stake DKIM is more work than warranted).
-- HTML templates (plain text for v1 to match current).
+- HTML templates — plain text for v1.
 - Bounce handling, suppression lists, click tracking.
-- A "test send" admin button (deferred; manual SendGrid console use for ops).
+- Test-send admin button.
+- Push notifications — Phase 10.
 
 ---
 
-## Phase 10 — Data migration + cutover
+## Phase 10 — PWA + push notifications
+
+**Goal:** App is installable as a PWA on mobile + desktop; service worker caches static assets and shell; users can opt into push notifications via FCM Web. Managers receive a push notification when a new request is submitted (paralleling the email).
+
+**Owner:** web-engineer (PWA shell + push UI); backend-engineer (FCM registration triggers + push send Cloud Functions).
+
+**Dependencies:** Phase 6 (request lifecycle), Phase 9 (email patterns extended to push).
+
+### Sub-tasks
+
+_PWA shell_
+
+- [ ] `vite-plugin-pwa` configured in `apps/web/vite.config.ts`. Workbox strategy: cache-first for static assets; network-first for `/index.html`; never cache Firestore traffic.
+- [ ] Web manifest: name, short_name, theme_color, icons (192px + 512px + maskable). Generated at `apps/web/public/manifest.webmanifest`.
+- [ ] Apple touch icon for iOS install.
+- [ ] Install-prompt UX: small "Install Kindoo" affordance in topbar when `beforeinstallprompt` event fires.
+- [ ] Update prompt: when SW detects a new version, toast "Update available — refresh to update."
+- [ ] Offline shell: app shell loads from cache when offline; data layer surfaces "Offline" toast.
+
+_FCM Web push_
+
+- [ ] Generate VAPID key pair in Firebase project; private key in Secret Manager.
+- [ ] `apps/web/src/features/notifications/` — settings page subsection:
+  - Permission request button.
+  - Subscribe / unsubscribe to push.
+  - Per-category toggles (e.g., "New requests" for managers).
+- [ ] On subscribe: client gets FCM token; writes `userIndex/{canonical}.fcmTokens[deviceId] = token`.
+- [ ] On unsubscribe: removes from array.
+- [ ] Service worker `apps/web/public/firebase-messaging-sw.js` handles background push notifications.
+
+_Cloud Function push send_
+
+- [ ] `functions/src/triggers/pushOnRequestSubmit.ts` — fires on `requests/{rid}` create with `status='pending'`; reads all active managers' `userIndex` entries; sends push to each registered FCM token.
+- [ ] Falls back to email if push fails or no tokens registered (preserves email-as-source-of-truth notification).
+- [ ] Invalid tokens (expired, unsubscribed) cleaned up from `userIndex.fcmTokens` automatically on send-failure.
+
+_Per-user notification preferences_
+
+- [ ] `userIndex/{canonical}.notificationPrefs.push.newRequest = true|false` (default true if registered).
+- [ ] Future: per-category toggles. Phase 10 only ships "new request" push.
+
+### Tests
+
+_Unit_
+
+- [ ] Install-prompt UX shown only when `beforeinstallprompt` fired.
+- [ ] FCM token write helper appends deterministically (no duplicate tokens for same device).
+
+_Integration (FCM mock)_
+
+- [ ] `pushOnRequestSubmit` reads correct manager set; sends to all registered tokens.
+- [ ] Invalid token returns from FCM → token removed from userIndex.
+- [ ] No tokens registered → push silently skipped (email path covers).
+
+_E2E (Playwright + service worker support)_
+
+- [ ] PWA install prompt appears on first sign-in.
+- [ ] Service worker registers; cached assets load offline.
+- [ ] Update flow: deploy new version → SW detects → toast prompts user.
+
+_Manual_
+
+- [ ] Real push to a registered device.
+- [ ] iOS install (Safari → Add to Home Screen) — verify icon + standalone mode.
+- [ ] Android install (Chrome) — verify install banner.
+
+### Acceptance criteria
+
+- App installable on iOS, Android, desktop (Chrome/Edge).
+- Service worker caches shell; offline mode surfaces gracefully.
+- Push notifications work for at least one notification type (new request).
+- Per-user push opt-in respected.
+- Email continues to work as the source-of-truth channel.
+
+### Out of scope
+
+- Push for completion / rejection / cancellation / over-cap — Phase 10.5 if measured need.
+- iOS push (requires PWA installed; Safari support is recent).
+- Notification grouping / silencing windows.
+
+---
+
+## Phase 11 — Data migration + cutover
 
 **Goal:** Live data moves from the Sheet to Firestore; DNS flips `kindoo.csnorth.org` to Firebase Hosting; the Apps Script app is decommissioned. End of Phase A.
 
-**Dependencies:** Phases 1–9.
+**Owner:** All agents on deck. infra-engineer leads the cutover; backend-engineer owns the migration script; web-engineer validates the deployed app; docs-keeper updates spec/architecture in lockstep.
 
-**Sub-tasks**
+**Dependencies:** Phases 1–10.
+
+### Sub-tasks
 
 _Migration script_
 
-- [ ] `firebase/scripts/migrate-sheet-to-firestore.ts`:
-  - Reads each Sheet tab via Sheets API using the migration service account (separate from the runtime service account; granted view + edit on the source Sheet for the duration).
-  - Writes each row to the corresponding Firestore collection under `stakes/csnorth/`.
-  - Idempotent: re-runnable; same Firestore state regardless of run count. Achieved by using deterministic doc IDs (canonical email, composite keys) and `tx.set(docRef)` (overwrite) rather than `tx.create`.
-  - Preserves: timestamps (parsed from cell `Date` values), UUIDs (existing seat_id / request_id / audit_id values), audit log history, source_row_hash values, source field on Access.
-  - Maps the Config tab's key/value rows into the parent stake doc's fields.
-  - Verifies: post-write per-collection counts match Sheet row counts; logs any discrepancies with row indices.
-- [ ] Dry-run mode (`--dry-run`) that prints the planned writes without executing them.
-- [ ] Spot-check helper: `firebase/scripts/diff-sheet-vs-firestore.ts` — picks N random rows from each collection, compares the Firestore record with the Sheet row, flags differences.
+- [ ] `infra/scripts/migrate-sheet-to-firestore.ts`:
+  - Reads each Sheet tab via Sheets API using a migration service account.
+  - Writes to corresponding Firestore collection under `stakes/csnorth/`.
+  - Idempotent: deterministic doc IDs (canonical email, slug); `tx.set` (overwrite) rather than `tx.create`.
+  - **Schema-driven transformations** (the new bits vs. the prior plan):
+    - Collapses today's per-(scope, calling, email) seat rows into one seat doc per (canonical_email) per stake. Multi-calling people get `callings: [...]`. Cross-scope people: pick stake>ward priority for primary, rest into `duplicate_grants`.
+    - Splits today's Access `source` column into `importer_callings` map and `manual_grants` array on per-canonical-email doc.
+    - Drops `source_row_hash`.
+    - Slugifies building names; rewrites cross-references.
+    - Preserves audit log history into the new flat `auditLog` collection.
+  - Verifies: post-write per-collection counts match Sheet row counts; logs discrepancies.
+- [ ] `--dry-run` flag.
+- [ ] Spot-check helper `infra/scripts/diff-sheet-vs-firestore.ts`.
 
-_Pre-cutover (rehearsal against staging)_
+_Pre-cutover (rehearsal in staging)_
 
-- [ ] Snapshot the production Sheet (File → Make a copy) to a "staging-source" sheet.
-- [ ] Run migration script against `kindoo-staging` Firebase project + staging-source sheet.
-- [ ] Walk the staging app end-to-end as each role: bishopric (CO ward), stake, manager. Compare every page against the Apps Script production app side-by-side.
-- [ ] Compare audit log between Apps Script and Firestore — sample 20 rows, verify identical `before` / `after` JSON.
-- [ ] Performance baseline: Dashboard p50, AllSeats p50, Audit Log first-page p50.
-- [ ] Run a full importer cycle against the staging-source LCR sheet; verify per-row audits + over-cap detection match production.
-- [ ] Run an expiry cycle against a seeded soon-to-expire temp seat in staging.
-- [ ] Send one test email from each of the five notification types.
+- [ ] Snapshot production Sheet → "staging-source" sheet.
+- [ ] Run migration against `kindoo-staging` + staging-source.
+- [ ] Walk staging end-to-end as each role; compare to production Apps Script side-by-side.
+- [ ] Compare audit log: sample 20 rows; verify `before` / `after` JSON equivalent.
+- [ ] Performance baseline: Dashboard p50, AllSeats p50, Audit Log first-page p50, Roster live-update latency.
+- [ ] Run full importer cycle against staging-source LCR sheet; verify audits + over-cap detection match production.
+- [ ] Run expiry cycle against seeded soon-to-expire temp seat.
+- [ ] Send one test email per notification type.
+- [ ] PWA install verification on real iOS + Android devices.
 
 _Cutover (production maintenance window)_
 
 - [ ] Banner on Apps Script app 24h pre-cutover: "Going read-only at HH:MM Saturday for migration; back at HH:MM."
-- [ ] Communicate the window to Kindoo Managers + Stake + Bishopric leads.
-- [ ] At go-time: revoke write access on the Sheet (Sheet → Share → set to "Viewer" for everyone except your migration account) AND set the Apps Script web app deployment to disabled (Manage Deployments → archive the active deployment).
-- [ ] Run migration script against `kindoo-prod` Firebase project + the live Sheet.
+- [ ] Communicate window to managers + bishopric leads.
+- [ ] At go-time: revoke write access on the Sheet (Sheet → Share → set to Viewer) AND set Apps Script web app to disabled.
+- [ ] Run migration script against `kindoo-prod` + live Sheet.
 - [ ] Verify counts match.
-- [ ] Smoke test as each role on `kindoo-prod.web.app` (the default Hosting URL — DNS hasn't flipped yet).
-_DNS flip_
+- [ ] Smoke test as each role on `kindoo-prod.web.app` (default Hosting URL — DNS hasn't flipped yet).
 
-- [ ] `kindoo.csnorth.org` DNS record flips from the Cloudflare Worker target to Firebase Hosting's target. Cloudflare Worker keeps the rule but is now bypassed.
-- [ ] Per F12 (HTTP only, no SSL): the custom domain is served over http. No SSL cert is provisioned for `kindoo.csnorth.org`; no https redirect is configured in `firebase.json`. Users accessing `https://kindoo.csnorth.org` will see a browser warning — that's expected and documented in the in-app FAQ.
-- [ ] Verify immediately after flip: `curl -v http://kindoo.csnorth.org/api/health` returns the expected JSON; site loads in a browser over http; sign-in popup (Google's https) completes and persists back to the app.
-- [ ] Re-enable write access on the Sheet (Viewers can become Editors again — the Sheet is no longer the source of truth but stays human-readable for archive purposes).
+_DNS for the new domain_
+
+- [ ] Per F17, the user-chosen new domain points to Firebase Hosting (custom domain configured in Firebase Hosting console; auto-provisioned Let's Encrypt cert).
+- [ ] HTTPS verified end-to-end on the new domain.
+- [ ] Smoke test on the new domain's URL as each role; sign-in works; PWA install still works.
+- [ ] Re-enable write access on the legacy LCR Sheet (no longer source of truth; stays human-readable as archive).
+
+_Legacy `kindoo.csnorth.org` decommission_
+
+- [ ] Decision: redirect to the new domain, leave dormant pointing to a "moved" page on GitHub Pages, or take down entirely. Document the chosen path in `infra/runbooks/cutover.md` before the window opens.
+- [ ] If redirect chosen: update `website/index.html` to a meta-refresh + JS redirect to the new domain; keep GitHub Pages alive at the old path.
+- [ ] Communicate the URL change to managers / bishopric / stake leads in the cutover communication (E3).
 
 _Post-cutover monitoring_
 
-- [ ] 24–48 hours of active monitoring: Cloud Run logs, Firestore rules-denied count, error rates.
-- [ ] Apps Script app stays deployed but disabled (web app set to "only me" or archived deployment) for one week as rollback option.
-- [ ] After one week with no critical issues: delete Apps Script triggers (`ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t))`), set Apps Script web app to fully disabled, revoke the migration service account's Sheet edit access (downgrade to no access).
+- [ ] 24–48h active monitoring: Cloud Functions logs, Firestore rules-denied count, error rates, push-notification delivery rate.
+- [ ] Apps Script app stays deployed but disabled for one week as rollback.
+- [ ] After one week with no critical issues: delete Apps Script triggers, fully archive deployment, revoke migration service account's Sheet access.
 
 _Repo cleanup_
 
-- [ ] Delete `src/` (Apps Script Main project source).
+- [ ] Delete `src/` (Apps Script Main).
 - [ ] Delete `identity-project/`.
-- [ ] Delete `.clasp.json`, `.clasp.json.example`, `clasp` package.json scripts.
-- [ ] Move `firebase/` contents to repo root (so `client/`, `server/`, `shared/` are top-level — cleaner long-term shape).
-- [ ] Update `CLAUDE.md`: remove Apps Script-specific guidance ("Flat namespace", "auth is GSI + server-side JWT", "two identities"); add Firebase guidance.
+- [ ] Delete `.clasp.json`, clasp scripts, package.json clasp deps.
+- [ ] Update root `CLAUDE.md`: remove Apps Script-specific guidance ("Flat namespace", "Auth is GSI + JWT", "Two identities"); add Firebase-specific.
+- [ ] Update `pnpm-workspace.yaml` if needed.
 
 _Doc updates_
 
-- [ ] `docs/spec.md` — auth section rewritten (Firebase Auth, Cloud Run, Firestore); stack section rewritten; concurrency section rewritten (transactions instead of script lock).
-- [ ] `docs/architecture.md` — D2, D6, D7, D10 superseded; new Firebase decisions added with new D-numbers (continue the sequence).
-- [ ] `docs/data-model.md` — rewrite for Firestore shape. Key changes to capture: doc-ID conventions (composite keys on Access, canonical emails on KindooManagers, slugged IDs on Buildings, `<ISO ts>_<uuid>` on AuditLog); `Config` tab collapse into the `stakes/{stakeId}` parent doc's fields; `auditLog` shape change (nested `before`/`after` objects rather than JSON strings, plus the `ttl` field and 365-day policy); source-row-hash preserved; composite-index enumeration for `auditLog`.
-- [ ] `docs/build-plan.md` Chunk 11 marked `[SUPERSEDED — Firebase Hosting handles custom domain natively, see firebase-migration.md Phase 10]`.
-- [ ] `docs/changelog/chunk-11-cloudflare.md` — never created; instead a `docs/changelog/firebase-cutover.md` entry summarizes Phases 1–10.
-- [ ] Identity project README archived under `docs/archive/identity-project-readme.md` for historical reference (the secret-rotation runbook is no longer relevant but the auth-pivot narrative is good context).
+- [ ] `docs/spec.md` — auth section rewritten (Firebase Auth + custom claims); stack section rewritten; concurrency section rewritten (Firestore transactions).
+- [ ] `docs/architecture.md` — D2, D6, D7, D10 superseded; new Firebase decisions documented.
+- [ ] `docs/data-model.md` — rewritten for Firestore schema; redirects to `firebase-alt-schema.md` as the primary reference.
+- [ ] `docs/build-plan.md` Chunk 11 marked `[SUPERSEDED — Firebase Hosting handles custom domain natively, see firebase-migration.md Phase 11]`.
+- [ ] `docs/changelog/firebase-cutover.md` summarizes Phases 1–11.
+- [ ] Identity project README archived under `docs/archive/identity-project-readme.md`.
 
-**Tests**
+### Tests
 
-Migration script correctness is the highest-stakes test surface in the entire migration. A bug here corrupts the cutover. Heavy unit + integration coverage; smoke + cutover steps below are manual but enumerated for the runbook.
+Migration script correctness is the highest-stakes test surface. Heavy unit + integration coverage; smoke + cutover steps below are manual but enumerated for the runbook.
 
 _Unit_
 
 - [ ] Per-tab transformation function (Sheet row → Firestore doc shape):
-  - Date cells parsed correctly (timestamps land as Firestore `Timestamp`s).
+  - Date cells parsed correctly (Firestore `Timestamp`).
   - Empty cells map to empty strings, not `undefined`.
-  - Composite keys for Access constructed correctly per `accessRepo.makeId`.
-  - Audit-log rows preserve `before`/`after` as nested objects (parsed from any existing JSON-string form on legacy rows).
-  - `source` field on Access defaults to `'importer'` for legacy rows missing the column.
-- [ ] Building name → slug transform stable for known inputs; cross-references rewritten consistently across `wards.building_name`, `seats.building_names`, etc.
+  - **Seat row collapse**: multiple seat rows with same canonical email + scope → one seat doc with merged callings list.
+  - **Cross-scope detection**: stake-scope row + ward-scope row for same email → primary = stake, duplicate = ward.
+  - **Access split**: rows with `source='importer'` → `importer_callings` map; rows with `source='manual'` → `manual_grants` array; preserves grant_id (uuid generated if missing on legacy rows).
+  - Audit-log rows preserve `before`/`after` as nested objects (parsed from any JSON-string form on legacy rows).
+- [ ] Building name → slug transform stable; cross-references rewritten consistently.
 
 _Integration (Firestore emulator + Sheets fixture)_
 
-- [ ] Migrate fixture Sheet → Firestore matches expected state byte-for-byte (excluding auto-generated timestamps where applicable).
-- [ ] Idempotency: second run produces identical Firestore state; no duplicates; no orphaned docs.
+- [ ] Migrate fixture Sheet → Firestore matches expected state byte-for-byte (excluding auto-generated timestamps).
+- [ ] Idempotency: second run identical state.
 - [ ] Re-run on partial failure: kill mid-run, restart; complete state matches one-shot run.
-- [ ] Source-row hashes preserved across migration (importer's first post-cutover run produces zero diffs against the migrated state).
-- [ ] Counts per collection match Sheet row counts.
-- [ ] Diff helper (`diff-sheet-vs-firestore.ts`):
-  - Synthetic mismatch (e.g. flipped `member_name`) → flagged with row index.
-  - Identical state → no flags.
-  - Sample size of N rows per collection respected.
+- [ ] Counts per collection match Sheet row counts (after collapse for seats).
+- [ ] Diff helper: synthetic mismatch flagged; identical state → no flags.
+- [ ] Importer's first post-cutover run produces zero diffs against migrated state (proves migration shape matches importer's output shape).
 
 _Smoke (manual, during cutover rehearsal in staging)_
 
 - [ ] Run migration against `kindoo-staging` (snapshot of production Sheet) → walk full app as each role.
-- [ ] Compare audit log: 20 random rows match between Apps Script and Firebase end-to-end (`before`/`after` JSON preserved).
+- [ ] Audit log: 20 random rows match between Apps Script and Firebase end-to-end.
 - [ ] Send one of each email type from staging.
-- [ ] Run a full importer cycle against the staging-source LCR sheet → diff vs production Apps Script's last import: zero unexpected changes.
+- [ ] Run full importer cycle against staging-source LCR sheet → diff vs production Apps Script's last import → zero unexpected changes.
 
-_Cutover (manual, during the maintenance window)_
+_Cutover (manual, during the window)_
 
 - [ ] Pre-cutover: Sheet read-only confirmed; Apps Script web app archived.
 - [ ] Migration script run against `kindoo-prod`; counts verified.
 - [ ] Smoke as each role on `kindoo-prod.web.app`.
-- [ ] DNS flip; http loads verified (per F12, no SSL); smoke on `kindoo.csnorth.org`.
-- [ ] 24h monitoring: error rate < threshold (set during rehearsal); no rules-denied spikes.
+- [ ] DNS flip; HTTPS verified; smoke on `kindoo.csnorth.org`.
+- [ ] PWA install verified on at least one iOS + one Android device.
+- [ ] 24h monitoring: error rate < threshold; no rules-denied spikes.
 
-Coverage gate: integration tests pass against the real production-snapshot fixture before the cutover window opens. No manual cutover step is taken before the rehearsal in staging is fully green.
+Coverage gate: integration tests pass against production-snapshot fixture before the cutover window opens.
 
-**Acceptance criteria**
+### Acceptance criteria
 
-- Migration script reproduces Firestore state from Sheet input deterministically (rerun-safe).
+- Migration script reproduces Firestore state from Sheet input deterministically.
 - Spot-check: 20 random rows match between Sheet and Firestore in each collection.
+- Schema collapse verified: today's multi-row seat data correctly merged into one doc per (stake, member).
+- Source-split verified: today's Access `source` column correctly split into `importer_callings` / `manual_grants`.
 - All roles can sign in and walk a smoke test against production Firestore.
 - DNS flip succeeds; users land on Firebase Hosting via `kindoo.csnorth.org`.
+- PWA installs on real devices.
 - One week of post-cutover monitoring with no rollback.
 - Apps Script and Identity projects decommissioned.
 - `src/` and `identity-project/` removed from repo; git history preserves them.
-- All docs reflect the Firebase reality.
 
-**Out of scope**
+### Rollback plan (documented before go-time)
 
-- Multi-stake — Phase 11+.
+- Within 24h of cutover: DNS flip back to GitHub Pages → Apps Script. Re-enable Apps Script web app deployment. Re-enable triggers. Sheet is still source of truth (we never moved it). No data restore needed.
+- After 24h but within 7 days: same DNS flip, but any Firestore-side writes that happened post-cutover need manual reconciliation back into the Sheet. Acceptable but uncomfortable.
+- After 7 days: Apps Script triggers deleted; full rollback would require redeploying. Don't roll back; fix forward.
+
+### Out of scope
+
+- Multi-stake — Phase 12.
 - Performance tuning beyond what was needed for Phases 6/7 to ship.
 - Cost optimization beyond the $1 budget alert.
 
-**Rollback plan (documented before go-time)**
-
-- Within 24h of cutover: DNS flip back to Cloudflare Worker → Apps Script. Re-enable Apps Script web app deployment. Re-enable Apps Script triggers. The Sheet is still the source of truth (we never moved it), so no data restore is needed.
-- After 24h but within 7 days: same DNS flip, but any Firestore-side writes that happened post-cutover need manual reconciliation back into the Sheet. Acceptable but uncomfortable.
-- After 7 days: Apps Script triggers deleted; full rollback would require redeploying Apps Script + restoring triggers. Don't roll back at this point — fix forward.
-
 ---
 
-## Phase 11 — Stake routing
+## Phase 12 — Multi-stake (Phase B, deferred)
 
-**Goal:** Every API endpoint takes `stakeId` from the URL path. The principal carries memberships across multiple stakes. The hardcoded `csnorth` constant disappears from the codebase. Single-stake users still auto-route to their one stake — the URL just shifts to include `/csnorth/`.
+**Goal:** A second stake can be onboarded end-to-end via a platform-superadmin surface. The platform superadmin has a tiny provisioning role (no read access to any stake's operational data, per the locked-in design).
 
-**Dependencies:** Phase 10 (production must be on Firebase before this refactor).
+**Owner:** All agents.
 
-**Sub-tasks**
+**Dependencies:** Phase 11. **Not started until at least one second stake is in scope.**
 
-_URL convention_
+### Sub-tasks
 
-- [ ] `kindoo.csnorth.org/{stakeId}/?p=<page>&...`. The stakeId becomes the first path segment.
-- [ ] Vite / router updated: routing reads stakeId from `location.pathname.split('/')[1]`.
-- [ ] All `<a data-page>` links rewrite to include the current stakeId.
-- [ ] Direct deep-links from emails / bookmarks: the existing `kindoo.csnorth.org?p=...` URLs (no stakeId) redirect to `kindoo.csnorth.org/csnorth?p=...` for compat. Add a one-liner in the bootstrap path: if URL has no stakeId segment AND the user has exactly one stake, redirect to `/{theirStake}/{rest of url}`.
+Materially identical to the prior plan's Phases 11 + 12 (combined into one phase here since the data model already carries `{stakeId}` from day one per F15):
 
-_Server: principal shape change_
+- [ ] URL convention: `kindoo.csnorth.org/{stakeId}/?p=<page>&...`. The stakeId becomes the first path segment in the SPA.
+- [ ] Single-stake users redirect from bare `/?p=...` URLs to `/{theirStake}/?p=...` for backward compat.
+- [ ] Multi-stake users see a stake picker page or a stake switcher in the topbar.
+- [ ] `platformSuperadmins/{canonicalEmail}` populated. Edited via Firestore console (chicken-and-egg).
+- [ ] `features/platform/` — list stakes, create stake form. `POST /api/platform/createStake` callable.
+- [ ] Bootstrap wizard re-verified for fresh stakes.
+- [ ] Operator runbooks: `infra/runbooks/onboard-stake.md`, `infra/runbooks/lost-bootstrap-admin.md`.
+- [ ] Onboarding integration test: full second-stake setup from cold start in <30 minutes.
 
-- [ ] `Principal` becomes:
-  ```ts
-  interface Principal {
-    email: string;
-    isPlatformSuperadmin: boolean;
-    memberships: Record<StakeId, { roles: Role[] }>;
-  }
-  ```
-- [ ] `Auth_principalFrom(token, stakeId)` resolves the user's memberships across all stakes (collection-group queries on `kindooManagers` and `access` filtered by canonical email), AND validates the user has at least one role in `stakeId` (else `Forbidden`). Returns the full multi-stake principal so the UI can render a stake switcher.
-- [ ] Collection-group indexes: `kindooManagers` and `access` need collection-group queries enabled. Configure in `firestore.indexes.json`.
+### Tests
 
-_Server: route refactor_
+Same shape as the prior plan's Phase 11 + 12 test sections, adapted for direct Firestore + custom claims. See git history for prior detail; reproduce when phase is live.
 
-- [ ] Express routes already have `:stakeId` path param from Phase 4. The change here is removing the client-side hardcoded `csnorth` constant — every rpc call now passes the current URL's stakeId.
-- [ ] `Auth_requireRole`, `Auth_requireWardScope` operate against `principal.memberships[stakeId].roles` (already scoped, since the principal validation gate happened in `Auth_principalFrom`).
+### Acceptance criteria
 
-_Client: rpc + page shape_
+- Superadmin can create new stake from `/platform`.
+- Bootstrap admin can sign in and run wizard for the new stake.
+- Two stakes' data fully isolated (verified by emulator rules tests).
+- Stake picker + switcher in topbar work.
+- Superadmin without explicit stake membership cannot read stake data.
+- Onboarding takes <30 minutes end-to-end.
 
-- [ ] `rpc/client.ts` reads stakeId from current URL and prefixes API path automatically.
-- [ ] `pages/*` `init(model, queryParams)` signatures unchanged — page model already typed to be stake-agnostic.
-
-_Importer / Expiry_
-
-- [ ] Already use the loop-over-stakes pattern from Phase 8. Just confirm they work for >1 stake by adding a `testStake` to staging and seeding test data.
-
-_Security rules_
-
-- [ ] Already correct from Phase 3 (`hasMembership(stakeId)` covers it). Verify `kindooManagers` and `access` collection-group rules allow authenticated users to read their own membership docs across stakes (needed for the principal resolution). Or — alternative — make principal resolution a server-only operation via the Admin SDK and don't expose collection-group queries to clients at all. (Recommend the latter; clients never need to query Firestore directly.)
-
-_Ops_
-
-- [ ] Onboard a `testStake` in staging via direct Firestore writes (since the platform admin surface lands in Phase 12). Walk through the full role lifecycle to verify isolation.
-
-**Tests**
-
-Multi-stake routing: principal shape change, URL plumbing, cross-stake denial.
-
-_Unit_
-
-- [ ] Multi-stake principal builder: collection-group query results → `memberships` map keyed by stakeId.
-- [ ] URL stakeId extractor: `/csnorth/?p=mgr/seats` → `'csnorth'`; `/?p=...` → null (triggers redirect logic).
-- [ ] Default-route logic: 0 stakes / 1 stake / >1 stakes; no-superadmin variations (superadmin variants land in Phase 12).
-
-_Integration_
-
-- [ ] `Auth_principalFrom(token, stakeId)`:
-  - User with membership in stakeId → returns principal with that stakeId in `memberships`.
-  - User with membership in stake A only, called for stake B → throws `Forbidden`.
-  - User with no memberships → empty `memberships` map (handled at routing layer; principal still resolved).
-- [ ] Collection-group queries against emulator: user with roles in two stakes → both surfaces in `memberships`.
-- [ ] Every endpoint after refactor: hits `/api/stakes/csnorth/...` for csnorth member → works. Hits `/api/stakes/otherStake/...` for non-member → 403.
-- [ ] Bare URL compat: `/?p=mgr/seats` for single-stake user → server-side redirect to `/csnorth/?p=mgr/seats`.
-
-_E2E (Playwright)_
-
-- [ ] Single-stake user (csnorth only) signs in → URL gains `/csnorth/` segment automatically; nothing else feels different.
-- [ ] Multi-stake user (signed in via emulator-seeded membership in csnorth + testStake) signs in → bootstrap returns memberships for both; current URL determines active stake.
-- [ ] Hand-crafted URL change to `/otherStake/?p=mgr/seats` for non-member → Forbidden toast; redirect to safe default.
-- [ ] Full Phase-7 E2E suite still passes for csnorth (regression check).
-
-Coverage gate: zero hardcoded `'csnorth'` strings in code (verified by `grep` step in CI); every API path tested with a wrong-stake principal.
-
-**Acceptance criteria**
-
-- The constant `'csnorth'` does not appear in the codebase except in seed scripts, tests, and documentation examples.
-- A user with memberships in stake A and stake B can access both via different URL paths.
-- A user attempting to access `/{otherStake}/` without membership gets Forbidden (server enforced) and a clean error toast (client surfaced).
-- All Phase 7 acceptance criteria still pass.
-- Importer / Expiry continue to work; per-stake schedules respected via the hourly-fire-loop pattern.
-- Existing single-stake users see no behaviour change other than the URL gaining a `/csnorth/` segment.
-- The bare `kindoo.csnorth.org/?p=mgr/seats` URL redirects to `kindoo.csnorth.org/csnorth/?p=mgr/seats` for backward compat.
-
-**Out of scope**
-
-- Stake selector UI — Phase 12.
-- Platform superadmin — Phase 12.
-- Onboarding a second real stake via the in-app flow — Phase 12.
-
----
-
-## Phase 12 — Platform superadmin + stake picker
-
-**Goal:** A second stake can be onboarded end-to-end via the in-app platform admin surface. The platform superadmin has a tiny provisioning role (no read access to any stake's operational data, per the locked-in design).
-
-**Dependencies:** Phase 11.
-
-**Sub-tasks**
-
-_Superadmin allow list_
-
-- [ ] `platformSuperadmins/{canonicalEmail}` collection — minimal `{email, addedAt, addedBy}` doc.
-- [ ] Edited via direct Firestore console use (no in-app management surface — chicken-and-egg, and the list is small enough).
-- [ ] Server: `isPlatformSuperadmin(email)` helper; populates `principal.isPlatformSuperadmin`.
-- [ ] Tad's email seeded into `kindoo-prod` `platformSuperadmins/`.
-
-_Platform admin page_
-
-- [ ] `pages/platform/index.ts` — list of stakes (id, display name, `setup_complete` flag, created_at, bootstrap admin email).
-- [ ] `pages/platform/createStake.ts` — form (stakeId slug, display name, bootstrap admin email).
-- [ ] On submit: writes `stakes/{stakeId}` with `setup_complete=false, bootstrap_admin_email=<...>, created_at=now, created_by=<superadmin email>`. Subcollections start empty.
-- [ ] One audit row written to a new top-level `platformAuditLog/{ts}` collection (since stake-scoped auditLog doesn't yet exist for the new stake at creation time).
-- [ ] `POST /api/platform/createStake` — only superadmins can call.
-
-_Stake picker_
-
-- [ ] `pages/stakePicker.ts` — rendered when bootstrap principal has memberships in >1 stake. Lists stakes with display names (read from each `stakes/{id}` doc); clicking navigates to `/{stakeId}/`.
-
-_Stake switcher in topbar_
-
-- [ ] Dropdown rendered in `layout/shell.ts` topbar when memberships > 1. Clicking switches the stakeId in the URL.
-
-_Default route logic (consolidated)_
-
-- [ ] On bootstrap:
-  - 0 stakes + not superadmin → `notAuthorized`.
-  - 0 stakes + superadmin → redirect to `/platform`.
-  - 1 stake → redirect to `/{thatStake}/{role-default-page}`.
-  - >1 stakes → render `stakePicker`.
-  - Superadmin who's also a stake member: same as above, plus a "Platform admin" link in the topbar.
-
-_Bootstrap wizard parameterization_
-
-- [ ] Already parameterized by stakeId in Phase 7 (the wizard always operated against `stakes/csnorth`). Just verify it works for a fresh `stakes/{newId}` doc seeded with `setup_complete=false` and `bootstrap_admin_email=<...>`.
-
-_Security rules_
-
-- [ ] `match /stakes/{stakeId}` doc — write allowed if `isSuperadmin()`.
-- [ ] `match /stakes/{stakeId}/{document=**}` — superadmin gets nothing (read or write). Provisioning ≠ inspection (per F10 + Phase 12 design).
-- [ ] `match /platformSuperadmins/{email}` — read allowed if `isSuperadmin()`; write forbidden (console-only).
-- [ ] `match /platformAuditLog/{id}` — read allowed if `isSuperadmin()`; write forbidden (server-only).
-
-_Operator runbook_
-
-- [ ] New doc: `docs/runbooks/lost-bootstrap-admin.md` — how superadmin re-designates a stake's bootstrap admin if the original is unreachable.
-- [ ] New doc: `docs/runbooks/onboard-stake.md` — end-to-end checklist: superadmin creates stake → bootstrap admin signed up → wizard run → callings sheet shared with importer service account → first import → first email tested.
-
-_Onboarding test_
-
-- [ ] Create `testStake` (or `csnsouth` or whatever the second target name is). Designate yourself bootstrap admin. Run the full wizard. Verify isolation from `csnorth` via emulator rules tests AND a manual cross-stake access test.
-
-**Tests**
-
-Platform superadmin surface + multi-stake UX. Ends with a full second-stake onboarding as a manual integration test.
-
-_Unit_
-
-- [ ] `isPlatformSuperadmin(email)`: matches against `platformSuperadmins/{canonicalEmail}` lookup; canonical-email comparison.
-- [ ] Default-route logic from Phase 11 expanded with superadmin cases:
-  - Superadmin + 0 stakes → `/platform`.
-  - Superadmin + 1 stake → role default for that stake + Platform link in topbar.
-  - Superadmin + >1 stakes → picker + Platform link.
-
-_Integration_
-
-- [ ] `POST /api/platform/createStake`:
-  - Superadmin → 200; stake doc written with `setup_complete=false, bootstrap_admin_email=<...>`; one row in `platformAuditLog`.
-  - Non-superadmin → 403.
-  - Duplicate stakeId → 409.
-  - Invalid stakeId (whitespace, special chars, reserved words) → 400.
-- [ ] `GET /api/platform/stakes`:
-  - Superadmin → list of all stakes with `{id, name, setup_complete, created_at, bootstrap_admin_email}`.
-  - Non-superadmin → 403.
-- [ ] Bootstrap wizard against a freshly-created `stakes/testStake` doc — full Phase-7 wizard test suite re-run with `stakeId='testStake'`; all assertions pass identically.
-
-_Rules_
-
-- [ ] Superadmin can `update`/`set` `stakes/{stakeId}` doc (the parent doc only).
-- [ ] Superadmin **cannot** read `stakes/{stakeId}/seats/...` (or any subcollection) without an explicit membership in that stake.
-- [ ] Non-superadmin cannot read `platformSuperadmins/*` or `platformAuditLog/*`.
-- [ ] Non-superadmin cannot write `stakes/{stakeId}` parent doc.
-
-_E2E (Playwright)_
-
-- [ ] Superadmin (no stake memberships) signs in → lands on `/platform`.
-- [ ] Superadmin creates a new stake from the form → stake appears in the list → bootstrap admin email captured.
-- [ ] Designated bootstrap admin signs in → SetupInProgress for non-admins; wizard for the admin → completes wizard end-to-end.
-- [ ] Multi-stake user (csnorth + testStake) signs in → picker page → selects one stake → lands on role default for that stake.
-- [ ] Stake switcher in topbar: switch from stake A to stake B → URL updates to `/{stakeB}/...` → page re-renders with stake B's data.
-- [ ] Cross-stake isolation: signed in as manager of stake A, hand-craft URL to `/{stakeB}/?p=mgr/seats` (no membership in B) → Forbidden toast.
-- [ ] Onboarding integration: full second-stake setup from cold start in <30 minutes (manual stopwatch; documented in onboarding runbook).
-
-Coverage gate: full Phase-7 test suite passes against a freshly-created `testStake` with no shared state with `csnorth`. The stopwatch onboarding test is run at least once before the phase ships.
-
-**Acceptance criteria**
-
-- Superadmin can create a new stake from `/platform` without leaving the app.
-- A new stake's bootstrap admin can sign in and run the wizard end-to-end.
-- Two stakes' data is fully isolated (verified by emulator rules tests + manual probes).
-- Stake picker appears for users with >1 stake; stake switcher dropdown in topbar works.
-- Superadmin without explicit stake membership cannot read stake data (verified by manual probe + rules test).
-- Operator runbooks exist for the two ops scenarios above.
-- Onboarding a second stake via the in-app flow takes <30 minutes end-to-end (excluding callings-sheet sharing wait time).
-
-**Out of scope**
+### Out of scope
 
 - Self-serve stake creation (superadmin-curated only).
-- Per-stake billing / quotas (single SendGrid sender, single GCP project for v1).
-- Multi-stake reporting / cross-stake dashboards.
+- Per-stake billing / quotas.
+- Multi-stake reporting dashboards.
 - Per-stake "From" address.
 - Per-stake custom domain.
 
 ---
 
-## Open questions to resolve before kicking off
+## Open questions
 
-These came up while writing. Better to nail them down before Phase 1 starts than discover mid-implementation.
+The full list of open questions, sorted by weight, lives in `docs/firebase-alt-schema.md` §8. The summary:
 
-1. **Buildings doc-ID slugging** (Phase 3): slugify on write (`Cordera Building` → `cordera-building`) with a `building_name` display field, vs URL-encoding the natural key as the doc ID? Recommend slugify; the cross-references (`wards.building_name`, `seats.building_names`) need a one-time migration to the slug form during Phase 10.
+- **Q1 (meta):** Whether to migrate at all — Apps Script keeps running until this is settled.
+- **Q2–Q4 (behavioural changes from current spec):** Duplicate manual/temp seats blocked vs warned; multi-calling auto seats collapsed; stake-priority makes stake-presidency members invisible on ward rosters.
+- **Q5–Q10 (design pieces sketched, not finished):** Reconcile UX, audit-log diff rendering with nested maps, `getAfter()` viability spike, custom-claims size budget, bootstrap admin first-sign-in sequencing, self-lockout protection.
+- **Q11–Q15 (operational):** Migration script, test strategy, phase-plan structure (this doc resolves it), reconciliation alerting, userIndex collision handling.
+- **Q16–Q22 (minor):** Slugging strategy, "From" address, claim field name, request doc ID format, platformAuditLog TTL, reconcile cadence, ward-vs-ward priority.
 
-2. **Migration of audit-log history**: keep all existing audit rows (preserves continuity for "what changed in the last 6 months") vs start fresh on Firebase (cleaner, smaller initial Firestore size). Recommend keep — the audit log is a real artifact, not an operational table.
-
-3. **Email "From" address final form**: `noreply@csnorth.org` (apex domain, requires SPF/DKIM at apex), or `noreply@kindoo.csnorth.org` (subdomain, isolates email DNS from your existing csnorth.org mail setup), or something else? Recommend `noreply@kindoo.csnorth.org` — least invasive on your existing csnorth.org DNS.
-
-4. **`platformAuditLog` location**: top-level collection (proposed in Phase 12) vs reuse the per-stake auditLog with a `system` entity_type? Top-level is cleaner because stake-creation events don't belong to any stake. Confirm.
-
-5. **Cloud Run region**: `us-central1` is the cheapest + lowest-latency for your geographic spread (Denver-area users). Confirm or override.
-
-6. **Migration timing**: when do you want to target cutover (end of Phase 10)? This drives how compressed the phase pacing should be. No constraint on my end; this is a calendar question.
-
-7. **Test data for staging**: do you want staging Firestore seeded with a redacted production snapshot (real-shape, real-volume), or a tiny hand-crafted fixture (one ward, three seats, etc.)? The migration script can do either; recommend redacted snapshot for higher-fidelity rehearsal.
-
-Resolve these (any subset; I'll defer the rest to mid-phase) before Phase 1 starts.
+Resolve any subset before starting any given phase; defer the rest. The Q1 meta-question gates everything.
