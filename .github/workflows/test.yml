@@ -66,6 +66,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Playwright browsers (chromium + system deps)
+        # pnpm install only fetches the @playwright/test JS package; the
+        # actual browser binary is downloaded separately. --with-deps
+        # apt-installs the Chromium runtime libraries that Ubuntu runners
+        # may not have by default.
+        run: pnpm --filter @kindoo/e2e exec playwright install --with-deps chromium
+
       # The remaining steps each set continue-on-error: true so we collect
       # every failure in a single run; the final `Verify all checks
       # passed` step inspects each step's outcome and fails the workflow
