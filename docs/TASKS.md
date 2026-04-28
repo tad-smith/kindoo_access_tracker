@@ -196,11 +196,11 @@ Phase: 12
 `functions/src/lib/constants.ts` exports `STAKE_IDS = ['csnorth']` and `seedClaimsFromRoleData` walks this list when seeding claims for brand-new users on first sign-in. The `syncAccessClaims` / `syncManagersClaims` triggers extract `stakeId` from the doc path directly, so they are stake-ID-agnostic; only the seed path is hardcoded. Implication: if the v1 stake's actual document ID isn't `csnorth`, new users will sign in cleanly but won't get claims seeded automatically — operators can work around by manually editing a `kindooManagers` doc to fire the sync trigger. Phase 12 (multi-stake) makes this dynamic by deriving the list at runtime.
 
 ## [T-14] Local Node 20 vs production Node 22 mismatch produces emulator warning
-Status: open
-Owner: @docs-keeper
-Phase: cross-cutting
+Status: done (2026-04-28, Phase 3.5 close)
+Owner: @infra-engineer
+Phase: 3.5
 
-The Functions emulator runs against the host's Node (currently 20.x on the operator's machine); the production runtime is Node 22. The emulator emits a version-mismatch warning at startup. Informational only — Phase 2 functions code runs on both. Document the recommended Node 22 LTS upgrade path (nvm / asdf) in the root `CLAUDE.md` onboarding section or `apps/web/CLAUDE.md`. Developer-environment concern, not a deploy blocker.
+Resolved by pinning Node 22 project-wide. Root `package.json` carries `"volta": { "node": "22.22.2" }` so Volta auto-installs and resolves the right Node when the operator (or any contributor with Volta) `cd`s into the repo. `.nvmrc` (`22`) covers nvm/fnm contributors as defense-in-depth. `.npmrc` adds `engine-strict=true` so npm/pnpm refuses to install on a mismatched runtime. Root `engines.node` bumped from `>=20` to `>=22`. Functions still pin `engines.node: "22"` (matches Cloud Functions v2 runtime). Emulator no longer emits the version-mismatch warning. Closed at Phase 3.5 close — see `docs/changelog/phase-3-5-infra-refresh.md`.
 
 ## [T-15] Configure Firestore TTL on auditLog collection-group
 Status: open

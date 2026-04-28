@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Kindoo door-access tracker. Apps Script app under src/ and identity-project/ runs in production until Phase 11 cutover; Firebase monorepo under apps/, functions/, firestore/, packages/, e2e/, infra/ is built in parallel.",
-  "packageManager": "pnpm@9.15.0",
+  "packageManager": "pnpm@10.33.2",
   "scripts": {
     "login": "clasp login",
     "logout": "clasp logout",
@@ -34,17 +34,19 @@
     "@google/clasp": "^2.4.2",
     "concurrently": "^9.1.0",
     "prettier": "^3.4.2",
-    "typescript": "^5.7.2"
+    "typescript": "^6.0.3"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "pnpm": {
     "peerDependencyRules": {
       "allowedVersions": {
-        "reactfire>firebase": "11",
-        "@firebase/rules-unit-testing>firebase": "11"
+        "@firebase/rules-unit-testing>firebase": "12"
       }
     }
+  },
+  "volta": {
+    "node": "22.22.2"
   }
 }

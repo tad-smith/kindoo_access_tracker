@@ -28,11 +28,15 @@
 // The pure derivation `principalFromClaims` lives alongside in
 // `principal-derive.ts` so unit tests can exercise it without pulling
 // the Firebase SDK init module into the import graph.
+//
+// Phase 3.5 (D11): replaced reactfire's `useUser()` with a direct
+// `onAuthStateChanged` subscription against the `auth` SDK singleton.
+// Same data, no provider stack required.
 
-import type { User } from 'firebase/auth';
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
-import { useUser } from 'reactfire';
 import { useTokenRefresh } from '../features/auth/useTokenRefresh';
+import { auth } from './firebase';
 import type { CustomClaims, Principal } from './principal-derive';
 import { principalFromClaims } from './principal-derive';
 
@@ -42,13 +46,23 @@ export { principalFromClaims };
 /**
  * `usePrincipal()` — read the current user's role union from custom
  * claims. Re-renders on token rotation (sign-in, sign-out, hourly
- * refresh, server-side claim updates). Suspense-compatible.
+ * refresh, server-side claim updates).
  */
 export function usePrincipal(): Principal {
-  // `suspense: true` is the reactfire default; we want it here so the
-  // top-level <Suspense> in main.tsx renders the loading fallback while
-  // the initial `onAuthStateChanged` resolves.
-  const { data: user } = useUser();
+  // Mirror the `auth.currentUser` SDK signal. `auth.currentUser` is
+  // synchronous-readable but not reactive; `onAuthStateChanged` is
+  // the change feed. We seed initial state from `auth.currentUser` so
+  // a mount during a steady-signed-in session doesn't flicker through
+  // a transient signed-out frame.
+  const [user, setUser] = useState<User | null>(auth.currentUser);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (next) => {
+      setUser(next);
+    });
+    return unsubscribe;
+  }, []);
+
   // Bump on token rotation so the effect below re-fires and pulls fresh claims.
   const tick = useTokenRefresh();
   const [claims, setClaims] = useState<CustomClaims | null>(null);
@@ -62,8 +76,7 @@ export function usePrincipal(): Principal {
       };
     }
     // `getIdTokenResult()` decodes claims from the *current* (cached)
-    // token; reactfire would also expose this via `useIdTokenResult`,
-    // but we manage it directly so the `useTokenRefresh` tick can
+    // token; we manage it directly so the `useTokenRefresh` tick can
     // force a re-read after a server-side claim update.
     user
       .getIdTokenResult()
@@ -80,5 +93,5 @@ export function usePrincipal(): Principal {
     };
   }, [user, tick]);
 
-  return principalFromClaims(user as User | null, claims);
+  return principalFromClaims(user, claims);
 }

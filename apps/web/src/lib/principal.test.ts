@@ -1,8 +1,8 @@
 // Unit tests for the web-side `principalFromClaims` wrapper around the
 // shared derivation. We test the wrapper directly rather than mounting
-// reactfire — the wrapper is responsible for adding `firebaseAuthSignedIn`
-// + the `hasAnyRole` / `wardsInStake` helpers on top of `@kindoo/shared`'s
-// pure `principalFromClaims`.
+// the live `usePrincipal()` hook — the wrapper is responsible for
+// adding `firebaseAuthSignedIn` + the `hasAnyRole` / `wardsInStake`
+// helpers on top of `@kindoo/shared`'s pure `principalFromClaims`.
 //
 // We import from `./principal-derive` rather than `./principal` so the
 // test module graph doesn't pull in the Firebase SDK init (which would

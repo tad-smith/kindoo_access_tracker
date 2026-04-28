@@ -2,13 +2,14 @@
 // re-render when the token rotates (initial sign-in, hourly auto-
 // refresh, server-side `revokeRefreshTokens`, manual `getIdToken(true)`).
 //
-// Why this exists: reactfire's `useIdTokenResult(user)` caches by user
-// reference. After `revokeRefreshTokens` fires server-side, the user
-// reference is stable but the underlying token has new claims; without
-// a re-render trigger, `usePrincipal()` would surface stale claims
-// until the user took an action that re-rendered the tree. This hook
+// Why this exists: `usePrincipal()` reads decoded claims from the
+// current `User` via `getIdTokenResult()`. The `User` reference is
+// stable across token rotations, so without an external re-render
+// trigger, server-side claim updates (`revokeRefreshTokens` fans the
+// next refresh; the SDK rotates the token) would not flow into the
+// React tree until something else caused a re-render. This hook
 // bumps a counter on every `onIdTokenChanged` event so consumers
-// re-evaluate.
+// re-evaluate their decoded claims.
 
 import { onIdTokenChanged } from 'firebase/auth';
 import { useEffect, useState } from 'react';

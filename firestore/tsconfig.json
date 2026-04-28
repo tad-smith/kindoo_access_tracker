@@ -4,7 +4,13 @@
   "compilerOptions": {
     "composite": true,
     "outDir": "./.tsbuild",
-    "rootDir": "./tests"
+    "rootDir": "./tests",
+    // tests/lib/rules.ts uses node: built-ins (node:fs, node:path,
+    // node:url) and import.meta.url. Pre-Phase-3.5, vitest 2's
+    // transitive resolution made @types/node discoverable to TypeScript
+    // via @types auto-include. Vitest 4 / TS 6 stopped picking it up
+    // through that path, so name it explicitly.
+    "types": ["node"]
   },
   "include": ["tests"]
 }
