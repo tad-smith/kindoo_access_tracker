@@ -21,6 +21,7 @@
     "test": "pnpm -r --if-present test",
     "test:unit": "pnpm -r --if-present test:unit",
     "test:integration": "pnpm -r --if-present test:integration",
+    "test:integration:local": "pnpm -r --if-present test:integration:local",
     "test:rules": "pnpm -r --if-present test:rules",
     "test:e2e": "pnpm -r --if-present test:e2e",
     "build": "pnpm -r --if-present build",

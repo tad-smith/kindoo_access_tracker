@@ -13,7 +13,8 @@
     "shell": "firebase functions:shell",
     "test": "vitest run",
     "test:unit": "vitest run src/",
-    "test:integration": "firebase emulators:exec --only firestore,auth --project demo-kindoo-tests 'pnpm exec vitest run tests/'",
+    "test:integration": "vitest run tests/",
+    "test:integration:local": "firebase emulators:exec --only firestore,auth --project demo-kindoo-tests 'pnpm exec vitest run tests/'",
     "lint": "prettier --check src tests",
     "typecheck": "tsc -b tsconfig.tests.json"
   },
