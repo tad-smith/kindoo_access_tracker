@@ -11,8 +11,8 @@
     "push": "npm run version:stamp && clasp push",
     "push:watch": "npm run version:stamp && clasp push --watch",
     "pull": "clasp pull",
-    "open": "clasp open",
-    "open:web": "clasp open --webapp",
+    "open": "clasp open-script",
+    "open:web": "clasp open-web-app",
     "deploy:apps-script": "clasp deploy",
     "deployments": "clasp deployments",
     "logs": "clasp logs",
@@ -31,9 +31,9 @@
     "deploy:prod": "bash infra/scripts/deploy-prod.sh"
   },
   "devDependencies": {
-    "@google/clasp": "^2.4.2",
-    "concurrently": "^9.1.0",
-    "prettier": "^3.4.2",
+    "@google/clasp": "^3.3.0",
+    "concurrently": "^9.2.1",
+    "prettier": "^3.8.3",
     "typescript": "^6.0.3"
   },
   "engines": {
