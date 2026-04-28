@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "firebase emulators:exec --only firestore --project demo-kindoo 'pnpm exec vitest run'",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-kindoo 'pnpm exec vitest run'",
-    "test:rules:no-emulator": "vitest run",
+    "test:rules": "vitest run",
+    "test:rules:with-emulator": "firebase emulators:exec --only firestore --project demo-kindoo 'pnpm exec vitest run'",
     "lint": "prettier --check tests",
     "typecheck": "tsc -b"
   },
