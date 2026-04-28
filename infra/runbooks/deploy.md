@@ -2,6 +2,8 @@
 
 Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `kindoo-prod`. Two commands, but with pre-flight, post-deploy verification, and rollback steps documented here so an operator under pressure has them in one place.
 
+> **Before running this runbook**, complete `infra/runbooks/provision-firebase-projects.md` (B1 in pre-Phase-1 setup). That runbook creates the Firebase projects, billing, services, Firestore databases, Auth, and service accounts that this deploy runbook assumes already exist.
+
 > **STATUS (as of 2026-04-27):** This runbook is **Phase 1 skeleton**. Several sections are TODO until operator task **B1** in `docs/firebase-migration.md` lands (real Firebase projects + service accounts + billing). The structure is in place so that as B1 + later phases ship, this fills in incrementally.
 
 ## Pre-flight (every deploy)

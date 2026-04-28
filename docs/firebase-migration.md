@@ -39,7 +39,7 @@ The pure-client + minimal-Cloud-Functions approach trades a centralised service 
 | F14 | **Repo layout side-by-side during migration.** New code in monorepo at repo root (`apps/web/`, `functions/`, `firestore/`, `packages/shared/`, `infra/`, `e2e/`); existing `src/` and `identity-project/` untouched until Phase 11's cutover. | Keeps the live app deployable for rollback throughout. Phase 11 retires `src/` and `identity-project/`; their git history is preserved. |
 | F15 | **`stakeId` parameterized from day one.** Even though there's only one stake (`csnorth`) for v1, every collection path and rule takes `{stakeId}` as a path segment. Phase B is then a routing change, not a data refactor. | Prior plan's lesson learned. The hardcoded `csnorth` constant is consolidated in one place (`apps/web/src/lib/constants.ts`) so Phase B is grep-and-fix. |
 | F16 | **Email via Resend** (100/day free tier; 3000/month). Domain verification via DKIM CNAME + DMARC TXT records (~10 min setup, no significant DNS lead time). Locked in 2026-04-27. | Resend has the cleanest developer experience among free transactional-email vendors at this scale. SendGrid (originally proposed) and Brevo are equivalent fallbacks if needed; vendor swap is a Cloud Function wrapper change of ~30 lines. |
-| F17 | **Custom domain on a new TLD (TBD by user)**, used for both Firebase Hosting custom URL AND Resend email "From" branding. ~$10/year. The legacy `kindoo.csnorth.org` GitHub-Pages-iframe-wrapper URL is decommissioned at Phase 11 cutover (decision on whether to redirect or take down deferred to runbook). Locked in 2026-04-27. | User explicitly chose a fresh domain over staying on `kindoo.csnorth.org`. Same domain serves both app + email keeps DNS records consolidated. |
+| F17 | **Custom domain `stakebuildingaccess.org`**, used for both Firebase Hosting custom URL AND Resend email "From" branding (`noreply@stakebuildingaccess.org`). Domain name chosen 2026-04-27; registration + DNS verification land in B2. The legacy `kindoo.csnorth.org` GitHub-Pages-iframe-wrapper URL is decommissioned at Phase 11 cutover (decision on whether to redirect or take down deferred to runbook). | User explicitly chose a fresh domain over staying on `kindoo.csnorth.org`. Same domain serves both app + email keeps DNS records consolidated. |
 
 ## Team composition
 
@@ -1021,7 +1021,7 @@ Coverage gate: every diff plan branch has at least one fixture test.
   - `notifyManagersCancelled(stake, request)`
   - `notifyManagersOverCap(stake, pools, source)`
 - [ ] Plain-text bodies (preserve current shape).
-- [ ] "From" address: `<stake.stake_name> — Kindoo Access <noreply@<new-domain>>` (display name from `stake.stake_name`; domain from F17).
+- [ ] "From" address: `<stake.stake_name> — Kindoo Access <noreply@stakebuildingaccess.org>` (display name from `stake.stake_name`; domain per F17).
 - [ ] `notifications_enabled` kill-switch on stake doc — `false` skips every send and logs only.
 - [ ] Firestore triggers that invoke email service:
   - [ ] `functions/src/triggers/notifyOnRequestWrite.ts` — fires on requests writes; matches lifecycle transition; calls appropriate notification.

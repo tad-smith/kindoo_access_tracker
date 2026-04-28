@@ -15,6 +15,8 @@ These IDs are written into `.firebaserc` at the repo root and into the `infra/sc
 
 When B1 lands, no scripts in `infra/` should need to change — `firebase deploy --project staging` (or `prod`) reads the alias from `.firebaserc` and resolves it to whatever real project ID was created. Just verify the IDs match. If different IDs are chosen, edit `.firebaserc` once and everything else picks them up.
 
+The end-to-end click-by-click runbook for B1 is at `infra/runbooks/provision-firebase-projects.md`. Walk it once for staging, then again for prod; estimated ~90 minutes total for a first-time operator.
+
 ## Layout
 
 ```
@@ -30,9 +32,10 @@ infra/
 │   ├── alerts/                       # Cloud Monitoring alert policy YAML (gcloud-applied)
 │   └── metrics/                      # log-based metric definitions (gcloud-applied)
 ├── runbooks/
-│   ├── deploy.md                     # operator playbook for staging + prod deploy
-│   ├── observability.md              # what alerts fire, how to find logs
-│   └── restore.md                    # PITR restore, GCS-export restore, partial restore
+│   ├── provision-firebase-projects.md  # B1: create both Firebase projects end-to-end
+│   ├── deploy.md                       # operator playbook for staging + prod deploy
+│   ├── observability.md                # what alerts fire, how to find logs
+│   └── restore.md                      # PITR restore, GCS-export restore, partial restore
 └── CLAUDE.md                         # agent-facing conventions
 ```
 
