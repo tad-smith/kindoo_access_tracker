@@ -12,8 +12,7 @@
     "serve": "firebase emulators:start --only functions,firestore,auth",
     "shell": "firebase functions:shell",
     "test": "vitest run",
-    "test:unit": "vitest run --include 'src/**/*.test.ts'",
-    "test:integration": "vitest run --include 'tests/**/*.test.ts'",
+    "test:unit": "vitest run src/",
     "lint": "prettier --check src",
     "typecheck": "tsc -b"
   },
