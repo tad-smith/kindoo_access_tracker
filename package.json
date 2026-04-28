@@ -43,7 +43,7 @@
     "peerDependencyRules": {
       "allowedVersions": {
         "reactfire>firebase": "11",
-        "@firebase/rules-unit-testing>firebase": "11"
+        "@firebase/rules-unit-testing>firebase": "12"
       }
     }
   },
