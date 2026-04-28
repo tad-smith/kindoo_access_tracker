@@ -8,7 +8,7 @@
     "test": "playwright test",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "lint": "prettier --check tests",
+    "lint": "prettier --check tests fixtures",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

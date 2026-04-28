@@ -1,16 +1,30 @@
 rules_version = '2';
 
-// Phase 1 stub — locked down. Real rules land in Phase 3 per
-// docs/firebase-schema.md §6, where the deny-by-default with
-// explicit allows by collection gets implemented and tested.
+// Phase 1 stub — locked down by default. Phase 3 ships the real
+// per-collection rule matrix per `docs/firebase-schema.md` §6.
 //
-// Until then, the only way data gets into Firestore is via the
-// Admin SDK (Cloud Functions, deploy-time seed scripts), which
-// bypasses rules. This is intentional: it means a misconfigured
-// client cannot write anything during Phases 1–2 even by accident.
+// Phase 2 adds ONE allow-listed collection: `userIndex/{canonical}`,
+// readable by the user it identifies (the bridge that
+// `usePrincipal()` consults to confirm the bridge doc exists for
+// their canonical email). Writes stay forbidden — the
+// `onAuthUserCreate` trigger writes via the Admin SDK, which bypasses
+// rules. Every other path stays `if false`, so a misconfigured client
+// still cannot write anywhere by accident.
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // userIndex/{canonical} — written by `onAuthUserCreate` trigger
+    // (Admin SDK bypass); read by the user themselves so the SPA can
+    // confirm the bridge entry exists with the expected uid. The
+    // matching rule will become more nuanced in Phase 3 if any
+    // additional reader is required (currently planned: none).
+    match /userIndex/{memberCanonical} {
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Catch-all: every other path stays locked down until Phase 3.
     match /{document=**} {
       allow read, write: if false;
     }

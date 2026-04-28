@@ -1,5 +1,15 @@
 // Public surface of @kindoo/shared. Both apps/web/ and functions/ import
-// from here. Domain types and zod schemas land in Phase 3 (per
-// docs/firebase-migration.md); for Phase 1 we only ship the
-// canonical-email helpers that need to be consistent across runtimes.
+// from here. Phase 1 shipped canonical-email helpers; Phase 2 adds the
+// auth surface (claims, principal, userIndex bridge); Phase 3 will add
+// domain types (Seat / Request / Access / Audit / Stake) and zod
+// schemas alongside.
+
 export { canonicalEmail, emailsEqual } from './canonicalEmail.js';
+export { principalFromClaims } from './principal.js';
+export type {
+  CustomClaims,
+  Principal,
+  StakeClaims,
+  TimestampLike,
+  UserIndexEntry,
+} from './types/index.js';

@@ -8,21 +8,23 @@
     "node": "22"
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "node scripts/build.mjs",
     "serve": "firebase emulators:start --only functions,firestore,auth",
     "shell": "firebase functions:shell",
     "test": "vitest run",
     "test:unit": "vitest run src/",
-    "lint": "prettier --check src",
-    "typecheck": "tsc -b"
+    "test:integration": "firebase emulators:exec --only firestore,auth --project demo-kindoo-tests 'pnpm exec vitest run tests/'",
+    "lint": "prettier --check src tests",
+    "typecheck": "tsc -b tsconfig.tests.json"
   },
   "dependencies": {
-    "@kindoo/shared": "workspace:*",
     "firebase-admin": "^13.0.2",
     "firebase-functions": "^6.1.1"
   },
   "devDependencies": {
+    "@kindoo/shared": "workspace:*",
     "@types/node": "^22.10.5",
+    "esbuild": "^0.24.0",
     "firebase-functions-test": "^3.4.0",
     "vitest": "^2.1.8"
   }

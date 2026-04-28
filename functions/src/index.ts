@@ -1,9 +1,19 @@
-// Cloud Functions entry point. Phase 1 ships exactly one callable —
-// `hello` — which the smoketest in apps/web invokes to prove the SPA →
-// Functions → Firestore wiring works end-to-end.
+// Cloud Functions entry point. Phase 1 shipped the `hello` callable
+// (a Phase-2 deletion candidate, but kept until the SPA's smoketest
+// is rewired to talk to a real callable). Phase 2 adds the four
+// claim-sync triggers per `docs/firebase-schema.md` §7:
 //
-// Phase 1 leaves `hello` anonymously callable (no auth gate). Phase 2
-// adds Firebase Auth verification once Identity Platform is wired.
+//   - onAuthUserCreate     (auth.user().onCreate; v1 — see trigger
+//                           file for why v2 is not used here)
+//   - syncAccessClaims     (firestore onDocumentWritten)
+//   - syncManagersClaims   (firestore onDocumentWritten)
+//   - syncSuperadminClaims (firestore onDocumentWritten; v1 skeleton —
+//                           empty allow-list)
+//
+// Phase 1 left `hello` anonymously callable (no auth gate). That's
+// still the case in Phase 2; Phase 3+ will retire `hello` once real
+// auth-gated reads exist.
+
 import { onCall } from 'firebase-functions/v2/https';
 import { KINDOO_FUNCTIONS_VERSION } from './version.js';
 
@@ -22,3 +32,8 @@ export const hello = onCall({}, () => ({
   // is a reliable "we are local" signal.
   env: process.env['FIREBASE_CONFIG'] ? 'cloud' : 'local',
 }));
+
+export { onAuthUserCreate } from './triggers/onAuthUserCreate.js';
+export { syncAccessClaims } from './triggers/syncAccessClaims.js';
+export { syncManagersClaims } from './triggers/syncManagersClaims.js';
+export { syncSuperadminClaims } from './triggers/syncSuperadminClaims.js';

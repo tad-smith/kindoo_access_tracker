@@ -14,6 +14,7 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
+    "@kindoo/shared": "workspace:*",
     "@tanstack/react-router": "^1.95.5",
     "firebase": "^11.1.0",
     "react": "^19.0.0",

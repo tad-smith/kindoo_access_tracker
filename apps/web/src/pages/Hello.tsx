@@ -1,75 +1,50 @@
-// Phase 1 smoketest page.
+// Phase 2 placeholder landing page.
 //
-// Reads the smoketest doc at `stakes/_smoketest/hello` via reactfire's
-// `useFirestoreDocData`. The doc may not be seeded yet (operator runs a
-// seed step after wiring Firebase up), so the page handles loading,
-// error, "no data", and "invalid path" states without throwing.
+// Renders the signed-in user's email + a pretty-printed dump of the
+// decoded `Principal` object (custom claims via `usePrincipal()`). This
+// is the "Hello page renders email + decoded roles" proof from the
+// migration plan Phase 2 sub-tasks.
 //
-// Phase 4 replaces this page with the real auth-gated landing page.
+// Replaced in Phase 5/6 by real role-based pages (Roster, Queue, etc.).
+// The migration plan explicitly calls this out: "Phase-2-only
+// `pages/hello.ts` shows email + roles. Deleted in Phase 6."
 
-import type { DocumentReference } from 'firebase/firestore';
-import { doc } from 'firebase/firestore';
-import { useFirestore, useFirestoreDocData } from 'reactfire';
-
-const SMOKETEST_PATH = 'stakes/_smoketest/hello';
+import { usePrincipal } from '../lib/principal';
 
 export function Hello() {
-  const firestore = useFirestore();
-
-  // `doc()` validates the path string at call time. The smoketest path
-  // may not resolve to a valid even-segment document path under the
-  // current schema; we catch that synchronous throw and surface it as a
-  // visible error rather than letting the page itself crash. Playwright
-  // asserts the page renders, not that the doc resolves successfully.
-  let ref: DocumentReference | null = null;
-  let pathError: Error | null = null;
-  try {
-    ref = doc(firestore, SMOKETEST_PATH);
-  } catch (err) {
-    pathError = err instanceof Error ? err : new Error(String(err));
-  }
+  const principal = usePrincipal();
 
   return (
-    <main>
-      <h1>Kindoo &mdash; Phase 1 smoketest</h1>
-      {pathError ? (
-        <SmoketestPathError error={pathError} />
-      ) : (
-        <SmoketestDoc reference={ref as DocumentReference} />
-      )}
+    <main style={{ padding: '1rem', maxWidth: '60ch', margin: '0 auto' }}>
+      <h1>Hello, {principal.email || '(no email)'}</h1>
+      <p>
+        This is the Phase 2 placeholder landing page. Real role-based pages land starting in Phase
+        5.
+      </p>
+      <h2>Decoded principal</h2>
+      <pre
+        style={{
+          background: '#f4f4f4',
+          padding: '0.75rem',
+          borderRadius: '4px',
+          overflowX: 'auto',
+        }}
+      >
+        {JSON.stringify(principalForDisplay(principal), null, 2)}
+      </pre>
     </main>
   );
 }
 
-function SmoketestPathError({ error }: { error: Error }) {
-  return (
-    <pre role="alert">
-      Smoketest path <code>{SMOKETEST_PATH}</code> is not a valid doc reference: {error.message}
-    </pre>
-  );
-}
-
-function SmoketestDoc({ reference }: { reference: DocumentReference }) {
-  // `suspense: false` tells reactfire to surface loading state via the
-  // returned `status` field rather than throwing a promise. That lets
-  // the heading render synchronously even when the emulator isn't
-  // running — the smoke test asserts the heading, not the data.
-  const { status, data, error } = useFirestoreDocData(reference, {
-    suspense: false,
-  });
-
-  if (status === 'loading') {
-    return <p>Loading&hellip;</p>;
-  }
-  if (status === 'error') {
-    return <pre role="alert">Error: {error?.message ?? 'unknown'}</pre>;
-  }
-  if (data === undefined) {
-    return (
-      <p>
-        <em>No smoketest doc seeded yet.</em>
-      </p>
-    );
-  }
-  return <pre>{JSON.stringify(data, null, 2)}</pre>;
+// Strip non-serializable function fields before pretty-printing.
+function principalForDisplay(p: ReturnType<typeof usePrincipal>) {
+  return {
+    isAuthenticated: p.isAuthenticated,
+    email: p.email,
+    canonical: p.canonical,
+    isPlatformSuperadmin: p.isPlatformSuperadmin,
+    managerStakes: p.managerStakes,
+    stakeMemberStakes: p.stakeMemberStakes,
+    bishopricWards: p.bishopricWards,
+  };
 }

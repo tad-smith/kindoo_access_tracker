@@ -195,6 +195,17 @@ What each API does for us:
 | `eventarc.googleapis.com` | Firestore-trigger plumbing for 2nd-gen Functions (used by audit + claim-sync). |
 | `pubsub.googleapis.com` | Pub/Sub backs Cloud Scheduler delivery to Pub/Sub-targeted Functions; required even if jobs use HTTP targets. |
 
+### 1.5.1 Initialize Firebase Hosting via the console
+
+After the API is enabled, you must also "initialize" Hosting via the Firebase Console for the default site to actually serve traffic. Without this step, `firebase deploy --only hosting` succeeds at upload but `kindoo-staging.web.app` returns "Site Not Found."
+
+1. Open <https://console.firebase.google.com/project/kindoo-staging/hosting/sites/kindoo-staging>.
+2. Click "Get Started." Walk the wizard:
+   - Step 1 (Install Firebase CLI): already done; click Next.
+   - Step 2 (Initialize project): already done via `.firebaserc`; click Next.
+   - Step 3 (Deploy): click Finish/Continue. The wizard's "Deploy" step is satisfied either by an immediate `firebase deploy --only hosting` afterward or by accepting that you'll deploy via CI/script.
+3. After the wizard completes, the URL `kindoo-staging.web.app` will resolve (may need 1–2 minutes for CDN propagation).
+
 ### 1.6 Create the Firestore database
 
 Per F8/F9 we use Native mode in `us-central1` (matches the stake's `America/Denver` script-tz bias). **The region is immutable** — to change it later you'd have to delete the project and recreate. Triple-check before clicking.
@@ -350,10 +361,22 @@ The Firebase **API key is not a secret** — it's a public client identifier; se
 
 Repeat **all of Phase 1**, substituting `kindoo-prod` everywhere `kindoo-staging` appears. Re-read each step rather than skimming — there are subtle prod-only additions in the next two phases.
 
+In particular, do not skip step 1.5.1 (Initialize Firebase Hosting via the console) for prod. The instructions are identical:
+
+1. Open <https://console.firebase.google.com/project/kindoo-prod/hosting/sites/kindoo-prod>.
+2. Click "Get Started." Walk the wizard:
+   - Step 1 (Install Firebase CLI): already done; click Next.
+   - Step 2 (Initialize project): already done via `.firebaserc`; click Next.
+   - Step 3 (Deploy): click Finish/Continue. The wizard's "Deploy" step is satisfied either by an immediate `firebase deploy --only hosting` afterward or by accepting that you'll deploy via CI/script.
+3. After the wizard completes, the URL `kindoo-prod.web.app` will resolve (may need 1–2 minutes for CDN propagation).
+
+Without this step, `firebase deploy --only hosting` succeeds at upload but `kindoo-prod.web.app` returns "Site Not Found."
+
 When done, you should have:
 
 - A `kindoo-prod` Firebase project on Blaze with $1 budget alert.
 - All 14 services enabled.
+- The default Hosting site initialized via the console wizard.
 - A Firestore database in `us-central1` Native mode.
 - Authentication with Google sign-in enabled, public name "Kindoo Access Tracker," authorized domains: `localhost`, `kindoo-prod.web.app`, `kindoo-prod.firebaseapp.com`.
 - A `kindoo-app` SA with the three F1 roles.
@@ -675,6 +698,21 @@ gcloud projects get-iam-policy <PROJECT_ID> \
 
 Expected: at minimum `roles/datastore.user`. If missing, re-run step 1.9.
 
+### "Changing from an HTTPS function to a background triggered function is not allowed."
+
+This means a previous deploy attempt failed mid-way and registered some functions with a wrong trigger type — typically because a partial-deploy failure left Firestore-document or Auth-trigger functions registered as plain HTTPS functions in the Cloud Functions registry. Recovery:
+
+```bash
+firebase functions:delete <function-names...> \
+  --region us-central1 \
+  --project <project-alias>
+# Confirm "y" at the prompt for each (or pass --force).
+
+firebase deploy --only functions --project <project-alias>
+```
+
+If you don't know which functions are in the bad state, use `firebase functions:list --project <project-alias>` to see all and delete the ones whose trigger type doesn't match the source code's intent.
+
 ### "$1 budget" alert is firing every month even with no real usage
 
 Cloud Storage charges for Firestore exports show up as fractional cents. If the budget is set to $1 with 50% threshold, you'll get an alert email when the project crosses $0.50 in a month — which can happen on prod after a few months of weekly exports if the database has any size to it. Either:
@@ -709,6 +747,7 @@ Both should succeed. The pipeline middle-steps are blocked until later phases.
 - **Real Firestore data** — Phase 11 cutover via `infra/scripts/migrate-sheet-to-firestore.ts`.
 - **CI deploy automation** — operator-triggered through the migration period; CI deploys land post-Phase-11.
 - **Monitoring alert policies + log-based metrics** — separately documented in `infra/runbooks/observability.md` and applied by gcloud commands once B1 lands. They're orthogonal to project provisioning.
+- **The actual deploy of the React app + Cloud Functions** — has its own concerns (esbuild bundling for the workspace:* deploy issue, the Hosting predeploy hook in `firebase.json`, etc.) that land in the Phase 2+ engineering work and are documented in `docs/changelog/phase-2-auth-and-claims.md`.
 
 ---
 

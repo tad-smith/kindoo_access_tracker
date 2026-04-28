@@ -152,3 +152,52 @@ Owner: @web-engineer
 Phase: 1 → fixed by Phase 4
 
 Firebase SDK is the bulk of the bundle. Phase 4's TanStack Router file-based routing + code-splitting work will fix it. No action required during Phases 2–3.
+
+## [T-08] Consolidate web-side `principal.ts` onto `@kindoo/shared`
+Status: open
+Owner: @web-engineer
+Phase: 2
+
+`packages/shared/src/principal.ts` exports `principalFromClaims(claims, typedEmail): Principal` plus the `CustomClaims` / `Principal` / `StakeClaims` types from `packages/shared/src/types/auth.ts`. Backend-engineer's Phase 2 work (sync triggers + onAuthUserCreate) builds against these. The web-engineer's parallel Phase 2 work currently has its own `apps/web/src/lib/principal.ts` + `principal-derive.ts`; before Phase 2 closes, consolidate by importing `principalFromClaims` and the types from `@kindoo/shared`, so the SPA's `usePrincipal()` hook and the trigger code use the same derivation. Catches the common drift surface where claims-shape changes accidentally only land on one side.
+
+## [T-09] Add `hosting.predeploy` hook to `firebase.json`
+Status: open
+Owner: @infra-engineer
+Phase: cross-cutting
+
+`firebase.json` has no `hosting.predeploy` to rebuild `apps/web/dist` automatically before `firebase deploy --only hosting`. The Functions side has a predeploy hook (esbuild bundle); Hosting does not. Today the operator must remember to run `pnpm --filter @kindoo/web build` before each Hosting deploy or stale assets ship. Add a `hosting.predeploy` entry that runs the build, mirroring the Functions hook. Polish pass; not deploy-blocking.
+
+## [T-10] Document Firebase Hosting "Get Started" console step in B1 runbook
+Status: in-progress
+Owner: @infra-engineer
+Phase: cross-cutting
+
+`gcloud services enable firebasehosting.googleapis.com` enables the API but does not provision a default Hosting site for serving — the operator must click "Get Started" once in the Firebase Hosting console after first deploy or the deployed URL 404s. Surfaced on the first Phase 2 staging deploy. `infra-engineer` is updating `infra/runbooks/provision-firebase-projects.md` in parallel with this Phase 2 close commit.
+
+## [T-11] Document the esbuild-bundling deploy approach for Cloud Functions
+Status: open
+Owner: @docs-keeper
+Phase: cross-cutting
+
+Cloud Build's `npm install` cannot resolve pnpm's `workspace:*` protocol, so `@kindoo/shared` as a workspace dep blocks Cloud Functions deploy. Phase 2 worked around this with esbuild bundling: `functions/scripts/build.mjs` bundles `@kindoo/shared`'s source into `functions/lib/index.js` and writes a clean `functions/lib/package.json` containing only real npm deps; `firebase.json`'s `functions.source` points at `functions/lib`. This is architecturally significant — the workaround shape (clean `lib/package.json` + symlinked `node_modules` for the local emulator) is non-obvious and easy to break. Document it in `infra/CLAUDE.md` and consider promoting to a numbered architecture decision (next D-number) so future agents don't re-derive the trap. See the Phase 2 changelog "Deviations" section for the full rationale.
+
+## [T-12] Document failed-deploy half-state recovery in B1 runbook
+Status: open
+Owner: @infra-engineer
+Phase: cross-cutting
+
+A failed first-deploy attempt can leave Cloud Functions in a half-registered state where the platform sees a function as an HTTPS function even though the source declares it as a Firestore-document trigger. Symptom: subsequent deploys fail with a trigger-type-mismatch error. Recovery: `firebase functions:delete <name>` against the affected functions, then redeploy. Add a troubleshooting entry to `infra/runbooks/provision-firebase-projects.md`.
+
+## [T-13] `STAKE_IDS` hardcoded to `['csnorth']` in functions
+Status: open
+Owner: @backend-engineer
+Phase: 12
+
+`functions/src/lib/constants.ts` exports `STAKE_IDS = ['csnorth']` and `seedClaimsFromRoleData` walks this list when seeding claims for brand-new users on first sign-in. The `syncAccessClaims` / `syncManagersClaims` triggers extract `stakeId` from the doc path directly, so they are stake-ID-agnostic; only the seed path is hardcoded. Implication: if the v1 stake's actual document ID isn't `csnorth`, new users will sign in cleanly but won't get claims seeded automatically — operators can work around by manually editing a `kindooManagers` doc to fire the sync trigger. Phase 12 (multi-stake) makes this dynamic by deriving the list at runtime.
+
+## [T-14] Local Node 20 vs production Node 22 mismatch produces emulator warning
+Status: open
+Owner: @docs-keeper
+Phase: cross-cutting
+
+The Functions emulator runs against the host's Node (currently 20.x on the operator's machine); the production runtime is Node 22. The emulator emits a version-mismatch warning at startup. Informational only — Phase 2 functions code runs on both. Document the recommended Node 22 LTS upgrade path (nvm / asdf) in the root `CLAUDE.md` onboarding section or `apps/web/CLAUDE.md`. Developer-environment concern, not a deploy blocker.

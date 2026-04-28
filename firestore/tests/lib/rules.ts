@@ -1,7 +1,7 @@
 // Helpers for spinning up `@firebase/rules-unit-testing` against the
-// committed firestore.rules. Phase 1 ships only the scaffolding; Phase 3
-// adds real per-collection rules and per-match-block test files that
-// reuse the helpers here.
+// committed firestore.rules. Phase 1 shipped scaffolding; Phase 2 adds
+// the `seedAsAdmin` helper for tests that need to populate documents
+// before exercising rules.
 //
 // The helper reads firestore.rules from a path relative to THIS file,
 // not from the test's CWD — vitest runs tests from the workspace root
@@ -53,8 +53,8 @@ export async function clearAll(env: RulesTestEnvironment): Promise<void> {
 
 /**
  * Build a Firestore handle authenticated as the given uid (with optional
- * custom claims). Phase 3 will pass the same shape of token claims that
- * Phase 2's claim-sync triggers stamp on real users.
+ * custom claims). The Phase 3 rules will read the same shape of token
+ * claims that the Phase 2 claim-sync triggers stamp on real users.
  */
 export function authedContext(
   env: RulesTestEnvironment,
@@ -70,4 +70,18 @@ export function authedContext(
  */
 export function unauthedContext(env: RulesTestEnvironment): RulesTestContext {
   return env.unauthenticatedContext();
+}
+
+/**
+ * Run `fn` with rules disabled — the way to seed documents for a rules
+ * test. The Admin SDK does the same thing in Cloud Functions; in tests
+ * `withSecurityRulesDisabled` is the equivalent affordance.
+ */
+export async function seedAsAdmin(
+  env: RulesTestEnvironment,
+  fn: (ctx: RulesTestContext) => Promise<void>,
+): Promise<void> {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await fn(ctx);
+  });
 }
