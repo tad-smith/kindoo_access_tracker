@@ -114,7 +114,7 @@ Firebase shows the project number in two places. Find it now and write it down �
 
 1. Click the gear icon (top left, next to "Project Overview") → "Project settings."
 2. The General tab shows "Project ID" (= `kindoo-staging`) and "Project number" (= a 12-digit number, e.g., `123456789012`). Note the project number.
-3. The same page also has a "Web API key" — ignore for now; you'll capture per-app config in step 1.11.
+3. The same page also has a "Web API key" — ignore for now; you'll capture per-app config in step 1.10.
 
 ### 1.3 Upgrade to Blaze plan + set $1 budget alert
 
@@ -200,14 +200,32 @@ What each API does for us:
 Per F8/F9 we use Native mode in `us-central1` (matches the stake's `America/Denver` script-tz bias). **The region is immutable** — to change it later you'd have to delete the project and recreate. Triple-check before clicking.
 
 1. Firebase console → "Firestore Database" in the left nav → "Create database."
-2. **Mode:** Native mode. (NOT Datastore mode — that's a different product.)
-3. Click "Next."
-4. **Location:** `nam5 (us-central)` from the Multi-region section, OR `us-central1 (Iowa)` from the Region section. **Per F8 we want the regional `us-central1`** — it's cheaper than multi-region and our scale doesn't justify multi-region failover. Click `us-central1`.
-5. Click "Next."
-6. **Security rules starting mode:** "Start in production mode" (auto-locks all reads/writes). Phase 1's `firestore/firestore.rules` stub is `allow read, write: if false;` which will overwrite this on first deploy regardless, but starting locked-down is safer than starting open.
-7. Click "Create." Wait ~60s.
+2. **Database ID:** if the console prompts you for a name, leave it as `(default)`. Do **not** type the project ID (e.g., `kindoo-prod`) — that creates a *named* database instead of the default one, and every Firebase SDK + tutorial assumes you're talking to `(default)`. Threading an explicit `databaseId` through Web SDK init, Functions, rules deploys, and the export job is a forever-tax you don't want. If the console only shows a name field with the project ID prefilled, clear it and type `(default)` (with the parens).
+3. **Mode:** Native mode. (NOT Datastore mode — that's a different product.)
+4. Click "Next."
+5. **Location:** `nam5 (us-central)` from the Multi-region section, OR `us-central1 (Iowa)` from the Region section. **Per F8 we want the regional `us-central1`** — it's cheaper than multi-region and our scale doesn't justify multi-region failover. Click `us-central1`.
+6. Click "Next."
+7. **Security rules starting mode:** "Start in production mode" (auto-locks all reads/writes). Phase 1's `firestore/firestore.rules` stub is `allow read, write: if false;` which will overwrite this on first deploy regardless, but starting locked-down is safer than starting open.
+8. Click "Create." Wait ~60s.
 
 The database is now provisioned. The Firestore tab will show an empty database.
+
+**Verify the name:** before moving on, confirm the database is `(default)`, not project-id-named:
+
+```bash
+gcloud firestore databases list --project=<PROJECT_ID> --format="value(name)"
+```
+
+Expected: a single line ending in `databases/(default)`. If it ends in `databases/<PROJECT_ID>` instead, you got a named database. Recreate as `(default)`:
+
+```bash
+gcloud firestore databases delete --database=<PROJECT_ID> --project=<PROJECT_ID>
+gcloud firestore databases create \
+  --database='(default)' \
+  --location=us-central1 \
+  --type=firestore-native \
+  --project=<PROJECT_ID>
+```
 
 ### 1.7 Enable Firebase Authentication + Google sign-in
 
@@ -292,19 +310,7 @@ for ROLE in roles/run.invoker roles/secretmanager.secretAccessor; do
 done
 ```
 
-### 1.10 Verify the default Cloud Storage bucket exists
-
-Firebase auto-creates a default bucket (`<project-id>.appspot.com` or `<project-id>.firebasestorage.app` depending on project age) when the project is created. Confirm:
-
-```bash
-gsutil ls -p kindoo-staging
-```
-
-Expected: at least one bucket listed, named like `gs://kindoo-staging.appspot.com/` or `gs://kindoo-staging.firebasestorage.app/`. Note which.
-
-We don't actively use Cloud Storage for app data in v1 (per `docs/firebase-schema.md` §9 — no avatars, no file uploads). The bucket exists because Firebase Hosting and the Firestore weekly-export job both need a GCS-shaped landing zone.
-
-### 1.11 Register the web app + capture client config
+### 1.10 Register the web app + capture client config
 
 The web app needs Firebase config (API key, auth domain, etc.) to talk to this project. Register it:
 
@@ -352,7 +358,6 @@ When done, you should have:
 - Authentication with Google sign-in enabled, public name "Kindoo Access Tracker," authorized domains: `localhost`, `kindoo-prod.web.app`, `kindoo-prod.firebaseapp.com`.
 - A `kindoo-app` SA with the three F1 roles.
 - The default compute SA with `roles/datastore.user`, `roles/run.invoker`, `roles/secretmanager.secretAccessor`.
-- A default GCS bucket.
 - A registered web app — but **do not write its config to `apps/web/.env.local`** (which holds staging). Save it somewhere safe; it will land in CI secrets or an `.env.production` later. For now, copy it into a personal-notes scratchpad and forget it.
 
 Once Phase 2 completes, move on to Phase 3 (PITR + backups), which is **prod-only**.
@@ -381,7 +386,9 @@ The matching restore procedures live in `infra/runbooks/restore.md`.
 ### 3.2 Create the prod backups bucket
 
 ```bash
-gsutil mb -p kindoo-prod -l us-central1 gs://kindoo-prod-backups/
+gcloud storage buckets create gs://kindoo-prod-backups \
+  --project=kindoo-prod \
+  --location=us-central1
 ```
 
 Expected: `Creating gs://kindoo-prod-backups/...`
@@ -390,29 +397,29 @@ Match the Firestore region (`us-central1`) so the export job stays in-region (no
 
 Now apply the 90-day lifecycle rule (per F8 / Phase 1) — keep ~12 weekly snapshots, expire older ones:
 
-Save this lifecycle JSON to a temp file (`/tmp/lifecycle.json` or wherever):
+Save this lifecycle JSON to a temp file (`/tmp/lifecycle.json` or wherever). Note `gcloud storage` expects the inner object only (no wrapping `lifecycle` key — that's a `gsutil`-ism):
 
 ```json
 {
-  "lifecycle": {
-    "rule": [
-      {
-        "action": { "type": "Delete" },
-        "condition": { "age": 90 }
-      }
-    ]
-  }
+  "rule": [
+    {
+      "action": { "type": "Delete" },
+      "condition": { "age": 90 }
+    }
+  ]
 }
 ```
 
 Then apply:
 
 ```bash
-gsutil lifecycle set /tmp/lifecycle.json gs://kindoo-prod-backups/
-gsutil lifecycle get gs://kindoo-prod-backups/
+gcloud storage buckets update gs://kindoo-prod-backups \
+  --lifecycle-file=/tmp/lifecycle.json
+gcloud storage buckets describe gs://kindoo-prod-backups \
+  --format="value(lifecycle_config)"
 ```
 
-Expected: the second command prints back the JSON you just applied.
+Expected: the second command prints back the rule you just applied (something like `{'rule': [{'action': {'type': 'Delete'}, 'condition': {'age': 90}}]}`). If it prints empty, the field name may have changed — fall back to `gcloud storage buckets describe gs://kindoo-prod-backups --format=yaml | grep -A 20 lifecycle` and look for an `age: 90` entry.
 
 ### 3.3 Grant the export-runner SA permission to write to the bucket
 
@@ -478,7 +485,7 @@ gcloud scheduler jobs run firestore-weekly-export \
 Then, after ~30s, list the bucket:
 
 ```bash
-gsutil ls gs://kindoo-prod-backups/
+gcloud storage ls gs://kindoo-prod-backups/
 ```
 
 Expected: a single subdirectory like `gs://kindoo-prod-backups/2026-04-27T18:42:11_98765/`. (At Phase 1 prod is empty, so the export will be small — just the export metadata files.)
@@ -520,7 +527,7 @@ Both should print `Now using alias <name> (<project-id>).`
 
 ### 4.2 Confirm `apps/web/.env.local` is set for staging
 
-You filled this in during step 1.11. Re-verify:
+You filled this in during step 1.10. Re-verify:
 
 ```bash
 cat apps/web/.env.local | grep -v '^#' | grep -v '^$'
@@ -528,7 +535,7 @@ cat apps/web/.env.local | grep -v '^#' | grep -v '^$'
 
 Expected: five lines populated; `VITE_USE_FIRESTORE_EMULATOR` empty.
 
-The prod values you captured in Phase 2 step 1.11 are *not* in this file — they'll go into a CI secret store later. For now keep them in your password manager.
+The prod values you captured in Phase 2 step 1.10 are *not* in this file — they'll go into a CI secret store later. For now keep them in your password manager.
 
 ### 4.3 (Future) prod env handling — punted to later
 
@@ -599,11 +606,12 @@ For staging the same command will print `POINT_IN_TIME_RECOVERY_DISABLED` — th
 ### 5.6 Backup bucket exists with lifecycle rule (prod only)
 
 ```bash
-gsutil ls -p kindoo-prod | grep kindoo-prod-backups
-gsutil lifecycle get gs://kindoo-prod-backups/
+gcloud storage ls --project=kindoo-prod | grep kindoo-prod-backups
+gcloud storage buckets describe gs://kindoo-prod-backups \
+  --format="value(lifecycle_config)"
 ```
 
-Expected: bucket listed; lifecycle JSON showing `"age": 90`.
+Expected: bucket listed; lifecycle output showing `'age': 90`.
 
 ### 5.7 Weekly export scheduler job exists (prod only)
 
