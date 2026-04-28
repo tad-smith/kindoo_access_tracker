@@ -3,11 +3,6 @@
     {
       "collectionGroup": "auditLog",
       "queryScope": "COLLECTION",
-      "fields": [{ "fieldPath": "timestamp", "order": "DESCENDING" }]
-    },
-    {
-      "collectionGroup": "auditLog",
-      "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "action", "order": "ASCENDING" },
         { "fieldPath": "timestamp", "order": "DESCENDING" }

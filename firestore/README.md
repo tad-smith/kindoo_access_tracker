@@ -9,21 +9,22 @@ Firestore Security Rules and composite-index declarations.
 | File                     | Status (Phase 3) |
 |---|---|
 | `firestore.rules`        | Full per-collection rules per `docs/firebase-schema.md` §6. Helpers, the `tiedToRequestCompletion` cross-doc invariant, and split-ownership on `access` are all in place. |
-| `firestore.indexes.json` | Composite indexes per `docs/firebase-schema.md` §5.1 (six on `auditLog`, four on `requests`). See "Index justifications" below for which query each one supports. |
+| `firestore.indexes.json` | Composite indexes per `docs/firebase-schema.md` §5.1 (five on `auditLog`, four on `requests`). See "Index justifications" below for which query each one supports. |
 | `tests/`                 | One rules-unit-testing suite per match block. Every collection has anon-deny / non-member-deny / member-allow / cross-stake-deny / write-path coverage. The Phase 1 `setup.test.ts` smoke and the Phase 2 `userIndex.test.ts` survive into Phase 3. |
 
 ## Index justifications
 
 JSON doesn't admit comments, so the per-index rationale lives here. If a query is removed, the matching index can be too.
 
-`auditLog` — collection-group indexes (so a single declaration covers every stake's `stakes/{stakeId}/auditLog`):
+`auditLog` — per-stake `COLLECTION`-scope indexes (queried as `stakes/{stakeId}/auditLog`, not collection-group):
 
-- `(timestamp DESC)` — default Audit Log page view (newest first).
 - `(action ASC, timestamp DESC)` — filter by action.
 - `(entity_type ASC, timestamp DESC)` — filter by entity type.
 - `(entity_id ASC, timestamp DESC)` — per-entity history view (one seat or one request's lifecycle).
 - `(actor_canonical ASC, timestamp DESC)` — filter by actor (Importer activity, manager activity).
 - `(member_canonical ASC, timestamp DESC)` — cross-collection per-user view (every audit row about one member).
+
+The default Audit Log page view (`.orderBy('timestamp', 'desc')` with no `where`) does not need a declared index: Firestore auto-creates ASC + DESC single-field indexes at `COLLECTION` scope by default. Declaring it as a composite was rejected by the deploy with `this index is not necessary, configure using single field index controls` — the entry was removed in `fix/firestore-unnecessary-index`.
 
 `requests` — collection-group indexes:
 
