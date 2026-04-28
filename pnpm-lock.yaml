@@ -41,9 +41,6 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.5(react@19.2.5)
-      reactfire:
-        specifier: ^4.2.3
-        version: 4.2.3(firebase@11.10.0)(react@19.2.5)
     devDependencies:
       '@tanstack/router-plugin':
         specifier: ^1.95.5
@@ -3793,13 +3790,6 @@ packages:
     resolution: {integrity: sha512-llUJLzz1zTUBrskt2pwZgLq59AemifIftw4aB7JxOqf1HY2FDaGDxgwpAPVzHU1kdWabH7FauP4i1oEeer2WCA==}
     engines: {node: '>=0.10.0'}
 
-  reactfire@4.2.3:
-    resolution: {integrity: sha512-FG75b586r8dId7EGIyVi/nKokth++BIvdRO1BRIBkM7BGe2v753olcNpUHBLGdBPap7t67vq2FA0P22Pu8rT3Q==}
-    engines: {node: '>=14'}
-    peerDependencies:
-      firebase: ^9.0.0
-      react: '>=16 || experimental'
-
   read-pkg-up@8.0.0:
     resolution: {integrity: sha512-snVCqPczksT0HS2EC+SxUndvSzn6LRCwpfSvLrIfR5BKDQQZMaI6jPRC9dYvYFDRAuFEAnkwww8kBBNE/3VvzQ==}
     engines: {node: '>=12'}
@@ -3883,12 +3873,6 @@ packages:
   run-async@2.4.1:
     resolution: {integrity: sha512-tvVnVv01b8c1RrA6Ep7JkStj85Guv/YrMcwqYQnwjsAS2cTmmPGBBjAjpCW7RrSodNSoE2/qg9O4bceNvUuDgQ==}
     engines: {node: '>=0.12.0'}
-
-  rxfire@6.1.0:
-    resolution: {integrity: sha512-NezdjeY32VZcCuGO0bbb8H8seBsJSCaWdUwGsHNzUcAOHR0VGpzgPtzjuuLXr8R/iemkqSzbx/ioS7VwV43ynA==}
-    peerDependencies:
-      firebase: ^9.0.0 || ^10.0.0 || ^11.0.0
-      rxjs: ^6.0.0 || ^7.0.0
 
   rxjs@6.6.7:
     resolution: {integrity: sha512-hTdwr+7yYNIT5n4AMYp85KA6yw2Va0FLa3Rguvbpa4W3I5xynaBZo41cM3XM+4Q6fRMj3sBYIR1VAmZMXYJvRQ==}
@@ -8829,13 +8813,6 @@ snapshots:
 
   react@19.2.5: {}
 
-  reactfire@4.2.3(firebase@11.10.0)(react@19.2.5):
-    dependencies:
-      firebase: 11.10.0
-      react: 19.2.5
-      rxfire: 6.1.0(firebase@11.10.0)(rxjs@7.8.2)
-      rxjs: 7.8.2
-
   read-pkg-up@8.0.0:
     dependencies:
       find-up: 5.0.0
@@ -8947,11 +8924,6 @@ snapshots:
   rrweb-cssom@0.8.0: {}
 
   run-async@2.4.1: {}
-
-  rxfire@6.1.0(firebase@11.10.0)(rxjs@7.8.2):
-    dependencies:
-      firebase: 11.10.0
-      rxjs: 7.8.2
 
   rxjs@6.6.7:
     dependencies:
