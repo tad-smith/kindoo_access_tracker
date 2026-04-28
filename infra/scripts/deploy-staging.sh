@@ -8,11 +8,19 @@
 #      functions/src/version.ts) so the deployed bundle reports its
 #      git short SHA + UTC build timestamp.
 #   2. Runs typecheck across all workspaces (`tsc -b`).
-#   3. Runs the test suite (`pnpm test`).
-#   4. Builds the web SPA (`pnpm --filter ./apps/web build`).
-#   5. Builds the Cloud Functions (`pnpm --filter ./functions build`).
-#   6. Deploys Hosting + Functions + Firestore (rules + indexes) via the
+#   3. Builds the web SPA (`pnpm --filter ./apps/web build`).
+#   4. Builds the Cloud Functions (`pnpm --filter ./functions build`).
+#   5. Deploys Hosting + Functions + Firestore (rules + indexes) via the
 #      Firebase CLI, targeting the `staging` alias defined in .firebaserc.
+#
+# Steps were: stamp / typecheck / test / build-web / build-functions /
+# firebase deploy. Step 3 (test) was removed because the local script
+# doesn't boot emulators; CI is the test gate. The operator triggers
+# deploys only after CI is green on `main`, and CI already runs
+# lint + typecheck + unit + rules + integration + e2e + build against
+# the same commit. An operator who wants belt-and-suspenders local
+# verification can run `pnpm test` themselves before invoking this
+# script.
 #
 # What it assumes:
 #   - You're at the repo root (the script tolerates being invoked from
@@ -80,16 +88,13 @@ run "node infra/scripts/stamp-version.js"
 # Step 2: typecheck across workspaces.
 run "pnpm typecheck"
 
-# Step 3: tests.
-run "pnpm test"
-
-# Step 4: build web.
+# Step 3: build web.
 run "pnpm --filter ./apps/web build"
 
-# Step 5: build functions.
+# Step 4: build functions.
 run "pnpm --filter ./functions build"
 
-# Step 6: deploy via Firebase CLI.
+# Step 5: deploy via Firebase CLI.
 # Note on what gets deployed:
 #   --only hosting,functions,firestore covers everything Phase 1 produces.
 #   firestore deploy = rules + indexes (firebase.json points at firestore/
