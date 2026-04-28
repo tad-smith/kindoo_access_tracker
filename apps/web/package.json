@@ -17,7 +17,7 @@
     "@kindoo/shared": "workspace:*",
     "@tanstack/react-query": "^5.62.10",
     "@tanstack/react-router": "^1.95.5",
-    "firebase": "^11.1.0",
+    "firebase": "^12.12.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
