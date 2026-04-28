@@ -8,12 +8,12 @@ The user-facing SPA. React 19 + TypeScript + Vite + Firebase SDK direct-to-Fires
 
 - React 19 (functional components + hooks only)
 - TypeScript strict (`tsconfig.base.json` extended)
-- Vite 6 (dev server + build)
+- Vite 8 (dev server + build; rolldown bundler)
 - TanStack Router (file-based routes; **typed search params via zod schemas**)
-- TanStack Query (mutations + non-live cache)
-- reactfire (live Firestore subscriptions via `useFirestoreCollectionData`, `useFirestoreDocData`)
+- TanStack Query (cache substrate; mutations; the DIY hooks layer below pushes Firestore snapshots into it)
+- DIY Firestore hooks at `apps/web/src/lib/data/` (per architecture D11): `useFirestoreDoc`, `useFirestoreCollection`, `useFirestoreOnce`. Consume SDK singletons from `apps/web/src/lib/firebase.ts` directly; no React-context provider required for the SDK instances.
 - Zustand (cross-page local state: toast queue, modal stack, principal cache)
-- react-hook-form + zod (every form)
+- react-hook-form + zod 4 (every form)
 - shadcn-ui components (Radix primitives + Tailwind)
 - Tailwind CSS (utility-first, no CSS-in-JS, no CSS modules)
 - vite-plugin-pwa (service worker + manifest)
@@ -41,7 +41,7 @@ src/
 ## Conventions
 
 - **Routes are thin.** Defined in `src/routes/`, just compose hooks + components from `features/`.
-- **All Firestore reads via reactfire hooks.** No direct `getDoc`/`getDocs` calls in components. Hooks live in `features/{x}/hooks.ts`.
+- **All Firestore reads via the DIY hooks at `apps/web/src/lib/data/`.** Wrap them in feature-specific hooks under `features/{x}/hooks.ts`; components consume those, never the SDK directly. The two patterns load-bearing inside `lib/data/`: cache values are sentinel-wrapped (`{ value: T | undefined }`) because TanStack Query 5 disallows raw `undefined`; live-subscribed hooks use a never-resolving `queryFn` so the `onSnapshot` listener owns state transitions. Preserve both when adding new hooks. (See architecture D11 implementation note.)
 - **All mutations via TanStack `useMutation`** wrapping a Firestore transaction. Mutations live in `features/{x}/hooks.ts`.
 - **Forms always use react-hook-form + zod resolver.** Same zod schema can move to `packages/shared/` if a Cloud Function validates the same shape.
 - **shadcn-ui components are copy-pasted** into `src/components/ui/` via the shadcn CLI. They're your code, customize freely.
