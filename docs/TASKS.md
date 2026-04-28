@@ -247,3 +247,17 @@ Phase 4 deferred Tailwind setup and the shadcn-ui CLI bootstrap because the shel
 4. The hand-rolled CSS in `src/lib/render/*.css` and `src/components/layout/*.css` stays — it's shell-level styling that Tailwind utilities don't replace cleanly.
 
 Defer-rationale: shadcn-ui requires Tailwind, and the Phase 4 acceptance criteria didn't need utility classes. Adding both at the same time as Phase 5's first real page is cleaner than splitting across phases.
+
+## [T-19] Refresh stale caret-floor pins across workspaces
+Status: open
+Owner: @infra-engineer
+Phase: cross-cutting
+
+A 2026-04-28 dependency audit found several caret floors lagging current by many minors: `firebase-admin ^13.0.2` (latest 13.8.0), `@playwright/test ^1.49.1` (latest 1.59.1), `@tanstack/react-router ^1.95.5` and `@tanstack/router-plugin ^1.95.5` (latest 1.168.x / 1.167.x), `@tanstack/react-query ^5.62.10` (latest 5.100.x), plus smaller drift on `prettier`, `vite`, `jsdom`, `concurrently`, `@vitejs/plugin-react`, `@testing-library/*`, `firebase-functions-test`, `zod`. Carets would catch these on a fresh install but the lockfile holds. Bump the floors and refresh `pnpm-lock.yaml` in one pass; one PR, all workspaces. Separate concern: **`@google/clasp ^2.4.2` is in the affected range for CVE-2026-4092** (path traversal → arbitrary file write); bump to `^3.3.0` and verify push/deploy scripts still work — clasp 3.x is a major. Track that bump under this task or split it out, operator's choice. Hold `@types/node` at `^22` deliberately to track the Node 22 runtime; if upgraded, leave a comment noting the deliberate pin. Out of scope: TypeScript / Vite / Vitest / Firebase / esbuild, all already at-latest.
+
+## [T-20] Bundle THIRD_PARTY_LICENSES artifact in production build
+Status: open
+Owner: @infra-engineer
+Phase: 11 (cutover) → due before public DNS flip
+
+Apache-2.0 dependencies in the production bundle (TypeScript, firebase, firebase-admin, @google/clasp, @playwright/test, @firebase/rules-unit-testing) require preserving the LICENSE + NOTICE text in the distributed artifact. MIT deps require preserving the copyright + license notice. Today nothing in the Hosting build assembles this. Add a build step (e.g., `pnpm-licenses` / `license-checker-rseidelsohn` / similar) that emits `apps/web/dist/THIRD_PARTY_LICENSES.txt` covering every runtime dep in the SPA bundle, and surface a link from a footer or About page so users can find it. Functions side does not ship to end-users so no equivalent artifact is needed. Verify the build runs in CI and the file is non-empty before Phase 11 close.

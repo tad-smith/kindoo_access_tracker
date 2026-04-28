@@ -46,7 +46,10 @@ async function signInAsManager(page: Page, email: string): Promise<void> {
       csnorth: { manager: true, stake: false, wards: [] },
     },
   });
-  await page.goto('/');
+  // `?p=hello` lands on the Phase 4 placeholder. Without it, the
+  // role-default redirect would send the manager to
+  // `/manager/dashboard` (404 until Phase 5+).
+  await page.goto('/?p=hello');
   await signInViaTestHatch(page, email, TEST_PASSWORD);
 }
 
@@ -76,29 +79,47 @@ test.describe('Phase 4 shell + deep-links', () => {
   });
 
   test('browser back/forward preserves shell + content', async ({ page }) => {
-    await signInAsManager(page, 'manager-bf@example.com');
-    // Phase 4 only ships /hello + the role-default redirect. After
-    // sign-in the manager is redirected from `/` to /manager/dashboard
-    // which 404s in Phase 4 — the SPA renders nothing on a missing
-    // route. We exercise back/forward by navigating to /hello then
-    // back to /, confirming the shell stays mounted at each step.
-    await page.goto('/hello');
+    // Phase 4 only ships /hello as a renderable destination; the
+    // per-role default redirects (manager → /manager/dashboard etc.)
+    // 404 until Phase 5+. We exercise back/forward by navigating
+    // through three URLs that all land on the Hello page within the
+    // shell:
+    //   1. `/?p=hello` — the legacy deep-link resolver redirects to
+    //                    `/hello` after the gate.
+    //   2. `/hello` — direct hit on the placeholder route.
+    //   3. back/forward through that history — shell stays mounted.
+    const email = 'manager-bf@example.com';
+    const { uid } = await createAuthUser({ email });
+    await setCustomClaims(uid, {
+      canonical: email,
+      stakes: {
+        csnorth: { manager: true, stake: false, wards: [] },
+      },
+    });
+
+    // Land on the Hello page via the `?p=hello` deep-link.
+    await page.goto('/?p=hello');
+    await signInViaTestHatch(page, email, TEST_PASSWORD);
     await expect(page.getByRole('heading', { name: /Hello/ })).toBeVisible();
 
-    // Topbar should be present (shell stable). The brand text is
-    // rendered inside <strong>; query by exact text.
     const topbarBrand = page.locator('.kd-topbar-brand');
     await expect(topbarBrand).toBeVisible();
 
-    // Back to root — the SPA evaluates the gate and redirects again
-    // to the role default. The topbar stays mounted across the
-    // transition (we just need to verify no full reload happens).
-    await page.goBack();
+    // Direct navigation to `/hello` (different URL, same destination).
+    await page.goto('/hello');
+    await expect(page.getByRole('heading', { name: /Hello/ })).toBeVisible();
     await expect(topbarBrand).toBeVisible();
 
-    // Forward to /hello — content matches.
+    // Back to `/?p=hello` — gate redirects to `/hello` again, shell
+    // stays mounted (no full reload).
+    await page.goBack();
+    await expect(page.getByRole('heading', { name: /Hello/ })).toBeVisible();
+    await expect(topbarBrand).toBeVisible();
+
+    // Forward to `/hello` — content matches.
     await page.goForward();
     await expect(page.getByRole('heading', { name: /Hello/ })).toBeVisible();
+    await expect(topbarBrand).toBeVisible();
   });
 
   test('mobile viewport (375x667) renders without horizontal scroll', async ({ page }) => {

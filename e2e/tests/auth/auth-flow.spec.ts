@@ -1,4 +1,4 @@
-// Phase 2 end-to-end auth-flow specs. Covers the seven proofs from the
+// Phase 2 end-to-end auth-flow specs. Covers the four proofs from the
 // migration plan (Phase 2):
 //   1. Anonymous visit → SignInPage renders.
 //   2. Sign in via Auth emulator (no claims yet) → NotAuthorizedPage.
@@ -12,6 +12,13 @@
 // is the backend-engineer's territory; their integration tests cover
 // trigger correctness. The web's contract is "given claims on the
 // token, render the right page", which is what this spec proves.
+//
+// Phase 4 routing note. The default-landing rule sends a manager
+// principal to `/manager/dashboard`, which 404s in Phase 4 (the route
+// lands in Phase 5+). The proofs that need a rendered page therefore
+// navigate to `/?p=hello` (or `/hello` directly) — the deep-link
+// resolver translates `?p=hello` to the placeholder Hello page within
+// the authed shell. Phase 5+ rewrites this to the real dashboard.
 
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -92,7 +99,10 @@ test.describe('auth-flow', () => {
       },
     });
 
-    await page.goto('/');
+    // `?p=hello` maps to /hello via the Phase 4 deep-link resolver.
+    // Without it, the manager would redirect to /manager/dashboard
+    // (404 until Phase 5+) and miss the Hello placeholder.
+    await page.goto('/?p=hello');
     await signInViaTestHatch(page, 'manager@example.com', TEST_PASSWORD);
 
     await expect(page.getByRole('heading', { name: /Hello, manager@example\.com/ })).toBeVisible();
@@ -111,7 +121,9 @@ test.describe('auth-flow', () => {
       },
     });
 
-    await page.goto('/');
+    // `?p=hello` deep-link → /hello (Phase 4 placeholder). See header
+    // comment on the routing note.
+    await page.goto('/?p=hello');
     await signInViaTestHatch(page, 'manager2@example.com', TEST_PASSWORD);
     await expect(page.getByRole('heading', { name: /Hello, manager2@example\.com/ })).toBeVisible();
 
