@@ -67,19 +67,34 @@ export async function createAuthUser(opts: {
 }
 
 /**
- * Set custom claims on an existing emulator user. The emulator exposes
- * a `setAccountInfo` endpoint that accepts a `customAttributes` JSON
- * string — same shape Firebase Admin SDK's `setCustomUserClaims` writes.
+ * Set custom claims on an existing emulator user. We hit the Identity
+ * Toolkit *server-side* `accounts:update` endpoint — the one Firebase
+ * Admin SDK uses under the hood for `setCustomUserClaims`. The
+ * client-side variant at `/v1/accounts:update?key=...` does NOT accept
+ * `customAttributes` (the emulator returns 400 INVALID_REQ_TYPE);
+ * `customAttributes` is privileged and only the project-scoped admin
+ * route honours it. The Auth emulator accepts `Authorization: Bearer
+ * owner` as a stand-in for real service-account credentials.
+ *
+ * Endpoint:
+ *   POST http://{AUTH_HOST}/identitytoolkit.googleapis.com/v1/projects/{pid}/accounts:update
+ *   Authorization: Bearer owner
+ *   { localId, customAttributes }
+ *
+ * Reference: https://cloud.google.com/identity-platform/docs/reference/rest/v1/projects.accounts/update
  *
  * In production these are set by the `onAuthUserCreate` /
  * `syncAccessClaims` / `syncManagersClaims` triggers; in tests we set
  * them directly to simulate "trigger has run, claims are seeded".
  */
 export async function setCustomClaims(uid: string, claims: object): Promise<void> {
-  const url = `http://${AUTH_HOST}/identitytoolkit.googleapis.com/v1/accounts:update?key=fake-api-key`;
+  const url = `http://${AUTH_HOST}/identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts:update`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer owner',
+    },
     body: JSON.stringify({
       localId: uid,
       customAttributes: JSON.stringify(claims),
@@ -95,6 +110,15 @@ export async function setCustomClaims(uid: string, claims: object): Promise<void
  * doc path (e.g., `stakes/csnorth/kindooManagers/alice@example.com`).
  * Fields are converted to Firestore's typed-value envelope.
  *
+ * The fixture's job is to seed test state cheaply — we want to write
+ * docs that the production rules wouldn't permit (the rules require
+ * manager claims + a `lastActor` integrity check on every write). We
+ * pass `Authorization: Bearer owner`, which the Firestore emulator
+ * recognises as service-account-equivalent credentials and applies
+ * **without** evaluating Security Rules. This is the same bypass the
+ * Admin SDK uses against the emulator. Reference:
+ * https://firebase.google.com/docs/emulator-suite/connect_firestore#admin_sdks
+ *
  * Phase 2 only writes simple string/bool/timestamp fields, so we keep
  * the converter minimal.
  */
@@ -106,7 +130,10 @@ export async function writeDoc(path: string, data: Record<string, unknown>): Pro
   }
   const res = await fetch(url, {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer owner',
+    },
     body: JSON.stringify({ fields }),
   });
   if (!res.ok) {
