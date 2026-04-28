@@ -87,6 +87,9 @@ importers:
       '@firebase/rules-unit-testing':
         specifier: ^3.0.4
         version: 3.0.4(firebase@11.10.0)
+      firebase:
+        specifier: ^11.10.0
+        version: 11.10.0
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@25.6.0)(jsdom@25.0.1)

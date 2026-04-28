@@ -1,7 +1,9 @@
 // Helpers for spinning up `@firebase/rules-unit-testing` against the
-// committed firestore.rules. Phase 1 shipped scaffolding; Phase 2 adds
-// the `seedAsAdmin` helper for tests that need to populate documents
-// before exercising rules.
+// committed firestore.rules. Phase 1 shipped scaffolding; Phase 2 added
+// `seedAsAdmin`. Phase 3 adds the stake-aware auth helpers
+// (`managerContext`, `stakeMemberContext`, `bishopricContext`,
+// `superadminContext`) that build the same custom-claims shape Phase 2's
+// sync triggers stamp on real users.
 //
 // The helper reads firestore.rules from a path relative to THIS file,
 // not from the test's CWD — vitest runs tests from the workspace root
@@ -28,12 +30,12 @@ const RULES_PATH = resolve(__dirname, '..', '..', 'firestore.rules');
  * running on a non-default port.
  *
  * `stakeId` is folded into the synthetic emulator project ID so test
- * files using different stakes get isolated emulator state. Phase 3
- * multi-stake rules tests will pass a real stake slug here; until then,
- * the default keeps every rules test under one synthetic project.
+ * files using different stakes get isolated emulator state. The
+ * project ID has a `demo-` prefix so the emulator allows offline use
+ * without prompting for credentials.
  */
 export async function setupTestEnv(stakeId?: string): Promise<RulesTestEnvironment> {
-  const projectId = stakeId ? `kindoo-rules-test-${stakeId}` : 'kindoo-rules-test';
+  const projectId = stakeId ? `demo-kindoo-rules-${stakeId}` : 'demo-kindoo-rules';
   return initializeTestEnvironment({
     projectId,
     firestore: {
@@ -53,8 +55,8 @@ export async function clearAll(env: RulesTestEnvironment): Promise<void> {
 
 /**
  * Build a Firestore handle authenticated as the given uid (with optional
- * custom claims). The Phase 3 rules will read the same shape of token
- * claims that the Phase 2 claim-sync triggers stamp on real users.
+ * custom claims). Phase 3 rules read the same shape of token claims that
+ * the Phase 2 claim-sync triggers stamp on real users.
  */
 export function authedContext(
   env: RulesTestEnvironment,
@@ -66,7 +68,7 @@ export function authedContext(
 
 /**
  * Build a Firestore handle with no auth — the "anonymous reader" case
- * that the lock-everything stub denies for every path.
+ * that the locked-down paths deny by default.
  */
 export function unauthedContext(env: RulesTestEnvironment): RulesTestContext {
   return env.unauthenticatedContext();
@@ -83,5 +85,166 @@ export async function seedAsAdmin(
 ): Promise<void> {
   await env.withSecurityRulesDisabled(async (ctx) => {
     await fn(ctx);
+  });
+}
+
+// ---- Stake-aware identity helpers -----------------------------------
+//
+// All four helpers below stamp the same custom-claims layout that
+// `syncManagersClaims` / `syncAccessClaims` / `syncSuperadminClaims`
+// produce on real users — `canonical` + `stakes[stakeId].{manager,
+// stake, wards}` (+ `isPlatformSuperadmin`). The rules read these
+// fields off the auth token unchanged, so a context built here
+// behaves identically to a real signed-in user with the matching role
+// docs.
+//
+// The `email` field on the token is the typed display form, set so
+// `lastActorMatchesAuth` can verify it against `lastActor.email` on
+// every client write. Tests pass typed emails like `'Mgr@gmail.com'`
+// (uppercase / mixed case preserved) and the helper also derives the
+// canonical form for the `canonical` claim.
+
+const TYPED_EMAILS: Record<string, string> = {
+  manager: 'Mgr@gmail.com',
+  stakeMember: 'StakeUser@gmail.com',
+  bishopric: 'Bishop@gmail.com',
+  outsider: 'Outsider@gmail.com',
+  superadmin: 'Superadmin@gmail.com',
+};
+
+const CANONICAL_EMAILS: Record<string, string> = {
+  manager: 'mgr@gmail.com',
+  stakeMember: 'stakeuser@gmail.com',
+  bishopric: 'bishop@gmail.com',
+  outsider: 'outsider@gmail.com',
+  superadmin: 'superadmin@gmail.com',
+};
+
+/** Synthetic identity (typed email + canonical) used for tests that do not need a custom email. */
+export type Persona = {
+  uid: string;
+  email: string;
+  canonical: string;
+};
+
+/** A persona for each of the test roles. Tests can also build their own. */
+export const personas: {
+  manager: Persona;
+  stakeMember: Persona;
+  bishopric: Persona;
+  outsider: Persona;
+  superadmin: Persona;
+} = {
+  manager: {
+    uid: 'uid-mgr',
+    email: TYPED_EMAILS['manager']!,
+    canonical: CANONICAL_EMAILS['manager']!,
+  },
+  stakeMember: {
+    uid: 'uid-stake',
+    email: TYPED_EMAILS['stakeMember']!,
+    canonical: CANONICAL_EMAILS['stakeMember']!,
+  },
+  bishopric: {
+    uid: 'uid-bishop',
+    email: TYPED_EMAILS['bishopric']!,
+    canonical: CANONICAL_EMAILS['bishopric']!,
+  },
+  outsider: {
+    uid: 'uid-outsider',
+    email: TYPED_EMAILS['outsider']!,
+    canonical: CANONICAL_EMAILS['outsider']!,
+  },
+  superadmin: {
+    uid: 'uid-superadmin',
+    email: TYPED_EMAILS['superadmin']!,
+    canonical: CANONICAL_EMAILS['superadmin']!,
+  },
+};
+
+/** A `lastActor` payload matching a given persona — every client-write fixture needs one. */
+export function lastActorOf(p: Persona): { email: string; canonical: string } {
+  return { email: p.email, canonical: p.canonical };
+}
+
+type RoleClaims = {
+  manager?: boolean;
+  stake?: boolean;
+  wards?: string[];
+};
+
+/**
+ * Build a context authenticated as `persona`, with `stakes[stakeId]`
+ * carrying the supplied role flags. Pass an empty `roleClaims` to
+ * simulate a signed-in user with no role under that stake (the
+ * "outsider" case).
+ */
+export function contextFor(
+  env: RulesTestEnvironment,
+  persona: Persona,
+  stakeId: string,
+  roleClaims: RoleClaims,
+): RulesTestContext {
+  return env.authenticatedContext(persona.uid, {
+    email: persona.email,
+    email_verified: true,
+    canonical: persona.canonical,
+    stakes: {
+      [stakeId]: {
+        manager: roleClaims.manager === true,
+        stake: roleClaims.stake === true,
+        wards: roleClaims.wards ?? [],
+      },
+    },
+  });
+}
+
+/** Convenience: a manager under `stakeId`. */
+export function managerContext(env: RulesTestEnvironment, stakeId: string): RulesTestContext {
+  return contextFor(env, personas.manager, stakeId, { manager: true });
+}
+
+/** Convenience: a stake-scope member under `stakeId`. */
+export function stakeMemberContext(env: RulesTestEnvironment, stakeId: string): RulesTestContext {
+  return contextFor(env, personas.stakeMember, stakeId, { stake: true });
+}
+
+/** Convenience: a bishopric member with visibility into `wards` under `stakeId`. */
+export function bishopricContext(
+  env: RulesTestEnvironment,
+  stakeId: string,
+  wards: string[],
+): RulesTestContext {
+  return contextFor(env, personas.bishopric, stakeId, { wards });
+}
+
+/**
+ * Convenience: an authenticated user with no role under `stakeId`. The
+ * `email` + `canonical` claims are still set (so `authedCanonical()`
+ * resolves), but no entry exists for `stakeId` in the `stakes` map.
+ */
+export function outsiderContext(env: RulesTestEnvironment, stakeId: string): RulesTestContext {
+  return env.authenticatedContext(personas.outsider.uid, {
+    email: personas.outsider.email,
+    email_verified: true,
+    canonical: personas.outsider.canonical,
+    stakes: {
+      // Deliberately a different stake — the user is signed in but has
+      // no claims under `stakeId`. Cross-stake denial tests use this.
+      'demo-other-stake': { manager: true, stake: true, wards: [] },
+    },
+    // Empty stake claim object would also work; keeping `stakes` populated
+    // exercises the "stake claims exist but not for this stakeId" branch.
+    [`__test_skipStake_${stakeId}`]: true,
+  });
+}
+
+/** Convenience: a platform superadmin (cross-stake). */
+export function superadminContext(env: RulesTestEnvironment): RulesTestContext {
+  return env.authenticatedContext(personas.superadmin.uid, {
+    email: personas.superadmin.email,
+    email_verified: true,
+    canonical: personas.superadmin.canonical,
+    isPlatformSuperadmin: true,
   });
 }

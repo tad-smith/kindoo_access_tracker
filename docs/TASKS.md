@@ -201,3 +201,28 @@ Owner: @docs-keeper
 Phase: cross-cutting
 
 The Functions emulator runs against the host's Node (currently 20.x on the operator's machine); the production runtime is Node 22. The emulator emits a version-mismatch warning at startup. Informational only — Phase 2 functions code runs on both. Document the recommended Node 22 LTS upgrade path (nvm / asdf) in the root `CLAUDE.md` onboarding section or `apps/web/CLAUDE.md`. Developer-environment concern, not a deploy blocker.
+
+## [T-15] Configure Firestore TTL on auditLog collection-group
+Status: open
+Owner: @infra-engineer (operator runs gcloud) + @tad
+Phase: 3 → due before Phase 8 importer ships (or any earlier deploy that writes auditLog rows)
+
+`firebase-schema.md` §5.2 specifies a 365-day TTL on `auditLog.ttl`, configured once via `gcloud` per project. Firestore TTL policies are not declared in source — they're a project-level configuration applied via:
+
+```
+gcloud firestore fields ttls update ttl \
+  --collection-group=auditLog \
+  --enable-ttl \
+  --project=<staging-project>
+```
+
+Repeat for the production project. Optionally also for `platformAuditLog` (Q20 — defaulted 365 days, may warrant longer for superadmin records). Add the command to `infra/runbooks/provision-firebase-projects.md` under a "Phase 3 — TTL configuration" subsection.
+
+Note for `infra-engineer`: the rules + indexes are in source as of Phase 3 close (`firestore/firestore.rules`, `firestore/firestore.indexes.json`); only TTL is a console / gcloud step. The Phase 3 changelog flags this as deferred.
+
+## [T-16] Web-side typed-doc helper (`apps/web/src/lib/docs.ts`)
+Status: open
+Owner: @web-engineer
+Phase: 4 → before first real client query
+
+`firebase-migration.md` Phase 3 §"Per-doc shape verification" calls for a thin typed-doc-helper layer in `apps/web/src/lib/docs.ts` that exports typed `doc(...)` and `collection(...)` references with the correct path for each collection (Stake, Ward, Building, KindooManager, Access, Seat, Request, *CallingTemplate, AuditLog, PlatformSuperadmin, PlatformAuditLog, UserIndex). Phase 3 (backend-engineer) shipped the shared types + zod schemas in `@kindoo/shared`; the typed-doc helper is `web-engineer`'s lane and lands in Phase 4 alongside the first real query.

@@ -1,0 +1,490 @@
+// Rules tests for `stakes/{stakeId}/seats/{memberCanonical}` per
+// `firebase-schema.md` §4.6.
+//
+// This file exercises the most architecturally interesting rule in
+// the schema: the `tiedToRequestCompletion` cross-doc invariant
+// (uses `getAfter()`). A seat may only be created when the request
+// that justifies it transitions pending → complete in the same
+// write — proven via a `WriteBatch` that updates the request doc
+// AND creates the seat doc atomically.
+//
+// Reads cover the per-scope visibility split (managers see all;
+// stake members see stake-scope only; bishopric sees their wards).
+import { afterAll, afterEach, beforeAll, describe, it } from 'vitest';
+import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
+import type { RulesTestEnvironment } from '@firebase/rules-unit-testing';
+import {
+  bishopricContext,
+  clearAll,
+  lastActorOf,
+  managerContext,
+  outsiderContext,
+  personas,
+  seedAsAdmin,
+  setupTestEnv,
+  stakeMemberContext,
+  unauthedContext,
+} from './lib/rules.js';
+
+const STAKE_ID = 'csnorth';
+const TARGET_CANONICAL = 'alice@gmail.com';
+const SEAT_PATH = `stakes/${STAKE_ID}/seats/${TARGET_CANONICAL}`;
+
+const REQUEST_ID_MANUAL = 'req-manual-1';
+const REQUEST_ID_TEMP = 'req-temp-1';
+const REQUEST_PATH_MANUAL = `stakes/${STAKE_ID}/requests/${REQUEST_ID_MANUAL}`;
+const REQUEST_PATH_TEMP = `stakes/${STAKE_ID}/requests/${REQUEST_ID_TEMP}`;
+
+function manualSeatDoc(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    member_canonical: TARGET_CANONICAL,
+    member_email: 'Alice@gmail.com',
+    member_name: 'Alice Smith',
+    scope: 'stake',
+    type: 'manual',
+    callings: [],
+    reason: 'Visiting authority',
+    building_names: ['Cordera Building'],
+    granted_by_request: REQUEST_ID_MANUAL,
+    duplicate_grants: [],
+    created_at: new Date(),
+    last_modified_at: new Date(),
+    last_modified_by: lastActorOf(personas.manager),
+    lastActor: lastActorOf(personas.manager),
+    ...overrides,
+  };
+}
+
+function tempSeatDoc(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return manualSeatDoc({
+    type: 'temp',
+    reason: 'Visiting speaker',
+    start_date: '2026-05-01',
+    end_date: '2026-05-08',
+    granted_by_request: REQUEST_ID_TEMP,
+    ...overrides,
+  });
+}
+
+function pendingRequestDoc(
+  type: 'add_manual' | 'add_temp',
+  overrides: Partial<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    request_id: type === 'add_manual' ? REQUEST_ID_MANUAL : REQUEST_ID_TEMP,
+    type,
+    scope: 'stake',
+    member_email: 'Alice@gmail.com',
+    member_canonical: TARGET_CANONICAL,
+    member_name: 'Alice Smith',
+    reason: type === 'add_temp' ? 'Visiting speaker' : 'Visiting authority',
+    comment: '',
+    building_names: ['Cordera Building'],
+    status: 'pending',
+    requester_email: 'StakeUser@gmail.com',
+    requester_canonical: 'stakeuser@gmail.com',
+    requested_at: new Date(),
+    lastActor: lastActorOf(personas.stakeMember),
+    ...(type === 'add_temp' ? { start_date: '2026-05-01', end_date: '2026-05-08' } : {}),
+    ...overrides,
+  };
+}
+
+describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
+  let env: RulesTestEnvironment;
+
+  beforeAll(async () => {
+    env = await setupTestEnv('seats');
+  });
+
+  afterEach(async () => {
+    await clearAll(env);
+  });
+
+  afterAll(async () => {
+    await env.cleanup();
+  });
+
+  describe('read', () => {
+    it('manager can read any seat', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: '01' }));
+      });
+      await assertSucceeds(managerContext(env, STAKE_ID).firestore().doc(SEAT_PATH).get());
+    });
+
+    it('stake-scope member can read stake-scope seat', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      await assertSucceeds(stakeMemberContext(env, STAKE_ID).firestore().doc(SEAT_PATH).get());
+    });
+
+    it('stake-scope member is denied a ward-scope seat', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: '01' }));
+      });
+      await assertFails(stakeMemberContext(env, STAKE_ID).firestore().doc(SEAT_PATH).get());
+    });
+
+    it("bishopric reads own ward's seats", async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: '01' }));
+      });
+      await assertSucceeds(
+        bishopricContext(env, STAKE_ID, ['01']).firestore().doc(SEAT_PATH).get(),
+      );
+    });
+
+    it("bishopric is denied another ward's seats", async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: '02' }));
+      });
+      await assertFails(bishopricContext(env, STAKE_ID, ['01']).firestore().doc(SEAT_PATH).get());
+    });
+
+    it('outsider denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      await assertFails(outsiderContext(env, STAKE_ID).firestore().doc(SEAT_PATH).get());
+    });
+
+    it('anonymous denied', async () => {
+      await assertFails(unauthedContext(env).firestore().doc(SEAT_PATH).get());
+    });
+
+    it('cross-stake reads denied', async () => {
+      const otherPath = `stakes/someother/seats/${TARGET_CANONICAL}`;
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(otherPath)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      await assertFails(managerContext(env, STAKE_ID).firestore().doc(otherPath).get());
+    });
+  });
+
+  describe('create — `tiedToRequestCompletion` cross-doc invariant', () => {
+    it('manager creates manual seat in same batch as request flipping pending → complete → ok', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(REQUEST_PATH_MANUAL).set(pendingRequestDoc('add_manual'));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      const batch = db.batch();
+      batch.set(db.doc(SEAT_PATH), manualSeatDoc());
+      batch.update(db.doc(REQUEST_PATH_MANUAL), {
+        status: 'complete',
+        completer_email: personas.manager.email,
+        completer_canonical: personas.manager.canonical,
+        completed_at: new Date(),
+        lastActor: lastActorOf(personas.manager),
+      });
+      await assertSucceeds(batch.commit());
+    });
+
+    it('manager creates temp seat in same batch as request flipping pending → complete → ok', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(REQUEST_PATH_TEMP).set(pendingRequestDoc('add_temp'));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      const batch = db.batch();
+      batch.set(db.doc(SEAT_PATH), tempSeatDoc());
+      batch.update(db.doc(REQUEST_PATH_TEMP), {
+        status: 'complete',
+        completer_email: personas.manager.email,
+        completer_canonical: personas.manager.canonical,
+        completed_at: new Date(),
+        lastActor: lastActorOf(personas.manager),
+      });
+      await assertSucceeds(batch.commit());
+    });
+
+    it('seat-only create (no request transition) → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(REQUEST_PATH_MANUAL).set(pendingRequestDoc('add_manual'));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(db.doc(SEAT_PATH).set(manualSeatDoc()));
+    });
+
+    it('seat scope does not match request scope → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(REQUEST_PATH_MANUAL)
+          .set(pendingRequestDoc('add_manual', { scope: '01' }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      const batch = db.batch();
+      batch.set(db.doc(SEAT_PATH), manualSeatDoc({ scope: 'stake' }));
+      batch.update(db.doc(REQUEST_PATH_MANUAL), {
+        status: 'complete',
+        completer_email: personas.manager.email,
+        completer_canonical: personas.manager.canonical,
+        completed_at: new Date(),
+        lastActor: lastActorOf(personas.manager),
+      });
+      await assertFails(batch.commit());
+    });
+
+    it('seat type does not match request type (add_manual but type=temp) → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(REQUEST_PATH_MANUAL).set(pendingRequestDoc('add_manual'));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      const batch = db.batch();
+      batch.set(db.doc(SEAT_PATH), tempSeatDoc({ granted_by_request: REQUEST_ID_MANUAL }));
+      batch.update(db.doc(REQUEST_PATH_MANUAL), {
+        status: 'complete',
+        completer_email: personas.manager.email,
+        completer_canonical: personas.manager.canonical,
+        completed_at: new Date(),
+        lastActor: lastActorOf(personas.manager),
+      });
+      await assertFails(batch.commit());
+    });
+
+    it('seat type=auto → denied (auto seats are server-only)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(REQUEST_PATH_MANUAL).set(pendingRequestDoc('add_manual'));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      const batch = db.batch();
+      batch.set(db.doc(SEAT_PATH), manualSeatDoc({ type: 'auto', callings: ['Bishop'] }));
+      batch.update(db.doc(REQUEST_PATH_MANUAL), {
+        status: 'complete',
+        completer_email: personas.manager.email,
+        completer_canonical: personas.manager.canonical,
+        completed_at: new Date(),
+        lastActor: lastActorOf(personas.manager),
+      });
+      await assertFails(batch.commit());
+    });
+
+    it('seat with non-empty callings (manual/temp must have callings=[]) → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(REQUEST_PATH_MANUAL).set(pendingRequestDoc('add_manual'));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      const batch = db.batch();
+      batch.set(db.doc(SEAT_PATH), manualSeatDoc({ callings: ['Bishop'] }));
+      batch.update(db.doc(REQUEST_PATH_MANUAL), {
+        status: 'complete',
+        completer_email: personas.manager.email,
+        completer_canonical: personas.manager.canonical,
+        completed_at: new Date(),
+        lastActor: lastActorOf(personas.manager),
+      });
+      await assertFails(batch.commit());
+    });
+
+    it('seat doc-id ≠ member_canonical → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(REQUEST_PATH_MANUAL)
+          .set(pendingRequestDoc('add_manual', { member_canonical: 'bob@gmail.com' }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      const batch = db.batch();
+      // Seat at alice path but doc data says member_canonical=bob.
+      batch.set(db.doc(SEAT_PATH), manualSeatDoc({ member_canonical: 'bob@gmail.com' }));
+      batch.update(db.doc(REQUEST_PATH_MANUAL), {
+        status: 'complete',
+        completer_email: personas.manager.email,
+        completer_canonical: personas.manager.canonical,
+        completed_at: new Date(),
+        lastActor: lastActorOf(personas.manager),
+      });
+      await assertFails(batch.commit());
+    });
+
+    it('non-manager cannot create even via batch', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(REQUEST_PATH_MANUAL).set(pendingRequestDoc('add_manual'));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      const batch = db.batch();
+      batch.set(db.doc(SEAT_PATH), manualSeatDoc({ lastActor: lastActorOf(personas.stakeMember) }));
+      batch.update(db.doc(REQUEST_PATH_MANUAL), {
+        status: 'complete',
+        completer_email: personas.stakeMember.email,
+        completer_canonical: personas.stakeMember.canonical,
+        completed_at: new Date(),
+        lastActor: lastActorOf(personas.stakeMember),
+      });
+      await assertFails(batch.commit());
+    });
+  });
+
+  describe('update', () => {
+    it('manager updates allowlisted fields → ok', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(SEAT_PATH).update({
+          member_name: 'Alice Updated',
+          reason: 'Updated reason',
+          building_names: ['Pikes Peak Building'],
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('manager mutates immutable scope → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          scope: '01',
+          last_modified_at: new Date(),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('manager mutates immutable type → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          type: 'temp',
+          last_modified_at: new Date(),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('manager mutates immutable member_canonical → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          member_canonical: 'bob@gmail.com',
+          last_modified_at: new Date(),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('manager update with bad lastActor → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          member_name: 'X',
+          last_modified_at: new Date(),
+          lastActor: { email: 'X@x.com', canonical: 'y@x.com' },
+        }),
+      );
+    });
+
+    it('manager updates an auto seat → denied (only manual/temp updatable)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ type: 'auto', callings: ['Bishop'] }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          member_name: 'X',
+          last_modified_at: new Date(),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('non-manager update is denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          member_name: 'X',
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+  });
+
+  describe('delete', () => {
+    it('manager deletes a manual seat with no duplicates → ok', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(db.doc(SEAT_PATH).delete());
+    });
+
+    it('manager cannot delete a seat with non-empty duplicate_grants', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(
+            manualSeatDoc({
+              duplicate_grants: [
+                { scope: '01', type: 'auto', callings: ['Bishop'], detected_at: new Date() },
+              ],
+            }),
+          );
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(db.doc(SEAT_PATH).delete());
+    });
+
+    it('manager cannot delete an auto seat (auto seats deleted by importer/expiry only)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ type: 'auto', callings: ['Bishop'] }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(db.doc(SEAT_PATH).delete());
+    });
+
+    it('non-manager delete is denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(db.doc(SEAT_PATH).delete());
+    });
+  });
+});

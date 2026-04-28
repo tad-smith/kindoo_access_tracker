@@ -1,32 +1,384 @@
 rules_version = '2';
 
-// Phase 1 stub — locked down by default. Phase 3 ships the real
-// per-collection rule matrix per `docs/firebase-schema.md` §6.
+// Firestore Security Rules — full per-collection allow/deny matrix per
+// `docs/firebase-schema.md` §6. Phase 3 replaces the lock-everything
+// stub from Phases 1–2 with the real rules; Phase 2's userIndex
+// match block is preserved verbatim (now sitting next to the other
+// top-level rules).
 //
-// Phase 2 adds ONE allow-listed collection: `userIndex/{canonical}`,
-// readable by the user it identifies (the bridge that
-// `usePrincipal()` consults to confirm the bridge doc exists for
-// their canonical email). Writes stay forbidden — the
-// `onAuthUserCreate` trigger writes via the Admin SDK, which bypasses
-// rules. Every other path stays `if false`, so a misconfigured client
-// still cannot write anywhere by accident.
+// Conventions:
+//
+//   - Helpers at top: `isAuthed`, `authedCanonical`, `isManager`,
+//     `isStakeMember`, `bishopricWardOf`, `isAnyMember`,
+//     `isPlatformSuperadmin`, `lastActorMatchesAuth`. Defined once,
+//     reused throughout.
+//
+//   - `lastActor` integrity check is the primary defense: every
+//     client write must carry `lastActor.{email, canonical}` matching
+//     the auth token's typed email + custom-claim canonical. This is
+//     what gives the audit trigger a trustworthy `actor_email`.
+//
+//   - `getAfter()` is used in exactly one place — `seats.create`'s
+//     `tiedToRequestCompletion` invariant — so a seat creation
+//     proves it is the resolution of a pending request transitioning
+//     to `complete` in the same write.
+//
+//   - Split-ownership on `access`: `importer_callings` is
+//     server-only (Importer via Admin SDK bypasses rules). Manager
+//     updates must leave it byte-equal to the prior value. Manual
+//     side (`manual_grants`) is the manager's lane.
+//
+//   - Cross-stake denial is automatic: `isAnyMember(stakeId)` returns
+//     false when the user has no claim block for `stakeId`, so a
+//     read against another stake fails the parent-doc rule and never
+//     reaches the subcollection rules.
+//
+//   - Admin SDK writes (importer, expiry, claim sync, audit trigger,
+//     remove-seat trigger) bypass rules entirely. The Cloud Functions
+//     code carries the discipline.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // userIndex/{canonical} — written by `onAuthUserCreate` trigger
-    // (Admin SDK bypass); read by the user themselves so the SPA can
-    // confirm the bridge entry exists with the expected uid. The
-    // matching rule will become more nuanced in Phase 3 if any
-    // additional reader is required (currently planned: none).
+    // ===== Helpers =====
+
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    // Trustworthy: `canonical` is set by the sync triggers as a custom
+    // claim (`syncManagersClaims` / `syncAccessClaims` /
+    // `syncSuperadminClaims`). Comparing against this lets us key off
+    // the canonical email without a per-call userIndex lookup.
+    function authedCanonical() {
+      return request.auth.token.canonical;
+    }
+
+    function isManager(stakeId) {
+      return isAuthed()
+        && 'stakes' in request.auth.token
+        && stakeId in request.auth.token.stakes
+        && request.auth.token.stakes[stakeId].manager == true;
+    }
+
+    function isStakeMember(stakeId) {
+      return isAuthed()
+        && 'stakes' in request.auth.token
+        && stakeId in request.auth.token.stakes
+        && request.auth.token.stakes[stakeId].stake == true;
+    }
+
+    // Returns the ward_code list for which the user has bishopric
+    // visibility under `stakeId`. Empty list if not a member of that
+    // stake.
+    function bishopricWardOf(stakeId) {
+      return isAuthed()
+        && 'stakes' in request.auth.token
+        && stakeId in request.auth.token.stakes
+          ? request.auth.token.stakes[stakeId].wards
+          : [];
+    }
+
+    // Any member of the stake — manager OR stake-scope member OR any
+    // bishopric-ward member. Used to gate parent-stake-doc reads and
+    // wards/buildings reads.
+    function isAnyMember(stakeId) {
+      return isManager(stakeId)
+        || isStakeMember(stakeId)
+        || bishopricWardOf(stakeId).size() > 0;
+    }
+
+    function isPlatformSuperadmin() {
+      return isAuthed() && request.auth.token.isPlatformSuperadmin == true;
+    }
+
+    // The `lastActor` integrity check — every client write must
+    // declare `lastActor.{email, canonical}` matching the auth token.
+    // Server-side (Admin SDK) writes use synthetic actors
+    // (`'Importer'` / `'ExpiryTrigger'`) and bypass this check by
+    // bypassing rules entirely.
+    function lastActorMatchesAuth(data) {
+      return data.lastActor.canonical == authedCanonical()
+        && data.lastActor.email == request.auth.token.email;
+    }
+
+    // ===== Top-level collections =====
+
+    // userIndex/{canonical} — written by `onAuthUserCreate` (Admin
+    // SDK bypass); read by the user themselves so the SPA can confirm
+    // the bridge entry exists with the expected uid. Phase 2's
+    // match block, preserved verbatim into Phase 3.
     match /userIndex/{memberCanonical} {
-      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow read: if isAuthed() && resource.data.uid == request.auth.uid;
       allow write: if false;
     }
 
-    // Catch-all: every other path stays locked down until Phase 3.
-    match /{document=**} {
-      allow read, write: if false;
+    // platformSuperadmins — allow-list for the cross-stake superadmin
+    // role. Read by superadmins (so a superadmin can list peers);
+    // write forbidden (managed via Firestore console only — see
+    // `firebase-schema.md` §3.2).
+    match /platformSuperadmins/{canonicalEmail} {
+      allow read: if isPlatformSuperadmin();
+      allow write: if false;
+    }
+
+    // platformAuditLog — cross-stake audit trail for stake creation
+    // and superadmin-membership changes. Read by superadmins; writes
+    // server-only (the `createStake` callable + the superadmin
+    // sync triggers fan rows here via Admin SDK).
+    match /platformAuditLog/{auditId} {
+      allow read: if isPlatformSuperadmin();
+      allow write: if false;
+    }
+
+    // ===== Per-stake collections =====
+
+    match /stakes/{stakeId} {
+
+      // Parent stake doc — Config-tab-equivalent fields. Read by any
+      // member of the stake (the SPA's bootstrap response includes
+      // stake metadata for every signed-in member). Updates by
+      // managers only, enforcing the lastActor integrity check. Create
+      // is superadmin-only via the `createStake` callable; delete
+      // forbidden everywhere.
+      allow read: if isAnyMember(stakeId);
+      allow create: if isPlatformSuperadmin();
+      allow update: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+      allow delete: if false;
+
+      // ----- Wards -----
+      // Any member of the stake can read the ward list (Roster UI
+      // needs them for utilization rendering). Only managers can
+      // mutate; the integrity check stamps the writing manager.
+      match /wards/{wardCode} {
+        allow read: if isAnyMember(stakeId);
+        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+      }
+
+      // ----- Buildings -----
+      // Same shape as wards — any member can read; only managers
+      // can mutate.
+      match /buildings/{buildingId} {
+        allow read: if isAnyMember(stakeId);
+        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+      }
+
+      // ----- KindooManagers -----
+      // Manager allow-list. Manager-only read so non-managers can't
+      // enumerate peers; manager-only write.
+      match /kindooManagers/{memberCanonical} {
+        allow read: if isManager(stakeId);
+        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+      }
+
+      // ----- Access (split-ownership) -----
+      // The most subtle rule block in this file. The doc has two
+      // top-level maps with different write authorities:
+      //
+      //   - `importer_callings` — server-only (the weekly Importer
+      //     wholesale-replaces this map per scope via Admin SDK).
+      //     Rules forbid client mutation by requiring it to be
+      //     byte-equal to the prior value on every client update.
+      //
+      //   - `manual_grants` — manager-only client-writable. The
+      //     `affectedKeys()` allowlist below enumerates exactly the
+      //     fields a manager update may touch.
+      //
+      // Manager-only read covers `access` because non-managers
+      // shouldn't be able to enumerate the role grants.
+      match /access/{memberCanonical} {
+        allow read: if isManager(stakeId);
+
+        // Manager creates a manual-only access doc — no importer
+        // rows yet (the importer would have created the doc itself
+        // if there were any). At least one manual_grants entry is
+        // required so we don't create empty docs that would
+        // immediately satisfy the delete predicate.
+        allow create: if isManager(stakeId)
+          && memberCanonical == request.resource.data.member_canonical
+          && request.resource.data.importer_callings == {}
+          && request.resource.data.manual_grants.size() > 0
+          && lastActorMatchesAuth(request.resource.data);
+
+        // Manager edits manual_grants only — `importer_callings`
+        // is immutable from clients, and only the manual side +
+        // bookkeeping fields are in the affected-keys allowlist.
+        allow update: if isManager(stakeId)
+          && request.resource.data.member_canonical == resource.data.member_canonical
+          && request.resource.data.importer_callings == resource.data.importer_callings
+          && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['manual_grants', 'last_modified_by', 'last_modified_at', 'lastActor'])
+          && lastActorMatchesAuth(request.resource.data);
+
+        // Manager deletes a now-empty access doc. The Importer
+        // empties `importer_callings` on a wholesale-replace if the
+        // user no longer has any qualifying callings; the manager
+        // empties `manual_grants` by removing its last entry.
+        // The delete only fires when both are empty so the doc-
+        // existence invariant ("exists iff some grant exists") is
+        // preserved.
+        allow delete: if isManager(stakeId)
+          && resource.data.importer_callings == {}
+          && resource.data.manual_grants == {};
+      }
+
+      // ----- Seats -----
+      // Reads: managers see all; stake members see stake-scope seats
+      // (ward members see their assigned wards' seats). Cross-ward
+      // bishopric visibility falls out of the wards-array claim.
+      //
+      // Creates: only via request completion (the
+      // `tiedToRequestCompletion` cross-doc invariant below verifies
+      // a request flips pending → complete in the same write). Auto
+      // seats are written by the Importer via Admin SDK and bypass
+      // rules entirely; client-create only allows manual/temp.
+      //
+      // Updates: managers can edit a small allowlist of fields on
+      // existing manual/temp seats. Primary scope/type/canonical are
+      // immutable post-creation (a re-scope is a new request).
+      //
+      // Deletes: managers can delete a manual/temp seat with no
+      // duplicate_grants. Remove-request completions go through a
+      // Cloud Function (Admin SDK bypass) instead, since client
+      // delete rules can't read request.resource.data.
+      match /seats/{memberCanonical} {
+        allow read: if isManager(stakeId)
+          || (resource.data.scope == 'stake' && isStakeMember(stakeId))
+          || (resource.data.scope in bishopricWardOf(stakeId));
+
+        allow create: if isManager(stakeId)
+          && memberCanonical == request.resource.data.member_canonical
+          && request.resource.data.type in ['manual', 'temp']
+          && request.resource.data.duplicate_grants.size() == 0
+          && request.resource.data.callings.size() == 0
+          && lastActorMatchesAuth(request.resource.data)
+          && tiedToRequestCompletion(stakeId,
+                                     request.resource.data.granted_by_request,
+                                     request.resource.data.scope,
+                                     memberCanonical,
+                                     request.resource.data.type);
+
+        allow update: if isManager(stakeId)
+          && resource.data.type in ['manual', 'temp']
+          && request.resource.data.member_canonical == resource.data.member_canonical
+          && request.resource.data.scope == resource.data.scope
+          && request.resource.data.type == resource.data.type
+          && lastActorMatchesAuth(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['member_name', 'reason', 'building_names', 'start_date', 'end_date',
+                       'duplicate_grants', 'last_modified_by', 'last_modified_at', 'lastActor']);
+
+        allow delete: if isManager(stakeId)
+          && resource.data.type in ['manual', 'temp']
+          && resource.data.duplicate_grants.size() == 0;
+      }
+
+      // The cross-doc invariant that gates seat creation: a manual /
+      // temp seat may only be created when the request that justifies
+      // it transitions from pending → complete in the same write. We
+      // use `getAfter()` (the after-this-write view) to read the
+      // request as it will look once the client's transaction commits.
+      // `getAfter()` is used here and ONLY here — every other rule
+      // is local to its own document.
+      function tiedToRequestCompletion(sid, requestId, expectedScope, expectedMember, expectedSeatType) {
+        let reqBefore = get(/databases/$(database)/documents/stakes/$(sid)/requests/$(requestId));
+        let reqAfter  = getAfter(/databases/$(database)/documents/stakes/$(sid)/requests/$(requestId));
+        return reqBefore.data.status == 'pending'
+          && reqAfter.data.status == 'complete'
+          && reqAfter.data.scope == expectedScope
+          && reqAfter.data.member_canonical == expectedMember
+          && (
+            (expectedSeatType == 'manual' && reqAfter.data.type == 'add_manual')
+            || (expectedSeatType == 'temp' && reqAfter.data.type == 'add_temp')
+          );
+      }
+
+      // ----- Requests -----
+      // Reads: managers see all; the original requester sees their
+      // own; stake-scope members see all stake-scope requests; ward-
+      // scope is visible to bishopric members of that ward.
+      //
+      // Creates (Submit): only `pending` is a legal starting status.
+      // The requester_canonical must match the auth token's canonical
+      // claim. Add-types require member_name; stake-scope add-types
+      // require at least one building selection. Scope must match
+      // the requester's role: stake-scope requires stake membership,
+      // ward-scope requires that ward in the bishopric list.
+      //
+      // Updates: pending → terminal only. Cancellation is requester-
+      // only; complete / reject are manager-only. Reject requires a
+      // non-empty rejection_reason.
+      //
+      // Deletes: never.
+      match /requests/{requestId} {
+        allow read: if isAuthed() && (
+          isManager(stakeId)
+          || resource.data.requester_canonical == authedCanonical()
+          || (resource.data.scope == 'stake' && isStakeMember(stakeId))
+          || (resource.data.scope in bishopricWardOf(stakeId))
+        );
+
+        allow create: if isAuthed()
+          && request.resource.data.status == 'pending'
+          && request.resource.data.requester_canonical == authedCanonical()
+          && request.resource.data.requested_at == request.time
+          && lastActorMatchesAuth(request.resource.data)
+          && (request.resource.data.type == 'remove'
+              || request.resource.data.member_name.size() > 0)
+          && (request.resource.data.type == 'remove'
+              || request.resource.data.scope != 'stake'
+              || request.resource.data.building_names.size() > 0)
+          && (
+               (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
+            || (request.resource.data.scope in bishopricWardOf(stakeId))
+          );
+
+        allow update: if resource.data.status == 'pending'
+          && lastActorMatchesAuth(request.resource.data)
+          && (
+            // Cancel — only the original requester
+            (request.resource.data.status == 'cancelled'
+             && resource.data.requester_canonical == authedCanonical())
+            ||
+            // Complete — only managers (self-approval is allowed; rules
+            // do not require requester != completer per F12 invariant 7)
+            (request.resource.data.status == 'complete'
+             && isManager(stakeId)
+             && request.resource.data.completer_canonical == authedCanonical())
+            ||
+            // Reject — only managers, with non-empty reason
+            (request.resource.data.status == 'rejected'
+             && isManager(stakeId)
+             && request.resource.data.rejection_reason.size() > 0
+             && request.resource.data.completer_canonical == authedCanonical())
+          );
+
+        allow delete: if false;
+      }
+
+      // ----- Calling templates -----
+      // Manager-only on both reads and writes. Templates seed the
+      // importer's mapping from calling-name → app-access; they're
+      // configuration data, not member data, so non-managers don't
+      // need read access.
+      match /wardCallingTemplates/{callingName} {
+        allow read: if isManager(stakeId);
+        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+      }
+
+      match /stakeCallingTemplates/{callingName} {
+        allow read: if isManager(stakeId);
+        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+      }
+
+      // ----- AuditLog -----
+      // Manager-only read (the manager Audit Log page surfaces this).
+      // Writes server-only — the parameterized `auditTrigger` Cloud
+      // Function fans rows here via Admin SDK.
+      match /auditLog/{auditId} {
+        allow read: if isManager(stakeId);
+        allow write: if false;
+      }
     }
   }
 }
