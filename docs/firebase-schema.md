@@ -781,9 +781,9 @@ Total: ~10–12 Cloud Functions. None hot-path; all run on free tier at this sca
 
 Sorted by weight. The first item gates everything else.
 
-### 8.1 Meta — gates the entire document
+### 8.1 Meta — RESOLVED 2026-04-27
 
-**Q1. Which architecture, if any, will actually be built?** This document and `docs/firebase-migration.md` (the original Cloud Run + Express plan) are both paused, both viable, both unbuilt. The Apps Script implementation continues to run in production. No commitment to migrate at all, let alone to which path. Until that's settled, the rest of this list is hypothetical.
+Q1 (whether to migrate, and to which architecture) was resolved on 2026-04-27 when the user committed to the Firebase migration. `docs/firebase-migration.md` was rewritten from the prior Cloud Run + Express plan to direct-to-Firestore + custom claims and is now the active plan. See §8.6 for the resolved-decisions summary.
 
 ### 8.2 Behavioural changes from current spec — RESOLVED 2026-04-27
 
@@ -835,6 +835,7 @@ Q2 (duplicate manual/temp blocking), Q3 (multi-calling collapse + utilization re
 
 For completeness, here's what was actively considered and resolved during the conversation, so future readers don't reopen them by mistake:
 
+- **Q1 — Migration commitment (2026-04-27):** User committed to the Firebase migration on 2026-04-27. `docs/firebase-migration.md` is the active plan (rewritten from the prior Cloud Run + Express architecture to direct-to-Firestore + custom claims; the rewrite superseded the prior plan in the same file path).
 - **Audit-log strategy:** Option A (trigger-written audit, flat `auditLog` collection per stake) chosen over Option B (embedded `history` subcollections with `getAfter()` rules). Reasoning: B's atomicity advantage applies only to client writes; Admin SDK writes (importer, expiry) bypass rules either way. Option D (best-effort + nightly reconciliation) kept as fallback.
 - **Seat ID format:** canonical email. Not `{type}__{scope}__{canonical}`, not UUIDs.
 - **Access ID format:** canonical email. Not composite key.
@@ -849,7 +850,6 @@ For completeness, here's what was actively considered and resolved during the co
 ## 9. What this doc does not cover
 
 - Phase plan (how to actually port the Apps Script app to this architecture).
-- Effort comparison vs the original Cloud Run plan in `firebase-migration.md`.
 - UI/UX changes implied by the schema (e.g. card-per-user rendering on the Access page, Reconcile flow on collisions).
 - Migration script (Sheet → Firestore mapping under this schema).
 - Test strategy (rules tests, trigger tests, E2E).

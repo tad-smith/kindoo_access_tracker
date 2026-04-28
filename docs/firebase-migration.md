@@ -900,7 +900,7 @@ _Importer service_
   - Per-row audit (via Phase 8 audit trigger; importer code doesn't write audit directly).
   - Updates `last_import_at`, `last_import_summary` on stake doc.
   - Over-cap detection in a follow-up pass; persists snapshot to `stakes.{sid}.last_over_caps_json`; emails best-effort (Phase 9).
-- [ ] Sheets API integration via `googleapis` npm package using the Cloud Run service account.
+- [ ] Sheets API integration via `googleapis` npm package using the importer Cloud Function's service account.
 - [ ] Operator runbook: `infra/runbooks/granting-importer-sheet-access.md` — file → share → add `kindoo-app@<project>.iam.gserviceaccount.com` as Viewer.
 
 _Expiry service_
