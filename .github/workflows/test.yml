@@ -39,18 +39,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up pnpm
         # Version is read from the `packageManager` field in package.json
-        # (currently pnpm@9.15.0). Specifying a version here too produces
+        # (currently pnpm@10.33.2). Specifying a version here too produces
         # ERR_PNPM_BAD_PM_VERSION when they disagree.
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        # node-version-file pins the runner to the same Node line the
+        # local toolchain uses (.nvmrc = 22, matched by the Volta pin in
+        # root package.json and by the Cloud Functions v2 runtime). Single
+        # source of truth, no drift between local + CI + production.
+        uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version-file: '.nvmrc'
           cache: 'pnpm'
 
       - name: Set up Java (for Firestore + Functions emulators)
@@ -58,7 +62,7 @@ jobs:
         # emulators (they're Java apps under the hood). GitHub Actions
         # Ubuntu runners ship an older default Java; pinning Temurin 21
         # makes the runtime explicit.
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
