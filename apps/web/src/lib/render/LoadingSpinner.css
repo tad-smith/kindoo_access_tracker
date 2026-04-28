@@ -1,0 +1,40 @@
+/* Loading spinner. Single-element CSS animation; no SVG / image
+   dependency so the component renders correctly during the first
+   paint with no JS-side hydration delay. */
+
+@keyframes kd-spinner-pulse {
+  0%,
+  100% {
+    transform: scale(0.85);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.kd-spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--kd-fg-2);
+}
+
+.kd-spinner-block {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+.kd-spinner-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--kd-primary);
+  animation: kd-spinner-pulse 1s ease-in-out infinite;
+}
+
+.kd-spinner-label {
+  font-size: 0.95em;
+}

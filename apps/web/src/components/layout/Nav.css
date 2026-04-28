@@ -1,0 +1,64 @@
+/* Primary nav. Sits below the topbar in a horizontal scroll-strip on
+   desktop; stacks vertically below the topbar on mobile per the
+   "mobile usable at 375px" acceptance criterion in
+   `docs/firebase-migration.md` Phase 4. */
+
+.kd-nav {
+  background: #fff;
+  border-bottom: 1px solid var(--kd-chrome-border);
+}
+
+.kd-nav ul {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0 20px;
+  max-width: 1440px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.kd-nav-link {
+  display: inline-block;
+  padding: 10px 14px;
+  color: var(--kd-fg-2);
+  text-decoration: none;
+  font-size: 0.95em;
+  border-radius: 4px;
+  border: 1px solid transparent;
+}
+
+.kd-nav-link:hover {
+  background: var(--kd-surface-alt);
+  color: var(--kd-fg-1);
+  text-decoration: none;
+}
+
+.kd-nav-link.active {
+  background: var(--kd-primary-tint);
+  color: var(--kd-primary);
+  font-weight: 600;
+  border-color: var(--kd-primary-tint-link);
+}
+
+.kd-nav-link.kd-nav-disabled {
+  color: var(--kd-chrome-fg-muted);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+@media (max-width: 600px) {
+  .kd-nav ul {
+    padding: 0 12px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: thin;
+  }
+
+  .kd-nav-link {
+    white-space: nowrap;
+    padding: 8px 10px;
+    font-size: 0.9em;
+  }
+}

@@ -1,0 +1,72 @@
+/* Modal styles. Mechanical port of `.kd-modal*` rules from
+   `src/ui/Styles.html` so the visual matches the Apps Script app.
+   Radix renders the overlay and the content as siblings inside the
+   portal, so we add a `.kd-modal-positioner` wrapper around the
+   content node to handle the centering that the Apps Script flex
+   block did directly on the overlay. */
+
+.kd-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(29, 35, 51, 0.55);
+  z-index: 1300;
+}
+
+.kd-modal-positioner {
+  position: fixed;
+  inset: 0;
+  z-index: 1301;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+.kd-modal-inner {
+  background: #fff;
+  border-radius: 8px;
+  padding: 20px 24px;
+  width: min(480px, 100%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  pointer-events: auto;
+}
+
+.kd-modal-title {
+  margin: 0 0 10px;
+  font-size: 1.1em;
+  color: var(--kd-fg-1);
+}
+
+.kd-modal-body {
+  color: var(--kd-fg-2);
+  font-size: 0.95em;
+  line-height: 1.5;
+  margin-bottom: 14px;
+  word-break: break-word;
+}
+
+/* Visually hidden but readable by assistive tech. Used when a Dialog
+   has no caller-supplied description — Radix requires either a
+   `<Description>` child or an `aria-describedby` override. */
+.kd-modal-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kd-modal,
+  .kd-modal-positioner,
+  .kd-modal-inner {
+    animation: none !important;
+    transition: none !important;
+  }
+}
