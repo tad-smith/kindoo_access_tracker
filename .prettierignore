@@ -19,6 +19,7 @@ test-results/
 
 # Generated files
 **/version.ts
+apps/web/src/routeTree.gen.ts
 
 # Lockfiles
 pnpm-lock.yaml

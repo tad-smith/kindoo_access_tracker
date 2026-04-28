@@ -1,0 +1,86 @@
+/* Shell layout. Topbar + nav + content. Identical visual structure to
+   the Apps Script app's `topbar` block in `src/ui/Styles.html` — same
+   24px content padding, same brand + meta split, same border under
+   the topbar. */
+
+.kd-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.kd-topbar {
+  background: #fff;
+  color: var(--kd-chrome-fg);
+  border-bottom: 1px solid var(--kd-chrome-border);
+}
+
+.kd-topbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  gap: 12px;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.kd-topbar-brand {
+  color: var(--kd-primary);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.05em;
+}
+
+.kd-topbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  color: var(--kd-chrome-fg-muted);
+  font-size: 0.9em;
+}
+
+.kd-topbar-stake-slot:empty {
+  display: none;
+}
+
+.kd-topbar-email {
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kd-topbar-version {
+  font-size: 0.7em;
+  color: var(--kd-chrome-fg-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  user-select: all;
+}
+
+.kd-main {
+  flex: 1;
+  padding: 24px 20px;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 1200px;
+  box-sizing: border-box;
+}
+
+@media (max-width: 480px) {
+  .kd-topbar-inner {
+    padding: 10px 12px;
+  }
+
+  .kd-main {
+    padding: 16px 12px;
+  }
+
+  .kd-topbar-email {
+    max-width: 18ch;
+  }
+}

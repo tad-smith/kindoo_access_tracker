@@ -1,0 +1,50 @@
+/* Toast notifications. Ported from `.toast-*` rules in
+   `src/ui/Styles.html` (around line 171). Identical positioning so a
+   user familiar with the Apps Script app sees the same UX. */
+
+.toast-host {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 0.92em;
+  background: #1d2333;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+  cursor: pointer;
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+
+.toast-leaving {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.toast-info {
+  background: #2b6cb0;
+}
+
+.toast-success {
+  background: #4a8560;
+}
+
+.toast-warn {
+  background: #b76d00;
+}
+
+.toast-error {
+  background: #a85450;
+}

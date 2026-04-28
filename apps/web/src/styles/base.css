@@ -1,0 +1,127 @@
+/* Base resets and document-level styles. Mechanical port of the
+   non-component-specific rules from `src/ui/Styles.html`. Everything
+   that's tied to a specific page family ports lazily as Phase 5+ pages
+   need it. */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  color: var(--kd-fg-1);
+  background: #f7f8fb;
+  line-height: 1.45;
+}
+
+a {
+  color: var(--kd-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+main {
+  padding: 24px 20px;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 900px;
+  box-sizing: border-box;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 1.5em;
+}
+
+.hidden {
+  display: none;
+}
+
+.error {
+  color: var(--kd-danger);
+}
+
+code {
+  background: var(--kd-border-soft);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95em;
+}
+
+/* Mobile reset — list pages need to scroll without a horizontal
+   bounce on 375px. The shell's nav stacks vertically below the topbar
+   at narrow widths (see Shell.css). */
+@media (max-width: 480px) {
+  main {
+    padding: 16px 12px;
+  }
+}
+
+/* Standard button family. Copied from `src/ui/Styles.html` §base. */
+.btn {
+  background: var(--kd-primary);
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--kd-primary-hover);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: var(--kd-primary);
+  border: 1px solid var(--kd-border);
+}
+
+.btn-secondary:hover {
+  background: var(--kd-surface-alt);
+}
+
+.btn-success {
+  background: var(--kd-success);
+  color: #fff;
+  border: none;
+}
+
+.btn-success:hover {
+  background: var(--kd-success-dark);
+}
+
+.btn-danger {
+  background: var(--kd-danger);
+  color: #fff;
+  border: none;
+}
+
+.btn-danger:hover {
+  background: var(--kd-danger-dark);
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}

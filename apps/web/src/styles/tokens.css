@@ -1,0 +1,54 @@
+/* Design tokens. Mechanical port of `:root` from Apps Script
+   `src/ui/Styles.html` (DESIGN_REFACTOR.md §1) so the new SPA matches
+   the live app's palette pixel-for-pixel. New tokens added in
+   subsequent phases live below the imported block with a comment
+   pointing back to their introducing PR / phase. */
+
+:root {
+  /* Brand */
+  --kd-primary: #2b6cb0;
+  --kd-primary-hover: #2c5282;
+  --kd-primary-nav: #ffffff;
+  --kd-primary-tint: #ebf4fb;
+  --kd-primary-tint-link: #9fc1ff;
+
+  /* Chrome (topbar / page frame) */
+  --kd-chrome-border: #e5e7eb;
+  --kd-chrome-fg: #1a1d23;
+  --kd-chrome-fg-muted: #6b7280;
+
+  /* Surfaces and borders */
+  --kd-surface-alt: #f3f5fa;
+  --kd-border: #d8dbe4;
+  --kd-border-soft: #eef0f5;
+  --kd-fg-1: #1d2333;
+  --kd-fg-2: #4b5266;
+  --kd-fg-3: #6b7280;
+
+  /* Semantic — success */
+  --kd-success: #4a8560;
+  --kd-success-dark: #3a6b4c;
+  --kd-success-tint: #e6f3ea;
+  --kd-success-fg: #2f6f47;
+  --kd-success-bg: #f4faf6;
+  --kd-success-br: #c4ddcc;
+
+  /* Semantic — danger */
+  --kd-danger: #a85450;
+  --kd-danger-dark: #8a4340;
+  --kd-danger-alt: #923834;
+  --kd-danger-red: #c25858;
+  --kd-danger-tint: #f5e4e4;
+  --kd-danger-fg: #923834;
+  --kd-danger-fg-2: #6b2a2a;
+  --kd-danger-fg-3: #9a4a4a;
+  --kd-danger-bg: #faf0f0;
+
+  /* Row tints + warn family */
+  --kd-row-auto: #fafbff;
+  --kd-row-temp: #fff8ea;
+  --kd-warn-tint: #ffe3c2;
+  --kd-warn-dark: #7a4400;
+  --kd-warn-tint-2: #fde4a1;
+  --kd-warn-mid: #6b4a00;
+}

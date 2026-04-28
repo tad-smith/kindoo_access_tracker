@@ -1,22 +1,30 @@
 // Vite config for the Kindoo SPA.
 //
-// Phase 1 wires the bare minimum:
-//   - React 19 plugin
-//   - Dev server on 5173, preview on 4173 (Playwright targets preview)
+// Phase 4 wires:
+//   - `@tanstack/router-plugin/vite` (T-17): generates
+//     `src/routeTree.gen.ts` from file-based routes under
+//     `src/routes/`; `autoCodeSplitting: true` produces per-route JS
+//     chunks so heavyweight pages don't bloat the initial bundle.
+//   - React 19 plugin (must come AFTER the router plugin so route
+//     transforms see the file-based-route exports).
+//   - Dev server on 5173, preview on 4173 (Playwright targets preview).
 //
-// TanStack Router is currently configured code-first in src/router.tsx.
-// Phase 4 switches to file-based routing under src/routes/, at which point
-// we re-add the @tanstack/router-plugin/vite plugin with a routesDirectory
-// option. Adding it now without a routesDirectory crashes Vite at config
-// load time because the plugin can't resolve its default route directory.
-//
-// vite-plugin-pwa, Tailwind, shadcn-ui, etc. are deferred to Phase 4+.
+// vite-plugin-pwa is deferred to Phase 10; Tailwind + shadcn-ui to
+// Phase 5 (T-18).
 
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { TanStackRouterVite } from '@tanstack/router-plugin/vite';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    TanStackRouterVite({
+      routesDirectory: './src/routes',
+      generatedRouteTree: './src/routeTree.gen.ts',
+      autoCodeSplitting: true,
+    }),
+    react(),
+  ],
   server: {
     port: 5173,
     strictPort: true,
