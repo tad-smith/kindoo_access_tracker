@@ -103,11 +103,13 @@ The "warning" referred to the *"This application was created by a Google Apps Sc
 Tasks surfaced during the Firebase monorepo migration (Phases 1+). These follow the agent-spec `[T-NN]` format from `.claude/agents/docs-keeper.md` rather than the numbered Apps Script-era format above. Future migration follow-ups should be appended here in the same shape; pre-migration entries above are kept in their original style.
 
 ## [T-01] Reconcile `stamp-version.js` with workspace `version.ts` shape
-Status: open
-Owner: @backend-engineer (functions side) + @web-engineer (web side)
+Status: done (2026-04-28)
+Owner: @infra-engineer
 Phase: 1 → due before Phase 4 staging deploy
 
-`infra/scripts/stamp-version.js` writes `VERSION` + `BUILT_AT`, but the Phase 1 workspace authors created `version.ts` files exporting `KINDOO_WEB_VERSION` / `KINDOO_FUNCTIONS_VERSION` per the migration-plan task spec. No runtime failure today because the stamper only runs at deploy time, which is itself blocked on T-03 (B1). Pick one of: (a) rename per-workspace `version.ts` → `buildInfo.ts` and update the stamper + tests + consumers to align with the existing stamper output, or (b) extend `stamp-version.js` to also emit the per-workspace `KINDOO_*_VERSION` constants. Settle before the first staging deploy under Phase 4 acceptance.
+`infra/scripts/stamp-version.js` wrote `VERSION` + `BUILT_AT`, but the Phase 1 workspace authors created `version.ts` files exporting `KINDOO_WEB_VERSION` / `KINDOO_FUNCTIONS_VERSION` per the migration-plan task spec. The mismatch surfaced when the operator ran `pnpm deploy:staging` for the first time: the stamper clobbered the placeholder files and `pnpm typecheck` failed because Shell.tsx, version.test.ts, functions/src/index.ts, and functions/src/index.test.ts all imported the per-workspace named constants.
+
+Closed 2026-04-28 (option b): `infra/scripts/stamp-version.js` now emits per-workspace named exports — `KINDOO_WEB_VERSION` + `KINDOO_WEB_BUILT_AT` for `apps/web/src/version.ts`, `KINDOO_FUNCTIONS_VERSION` + `KINDOO_FUNCTIONS_BUILT_AT` for `functions/src/version.ts`. Consumer-side files unchanged. See PR #fix/t-01-version-stamper-shape.
 
 ## [T-02] Document `firebase-tools` standalone-binary footgun in deploy runbook
 Status: open
