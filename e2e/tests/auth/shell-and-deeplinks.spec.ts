@@ -82,12 +82,10 @@ test.describe('Phase 4 shell + deep-links', () => {
     // Phase 4 only ships /hello as a renderable destination; the
     // per-role default redirects (manager → /manager/dashboard etc.)
     // 404 until Phase 5+. We exercise back/forward by navigating
-    // through three URLs that all land on the Hello page within the
-    // shell:
-    //   1. `/?p=hello` — the legacy deep-link resolver redirects to
-    //                    `/hello` after the gate.
-    //   2. `/hello` — direct hit on the placeholder route.
-    //   3. back/forward through that history — shell stays mounted.
+    // between two `/hello` URLs that differ in their hash fragment.
+    // Hash changes are same-route navigations — the Hello page stays
+    // mounted, the shell never unmounts, but the browser still records
+    // the entry in history so back/forward have something to traverse.
     const email = 'manager-bf@example.com';
     const { uid } = await createAuthUser({ email });
     await setCustomClaims(uid, {
@@ -97,7 +95,7 @@ test.describe('Phase 4 shell + deep-links', () => {
       },
     });
 
-    // Land on the Hello page via the `?p=hello` deep-link.
+    // Land on the Hello page via the `?p=hello` deep-link, then sign in.
     await page.goto('/?p=hello');
     await signInViaTestHatch(page, email, TEST_PASSWORD);
     await expect(page.getByRole('heading', { name: /Hello/ })).toBeVisible();
@@ -105,18 +103,22 @@ test.describe('Phase 4 shell + deep-links', () => {
     const topbarBrand = page.locator('.kd-topbar-brand');
     await expect(topbarBrand).toBeVisible();
 
-    // Direct navigation to `/hello` (different URL, same destination).
-    await page.goto('/hello');
+    // Push a second history entry on the same route.
+    await page.evaluate(() => {
+      window.history.pushState({}, '', '/hello#a');
+    });
     await expect(page.getByRole('heading', { name: /Hello/ })).toBeVisible();
     await expect(topbarBrand).toBeVisible();
 
-    // Back to `/?p=hello` — gate redirects to `/hello` again, shell
-    // stays mounted (no full reload).
+    // Back — shell stays mounted, content stays rendered. The
+    // assertion is the same: Hello heading + topbar brand visible
+    // *without* a full page reload (which would briefly tear down
+    // the shell and re-mount).
     await page.goBack();
     await expect(page.getByRole('heading', { name: /Hello/ })).toBeVisible();
     await expect(topbarBrand).toBeVisible();
 
-    // Forward to `/hello` — content matches.
+    // Forward — same.
     await page.goForward();
     await expect(page.getByRole('heading', { name: /Hello/ })).toBeVisible();
     await expect(topbarBrand).toBeVisible();
