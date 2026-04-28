@@ -37,32 +37,25 @@ describe('navLinksForPrincipal (pure derivation)', () => {
     expect(navLinksForPrincipal(makePrincipal())).toEqual([]);
   });
 
-  it('returns the manager link set for a manager principal', () => {
+  it('returns the Phase 5 manager link set for a manager principal', () => {
     const links = navLinksForPrincipal(makePrincipal({ managerStakes: ['csnorth'] }));
     expect(links.map((l) => l.label)).toEqual([
       'Dashboard',
-      'Requests Queue',
       'All Seats',
-      'Configuration',
-      'Access',
-      'Import',
       'Audit Log',
-    ]);
-  });
-
-  it('returns the stake link set for a stake-member principal', () => {
-    const links = navLinksForPrincipal(makePrincipal({ stakeMemberStakes: ['csnorth'] }));
-    expect(links.map((l) => l.label)).toEqual([
-      'Roster',
-      'New Kindoo Request',
+      'Access',
       'My Requests',
-      'Ward Rosters',
     ]);
   });
 
-  it('returns the bishopric link set for a bishopric principal', () => {
+  it('returns the Phase 5 stake link set for a stake-member principal', () => {
+    const links = navLinksForPrincipal(makePrincipal({ stakeMemberStakes: ['csnorth'] }));
+    expect(links.map((l) => l.label)).toEqual(['Roster', 'Ward Rosters', 'My Requests']);
+  });
+
+  it('returns the Phase 5 bishopric link set for a bishopric principal', () => {
     const links = navLinksForPrincipal(makePrincipal({ bishopricWards: { csnorth: ['CO'] } }));
-    expect(links.map((l) => l.label)).toEqual(['Roster', 'New Kindoo Request', 'My Requests']);
+    expect(links.map((l) => l.label)).toEqual(['Roster', 'My Requests']);
   });
 
   it('orders priority manager > stake > bishopric in a multi-role union', () => {
@@ -73,11 +66,12 @@ describe('navLinksForPrincipal (pure derivation)', () => {
         bishopricWards: { csnorth: ['CO'] },
       }),
     );
-    // Manager links lead; stake links follow (de-duplicated where keys overlap).
+    // Manager block leads (Dashboard at index 0).
     expect(links[0]?.label).toBe('Dashboard');
-    // Stake's "Roster" follows the manager block.
+    // Stake's Roster + Ward Rosters appear after the manager block.
     expect(links.map((l) => l.label)).toContain('Roster');
-    // No duplicates after de-dup.
+    expect(links.map((l) => l.label)).toContain('Ward Rosters');
+    // No duplicates after de-dup (My Requests collapses across roles).
     expect(new Set(links.map((l) => l.key)).size).toBe(links.length);
   });
 });
@@ -85,9 +79,6 @@ describe('navLinksForPrincipal (pure derivation)', () => {
 // Minimal router fixture so `<Nav />` can call `useRouterState`.
 async function renderNavAtPath(principal: Principal, pathname: string) {
   const rootRoute = createRootRoute({ component: () => <Nav principal={principal} /> });
-  // We don't need real child routes — they're never matched; the nav
-  // just reads `useRouterState().location.pathname`. Adding a catch-all
-  // child route keeps the router happy for arbitrary `pathname` values.
   const catchAll = createRoute({
     getParentRoute: () => rootRoute,
     path: '$',
@@ -108,8 +99,8 @@ describe('<Nav />', () => {
   });
 
   it('renders manager links and marks the active one', async () => {
-    await renderNavAtPath(makePrincipal({ managerStakes: ['csnorth'] }), '/manager/queue');
-    const link = screen.getByRole('link', { name: /Requests Queue/ });
+    await renderNavAtPath(makePrincipal({ managerStakes: ['csnorth'] }), '/manager/seats');
+    const link = screen.getByRole('link', { name: /^All Seats$/ });
     expect(link).toHaveAttribute('aria-current', 'page');
     expect(link.className).toContain('active');
     // Other links exist but are not marked active.

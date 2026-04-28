@@ -11,7 +11,10 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthedHelloRouteImport } from './routes/_authed/hello'
+import { Route as AuthedMyRequestsRouteImport } from './routes/_authed/my-requests'
+import { Route as AuthedStakeWardsRouteImport } from './routes/_authed/stake/wards'
+import { Route as AuthedStakeRosterRouteImport } from './routes/_authed/stake/roster'
+import { Route as AuthedBishopricRosterRouteImport } from './routes/_authed/bishopric/roster'
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
@@ -22,32 +25,73 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthedHelloRoute = AuthedHelloRouteImport.update({
-  id: '/hello',
-  path: '/hello',
+const AuthedMyRequestsRoute = AuthedMyRequestsRouteImport.update({
+  id: '/my-requests',
+  path: '/my-requests',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedStakeWardsRoute = AuthedStakeWardsRouteImport.update({
+  id: '/stake/wards',
+  path: '/stake/wards',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedStakeRosterRoute = AuthedStakeRosterRouteImport.update({
+  id: '/stake/roster',
+  path: '/stake/roster',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedBishopricRosterRoute = AuthedBishopricRosterRouteImport.update({
+  id: '/bishopric/roster',
+  path: '/bishopric/roster',
   getParentRoute: () => AuthedRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/hello': typeof AuthedHelloRoute
+  '/my-requests': typeof AuthedMyRequestsRoute
+  '/bishopric/roster': typeof AuthedBishopricRosterRoute
+  '/stake/roster': typeof AuthedStakeRosterRoute
+  '/stake/wards': typeof AuthedStakeWardsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/hello': typeof AuthedHelloRoute
+  '/my-requests': typeof AuthedMyRequestsRoute
+  '/bishopric/roster': typeof AuthedBishopricRosterRoute
+  '/stake/roster': typeof AuthedStakeRosterRoute
+  '/stake/wards': typeof AuthedStakeWardsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authed': typeof AuthedRouteWithChildren
-  '/_authed/hello': typeof AuthedHelloRoute
+  '/_authed/my-requests': typeof AuthedMyRequestsRoute
+  '/_authed/bishopric/roster': typeof AuthedBishopricRosterRoute
+  '/_authed/stake/roster': typeof AuthedStakeRosterRoute
+  '/_authed/stake/wards': typeof AuthedStakeWardsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/hello'
+  fullPaths:
+    | '/'
+    | '/my-requests'
+    | '/bishopric/roster'
+    | '/stake/roster'
+    | '/stake/wards'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/hello'
-  id: '__root__' | '/' | '/_authed' | '/_authed/hello'
+  to:
+    | '/'
+    | '/my-requests'
+    | '/bishopric/roster'
+    | '/stake/roster'
+    | '/stake/wards'
+  id:
+    | '__root__'
+    | '/'
+    | '/_authed'
+    | '/_authed/my-requests'
+    | '/_authed/bishopric/roster'
+    | '/_authed/stake/roster'
+    | '/_authed/stake/wards'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -71,22 +115,49 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authed/hello': {
-      id: '/_authed/hello'
-      path: '/hello'
-      fullPath: '/hello'
-      preLoaderRoute: typeof AuthedHelloRouteImport
+    '/_authed/my-requests': {
+      id: '/_authed/my-requests'
+      path: '/my-requests'
+      fullPath: '/my-requests'
+      preLoaderRoute: typeof AuthedMyRequestsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/stake/wards': {
+      id: '/_authed/stake/wards'
+      path: '/stake/wards'
+      fullPath: '/stake/wards'
+      preLoaderRoute: typeof AuthedStakeWardsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/stake/roster': {
+      id: '/_authed/stake/roster'
+      path: '/stake/roster'
+      fullPath: '/stake/roster'
+      preLoaderRoute: typeof AuthedStakeRosterRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/bishopric/roster': {
+      id: '/_authed/bishopric/roster'
+      path: '/bishopric/roster'
+      fullPath: '/bishopric/roster'
+      preLoaderRoute: typeof AuthedBishopricRosterRouteImport
       parentRoute: typeof AuthedRoute
     }
   }
 }
 
 interface AuthedRouteChildren {
-  AuthedHelloRoute: typeof AuthedHelloRoute
+  AuthedMyRequestsRoute: typeof AuthedMyRequestsRoute
+  AuthedBishopricRosterRoute: typeof AuthedBishopricRosterRoute
+  AuthedStakeRosterRoute: typeof AuthedStakeRosterRoute
+  AuthedStakeWardsRoute: typeof AuthedStakeWardsRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
-  AuthedHelloRoute: AuthedHelloRoute,
+  AuthedMyRequestsRoute: AuthedMyRequestsRoute,
+  AuthedBishopricRosterRoute: AuthedBishopricRosterRoute,
+  AuthedStakeRosterRoute: AuthedStakeRosterRoute,
+  AuthedStakeWardsRoute: AuthedStakeWardsRoute,
 }
 
 const AuthedRouteWithChildren =

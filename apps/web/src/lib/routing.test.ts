@@ -29,13 +29,13 @@ describe('defaultLandingFor', () => {
     expect(defaultLandingFor(principal({ managerStakes: [STAKE_ID] }))).toBe('/manager/dashboard');
   });
 
-  it('returns /stake/new for a stake-member principal', () => {
-    expect(defaultLandingFor(principal({ stakeMemberStakes: [STAKE_ID] }))).toBe('/stake/new');
+  it('returns /stake/roster for a stake-member principal', () => {
+    expect(defaultLandingFor(principal({ stakeMemberStakes: [STAKE_ID] }))).toBe('/stake/roster');
   });
 
-  it('returns /bishopric/new for a bishopric principal', () => {
+  it('returns /bishopric/roster for a bishopric principal', () => {
     expect(defaultLandingFor(principal({ bishopricWards: { [STAKE_ID]: ['CO'] } }))).toBe(
-      '/bishopric/new',
+      '/bishopric/roster',
     );
   });
 
@@ -56,15 +56,15 @@ describe('defaultLandingFor', () => {
           bishopricWards: { [STAKE_ID]: ['CO'] },
         }),
       ),
-    ).toBe('/stake/new');
+    ).toBe('/stake/roster');
   });
 
   it('prefers manager when the principal is a platform superadmin', () => {
     expect(defaultLandingFor(principal({ isPlatformSuperadmin: true }))).toBe('/manager/dashboard');
   });
 
-  it('falls back to /hello when the principal has no role in this stake', () => {
-    expect(defaultLandingFor(principal({ managerStakes: ['other-stake'] }))).toBe('/hello');
+  it('falls back to / when the principal has no role in this stake', () => {
+    expect(defaultLandingFor(principal({ managerStakes: ['other-stake'] }))).toBe('/');
   });
 });
 
@@ -74,11 +74,34 @@ describe('deepLinkPath', () => {
     expect(deepLinkPath('')).toBeNull();
   });
 
-  it('resolves the hello key (Phase 4)', () => {
-    expect(deepLinkPath('hello')).toBe('/hello');
+  it('resolves the bishopric roster key', () => {
+    expect(deepLinkPath('bish/roster')).toBe('/bishopric/roster');
+  });
+
+  it('resolves the manager dashboard key', () => {
+    expect(deepLinkPath('mgr/dashboard')).toBe('/manager/dashboard');
+  });
+
+  it('resolves the manager seats key', () => {
+    expect(deepLinkPath('mgr/seats')).toBe('/manager/seats');
+  });
+
+  it('resolves the manager audit-log key', () => {
+    expect(deepLinkPath('mgr/audit')).toBe('/manager/audit');
+  });
+
+  it('resolves both the legacy and new MyRequests keys to a shared route', () => {
+    expect(deepLinkPath('myreq')).toBe('/my-requests');
+    expect(deepLinkPath('my')).toBe('/my-requests');
   });
 
   it('returns null for unknown keys', () => {
     expect(deepLinkPath('some-future-page')).toBeNull();
+  });
+
+  it('returns null for the deprecated hello key', () => {
+    // Phase 4's placeholder route is gone; the deep link resolves to null
+    // and falls through to the per-role default.
+    expect(deepLinkPath('hello')).toBeNull();
   });
 });

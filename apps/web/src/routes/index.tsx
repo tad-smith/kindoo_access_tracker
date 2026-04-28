@@ -14,9 +14,8 @@
 // Back-compat deep-link: `/?p=<page-key>` lands the user on the
 // matching SPA route after the gate runs. Page keys mirror the Apps
 // Script keys. Unknown keys are ignored (the principal lands on the
-// default tab as if no `?p` was present). The full key set lands as
-// Phases 5–7 ship the corresponding routes; Phase 4 only resolves
-// `?p=hello`.
+// default tab as if no `?p` was present). Phase 5 wires the read-side
+// pages; Phase 6+ adds the remaining keys.
 
 import { useEffect } from 'react';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
