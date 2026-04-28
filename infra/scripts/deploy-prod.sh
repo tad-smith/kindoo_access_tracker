@@ -12,6 +12,15 @@
 #     - staging deploy has already passed for this commit
 #   Those gates are TODOs until B1 lands.
 #
+# Steps were: stamp / typecheck / test / build-web / build-functions /
+# firebase deploy. Step 3 (test) was removed because the local script
+# doesn't boot emulators; CI is the test gate. The operator triggers
+# deploys only after CI is green on `main`, and CI already runs
+# lint + typecheck + unit + rules + integration + e2e + build against
+# the same commit. An operator who wants belt-and-suspenders local
+# verification can run `pnpm test` themselves before invoking this
+# script.
+#
 # What it assumes:
 #   - All the same assumptions as deploy-staging.sh.
 #   - You've successfully run deploy-staging.sh on this commit and
@@ -84,16 +93,13 @@ run "node infra/scripts/stamp-version.js"
 # Step 2: typecheck.
 run "pnpm typecheck"
 
-# Step 3: tests.
-run "pnpm test"
-
-# Step 4: build web.
+# Step 3: build web.
 run "pnpm --filter ./apps/web build"
 
-# Step 5: build functions.
+# Step 4: build functions.
 run "pnpm --filter ./functions build"
 
-# Step 6: deploy via Firebase CLI.
+# Step 5: deploy via Firebase CLI.
 run "firebase deploy --project prod --only hosting,functions,firestore"
 
 echo ""
