@@ -37,7 +37,7 @@
     "typescript": "^5.7.2"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "pnpm": {
     "peerDependencyRules": {
@@ -46,5 +46,8 @@
         "@firebase/rules-unit-testing>firebase": "11"
       }
     }
+  },
+  "volta": {
+    "node": "22.22.2"
   }
 }

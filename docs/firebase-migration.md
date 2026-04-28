@@ -177,19 +177,20 @@ kindoo/
 1 Project skeleton + monorepo + emulators
  └─ 2 Firebase Auth + custom claims + sync triggers
      └─ 3 Firestore schema + security rules + indexes
-         ├─ 4 Web SPA shell + auth flow
-         │   ├─ 5 Read-side pages
-         │   │   └─ 6 Write-side pages — request lifecycle
-         │   │       └─ 7 Manager admin pages + bootstrap wizard
-         │   │           └─ 10 PWA + push notifications
-         │   │               └─ 11 Data migration + cutover  ◄─── end of Phase A
-         │   │                   └─ 12 Multi-stake (Phase B)
-         │   └─ 8 Importer + Expiry + audit triggers
-         │       └─ 9 Email triggers via SendGrid
-         └─ (rules + indexes serve everything below)
+         └─ 3.5 Infrastructure refresh + reactfire replacement
+             ├─ 4 Web SPA shell + auth flow
+             │   ├─ 5 Read-side pages
+             │   │   └─ 6 Write-side pages — request lifecycle
+             │   │       └─ 7 Manager admin pages + bootstrap wizard
+             │   │           └─ 10 PWA + push notifications
+             │   │               └─ 11 Data migration + cutover  ◄─── end of Phase A
+             │   │                   └─ 12 Multi-stake (Phase B)
+             │   └─ 8 Importer + Expiry + audit triggers
+             │       └─ 9 Email triggers via SendGrid
+             └─ (rules + indexes serve everything below)
 ```
 
-Phase 5 → 6 → 7 is web-engineer's serial path. Phase 8 → 9 is backend-engineer's serial path. Once Phase 4 ships, both arcs run in parallel until they converge for Phase 10. Phase 11 is everyone-on-deck for the cutover window.
+Phase 5 → 6 → 7 is web-engineer's serial path. Phase 8 → 9 is backend-engineer's serial path. Once Phase 4 ships, both arcs run in parallel until they converge for Phase 10. Phase 11 is everyone-on-deck for the cutover window. Phase 3.5 is a single-pass infra refresh (replacing reactfire + bumping major deps) that all downstream phases inherit.
 
 ---
 
@@ -516,13 +517,127 @@ _Cross-stake denial_
 
 ---
 
+## Phase 3.5 — Infrastructure refresh + reactfire replacement
+
+**Goal:** A modern dependency baseline before Phase 4 onward commits the SPA to long-lived choices. `reactfire` (originally locked in by F2) is replaced by a thin in-house hooks layer at `apps/web/src/lib/data/` on top of TanStack Query + the Firebase SDK directly. The remaining major dep bumps land in one disciplined pass. Behaviour-preserving: every test that passed at the close of Phase 3 must still pass on the new baseline.
+
+**Owner:** mixed. `web-engineer` leads (most of the surface area). `backend-engineer` handles the `firebase-functions` 6 → 7 bump and the `zod` 3 → 4 migration in functions schemas. `infra-engineer` owns the Volta pin, the pnpm 10 bump, lockfile churn, and a short version-baseline note in `infra/CLAUDE.md`. `docs-keeper` writes the closing changelog and adds the architecture decision recording the reactfire → DIY-hooks swap.
+
+**Dependencies:** Phase 3 (closed at commit `bb6d7a9`).
+
+**Why this phase exists:** A dependency audit on 2026-04-28 found that `reactfire` (the React + Firebase wiring layer chosen in F2) is unmaintained — last release v4.2.3 on 2023-06-27, README badge "Experimental — not a supported Firebase product", 53 open issues + 57 unmerged PRs, no Firebase v12 or React 19 compatibility statement. `react-firebase-hooks` (CSFrequency) had a v5.1.1 release in November 2024 but its v5.1.0 release notes flagged unresolved React 18 issues; ruled inactive. `@invertase/tanstack-query-firebase` is actively maintained but its Firestore live-query support is officially "🟠 Work in progress" — only `firestore/lite` (no `onSnapshot`) is "✅ Ready for use", and Phases 5+ shared-attention pages need real-time listeners. The decision (signed off 2026-04-28) is to drop reactfire and own the wiring as ~80 lines of code under `apps/web/src/lib/data/`. Recorded in `architecture.md` as D11. Once we're touching the dependency surface, the previously-deferred major-version bumps come along too — except `@google/clasp` (Apps Script side gets deleted at Phase 11) and `@types/node` (must match the Node 22 runtime).
+
+### Sub-tasks
+
+_Toolchain pinning (mostly already in working tree; this phase finishes + verifies)_
+
+- [ ] Volta-pin Node 22.22.2 in root `package.json` (`"volta": { "node": "22.22.2" }`). Already in working tree.
+- [ ] `engines.node` bumped to `>=22` in root + every workspace `package.json`. Already in working tree.
+- [ ] `.nvmrc` (`22`) and `.npmrc` (`engine-strict=true`) at repo root. Already in working tree.
+- [ ] Bump `packageManager` field from `pnpm@9.15.0` to the current pnpm 10.x line; run `volta install pnpm@10.x` (Volta's pnpm support is gated on `VOLTA_FEATURE_PNPM=1`, already enabled in the operator's env); regenerate `pnpm-lock.yaml`.
+- [ ] Closes T-14 (formal close happens at Phase 3.5 commit time).
+
+_Reactfire removal + DIY hooks layer (load-bearing)_
+
+- [ ] Remove `reactfire` from `apps/web/package.json` dependencies.
+- [ ] Drop the `reactfire>firebase: "11"` entry from the `pnpm.peerDependencyRules.allowedVersions` block in root `package.json`. Keep the `@firebase/rules-unit-testing>firebase` entry, updating it to whatever Firebase v12 line we land on.
+- [ ] New module `apps/web/src/lib/data/`:
+  - `useFirestoreDoc.ts` — accepts a Firestore `DocumentReference<T>`; subscribes via `onSnapshot(ref)`; pushes each snapshot into the TanStack Query cache via `setQueryData`; returns the standard TanStack Query result shape `{ data, status, error, ... }`. Cleans up the subscription on unmount and on ref change.
+  - `useFirestoreCollection.ts` — same shape for `Query<T>` (collection reference or query). Returns `T[]` data; preserves referential stability across no-op snapshots so React doesn't re-render downstream consumers gratuitously.
+  - `useFirestoreOnce.ts` — one-shot via `getDoc` / `getDocs`, no live subscription. Used by Phase 5's Audit Log cursor pagination (per the Phase 5 plan: "Audit Log uses TanStack Query for cursor-based pagination — NOT live; pagination doesn't compose with live").
+  - `index.ts` — barrel re-exporting the three hooks.
+- [ ] `apps/web/src/lib/data/firebase.ts` — re-exports the Firestore + Auth instances from the existing `apps/web/src/lib/firebase.ts` (wired in Phase 2); keeps emulator detection consistent across consumers.
+- [ ] Hook signatures accept `DocumentReference<T>` / `Query<T>` directly. They do **not** depend on the typed-doc helper at `apps/web/src/lib/docs.ts` (which lands when the Phase 4 SPA shell is re-applied) — the helper produces refs of the right shape and the hooks consume them. This keeps the hooks layer independently testable.
+- [ ] No React-context provider is required for the SDK instances themselves — Firebase's `getFirestore()` / `getAuth()` are module-scoped singletons. If a `<DataProvider>` becomes useful later for testability, it lives in this module; v1 ships without one.
+
+_Web stack bumps (`apps/web`)_
+
+- [ ] `firebase` 11.10.0 → 12.x (latest stable line).
+- [ ] `vite` 6.4.2 → 8.x.
+- [ ] `@vitejs/plugin-react` 4.7.0 → 6.x (tied to Vite 8).
+- [ ] `vitest` 2.1.9 → 4.x.
+- [ ] `jsdom` 25 → 29.
+- [ ] `@hookform/resolvers` 3 → 5.
+- [ ] `zod` 3.25 → 4.x. Note: zod v4 has breaking syntax changes for nested schemas; web-side schema changes are minor compared to shared-package work below.
+
+_Functions stack bumps (`functions`)_
+
+- [ ] `firebase-functions` 6.6 → 7.x. Verify v1 `auth.user().onCreate` and v2 Firestore document-write triggers still register correctly via the existing emulator integration tests (Phase 2's claim-sync triggers).
+- [ ] `firebase-admin` stays on 13.x (already current).
+- [ ] `vitest` 2 → 4 (matches web).
+- [ ] `esbuild` 0.24 → 0.28.
+
+_Shared / firestore-tests / e2e stack bumps_
+
+- [ ] `@kindoo/shared`: `vitest` 2 → 4; `zod` 3 → 4. The zod v3 → v4 migration is the bulk of the shared-package work — schemas need rewriting to v4 syntax.
+- [ ] `@kindoo/firestore-tests`: `@firebase/rules-unit-testing` 3.0.4 → 5.x; `firebase` 11 → 12; `vitest` 2 → 4.
+- [ ] `@kindoo/e2e`: `@playwright/test` already current; nothing to bump.
+
+_Root + cross-cutting bumps_
+
+- [ ] `typescript` 5.9 → 6.x in root + per-workspace `tsconfig` checks for module-resolution behaviour changes.
+- [ ] `pnpm` 9.15.0 → 10.x (already covered above under toolchain pinning).
+
+_Hard exclusions (called out so future agents don't try)_
+
+- `@types/node` stays on `^22.x`. Must match the Node 22 LTS runtime; bumping past 22 imports types for APIs not present at runtime. Documented in `infra/CLAUDE.md`.
+- `@google/clasp` 2 → 3 is **not** part of this phase. The Apps Script side gets deleted at Phase 11 cutover; not worth the work.
+
+_Phase 4 plan reconciliation_
+
+- [ ] Update Phase 4 sub-tasks below: drop the reactfire `<FirebaseAppProvider>` / `<FirestoreProvider>` / `<AuthProvider>` bullet; replace with "DIY hooks consumed directly; SDK singletons exported from `lib/firebase.ts`." Update Phase 4's `Dependencies:` line to include Phase 3.5.
+- [ ] Note in the Phase 4 prose that the WIP branch `phase-4-spa-shell-wip` (commit `d38bda1`) gets rebased onto post-3.5 `main` once 3.5 closes, with breakage fixes (reactfire calls become DIY-hook calls; Vite/Vitest config tweaks for the new majors; etc.).
+
+### Tests
+
+The Phase 3.5 test surface is mostly "everything that already passed must still pass" plus a small new thin-hooks suite.
+
+_Existing (must still pass on the new baseline)_
+
+- [ ] `@kindoo/shared`: 69 tests.
+- [ ] `@kindoo/firestore-tests`: 160 rules tests.
+- [ ] `@kindoo/functions`: 1 unit + 21 emulator-gated integration.
+- [ ] `@kindoo/web`: 6 tests on `main` at the start of this phase (principal, version, SignInPage, NotAuthorizedPage from Phase 2). Must still pass on Firebase 12 + Vite 8 + Vitest 4 + zod 4.
+
+_New — thin hooks layer (`apps/web/src/lib/data/*.test.ts`)_
+
+- [ ] `useFirestoreDoc`: mock `onSnapshot` and verify the hook re-renders on snapshot push, returns the right `{ data, status }` shape for loading / success / error, cleans up the subscription on unmount, and re-subscribes correctly on ref change.
+- [ ] `useFirestoreCollection`: same as doc; plus verify referential stability — array data only re-creates when underlying snapshots actually change.
+- [ ] `useFirestoreOnce`: mock `getDoc` / `getDocs`; verify one-shot behaviour and proper TanStack Query cache integration.
+- [ ] Error path: snapshot listener throws → hook surfaces error in `error` field; cleanup still runs on unmount.
+
+_Smoke_
+
+- [ ] `pnpm --filter @kindoo/web build` succeeds on the new baseline.
+
+### Acceptance criteria
+
+- All workspace `typecheck && lint && test` pass on Node 22.22.2 + pnpm 10.x.
+- `@kindoo/web` production build is clean on the new baseline.
+- `apps/web/src/lib/data/` hooks exist, are tested, and are ready for Phase 4 (re-applied) and Phase 5 to consume.
+- `reactfire` is gone from `apps/web/package.json`, from `pnpm-lock.yaml`, and from the `pnpm.peerDependencyRules.allowedVersions` block in root `package.json`.
+- D11 added to `architecture.md` recording the reactfire → DIY-hooks decision.
+- Cloud Functions still register correctly under `firebase-functions` v7 (verified by the existing emulator integration tests).
+- Phase 4's sub-task list reflects reactfire-removed reality; Phase 4's `Dependencies:` line includes Phase 3.5.
+- T-14 closed in `docs/TASKS.md`.
+
+### Out of scope
+
+- Any new pages — Phase 4+.
+- The Phase 4 SPA shell itself — that resumes after Phase 3.5 closes by rebasing branch `phase-4-spa-shell-wip` onto post-3.5 `main` and fixing breakage from the dep bumps + reactfire removal.
+- `@google/clasp` 2 → 3 (above).
+- `@types/node` past `^22.x` (above).
+- Any Firestore schema / rules / index changes — owned by Phase 3, closed.
+
+---
+
 ## Phase 4 — Web SPA shell + auth flow + first page
 
 **Goal:** A complete React SPA shell — sign-in, layout with topbar + nav, content slot, client-side routing. One placeholder page (`hello`, surfaced through the shell) proves the loop works against real Firestore + Auth. The app feels like an SPA.
 
 **Owner:** web-engineer.
 
-**Dependencies:** Phase 2 (auth) + Phase 3 (rules permit reads).
+**Dependencies:** Phase 2 (auth) + Phase 3 (rules permit reads) + Phase 3.5 (DIY hooks layer + new dep baseline).
 
 ### Sub-tasks
 
@@ -530,7 +645,7 @@ _Stack wiring_
 
 - [ ] TanStack Router with file-based routes under `apps/web/src/routes/`.
 - [ ] TanStack Query provider at root.
-- [ ] reactfire `<FirebaseAppProvider>`, `<FirestoreProvider>`, `<AuthProvider>` at root.
+- [ ] DIY Firestore hooks consumed directly from `apps/web/src/lib/data/` (per Phase 3.5 / D11). SDK singletons exported from `apps/web/src/lib/firebase.ts`; no React-context provider for the SDK instances themselves.
 - [ ] Zustand for cross-page state (toast queue, modal stack).
 
 _Routing_
