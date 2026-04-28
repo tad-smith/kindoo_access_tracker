@@ -53,6 +53,16 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
+      - name: Set up Java (for Firestore + Functions emulators)
+        # firebase-tools requires JDK 21+ to run the Firestore + Functions
+        # emulators (they're Java apps under the hood). GitHub Actions
+        # Ubuntu runners ship an older default Java; pinning Temurin 21
+        # makes the runtime explicit.
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
