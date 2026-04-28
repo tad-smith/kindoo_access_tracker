@@ -1,14 +1,20 @@
-// Phase 1 smoke spec.
+// Cross-cutting smoke spec. One hermetic check that the SPA preview
+// build comes up without throwing. Does NOT depend on emulator state —
+// the anonymous landing page (SignInPage) renders synchronously on
+// mount, before the Firebase SDK reaches out for auth/Firestore.
 //
-// Boots the SPA preview build and asserts the page heading is rendered.
-// Does NOT assert the smoketest doc was loaded — `_smoketest/hello` may
-// not be seeded when this runs (the seed step is operator-driven). The
-// only contract Phase 1 makes is "the page comes up without throwing".
+// Phase 1 asserted a placeholder smoketest heading. Phase 2 replaced
+// that with the real SignInPage as the anonymous landing — the heading
+// is now `Kindoo Access Tracker`, the same one the auth-flow specs'
+// "anonymous visit" test asserts. We keep this smoke separate from
+// auth-flow because it doesn't need the Auth/Firestore emulators
+// running, so it stays useful when the larger suite is gated behind
+// emulator boot.
 
 import { expect, test } from '@playwright/test';
 
-test('smoketest page renders the Phase 1 heading', async ({ page }) => {
+test('SPA preview build renders the anonymous landing page', async ({ page }) => {
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: /Kindoo .* Phase 1 smoketest/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Kindoo Access Tracker/i })).toBeVisible();
 });
