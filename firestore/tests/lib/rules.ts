@@ -110,6 +110,7 @@ const TYPED_EMAILS: Record<string, string> = {
   bishopric: 'Bishop@gmail.com',
   outsider: 'Outsider@gmail.com',
   superadmin: 'Superadmin@gmail.com',
+  bootstrapAdmin: 'Bootstrap@gmail.com',
 };
 
 const CANONICAL_EMAILS: Record<string, string> = {
@@ -118,6 +119,7 @@ const CANONICAL_EMAILS: Record<string, string> = {
   bishopric: 'bishop@gmail.com',
   outsider: 'outsider@gmail.com',
   superadmin: 'superadmin@gmail.com',
+  bootstrapAdmin: 'bootstrap@gmail.com',
 };
 
 /** Synthetic identity (typed email + canonical) used for tests that do not need a custom email. */
@@ -134,6 +136,7 @@ export const personas: {
   bishopric: Persona;
   outsider: Persona;
   superadmin: Persona;
+  bootstrapAdmin: Persona;
 } = {
   manager: {
     uid: 'uid-mgr',
@@ -159,6 +162,11 @@ export const personas: {
     uid: 'uid-superadmin',
     email: TYPED_EMAILS['superadmin']!,
     canonical: CANONICAL_EMAILS['superadmin']!,
+  },
+  bootstrapAdmin: {
+    uid: 'uid-bootstrap',
+    email: TYPED_EMAILS['bootstrapAdmin']!,
+    canonical: CANONICAL_EMAILS['bootstrapAdmin']!,
   },
 };
 
@@ -246,5 +254,27 @@ export function superadminContext(env: RulesTestEnvironment): RulesTestContext {
     email_verified: true,
     canonical: personas.superadmin.canonical,
     isPlatformSuperadmin: true,
+  });
+}
+
+/**
+ * Convenience: a signed-in bootstrap admin — `email` + `canonical` set
+ * (matching what `onAuthUserCreate` stamps on first sign-in) but NO
+ * `stakes` claims, so `isManager` / `isStakeMember` / `isAnyMember` all
+ * return false. The rule-level `isBootstrapAdmin(stakeId)` is the only
+ * thing that should authorise this context's writes (and only while
+ * `setup_complete=false` on the matching stake doc).
+ *
+ * Tests using this helper must seed the stake doc with
+ * `bootstrap_admin_email == personas.bootstrapAdmin.email` and the
+ * desired `setup_complete` value before exercising the rule.
+ */
+export function bootstrapAdminContext(env: RulesTestEnvironment): RulesTestContext {
+  return env.authenticatedContext(personas.bootstrapAdmin.uid, {
+    email: personas.bootstrapAdmin.email,
+    email_verified: true,
+    canonical: personas.bootstrapAdmin.canonical,
+    // Deliberately no `stakes` block — this is the load-bearing
+    // property for the bootstrap-wizard rules tests.
   });
 }

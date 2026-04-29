@@ -564,6 +564,63 @@ The prod values you captured in Phase 2 step 1.10 are *not* in this file — the
 
 Prod web-app config doesn't need to live anywhere yet. The first Phase 4 staging deploy uses staging only. When prod deploys land at Phase 11 cutover, the build pipeline will need to inject prod values via `.env.production` or CI secrets — that's a Phase 11 sub-task, not B1.
 
+### 4.4 Pre-bootstrap stake-doc seed
+
+**When to do this:** before the Phase 7 bootstrap admin signs into a stake for the first time. Skip until you're ready to walk a fresh stake through the Phase 7 wizard.
+
+**Why:** the bootstrap wizard's first action is to write `stakes/{sid}/kindooManagers/{bootstrap-admin-canonical}` so `syncManagersClaims` mints the manager claim. Before that claim exists, the wizard's writes are authorised by the rule-level `isBootstrapAdmin(stakeId)` predicate, which is keyed off two fields on the parent stake doc:
+
+- `setup_complete: false` — gates the predicate to one-shot (the wizard's final write flips this to `true` and the gate stops applying).
+- `bootstrap_admin_email: <typed-form email>` — the typed-form Google identity that the wizard runs as. Compared against `request.auth.token.email`.
+
+Without this seed, the bootstrap admin's first wizard write is denied — chicken-and-egg. The seed has to land before they sign in for the first time.
+
+**How (Firebase console — recommended, GUI-driven):**
+
+1. Firebase console → Firestore Database → "Start collection."
+2. Collection ID: `stakes`. "Next."
+3. Document ID: the stake's slug — `csnorth` for the live stake.
+4. Add the following fields (all typed lowercase as field names):
+
+   | Field | Type | Value |
+   |---|---|---|
+   | `stake_id` | string | `csnorth` |
+   | `stake_name` | string | (whatever — the wizard Step 1 will overwrite this) |
+   | `created_at` | timestamp | now |
+   | `created_by` | string | the operator's canonical email |
+   | `callings_sheet_id` | string | (empty string is fine — Step 1 sets this) |
+   | `bootstrap_admin_email` | string | the **typed-form** email of the person who'll run the wizard, e.g. `Tad.E.Smith@gmail.com` |
+   | `setup_complete` | boolean | `false` |
+   | `stake_seat_cap` | number | `0` (Step 1 will overwrite) |
+   | `expiry_hour` | number | `4` |
+   | `import_day` | string | `MONDAY` |
+   | `import_hour` | number | `6` |
+   | `timezone` | string | `America/Denver` (or whichever IANA tz the stake uses) |
+   | `notifications_enabled` | boolean | `true` |
+   | `last_over_caps_json` | array | `[]` |
+   | `last_modified_at` | timestamp | now |
+
+   Note on `bootstrap_admin_email`: this is the **typed form**, not canonical. Match exactly what the user types in their Google account (uppercase letters, dots, plus-suffix all preserved). The rule compares against `request.auth.token.email` which Firebase Auth sets to whatever Google sends — typically the typed form as registered.
+
+5. Click "Save."
+
+**How (gcloud / Admin SDK — alternative, scriptable):** if you'd rather seed via an admin script, write a one-shot TypeScript file under `infra/scripts/seed-stake-doc.ts` that uses `firebase-admin` to set the doc fields above. There's no committed example today; the console path is the runbook-blessed approach.
+
+**Verify:**
+
+```bash
+gcloud firestore documents get \
+  --collection-id=stakes \
+  --document-id=csnorth \
+  --project=<staging-or-prod-project>
+```
+
+Expected: a JSON dump showing `setup_complete: false` and the `bootstrap_admin_email` you set.
+
+**Once the seed is in place:** the bootstrap admin signs in via Google → SPA detects `setup_complete=false` and routes them to the wizard → the wizard works end-to-end → its final action flips `setup_complete=true`. From that point on the bootstrap-admin gate is silent and the bootstrap admin operates as a regular manager.
+
+**Repeat per project.** Run this for `kindoo-staging` first to rehearse the wizard, then for `kindoo-prod` at Phase 11 cutover (when the live stake doc replaces the throwaway staging doc).
+
 ---
 
 ## Phase 5 — End-to-end verification
