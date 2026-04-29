@@ -101,34 +101,62 @@ export function gateDecision(principal: GatePrincipal, stake: GateStakeRead): Ga
   // Listener error path. The most common cause is a no-claims user
   // hitting a `setup_complete=true` stake: the read rules require
   // `isAnyMember`, so the listener errors with permission-denied
-  // once the snapshot would have landed (the `isSetupInProgressReadable`
-  // gate goes silent the moment `setup_complete` flips to true).
-  // We surface NotAuthorized in that case rather than SetupInProgress
-  // — the user genuinely lacks access. If the rules were widened in
-  // a future change so post-setup reads succeed for non-members, the
-  // listener wouldn't error and this branch wouldn't fire.
+  // (the `isSetupInProgressReadable` gate goes silent the moment
+  // `setup_complete` flips to true). We surface NotAuthorized in
+  // that case rather than SetupInProgress — the user genuinely lacks
+  // access.
   //
-  // For an authed (claim-bearing) user, the rules already permit the
-  // read at all states, so an `error` here is a transient connection
-  // issue or rules misconfiguration. NotAuthorized is the safest
-  // failure mode (better than letting them past the gate on a stake
-  // we couldn't read).
+  // For an authed (claim-bearing) user, the rules permit the read at
+  // all states, so an `error` here is a transient connection issue
+  // or a rules misconfiguration. NotAuthorized is the safest failure
+  // mode (better than letting them past the gate on a stake we
+  // couldn't read).
   if (stake.status === 'error') {
     return 'not-authorized';
   }
 
-  // Strict-truthy polarity — anything that isn't an explicit boolean
-  // `true` (false, missing field, doc absent) is treated as "setup
-  // not complete". See file header for the staging repro that
-  // justifies this.
-  const setupComplete = stake.data?.setup_complete === true;
+  const data = stake.data;
+  const setupComplete = data?.setup_complete === true;
+
+  if (data === undefined) {
+    // Successful read but no data: the doc doesn't exist. Two
+    // possible causes that the SDK can't distinguish from the
+    // client side:
+    //   (a) the operator hasn't seeded the stake doc yet, OR
+    //   (b) the rules denied the read but the SDK reported "doesn't
+    //       exist" instead of erroring (some emulator + offline
+    //       paths surface this way).
+    //
+    // For a no-claims user we resolve the ambiguity towards
+    // NotAuthorized — case (b) is by far the more common one in
+    // practice (post-setup wrong-account / bishopric-import-lag
+    // path per spec §6 + §10). The rarer case (a) — a no-claims
+    // user hitting a never-seeded stake — still surfaces a
+    // reasonable page (NotAuthorized prompts them to contact the
+    // admin, who'll then run the seed runbook).
+    //
+    // For a claim-bearing user the rules permit the read at all
+    // states; "doesn't exist" is unambiguous case (a). Per Option
+    // A from the staging-bug fix (2026-04-29), an absent stake doc
+    // is treated as setup-incomplete: the operator MUST seed the
+    // stake doc per the runbook, and absent should be a "this
+    // isn't set up yet" state, not "this is fully set up." Route
+    // them to SetupInProgress.
+    if (!principal.isAuthenticated) {
+      return 'not-authorized';
+    }
+    return 'setup-in-progress';
+  }
 
   if (!setupComplete) {
-    // setup_complete=false branch — wizard for the bootstrap admin,
+    // Strict-truthy polarity — anything that isn't an explicit
+    // boolean `true` (false, missing field, non-boolean value) is
+    // treated as setup-incomplete. See file header for the staging
+    // repro that justifies this. Wizard for the bootstrap admin,
     // SetupInProgress for everyone else (incl. zero-claims users and
-    // claim-bearing users alike: SetupInProgress takes precedence
+    // claim-bearing users alike — SetupInProgress takes precedence
     // over both Dashboard and NotAuthorized during setup).
-    const adminCanonical = canonicalEmailFn(stake.data?.bootstrap_admin_email ?? '');
+    const adminCanonical = canonicalEmailFn(data.bootstrap_admin_email ?? '');
     const meCanonical = principal.canonical ?? canonicalEmailFn(principal.email ?? '');
     if (adminCanonical && meCanonical && adminCanonical === meCanonical) {
       return 'wizard';

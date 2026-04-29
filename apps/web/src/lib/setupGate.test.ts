@@ -98,7 +98,7 @@ describe('gateDecision', () => {
     expect(gateDecision(p, stake)).toBe('setup-in-progress');
   });
 
-  it('absent stake doc is treated as setup_complete=false (Option A)', () => {
+  it('absent stake doc is treated as setup_complete=false for claim-bearing users (Option A)', () => {
     // The operator MUST seed the stake doc per the runbook; an absent
     // doc is "not yet set up", never "fully set up". A claim-bearing
     // user must see SetupInProgress, not their role-default landing.
@@ -108,6 +108,22 @@ describe('gateDecision', () => {
       canonical: 'mgr@example.com',
     });
     expect(gateDecision(p, stakeAbsent)).toBe('setup-in-progress');
+  });
+
+  it('absent stake doc routes no-claims users to NotAuthorized', () => {
+    // A no-claims user with `data===undefined` is ambiguous — the
+    // doc could be genuinely absent (rare) or the rules denied the
+    // read and the SDK reported "doesn't exist" (common: post-setup
+    // wrong-account path). We resolve towards NotAuthorized because
+    // the post-setup case is far more common in production. The
+    // rare "no-claims user hits a never-seeded stake" case still
+    // surfaces a reasonable page (the prompt to contact the admin).
+    const p = principal({
+      isAuthenticated: false,
+      email: 'noclaims@example.com',
+      canonical: 'noclaims@example.com',
+    });
+    expect(gateDecision(p, stakeAbsent)).toBe('not-authorized');
   });
 
   it('returns authed for claim-bearing principal when setup_complete=true', () => {
