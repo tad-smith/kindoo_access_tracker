@@ -350,3 +350,15 @@ Tests to add (in `firestore/tests/`):
 - Bootstrap admin write to stake doc (`setup_complete: true`) is allowed and is a one-way flip (subsequent `setup_complete: false` write by bootstrap admin alone is denied — they need to be a manager for that, which they are post-flip via the kindooManagers auto-add).
 
 The web side is already wired to fail gracefully (each wizard mutation surfaces server errors as toast), so this is purely a server-side gap. Phase 7 SPA pushed the UI against a bare staging env in good faith; once the rules update lands, a fresh `setup_complete=false` stake walks through the wizard end-to-end.
+
+## [T-23] Bootstrap wizard: silent delete failures + 6 small UX issues from staging [DONE 2026-04-28]
+Status: done
+Owner: @web-engineer
+
+Operator surfaced 7 issues during manual staging of the bootstrap wizard. Shipped in `fix/bootstrap-wizard-issues`:
+
+- **Building / ward / manager delete failed silently.** Root cause: `firestore.rules` used `allow write: if … && lastActorMatchesAuth(request.resource.data)` for wards / buildings / kindooManagers. On delete, `request.resource.data` doesn't exist, so the integrity check evaluated false and the delete was denied. Optimistic-update reverted on the next snapshot; toast wasn't surfacing because the wizard's `.catch` chain only ran on a thrown error and the rule denial was thrown but the toast wiring was correct — verified during repro. Fix: split the three match blocks into `allow create, update: if (…) && lastActorMatchesAuth(request.resource.data)` plus a separate `allow delete: if (…)` predicate without the integrity check (no resource data to check). Added 4 tests in `firestore/tests/bootstrap.test.ts` covering delete-allowed during setup + delete-denied post-setup. Audited every wizard mutation hook to confirm `onError`/`.catch` surfaces the error message via `toast(..., 'error')` — already correct.
+- **Configuration → Managers + wizard Step 4 had a stray "Active" checkbox.** Removed both. New managers default `active: true` on doc create. Schema field retained (claim-sync trigger keys off it; Configuration deactivate / activate row buttons remain).
+- **"Deactivate" on bootstrap admin row was a no-op.** Bootstrap admin can't be deactivated (would lock themselves out). Hid both the deactivate and the delete buttons on the bootstrap admin row.
+- **Step indicator restyled.** Chevron-arrow stepper with labels-only (no numbers); steps turn green when their validation passes, neutral otherwise, ring-highlighted for the current step. Hand-rolled with Tailwind utilities + a CSS-triangle chevron — ~50 lines, no shadcn-ui stepper primitive needed.
+- **"Complete Setup" disabled with no indication.** Helper text below the button lists which prerequisites are missing (e.g., "Add at least one building").

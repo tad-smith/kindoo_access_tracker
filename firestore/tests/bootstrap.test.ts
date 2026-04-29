@@ -248,6 +248,42 @@ describe('firestore.rules — bootstrap-admin gate', () => {
         ),
       );
     });
+
+    // Delete paths — `lastActor` integrity check cannot run on delete
+    // (no `request.resource.data`), so the rules split create/update
+    // from delete and gate delete only on the role predicate. The
+    // wizard's delete buttons depend on this.
+    it('bootstrap admin can delete a building (wizard Step 2 delete row)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(STAKE_PATH).set(freshStakeDoc());
+        await ctx.firestore().doc(BUILDING_PATH).set(freshBuildingDoc());
+      });
+      const db = bootstrapAdminContext(env).firestore();
+      await assertSucceeds(db.doc(BUILDING_PATH).delete());
+    });
+
+    it('bootstrap admin can delete a ward (wizard Step 3 delete row)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(STAKE_PATH).set(freshStakeDoc());
+        await ctx.firestore().doc(WARD_PATH).set(freshWardDoc());
+      });
+      const db = bootstrapAdminContext(env).firestore();
+      await assertSucceeds(db.doc(WARD_PATH).delete());
+    });
+
+    it('bootstrap admin can delete a kindooManager (wizard Step 4 delete row)', async () => {
+      const otherCanonical = 'second-mgr@gmail.com';
+      const otherPath = `${STAKE_PATH}/kindooManagers/${otherCanonical}`;
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(STAKE_PATH).set(freshStakeDoc());
+        await ctx
+          .firestore()
+          .doc(otherPath)
+          .set(freshKindooManagerDoc(otherCanonical, 'Second-Mgr@gmail.com'));
+      });
+      const db = bootstrapAdminContext(env).firestore();
+      await assertSucceeds(db.doc(otherPath).delete());
+    });
   });
 
   // -----------------------------------------------------------------
@@ -317,6 +353,18 @@ describe('firestore.rules — bootstrap-admin gate', () => {
       });
       const db = bootstrapAdminContext(env).firestore();
       await assertFails(db.doc(BUILDING_PATH).set(freshBuildingDoc()));
+    });
+
+    it('bootstrap admin alone cannot delete a building post-setup', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(STAKE_PATH)
+          .set(freshStakeDoc({ setup_complete: true }));
+        await ctx.firestore().doc(BUILDING_PATH).set(freshBuildingDoc());
+      });
+      const db = bootstrapAdminContext(env).firestore();
+      await assertFails(db.doc(BUILDING_PATH).delete());
     });
   });
 

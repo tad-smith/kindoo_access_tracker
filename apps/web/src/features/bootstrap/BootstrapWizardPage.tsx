@@ -148,36 +148,17 @@ export function BootstrapWizardPage() {
         completed step. Each row saves immediately when you click Add.
       </p>
 
-      <nav className="kd-wizard-steps" role="tablist" aria-label="Bootstrap steps">
-        <StepTab
-          num={1}
-          label="Stake"
-          active={step === 1}
-          done={step1Done}
-          onClick={() => setStep(1)}
-        />
-        <StepTab
-          num={2}
-          label="Buildings"
-          active={step === 2}
-          done={step2Done}
-          onClick={() => setStep(2)}
-        />
-        <StepTab
-          num={3}
-          label="Wards"
-          active={step === 3}
-          done={step3Done}
-          onClick={() => setStep(3)}
-        />
-        <StepTab
-          num={4}
-          label="Managers"
-          active={step === 4}
-          done={true}
-          onClick={() => setStep(4)}
-        />
-      </nav>
+      <StepIndicator
+        steps={[
+          { num: 1, label: 'Stake', done: step1Done },
+          { num: 2, label: 'Buildings', done: step2Done },
+          { num: 3, label: 'Wards', done: step3Done },
+          { num: 4, label: 'Managers', done: true },
+        ]}
+        current={step}
+        onSelect={(n) => setStep(n)}
+        completeDone={canFinish}
+      />
 
       <section className="kd-wizard-panel" data-testid={`wizard-step-${step}`}>
         {step === 1 ? <Step1Form /> : null}
@@ -197,6 +178,7 @@ export function BootstrapWizardPage() {
         ) : null}
         <CompleteSetupButton
           enabled={canFinish}
+          missing={completionBlockers({ step1Done, step2Done, step3Done })}
           onCompleted={() => {
             // Navigation back to / lets the routing gate redirect to
             // the manager default landing page now that
@@ -209,33 +191,93 @@ export function BootstrapWizardPage() {
   );
 }
 
-interface StepTabProps {
-  num: StepNumber;
-  label: string;
-  active: boolean;
-  done: boolean;
-  onClick: () => void;
+// Mirrors the disabled-state check on the Complete Setup button. Returned
+// list is empty iff the button is enabled. Drives the helper text below
+// the button so the user knows exactly what's blocking finalisation.
+export function completionBlockers(args: {
+  step1Done: boolean;
+  step2Done: boolean;
+  step3Done: boolean;
+}): string[] {
+  const out: string[] = [];
+  if (!args.step1Done) out.push('Fill in stake name, callings sheet ID, and seat cap (Step 1).');
+  if (!args.step2Done) out.push('Add at least one building (Step 2).');
+  if (!args.step3Done) out.push('Add at least one ward (Step 3).');
+  return out;
 }
 
-function StepTab({ num, label, active, done, onClick }: StepTabProps) {
-  const cls = `kd-wizard-step${active ? ' active' : ''}${done ? ' done' : ''}`;
+interface StepIndicatorProps {
+  steps: ReadonlyArray<{ num: StepNumber; label: string; done: boolean }>;
+  current: StepNumber;
+  onSelect: (n: StepNumber) => void;
+  /** True iff every wizard step is satisfied — drives the trailing "Complete" pill. */
+  completeDone: boolean;
+}
+
+// Chevron-arrow stepper. Labels only (no numbers); green when the
+// step's validation passes, neutral otherwise, slightly highlighted
+// for the current step. The trailing "Complete" pill turns green only
+// when every prior step is done.
+function StepIndicator({ steps, current, onSelect, completeDone }: StepIndicatorProps) {
   return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      className={cls}
-      onClick={onClick}
-      data-testid={`wizard-step-tab-${num}`}
+    <nav
+      role="tablist"
+      aria-label="Bootstrap steps"
+      className="flex flex-wrap items-center gap-1 sm:gap-2 my-4"
     >
-      <span className="kd-wizard-step-num">{num}</span>
-      <span className="kd-wizard-step-label">{label}</span>
-      {done ? (
-        <span aria-hidden className="kd-wizard-step-check">
-          ✓
-        </span>
-      ) : null}
-    </button>
+      {steps.map((s, idx) => {
+        const isCurrent = current === s.num;
+        return (
+          <span key={s.num} className="flex items-center gap-1 sm:gap-2">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={isCurrent}
+              aria-current={isCurrent ? 'step' : undefined}
+              onClick={() => onSelect(s.num)}
+              data-testid={`wizard-step-tab-${s.num}`}
+              data-step-done={s.done ? 'true' : 'false'}
+              className={
+                'inline-flex items-center px-3 py-1.5 text-sm rounded transition-colors ' +
+                'border ' +
+                (s.done
+                  ? 'border-green-600 bg-green-50 text-green-900 hover:bg-green-100 '
+                  : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 ') +
+                (isCurrent ? 'ring-2 ring-blue-500 ring-offset-1 font-semibold ' : '')
+              }
+            >
+              {s.label}
+            </button>
+            {idx < steps.length - 1 ? <StepChevron /> : null}
+          </span>
+        );
+      })}
+      <StepChevron />
+      <span
+        aria-hidden={!completeDone}
+        data-testid="wizard-step-complete-pill"
+        data-step-done={completeDone ? 'true' : 'false'}
+        className={
+          'inline-flex items-center px-3 py-1.5 text-sm rounded border ' +
+          (completeDone
+            ? 'border-green-600 bg-green-50 text-green-900'
+            : 'border-gray-300 bg-white text-gray-500')
+        }
+      >
+        Complete
+      </span>
+    </nav>
+  );
+}
+
+// CSS-triangle chevron pointing right. No SVG, no extra deps; one
+// element wide enough to read at 375px without crowding the labels.
+function StepChevron() {
+  return (
+    <span
+      aria-hidden
+      className="inline-block h-0 w-0 border-y-[6px] border-y-transparent border-l-[8px] border-l-gray-400"
+    />
   );
 }
 
@@ -512,7 +554,7 @@ function Step4Managers() {
 
   const form = useForm<ManagerForm>({
     resolver: zodResolver(managerSchema),
-    defaultValues: { member_email: '', name: '', active: true },
+    defaultValues: { member_email: '', name: '' },
   });
   const { register, handleSubmit, reset, formState } = form;
 
@@ -530,8 +572,9 @@ function Step4Managers() {
     <div className="kd-wizard-form">
       <h2>Kindoo Managers</h2>
       <p>
-        Optional. The bootstrap admin is auto-added and can&rsquo;t be deleted from this step.
-        Additional managers can also be added later from the Configuration page.
+        Optional. The bootstrap admin is auto-added and can&rsquo;t be deleted or deactivated from
+        this step (deactivating themselves would lock them out). Additional managers can also be
+        added later from the Configuration page.
       </p>
       <ul className="kd-wizard-row-list" data-testid="bootstrap-managers-list">
         {(managers.data ?? []).map((m) => {
@@ -543,20 +586,23 @@ function Step4Managers() {
                 {!m.active ? <em> (inactive)</em> : null}
                 {isAdmin ? <em> (bootstrap admin)</em> : null}
               </span>
-              <span style={{ display: 'inline-flex', gap: 8 }}>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    updateMutation
-                      .mutateAsync({ canonical: m.member_canonical, active: !m.active })
-                      .then(() => toast('Manager updated.', 'success'))
-                      .catch((err) => toast(errorMessage(err), 'error'));
-                  }}
-                  data-testid={`bootstrap-manager-toggle-${m.member_canonical}`}
-                >
-                  {m.active ? 'Deactivate' : 'Activate'}
-                </Button>
-                {isAdmin ? null : (
+              {/* The bootstrap admin row hides BOTH the deactivate and the
+                  delete actions — deactivating or removing themselves
+                  would lock them out of the wizard mid-setup. */}
+              {isAdmin ? null : (
+                <span className="inline-flex gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      updateMutation
+                        .mutateAsync({ canonical: m.member_canonical, active: !m.active })
+                        .then(() => toast('Manager updated.', 'success'))
+                        .catch((err) => toast(errorMessage(err), 'error'));
+                    }}
+                    data-testid={`bootstrap-manager-toggle-${m.member_canonical}`}
+                  >
+                    {m.active ? 'Deactivate' : 'Activate'}
+                  </Button>
                   <Button
                     variant="danger"
                     onClick={() => {
@@ -569,8 +615,8 @@ function Step4Managers() {
                   >
                     Delete
                   </Button>
-                )}
-              </span>
+                </span>
+              )}
             </li>
           );
         })}
@@ -594,9 +640,6 @@ function Step4Managers() {
             {formState.errors.name.message}
           </p>
         ) : null}
-        <label>
-          <input type="checkbox" {...register('active')} /> Active
-        </label>
         <div className="form-actions">
           <Button type="submit" disabled={addMutation.isPending}>
             {addMutation.isPending ? 'Adding…' : 'Add manager'}
@@ -609,10 +652,12 @@ function Step4Managers() {
 
 interface CompleteSetupProps {
   enabled: boolean;
+  /** Human-readable list of remaining prerequisites; empty when enabled. */
+  missing: string[];
   onCompleted: () => void;
 }
 
-function CompleteSetupButton({ enabled, onCompleted }: CompleteSetupProps) {
+function CompleteSetupButton({ enabled, missing, onCompleted }: CompleteSetupProps) {
   const mutation = useCompleteSetupMutation();
 
   async function complete() {
@@ -636,14 +681,29 @@ function CompleteSetupButton({ enabled, onCompleted }: CompleteSetupProps) {
     }
   }
 
+  // Right-align the button + helper text as a column so the helper
+  // sits directly below the button (matches the parent
+  // `kd-wizard-finish` justify-end layout).
   return (
-    <Button
-      variant="success"
-      onClick={complete}
-      disabled={!enabled || mutation.isPending}
-      data-testid="bootstrap-complete-setup"
-    >
-      {mutation.isPending ? 'Completing…' : 'Complete Setup'}
-    </Button>
+    <span className="inline-flex flex-col items-end gap-1">
+      <Button
+        variant="success"
+        onClick={complete}
+        disabled={!enabled || mutation.isPending}
+        data-testid="bootstrap-complete-setup"
+      >
+        {mutation.isPending ? 'Completing…' : 'Complete Setup'}
+      </Button>
+      {!enabled && missing.length > 0 ? (
+        <ul
+          className="kd-form-hint list-none p-0 m-0 text-right"
+          data-testid="bootstrap-complete-blockers"
+        >
+          {missing.map((m) => (
+            <li key={m}>{m}</li>
+          ))}
+        </ul>
+      ) : null}
+    </span>
   );
 }

@@ -185,9 +185,11 @@ export function useDeleteWardMutation() {
 export interface ManagerInput {
   member_email: string;
   name: string;
-  active: boolean;
 }
 
+// New managers default to `active: true`. The deactivate flow happens
+// post-create via `useUpdateManagerActiveMutation` (Configuration page +
+// wizard Step 4 toggle).
 export function useAddManagerMutation() {
   const principal = usePrincipal();
   const qc = useQueryClient();
@@ -199,7 +201,7 @@ export function useAddManagerMutation() {
         member_canonical: canonical,
         member_email: input.member_email.trim(),
         name: input.name.trim(),
-        active: input.active,
+        active: true,
         added_at: serverTimestamp(),
         added_by: actor,
         lastActor: actor,
