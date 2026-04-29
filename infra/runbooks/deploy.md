@@ -118,7 +118,7 @@ Workspaces' `tsconfig.json` files are missing or have errors. Phase 1 workspace 
 
 ### Deploy succeeds but the staging site shows the old version
 
-Browser cache. Hard-refresh (Cmd-Shift-R on macOS). The `version.ts` footer should match the commit you just deployed; if it doesn't, the deploy actually didn't go through — check `firebase hosting:channel:list --project staging` and re-run the deploy.
+Browser cache. Hard-refresh (Cmd-Shift-R on macOS). The `version.gen.ts` payload (rendered in the topbar) should match the commit you just deployed; if it doesn't, the deploy actually didn't go through — check `firebase hosting:channel:list --project staging` and re-run the deploy.
 
 ## What this runbook does NOT cover
 

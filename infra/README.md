@@ -24,7 +24,8 @@ infra/
 ├── scripts/
 │   ├── deploy-staging.sh             # operator-triggered deploy to staging
 │   ├── deploy-prod.sh                # operator-triggered deploy to prod (requires B1)
-│   └── stamp-version.js              # writes apps/web/src/version.ts + functions/src/version.ts
+│   ├── ensure-version-gen.js         # seeds gitignored version.gen.ts placeholders on `pnpm install`
+│   └── stamp-version.js              # writes apps/web/src/version.gen.ts + functions/src/version.gen.ts
 ├── ci/
 │   └── workflows/
 │       └── test.yml                  # source-of-truth for .github/workflows/test.yml

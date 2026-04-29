@@ -18,7 +18,7 @@ test-results/
 .firebase/
 
 # Generated files
-**/version.ts
+**/version.gen.ts
 apps/web/src/routeTree.gen.ts
 
 # Lockfiles

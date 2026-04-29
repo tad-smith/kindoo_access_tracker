@@ -28,7 +28,8 @@
     "lint": "pnpm -r --if-present lint && prettier --check .",
     "typecheck": "tsc -b",
     "deploy:staging": "bash infra/scripts/deploy-staging.sh",
-    "deploy:prod": "bash infra/scripts/deploy-prod.sh"
+    "deploy:prod": "bash infra/scripts/deploy-prod.sh",
+    "prepare": "node infra/scripts/ensure-version-gen.js"
   },
   "devDependencies": {
     "@google/clasp": "^3.3.0",
