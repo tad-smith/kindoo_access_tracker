@@ -145,6 +145,17 @@ describe('gateDecision', () => {
     expect(gateDecision(p, stake)).toBe('setup-in-progress');
   });
 
+  it('returns not-authorized when the stake-doc listener errors', () => {
+    // Most common cause: post-setup no-claims user hitting a
+    // setup_complete=true stake. The rules require isAnyMember; the
+    // listener errors with permission-denied once the snapshot would
+    // have landed. We surface NotAuthorized rather than SetupInProgress
+    // — the user genuinely lacks access.
+    const p = principal({ isAuthenticated: false, email: 'noclaims@example.com' });
+    const stake: GateStakeRead = { status: 'error', data: undefined };
+    expect(gateDecision(p, stake)).toBe('not-authorized');
+  });
+
   it('canonicalises bootstrap_admin_email and current email before comparison', () => {
     // The wizard match must canonicalise both sides so a Gmail user's
     // typed-form `Tad.E.Smith+test@gmail.com` matches a stored

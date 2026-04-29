@@ -94,24 +94,33 @@ export function gateDecision(principal: GatePrincipal, stake: GateStakeRead): Ga
 
   // Stake-doc subscription not yet resolved — render null in the
   // caller. We don't try to decide anything until the snapshot lands.
-  // An `error` state at the listener level (e.g., listener errored
-  // because the rules denied) is treated the same as pending: the
-  // gate has no data to decide with, so we surface the safest
-  // fallback (the not-authorized branch below) only AFTER the listener
-  // had a chance to settle. In practice the rules permit any authed
-  // read while setup is incomplete; `error` here means the listener
-  // genuinely couldn't read, which is the post-setup no-claims case.
   if (stake.status === 'pending') {
     return 'pending';
+  }
+
+  // Listener error path. The most common cause is a no-claims user
+  // hitting a `setup_complete=true` stake: the read rules require
+  // `isAnyMember`, so the listener errors with permission-denied
+  // once the snapshot would have landed (the `isSetupInProgressReadable`
+  // gate goes silent the moment `setup_complete` flips to true).
+  // We surface NotAuthorized in that case rather than SetupInProgress
+  // — the user genuinely lacks access. If the rules were widened in
+  // a future change so post-setup reads succeed for non-members, the
+  // listener wouldn't error and this branch wouldn't fire.
+  //
+  // For an authed (claim-bearing) user, the rules already permit the
+  // read at all states, so an `error` here is a transient connection
+  // issue or rules misconfiguration. NotAuthorized is the safest
+  // failure mode (better than letting them past the gate on a stake
+  // we couldn't read).
+  if (stake.status === 'error') {
+    return 'not-authorized';
   }
 
   // Strict-truthy polarity — anything that isn't an explicit boolean
   // `true` (false, missing field, doc absent) is treated as "setup
   // not complete". See file header for the staging repro that
-  // justifies this. Listener errors fall through here too: an authed
-  // user whose stake-doc read errored AFTER pending is the post-setup
-  // no-claims case (rules denied the read), and the next branch
-  // routes them to NotAuthorized.
+  // justifies this.
   const setupComplete = stake.data?.setup_complete === true;
 
   if (!setupComplete) {

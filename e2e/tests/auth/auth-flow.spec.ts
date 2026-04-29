@@ -90,6 +90,16 @@ test.describe('auth-flow', () => {
   });
 
   test('signed-in manager lands on the Dashboard within the shell', async ({ page }) => {
+    // Setup-complete stake so the Phase 7 setup-complete gate doesn't
+    // intercept the manager into SetupInProgress. Per
+    // `apps/web/src/lib/setupGate.ts`, an absent stake doc is treated
+    // as setup-incomplete (Option A from the 2026-04-29 staging-bug fix).
+    await writeDoc('stakes/csnorth', {
+      stake_id: 'csnorth',
+      stake_name: 'Test Stake',
+      bootstrap_admin_email: 'admin@example.com',
+      setup_complete: true,
+    });
     const { uid } = await createAuthUser({ email: 'manager@example.com' });
     // Pre-seed: kindooManagers doc + custom claims that the
     // `onAuthUserCreate` / `syncManagersClaims` triggers would set in
@@ -115,6 +125,13 @@ test.describe('auth-flow', () => {
   });
 
   test('sign-out from the Dashboard returns to SignInPage', async ({ page }) => {
+    // Same Phase 7 setup-complete-gate seed as above.
+    await writeDoc('stakes/csnorth', {
+      stake_id: 'csnorth',
+      stake_name: 'Test Stake',
+      bootstrap_admin_email: 'admin@example.com',
+      setup_complete: true,
+    });
     const { uid } = await createAuthUser({ email: 'manager2@example.com' });
     await setCustomClaims(uid, {
       canonical: 'manager2@example.com',

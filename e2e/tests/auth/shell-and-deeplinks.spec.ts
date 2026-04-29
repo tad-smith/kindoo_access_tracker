@@ -51,10 +51,33 @@ async function signInAsManager(page: Page, email: string): Promise<void> {
   await signInViaTestHatch(page, email, TEST_PASSWORD);
 }
 
+/**
+ * Default stake doc seed for these specs. Phase 7 setup-complete gate
+ * (added 2026-04-29) routes users with `setup_complete !== true` to
+ * SetupInProgress instead of Dashboard. Tests that exercise the
+ * Dashboard / nav must seed `setup_complete: true` first, or their
+ * shell never renders. Per `apps/web/src/lib/setupGate.ts`, an absent
+ * stake doc is treated as setup-incomplete (Option A from the
+ * staging-bug fix).
+ */
+async function seedSetupCompleteStake(over: Record<string, unknown> = {}): Promise<void> {
+  await writeDoc('stakes/csnorth', {
+    stake_id: 'csnorth',
+    stake_name: 'Test Stake',
+    bootstrap_admin_email: 'admin@example.com',
+    setup_complete: true,
+    ...over,
+  });
+}
+
 test.describe('Phase 5 shell + deep-links', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
+    // Seed the default setup-complete stake. Individual tests can
+    // overwrite with `seedSetupCompleteStake({...})` if they need to
+    // pin a specific `stake_name` etc.
+    await seedSetupCompleteStake();
   });
 
   test('?p=mgr/dashboard deep-link lands on the Dashboard within the shell', async ({ page }) => {
@@ -103,14 +126,11 @@ test.describe('Phase 5 shell + deep-links', () => {
   });
 
   test('topbar brand shows the stake name once the stake doc loads', async ({ page }) => {
-    // Seed a stake doc with a deterministic display name. The Shell's
-    // live `useFirestoreDoc(stakeRef(...))` subscription should swap
-    // the topbar brand from the product-name fallback to the
-    // `stake_name` value once the snapshot lands.
-    await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
-      stake_name: 'Test Stake (E2E)',
-    });
+    // Override the default seed with a deterministic display name.
+    // The Shell's live `useFirestoreDoc(stakeRef(...))` subscription
+    // should swap the topbar brand from the product-name fallback to
+    // the `stake_name` value once the snapshot lands.
+    await seedSetupCompleteStake({ stake_name: 'Test Stake (E2E)' });
 
     await signInAsManager(page, 'brand-bar@example.com');
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
@@ -119,12 +139,16 @@ test.describe('Phase 5 shell + deep-links', () => {
     await expect(brand).toHaveText('Test Stake (E2E)');
   });
 
-  test('topbar brand falls back to the product name when the stake doc is missing', async ({
+  test('topbar brand falls back to the product name when the stake_name field is empty', async ({
     page,
   }) => {
-    // No stake doc seeded — the live subscription resolves to "doc
-    // doesn't exist", and the Shell falls back to "Stake Building
-    // Access" so the topbar is never empty.
+    // Phase 7 setup-complete gate (2026-04-29) means an absent stake
+    // doc routes the user to SetupInProgress, where there's no
+    // topbar to test. Pin the original intent of this spec — "topbar
+    // never renders empty" — by seeding a setup-complete stake with
+    // an empty `stake_name`, which still triggers the Shell's
+    // product-name fallback.
+    await seedSetupCompleteStake({ stake_name: '' });
     await signInAsManager(page, 'brand-bar-fallback@example.com');
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
 
