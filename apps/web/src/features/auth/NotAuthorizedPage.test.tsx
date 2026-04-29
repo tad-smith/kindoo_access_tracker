@@ -32,4 +32,16 @@ describe('NotAuthorizedPage', () => {
     await user.click(screen.getByRole('button', { name: /Sign out/i }));
     expect(signOutMock).toHaveBeenCalledTimes(1);
   });
+
+  // Regression guard: same Tailwind v4 preflight reset that bit
+  // SignInPage in PR #12 also stripped this page's bare `<button>`.
+  // Routing through the shadcn `<Button>` primitive carries the `.btn`
+  // class from `base.css` so the button is actually styled. The deeper
+  // visual check lives in `e2e/tests/auth/not-authorized-button-renders.spec.ts`
+  // because RTL's jsdom doesn't apply CSS.
+  it('renders the sign-out button with the .btn class so it is actually styled', () => {
+    render(<NotAuthorizedPage />);
+    const button = screen.getByRole('button', { name: /Sign out/i });
+    expect(button).toHaveClass('btn');
+  });
 });

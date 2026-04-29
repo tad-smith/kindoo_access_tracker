@@ -10,8 +10,16 @@
 //      typo, wrong account, or the user genuinely shouldn't have access.
 //
 // We give them both reasons + a sign-out button to switch accounts.
+//
+// Sign-out button routes through the shadcn `<Button>` primitive — same
+// preflight regression as PR #12 (SignInPage). A bare `<button>` is
+// zeroed by Tailwind v4's preflight reset (background, border, padding
+// all collapsed) so it renders as plain text. The `<Button>` primitive
+// carries the `.btn` class from `base.css`. Regression spec at
+// `e2e/tests/auth/not-authorized-button-renders.spec.ts`.
 
 import { useState } from 'react';
+import { Button } from '../../components/ui/Button';
 import { signOut } from './signOut';
 
 export function NotAuthorizedPage() {
@@ -58,9 +66,9 @@ export function NotAuthorizedPage() {
       <p style={{ maxWidth: '50ch' }}>
         Contact your stake&rsquo;s Kindoo Manager if you believe this is a mistake.
       </p>
-      <button type="button" onClick={handleSignOut} disabled={pending}>
+      <Button onClick={handleSignOut} disabled={pending}>
         {pending ? 'Signing out…' : 'Sign out'}
-      </button>
+      </Button>
       {error ? (
         <div role="alert" style={{ color: '#a40000' }}>
           Sign-out failed: {error}
