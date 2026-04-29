@@ -1,4 +1,4 @@
-// Firebase SDK initialisation for the Kindoo SPA.
+// Firebase SDK initialisation for the Stake Building Access SPA.
 //
 // One module, one app, one Firestore instance, one Auth instance.
 // Imported by main.tsx.

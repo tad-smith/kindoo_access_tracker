@@ -1136,7 +1136,7 @@ Coverage gate: every diff plan branch has at least one fixture test.
   - `notifyManagersCancelled(stake, request)`
   - `notifyManagersOverCap(stake, pools, source)`
 - [ ] Plain-text bodies (preserve current shape).
-- [ ] "From" address: `<stake.stake_name> — Kindoo Access <noreply@stakebuildingaccess.org>` (display name from `stake.stake_name`; domain per F17).
+- [ ] "From" address: `<stake.stake_name> — Stake Building Access <noreply@stakebuildingaccess.org>` (display name from `stake.stake_name`; domain per F17).
 - [ ] `notifications_enabled` kill-switch on stake doc — `false` skips every send and logs only.
 - [ ] Firestore triggers that invoke email service:
   - [ ] `functions/src/triggers/notifyOnRequestWrite.ts` — fires on requests writes; matches lifecycle transition; calls appropriate notification.
@@ -1202,7 +1202,7 @@ _PWA shell_
 - [ ] `vite-plugin-pwa` configured in `apps/web/vite.config.ts`. Workbox strategy: cache-first for static assets; network-first for `/index.html`; never cache Firestore traffic.
 - [ ] Web manifest: name, short_name, theme_color, icons (192px + 512px + maskable). Generated at `apps/web/public/manifest.webmanifest`.
 - [ ] Apple touch icon for iOS install.
-- [ ] Install-prompt UX: small "Install Kindoo" affordance in topbar when `beforeinstallprompt` event fires.
+- [ ] Install-prompt UX: small "Install Stake Building Access" affordance in topbar when `beforeinstallprompt` event fires.
 - [ ] Update prompt: when SW detects a new version, toast "Update available — refresh to update."
 - [ ] Offline shell: app shell loads from cache when offline; data layer surfaces "Offline" toast.
 

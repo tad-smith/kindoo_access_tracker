@@ -1,4 +1,4 @@
-# Kindoo Access Tracker — Specification
+# Stake Building Access — Specification
 
 > **Live source of truth.** This doc always describes the system as it is right now. Code and spec change together, in the same commit — if you want to know what the deployed app does, this is the file. Per-chunk history and deviation rationale live in [`docs/changelog/`](changelog/); read the latest chunk file plus this doc to be caught up. Ambiguities and watch-outs are tracked in [`open-questions.md`](open-questions.md).
 
