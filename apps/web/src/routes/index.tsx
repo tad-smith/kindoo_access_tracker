@@ -56,8 +56,9 @@ function Index() {
     if (target !== null) {
       navigate({ to: target, replace: true }).catch(() => {
         // Navigation can fail when the target route hasn't been built
-        // yet (Phase 4 only ships /hello). Swallow — the user sees
-        // the SignInPage again rather than a hung loading state.
+        // yet (some `?p=` keys map to routes that arrive in later
+        // phases). Swallow — the user sees the SignInPage again rather
+        // than a hung loading state.
       });
     }
   }, [target, navigate]);

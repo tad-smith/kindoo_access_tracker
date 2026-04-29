@@ -9,7 +9,9 @@
  * The default value below is the dev placeholder — kept in source so
  * `pnpm dev` and `pnpm test` work without running the stamper. The
  * stamper exports `VERSION` and `BUILT_AT`; this file ships an
- * additional `KINDOO_WEB_VERSION` constant for the SPA footer (Phase 4+).
+ * additional `KINDOO_WEB_VERSION` constant so the SPA topbar (and any
+ * future deploy-artifact consumer in the web bundle) can render the
+ * stamp for operator verification.
  *
  * If you change the export shape here, update
  * `infra/scripts/stamp-version.js` to match.
