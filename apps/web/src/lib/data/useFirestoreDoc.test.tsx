@@ -194,6 +194,99 @@ describe('useFirestoreDoc', () => {
     unmount();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
+
+  it('surfaces a synchronous onSnapshot throw as a hook error state', async () => {
+    // Mirrors the SDK 12.x edge case where `onSnapshot` itself throws
+    // synchronously instead of routing the error through the listener
+    // callback. The hook must convert that into a hook error state, not
+    // let the throw propagate to the React error boundary.
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      onSnapshotMock.mockImplementation(() => {
+        throw Object.assign(new Error('subscribe panic'), {
+          code: 'permission-denied',
+          name: 'FirebaseError',
+        });
+      });
+      const ref = fakeRef('stakes/x/seats/panic') as unknown as Parameters<
+        typeof useFirestoreDoc<unknown>
+      >[0];
+
+      const { result } = renderHook(() => useFirestoreDoc<unknown>(ref), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.status).toBe('error');
+        expect(result.current.error?.code).toBe('permission-denied');
+      });
+      // Operator-visible log line includes the offending path.
+      expect(
+        consoleErrorSpy.mock.calls.some(
+          ([first, payload]) =>
+            typeof first === 'string' &&
+            first.includes('[useFirestoreDoc]') &&
+            (payload as { path?: string } | undefined)?.path === 'stakes/x/seats/panic',
+        ),
+      ).toBe(true);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('logs the failing path when the listener error callback fires', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      let onError: ((e: unknown) => void) | null = null;
+      onSnapshotMock.mockImplementation((_ref, _onNext, onErr) => {
+        onError = onErr;
+        return () => {};
+      });
+      const ref = fakeRef('stakes/x/wards/CO') as unknown as Parameters<
+        typeof useFirestoreDoc<unknown>
+      >[0];
+
+      renderHook(() => useFirestoreDoc<unknown>(ref), { wrapper });
+      const fakeErr = Object.assign(new Error('denied'), {
+        code: 'permission-denied',
+        name: 'FirebaseError',
+      });
+      await act(async () => {
+        onError!(fakeErr);
+      });
+
+      expect(
+        consoleErrorSpy.mock.calls.some(
+          ([first, payload]) =>
+            typeof first === 'string' &&
+            first.includes('[useFirestoreDoc]') &&
+            (payload as { path?: string; code?: string } | undefined)?.path ===
+              'stakes/x/wards/CO' &&
+            (payload as { code?: string } | undefined)?.code === 'permission-denied',
+        ),
+      ).toBe(true);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('swallows an unsubscribe throw on unmount without propagating', () => {
+    // SDK can throw on `unsubscribe()` during teardown when its own
+    // internal state is wedged. The cleanup must not propagate; the
+    // surrounding React effect chain runs the next teardown either way.
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      onSnapshotMock.mockImplementation(() => () => {
+        throw new Error('teardown wedged');
+      });
+      const ref = fakeRef('stakes/x/seats/d') as unknown as Parameters<
+        typeof useFirestoreDoc<unknown>
+      >[0];
+      const { unmount } = renderHook(() => useFirestoreDoc<unknown>(ref), { wrapper });
+      expect(() => unmount()).not.toThrow();
+      expect(consoleWarnSpy).toHaveBeenCalled();
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
 });
 
 function HookProbe({ refArg }: { refArg: unknown }) {

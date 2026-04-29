@@ -25,6 +25,25 @@
 //                              `FirestoreError`; cleanup still runs on unmount.
 //   - `ref` changes         → previous subscription torn down before
 //                              the next one starts. No leaked listeners.
+//
+// Defensive layers around the SDK's `onSnapshot`:
+//   - The `onSnapshot` *call* is wrapped in a try/catch. The modular
+//     SDK can throw synchronously when the SDK is in a torn-down state
+//     (HMR re-eval, double-mount in StrictMode, internal listener
+//     registry inconsistency). A throw there must not unmount the tree.
+//   - The error callback logs the offending path + Firestore error code
+//     to the console so the operator can narrow which rule is denying.
+//   - `setQueryData` is called inside try/catch since the cache may be
+//     mid-teardown when an unmount races with a snapshot push.
+//
+// These guards do NOT catch the SDK's *internal-assertion* panic
+// (`Unexpected state ID: ca9` / `b815`) — that throws from inside the
+// SDK's microtask dispatch and propagates through the global error
+// handler, not through our callback. The root error boundary in
+// `main.tsx` catches that case and renders a fallback. Together the
+// two layers turn a permission-denied subscribe into either a hook
+// error state (the common case) or an in-app error fallback (the rare
+// SDK-panic case) — never a blank page.
 
 import { useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import { onSnapshot, type DocumentReference, type FirestoreError } from 'firebase/firestore';
@@ -77,19 +96,56 @@ export function useFirestoreDoc<T>(
     }
 
     setListenerError(null);
-    const unsubscribe = onSnapshot(
-      ref,
-      (snapshot) => {
-        const value = snapshot.exists() ? snapshot.data() : undefined;
-        queryClient.setQueryData<DocCacheValue<T>>(docKey(ref), { value });
-      },
-      (err) => {
-        setListenerError(err);
-      },
-    );
+
+    // `onSnapshot` returns synchronously in normal operation, but can
+    // throw under the SDK's internal-state edge cases (HMR re-eval,
+    // double-mount during StrictMode, listener registry race on
+    // permission-denied). Convert any synchronous throw into a hook
+    // error state so a single failed listener can't tear the tree down.
+    let unsubscribe: () => void;
+    try {
+      unsubscribe = onSnapshot(
+        ref,
+        (snapshot) => {
+          try {
+            const value = snapshot.exists() ? snapshot.data() : undefined;
+            queryClient.setQueryData<DocCacheValue<T>>(docKey(ref), { value });
+          } catch (cacheErr) {
+            // Cache write failure during unmount race; drop silently.
+            // The unsubscribe in the cleanup below will fire next.
+            console.warn('[useFirestoreDoc] cache write failed', { path: ref.path, cacheErr });
+          }
+        },
+        (err) => {
+          // Surface the failing path + code so the operator can pin the
+          // offending rule the next time the SDK trips this. Log once
+          // per error rather than on every re-render to keep the
+          // console useful.
+          console.error('[useFirestoreDoc] listener error', {
+            path: ref.path,
+            code: err.code,
+            message: err.message,
+          });
+          setListenerError(err);
+        },
+      );
+    } catch (subscribeErr) {
+      console.error('[useFirestoreDoc] subscribe threw', { path: ref.path, subscribeErr });
+      setListenerError(coerceFirestoreError(subscribeErr));
+      return;
+    }
 
     return () => {
-      unsubscribe();
+      try {
+        unsubscribe();
+      } catch (unsubscribeErr) {
+        // Best-effort teardown; an SDK-internal throw on unsubscribe
+        // shouldn't propagate through the React effect cleanup chain.
+        console.warn('[useFirestoreDoc] unsubscribe threw', {
+          path: ref.path,
+          unsubscribeErr,
+        });
+      }
     };
   }, [ref, queryClient]);
 
@@ -139,3 +195,19 @@ export function useFirestoreDoc<T>(
 }
 
 const NULL_DOC_KEY = ['__kindoo_firestore__', 'doc', '__null__'] as const;
+
+/**
+ * Coerce an unknown thrown value into a `FirestoreError` shape so the
+ * hook's `error` field always carries a typed object. Real
+ * FirestoreErrors flow through unchanged; everything else gets a
+ * synthetic `unknown` code so callers can still inspect `.code`.
+ */
+function coerceFirestoreError(err: unknown): FirestoreError {
+  if (err && typeof err === 'object' && 'code' in err && 'message' in err) {
+    return err as FirestoreError;
+  }
+  return Object.assign(new Error(String(err)), {
+    name: 'FirestoreError',
+    code: 'unknown',
+  }) as unknown as FirestoreError;
+}
