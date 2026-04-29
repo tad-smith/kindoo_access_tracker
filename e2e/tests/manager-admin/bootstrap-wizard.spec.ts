@@ -201,21 +201,34 @@ test.describe('Bootstrap wizard gate', () => {
 
     await expect(page.getByTestId('bootstrap-wizard')).toBeVisible();
     // Add a building first (wards reference one).
+    const step2 = page.getByTestId('wizard-step-2');
     await page.getByTestId('wizard-step-tab-2').click();
-    await page.getByLabel(/^Building name$/).fill('Main Building');
-    await page.getByLabel(/^Address$/).fill('');
-    await page.getByRole('button', { name: /^Add building$/ }).click();
+    await step2.getByLabel(/^Building name$/).fill('Main Building');
+    await step2.getByLabel(/^Address$/).fill('1 Main St');
+    await step2.getByRole('button', { name: /^Add building$/ }).click();
     await expect(
       page.getByTestId('bootstrap-buildings-list').getByText('Main Building'),
     ).toBeVisible();
 
-    // Now Wards tab — add + delete.
+    // Wards tab — add + delete. Scope all field locators to the
+    // step-3 panel testid. The Building <select> sits inside an
+    // implicit-label parent (`<label>Building <select>...</select>
+    // </label>`); Playwright's getByLabel against an implicit label
+    // concatenates the option text into the accessible name, so we
+    // target the <select> by role + nearest preceding label text
+    // instead.
     await page.getByTestId('wizard-step-tab-3').click();
-    await page.getByLabel(/^Ward code$/).fill('CO');
-    await page.getByLabel(/^Ward name$/).fill('Cordera Ward');
-    await page.getByLabel(/^Building$/).selectOption('Main Building');
-    await page.getByLabel(/^Seat cap$/).fill('20');
-    await page.getByRole('button', { name: /^Add ward$/ }).click();
+    const step3 = page.getByTestId('wizard-step-3');
+    await expect(step3.getByRole('heading', { name: /^Wards$/ })).toBeVisible();
+    // Wait for the building option to populate the select before
+    // attempting to select it (the Firestore listener may still be
+    // catching up after the Step 2 add).
+    await expect(step3.getByRole('option', { name: 'Main Building' })).toHaveCount(1);
+    await step3.getByLabel(/^Ward code$/).fill('CO');
+    await step3.getByLabel(/^Ward name$/).fill('Cordera Ward');
+    await step3.locator('select').selectOption('Main Building');
+    await step3.getByLabel(/^Seat cap$/).fill('20');
+    await step3.getByRole('button', { name: /^Add ward$/ }).click();
 
     const list = page.getByTestId('bootstrap-wards-list');
     await expect(list.getByText(/Cordera Ward \(CO\)/)).toBeVisible();
@@ -240,18 +253,22 @@ test.describe('Bootstrap wizard gate', () => {
     await page.getByTestId('wizard-step-tab-4').click();
 
     // The bootstrap admin is auto-added — wait for that row, then add a
-    // second manager and delete it.
+    // second manager and delete it. The auto-add seeds `name` to the
+    // principal email, so each row contains the email twice (once in
+    // `<strong>` for name, once in `<code>` for member_email). Locate
+    // by the `<code>` element to keep the assertion strict-mode-safe.
     const list = page.getByTestId('bootstrap-managers-list');
-    await expect(list.getByText(adminEmail)).toBeVisible();
+    await expect(list.locator('code', { hasText: adminEmail })).toBeVisible();
 
     const otherEmail = 'second-mgr@example.com';
-    await page.getByLabel(/^Email$/).fill(otherEmail);
-    await page.getByLabel(/^Name$/).fill('Second Mgr');
-    await page.getByRole('button', { name: /^Add manager$/ }).click();
-    await expect(list.getByText(otherEmail)).toBeVisible();
+    const step4 = page.getByTestId('wizard-step-4');
+    await step4.getByLabel(/^Email$/).fill(otherEmail);
+    await step4.getByLabel(/^Name$/).fill('Second Mgr');
+    await step4.getByRole('button', { name: /^Add manager$/ }).click();
+    await expect(list.locator('code', { hasText: otherEmail })).toBeVisible();
 
     await page.getByTestId(`bootstrap-manager-delete-${otherEmail}`).click();
-    await expect(list.getByText(otherEmail)).toHaveCount(0);
+    await expect(list.locator('code', { hasText: otherEmail })).toHaveCount(0);
 
     // Bootstrap-admin row hides BOTH delete and toggle (regression).
     await expect(page.getByTestId(`bootstrap-manager-delete-${adminEmail}`)).toHaveCount(0);
