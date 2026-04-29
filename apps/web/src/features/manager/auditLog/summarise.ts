@@ -113,3 +113,123 @@ export function diffKeys(
   }
   return changed;
 }
+
+/** A single row in the field-by-field diff table. `kind` controls how
+ *  the renderer styles the row: `change` shows both columns, `add`
+ *  shows only after (insert path), `remove` shows only before (delete
+ *  path). `before` / `after` are raw — formatting happens in the
+ *  renderer. */
+export interface FieldDiffRow {
+  field: string;
+  kind: 'change' | 'add' | 'remove';
+  before: unknown;
+  after: unknown;
+}
+
+export interface FieldDiffResult {
+  /** Action shape: 'create' has no `before`, 'delete' has no `after',
+   *  'update' has both. Drives the table header in the renderer. */
+  shape: 'create' | 'update' | 'delete' | 'empty';
+  rows: FieldDiffRow[];
+  /** Count of fields present on either side that didn't change. Surfaced
+   *  in the renderer trailer ("N unchanged fields not shown") so the
+   *  reader knows the table isn't truncated. Always 0 for create/delete
+   *  shapes (every field is, by definition, an add or a remove). */
+  unchangedCount: number;
+}
+
+/** Walk `before` + `after`, return only the fields that differ. The
+ *  shape ('create' | 'update' | 'delete' | 'empty') captures the
+ *  before/after presence and lets the renderer pick a sensible header
+ *  per audit action.
+ *
+ *  Cross-collection rows (member_canonical filter spans seats / access
+ *  / requests) work transparently: every row's keys are computed from
+ *  its own before+after, so heterogeneous shapes render side-by-side
+ *  without any per-collection branching. */
+export function computeFieldDiff(before: unknown, after: unknown): FieldDiffResult {
+  const beforeObj = isPlainObject(before) ? before : null;
+  const afterObj = isPlainObject(after) ? after : null;
+
+  if (!beforeObj && !afterObj) return { shape: 'empty', rows: [], unchangedCount: 0 };
+
+  if (!beforeObj && afterObj) {
+    const rows: FieldDiffRow[] = Object.keys(afterObj)
+      .sort()
+      .map((field) => ({ field, kind: 'add', before: undefined, after: afterObj[field] }));
+    return { shape: 'create', rows, unchangedCount: 0 };
+  }
+  if (beforeObj && !afterObj) {
+    const rows: FieldDiffRow[] = Object.keys(beforeObj)
+      .sort()
+      .map((field) => ({ field, kind: 'remove', before: beforeObj[field], after: undefined }));
+    return { shape: 'delete', rows, unchangedCount: 0 };
+  }
+
+  // Both sides present — compute the changed-keys set, build rows in a
+  // stable sort order, count the unchanged fields for the trailer.
+  const allKeys = new Set<string>([...Object.keys(beforeObj!), ...Object.keys(afterObj!)]);
+  const rows: FieldDiffRow[] = [];
+  let unchangedCount = 0;
+  for (const field of [...allKeys].sort()) {
+    const b = (beforeObj as Record<string, unknown>)[field];
+    const a = (afterObj as Record<string, unknown>)[field];
+    if (JSON.stringify(b) === JSON.stringify(a)) {
+      unchangedCount += 1;
+      continue;
+    }
+    const inBefore = field in beforeObj!;
+    const inAfter = field in afterObj!;
+    const kind: FieldDiffRow['kind'] = !inBefore ? 'add' : !inAfter ? 'remove' : 'change';
+    rows.push({ field, kind, before: b, after: a });
+  }
+  return { shape: 'update', rows, unchangedCount };
+}
+
+/** Render an arbitrary value into the diff cell text. Mirrors the Apps
+ *  Script `stringifyValue_`: nulls render as `(empty)` instead of the
+ *  literal `""`, timestamps render in human-readable form, primitives
+ *  cap at 200 chars (Apps Script capped at 80 — bumped because the diff
+ *  table cell is wider than the inline summary), arrays / maps render
+ *  as compact JSON. */
+export function formatDiffValue(v: unknown): string {
+  if (v === undefined) return '(absent)';
+  if (v === null || v === '') return '(empty)';
+  if (typeof v === 'string') {
+    // ISO-ish timestamp string: drop ms + "T" / "Z" for readability.
+    const isoMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?Z?$/.exec(v);
+    if (isoMatch) return `${isoMatch[1]} ${isoMatch[2]} UTC`;
+    return v.length > 200 ? `${v.substring(0, 197)}…` : v;
+  }
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (isFirestoreTimestamp(v)) {
+    return v.toDate().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  }
+  if (Array.isArray(v)) {
+    if (v.length === 0) return '(empty list)';
+    // Comma-separated for primitive arrays; JSON for nested.
+    if (v.every((x) => typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean')) {
+      return v.join(', ');
+    }
+    return JSON.stringify(v);
+  }
+  if (typeof v === 'object') {
+    const entries = Object.entries(v as Record<string, unknown>);
+    if (entries.length === 0) return '(empty map)';
+    return JSON.stringify(v);
+  }
+  return String(v);
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function isFirestoreTimestamp(v: unknown): v is { toDate: () => Date } {
+  return (
+    v !== null &&
+    typeof v === 'object' &&
+    'toDate' in v &&
+    typeof (v as { toDate: unknown }).toDate === 'function'
+  );
+}

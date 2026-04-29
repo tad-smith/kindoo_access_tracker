@@ -3,7 +3,7 @@
 // exercised without touching Firestore.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AuditLog } from '@kindoo/shared';
 import { makeAuditLog } from '../../../../test/fixtures';
@@ -114,7 +114,13 @@ describe('<AuditLogPage />', () => {
     expect(details.open).toBe(false);
     await user.click(details.querySelector('summary')!);
     expect(details.open).toBe(true);
-    expect(card.querySelector('pre')).toHaveTextContent(/bob@example\.com/);
+    // Expanded: field-by-field diff table renders one row per
+    // changed/added field; the value cell carries the after-side
+    // contents.
+    const table = within(card).getByTestId('audit-diff-table');
+    expect(within(table).getByText('bob@example.com')).toBeInTheDocument();
+    expect(within(table).getByText('CO')).toBeInTheDocument();
+    expect(within(table).getByText('auto')).toBeInTheDocument();
   });
 
   it('surfaces the completion_note inline on R-1 complete_request rows', () => {

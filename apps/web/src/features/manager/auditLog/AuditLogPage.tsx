@@ -1,10 +1,10 @@
 // Manager Audit Log page. Mirrors `src/ui/manager/AuditLog.html`.
 // Cursor-paginated (request-response), filterable by action /
 // entity_type / entity_id / actor_canonical / member_canonical / date
-// range. Per-row collapsed summary + `<details>` diff view.
-//
-// New in Phase 5 (per migration plan): filter by `member_canonical`
-// for cross-collection per-user view.
+// range. Per-row collapsed summary + `<details>` field-by-field diff
+// table (see `AuditDiffTable.tsx`). The `member_canonical` filter
+// produces cross-collection rows; the diff table walks each row's
+// before/after independently so heterogeneous shapes coexist.
 
 import { useMemo, useState } from 'react';
 import { Timestamp } from 'firebase/firestore';
@@ -12,6 +12,7 @@ import { useNavigate } from '@tanstack/react-router';
 import type { AuditLog } from '@kindoo/shared';
 import { useAuditLogPage, PAGE_SIZE, type AuditLogFilters } from './hooks';
 import { summariseAuditRow } from './summarise';
+import { AuditDiffTable } from './AuditDiffTable';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { Button } from '../../../components/ui/Button';
@@ -234,7 +235,7 @@ function AuditCard({ row }: AuditCardProps) {
       </div>
       <details className="kd-audit-card-diff">
         <summary>details</summary>
-        <pre>{JSON.stringify({ before: row.before, after: row.after }, null, 2)}</pre>
+        <AuditDiffTable before={row.before} after={row.after} />
       </details>
     </div>
   );

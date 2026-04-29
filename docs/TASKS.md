@@ -286,31 +286,20 @@ Phase: 11 (cutover) → due before public DNS flip
 Apache-2.0 dependencies in the production bundle (TypeScript, firebase, firebase-admin, @google/clasp, @playwright/test, @firebase/rules-unit-testing) require preserving the LICENSE + NOTICE text in the distributed artifact. MIT deps require preserving the copyright + license notice. Today nothing in the Hosting build assembles this. Add a build step (e.g., `pnpm-licenses` / `license-checker-rseidelsohn` / similar) that emits `apps/web/dist/THIRD_PARTY_LICENSES.txt` covering every runtime dep in the SPA bundle, and surface a link from a footer or About page so users can find it. Functions side does not ship to end-users so no equivalent artifact is needed. Verify the build runs in CI and the file is non-empty before Phase 11 close.
 
 ## [T-21] Decide Audit Log diff rendering: JSON-pretty `<details>` vs field-by-field diff table
-Status: open
-Owner: (decision needed)
+Status: done (2026-04-29)
+Owner: @web-engineer
 Phase: not bound to any phase
 
-Phase 5 ported the manager Audit Log to a JSON-pretty `<details>` block instead of the Apps Script `manager/AuditLog.html`'s bespoke field-by-field diff table. The decision:
+Closed 2026-04-29 via PR `feat/audit-log-field-diff` — operator picked **option 3** (port the full Apps Script field-table form). The JSON-pretty `<details>` block is gone; the expansion now renders a Field / Before / After table sourced from a new `computeFieldDiff(before, after)` helper sitting next to the existing `diffKeys` in `apps/web/src/features/manager/auditLog/summarise.ts`. Three header shapes (create / update / delete) plus an "(empty payload)" placeholder; only changed fields appear; an unchanged-fields trailer surfaces the count so the reader knows the table isn't truncated. Cross-collection rows (`member_canonical`-filtered view) render transparently because the helper walks each row's own `before` ∪ `after` keys with no per-entity branching. Special-cased value rendering: ISO-timestamp strings + Firestore Timestamps fold to `YYYY-MM-DD HH:MM:SS UTC`, primitive arrays render comma-separated, nested maps / arrays fall back to JSON, nullables render as `(empty)`, fields absent on the other side render `(absent)` and tag the cell muted. Comprehensive unit tests in `summarise.test.ts` and `AuditDiffTable.test.tsx`.
 
-- **JSON-pretty form (current).** Faithful to the data. Handles cross-collection rows (e.g., `member_canonical`-filtered view spanning seats + access + requests) cleanly because JSON renders any document shape. Less scannable for a single-entity audit row where the operator wants to see "calling: 'X' → 'Y'" at a glance.
+**Original options memo (preserved as trail):**
+
+- **JSON-pretty form.** Faithful to the data. Handles cross-collection rows cleanly because JSON renders any document shape. Less scannable for a single-entity audit row where the operator wants to see "calling: 'X' → 'Y'" at a glance.
 - **Field-by-field form (Apps Script reality).** More readable for canonical seat/access/request changes. Gets awkward for cross-collection rows because each entity has different fields. The Apps Script app handled this by limiting the audit log to per-collection views.
 
-Phase 5 went with JSON-pretty because (a) the new `member_canonical` filter introduced cross-collection views per the migration plan, (b) the bespoke field-table renderer would need to be rewritten for the new query shapes, (c) JSON is honest for any shape.
+Phase 5 went with JSON-pretty because (a) the new `member_canonical` filter introduced cross-collection views per the migration plan, (b) the bespoke field-table renderer would need to be rewritten for the new query shapes, (c) JSON was honest for any shape. Operator's verdict on real data: "the new diffing logic sucks." Picked option 3.
 
-The `diffKeys` helper in `apps/web/src/features/manager/auditLog/summarise.ts` is isolated, so swapping back to field-table form is mechanical if a real workflow demands it.
-
-Three options to pick from:
-
-1. **Keep JSON-pretty as-is.** Lowest cost; cross-collection-honest.
-2. **Port the field-table form for single-entity rows; fall back to JSON for cross-collection rows.** Hybrid.
-3. **Port the full field-table form** and accept that cross-collection rows render less cleanly (or scope the cross-collection filter to one entity type).
-
-Decision blocker: nobody has used the audit log on real data on the new SPA yet. Decide once Phase 11 cutover puts this in front of an actual operator workflow.
-
-**Files to touch when implementing the chosen option:**
-
-- `apps/web/src/features/manager/auditLog/summarise.ts` (the `diffKeys` helper)
-- The detail-row rendering inside `apps/web/src/features/manager/auditLog/AuditLogPage.tsx` (or wherever the `<details>` block lives)
+**Files touched:** `apps/web/src/features/manager/auditLog/summarise.ts`, `apps/web/src/features/manager/auditLog/AuditDiffTable.tsx` (new), `apps/web/src/features/manager/auditLog/AuditLogPage.tsx`, `apps/web/src/features/manager/auditLog/summarise.test.ts` (new), `apps/web/src/features/manager/auditLog/AuditDiffTable.test.tsx` (new), `apps/web/src/features/manager/auditLog/AuditLogPage.test.tsx`, `apps/web/src/styles/pages.css`.
 
 ## [T-22] Bootstrap-wizard rules: allow bootstrap-admin writes when `setup_complete=false`
 Status: open
