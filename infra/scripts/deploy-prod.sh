@@ -48,6 +48,10 @@
 #   bash infra/scripts/deploy-prod.sh --dry-run         # echo every
 #                                                       # command
 #                                                       # without running
+#
+# `--from-pr` is intentionally staging-only (deploy-staging.sh).
+# Production must always ship from `main`; testing a PR on prod would
+# defeat the staging rehearsal. Don't add it here.
 
 set -euo pipefail
 
