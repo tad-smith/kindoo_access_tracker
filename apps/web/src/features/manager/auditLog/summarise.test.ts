@@ -2,7 +2,13 @@
 
 import { describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase/firestore';
-import { computeFieldDiff, formatDiffValue, summariseAuditRow } from './summarise';
+import {
+  auditActionCategory,
+  computeFieldDiff,
+  diffKeys,
+  formatDiffValue,
+  summariseAuditRow,
+} from './summarise';
 import { makeAuditLog } from '../../../../test/fixtures';
 
 describe('summariseAuditRow', () => {
@@ -163,5 +169,135 @@ describe('formatDiffValue', () => {
     const out = formatDiffValue(long);
     expect(out.endsWith('…')).toBe(true);
     expect(out.length).toBe(198); // 197 chars + ellipsis
+  });
+});
+
+describe('bookkeeping field exclusion', () => {
+  // Both consumers (diffKeys for the inline summary, computeFieldDiff
+  // for the expanded table) should agree: lastActor / *_at / *_by
+  // should never surface to the operator.
+  const BOOKKEEPING_FIELD_NAMES = [
+    'lastActor',
+    'last_modified_at',
+    'last_modified_by',
+    'created_at',
+    'created_by',
+    'added_at',
+    'added_by',
+    'granted_at',
+    'granted_by',
+    'detected_at',
+    'updated_at',
+  ];
+
+  it('diffKeys drops every bookkeeping field even when the value changed', () => {
+    const before = Object.fromEntries(BOOKKEEPING_FIELD_NAMES.map((k) => [k, 'before']));
+    const after = Object.fromEntries(BOOKKEEPING_FIELD_NAMES.map((k) => [k, 'after']));
+    expect(diffKeys(before, after)).toEqual([]);
+  });
+
+  it('diffKeys keeps real fields alongside bookkeeping changes', () => {
+    const before = { lastActor: { canonical: 'a' }, scope: 'CO', type: 'auto' };
+    const after = { lastActor: { canonical: 'b' }, scope: 'CO', type: 'manual' };
+    expect(diffKeys(before, after)).toEqual(['type']);
+  });
+
+  it('computeFieldDiff "create" shape drops bookkeeping fields', () => {
+    const r = computeFieldDiff(null, {
+      scope: 'CO',
+      type: 'auto',
+      lastActor: { canonical: 'a' },
+      created_at: '2026-04-28T00:00:00Z',
+      created_by: 'alice@example.com',
+    });
+    expect(r.shape).toBe('create');
+    expect(r.rows.map((x) => x.field).sort()).toEqual(['scope', 'type']);
+  });
+
+  it('computeFieldDiff "delete" shape drops bookkeeping fields', () => {
+    const r = computeFieldDiff(
+      {
+        scope: 'CO',
+        type: 'auto',
+        lastActor: { canonical: 'a' },
+        added_at: '2026-04-28T00:00:00Z',
+        added_by: 'alice@example.com',
+      },
+      null,
+    );
+    expect(r.shape).toBe('delete');
+    expect(r.rows.map((x) => x.field).sort()).toEqual(['scope', 'type']);
+  });
+
+  it('computeFieldDiff "update" shape drops bookkeeping fields from both rows AND unchanged count', () => {
+    // Bookkeeping fields aren't visible AND aren't counted in the
+    // "N unchanged" trailer — surfacing "lastActor unchanged" would be
+    // confusing because the operator never sees lastActor in the
+    // first place.
+    const r = computeFieldDiff(
+      {
+        scope: 'CO',
+        type: 'auto',
+        lastActor: { canonical: 'a' },
+        last_modified_at: '2026-04-27',
+        member_email: 'alice@example.com',
+      },
+      {
+        scope: 'CO',
+        type: 'manual',
+        lastActor: { canonical: 'b' }, // changed but bookkeeping
+        last_modified_at: '2026-04-28', // changed but bookkeeping
+        member_email: 'alice@example.com',
+      },
+    );
+    expect(r.shape).toBe('update');
+    expect(r.rows.map((x) => x.field)).toEqual(['type']);
+    // Two unchanged user fields (scope, member_email); bookkeeping
+    // doesn't add to the count.
+    expect(r.unchangedCount).toBe(2);
+  });
+
+  it('computeFieldDiff returns no rows when only bookkeeping changed', () => {
+    const r = computeFieldDiff(
+      { scope: 'CO', lastActor: { canonical: 'a' }, last_modified_at: '2026-04-27' },
+      { scope: 'CO', lastActor: { canonical: 'b' }, last_modified_at: '2026-04-28' },
+    );
+    expect(r.shape).toBe('update');
+    expect(r.rows).toEqual([]);
+    expect(r.unchangedCount).toBe(1); // scope
+  });
+});
+
+describe('auditActionCategory', () => {
+  it('categorises CRUD actions as "crud"', () => {
+    expect(auditActionCategory('create_seat')).toBe('crud');
+    expect(auditActionCategory('update_seat')).toBe('crud');
+    expect(auditActionCategory('delete_seat')).toBe('crud');
+    expect(auditActionCategory('create_access')).toBe('crud');
+    expect(auditActionCategory('update_access')).toBe('crud');
+    expect(auditActionCategory('delete_access')).toBe('crud');
+    expect(auditActionCategory('create_manager')).toBe('crud');
+    expect(auditActionCategory('update_manager')).toBe('crud');
+    expect(auditActionCategory('delete_manager')).toBe('crud');
+    expect(auditActionCategory('update_stake')).toBe('crud');
+  });
+
+  it('categorises request-lifecycle actions as "request"', () => {
+    expect(auditActionCategory('submit_request')).toBe('request');
+    expect(auditActionCategory('complete_request')).toBe('request');
+    expect(auditActionCategory('reject_request')).toBe('request');
+    expect(auditActionCategory('cancel_request')).toBe('request');
+    expect(auditActionCategory('create_request')).toBe('crud'); // CRUD wins on prefix
+  });
+
+  it('categorises importer actions as "import"', () => {
+    expect(auditActionCategory('import_start')).toBe('import');
+    expect(auditActionCategory('import_end')).toBe('import');
+  });
+
+  it('categorises system events as "system"', () => {
+    expect(auditActionCategory('auto_expire')).toBe('system');
+    expect(auditActionCategory('over_cap_warning')).toBe('system');
+    expect(auditActionCategory('setup_complete')).toBe('system');
   });
 });

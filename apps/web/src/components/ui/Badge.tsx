@@ -19,7 +19,16 @@ export type BadgeVariant =
   | 'success'
   | 'warning'
   | 'danger'
-  | 'info';
+  | 'info'
+  // Audit-action category badges. Mirror Apps Script's four
+  // `audit-action-*` classes (Styles.html lines 1881-1884) exactly so
+  // the manager Audit Log row chips render with the Apps Script
+  // palette: blue for CRUD, green for request lifecycle, red for
+  // system events, amber for importer.
+  | 'audit-crud'
+  | 'audit-request'
+  | 'audit-system'
+  | 'audit-import';
 
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   variant?: BadgeVariant;
@@ -34,6 +43,17 @@ const VARIANT_CLASSES: Record<BadgeVariant, string> = {
   warning: 'bg-kd-warn-tint text-kd-warn-mid',
   danger: 'bg-kd-danger-bg text-kd-danger-fg border border-kd-danger',
   info: 'bg-kd-primary-tint text-kd-primary-hover',
+  // Apps Script's `.audit-action-badge` is uppercase + font-weight
+  // 600. Layer those modifiers per-variant so they stack with the
+  // base Badge classes (which set rounded + padding + text-xs).
+  // #ebf4fb / #2b6cb0
+  'audit-crud': 'bg-kd-primary-tint text-kd-primary uppercase font-semibold',
+  // #e6f3ea / #2f6f47
+  'audit-request': 'bg-kd-success-tint text-kd-success-fg uppercase font-semibold',
+  // #f5e4e4 / #923834
+  'audit-system': 'bg-kd-danger-tint text-kd-danger-fg uppercase font-semibold',
+  // #fde4a1 / #6b4a00
+  'audit-import': 'bg-kd-warn-tint-2 text-kd-warn-mid uppercase font-semibold',
 };
 
 export function Badge({ variant = 'default', className, ...rest }: BadgeProps) {

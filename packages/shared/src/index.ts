@@ -6,6 +6,7 @@
 
 // ---- Pure helpers -----------------------------------------------------
 export { auditId } from './auditId.js';
+export { BOOKKEEPING_FIELDS } from './auditBookkeepingFields.js';
 export { buildingSlug } from './buildingSlug.js';
 export { canonicalEmail, emailsEqual } from './canonicalEmail.js';
 export { principalFromClaims } from './principal.js';

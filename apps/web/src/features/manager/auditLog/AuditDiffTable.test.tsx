@@ -114,4 +114,111 @@ describe('<AuditDiffTable />', () => {
     expect(screen.getByTestId('audit-diff-row-scope')).toBeInTheDocument();
     expect(screen.getByTestId('audit-diff-row-manual_grants')).toBeInTheDocument();
   });
+
+  describe('cell coloring (red/green diff convention)', () => {
+    it('paints the before cell with kd-audit-diff-before (red)', () => {
+      render(<AuditDiffTable before={{ scope: 'CO' }} after={{ scope: 'EN' }} />);
+      const row = screen.getByTestId('audit-diff-row-scope');
+      const cells = row.querySelectorAll('td');
+      // Cells: 0=field name code, 1=before, 2=after.
+      expect(cells[1]?.className).toContain('kd-audit-diff-before');
+      expect(cells[1]?.className).not.toContain('kd-audit-diff-muted');
+    });
+
+    it('paints the after cell with kd-audit-diff-after (green)', () => {
+      render(<AuditDiffTable before={{ scope: 'CO' }} after={{ scope: 'EN' }} />);
+      const row = screen.getByTestId('audit-diff-row-scope');
+      const cells = row.querySelectorAll('td');
+      expect(cells[2]?.className).toContain('kd-audit-diff-after');
+      expect(cells[2]?.className).not.toContain('kd-audit-diff-muted');
+    });
+
+    it('mutes the before cell on an "add" row (key only in after)', () => {
+      // The before column shows "(absent)" for an added field — paint
+      // it muted so the eye lands on the after side.
+      render(<AuditDiffTable before={{ existing: 1 }} after={{ existing: 1, added: 'x' }} />);
+      const row = screen.getByTestId('audit-diff-row-added');
+      const cells = row.querySelectorAll('td');
+      expect(cells[1]?.className).toContain('kd-audit-diff-muted');
+      expect(cells[2]?.className).not.toContain('kd-audit-diff-muted');
+    });
+
+    it('mutes the after cell on a "remove" row (key only in before)', () => {
+      render(<AuditDiffTable before={{ existing: 1, removed: 'x' }} after={{ existing: 1 }} />);
+      const row = screen.getByTestId('audit-diff-row-removed');
+      const cells = row.querySelectorAll('td');
+      expect(cells[1]?.className).not.toContain('kd-audit-diff-muted');
+      expect(cells[2]?.className).toContain('kd-audit-diff-muted');
+    });
+
+    it('paints the after-only cell on a "create" row green (no muted class)', () => {
+      render(<AuditDiffTable before={null} after={{ scope: 'CO' }} />);
+      const row = screen.getByTestId('audit-diff-row-scope');
+      const cells = row.querySelectorAll('td');
+      // Two cells: field name, after.
+      expect(cells[1]?.className).toContain('kd-audit-diff-after');
+      expect(cells[1]?.className).not.toContain('kd-audit-diff-muted');
+    });
+
+    it('paints the before-only cell on a "delete" row red (no muted class)', () => {
+      render(<AuditDiffTable before={{ scope: 'CO' }} after={null} />);
+      const row = screen.getByTestId('audit-diff-row-scope');
+      const cells = row.querySelectorAll('td');
+      expect(cells[1]?.className).toContain('kd-audit-diff-before');
+      expect(cells[1]?.className).not.toContain('kd-audit-diff-muted');
+    });
+  });
+
+  describe('bookkeeping field exclusion', () => {
+    it('hides lastActor changes from the visible diff', () => {
+      render(
+        <AuditDiffTable
+          before={{ scope: 'CO', lastActor: { canonical: 'a@x.com', email: 'a@x.com' } }}
+          after={{ scope: 'CO', lastActor: { canonical: 'b@x.com', email: 'b@x.com' } }}
+        />,
+      );
+      // No diff rows at all — only bookkeeping changed.
+      expect(screen.queryByTestId('audit-diff-row-lastActor')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-scope')).not.toBeInTheDocument();
+      expect(screen.getByText(/no field changes/i)).toBeInTheDocument();
+    });
+
+    it('hides timestamp metadata fields (created_at, last_modified_at, etc)', () => {
+      render(
+        <AuditDiffTable
+          before={null}
+          after={{
+            scope: 'CO',
+            type: 'auto',
+            lastActor: { canonical: 'a@x.com' },
+            created_at: '2026-04-28T00:00:00Z',
+            created_by: 'a@x.com',
+            last_modified_at: '2026-04-28T00:00:00Z',
+            last_modified_by: 'a@x.com',
+            added_at: '2026-04-28T00:00:00Z',
+            added_by: 'a@x.com',
+            granted_at: '2026-04-28T00:00:00Z',
+            granted_by: 'a@x.com',
+            detected_at: '2026-04-28T00:00:00Z',
+            updated_at: '2026-04-28T00:00:00Z',
+          }}
+        />,
+      );
+      // Only user-visible fields render.
+      expect(screen.getByTestId('audit-diff-row-scope')).toBeInTheDocument();
+      expect(screen.getByTestId('audit-diff-row-type')).toBeInTheDocument();
+      // Every bookkeeping field hidden.
+      expect(screen.queryByTestId('audit-diff-row-lastActor')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-created_at')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-created_by')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-last_modified_at')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-last_modified_by')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-added_at')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-added_by')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-granted_at')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-granted_by')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-detected_at')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('audit-diff-row-updated_at')).not.toBeInTheDocument();
+    });
+  });
 });

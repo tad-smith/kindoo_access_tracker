@@ -11,7 +11,8 @@ import { Timestamp } from 'firebase/firestore';
 import { useNavigate } from '@tanstack/react-router';
 import type { AuditLog } from '@kindoo/shared';
 import { useAuditLogPage, PAGE_SIZE, type AuditLogFilters } from './hooks';
-import { summariseAuditRow } from './summarise';
+import { auditActionCategory, summariseAuditRow } from './summarise';
+import type { BadgeVariant } from '../../../components/ui/Badge';
 import { AuditDiffTable } from './AuditDiffTable';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
@@ -241,13 +242,22 @@ function AuditCard({ row }: AuditCardProps) {
   );
 }
 
-function badgeVariantForAction(action: AuditLog['action']) {
-  if (action.includes('request')) return 'info' as const;
-  if (action.startsWith('delete') || action === 'over_cap_warning' || action === 'reject_request')
-    return 'danger' as const;
-  if (action.startsWith('import') || action === 'auto_expire') return 'warning' as const;
-  if (action.startsWith('create')) return 'success' as const;
-  return 'default' as const;
+/** Map an audit-action category onto the Badge variant that renders
+ *  the matching Apps Script color: blue for CRUD, green for request
+ *  lifecycle, red for system, amber for importer. */
+function badgeVariantForAction(action: AuditLog['action']): BadgeVariant {
+  switch (auditActionCategory(action)) {
+    case 'crud':
+      return 'audit-crud';
+    case 'request':
+      return 'audit-request';
+    case 'system':
+      return 'audit-system';
+    case 'import':
+      return 'audit-import';
+    default:
+      return 'default';
+  }
 }
 
 function stripEmpty(filters: AuditLogFilters): Record<string, string> {

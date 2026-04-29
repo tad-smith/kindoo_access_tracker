@@ -30,17 +30,12 @@
 // is rare and at worst produces a redundant audit row, which is the
 // safer failure mode.
 
-/** Fields the diff treats as bookkeeping — never trigger audit emission. */
-export const BOOKKEEPING_FIELDS = new Set<string>([
-  'lastActor',
-  'last_modified_at',
-  'last_modified_by',
-  'created_at',
-  'added_at',
-  'granted_at',
-  'detected_at',
-  'updated_at',
-]);
+import { BOOKKEEPING_FIELDS } from '@kindoo/shared';
+
+// Re-exported so existing local imports of `BOOKKEEPING_FIELDS` from
+// `./auditDiff` still work. The canonical home is `@kindoo/shared`;
+// the renderer in apps/web pulls it from there too.
+export { BOOKKEEPING_FIELDS };
 
 /**
  * Return the set of top-level keys whose values changed between

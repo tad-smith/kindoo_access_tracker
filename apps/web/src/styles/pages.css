@@ -168,8 +168,17 @@
   font-weight: 600;
 }
 
+/* Automated actor chip ("Importer", "ExpiryTrigger"). Mirrors Apps
+   Script's `.audit-log-actor-automated` (Styles.html lines 1863-
+   1869): primary-tint pill so the synthetic actors stand out from
+   real-user emails. */
 .kd-audit-card-actor.actor-automated {
-  color: var(--kd-warn-dark);
+  background: var(--kd-primary-tint);
+  color: var(--kd-primary);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.85em;
+  font-weight: 500;
 }
 
 .kd-audit-card-summary {
@@ -243,18 +252,29 @@
   word-break: break-word;
 }
 
+/* Diff cell coloring. Mirrors Apps Script's audit-diff-old / -new
+   exactly (Styles.html lines 1907-1908): red text for the deleted
+   side, green for the inserted side, monospace, word-break so long
+   values wrap inside the cell. */
 .kd-audit-diff-before {
-  color: var(--kd-fg-2);
+  color: var(--kd-danger-fg); /* #923834 */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-word;
 }
 
 .kd-audit-diff-after {
-  color: var(--kd-fg-1);
-  font-weight: 500;
+  color: var(--kd-success-fg); /* #2f6f47 */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-word;
 }
 
+/* `(absent)` / `(empty)` placeholders sit on top of the colored cell;
+   italic + dim signals "no real value on this side." Overrides the
+   colored text. */
 .kd-audit-diff-muted {
   color: var(--kd-fg-3);
   font-style: italic;
+  font-family: inherit;
 }
 
 .kd-audit-diff-unchanged,
