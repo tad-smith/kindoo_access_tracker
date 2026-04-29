@@ -43,9 +43,23 @@ describe('gateDecision', () => {
     expect(gateDecision(p, stakePending)).toBe('sign-in');
   });
 
-  it('returns pending when the stake-doc subscription has not yet resolved', () => {
+  it('returns pending when the stake-doc subscription has not yet resolved (authed user)', () => {
     const p = principal({ isAuthenticated: true });
     expect(gateDecision(p, stakePending)).toBe('pending');
+  });
+
+  it('shortcuts to not-authorized for no-claims users while the stake doc is pending', () => {
+    // Two reasons we don't wait for the listener here. (a) The
+    // post-setup wrong-account case is the common path and the
+    // listener will end up at NotAuthorized anyway. (b) Avoiding the
+    // listener sidesteps a known Firestore SDK 12.x assertion
+    // ("Unexpected state ID: ca9") that fires when onSnapshot
+    // encounters a permission-denied response on initial connection.
+    // The brief flash for the rare "non-admin during bootstrap" case
+    // is acceptable — once the snapshot lands, the gate re-renders
+    // into SetupInProgress.
+    const p = principal({ isAuthenticated: false, email: 'noclaims@example.com' });
+    expect(gateDecision(p, stakePending)).toBe('not-authorized');
   });
 
   it('returns wizard for the bootstrap admin during setup_complete=false', () => {

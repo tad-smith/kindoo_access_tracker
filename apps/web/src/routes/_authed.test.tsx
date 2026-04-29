@@ -220,15 +220,15 @@ describe('_authed gate', () => {
     expect(screen.getByTestId('shell-rendered')).toBeInTheDocument();
   });
 
-  it('waits (renders nothing) while the stake-doc subscription is pending — no-claims user', () => {
-    // Updated 2026-04-29: previously the gate shortcut to NotAuthorized
-    // for no-claims users while pending. The new policy is to wait for
-    // the snapshot so the rare "non-admin during bootstrap" case
-    // doesn't flash NotAuthorized before re-rendering into
-    // SetupInProgress. The rules already explicitly allow any authed
-    // user to read the parent stake doc during setup_complete=false
-    // (firestore.rules `isSetupInProgressReadable`); the snapshot
-    // lands quickly enough that the brief null render is invisible.
+  it('shortcuts to NotAuthorized for no-claims users while the stake-doc is pending', () => {
+    // Avoids a known Firestore SDK 12.x assertion crash ("Unexpected
+    // state ID: ca9") that fires when onSnapshot encounters a
+    // permission-denied response on initial connection. The rules
+    // require isAnyMember post-setup, so the listener errors anyway
+    // for no-claims users on a setup_complete=true stake. Better to
+    // shortcut to NotAuthorized than crash the app. The brief flash
+    // for the rare "non-admin during bootstrap" case re-renders into
+    // SetupInProgress once the snapshot lands.
     mockedPrincipal.current = {
       ...mockedPrincipal.current,
       firebaseAuthSignedIn: true,
@@ -236,9 +236,8 @@ describe('_authed gate', () => {
       email: 'someone@example.com',
       canonical: 'someone@example.com',
     };
-    const { container } = render(<AuthedLayout />);
-    expect(container.firstChild).toBeNull();
-    expect(screen.queryByTestId('notauth-page')).toBeNull();
+    render(<AuthedLayout />);
+    expect(screen.getByTestId('notauth-page')).toBeInTheDocument();
   });
 
   it('waits (renders nothing) while the stake-doc subscription is pending — authenticated user', () => {

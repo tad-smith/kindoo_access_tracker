@@ -92,10 +92,31 @@ export function gateDecision(principal: GatePrincipal, stake: GateStakeRead): Ga
     return 'sign-in';
   }
 
-  // Stake-doc subscription not yet resolved — render null in the
-  // caller. We don't try to decide anything until the snapshot lands.
+  // Stake-doc subscription not yet resolved.
+  //
+  // For an authed (claim-bearing) user we render null in the caller
+  // so a manager who's also the bootstrap admin doesn't flash the
+  // dashboard before the wizard gate fires.
+  //
+  // For a no-claims user we shortcut to NotAuthorized immediately.
+  // Two reasons:
+  //   (a) The post-setup wrong-account case is the common path; the
+  //       listener will eventually error with permission-denied (rules
+  //       require isAnyMember) and the gate would land on
+  //       NotAuthorized anyway.
+  //   (b) Avoiding the listener on this code path sidesteps a known
+  //       Firestore JS SDK 12.x assertion crash ("Unexpected state
+  //       ID: ca9") that fires when onSnapshot encounters a
+  //       permission-denied response on initial connection. Keeping
+  //       no-claims users on the immediate-NotAuthorized path keeps
+  //       the SPA from rendering its error boundary in production.
+  //
+  // The brief flash of NotAuthorized for the rare "non-admin during
+  // bootstrap" case (where the listener succeeds and the gate
+  // re-renders into SetupInProgress) is acceptable; a 5-second blank
+  // page or a crashed app is not.
   if (stake.status === 'pending') {
-    return 'pending';
+    return principal.isAuthenticated ? 'pending' : 'not-authorized';
   }
 
   // Listener error path. The most common cause is a no-claims user
