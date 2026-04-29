@@ -2,9 +2,7 @@
 // §Phase 7 "Setup-complete gate" + `docs/spec.md` §10:
 //
 //   1. No Firebase Auth user → SignInPage.
-//   2. Stake-doc subscription still pending → render null (avoid
-//      flashing NotAuthorized while the snapshot is in flight).
-//   3. Stake doc loaded with `setup_complete=false`:
+//   2. Stake doc loaded with `setup_complete=false`:
 //        a. Bootstrap admin (token email matches stake.bootstrap_admin_email)
 //           → BootstrapWizardPage. `?p=` deep-links are ignored until
 //           the wizard finishes.
@@ -13,11 +11,18 @@
 //           users with zero claims. Spec §10: non-admins during
 //           bootstrap aren't unauthorised, the app simply isn't ready
 //           yet for them.
-//   4. Stake doc loaded with `setup_complete=true` and no role claims
-//      → NotAuthorizedPage (wrong account / bishopric-import lag from
-//      `docs/spec.md` §6).
-//   5. Authenticated principal post-setup → redirect to default
-//      landing (`?p=` wins over the per-role default).
+//   3. No role claims → NotAuthorizedPage (wrong account / bishopric-
+//      import lag from `docs/spec.md` §6). We don't wait for the
+//      stake-doc subscription here — Firestore's permission-denied
+//      listener errors can take seconds to fire in CI, and a noclaims
+//      user in the post-setup case is the common path. If the rare
+//      "non-admin during setup" case is real, the snapshot lands
+//      shortly (rules allow) and the gate above re-renders into
+//      SetupInProgress.
+//   4. Authenticated principal — wait for stake-doc subscription to
+//      settle (avoid flashing the dashboard before the wizard gate
+//      fires for a manager who's also the bootstrap admin), then
+//      redirect to the default landing (`?p=` wins over per-role).
 //
 // Back-compat deep-link: `/?p=<page-key>` lands the user on the
 // matching SPA route after the gate runs. Page keys mirror the Apps
@@ -91,17 +96,9 @@ function Index() {
     return <SignInPage />;
   }
 
-  // Wait for the stake-doc subscription to settle before deciding any
-  // setup-state branch. With the rules clause that lets any authed
-  // user read the parent stake doc during `setup_complete=false`, the
-  // subscription resolves quickly for everyone; this prevents flashing
-  // NotAuthorized while the snapshot is in flight.
-  if (stake.status === 'pending') {
-    return null;
-  }
-
   // Setup gate (precedence over NotAuthorized): bootstrap admin →
   // wizard; anyone else (incl. zero-claims users) → SetupInProgress.
+  // Fires only when the stake doc has loaded with setup_complete=false.
   if (setupIncomplete) {
     if (isBootstrapAdminUser) {
       return <BootstrapWizardPage />;
@@ -109,9 +106,22 @@ function Index() {
     return <SetupInProgressPage />;
   }
 
-  // Post-setup: no-claims fallback.
+  // No-claims fallback fires immediately; we don't wait for the
+  // stake-doc subscription. The Firestore permission-denied listener
+  // can be slow to error in CI, and a noclaims-during-post-setup user
+  // is the common path. The rare noclaims-during-setup user briefly
+  // flashes NotAuthorized then re-renders into SetupInProgress when
+  // the snapshot lands.
   if (!principal.isAuthenticated) {
     return <NotAuthorizedPage />;
+  }
+
+  // Authenticated principal — wait for the stake-doc subscription to
+  // settle before redirecting; otherwise a manager who's also the
+  // bootstrap admin would briefly land on the dashboard before the
+  // wizard gate fires.
+  if (stake.status === 'pending') {
+    return null;
   }
 
   // Authenticated principal whose role-default redirect is in flight —

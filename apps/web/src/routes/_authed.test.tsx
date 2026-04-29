@@ -220,7 +220,13 @@ describe('_authed gate', () => {
     expect(screen.getByTestId('shell-rendered')).toBeInTheDocument();
   });
 
-  it('waits (renders nothing) while the stake-doc subscription is pending', () => {
+  it('renders NotAuthorized immediately for no-claims user even while stake-doc is pending', () => {
+    // The Firestore permission-denied listener can take seconds to
+    // fire its error callback in CI; we don't block on it for
+    // no-claims users. They land on NotAuthorized straight away. If
+    // the stake doc later resolves with `setup_complete=false`, the
+    // gate above re-renders into SetupInProgress (the rare
+    // non-admin-during-bootstrap case).
     mockedPrincipal.current = {
       ...mockedPrincipal.current,
       firebaseAuthSignedIn: true,
@@ -228,13 +234,27 @@ describe('_authed gate', () => {
       email: 'someone@example.com',
       canonical: 'someone@example.com',
     };
-    // Stake status: pending → null render.
+    // Stake status remains pending.
+    render(<AuthedLayout />);
+    expect(screen.getByTestId('notauth-page')).toBeInTheDocument();
+  });
+
+  it('waits (renders nothing) while the stake-doc subscription is pending for AUTHENTICATED users', () => {
+    // For authenticated principals (managers etc.) we still wait so a
+    // manager who's also the bootstrap admin doesn't flash the
+    // dashboard before the wizard gate fires.
+    mockedPrincipal.current = {
+      ...mockedPrincipal.current,
+      firebaseAuthSignedIn: true,
+      isAuthenticated: true,
+      email: 'mgr@example.com',
+      canonical: 'mgr@example.com',
+      managerStakes: ['csnorth'],
+      hasAnyRole: () => true,
+    };
+    // Stake status pending → null render (no Shell yet).
     const { container } = render(<AuthedLayout />);
     expect(container.firstChild).toBeNull();
-    expect(screen.queryByTestId('signin-page')).toBeNull();
-    expect(screen.queryByTestId('notauth-page')).toBeNull();
-    expect(screen.queryByTestId('setup-in-progress')).toBeNull();
-    expect(screen.queryByTestId('wizard-page')).toBeNull();
     expect(screen.queryByTestId('shell-rendered')).toBeNull();
   });
 });

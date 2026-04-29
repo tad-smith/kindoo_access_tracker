@@ -18,11 +18,18 @@
 //           (rules clause: see firestore.rules `match /stakes/{sid}`).
 //   3. Stake doc loaded with `setup_complete=true` (post-setup) and no
 //      role claims → NotAuthorizedPage.
-//   4. Authenticated with claims, stake-doc still pending → render
-//      null briefly to avoid flashing the dashboard before the wizard
-//      gate fires (only meaningful for managers; dashboard mount is
-//      the normal next step).
-//   5. Render the child outlet inside the Shell.
+//   4. Stake-doc subscription unresolved (pending or errored) for a
+//      no-claims user → render NotAuthorizedPage immediately. The
+//      Firestore listener may take seconds to fire its error callback
+//      under permission-denied; we don't wait. If the user is
+//      genuinely the rare "non-admin during setup" case (rule allows
+//      their read), the snapshot lands shortly and re-renders into
+//      SetupInProgress. The brief NotAuthorized flash is acceptable;
+//      a 5+ second blank page is not.
+//   5. Authenticated principal with claims, stake-doc still pending →
+//      render null briefly so a manager who is also the bootstrap
+//      admin doesn't flash the dashboard before the wizard gate fires.
+//   6. Render the child outlet inside the Shell.
 //
 // We don't use TanStack Router's `beforeLoad` redirect for the gate
 // because `usePrincipal()` is a React hook (it subscribes to Firebase
@@ -57,20 +64,9 @@ export function AuthedLayout() {
     return <SignInPage />;
   }
 
-  // Wait for the stake-doc subscription to settle before deciding any
-  // of the role-aware branches. The post-PR-16 rules (plus the
-  // setup-state read clause) let any authed user read the parent stake
-  // doc during `setup_complete=false`, so the noclaims-during-setup
-  // case lands on SetupInProgress (not NotAuthorized). A pending
-  // listener while we'd otherwise flash NotAuthorized is the wrong
-  // failure mode — render null briefly until status flips.
-  if (stake.status === 'pending') {
-    return null;
-  }
-
-  // Setup gate: when the stake doc reports `setup_complete === false`,
-  // bootstrap admin → wizard; everyone else → SetupInProgress
-  // (precedence over NotAuthorized per spec §10).
+  // Setup gate fires whenever the stake doc has loaded with
+  // `setup_complete=false`. Bootstrap admin → wizard; everyone else
+  // → SetupInProgress (precedence over NotAuthorized per spec §10).
   if (stake.data && stake.data.setup_complete === false) {
     const adminCanonical = canonicalEmailFn(stake.data.bootstrap_admin_email ?? '');
     const meCanonical = principal.canonical ?? canonicalEmailFn(principal.email ?? '');
@@ -80,9 +76,23 @@ export function AuthedLayout() {
     return <SetupInProgressPage />;
   }
 
-  // Post-setup or unreadable: no-claims users land on NotAuthorized.
+  // No-claims users land on NotAuthorized immediately, regardless of
+  // stake-doc subscription state. We don't block on `pending` here —
+  // Firestore's permission-denied listener errors can take seconds to
+  // fire in CI, and a noclaims user in the post-setup case is the
+  // common path. If the rare "non-admin during setup" case is real,
+  // the stake-doc snapshot lands shortly (rules allow), and the gate
+  // above re-renders into SetupInProgress.
   if (!principal.isAuthenticated) {
     return <NotAuthorizedPage />;
+  }
+
+  // Authenticated principal — wait for the stake-doc subscription to
+  // settle before rendering the Shell, so a manager who is also the
+  // bootstrap admin doesn't flash the dashboard before the wizard
+  // gate above fires.
+  if (stake.status === 'pending') {
+    return null;
   }
 
   return (

@@ -361,7 +361,14 @@ describe('firestore.rules — bootstrap-admin gate', () => {
       );
     });
 
-    it('signed-in user whose email does NOT match bootstrap_admin_email is denied reading stake doc', async () => {
+    it('signed-in user whose email does NOT match bootstrap_admin_email is still allowed to READ during setup_complete=false (via isSetupInProgressReadable)', async () => {
+      // The SPA's setup-complete gate (per docs/firebase-migration.md
+      // §Phase 7 + docs/spec.md §10) needs ANY authed user to be able
+      // to read the parent stake doc while setup is in progress, so
+      // the gate can route non-admins to SetupInProgress instead of
+      // NotAuthorized. The `isSetupInProgressReadable` helper widens
+      // reads under that condition. Identity-match remains required
+      // for the write paths — see the two preceding tests.
       await seedAsAdmin(env, async (ctx) => {
         await ctx
           .firestore()
@@ -369,8 +376,26 @@ describe('firestore.rules — bootstrap-admin gate', () => {
           .set(freshStakeDoc({ bootstrap_admin_email: 'Someone-Else@gmail.com' }));
       });
       const db = bootstrapAdminContext(env).firestore();
-      // No stake claims, no manager claim, and email doesn't match —
-      // the only path through (`isAnyMember`) is also closed.
+      await assertSucceeds(db.doc(STAKE_PATH).get());
+    });
+
+    it('signed-in user whose email does NOT match bootstrap_admin_email is denied reading stake doc once setup_complete=true (gate goes silent)', async () => {
+      // After the wizard flips setup_complete=true, the
+      // isSetupInProgressReadable gate goes silent and the standard
+      // isAnyMember rule takes over. A signed-in non-member without
+      // matching identity has no read path.
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(STAKE_PATH)
+          .set(
+            freshStakeDoc({
+              bootstrap_admin_email: 'Someone-Else@gmail.com',
+              setup_complete: true,
+            }),
+          );
+      });
+      const db = bootstrapAdminContext(env).firestore();
       await assertFails(db.doc(STAKE_PATH).get());
     });
   });
