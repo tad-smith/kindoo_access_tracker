@@ -158,14 +158,38 @@ export function useUpsertBuildingMutation() {
   });
 }
 
+// Block deletes when any ward references the building by name. Wards
+// FK on `building_name` (per firebase-schema.md §4) — orphaning a ward
+// silently breaks its building lookup. Firestore Security Rules can't
+// iterate a sibling collection, so this guard is client-side only
+// (documented gap in docs/firebase-migration.md).
+//
+// Caller passes the wards snapshot (already subscribed via useWards) so
+// the guard fires against the exact list the user just saw — no extra
+// Firestore read.
+export interface DeleteBuildingInput {
+  buildingId: string;
+  buildingName: string;
+  wards: ReadonlyArray<Ward>;
+}
 export function useDeleteBuildingMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (buildingId: string) => {
-      await deleteDoc(buildingRef(db, STAKE_ID, buildingId));
+    mutationFn: async (input: DeleteBuildingInput) => {
+      const refs = input.wards.filter((w) => w.building_name === input.buildingName);
+      const blocker = buildingDeleteBlocker(refs);
+      if (blocker) throw new Error(blocker);
+      await deleteDoc(buildingRef(db, STAKE_ID, input.buildingId));
     },
     onSuccess: () => qc.invalidateQueries(),
   });
+}
+
+/** Pure guard helper — see bootstrap/hooks.ts for rationale. */
+export function buildingDeleteBlocker(referencingWards: ReadonlyArray<Ward>): string | null {
+  if (referencingWards.length === 0) return null;
+  const labels = referencingWards.map((w) => `${w.ward_name} (${w.ward_code})`);
+  return `Cannot delete: referenced by ${labels.length} ward(s) — ${labels.join(', ')}`;
 }
 
 // ---- Managers mutations ---------------------------------------------
@@ -293,7 +317,7 @@ export function useDeleteStakeCallingTemplateMutation() {
 
 export interface ConfigInput {
   stake_name: string;
-  callings_sheet_id: string;
+  callings_sheet_id?: string | undefined;
   stake_seat_cap: number;
   expiry_hour: number;
   import_day: ImportDay;
@@ -310,7 +334,7 @@ export function useUpdateStakeConfigMutation() {
       const actor = actorOf(principal);
       await updateDoc(stakeRef(db, STAKE_ID), {
         stake_name: input.stake_name,
-        callings_sheet_id: input.callings_sheet_id,
+        callings_sheet_id: input.callings_sheet_id ?? '',
         stake_seat_cap: input.stake_seat_cap,
         expiry_hour: input.expiry_hour,
         import_day: input.import_day,

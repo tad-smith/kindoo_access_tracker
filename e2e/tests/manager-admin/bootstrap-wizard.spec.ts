@@ -236,6 +236,59 @@ test.describe('Bootstrap wizard gate', () => {
     await expect(list.getByText(/Cordera Ward \(CO\)/)).toHaveCount(0);
   });
 
+  test('wizard refuses to delete a building still referenced by a ward', async ({ page }) => {
+    // Ref-guard regression (2026-04-29). Wards FK on building_name; the
+    // wizard must block a building delete when at least one ward
+    // references it. Firestore Security Rules can't iterate sibling
+    // collections, so this is enforced client-side only.
+    const adminEmail = 'admin-refguard@example.com';
+    await writeDoc('stakes/csnorth', {
+      stake_id: 'csnorth',
+      stake_name: 'Test Stake',
+      bootstrap_admin_email: adminEmail,
+      setup_complete: false,
+    });
+    const { uid } = await createAuthUser({ email: adminEmail });
+    await setCustomClaims(uid, { canonical: adminEmail, stakes: {} });
+    await page.goto('/');
+    await signInViaTestHatch(page, adminEmail, TEST_PASSWORD);
+    await expect(page.getByTestId('bootstrap-wizard')).toBeVisible();
+
+    // Step 2 — add a building.
+    await page.getByTestId('wizard-step-tab-2').click();
+    const step2 = page.getByTestId('wizard-step-2');
+    await step2.getByLabel(/^Building name$/).fill('Cordera Building');
+    await step2.getByLabel(/^Address$/).fill('1 Cordera Cir');
+    await step2.getByRole('button', { name: /^Add building$/ }).click();
+    await expect(
+      page.getByTestId('bootstrap-buildings-list').getByText('Cordera Building'),
+    ).toBeVisible();
+
+    // Step 3 — add a ward referencing that building.
+    await page.getByTestId('wizard-step-tab-3').click();
+    const step3 = page.getByTestId('wizard-step-3');
+    await expect(step3.getByRole('option', { name: 'Cordera Building' })).toHaveCount(1);
+    await step3.getByLabel(/^Ward code$/).fill('CO');
+    await step3.getByLabel(/^Ward name$/).fill('Cordera Ward');
+    await step3.locator('select').selectOption('Cordera Building');
+    await step3.getByLabel(/^Seat cap$/).fill('20');
+    await step3.getByRole('button', { name: /^Add ward$/ }).click();
+    await expect(
+      page.getByTestId('bootstrap-wards-list').getByText(/Cordera Ward \(CO\)/),
+    ).toBeVisible();
+
+    // Step 2 — attempt to delete the referenced building.
+    await page.getByTestId('wizard-step-tab-2').click();
+    await page.getByTestId('bootstrap-building-delete-cordera-building').click();
+
+    // Toast surfaces the ref-guard message.
+    await expect(page.getByText(/Cannot delete: referenced by/)).toBeVisible();
+    // Building is still in the list (delete was aborted).
+    await expect(
+      page.getByTestId('bootstrap-buildings-list').getByText('Cordera Building'),
+    ).toBeVisible();
+  });
+
   test('wizard add+delete cycle works for managers', async ({ page }) => {
     const adminEmail = 'admin-mgr@example.com';
     await writeDoc('stakes/csnorth', {

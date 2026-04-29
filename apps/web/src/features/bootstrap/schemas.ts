@@ -10,9 +10,12 @@
 
 import { z } from 'zod';
 
+// `callings_sheet_id` is optional — operators can leave it blank in the
+// wizard and fill it in later from the Configuration page once the
+// Sheet is set up.
 export const step1Schema = z.object({
   stake_name: z.string().trim().min(1, 'Stake name is required.'),
-  callings_sheet_id: z.string().trim().min(1, 'Callings sheet ID is required.'),
+  callings_sheet_id: z.string().trim().optional(),
   stake_seat_cap: z
     .number({ message: 'Seat cap must be a number.' })
     .int('Seat cap must be an integer.')

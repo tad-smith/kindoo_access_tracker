@@ -10,7 +10,8 @@
 //
 // Architecture mirrors the legacy four-step layout:
 //
-//   Step 1 — Stake fields (name, callings_sheet_id, stake_seat_cap).
+//   Step 1 — Stake fields (name + stake_seat_cap required;
+//            callings_sheet_id optional).
 //   Step 2 — ≥1 Building.
 //   Step 3 — ≥1 Ward.
 //   Step 4 — Additional Kindoo Managers (optional). Bootstrap admin
@@ -19,7 +20,7 @@
 // Each step writes to Firestore directly (no client-side pending
 // queue). Navigation between steps is free (no forward-only flow); the
 // "Complete Setup" button is enabled iff steps 1–3 are valid:
-//   - stake.stake_name + callings_sheet_id + stake_seat_cap all set
+//   - stake.stake_name + stake_seat_cap set
 //   - ≥1 building
 //   - ≥1 ward
 //
@@ -33,6 +34,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useNavigate } from '@tanstack/react-router';
+import { ChevronRight } from 'lucide-react';
 import {
   buildingSchema,
   managerSchema,
@@ -62,6 +64,7 @@ import {
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
+import { ToastHost } from '../../components/ui/Toast';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
 import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
@@ -110,14 +113,12 @@ export function BootstrapWizardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminEmail, principalEmail, managers.data]);
 
+  // callings_sheet_id is optional — only stake_name + stake_seat_cap
+  // gate Step 1 completion.
   const step1Done = useMemo(() => {
     const s = stake.data;
     return Boolean(
-      s &&
-      s.stake_name &&
-      s.callings_sheet_id &&
-      typeof s.stake_seat_cap === 'number' &&
-      s.stake_seat_cap >= 0,
+      s && s.stake_name && typeof s.stake_seat_cap === 'number' && s.stake_seat_cap >= 0,
     );
   }, [stake.data]);
   const step2Done = (buildings.data?.length ?? 0) > 0;
@@ -167,26 +168,35 @@ export function BootstrapWizardPage() {
         {step === 4 ? <Step4Managers /> : null}
       </section>
 
-      <div className="kd-wizard-finish">
-        {step > 1 ? (
-          <Button variant="secondary" onClick={() => setStep((s) => (s - 1) as StepNumber)}>
-            Back
-          </Button>
-        ) : null}
-        {step < 4 ? (
-          <Button onClick={() => setStep((s) => (s + 1) as StepNumber)}>Next</Button>
-        ) : null}
-        <CompleteSetupButton
-          enabled={canFinish}
-          missing={completionBlockers({ step1Done, step2Done, step3Done })}
-          onCompleted={() => {
-            // Navigation back to / lets the routing gate redirect to
-            // the manager default landing page now that
-            // setup_complete=true.
-            navigate({ to: '/', replace: true }).catch(() => {});
-          }}
-        />
+      {/* Button row + blocker list stack vertically so the blocker
+          helper does not push the Next button leftward. The buttons sit
+          on their own row; the helper text renders below the row. */}
+      <div className="kd-wizard-finish-stack">
+        <div className="kd-wizard-finish">
+          {step > 1 ? (
+            <Button variant="secondary" onClick={() => setStep((s) => (s - 1) as StepNumber)}>
+              Back
+            </Button>
+          ) : null}
+          {step < 4 ? (
+            <Button onClick={() => setStep((s) => (s + 1) as StepNumber)}>Next</Button>
+          ) : null}
+          <CompleteSetupButton
+            enabled={canFinish}
+            onCompleted={() => {
+              // Navigation back to / lets the routing gate redirect to
+              // the manager default landing page now that
+              // setup_complete=true.
+              navigate({ to: '/', replace: true }).catch(() => {});
+            }}
+          />
+        </div>
+        <CompleteSetupBlockers missing={completionBlockers({ step1Done, step2Done, step3Done })} />
       </div>
+      {/* The wizard renders outside <Shell> so the global toast host
+          isn't mounted by default. Mount it here so operator-visible
+          toasts (success / error) actually surface during bootstrap. */}
+      <ToastHost />
     </main>
   );
 }
@@ -200,7 +210,7 @@ export function completionBlockers(args: {
   step3Done: boolean;
 }): string[] {
   const out: string[] = [];
-  if (!args.step1Done) out.push('Fill in stake name, callings sheet ID, and seat cap (Step 1).');
+  if (!args.step1Done) out.push('Fill in stake name and seat cap (Step 1).');
   if (!args.step2Done) out.push('Add at least one building (Step 2).');
   if (!args.step3Done) out.push('Add at least one ward (Step 3).');
   return out;
@@ -241,9 +251,9 @@ function StepIndicator({ steps, current, onSelect, completeDone }: StepIndicator
                 'inline-flex items-center px-3 py-1.5 text-sm rounded transition-colors ' +
                 'border ' +
                 (s.done
-                  ? 'border-green-600 bg-green-50 text-green-900 hover:bg-green-100 '
+                  ? 'border-kd-success-br bg-kd-success-tint text-kd-success-fg hover:bg-kd-success-bg '
                   : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 ') +
-                (isCurrent ? 'ring-2 ring-blue-500 ring-offset-1 font-semibold ' : '')
+                (isCurrent ? 'ring-2 ring-kd-primary ring-offset-1 font-semibold ' : '')
               }
             >
               {s.label}
@@ -260,7 +270,7 @@ function StepIndicator({ steps, current, onSelect, completeDone }: StepIndicator
         className={
           'inline-flex items-center px-3 py-1.5 text-sm rounded border ' +
           (completeDone
-            ? 'border-green-600 bg-green-50 text-green-900'
+            ? 'border-kd-success-br bg-kd-success-tint text-kd-success-fg'
             : 'border-gray-300 bg-white text-gray-500')
         }
       >
@@ -270,15 +280,11 @@ function StepIndicator({ steps, current, onSelect, completeDone }: StepIndicator
   );
 }
 
-// CSS-triangle chevron pointing right. No SVG, no extra deps; one
-// element wide enough to read at 375px without crowding the labels.
+// Breadcrumb-style chevron between wizard steps. Lucide's ChevronRight
+// is a stroked `>` glyph (not a filled arrowhead) — matches the
+// browser-breadcrumb / wizard-step visual the operator asked for.
 function StepChevron() {
-  return (
-    <span
-      aria-hidden
-      className="inline-block h-0 w-0 border-y-[6px] border-y-transparent border-l-[8px] border-l-gray-400"
-    />
-  );
+  return <ChevronRight aria-hidden className="h-4 w-4 shrink-0 text-gray-400" />;
 }
 
 // ---- Step 1 — Stake fields ------------------------------------------
@@ -327,14 +333,9 @@ function Step1Form() {
         </p>
       ) : null}
       <label>
-        Callings-sheet ID
+        Callings-sheet ID <span className="kd-form-hint">(optional)</span>
         <Input {...register('callings_sheet_id')} placeholder="1A2B3C..." />
       </label>
-      {formState.errors.callings_sheet_id ? (
-        <p role="alert" className="kd-form-error">
-          {formState.errors.callings_sheet_id.message}
-        </p>
-      ) : null}
       <label>
         Stake seat cap
         <Input type="number" min={0} {...register('stake_seat_cap', { valueAsNumber: true })} />
@@ -357,6 +358,9 @@ function Step1Form() {
 
 function Step2Buildings() {
   const buildings = useBuildings();
+  // Subscribe to wards so the building ref-guard can compute against
+  // the same snapshot the user just saw (no extra Firestore round-trip).
+  const wards = useWards();
   const addMutation = useAddBuildingMutation();
   const deleteMutation = useDeleteBuildingMutation();
 
@@ -391,7 +395,11 @@ function Step2Buildings() {
               variant="danger"
               onClick={() => {
                 deleteMutation
-                  .mutateAsync(b.building_id)
+                  .mutateAsync({
+                    buildingId: b.building_id,
+                    buildingName: b.building_name,
+                    wards: wards.data ?? [],
+                  })
                   .then(() => toast('Building deleted.', 'success'))
                   .catch((err) => toast(errorMessage(err), 'error'));
               }}
@@ -652,12 +660,10 @@ function Step4Managers() {
 
 interface CompleteSetupProps {
   enabled: boolean;
-  /** Human-readable list of remaining prerequisites; empty when enabled. */
-  missing: string[];
   onCompleted: () => void;
 }
 
-function CompleteSetupButton({ enabled, missing, onCompleted }: CompleteSetupProps) {
+function CompleteSetupButton({ enabled, onCompleted }: CompleteSetupProps) {
   const mutation = useCompleteSetupMutation();
 
   async function complete() {
@@ -681,29 +687,30 @@ function CompleteSetupButton({ enabled, missing, onCompleted }: CompleteSetupPro
     }
   }
 
-  // Right-align the button + helper text as a column so the helper
-  // sits directly below the button (matches the parent
-  // `kd-wizard-finish` justify-end layout).
   return (
-    <span className="inline-flex flex-col items-end gap-1">
-      <Button
-        variant="success"
-        onClick={complete}
-        disabled={!enabled || mutation.isPending}
-        data-testid="bootstrap-complete-setup"
-      >
-        {mutation.isPending ? 'Completing…' : 'Complete Setup'}
-      </Button>
-      {!enabled && missing.length > 0 ? (
-        <ul
-          className="kd-form-hint list-none p-0 m-0 text-right"
-          data-testid="bootstrap-complete-blockers"
-        >
-          {missing.map((m) => (
-            <li key={m}>{m}</li>
-          ))}
-        </ul>
-      ) : null}
-    </span>
+    <Button
+      variant="success"
+      onClick={complete}
+      disabled={!enabled || mutation.isPending}
+      data-testid="bootstrap-complete-setup"
+    >
+      {mutation.isPending ? 'Completing…' : 'Complete Setup'}
+    </Button>
+  );
+}
+
+// Renders the blocker list below the button row when the wizard is not
+// yet finishable. Empty list → nothing rendered, so the row collapses.
+function CompleteSetupBlockers({ missing }: { missing: string[] }) {
+  if (missing.length === 0) return null;
+  return (
+    <ul
+      className="kd-form-hint list-none p-0 m-0 text-right"
+      data-testid="bootstrap-complete-blockers"
+    >
+      {missing.map((m) => (
+        <li key={m}>{m}</li>
+      ))}
+    </ul>
   );
 }
