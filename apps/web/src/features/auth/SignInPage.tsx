@@ -2,12 +2,19 @@
 // out. Renders a single "Sign in with Google" button that drives the
 // Firebase Auth popup flow (`signIn()` from `./signIn.ts`).
 //
-// Phase 2 keeps the styling intentionally bare — no Tailwind, no
-// shadcn-ui yet (those land in Phase 4). The layout is a centred
-// full-viewport flex container so it reads acceptably on mobile (375px)
-// and desktop until the design system arrives.
+// Phase 2 originally shipped a bare `<button>` with no styling. Phase 5
+// (T-18) added Tailwind v4 + its preflight reset, which silently
+// stripped the browser-default button chrome (background, border,
+// padding) — leaving "Sign in with Google" rendered as plain text. The
+// rest of Phase 5 routed past the SignInPage on auth'd users so the
+// regression slipped past manual review. Fixed here by consuming the
+// shadcn `<Button>` primitive (variant="default" → `.btn` class from
+// `base.css`), matching the rest of the app's design system. See the
+// Playwright regression spec at
+// `e2e/tests/auth/sign-in-button-renders.spec.ts`.
 
 import { useState } from 'react';
+import { Button } from '../../components/ui/Button';
 import { signIn } from './signIn';
 
 export function SignInPage() {
@@ -44,9 +51,9 @@ export function SignInPage() {
     >
       <h1>Kindoo Access Tracker</h1>
       <p>Sign in to manage building access for your stake.</p>
-      <button type="button" onClick={handleClick} disabled={pending}>
+      <Button onClick={handleClick} disabled={pending}>
         {pending ? 'Signing in…' : 'Sign in with Google'}
-      </button>
+      </Button>
       {error ? (
         <div role="alert" style={{ color: '#a40000', maxWidth: '40ch', textAlign: 'center' }}>
           Sign-in failed: {error}
