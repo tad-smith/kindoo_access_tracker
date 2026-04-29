@@ -11,7 +11,7 @@
 // queue / my-requests features keeps each page's mutation set local
 // while sharing the rendering primitives below.
 
-import { addDoc, query, serverTimestamp, where } from 'firebase/firestore';
+import { doc, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail } from '@kindoo/shared';
@@ -44,18 +44,27 @@ export function useSeatForMember(canonical: string | null) {
  * Live "remove already pending" check for the X / removal modal so the
  * UI can disable the trashcan as soon as a remove submission lands.
  * Returns the matching request doc(s); empty array means no pending
- * removal. Caller filters by scope client-side.
+ * removal.
+ *
+ * The query MUST filter by scope as well as member, because the
+ * requests rule's read predicate keys off scope (a bishopric of CO
+ * may only list requests where `scope='CO'` — Firestore rejects
+ * queries whose filter set doesn't statically prove the result set
+ * is allowable). Callers pass both the seat's `member_canonical`
+ * and `scope`; the badge fires when a pending remove exists for the
+ * exact (scope, member) pair.
  */
-export function usePendingRemoveRequests(memberCanonical: string | null) {
+export function usePendingRemoveRequests(memberCanonical: string | null, scope: string | null) {
   const q = useMemo(() => {
-    if (!memberCanonical) return null;
+    if (!memberCanonical || !scope) return null;
     return query(
       requestsCol(db, STAKE_ID),
+      where('scope', '==', scope),
       where('type', '==', 'remove'),
       where('status', '==', 'pending'),
       where('member_canonical', '==', memberCanonical),
     );
-  }, [memberCanonical]);
+  }, [memberCanonical, scope]);
   return useFirestoreCollection<AccessRequest>(q);
 }
 
@@ -96,12 +105,21 @@ export function useSubmitRequest() {
       const memberCanonical = canonicalEmail(input.member_email);
       const actor = { email: user.email, canonical: tokenCanonical };
 
+      // Pre-allocate the doc id so we can stamp it on the body in one
+      // create call. `addDoc` would split the create + update across
+      // two writes, but the second write would have to flip status off
+      // pending to satisfy the rules' update rule — which would defeat
+      // the purpose. Pre-allocating the ref keeps the body internally
+      // consistent in a single rules-allowed create.
+      const ref = doc(requestsCol(db, STAKE_ID));
+
       // The doc body. Rules require: status='pending',
       // requester_canonical = auth canonical, requested_at = request.time
       // (serverTimestamp), lastActor matches auth, member_name non-empty
       // for add types, ≥1 building for stake-scope add types, scope
       // matches requester role.
-      const doc: Record<string, unknown> = {
+      const body: Record<string, unknown> = {
+        request_id: ref.id,
         type: input.type,
         scope: input.scope,
         member_email: input.member_email.trim(),
@@ -117,23 +135,16 @@ export function useSubmitRequest() {
         lastActor: actor,
       };
       if (input.type === 'add_temp') {
-        if (input.start_date) doc.start_date = input.start_date;
-        if (input.end_date) doc.end_date = input.end_date;
+        if (input.start_date) body.start_date = input.start_date;
+        if (input.end_date) body.end_date = input.end_date;
       }
       if (input.type === 'remove') {
         // Denormalise the seat key so the completion path can locate
         // the seat doc without a query (Firestore client transactions
         // don't support queries).
-        doc.seat_member_canonical = memberCanonical;
+        body.seat_member_canonical = memberCanonical;
       }
-      const ref = await addDoc(requestsCol(db, STAKE_ID), doc as unknown as AccessRequest);
-      // Stamp request_id back onto the doc body for legibility — tests
-      // expect it (the importer / spec mirror this convention). Keeping
-      // the read-side data shape consistent saves a join in the UI.
-      // The rules have no constraint on this update; it lands inside
-      // the same authed session, satisfying lastActorMatchesAuth.
-      // We skip the trip in unit-test environments where addDoc is
-      // mocked; the test fixture watches the create payload only.
+      await setDoc(ref, body as unknown as AccessRequest);
       return { id: ref.id };
     },
     onSuccess: () => {

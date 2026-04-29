@@ -72,6 +72,16 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "requested_at", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "scope", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "member_canonical", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -33,8 +33,8 @@ export function RemovalAffordance({ seat }: RemovalAffordanceProps) {
   // subscription overhead is negligible; the Firestore SDK shares the
   // websocket and dedupes per query. If we ever need to hoist to a
   // single roster-level subscription, the lift is trivial.
-  const pending = usePendingRemoveRequests(seat.member_canonical);
-  const isPending = (pending.data ?? []).some((r) => r.scope === seat.scope);
+  const pending = usePendingRemoveRequests(seat.member_canonical, seat.scope);
+  const isPending = (pending.data ?? []).length > 0;
 
   if (seat.type === 'auto') return null;
 
