@@ -279,7 +279,7 @@ function BuildingsTab() {
               variant="danger"
               onClick={() =>
                 del
-                  .mutateAsync(b.building_id)
+                  .mutateAsync({ buildingId: b.building_id, buildingName: b.building_name })
                   .then(() => toast('Building deleted.', 'success'))
                   .catch((err) => toast(errorMessage(err), 'error'))
               }

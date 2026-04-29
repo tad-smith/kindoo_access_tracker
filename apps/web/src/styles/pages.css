@@ -423,6 +423,14 @@
   background: var(--kd-border-soft, #f8fafc);
 }
 
+.kd-wizard-finish-stack {
+  /* Vertical stack: button row on top, blocker list below. Keeps the
+     blocker list from pushing the Next/Complete buttons leftward. */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
 .kd-wizard-finish {
   display: flex;
   gap: 8px;

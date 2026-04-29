@@ -11,7 +11,15 @@
 // load via `ensureBootstrapAdmin`, which gives the
 // `syncManagersClaims` trigger something to mint a manager claim from.
 
-import { deleteDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import {
+  deleteDoc,
+  getDocs,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
@@ -66,7 +74,9 @@ function actorOf(principal: Principal): { email: string; canonical: string } {
 
 export interface Step1Input {
   stake_name: string;
-  callings_sheet_id: string;
+  // Optional — operators may complete bootstrap without an LCR sheet
+  // configured and fill it in later from Configuration.
+  callings_sheet_id?: string | undefined;
   stake_seat_cap: number;
 }
 
@@ -86,7 +96,7 @@ export function useStep1Mutation() {
       const actor = actorOf(principal);
       await updateDoc(stakeRef(db, STAKE_ID), {
         stake_name: input.stake_name,
-        callings_sheet_id: input.callings_sheet_id,
+        callings_sheet_id: input.callings_sheet_id ?? '',
         stake_seat_cap: input.stake_seat_cap,
         last_modified_at: serverTimestamp(),
         last_modified_by: actor,
@@ -127,16 +137,44 @@ export function useAddBuildingMutation() {
   });
 }
 
+// Block deletes when any ward references the building by name. Wards
+// FK on `building_name` (per firebase-schema.md §4) — orphaning a ward
+// silently breaks its building lookup. Firestore Security Rules can't
+// iterate a sibling collection so we cannot enforce this at the rules
+// layer; this client guard is the only line of defense (documented in
+// docs/firebase-migration.md as a known gap).
+export interface DeleteBuildingInput {
+  buildingId: string;
+  buildingName: string;
+}
 export function useDeleteBuildingMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (buildingId: string) => {
-      await deleteDoc(buildingRef(db, STAKE_ID, buildingId));
+    mutationFn: async (input: DeleteBuildingInput) => {
+      const snap = await getDocs(
+        query(wardsCol(db, STAKE_ID), where('building_name', '==', input.buildingName)),
+      );
+      const refs = snap.docs.map((d) => d.data() as Ward);
+      const blocker = buildingDeleteBlocker(refs);
+      if (blocker) throw new Error(blocker);
+      await deleteDoc(buildingRef(db, STAKE_ID, input.buildingId));
     },
     onSuccess: () => {
       qc.invalidateQueries();
     },
   });
+}
+
+/**
+ * Pure helper: returns a user-facing error message when at least one
+ * ward references the building, or `null` when delete is safe. Pulled
+ * out so unit tests can exercise the guard without standing up a
+ * Firestore emulator.
+ */
+export function buildingDeleteBlocker(referencingWards: ReadonlyArray<Ward>): string | null {
+  if (referencingWards.length === 0) return null;
+  const labels = referencingWards.map((w) => `${w.ward_name} (${w.ward_code})`);
+  return `Cannot delete: referenced by ${labels.length} ward(s) — ${labels.join(', ')}`;
 }
 
 export interface WardInput {

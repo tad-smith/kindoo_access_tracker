@@ -353,6 +353,45 @@ describe('<BootstrapWizardPage />', () => {
     );
   });
 
+  it('passes building name to the delete mutation so the ref-guard can scope its query', async () => {
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'main', building_name: 'Main Building', address: '' } as Building,
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-2'));
+    await user.click(screen.getByTestId('bootstrap-building-delete-main'));
+    await vi.waitFor(() =>
+      expect(deleteBuildingMutate).toHaveBeenCalledWith({
+        buildingId: 'main',
+        buildingName: 'Main Building',
+      }),
+    );
+  });
+
+  it('surfaces the ref-guard message when the mutation rejects with it', async () => {
+    deleteBuildingMutate.mockRejectedValue(
+      new Error('Cannot delete: referenced by 1 ward(s) — Cordera (CO)'),
+    );
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'main', building_name: 'Main Building', address: '' } as Building,
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-2'));
+    await user.click(screen.getByTestId('bootstrap-building-delete-main'));
+    await vi.waitFor(() =>
+      expect(toastSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Cannot delete: referenced by'),
+        'error',
+      ),
+    );
+  });
+
   it('surfaces an error toast when ward delete fails', async () => {
     deleteWardMutate.mockRejectedValue(new Error('Permission denied: delete wards'));
     useWardsMock.mockReturnValue(

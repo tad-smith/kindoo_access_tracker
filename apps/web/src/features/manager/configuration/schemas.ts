@@ -62,7 +62,9 @@ export const importDaySchema = z.enum([
 
 export const configSchema = z.object({
   stake_name: z.string().trim().min(1, 'Stake name is required.'),
-  callings_sheet_id: z.string().trim().min(1, 'Callings sheet ID is required.'),
+  // Optional: operators can postpone the LCR-sheet wiring until after
+  // bootstrap. Mirrors `bootstrap.schemas.step1Schema`.
+  callings_sheet_id: z.string().trim().optional(),
   stake_seat_cap: z
     .number({ message: 'Seat cap must be a number.' })
     .int()
