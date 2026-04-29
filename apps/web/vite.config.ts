@@ -29,6 +29,8 @@ export default defineConfig({
       routesDirectory: './src/routes',
       generatedRouteTree: './src/routeTree.gen.ts',
       autoCodeSplitting: true,
+      // Skip colocated test files (`*.test.tsx` / `*.test.ts`) during route scanning.
+      routeFileIgnorePattern: '\\.test\\.',
     }),
     react(),
     tailwindcss(),
