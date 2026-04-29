@@ -35,6 +35,7 @@ import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { Dialog } from '../../../components/ui/Dialog';
 import { toast } from '../../../lib/store/toast';
+import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -210,6 +211,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
                   Reconcile
                 </Button>
               ) : null}
+              {seat.type !== 'auto' ? <RemovalAffordance seat={seat} /> : null}
             </span>
           )}
           extraBadges={(seat) =>

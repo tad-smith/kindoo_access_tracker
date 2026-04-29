@@ -29,13 +29,13 @@ describe('defaultLandingFor', () => {
     expect(defaultLandingFor(principal({ managerStakes: [STAKE_ID] }))).toBe('/manager/dashboard');
   });
 
-  it('returns /stake/roster for a stake-member principal', () => {
-    expect(defaultLandingFor(principal({ stakeMemberStakes: [STAKE_ID] }))).toBe('/stake/roster');
+  it('returns /stake/new for a stake-member principal', () => {
+    expect(defaultLandingFor(principal({ stakeMemberStakes: [STAKE_ID] }))).toBe('/stake/new');
   });
 
-  it('returns /bishopric/roster for a bishopric principal', () => {
+  it('returns /bishopric/new for a bishopric principal', () => {
     expect(defaultLandingFor(principal({ bishopricWards: { [STAKE_ID]: ['CO'] } }))).toBe(
-      '/bishopric/roster',
+      '/bishopric/new',
     );
   });
 
@@ -56,7 +56,7 @@ describe('defaultLandingFor', () => {
           bishopricWards: { [STAKE_ID]: ['CO'] },
         }),
       ),
-    ).toBe('/stake/roster');
+    ).toBe('/stake/new');
   });
 
   it('prefers manager when the principal is a platform superadmin', () => {
@@ -88,6 +88,24 @@ describe('deepLinkPath', () => {
 
   it('resolves the manager audit-log key', () => {
     expect(deepLinkPath('mgr/audit')).toBe('/manager/audit');
+  });
+
+  it('resolves the manager queue key', () => {
+    expect(deepLinkPath('mgr/queue')).toBe('/manager/queue');
+  });
+
+  it('resolves the per-role new-request keys', () => {
+    expect(deepLinkPath('stake/new')).toBe('/stake/new');
+    expect(deepLinkPath('bish/new')).toBe('/bishopric/new');
+  });
+
+  it('resolves the bare new-request key to the bishopric page', () => {
+    // Apps Script shipped one shared `new` page; the SPA splits per
+    // role, so the bare key resolves to the higher-priority leftmost
+    // (bishopric / stake share the New Request leftmost; bishopric
+    // wins arbitrarily here — multi-role principals land on the
+    // role-specific route via `defaultLandingFor`).
+    expect(deepLinkPath('new')).toBe('/bishopric/new');
   });
 
   it('resolves both the legacy and new MyRequests keys to a shared route', () => {

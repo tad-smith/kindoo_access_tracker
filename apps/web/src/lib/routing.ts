@@ -10,13 +10,9 @@
 //     `Router.html` page-key vocabulary so existing bookmarks and
 //     external links keep working.
 //
-// Phase 5 wires the read-side pages: bishopric/stake roster, ward
-// rosters, manager dashboard / all-seats / audit log / access, plus the
-// cross-role MyRequests page. Phase 6 will add `New Kindoo Request` for
-// bishopric + stake; the Nav meanwhile renders that link as a disabled
-// placeholder so the visual structure is right and the leftmost tab for
-// stake/bishopric in Phase 5 is Roster (per the spec's "leftmost nav
-// tab" default-landing rule applied to the Phase-5 nav set).
+// The leftmost nav tab for stake + bishopric is "New Kindoo Request"
+// per spec §5; manager's leftmost is the Dashboard. Multi-role users
+// resolve to the highest-priority role's leftmost tab.
 
 import type { Principal } from './principal';
 import { STAKE_ID } from './constants';
@@ -33,14 +29,24 @@ import { STAKE_ID } from './constants';
  * working page rather than a 404 placeholder.
  */
 const DEEP_LINK_TABLE: Record<string, string> = {
-  // Bishopric + stake read-only pages
+  // Bishopric + stake pages
   'bish/roster': '/bishopric/roster',
+  'bish/new': '/bishopric/new',
   'bish/myreq': '/my-requests',
   'stake/roster': '/stake/roster',
   'stake/wards': '/stake/wards',
+  'stake/new': '/stake/new',
+
+  // Apps Script's bare `new` key — the live shared NewRequest page
+  // dispatches by principal role. Bishopric + stake users land on
+  // their own per-role new-request page; multi-role users with
+  // bishopric coverage prefer that route (matches `defaultLandingFor`
+  // priority).
+  new: '/bishopric/new',
 
   // Manager pages
   'mgr/dashboard': '/manager/dashboard',
+  'mgr/queue': '/manager/queue',
   'mgr/seats': '/manager/seats',
   'mgr/audit': '/manager/audit',
   'mgr/access': '/manager/access',
@@ -62,9 +68,8 @@ export function deepLinkPath(p: string | undefined): string | null {
  * Per-principal default landing route. Mirrors `Router_defaultPageFor_`
  * in `src/web/Router.html` of the Apps Script app:
  *   - manager → `/manager/dashboard` (leftmost tab is Dashboard)
- *   - stake   → `/stake/roster` (Phase-5 leftmost; Phase 6 will
- *               re-front-load `/stake/new` per the live-spec rule)
- *   - bishopric → `/bishopric/roster` (same Phase-5 leftmost rule)
+ *   - stake   → `/stake/new` (leftmost tab is New Kindoo Request)
+ *   - bishopric → `/bishopric/new` (same)
  *   - multi-role → highest-priority role's leftmost tab (manager wins)
  *   - no role → null-equivalent ('/'); the route gate surfaces
  *               NotAuthorizedPage in that case.
@@ -74,11 +79,11 @@ export function defaultLandingFor(principal: Principal): string {
     return '/manager/dashboard';
   }
   if (principal.stakeMemberStakes.includes(STAKE_ID)) {
-    return '/stake/roster';
+    return '/stake/new';
   }
   const wards = principal.bishopricWards[STAKE_ID];
   if (Array.isArray(wards) && wards.length > 0) {
-    return '/bishopric/roster';
+    return '/bishopric/new';
   }
   // Authenticated principal with no role in this stake. Falls through
   // to the route-tree's auth gate which surfaces NotAuthorizedPage.

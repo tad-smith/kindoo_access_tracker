@@ -89,8 +89,13 @@ async function renderWithRouter() {
     path: 'manager/audit',
     component: () => <div>audit</div>,
   });
+  const queue = createRoute({
+    getParentRoute: () => rootRoute,
+    path: 'manager/queue',
+    component: () => <div>queue</div>,
+  });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([seats, audit]),
+    routeTree: rootRoute.addChildren([seats, audit, queue]),
     history: createMemoryHistory({ initialEntries: ['/'] }),
   });
   await router.load();

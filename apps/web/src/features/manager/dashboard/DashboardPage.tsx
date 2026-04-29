@@ -1,8 +1,6 @@
 // Manager Dashboard page (live). Mirrors `src/ui/manager/Dashboard.html`.
 // Five live cards:
-//   - Pending Requests (per-type counts; deep-links to /manager/queue
-//     once the request-lifecycle phase ships, /manager/seats today as
-//     a placeholder)
+//   - Pending Requests (per-type counts; deep-links to /manager/queue)
 //   - Utilization (per-ward + stake bars)
 //   - Warnings (over-cap pools from stake.last_over_caps_json)
 //   - Recent Activity (last 10 audit rows; deep-links to audit log
@@ -104,17 +102,19 @@ function PendingCard({ loading, requests }: PendingCardProps) {
         <CardTitle>Pending Requests</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="kd-dashboard-card-total">{total}</div>
-        <ul className="kd-dashboard-list">
-          {order
-            .filter((t) => byType[t])
-            .map((t) => (
-              <li key={t}>
-                <span>{t}</span>
-                <strong>{byType[t]}</strong>
-              </li>
-            ))}
-        </ul>
+        <Link to="/manager/queue" className="kd-dashboard-link">
+          <div className="kd-dashboard-card-total">{total}</div>
+          <ul className="kd-dashboard-list">
+            {order
+              .filter((t) => byType[t])
+              .map((t) => (
+                <li key={t}>
+                  <span>{t}</span>
+                  <strong>{byType[t]}</strong>
+                </li>
+              ))}
+          </ul>
+        </Link>
       </CardContent>
     </Card>
   );
