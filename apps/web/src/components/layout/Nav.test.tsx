@@ -107,4 +107,45 @@ describe('<Nav />', () => {
     const dashboard = screen.getByRole('link', { name: /^Dashboard$/ });
     expect(dashboard).not.toHaveAttribute('aria-current');
   });
+
+  // Regression guard for the "Nav links read as tabs, not buttons"
+  // ask. Three structural assertions that distinguish the two
+  // affordances at the markup level:
+  //   1. The clickable element is an `<a>` (role=link), not a
+  //      `<button>` — a button would change the tab/keyboard
+  //      semantics entirely.
+  //   2. No `.btn` / `.btn-secondary` shadcn-Button class on the
+  //      link — those are the pill-button affordance the operator
+  //      flagged.
+  //   3. The active link advertises itself via `aria-current="page"`
+  //      (tab-bar pattern), not via `aria-pressed` / `role=button`
+  //      (button-bar pattern).
+  // Visual styling lives in CSS and is exercised by the Playwright
+  // regression spec at e2e/tests/auth/nav-tabs-render.spec.ts;
+  // jsdom doesn't apply CSS so we can only assert markup contracts
+  // here.
+  it('renders links as tab-shaped anchors, not button-shaped controls', async () => {
+    await renderNavAtPath(makePrincipal({ managerStakes: ['csnorth'] }), '/manager/dashboard');
+
+    const navLinks = screen.getAllByRole('link');
+    expect(navLinks.length).toBeGreaterThan(0);
+    for (const link of navLinks) {
+      // The clickable element is an anchor, not a button.
+      expect(link.tagName).toBe('A');
+      // None of the shadcn Button / pill chrome classes leaked in.
+      expect(link.className).not.toContain('btn ');
+      expect(link.className).not.toMatch(/\bbtn\b/);
+      expect(link.className).not.toContain('btn-secondary');
+      // No `role="button"` override — link role stays a link.
+      expect(link).not.toHaveAttribute('role', 'button');
+      // No `aria-pressed` — that's the button-toggle ARIA, not the
+      // tab-bar ARIA.
+      expect(link).not.toHaveAttribute('aria-pressed');
+    }
+
+    // Active selection uses `aria-current="page"`, the tab-bar
+    // ARIA pattern.
+    const active = screen.getByRole('link', { name: /^Dashboard$/ });
+    expect(active).toHaveAttribute('aria-current', 'page');
+  });
 });
