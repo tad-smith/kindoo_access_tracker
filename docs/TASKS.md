@@ -280,3 +280,30 @@ Owner: @infra-engineer
 Phase: 11 (cutover) → due before public DNS flip
 
 Apache-2.0 dependencies in the production bundle (TypeScript, firebase, firebase-admin, @google/clasp, @playwright/test, @firebase/rules-unit-testing) require preserving the LICENSE + NOTICE text in the distributed artifact. MIT deps require preserving the copyright + license notice. Today nothing in the Hosting build assembles this. Add a build step (e.g., `pnpm-licenses` / `license-checker-rseidelsohn` / similar) that emits `apps/web/dist/THIRD_PARTY_LICENSES.txt` covering every runtime dep in the SPA bundle, and surface a link from a footer or About page so users can find it. Functions side does not ship to end-users so no equivalent artifact is needed. Verify the build runs in CI and the file is non-empty before Phase 11 close.
+
+## [T-21] Decide Audit Log diff rendering: JSON-pretty `<details>` vs field-by-field diff table
+Status: open
+Owner: (decision needed)
+Phase: not bound to any phase
+
+Phase 5 ported the manager Audit Log to a JSON-pretty `<details>` block instead of the Apps Script `manager/AuditLog.html`'s bespoke field-by-field diff table. The decision:
+
+- **JSON-pretty form (current).** Faithful to the data. Handles cross-collection rows (e.g., `member_canonical`-filtered view spanning seats + access + requests) cleanly because JSON renders any document shape. Less scannable for a single-entity audit row where the operator wants to see "calling: 'X' → 'Y'" at a glance.
+- **Field-by-field form (Apps Script reality).** More readable for canonical seat/access/request changes. Gets awkward for cross-collection rows because each entity has different fields. The Apps Script app handled this by limiting the audit log to per-collection views.
+
+Phase 5 went with JSON-pretty because (a) the new `member_canonical` filter introduced cross-collection views per the migration plan, (b) the bespoke field-table renderer would need to be rewritten for the new query shapes, (c) JSON is honest for any shape.
+
+The `diffKeys` helper in `apps/web/src/features/manager/auditLog/summarise.ts` is isolated, so swapping back to field-table form is mechanical if a real workflow demands it.
+
+Three options to pick from:
+
+1. **Keep JSON-pretty as-is.** Lowest cost; cross-collection-honest.
+2. **Port the field-table form for single-entity rows; fall back to JSON for cross-collection rows.** Hybrid.
+3. **Port the full field-table form** and accept that cross-collection rows render less cleanly (or scope the cross-collection filter to one entity type).
+
+Decision blocker: nobody has used the audit log on real data on the new SPA yet. Decide once Phase 11 cutover puts this in front of an actual operator workflow.
+
+**Files to touch when implementing the chosen option:**
+
+- `apps/web/src/features/manager/auditLog/summarise.ts` (the `diffKeys` helper)
+- The detail-row rendering inside `apps/web/src/features/manager/auditLog/AuditLogPage.tsx` (or wherever the `<details>` block lives)
