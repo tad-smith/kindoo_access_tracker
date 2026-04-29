@@ -251,6 +251,41 @@ describe('useFirestoreCollection', () => {
     }
   });
 
+  it('does not re-subscribe in a loop when onSnapshot throws on a stable query reference', async () => {
+    // Companion to the `useFirestoreDoc` regression test: a synchronous
+    // throw must not trigger a setState → re-render → re-subscribe loop
+    // for the same query.
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      onSnapshotMock.mockImplementation(() => {
+        throw Object.assign(new Error('subscribe panic'), {
+          code: 'permission-denied',
+          name: 'FirebaseError',
+        });
+      });
+      const q = fakeQuery('stakes/csnorth/access') as unknown as Parameters<
+        typeof useFirestoreCollection<unknown>
+      >[0];
+
+      const { result, rerender } = renderHook(() => useFirestoreCollection<unknown>(q), {
+        wrapper,
+      });
+
+      await waitFor(() => {
+        expect(result.current.status).toBe('error');
+      });
+
+      rerender();
+      rerender();
+      rerender();
+
+      expect(onSnapshotMock).toHaveBeenCalledTimes(1);
+      expect(result.current.error?.code).toBe('permission-denied');
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
   it('swallows an unsubscribe throw on unmount without propagating', () => {
     const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
