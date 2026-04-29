@@ -1,7 +1,7 @@
 // Authenticated-route group. Every page that requires an authenticated
 // principal with at least one role lives under the pathless `_authed`
-// segment. URLs don't carry `_authed/` — `_authed/hello` is reachable
-// at `/hello`.
+// segment. URLs don't carry `_authed/` — `_authed/manager/dashboard`
+// is reachable at `/manager/dashboard`.
 //
 // Gate logic mirrors `index.tsx`:
 //   - No Firebase Auth user → SignInPage.
