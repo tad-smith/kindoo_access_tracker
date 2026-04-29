@@ -4,6 +4,15 @@
 // block boots `vite preview` against the production-style build so we
 // catch issues that wouldn't surface in `vite dev`. Headless in CI; set
 // `PWDEBUG=1` or run `pnpm test:e2e:headed` for local debugging.
+//
+// Workers serialised. Every test's `beforeEach` calls `clearAuth()` and
+// `clearFirestore()` against the local emulator. Those calls are
+// project-scoped, not per-worker — under `fullyParallel`, worker B's
+// clearAuth deletes the user worker A just created, surfacing as
+// USER_NOT_FOUND / EMAIL_EXISTS / auth/user-not-found flakes.
+// `workers: 1` in CI serialises the suite end-to-end at the cost of
+// ~30s wall-clock; preferable to flake. Local dev keeps default
+// parallelism since the operator typically runs one spec at a time.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -14,7 +23,14 @@ const isCI = !!process.env.CI;
 
 export default defineConfig({
   testDir: './tests',
-  fullyParallel: true,
+  // Tests within a file run sequentially; files run sequentially in CI
+  // (workers: 1) to keep the auth-emulator clearAuth races out of CI
+  // signal. Locally, defaults still apply for fast iteration.
+  fullyParallel: false,
+  // `workers: 1` in CI — omit the key locally so Playwright picks its
+  // default (one worker per CPU core). Spread-conditional satisfies
+  // `exactOptionalPropertyTypes` from `tsconfig.base.json`.
+  ...(isCI ? { workers: 1 } : {}),
   forbidOnly: isCI,
   retries: isCI ? 2 : 0,
   reporter: isCI ? 'github' : 'list',

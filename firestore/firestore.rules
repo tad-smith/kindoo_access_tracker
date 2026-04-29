@@ -53,6 +53,16 @@ rules_version = '2';
 //     BEFORE the bootstrap admin signs in for the first time. See
 //     `infra/runbooks/provision-firebase-projects.md` for the seed
 //     instructions.
+//
+//   - Setup-in-progress read gate: `isSetupInProgressReadable(stakeId)`
+//     lets ANY authed user read the parent stake doc while
+//     `setup_complete == false`. Required by the SPA's setup-complete
+//     gate (per `docs/firebase-migration.md` §Phase 7 +
+//     `docs/spec.md` §10): a non-admin signing in during bootstrap
+//     must land on SetupInProgress (not NotAuthorized), and the gate
+//     can only know "we're in setup" by reading the parent doc.
+//     Once the wizard completes, this gate goes silent and standard
+//     `isAnyMember` membership reads take over.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -127,6 +137,28 @@ service cloud.firestore {
         && get(stakePath).data.bootstrap_admin_email == request.auth.token.email;
     }
 
+    // Setup-in-progress escape hatch — required by the SPA's
+    // setup-complete gate (per `docs/firebase-migration.md` §Phase 7
+    // and `docs/spec.md` §10): when `setup_complete == false`, any
+    // authed user must be able to read the parent stake doc so the
+    // gate can route them to SetupInProgress (instead of NotAuthorized
+    // or a blank screen). Once the wizard flips `setup_complete` to
+    // true, this gate goes silent and the standard `isAnyMember` rule
+    // takes over.
+    //
+    // The disclosure surface is small: the parent stake doc carries
+    // `stake_name`, `bootstrap_admin_email` (already the operator's
+    // typed email), config knobs (`callings_sheet_id`, schedule
+    // hours, `stake_seat_cap`), and bookkeeping fields. None of these
+    // are sensitive — `bootstrap_admin_email` is what the SetupInProgress
+    // page renders to the non-admin so they know who to contact.
+    function isSetupInProgressReadable(stakeId) {
+      let stakePath = /databases/$(database)/documents/stakes/$(stakeId);
+      return isAuthed()
+        && exists(stakePath)
+        && get(stakePath).data.setup_complete == false;
+    }
+
     // The `lastActor` integrity check — every client write must
     // declare `lastActor.{email, canonical}` matching the auth token.
     // Server-side (Admin SDK) writes use synthetic actors
@@ -183,7 +215,15 @@ service cloud.firestore {
       // and the final `setup_complete=true` flip). The flip itself
       // works because `isBootstrapAdmin` evaluates the pre-write state
       // — `setup_complete` is still false when the rule runs.
-      allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
+      //
+      // Setup-in-progress read gate: while `setup_complete == false`,
+      // ANY authed user can read the parent stake doc so the SPA's
+      // setup-complete gate can route them to SetupInProgress. This is
+      // a narrow read-only loosening tied to the same time-bound
+      // condition as `isBootstrapAdmin`; once setup completes, the
+      // standard `isAnyMember` rule takes over again.
+      allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId)
+        || isSetupInProgressReadable(stakeId);
       allow create: if isPlatformSuperadmin();
       allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
         && lastActorMatchesAuth(request.resource.data);

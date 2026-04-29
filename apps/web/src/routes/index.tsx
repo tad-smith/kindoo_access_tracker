@@ -1,21 +1,27 @@
-// Root route handler. Three jobs, in this order:
+// Root route handler. Gate ordering per `docs/firebase-migration.md`
+// §Phase 7 "Setup-complete gate" + `docs/spec.md` §10:
 //
-//   1. Render the SignInPage when no Firebase Auth user is present.
-//   2. Render the NotAuthorizedPage when the user is signed in but
-//      has no role claims (the "weekly LCR import hasn't run yet"
-//      lag described in `docs/spec.md` §6 + the wrong-account case).
-//   3. Redirect to the principal's default landing page when both
-//      signed in and at least one role claim is present.
-//
-// The default-landing rule mirrors `Router_defaultPageFor_` in the
-// Apps Script Router — manager > stake > bishopric priority, leftmost
-// nav tab per role. See `docs/spec.md` §5.
+//   1. No Firebase Auth user → SignInPage.
+//   2. Stake-doc subscription still pending → render null (avoid
+//      flashing NotAuthorized while the snapshot is in flight).
+//   3. Stake doc loaded with `setup_complete=false`:
+//        a. Bootstrap admin (token email matches stake.bootstrap_admin_email)
+//           → BootstrapWizardPage. `?p=` deep-links are ignored until
+//           the wizard finishes.
+//        b. Anyone else → SetupInProgressPage. **SetupInProgress takes
+//           precedence over NotAuthorized during setup**, including
+//           users with zero claims. Spec §10: non-admins during
+//           bootstrap aren't unauthorised, the app simply isn't ready
+//           yet for them.
+//   4. Stake doc loaded with `setup_complete=true` and no role claims
+//      → NotAuthorizedPage (wrong account / bishopric-import lag from
+//      `docs/spec.md` §6).
+//   5. Authenticated principal post-setup → redirect to default
+//      landing (`?p=` wins over the per-role default).
 //
 // Back-compat deep-link: `/?p=<page-key>` lands the user on the
 // matching SPA route after the gate runs. Page keys mirror the Apps
-// Script keys. Unknown keys are ignored (the principal lands on the
-// default tab as if no `?p` was present). Phase 5 wires the read-side
-// pages; Phase 6+ adds the remaining keys.
+// Script keys. Unknown keys fall back to the role default.
 
 import { useEffect } from 'react';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
@@ -53,21 +59,6 @@ function Index() {
   // the schema's `.optional()` field.
   const { p } = Route.useSearch();
 
-  // Bootstrap gate (must run BEFORE role-based redirect). Phase 7
-  // routing per `docs/spec.md` §10: if `stake.setup_complete=false`,
-  // the bootstrap admin sees the wizard and everyone else sees the
-  // SetupInProgress page — `?p=` deep-links are deliberately ignored
-  // until the wizard finishes.
-  //
-  // The gate fires ONLY when we've successfully read the stake doc and
-  // its `setup_complete` field is false. We don't block rendering on a
-  // pending/errored stake-doc read for users who otherwise wouldn't
-  // pass this gate (e.g. a no-claims signed-in user who isn't the
-  // bootstrap admin) — the rules deny their stake-doc read, the
-  // listener errors, and we'd otherwise sit on a blank page until the
-  // error callback fires. Instead, we let `principal.isAuthenticated`
-  // route them to NotAuthorized immediately while the read is still
-  // settling.
   const setupIncomplete = stake.data !== undefined && stake.data.setup_complete === false;
   const adminCanonical = setupIncomplete
     ? canonicalEmailFn(stake.data?.bootstrap_admin_email ?? '')
@@ -79,9 +70,7 @@ function Index() {
   // Decide where to send an authenticated principal. `p=...` wins over
   // the per-role default when it resolves to a known route; otherwise
   // we fall back to the role's leftmost nav tab. Only meaningful when
-  // setup is complete AND the stake-doc subscription has resolved
-  // (otherwise we'd redirect a manager who is also a bootstrap admin
-  // away from the wizard during the read latency).
+  // setup is complete AND the stake-doc subscription has resolved.
   const target =
     principal.isAuthenticated && !setupIncomplete && stake.status !== 'pending'
       ? (deepLinkPath(p) ?? defaultLandingFor(principal))
@@ -102,12 +91,17 @@ function Index() {
     return <SignInPage />;
   }
 
-  // Wizard branches first: only fires once the stake-doc read has
-  // resolved AND `setup_complete=false`. The bootstrap admin (no
-  // claims yet) lands on the wizard; anyone else who can read the
-  // stake doc during this window (only managers, since rules gate
-  // reads on `isAnyMember || isBootstrapAdmin`) lands on
-  // SetupInProgress.
+  // Wait for the stake-doc subscription to settle before deciding any
+  // setup-state branch. With the rules clause that lets any authed
+  // user read the parent stake doc during `setup_complete=false`, the
+  // subscription resolves quickly for everyone; this prevents flashing
+  // NotAuthorized while the snapshot is in flight.
+  if (stake.status === 'pending') {
+    return null;
+  }
+
+  // Setup gate (precedence over NotAuthorized): bootstrap admin →
+  // wizard; anyone else (incl. zero-claims users) → SetupInProgress.
   if (setupIncomplete) {
     if (isBootstrapAdminUser) {
       return <BootstrapWizardPage />;
@@ -115,16 +109,13 @@ function Index() {
     return <SetupInProgressPage />;
   }
 
-  // No-claims fallback fires regardless of stake-doc read state. A
-  // user with no claims CAN'T read the stake doc (rules deny), and
-  // we must not block their NotAuthorized landing on a denied-read
-  // listener-error round-trip.
+  // Post-setup: no-claims fallback.
   if (!principal.isAuthenticated) {
     return <NotAuthorizedPage />;
   }
 
-  // Authenticated principal whose stake-doc read is still pending —
-  // wait. The redirect effect above will fire once status flips to
-  // success.
+  // Authenticated principal whose role-default redirect is in flight —
+  // render nothing. The `useEffect` above fires `navigate(...)` on the
+  // next tick.
   return null;
 }

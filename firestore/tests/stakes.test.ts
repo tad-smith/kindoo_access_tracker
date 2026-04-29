@@ -121,6 +121,46 @@ describe('firestore.rules — stakes/{stakeId} parent doc', () => {
       const db = managerContext(env, STAKE_ID).firestore();
       await assertFails(db.doc(OTHER_PATH).get());
     });
+
+    // Setup-in-progress read gate: per the SPA's setup-complete gate
+    // (`docs/firebase-migration.md` §Phase 7 + `docs/spec.md` §10), any
+    // signed-in user must be able to read the parent stake doc while
+    // `setup_complete == false` so the gate can route them to
+    // SetupInProgress.
+    it('outsider can read the parent stake doc when setup_complete=false', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(freshStakeDoc({ setup_complete: false }));
+      });
+      const db = outsiderContext(env, STAKE_ID).firestore();
+      await assertSucceeds(db.doc(PATH).get());
+    });
+
+    // Once setup completes, the gate goes silent — outsiders are
+    // denied again (the standard `isAnyMember` rule is the only path).
+    it('outsider is re-denied once setup_complete=true', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(freshStakeDoc({ setup_complete: true }));
+      });
+      const db = outsiderContext(env, STAKE_ID).firestore();
+      await assertFails(db.doc(PATH).get());
+    });
+
+    it('anonymous read still denied during setup_complete=false', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(freshStakeDoc({ setup_complete: false }));
+      });
+      const db = unauthedContext(env).firestore();
+      await assertFails(db.doc(PATH).get());
+    });
   });
 
   describe('update', () => {
