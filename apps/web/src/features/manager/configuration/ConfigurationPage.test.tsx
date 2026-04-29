@@ -138,4 +138,10 @@ describe('<ConfigurationPage />', () => {
     await user.click(screen.getByRole('button', { name: /Save ward/i }));
     expect(await screen.findByText(/Ward code is required/i)).toBeInTheDocument();
   });
+
+  it('manager add form has no Active checkbox', () => {
+    render(<ConfigurationPage initialTab="managers" />, { wrapper: Wrapper });
+    expect(screen.queryByLabelText(/^Active$/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /Active/i })).not.toBeInTheDocument();
+  });
 });

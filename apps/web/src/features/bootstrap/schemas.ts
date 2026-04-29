@@ -45,10 +45,14 @@ export const wardSchema = z.object({
 
 export type WardForm = z.infer<typeof wardSchema>;
 
+// `active` is no longer a form input — new managers default to active.
+// The field is preserved on the persisted shape (`KindooManager.active`)
+// because the claim-sync trigger keys off it; toggling active state is
+// the Configuration page's deactivate / activate flow rather than a
+// form field on add.
 export const managerSchema = z.object({
   member_email: z.string().trim().min(1, 'Email is required.').email('Must be a valid email.'),
   name: z.string().trim().min(1, 'Name is required.'),
-  active: z.boolean(),
 });
 
 export type ManagerForm = z.infer<typeof managerSchema>;

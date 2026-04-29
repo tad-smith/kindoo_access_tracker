@@ -236,10 +236,16 @@ service cloud.firestore {
       // Bootstrap admin can read + write while `setup_complete=false`
       // so the wizard's Step 3 (≥1 ward) can land before the manager
       // claim is minted.
+      //
+      // Create + update carry the `lastActorMatchesAuth` integrity
+      // check; delete cannot (no `request.resource.data` on delete) and
+      // is gated only by the role predicate. Same split applied to
+      // buildings + kindooManagers below.
       match /wards/{wardCode} {
         allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
-        allow write: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+        allow create, update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
           && lastActorMatchesAuth(request.resource.data);
+        allow delete: if isManager(stakeId) || isBootstrapAdmin(stakeId);
       }
 
       // ----- Buildings -----
@@ -248,8 +254,9 @@ service cloud.firestore {
       // Step 2 (≥1 building) writes here.
       match /buildings/{buildingId} {
         allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
-        allow write: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+        allow create, update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
           && lastActorMatchesAuth(request.resource.data);
+        allow delete: if isManager(stakeId) || isBootstrapAdmin(stakeId);
       }
 
       // ----- KindooManagers -----
@@ -262,8 +269,9 @@ service cloud.firestore {
       // bootstrap admin doesn't yet hold a manager claim.
       match /kindooManagers/{memberCanonical} {
         allow read: if isManager(stakeId) || isBootstrapAdmin(stakeId);
-        allow write: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+        allow create, update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
           && lastActorMatchesAuth(request.resource.data);
+        allow delete: if isManager(stakeId) || isBootstrapAdmin(stakeId);
       }
 
       // ----- Access (split-ownership) -----

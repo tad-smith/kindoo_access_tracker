@@ -173,9 +173,11 @@ export function useDeleteBuildingMutation() {
 export interface ManagerInput {
   member_email: string;
   name: string;
-  active: boolean;
 }
 
+// New managers default to active. The merge: true preserves any
+// existing `active=false` set by a prior deactivate. Activate/deactivate
+// is a separate Configuration-level mutation (Phase 8 candidate).
 export function useUpsertManagerMutation() {
   const principal = usePrincipal();
   const qc = useQueryClient();
@@ -189,7 +191,7 @@ export function useUpsertManagerMutation() {
           member_canonical: can,
           member_email: input.member_email.trim(),
           name: input.name.trim(),
-          active: input.active,
+          active: true,
           added_at: serverTimestamp(),
           added_by: actor,
           lastActor: actor,

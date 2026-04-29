@@ -32,10 +32,14 @@ export const buildingSchema = z.object({
 });
 export type BuildingForm = z.infer<typeof buildingSchema>;
 
+// `active` is no longer a form input — the add-manager form always
+// creates managers with `active: true`. Toggling existing managers
+// happens via the deactivate / activate row buttons. The persisted
+// `KindooManager.active` field is retained on the schema in
+// packages/shared because the claim-sync trigger keys off it.
 export const managerSchema = z.object({
   member_email: z.string().trim().min(1, 'Email is required.').email('Must be a valid email.'),
   name: z.string().trim().min(1, 'Name is required.'),
-  active: z.boolean(),
 });
 export type ManagerForm = z.infer<typeof managerSchema>;
 

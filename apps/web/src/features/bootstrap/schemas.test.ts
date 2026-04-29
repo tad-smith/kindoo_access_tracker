@@ -80,7 +80,6 @@ describe('managerSchema', () => {
     const r = managerSchema.safeParse({
       member_email: 'm@example.com',
       name: 'M',
-      active: true,
     });
     expect(r.success).toBe(true);
   });
@@ -88,7 +87,6 @@ describe('managerSchema', () => {
     const r = managerSchema.safeParse({
       member_email: 'not-an-email',
       name: 'M',
-      active: true,
     });
     expect(r.success).toBe(false);
   });

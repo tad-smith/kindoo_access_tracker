@@ -325,7 +325,7 @@ function ManagersTab() {
 
   const form = useForm<ManagerForm>({
     resolver: zodResolver(managerSchema),
-    defaultValues: { member_email: '', name: '', active: true },
+    defaultValues: { member_email: '', name: '' },
   });
   const { register, handleSubmit, reset, formState } = form;
 
@@ -389,9 +389,6 @@ function ManagersTab() {
             {formState.errors.name.message}
           </p>
         ) : null}
-        <label>
-          <input type="checkbox" {...register('active')} /> Active
-        </label>
         <div className="form-actions">
           <Button type="submit" disabled={upsert.isPending}>
             {upsert.isPending ? 'Saving…' : 'Save manager'}
