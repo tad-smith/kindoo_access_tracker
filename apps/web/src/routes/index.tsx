@@ -1,28 +1,24 @@
 // Root route handler. Gate ordering per `docs/firebase-migration.md`
-// §Phase 7 "Setup-complete gate" + `docs/spec.md` §10:
+// §Phase 7 "Setup-complete gate" + `docs/spec.md` §10.
 //
-//   1. No Firebase Auth user → SignInPage.
-//   2. Stake doc loaded with `setup_complete=false`:
-//        a. Bootstrap admin (token email matches stake.bootstrap_admin_email)
-//           → BootstrapWizardPage. `?p=` deep-links are ignored until
+// The branch picker is `gateDecision()` in `lib/setupGate.ts` — same
+// module powers `routes/_authed.tsx` so the two gates can never drift.
+// See that module's header for the full rule table; the short version:
+//
+//   1. No Firebase Auth user                → SignInPage.
+//   2. Stake-doc subscription pending       → render null.
+//   3. Stake doc loaded with setup_complete !== true (incl. doc absent
+//      and missing field — Option A from the bug report):
+//        a. Token email matches stake.bootstrap_admin_email →
+//           BootstrapWizardPage. `?p=` deep-links are ignored until
 //           the wizard finishes.
-//        b. Anyone else → SetupInProgressPage. **SetupInProgress takes
-//           precedence over NotAuthorized during setup**, including
-//           users with zero claims. Spec §10: non-admins during
-//           bootstrap aren't unauthorised, the app simply isn't ready
-//           yet for them.
-//   3. No role claims → NotAuthorizedPage (wrong account / bishopric-
-//      import lag from `docs/spec.md` §6). We don't wait for the
-//      stake-doc subscription here — Firestore's permission-denied
-//      listener errors can take seconds to fire in CI, and a noclaims
-//      user in the post-setup case is the common path. If the rare
-//      "non-admin during setup" case is real, the snapshot lands
-//      shortly (rules allow) and the gate above re-renders into
-//      SetupInProgress.
-//   4. Authenticated principal — wait for stake-doc subscription to
-//      settle (avoid flashing the dashboard before the wizard gate
-//      fires for a manager who's also the bootstrap admin), then
-//      redirect to the default landing (`?p=` wins over per-role).
+//        b. Otherwise (incl. claim-bearing users) →
+//           SetupInProgressPage. Setup precedence over both Dashboard
+//           and NotAuthorized is the staging-bug fix.
+//   4. Stake doc loaded with setup_complete === true:
+//        a. No role claims → NotAuthorizedPage.
+//        b. Claim-bearing  → redirect to default landing
+//                            (`?p=` wins over per-role).
 //
 // Back-compat deep-link: `/?p=<page-key>` lands the user on the
 // matching SPA route after the gate runs. Page keys mirror the Apps
@@ -31,7 +27,6 @@
 import { useEffect } from 'react';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { z } from 'zod';
-import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
 import { SignInPage } from '../features/auth/SignInPage';
 import { NotAuthorizedPage } from '../features/auth/NotAuthorizedPage';
 import { SetupInProgressPage } from '../features/auth/SetupInProgressPage';
@@ -42,6 +37,7 @@ import { useFirestoreDoc } from '../lib/data';
 import { stakeRef } from '../lib/docs';
 import { db } from '../lib/firebase';
 import { STAKE_ID } from '../lib/constants';
+import { gateDecision } from '../lib/setupGate';
 
 const indexSearchSchema = z.object({
   p: z.string().optional(),
@@ -64,22 +60,11 @@ function Index() {
   // the schema's `.optional()` field.
   const { p } = Route.useSearch();
 
-  const setupIncomplete = stake.data !== undefined && stake.data.setup_complete === false;
-  const adminCanonical = setupIncomplete
-    ? canonicalEmailFn(stake.data?.bootstrap_admin_email ?? '')
-    : '';
-  const meCanonical = principal.canonical ?? canonicalEmailFn(principal.email ?? '');
-  const isBootstrapAdminUser =
-    setupIncomplete && adminCanonical && meCanonical && adminCanonical === meCanonical;
+  const decision = gateDecision(principal, { data: stake.data, status: stake.status });
 
-  // Decide where to send an authenticated principal. `p=...` wins over
-  // the per-role default when it resolves to a known route; otherwise
-  // we fall back to the role's leftmost nav tab. Only meaningful when
-  // setup is complete AND the stake-doc subscription has resolved.
-  const target =
-    principal.isAuthenticated && !setupIncomplete && stake.status !== 'pending'
-      ? (deepLinkPath(p) ?? defaultLandingFor(principal))
-      : null;
+  // Decide where to send a fully-authed principal. Only meaningful
+  // when the gate has cleared all the setup-precedence branches.
+  const target = decision === 'authed' ? (deepLinkPath(p) ?? defaultLandingFor(principal)) : null;
 
   useEffect(() => {
     if (target !== null) {
@@ -92,40 +77,20 @@ function Index() {
     }
   }, [target, navigate]);
 
-  if (!principal.firebaseAuthSignedIn) {
-    return <SignInPage />;
-  }
-
-  // Setup gate (precedence over NotAuthorized): bootstrap admin →
-  // wizard; anyone else (incl. zero-claims users) → SetupInProgress.
-  // Fires only when the stake doc has loaded with setup_complete=false.
-  if (setupIncomplete) {
-    if (isBootstrapAdminUser) {
+  switch (decision) {
+    case 'sign-in':
+      return <SignInPage />;
+    case 'pending':
+      return null;
+    case 'wizard':
       return <BootstrapWizardPage />;
-    }
-    return <SetupInProgressPage />;
+    case 'setup-in-progress':
+      return <SetupInProgressPage />;
+    case 'not-authorized':
+      return <NotAuthorizedPage />;
+    case 'authed':
+      // Redirect is in flight via the useEffect above. Render
+      // nothing in the meantime so we don't flash anything.
+      return null;
   }
-
-  // No-claims fallback fires immediately; we don't wait for the
-  // stake-doc subscription. The Firestore permission-denied listener
-  // can be slow to error in CI, and a noclaims-during-post-setup user
-  // is the common path. The rare noclaims-during-setup user briefly
-  // flashes NotAuthorized then re-renders into SetupInProgress when
-  // the snapshot lands.
-  if (!principal.isAuthenticated) {
-    return <NotAuthorizedPage />;
-  }
-
-  // Authenticated principal — wait for the stake-doc subscription to
-  // settle before redirecting; otherwise a manager who's also the
-  // bootstrap admin would briefly land on the dashboard before the
-  // wizard gate fires.
-  if (stake.status === 'pending') {
-    return null;
-  }
-
-  // Authenticated principal whose role-default redirect is in flight —
-  // render nothing. The `useEffect` above fires `navigate(...)` on the
-  // next tick.
-  return null;
 }

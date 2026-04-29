@@ -34,6 +34,7 @@ import {
   clearFirestore,
   createAuthUser,
   setCustomClaims,
+  writeDoc,
 } from '../../fixtures/emulator';
 
 const TEST_PASSWORD = 'test-password-12345';
@@ -73,6 +74,17 @@ test.describe('Nav links render as tabs, not buttons', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
+    // Seed a setup-complete stake so the Phase 7 setup-complete gate
+    // doesn't intercept the manager into SetupInProgress. Per
+    // `apps/web/src/lib/setupGate.ts`, an absent stake doc is treated
+    // as `setup_complete=false` (Option A from the 2026-04-29
+    // staging-bug fix).
+    await writeDoc('stakes/csnorth', {
+      stake_id: 'csnorth',
+      stake_name: 'Test Stake',
+      bootstrap_admin_email: 'admin@example.com',
+      setup_complete: true,
+    });
   });
 
   test('inactive links have no button-pill chrome and the active link has a brand-color bottom-border accent', async ({

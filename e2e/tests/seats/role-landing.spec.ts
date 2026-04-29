@@ -17,7 +17,23 @@ import {
   clearFirestore,
   createAuthUser,
   setCustomClaims,
+  writeDoc,
 } from '../../fixtures/emulator';
+
+/**
+ * Seed a setup-complete stake doc so the Phase 7 setup-complete gate
+ * (added 2026-04-29) doesn't intercept claim-bearing users into
+ * SetupInProgress. Per `lib/setupGate.ts`, an absent stake doc is
+ * treated as `setup_complete=false` (Option A).
+ */
+async function seedSetupCompleteStake(): Promise<void> {
+  await writeDoc('stakes/csnorth', {
+    stake_id: 'csnorth',
+    stake_name: 'Test Stake',
+    bootstrap_admin_email: 'admin@example.com',
+    setup_complete: true,
+  });
+}
 
 const TEST_PASSWORD = 'test-password-12345';
 
@@ -56,6 +72,7 @@ test.describe('Phase 5 default landings', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
+    await seedSetupCompleteStake();
   });
 
   test('manager principal lands on /manager/dashboard', async ({ page }) => {
@@ -87,6 +104,7 @@ test.describe('Phase 5 nav click-through', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
+    await seedSetupCompleteStake();
   });
 
   test('manager can click through Dashboard → All Seats → Audit Log → Access', async ({ page }) => {
@@ -123,6 +141,7 @@ test.describe('Phase 5 URL deep-links', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
+    await seedSetupCompleteStake();
   });
 
   test('manager seats deep-link pre-fills the filter', async ({ page }) => {
@@ -142,6 +161,7 @@ test.describe('Phase 5 mobile viewport', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
+    await seedSetupCompleteStake();
   });
 
   test('manager dashboard fits 375x667 without horizontal scroll', async ({ page }) => {
