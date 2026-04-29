@@ -97,6 +97,39 @@ test.describe('Bootstrap wizard gate', () => {
     await expect(page.getByRole('button', { name: /^Sign out$/i })).toHaveCount(0);
   });
 
+  test('manager-claimed user during setup_complete=false sees SetupInProgress', async ({
+    page,
+  }) => {
+    // Staging-bug regression (2026-04-29). A user who already holds
+    // manager claims (e.g., from a prior staging Phase 2 test) signs
+    // in against a stake doc with setup_complete=false. The
+    // setup-complete gate must take precedence over claims-based
+    // routing — the user MUST land on SetupInProgress, not on the
+    // role-default Dashboard.
+    await writeDoc('stakes/csnorth', {
+      stake_id: 'csnorth',
+      stake_name: 'Test Stake',
+      bootstrap_admin_email: 'admin@example.com',
+      setup_complete: false,
+    });
+
+    const mgrEmail = 'mgr-during-setup@example.com';
+    const { uid } = await createAuthUser({ email: mgrEmail });
+    // Manager claim — same shape syncManagersClaims would mint.
+    await setCustomClaims(uid, {
+      canonical: mgrEmail,
+      stakes: { csnorth: { manager: true } },
+    });
+
+    await page.goto('/');
+    await signInViaTestHatch(page, mgrEmail, TEST_PASSWORD);
+
+    await expect(page.getByRole('heading', { name: /Setup in progress/i })).toBeVisible();
+    // Dashboard heading must NOT appear — proves the setup gate
+    // overrode the manager-default landing.
+    await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toHaveCount(0);
+  });
+
   test('?p= deep-link is ignored during bootstrap', async ({ page }) => {
     const adminEmail = 'admin2@example.com';
     await writeDoc('stakes/csnorth', {

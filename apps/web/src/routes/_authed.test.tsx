@@ -220,13 +220,15 @@ describe('_authed gate', () => {
     expect(screen.getByTestId('shell-rendered')).toBeInTheDocument();
   });
 
-  it('renders NotAuthorized immediately for no-claims user even while stake-doc is pending', () => {
-    // The Firestore permission-denied listener can take seconds to
-    // fire its error callback in CI; we don't block on it for
-    // no-claims users. They land on NotAuthorized straight away. If
-    // the stake doc later resolves with `setup_complete=false`, the
-    // gate above re-renders into SetupInProgress (the rare
-    // non-admin-during-bootstrap case).
+  it('waits (renders nothing) while the stake-doc subscription is pending — no-claims user', () => {
+    // Updated 2026-04-29: previously the gate shortcut to NotAuthorized
+    // for no-claims users while pending. The new policy is to wait for
+    // the snapshot so the rare "non-admin during bootstrap" case
+    // doesn't flash NotAuthorized before re-rendering into
+    // SetupInProgress. The rules already explicitly allow any authed
+    // user to read the parent stake doc during setup_complete=false
+    // (firestore.rules `isSetupInProgressReadable`); the snapshot
+    // lands quickly enough that the brief null render is invisible.
     mockedPrincipal.current = {
       ...mockedPrincipal.current,
       firebaseAuthSignedIn: true,
@@ -234,12 +236,12 @@ describe('_authed gate', () => {
       email: 'someone@example.com',
       canonical: 'someone@example.com',
     };
-    // Stake status remains pending.
-    render(<AuthedLayout />);
-    expect(screen.getByTestId('notauth-page')).toBeInTheDocument();
+    const { container } = render(<AuthedLayout />);
+    expect(container.firstChild).toBeNull();
+    expect(screen.queryByTestId('notauth-page')).toBeNull();
   });
 
-  it('waits (renders nothing) while the stake-doc subscription is pending for AUTHENTICATED users', () => {
+  it('waits (renders nothing) while the stake-doc subscription is pending — authenticated user', () => {
     // For authenticated principals (managers etc.) we still wait so a
     // manager who's also the bootstrap admin doesn't flash the
     // dashboard before the wizard gate fires.
@@ -256,5 +258,90 @@ describe('_authed gate', () => {
     const { container } = render(<AuthedLayout />);
     expect(container.firstChild).toBeNull();
     expect(screen.queryByTestId('shell-rendered')).toBeNull();
+  });
+
+  it('regression: manager-claimed user during setup_complete=false sees SetupInProgress (not Dashboard)', () => {
+    // Staging-bug regression test (2026-04-29). Operator with manager
+    // claims hit the app while stake doc had setup_complete=false and
+    // bootstrap_admin_email missing; the previous gate fell through
+    // both branches and rendered Dashboard. The setup-complete gate
+    // must take precedence over claims-based routing.
+    mockedPrincipal.current = {
+      ...mockedPrincipal.current,
+      firebaseAuthSignedIn: true,
+      isAuthenticated: true,
+      email: 'tad.e.smith@gmail.com',
+      canonical: 'tadesmith@gmail.com',
+      managerStakes: ['csnorth'],
+      hasAnyRole: () => true,
+    };
+    setStake({
+      data: makeStakeDoc({ setup_complete: false, bootstrap_admin_email: 'admin@example.com' }),
+      status: 'success',
+      isLoading: false,
+      isPending: false,
+      isSuccess: true,
+    });
+    render(<AuthedLayout />);
+    expect(screen.getByTestId('setup-in-progress')).toBeInTheDocument();
+    expect(screen.queryByTestId('shell-rendered')).toBeNull();
+  });
+
+  it('regression: manager-claimed user with stake doc absent sees SetupInProgress (Option A)', () => {
+    // Staging-bug regression test (2026-04-29). The operator MUST
+    // seed the stake doc per the runbook. An absent stake doc is
+    // "not yet set up", never "fully set up". Previously, an absent
+    // doc plus a claim-bearing user fell through the gate and
+    // rendered the role-default Dashboard. The fix treats absent as
+    // setup_complete=false (Option A), routing all users to
+    // SetupInProgress (or to the wizard if they happened to match an
+    // admin email — unreachable when the doc is absent because
+    // bootstrap_admin_email can't exist).
+    mockedPrincipal.current = {
+      ...mockedPrincipal.current,
+      firebaseAuthSignedIn: true,
+      isAuthenticated: true,
+      email: 'mgr@example.com',
+      canonical: 'mgr@example.com',
+      managerStakes: ['csnorth'],
+      hasAnyRole: () => true,
+    };
+    // Doc absent → success status with undefined data.
+    setStake({
+      data: undefined,
+      status: 'success',
+      isLoading: false,
+      isPending: false,
+      isSuccess: true,
+    });
+    render(<AuthedLayout />);
+    expect(screen.getByTestId('setup-in-progress')).toBeInTheDocument();
+    expect(screen.queryByTestId('shell-rendered')).toBeNull();
+  });
+
+  it('regression: stake doc with bootstrap_admin_email field missing routes non-admin to SetupInProgress', () => {
+    // The exact staging repro (2026-04-29): setup_complete=false AND
+    // bootstrap_admin_email field absent. Manager-claimed user must
+    // still see SetupInProgress, not Dashboard, because the wizard
+    // branch can't fire (no admin email to match against).
+    mockedPrincipal.current = {
+      ...mockedPrincipal.current,
+      firebaseAuthSignedIn: true,
+      isAuthenticated: true,
+      email: 'tad.e.smith@gmail.com',
+      canonical: 'tadesmith@gmail.com',
+      managerStakes: ['csnorth'],
+      hasAnyRole: () => true,
+    };
+    setStake({
+      // Doc with setup_complete=false but no bootstrap_admin_email field.
+      data: { setup_complete: false, stake_name: 'Colorado Springs North Stake' },
+      status: 'success',
+      isLoading: false,
+      isPending: false,
+      isSuccess: true,
+    });
+    render(<AuthedLayout />);
+    expect(screen.getByTestId('setup-in-progress')).toBeInTheDocument();
   });
 });
