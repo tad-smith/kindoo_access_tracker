@@ -36,6 +36,23 @@ rules_version = '2';
 //   - Admin SDK writes (importer, expiry, claim sync, audit trigger,
 //     remove-seat trigger) bypass rules entirely. The Cloud Functions
 //     code carries the discipline.
+//
+//   - Bootstrap-wizard escape hatch: `isBootstrapAdmin(stakeId)` lets
+//     the designated `stake.bootstrap_admin_email` user write to the
+//     wizard-managed collections (stakes/{sid}, kindooManagers, wards,
+//     buildings) WHILE `setup_complete == false`. Once the wizard
+//     flips that flag to true, the gate goes silent — by then the
+//     `syncManagersClaims` trigger has minted the bootstrap admin a
+//     real manager claim from their auto-added kindooManagers doc, so
+//     `isManager(stakeId)` takes over. This breaks the chicken-and-egg
+//     where the very first wizard write (the bootstrap admin's own
+//     kindooManagers doc) had nothing else to authorise it.
+//
+//     Operator pre-step: the stake doc must exist with
+//     `setup_complete=false` and `bootstrap_admin_email=<typed email>`
+//     BEFORE the bootstrap admin signs in for the first time. See
+//     `infra/runbooks/provision-firebase-projects.md` for the seed
+//     instructions.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -92,6 +109,24 @@ service cloud.firestore {
       return isAuthed() && request.auth.token.isPlatformSuperadmin == true;
     }
 
+    // Bootstrap-admin escape hatch — see file header. The token email
+    // is the typed form (Firebase puts the verified-email string on
+    // `request.auth.token.email`); we compare against the typed email
+    // recorded on the stake doc by the operator's pre-seed. The
+    // `setup_complete == false` clause makes this strictly time-bounded
+    // so the moment the wizard flips that flag, this gate stops applying.
+    //
+    // The `get()` short-circuits if the stake doc doesn't exist (rule
+    // returns false rather than erroring) — operator seed is mandatory
+    // before the bootstrap admin signs in.
+    function isBootstrapAdmin(stakeId) {
+      let stakePath = /databases/$(database)/documents/stakes/$(stakeId);
+      return isAuthed()
+        && exists(stakePath)
+        && get(stakePath).data.setup_complete == false
+        && get(stakePath).data.bootstrap_admin_email == request.auth.token.email;
+    }
+
     // The `lastActor` integrity check — every client write must
     // declare `lastActor.{email, canonical}` matching the auth token.
     // Server-side (Admin SDK) writes use synthetic actors
@@ -141,34 +176,54 @@ service cloud.firestore {
       // managers only, enforcing the lastActor integrity check. Create
       // is superadmin-only via the `createStake` callable; delete
       // forbidden everywhere.
-      allow read: if isAnyMember(stakeId);
+      //
+      // Bootstrap-admin gate: while `setup_complete == false`, the
+      // designated bootstrap admin can read the stake doc (the wizard
+      // needs to render current values) and update it (Step 1 fields
+      // and the final `setup_complete=true` flip). The flip itself
+      // works because `isBootstrapAdmin` evaluates the pre-write state
+      // — `setup_complete` is still false when the rule runs.
+      allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
       allow create: if isPlatformSuperadmin();
-      allow update: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+      allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+        && lastActorMatchesAuth(request.resource.data);
       allow delete: if false;
 
       // ----- Wards -----
       // Any member of the stake can read the ward list (Roster UI
       // needs them for utilization rendering). Only managers can
       // mutate; the integrity check stamps the writing manager.
+      // Bootstrap admin can read + write while `setup_complete=false`
+      // so the wizard's Step 3 (≥1 ward) can land before the manager
+      // claim is minted.
       match /wards/{wardCode} {
-        allow read: if isAnyMember(stakeId);
-        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+        allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
+        allow write: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+          && lastActorMatchesAuth(request.resource.data);
       }
 
       // ----- Buildings -----
       // Same shape as wards — any member can read; only managers
-      // can mutate.
+      // can mutate. Bootstrap-admin gate matches wards: the wizard's
+      // Step 2 (≥1 building) writes here.
       match /buildings/{buildingId} {
-        allow read: if isAnyMember(stakeId);
-        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+        allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
+        allow write: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+          && lastActorMatchesAuth(request.resource.data);
       }
 
       // ----- KindooManagers -----
       // Manager allow-list. Manager-only read so non-managers can't
-      // enumerate peers; manager-only write.
+      // enumerate peers; manager-only write. The bootstrap-admin gate
+      // unblocks the chicken-and-egg: the wizard's first action is
+      // adding the bootstrap admin to this collection, which fires
+      // `syncManagersClaims` and mints the manager claim. Without the
+      // gate, that very first write would be denied because the
+      // bootstrap admin doesn't yet hold a manager claim.
       match /kindooManagers/{memberCanonical} {
-        allow read: if isManager(stakeId);
-        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+        allow read: if isManager(stakeId) || isBootstrapAdmin(stakeId);
+        allow write: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+          && lastActorMatchesAuth(request.resource.data);
       }
 
       // ----- Access (split-ownership) -----

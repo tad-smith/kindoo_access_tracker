@@ -553,6 +553,18 @@ service cloud.firestore {
       return isAuthed() && request.auth.token.isPlatformSuperadmin == true;
     }
 
+    // Bootstrap-wizard escape hatch — see §6.1 "Bootstrap-admin gate".
+    // Unblocks the Phase 7 wizard's chicken-and-egg first writes
+    // (the bootstrap admin's auto-self-add to kindooManagers, before
+    // syncManagersClaims has minted them a manager claim).
+    function isBootstrapAdmin(stakeId) {
+      let stakePath = /databases/$(database)/documents/stakes/$(stakeId);
+      return isAuthed()
+        && exists(stakePath)
+        && get(stakePath).data.setup_complete == false
+        && get(stakePath).data.bootstrap_admin_email == request.auth.token.email;
+    }
+
     function lastActorMatchesAuth(data) {
       return data.lastActor.canonical == authedCanonical()
         && data.lastActor.email == request.auth.token.email;
@@ -579,28 +591,36 @@ service cloud.firestore {
 
     match /stakes/{stakeId} {
 
-      // Parent stake doc
-      allow read: if isAnyMember(stakeId);
+      // Parent stake doc — `isBootstrapAdmin` lets the wizard write Step 1 fields
+      // and the final `setup_complete=true` flip before the manager claim is minted.
+      allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
       allow create: if isPlatformSuperadmin();
-      allow update: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+      allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+        && lastActorMatchesAuth(request.resource.data);
       allow delete: if false;
 
       // ----- Wards -----
       match /wards/{wardCode} {
-        allow read: if isAnyMember(stakeId);
-        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+        allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
+        allow write: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+          && lastActorMatchesAuth(request.resource.data);
       }
 
       // ----- Buildings -----
       match /buildings/{buildingId} {
-        allow read: if isAnyMember(stakeId);
-        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+        allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
+        allow write: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+          && lastActorMatchesAuth(request.resource.data);
       }
 
       // ----- KindooManagers -----
+      // The bootstrap-admin gate breaks the chicken-and-egg: wizard's first action
+      // is adding the bootstrap admin to this collection, which fires
+      // `syncManagersClaims` and mints the manager claim.
       match /kindooManagers/{memberCanonical} {
-        allow read: if isManager(stakeId);
-        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+        allow read: if isManager(stakeId) || isBootstrapAdmin(stakeId);
+        allow write: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+          && lastActorMatchesAuth(request.resource.data);
       }
 
       // ----- Access (split-ownership) -----
@@ -758,6 +778,32 @@ service cloud.firestore {
 - **No client writes to importer_callings** — same pattern. `access.update` rules verify it's unchanged on every client write.
 - **Cross-stake denial is automatic** — `isAnyMember(stakeId)` returns false when the user has no claims for that stakeId, so reads are denied at the stake-doc level and inherit through.
 - **Admin SDK writes bypass everything** — the Cloud Functions (importer, expiry, audit triggers, claim sync) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
+
+#### Bootstrap-admin gate
+
+The Phase 7 bootstrap wizard runs as a designated bootstrap admin who, on first sign-in, holds NO role claims for the stake — the wizard's first action is to add them to `kindooManagers/`, which fires `syncManagersClaims` and mints the manager claim. Without an escape hatch, that very first write would be denied (chicken-and-egg).
+
+The `isBootstrapAdmin(stakeId)` predicate provides the escape hatch. It evaluates to true only when:
+
+1. The user is authenticated, AND
+2. The stake doc exists, AND
+3. `stake.setup_complete == false`, AND
+4. `stake.bootstrap_admin_email == request.auth.token.email` (typed-form comparison).
+
+The gate is OR'd into the read + write rules of the four wizard-managed paths:
+
+- `stakes/{sid}` (parent stake doc) — read + update (Step 1 fields + the final `setup_complete=true` flip)
+- `stakes/{sid}/kindooManagers/{canonical}` — read + write (auto-self-add + Step 4 additional managers)
+- `stakes/{sid}/wards/{wardCode}` — read + write (Step 3)
+- `stakes/{sid}/buildings/{buildingId}` — read + write (Step 2)
+
+The other wizard-adjacent collections (access, seats, requests, calling templates, auditLog) are NOT covered by the gate — the wizard never writes to them, and the gate intentionally does not open up arbitrary doors.
+
+**One-shot enforcement.** Step 3 of the gate's predicate (`setup_complete == false`) is what makes it strictly time-bounded. The wizard's final write flips `setup_complete=true`; the rule evaluates against pre-write state, so the flip itself succeeds, but every subsequent wizard-shaped write fails because the gate's predicate now returns false. By that point the bootstrap admin holds the manager claim minted by `syncManagersClaims`, so `isManager(stakeId)` takes over.
+
+**Operator pre-step.** The stake doc must exist with `setup_complete=false` and `bootstrap_admin_email=<typed email>` BEFORE the bootstrap admin signs in for the first time. The gate's `get()` short-circuits if the stake doc is missing — operator seed is mandatory. See `infra/runbooks/provision-firebase-projects.md` for the seed instructions.
+
+**`lastActorMatchesAuth` still applies.** The gate widens the *who can write* predicate but doesn't bypass the lastActor integrity check — the bootstrap admin's writes must still carry `lastActor.{email, canonical}` matching their auth token. This keeps audit trail integrity intact during bootstrap.
 
 ## 7. Cloud Functions
 
