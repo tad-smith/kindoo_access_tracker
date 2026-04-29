@@ -1,10 +1,12 @@
-// Phase 2 end-to-end auth-flow specs. Covers the four proofs from the
-// migration plan (Phase 2):
+// Phase 2 + Phase 5 end-to-end auth-flow specs. Covers the four proofs
+// from the Phase-2 acceptance criteria, refreshed for the Phase-5 page
+// set:
 //   1. Anonymous visit → SignInPage renders.
 //   2. Sign in via Auth emulator (no claims yet) → NotAuthorizedPage.
-//   3. Sign in with role claims pre-seeded → Hello page renders email
-//      + decoded principal.
-//   4. Sign-out from Hello → returns to SignInPage.
+//   3. Sign in with role claims pre-seeded → manager Dashboard
+//      renders within the persistent shell (Phase-4 hello placeholder
+//      retired in Phase 5).
+//   4. Sign-out from the Dashboard → returns to SignInPage.
 //
 // Custom claims are set directly on the emulator user (proof of "claims
 // reach the SDK + decode correctly") rather than going through the full
@@ -12,13 +14,6 @@
 // is the backend-engineer's territory; their integration tests cover
 // trigger correctness. The web's contract is "given claims on the
 // token, render the right page", which is what this spec proves.
-//
-// Phase 4 routing note. The default-landing rule sends a manager
-// principal to `/manager/dashboard`, which 404s in Phase 4 (the route
-// lands in Phase 5+). The proofs that need a rendered page therefore
-// navigate to `/?p=hello` (or `/hello` directly) — the deep-link
-// resolver translates `?p=hello` to the placeholder Hello page within
-// the authed shell. Phase 5+ rewrites this to the real dashboard.
 
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -83,7 +78,7 @@ test.describe('auth-flow', () => {
     await expect(page.getByRole('button', { name: /Sign out/i })).toBeVisible();
   });
 
-  test('signed-in manager sees the Hello page with decoded claims', async ({ page }) => {
+  test('signed-in manager lands on the Dashboard within the shell', async ({ page }) => {
     const { uid } = await createAuthUser({ email: 'manager@example.com' });
     // Pre-seed: kindooManagers doc + custom claims that the
     // `onAuthUserCreate` / `syncManagersClaims` triggers would set in
@@ -99,20 +94,16 @@ test.describe('auth-flow', () => {
       },
     });
 
-    // `?p=hello` maps to /hello via the Phase 4 deep-link resolver.
-    // Without it, the manager would redirect to /manager/dashboard
-    // (404 until Phase 5+) and miss the Hello placeholder.
-    await page.goto('/?p=hello');
+    await page.goto('/');
     await signInViaTestHatch(page, 'manager@example.com', TEST_PASSWORD);
 
-    await expect(page.getByRole('heading', { name: /Hello, manager@example\.com/ })).toBeVisible();
-    // The decoded principal block contains managerStakes: ['csnorth'].
-    const principalBlock = page.locator('pre');
-    await expect(principalBlock).toContainText('"managerStakes"');
-    await expect(principalBlock).toContainText('csnorth');
+    // Manager default landing per spec.md §5: /manager/dashboard.
+    await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
+    // Persistent shell stays mounted — topbar email + sign-out present.
+    await expect(page.getByRole('button', { name: /^Sign out$/i }).first()).toBeVisible();
   });
 
-  test('sign-out from Hello returns to SignInPage', async ({ page }) => {
+  test('sign-out from the Dashboard returns to SignInPage', async ({ page }) => {
     const { uid } = await createAuthUser({ email: 'manager2@example.com' });
     await setCustomClaims(uid, {
       canonical: 'manager2@example.com',
@@ -121,14 +112,10 @@ test.describe('auth-flow', () => {
       },
     });
 
-    // `?p=hello` deep-link → /hello (Phase 4 placeholder). See header
-    // comment on the routing note.
-    await page.goto('/?p=hello');
+    await page.goto('/');
     await signInViaTestHatch(page, 'manager2@example.com', TEST_PASSWORD);
-    await expect(page.getByRole('heading', { name: /Hello, manager2@example\.com/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
 
-    // Topbar sign-out (vs. NotAuthorized's). Either button works; we
-    // click the topbar's so we exercise the persistent-shell wiring.
     await page
       .getByRole('button', { name: /^Sign out$/i })
       .first()

@@ -1,17 +1,16 @@
 // Role-aware nav. Generates the link set from the active principal's
 // claims per the page map in `docs/spec.md` §5.
 //
-// Apps Script reality (until Phase 11):
-//   - Bishopric: Roster (own ward), New Kindoo Request, My Requests
-//   - Stake:     Roster, New Kindoo Request, My Requests, Ward Rosters
-//   - Manager:   Dashboard, Requests Queue, All Seats, Configuration,
-//                Access, Import, Audit Log
+// Phase 5 ship-set (read-only pages):
+//   - Bishopric: Roster (own ward), My Requests
+//   - Stake:     Roster, Ward Rosters, My Requests
+//   - Manager:   Dashboard, All Seats, Audit Log, Access, My Requests
 //
-// Phase 4 surfaces all the links a role *will* have once Phase 5–7 ship
-// the pages. Routes that don't yet exist render as `<span>` placeholders
-// styled like a disabled link so the visual structure reads correctly
-// during incremental phase delivery (and the e2e Nav test exercises the
-// label set rather than the active link state).
+// Phase 6 will re-add New Kindoo Request (bishopric + stake) and the
+// manager Requests Queue. Phase 7 adds Configuration / Import. Until
+// they ship the corresponding nav links don't appear at all (rather
+// than shipping disabled placeholders) — keeping the nav truthful
+// about what works today.
 //
 // "Highest-role priority" mirrors `Router_defaultPageFor_` from the
 // Apps Script Router: manager > stake > bishopric. Multi-role users
@@ -25,36 +24,32 @@ import './Nav.css';
 interface NavLinkSpec {
   key: string;
   label: string;
-  /** Matches a route path. `undefined` renders a disabled placeholder. */
-  to?: string;
+  /** Matches a route path. */
+  to: string;
 }
 
 function managerLinks(): NavLinkSpec[] {
   return [
     { key: 'mgr/dashboard', label: 'Dashboard', to: '/manager/dashboard' },
-    { key: 'mgr/queue', label: 'Requests Queue', to: '/manager/queue' },
     { key: 'mgr/seats', label: 'All Seats', to: '/manager/seats' },
-    { key: 'mgr/config', label: 'Configuration', to: '/manager/config' },
-    { key: 'mgr/access', label: 'Access', to: '/manager/access' },
-    { key: 'mgr/import', label: 'Import', to: '/manager/import' },
     { key: 'mgr/audit', label: 'Audit Log', to: '/manager/audit' },
+    { key: 'mgr/access', label: 'Access', to: '/manager/access' },
+    { key: 'myreq', label: 'My Requests', to: '/my-requests' },
   ];
 }
 
 function stakeLinks(): NavLinkSpec[] {
   return [
     { key: 'stake/roster', label: 'Roster', to: '/stake/roster' },
-    { key: 'new', label: 'New Kindoo Request', to: '/stake/new' },
-    { key: 'myreq', label: 'My Requests', to: '/myrequests' },
     { key: 'stake/wards', label: 'Ward Rosters', to: '/stake/wards' },
+    { key: 'myreq', label: 'My Requests', to: '/my-requests' },
   ];
 }
 
 function bishopricLinks(): NavLinkSpec[] {
   return [
     { key: 'bish/roster', label: 'Roster', to: '/bishopric/roster' },
-    { key: 'bish/new', label: 'New Kindoo Request', to: '/bishopric/new' },
-    { key: 'bish/myreq', label: 'My Requests', to: '/myrequests' },
+    { key: 'myreq', label: 'My Requests', to: '/my-requests' },
   ];
 }
 
@@ -98,16 +93,7 @@ export function Nav({ principal }: NavProps) {
     <nav className="kd-nav" aria-label="Primary">
       <ul>
         {links.map((link) => {
-          const isActive = link.to !== undefined && pathname === link.to;
-          if (link.to === undefined) {
-            return (
-              <li key={link.key}>
-                <span className="kd-nav-link kd-nav-disabled" aria-disabled="true">
-                  {link.label}
-                </span>
-              </li>
-            );
-          }
+          const isActive = pathname === link.to;
           return (
             <li key={link.key}>
               <Link

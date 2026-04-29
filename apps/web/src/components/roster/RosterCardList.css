@@ -1,0 +1,123 @@
+/* Roster-card stack styles. Mechanical port of the `.roster-cards` /
+   `.roster-card*` family from Apps Script `Styles.html` (lines ~838–926).
+   Stacked cards with no gap between them (shared bottom border) — the
+   "row-feel visual density" the user has explicit feedback on. */
+
+.roster-cards {
+  background: #fff;
+  border: 1px solid var(--kd-border);
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 0.92em;
+  max-width: 820px;
+}
+
+.roster-card {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--kd-border-soft);
+}
+
+.roster-cards .roster-card:last-child {
+  border-bottom: none;
+}
+
+.roster-card.type-auto {
+  background: var(--kd-row-auto);
+}
+
+.roster-card.type-manual {
+  background: #ffffff;
+}
+
+.roster-card.type-temp {
+  background: var(--kd-row-temp);
+}
+
+.roster-card-line1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.roster-card-line2 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+  padding-left: 4px;
+  color: var(--kd-fg-2);
+  font-size: 0.92em;
+}
+
+.roster-card-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.roster-card-member {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.roster-card-name {
+  font-weight: 600;
+  color: var(--kd-fg-1);
+}
+
+.roster-card-calling,
+.roster-card-reason {
+  font-weight: 600;
+  color: var(--kd-fg-1);
+}
+
+.roster-card-chip {
+  color: var(--kd-fg-2);
+  white-space: nowrap;
+}
+
+.roster-card-chip .label {
+  color: var(--kd-fg-3);
+  font-size: 0.88em;
+  margin-right: 4px;
+}
+
+.roster-card-scope code {
+  background: #eef0f5;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.roster-card-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.roster-card.has-removal-pending {
+  background: #fdf3f5;
+}
+
+.roster-email {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+@media (max-width: 480px) {
+  .roster-card-line1 {
+    gap: 6px;
+  }
+  .roster-email {
+    max-width: 180px;
+  }
+}

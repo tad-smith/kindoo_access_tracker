@@ -28,7 +28,9 @@ import { createRouter, RouterProvider } from '@tanstack/react-router';
 import './lib/firebase';
 import { routeTree } from './routeTree.gen';
 import './styles/tokens.css';
+import './styles/tailwind.css';
 import './styles/base.css';
+import './styles/pages.css';
 
 const router = createRouter({
   routeTree,

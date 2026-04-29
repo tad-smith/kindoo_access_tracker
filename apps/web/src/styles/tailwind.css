@@ -1,0 +1,57 @@
+/* Tailwind v4 entry. Imports the engine, then declares the project
+   theme via `@theme` so the design tokens from `tokens.css` are also
+   reachable as Tailwind utility classes (`bg-kd-primary`,
+   `text-kd-fg-1`, etc.).
+
+   Tailwind v4 has no `tailwind.config.js`; the theme lives here as CSS.
+   We deliberately keep `tokens.css` separate as the canonical token
+   source — that file is consumed both by hand-rolled component CSS
+   (Shell.css, Nav.css, etc.) AND by these `@theme` aliases. One source
+   of truth, two consumption surfaces.
+
+   Phase 5 (T-18): added alongside the shadcn-ui components in
+   `components/ui/` so Phase 5 page work has Tailwind utilities + Radix-
+   based primitives without rewriting the existing layout CSS. */
+
+@import 'tailwindcss';
+
+@theme {
+  /* Brand */
+  --color-kd-primary: #2b6cb0;
+  --color-kd-primary-hover: #2c5282;
+  --color-kd-primary-tint: #ebf4fb;
+
+  /* Chrome */
+  --color-kd-chrome-border: #e5e7eb;
+  --color-kd-chrome-fg: #1a1d23;
+  --color-kd-chrome-fg-muted: #6b7280;
+
+  /* Surfaces */
+  --color-kd-surface-alt: #f3f5fa;
+  --color-kd-border: #d8dbe4;
+  --color-kd-border-soft: #eef0f5;
+  --color-kd-fg-1: #1d2333;
+  --color-kd-fg-2: #4b5266;
+  --color-kd-fg-3: #6b7280;
+
+  /* Semantic — success */
+  --color-kd-success: #4a8560;
+  --color-kd-success-dark: #3a6b4c;
+  --color-kd-success-tint: #e6f3ea;
+  --color-kd-success-fg: #2f6f47;
+  --color-kd-success-bg: #f4faf6;
+  --color-kd-success-br: #c4ddcc;
+
+  /* Semantic — danger */
+  --color-kd-danger: #a85450;
+  --color-kd-danger-dark: #8a4340;
+  --color-kd-danger-fg: #923834;
+  --color-kd-danger-bg: #faf0f0;
+
+  /* Row tints + warn family */
+  --color-kd-row-auto: #fafbff;
+  --color-kd-row-temp: #fff8ea;
+  --color-kd-warn-tint: #ffe3c2;
+  --color-kd-warn-mid: #6b4a00;
+  --color-kd-warn-dark: #7a4400;
+}
