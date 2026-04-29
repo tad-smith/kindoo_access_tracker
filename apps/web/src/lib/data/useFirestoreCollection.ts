@@ -12,6 +12,14 @@
 // element-wise shallow-equal to the previously-cached array, we keep
 // the previous array reference. Downstream `useMemo` / list-render
 // stability falls out for free.
+//
+// Defensive guards mirror `useFirestoreDoc`: `onSnapshot` registration
+// is wrapped in try/catch, the error callback logs the offending query
+// path + Firestore error code, and `setQueryData` is itself wrapped to
+// tolerate an unmount/cache-teardown race. See `useFirestoreDoc.ts`'s
+// header for the full rationale and the link to the SDK panic these
+// guards mitigate at the hook layer (the in-app error boundary in
+// `main.tsx` catches the residual SDK-internal-assertion case).
 
 import { useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import {
@@ -62,23 +70,53 @@ export function useFirestoreCollection<T>(
     }
 
     setListenerError(null);
-    const unsubscribe = onSnapshot(
-      query,
-      (snapshot) => {
-        const next = snapshot.docs.map((d: QueryDocumentSnapshot<T>) => d.data());
-        const cached = queryClient.getQueryData<CollectionCacheValue<T>>(queryKey(query));
-        const prev = cached?.value;
-        // Preserve referential stability when nothing changed at all.
-        const out = arraysShallowEqual(prev, next) ? prev : next;
-        queryClient.setQueryData<CollectionCacheValue<T>>(queryKey(query), { value: out });
-      },
-      (err) => {
-        setListenerError(err);
-      },
-    );
+
+    let unsubscribe: () => void;
+    try {
+      unsubscribe = onSnapshot(
+        query,
+        (snapshot) => {
+          try {
+            const next = snapshot.docs.map((d: QueryDocumentSnapshot<T>) => d.data());
+            const cached = queryClient.getQueryData<CollectionCacheValue<T>>(queryKey(query));
+            const prev = cached?.value;
+            // Preserve referential stability when nothing changed at all.
+            const out = arraysShallowEqual(prev, next) ? prev : next;
+            queryClient.setQueryData<CollectionCacheValue<T>>(queryKey(query), { value: out });
+          } catch (cacheErr) {
+            console.warn('[useFirestoreCollection] cache write failed', {
+              path: pathFor(query),
+              cacheErr,
+            });
+          }
+        },
+        (err) => {
+          console.error('[useFirestoreCollection] listener error', {
+            path: pathFor(query),
+            code: err.code,
+            message: err.message,
+          });
+          setListenerError(err);
+        },
+      );
+    } catch (subscribeErr) {
+      console.error('[useFirestoreCollection] subscribe threw', {
+        path: pathFor(query),
+        subscribeErr,
+      });
+      setListenerError(coerceFirestoreError(subscribeErr));
+      return;
+    }
 
     return () => {
-      unsubscribe();
+      try {
+        unsubscribe();
+      } catch (unsubscribeErr) {
+        console.warn('[useFirestoreCollection] unsubscribe threw', {
+          path: pathFor(query),
+          unsubscribeErr,
+        });
+      }
     };
   }, [query, queryClient]);
 
@@ -137,6 +175,26 @@ function arraysShallowEqual<T>(prev: readonly T[] | undefined, next: readonly T[
     if (!shallowEqual(prev[i], next[i])) return false;
   }
   return true;
+}
+
+/**
+ * Best-effort path string for log lines. CollectionReference exposes
+ * `.path`; bare Query objects don't. Returns `'<query>'` when the path
+ * isn't accessible, so the log line stays readable.
+ */
+function pathFor(query: Query<unknown>): string {
+  const path = (query as unknown as { path?: string }).path;
+  return typeof path === 'string' && path.length > 0 ? path : '<query>';
+}
+
+function coerceFirestoreError(err: unknown): FirestoreError {
+  if (err && typeof err === 'object' && 'code' in err && 'message' in err) {
+    return err as FirestoreError;
+  }
+  return Object.assign(new Error(String(err)), {
+    name: 'FirestoreError',
+    code: 'unknown',
+  }) as unknown as FirestoreError;
 }
 
 function shallowEqual(a: unknown, b: unknown): boolean {

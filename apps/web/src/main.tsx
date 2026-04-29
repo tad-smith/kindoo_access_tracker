@@ -1,5 +1,9 @@
 // SPA entrypoint. Wires the provider stack:
 //
+//   RootErrorBoundary  — catches render-time + Firestore-SDK-panic
+//                        errors so the user lands on a fallback page
+//                        instead of a blank screen. Outermost so
+//                        every React subtree below is covered.
 //   QueryClientProvider — TanStack Query cache; required by the DIY
 //                          Firestore hooks (lib/data/) which push
 //                          snapshots into the cache via setQueryData,
@@ -26,6 +30,7 @@ import { createRouter, RouterProvider } from '@tanstack/react-router';
 // Side-effectful import — runs initializeApp + emulator wiring before
 // any consumer touches the Firebase SDK singletons.
 import './lib/firebase';
+import { RootErrorBoundary } from './components/RootErrorBoundary';
 import { routeTree } from './routeTree.gen';
 import './styles/tokens.css';
 import './styles/tailwind.css';
@@ -65,8 +70,10 @@ if (!rootEl) {
 
 createRoot(rootEl).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    <RootErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </RootErrorBoundary>
   </StrictMode>,
 );

@@ -186,4 +186,85 @@ describe('useFirestoreCollection', () => {
     unmount();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
+
+  it('surfaces a synchronous onSnapshot throw as a hook error state', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      onSnapshotMock.mockImplementation(() => {
+        throw Object.assign(new Error('subscribe panic'), {
+          code: 'permission-denied',
+          name: 'FirebaseError',
+        });
+      });
+      const q = fakeQuery('stakes/csnorth/kindooManagers') as unknown as Parameters<
+        typeof useFirestoreCollection<unknown>
+      >[0];
+      const { result } = renderHook(() => useFirestoreCollection<unknown>(q), { wrapper });
+      await waitFor(() => {
+        expect(result.current.status).toBe('error');
+        expect(result.current.error?.code).toBe('permission-denied');
+      });
+      expect(
+        consoleErrorSpy.mock.calls.some(
+          ([first, payload]) =>
+            typeof first === 'string' &&
+            first.includes('[useFirestoreCollection]') &&
+            (payload as { path?: string } | undefined)?.path === 'stakes/csnorth/kindooManagers',
+        ),
+      ).toBe(true);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('logs the failing path when the listener error callback fires', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      let onError: ((e: unknown) => void) | null = null;
+      onSnapshotMock.mockImplementation((_q, _onNext, onErr) => {
+        onError = onErr;
+        return () => {};
+      });
+      const q = fakeQuery('stakes/csnorth/wards') as unknown as Parameters<
+        typeof useFirestoreCollection<unknown>
+      >[0];
+      renderHook(() => useFirestoreCollection<unknown>(q), { wrapper });
+      const fakeErr = Object.assign(new Error('denied'), {
+        code: 'permission-denied',
+        name: 'FirebaseError',
+      });
+      await act(async () => {
+        onError!(fakeErr);
+      });
+      expect(
+        consoleErrorSpy.mock.calls.some(
+          ([first, payload]) =>
+            typeof first === 'string' &&
+            first.includes('[useFirestoreCollection]') &&
+            (payload as { path?: string; code?: string } | undefined)?.path ===
+              'stakes/csnorth/wards' &&
+            (payload as { code?: string } | undefined)?.code === 'permission-denied',
+        ),
+      ).toBe(true);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('swallows an unsubscribe throw on unmount without propagating', () => {
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      onSnapshotMock.mockImplementation(() => () => {
+        throw new Error('teardown wedged');
+      });
+      const q = fakeQuery('stakes/csnorth/buildings') as unknown as Parameters<
+        typeof useFirestoreCollection<unknown>
+      >[0];
+      const { unmount } = renderHook(() => useFirestoreCollection<unknown>(q), { wrapper });
+      expect(() => unmount()).not.toThrow();
+      expect(consoleWarnSpy).toHaveBeenCalled();
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
 });
