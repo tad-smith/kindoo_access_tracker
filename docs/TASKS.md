@@ -155,11 +155,15 @@ The new `.claude/agents/{web-engineer,backend-engineer,infra-engineer,docs-keepe
 Closed 2026-04-28: the named agents (`web-engineer`, `backend-engineer`, `infra-engineer`, `docs-keeper`) have been dispatched repeatedly across Phases 2 / 3 / 3.5 / 4 — proven dispatchable.
 
 ## [T-07] Vite `apps/web` chunk-size warning >500 KB
-Status: partially-resolved (Phase 4 close, 2026-04-28)
+Status: partially-resolved across Phase 4 + Phase 5 (2026-04-28); residual schemas-chunk for future per-form schema imports
 Owner: @web-engineer
-Phase: 1 → revisit in Phase 5
+Phase: 1 → revisit when Phase 6 forms land
 
-Phase 4 wired the `@tanstack/router-plugin/vite` autogen plugin with `autoCodeSplitting: true`, so per-route components ship as separate chunks. Post-Phase-4 build output: main `index-*.js` ~293 KB / 92 KB gz, route chunks `_authed-*.js` ~5 KB, `hello-*.js` ~1 KB. The `schemas-*.js` chunk (the `@kindoo/shared` zod-4 schemas) is now the >500 KB outlier at ~352 KB / 106 KB gz. Phase 5 onwards adds real pages that import only the schemas they need — once enough pages exist, the per-page code-split will naturally fragment the schemas chunk too. Worth revisiting Phase 5 close to confirm. No action required during Phase 4 close.
+Phase 4 wired the `@tanstack/router-plugin/vite` autogen plugin with `autoCodeSplitting: true`, so per-route components ship as separate chunks. Phase 5 added seven feature folders, each landing as its own per-page chunk (2–7 KB), which further fragmented the bundle. Post-Phase-5 build output: main `index-*.js` is now in the 90–100 KB gz range (down from Phase-4-close's 92 KB but with substantially more app surface inside it), per-page route chunks 2–7 KB each, and the `schemas-*.js` chunk holds steady around ~352 KB / ~106 KB gz.
+
+The `schemas-*.js` chunk is now the residual outlier — it's the `@kindoo/shared` zod 4 schemas being bundled in their entirety per route that imports them. Not directly addressable without per-form schema imports: each form pulls only the schemas it actually validates against, rather than the whole `@kindoo/shared` schema barrel. Phase 6's write-side forms (New Kindoo Request, manager approve / reject / complete, manual Access add/delete) are the natural place to introduce that pattern — they're the first phase that materially exercises the schemas chunk for forms rather than as a transitive read-side dep.
+
+Revisit at Phase 6 close to confirm whether per-form schema imports actually shrank `schemas-*.js`. If the residual stays in the 100 KB gz range after per-form imports land, the pragmatic close is to bump Vite's `build.chunkSizeWarningLimit` past the current 500 KB default rather than chase further fragmentation.
 
 ## [T-08] Consolidate web-side `principal.ts` onto `@kindoo/shared`
 Status: done (2026-04-28)
