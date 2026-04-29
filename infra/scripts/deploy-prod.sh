@@ -5,12 +5,11 @@
 #
 # What it does:
 #   Same as deploy-staging.sh, but targets the `prod` alias defined in
-#   .firebaserc and (eventually) gates on stricter pre-flight checks:
+#   .firebaserc. Both scripts now share the same `guard_main_clean`
+#   pre-flight (branch == main, local == origin/main, working tree
+#   clean). Additional prod-only gates are still TODOs until B1 lands:
 #     - explicit operator confirmation (typed yes)
-#     - clean git working tree
-#     - HEAD is a commit on main
 #     - staging deploy has already passed for this commit
-#   Those gates are TODOs until B1 lands.
 #
 # Steps were: stamp / typecheck / test / build-web / build-functions /
 # firebase deploy. Step 3 (test) was removed because the local script
@@ -25,6 +24,12 @@
 #   - All the same assumptions as deploy-staging.sh.
 #   - You've successfully run deploy-staging.sh on this commit and
 #     verified the staging URL works.
+#
+# What it requires:
+#   - You're on the `main` branch.
+#   - Local `main` is up-to-date with `origin/main`.
+#   - Working tree is clean (no uncommitted changes other than the
+#     stamper output the script itself produces).
 #
 # What it leaves behind:
 #   - Same artifacts as staging.
@@ -84,8 +89,66 @@ echo ""
 #     read -r -p "Deploy to PROD (kindoo-prod)? Type 'yes' to confirm: " CONFIRM
 #     [[ "$CONFIRM" == "yes" ]] || { echo "aborted"; exit 1; }
 #   fi
-# TODO (post-B1, pre-Phase-11): require clean working tree:
-#   git diff-index --quiet HEAD -- || { echo "dirty working tree"; exit 1; }
+
+# Guard: deploys ship from `main`, full-stop.
+#
+# Triggered after the hello-on-staging incident (2026-04-28): operator
+# deployed Phase 5 from a topic branch forked off main *before* a
+# cleanup PR landed; the predeploy build hook ran against the topic
+# branch's source, so a `hello` Cloud Function — already removed on
+# main — was created on staging.
+#
+# Three checks, run before the stamper (which itself dirties
+# apps/web/src/version.ts and functions/src/version.ts):
+#   1. current branch == `main`
+#   2. local HEAD == origin/main (after a fresh fetch)
+#   3. working tree is clean
+#
+# No --force / --allow-dirty escape hatch. If the operator really
+# needs to override, they can edit the script.
+guard_main_clean() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "[dry-run] would: git symbolic-ref --short HEAD must == 'main'"
+    echo "[dry-run] would: git fetch origin main"
+    echo "[dry-run] would: git rev-parse HEAD must == git rev-parse origin/main"
+    echo "[dry-run] would: git status --porcelain must be empty"
+    return 0
+  fi
+
+  local current_branch
+  current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo '<detached>')"
+  if [[ "$current_branch" != "main" ]]; then
+    echo "error: deploy must run from \`main\`. You are on \`$current_branch\`." >&2
+    echo "To deploy: \`git checkout main && git pull --ff-only\`" >&2
+    exit 1
+  fi
+
+  git fetch origin main >/dev/null 2>&1 || {
+    echo "error: \`git fetch origin main\` failed. Check your network and remote." >&2
+    exit 1
+  }
+
+  local local_sha origin_sha
+  local_sha="$(git rev-parse HEAD)"
+  origin_sha="$(git rev-parse origin/main)"
+  if [[ "$local_sha" != "$origin_sha" ]]; then
+    echo "error: local main is not up-to-date with origin/main." >&2
+    echo "local:  $local_sha" >&2
+    echo "origin: $origin_sha" >&2
+    echo "To deploy: \`git pull --ff-only\` (if behind) or push your local commits and merge upstream first (if ahead)." >&2
+    exit 1
+  fi
+
+  local dirty
+  dirty="$(git status --porcelain)"
+  if [[ -n "$dirty" ]]; then
+    echo "error: working tree has uncommitted changes. Stash or commit before deploying." >&2
+    echo "$dirty" >&2
+    exit 1
+  fi
+}
+
+guard_main_clean
 
 # Step 1: stamp version.
 run "node infra/scripts/stamp-version.js"
