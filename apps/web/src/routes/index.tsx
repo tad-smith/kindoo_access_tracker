@@ -58,21 +58,30 @@ function Index() {
   // the bootstrap admin sees the wizard and everyone else sees the
   // SetupInProgress page — `?p=` deep-links are deliberately ignored
   // until the wizard finishes.
-  const setupIncomplete =
-    principal.firebaseAuthSignedIn &&
-    stake.data !== undefined &&
-    stake.data.setup_complete === false;
+  //
+  // The gate fires ONLY when we've successfully read the stake doc and
+  // its `setup_complete` field is false. We don't block rendering on a
+  // pending/errored stake-doc read for users who otherwise wouldn't
+  // pass this gate (e.g. a no-claims signed-in user who isn't the
+  // bootstrap admin) — the rules deny their stake-doc read, the
+  // listener errors, and we'd otherwise sit on a blank page until the
+  // error callback fires. Instead, we let `principal.isAuthenticated`
+  // route them to NotAuthorized immediately while the read is still
+  // settling.
+  const setupIncomplete = stake.data !== undefined && stake.data.setup_complete === false;
   const adminCanonical = setupIncomplete
     ? canonicalEmailFn(stake.data?.bootstrap_admin_email ?? '')
     : '';
   const meCanonical = principal.canonical ?? canonicalEmailFn(principal.email ?? '');
+  const isBootstrapAdminUser =
+    setupIncomplete && adminCanonical && meCanonical && adminCanonical === meCanonical;
 
   // Decide where to send an authenticated principal. `p=...` wins over
   // the per-role default when it resolves to a known route; otherwise
   // we fall back to the role's leftmost nav tab. Only meaningful when
   // setup is complete AND the stake-doc subscription has resolved
-  // (otherwise `setupIncomplete` reads false transiently and we'd
-  // redirect a bootstrap admin away from the wizard).
+  // (otherwise we'd redirect a manager who is also a bootstrap admin
+  // away from the wizard during the read latency).
   const target =
     principal.isAuthenticated && !setupIncomplete && stake.status !== 'pending'
       ? (deepLinkPath(p) ?? defaultLandingFor(principal))
@@ -93,24 +102,29 @@ function Index() {
     return <SignInPage />;
   }
 
-  // Wait for stake doc to load before deciding setup-state branches —
-  // a flash of NotAuthorized while the doc is in flight would be
-  // wrong on a fresh stake.
-  if (stake.status === 'pending') {
-    return null;
-  }
-
+  // Wizard branches first: only fires once the stake-doc read has
+  // resolved AND `setup_complete=false`. The bootstrap admin (no
+  // claims yet) lands on the wizard; anyone else who can read the
+  // stake doc during this window (only managers, since rules gate
+  // reads on `isAnyMember || isBootstrapAdmin`) lands on
+  // SetupInProgress.
   if (setupIncomplete) {
-    if (adminCanonical && meCanonical && adminCanonical === meCanonical) {
+    if (isBootstrapAdminUser) {
       return <BootstrapWizardPage />;
     }
     return <SetupInProgressPage />;
   }
 
+  // No-claims fallback fires regardless of stake-doc read state. A
+  // user with no claims CAN'T read the stake doc (rules deny), and
+  // we must not block their NotAuthorized landing on a denied-read
+  // listener-error round-trip.
   if (!principal.isAuthenticated) {
     return <NotAuthorizedPage />;
   }
-  // While the redirect effect is pending, render nothing (a flash of
-  // the previous page is preferable to a flash of unrelated content).
+
+  // Authenticated principal whose stake-doc read is still pending —
+  // wait. The redirect effect above will fire once status flips to
+  // success.
   return null;
 }

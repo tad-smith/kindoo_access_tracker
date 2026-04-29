@@ -124,9 +124,17 @@ export function BootstrapWizardPage() {
   const step3Done = (wards.data?.length ?? 0) > 0;
   const canFinish = step1Done && step2Done && step3Done;
 
+  // The outer wrapper carries `data-testid="bootstrap-wizard"`
+  // unconditionally so route-routing tests can assert "we landed on the
+  // wizard" before the inner content has hydrated. While the stake
+  // doc's snapshot is still in flight (the parent gate already saw
+  // `setup_complete=false`, so this is a brief same-key cache warmup),
+  // we render the spinner inside the wrapper rather than swapping the
+  // testid host out from under the test.
   if (stake.isLoading || stake.data === undefined) {
     return (
-      <main className="kd-bootstrap-wizard">
+      <main className="kd-bootstrap-wizard" data-testid="bootstrap-wizard">
+        <h1>Set up Stake Building Access</h1>
         <LoadingSpinner />
       </main>
     );
