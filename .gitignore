@@ -32,6 +32,8 @@ Thumbs.db
 
 # Claude Code local state (subagent definitions under .claude/agents/ ARE committed)
 .claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
 
 # Firebase + monorepo
 # Web SPA build output
