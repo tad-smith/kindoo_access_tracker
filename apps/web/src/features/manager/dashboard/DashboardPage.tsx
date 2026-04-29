@@ -1,7 +1,8 @@
 // Manager Dashboard page (live). Mirrors `src/ui/manager/Dashboard.html`.
 // Five live cards:
 //   - Pending Requests (per-type counts; deep-links to /manager/queue
-//     once Phase 6 ships, /manager/seats today as a placeholder)
+//     once the request-lifecycle phase ships, /manager/seats today as
+//     a placeholder)
 //   - Utilization (per-ward + stake bars)
 //   - Warnings (over-cap pools from stake.last_over_caps_json)
 //   - Recent Activity (last 10 audit rows; deep-links to audit log

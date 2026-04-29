@@ -1,41 +1,68 @@
-// Manager Access page (read-only in Phase 5). Per `firebase-schema.md`
+// Manager Access page (Phase 7 wires writes). Per `firebase-schema.md`
 // §4.5, the Access collection is jointly owned: importer-managed
 // `importer_callings` are read-only here; manager-managed
-// `manual_grants` get write actions in Phase 7.
+// `manual_grants` get add/delete affordances.
 //
 // One card per user with the two ownership stripes visually split:
 // importer block on top (light auto-row tint), manual block below
 // (warm tint). Empty maps collapse silently.
+//
+// Phase 7 additions:
+//   - "Add manual access" form at the page foot.
+//   - Per-grant Delete button on manual rows (with confirm dialog).
 
 import { useMemo, useState } from 'react';
-import type { Access } from '@kindoo/shared';
-import { useAccessList } from './hooks';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import type { Access, ManualGrant } from '@kindoo/shared';
+import { useAccessList, useAddManualGrantMutation, useDeleteManualGrantMutation } from './hooks';
+import { useStakeWards } from '../dashboard/hooks';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
 import { Select } from '../../../components/ui/Select';
+import { Input } from '../../../components/ui/Input';
+import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
+import { Dialog } from '../../../components/ui/Dialog';
+import { toast } from '../../../lib/store/toast';
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 export function AccessPage() {
   const access = useAccessList();
+  const wards = useStakeWards();
   const [scopeFilter, setScopeFilter] = useState<string>('');
+  const deleteMutation = useDeleteManualGrantMutation();
+  const [pendingDelete, setPendingDelete] = useState<{
+    canonical: string;
+    scope: string;
+    grant: ManualGrant;
+  } | null>(null);
 
   const all = useMemo(() => access.data ?? [], [access.data]);
 
   // Build the scope dropdown from every scope mentioned in any user's
-  // importer_callings or manual_grants.
+  // importer_callings or manual_grants, plus all known ward codes
+  // (ensures the "Add manual access" form scope dropdown is correct
+  // even before any access exists).
   const scopes = useMemo(() => {
     const seen = new Set<string>();
     for (const a of all) {
       for (const k of Object.keys(a.importer_callings ?? {})) seen.add(k);
       for (const k of Object.keys(a.manual_grants ?? {})) seen.add(k);
     }
+    for (const w of wards.data ?? []) seen.add(w.ward_code);
+    seen.add('stake');
     const list = Array.from(seen);
     return list.sort((a, b) => {
       if (a === 'stake') return -1;
       if (b === 'stake') return 1;
       return a.localeCompare(b);
     });
-  }, [all]);
+  }, [all, wards.data]);
 
   // Filter rows by scope: a user-row is included if either side has a
   // grant for the selected scope.
@@ -64,12 +91,27 @@ export function AccessPage() {
     0,
   );
 
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    try {
+      await deleteMutation.mutateAsync({
+        member_canonical: pendingDelete.canonical,
+        scope: pendingDelete.scope,
+        grant: pendingDelete.grant,
+      });
+      toast('Manual grant removed.', 'success');
+      setPendingDelete(null);
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
   return (
     <section>
       <h1>Access</h1>
       <p className="kd-page-subtitle">
         Who has app access. Importer-sourced rows reflect LCR truth; manual rows are direct grants
-        by a Kindoo Manager. Phase 5 is read-only; manage manual rows from Phase 7.
+        by a Kindoo Manager.
       </p>
 
       <div className="kd-filter-row">
@@ -93,14 +135,43 @@ export function AccessPage() {
       {access.isLoading || access.data === undefined ? (
         <LoadingSpinner />
       ) : sorted.length === 0 ? (
-        <EmptyState message="No access rows. Run the importer or add a manual grant (Phase 7)." />
+        <EmptyState message="No access rows. Run the importer or add a manual grant below." />
       ) : (
         <div className="kd-access-cards" data-testid="access-cards">
           {sorted.map((a) => (
-            <AccessCard key={a.member_canonical} access={a} scopeFilter={scopeFilter} />
+            <AccessCard
+              key={a.member_canonical}
+              access={a}
+              scopeFilter={scopeFilter}
+              onDeleteRequest={(scope, grant) =>
+                setPendingDelete({ canonical: a.member_canonical, scope, grant })
+              }
+            />
           ))}
         </div>
       )}
+
+      <AddManualGrantForm scopes={scopes} />
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title="Remove manual access?"
+        description={
+          pendingDelete
+            ? `Remove the "${pendingDelete.grant.reason}" grant for ${pendingDelete.scope === 'stake' ? 'the Stake' : pendingDelete.scope}?`
+            : 'Remove this manual access?'
+        }
+      >
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Button variant="danger" onClick={confirmDelete} disabled={deleteMutation.isPending}>
+            {deleteMutation.isPending ? 'Removing…' : 'Remove'}
+          </Button>
+        </Dialog.Footer>
+      </Dialog>
     </section>
   );
 }
@@ -108,9 +179,10 @@ export function AccessPage() {
 interface AccessCardProps {
   access: Access;
   scopeFilter: string;
+  onDeleteRequest: (scope: string, grant: ManualGrant) => void;
 }
 
-function AccessCard({ access, scopeFilter }: AccessCardProps) {
+function AccessCard({ access, scopeFilter, onDeleteRequest }: AccessCardProps) {
   const importerScopes = Object.entries(access.importer_callings ?? {})
     .filter(([scope, callings]) => (!scopeFilter || scope === scopeFilter) && callings.length > 0)
     .sort(([a], [b]) => (a === 'stake' ? -1 : b === 'stake' ? 1 : a.localeCompare(b)));
@@ -150,8 +222,7 @@ function AccessCard({ access, scopeFilter }: AccessCardProps) {
       {manualScopes.length > 0 ? (
         <div className="kd-access-section manual" data-testid="access-section-manual">
           <div className="kd-access-section-header">
-            <Badge variant="manual">manual</Badge> manager-granted (Phase 7 will add edit
-            affordances)
+            <Badge variant="manual">manual</Badge> manager-granted
           </div>
           {manualScopes.map(([scope, grants]) => (
             <div key={`man-${scope}`}>
@@ -160,7 +231,16 @@ function AccessCard({ access, scopeFilter }: AccessCardProps) {
               </span>
               <ul className="kd-access-grants">
                 {grants.map((g) => (
-                  <li key={g.grant_id}>{g.reason}</li>
+                  <li key={g.grant_id}>
+                    {g.reason}{' '}
+                    <Button
+                      variant="danger"
+                      onClick={() => onDeleteRequest(scope, g)}
+                      data-testid={`access-grant-delete-${access.member_canonical}-${g.grant_id}`}
+                    >
+                      Delete
+                    </Button>
+                  </li>
                 ))}
               </ul>
             </div>
@@ -168,5 +248,88 @@ function AccessCard({ access, scopeFilter }: AccessCardProps) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+const addManualSchema = z.object({
+  member_email: z.string().trim().min(1).email('Must be a valid email.'),
+  member_name: z.string().trim().min(1, 'Name is required.'),
+  scope: z.string().trim().min(1, 'Scope is required.'),
+  reason: z.string().trim().min(1, 'Reason is required.'),
+});
+type AddManualForm = z.infer<typeof addManualSchema>;
+
+interface AddManualGrantFormProps {
+  scopes: readonly string[];
+}
+
+function AddManualGrantForm({ scopes }: AddManualGrantFormProps) {
+  const mutation = useAddManualGrantMutation();
+  const form = useForm<AddManualForm>({
+    resolver: zodResolver(addManualSchema),
+    defaultValues: { member_email: '', member_name: '', scope: 'stake', reason: '' },
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  async function onSubmit(input: AddManualForm) {
+    try {
+      await mutation.mutateAsync(input);
+      reset({ member_email: '', member_name: '', scope: 'stake', reason: '' });
+      toast('Manual access added.', 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  return (
+    <form
+      className="kd-wizard-form"
+      onSubmit={handleSubmit(onSubmit)}
+      data-testid="add-manual-form"
+    >
+      <h2>Add manual access</h2>
+      <label>
+        Email
+        <Input type="email" {...register('member_email')} placeholder="member@example.com" />
+      </label>
+      {formState.errors.member_email ? (
+        <p role="alert" className="kd-form-error">
+          {formState.errors.member_email.message}
+        </p>
+      ) : null}
+      <label>
+        Name
+        <Input {...register('member_name')} />
+      </label>
+      {formState.errors.member_name ? (
+        <p role="alert" className="kd-form-error">
+          {formState.errors.member_name.message}
+        </p>
+      ) : null}
+      <label>
+        Scope
+        <Select {...register('scope')}>
+          {scopes.map((s) => (
+            <option key={s} value={s}>
+              {s === 'stake' ? 'Stake' : s}
+            </option>
+          ))}
+        </Select>
+      </label>
+      <label>
+        Reason
+        <Input {...register('reason')} placeholder="Covering bishop" />
+      </label>
+      {formState.errors.reason ? (
+        <p role="alert" className="kd-form-error">
+          {formState.errors.reason.message}
+        </p>
+      ) : null}
+      <div className="form-actions">
+        <Button type="submit" disabled={mutation.isPending}>
+          {mutation.isPending ? 'Adding…' : 'Add manual access'}
+        </Button>
+      </div>
+    </form>
   );
 }

@@ -1,0 +1,641 @@
+// Multi-step bootstrap wizard. Mirrors `src/ui/BootstrapWizard.html`
+// from the Apps Script app; runs against the bootstrap admin's Firebase
+// Auth account before they're a manager. The wizard's existence is
+// gated by the `BootstrapGate` route component (a parent guard) so this
+// page is only rendered when:
+//
+//   1. The user is signed in.
+//   2. The stake doc has `setup_complete=false`.
+//   3. The user's email matches `stake.bootstrap_admin_email`.
+//
+// Architecture mirrors the legacy four-step layout:
+//
+//   Step 1 — Stake fields (name, callings_sheet_id, stake_seat_cap).
+//   Step 2 — ≥1 Building.
+//   Step 3 — ≥1 Ward.
+//   Step 4 — Additional Kindoo Managers (optional). Bootstrap admin
+//            auto-added on first load.
+//
+// Each step writes to Firestore directly (no client-side pending
+// queue). Navigation between steps is free (no forward-only flow); the
+// "Complete Setup" button is enabled iff steps 1–3 are valid:
+//   - stake.stake_name + callings_sheet_id + stake_seat_cap all set
+//   - ≥1 building
+//   - ≥1 ward
+//
+// Complete Setup flips `setup_complete=true`, optionally invokes the
+// `installScheduledJobs` callable (Phase 8 stub — handled gracefully if
+// the function isn't deployed), and lets the routing gate redirect the
+// admin to `/manager/dashboard`. The `setup_complete=true` flip means a
+// post-setup wizard reload is invisible (the gate skips it).
+
+import { useEffect, useMemo, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useNavigate } from '@tanstack/react-router';
+import {
+  buildingSchema,
+  managerSchema,
+  step1Schema,
+  wardSchema,
+  type BuildingForm,
+  type ManagerForm,
+  type Step1Form,
+  type WardForm,
+} from './schemas';
+import {
+  useAddBuildingMutation,
+  useAddManagerMutation,
+  useAddWardMutation,
+  useBuildings,
+  useCompleteSetupMutation,
+  useDeleteBuildingMutation,
+  useDeleteManagerMutation,
+  useDeleteWardMutation,
+  useEnsureBootstrapAdmin,
+  useManagers,
+  useStakeDoc,
+  useStep1Mutation,
+  useUpdateManagerActiveMutation,
+  useWards,
+} from './hooks';
+import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Select } from '../../components/ui/Select';
+import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
+import { toast } from '../../lib/store/toast';
+import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
+import { usePrincipal } from '../../lib/principal';
+import { invokeInstallScheduledJobs } from './callables';
+
+type StepNumber = 1 | 2 | 3 | 4;
+
+/** Friendly summary of a thrown rule denial / transaction failure. */
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+export function BootstrapWizardPage() {
+  const navigate = useNavigate();
+  const principal = usePrincipal();
+  const stake = useStakeDoc();
+  const buildings = useBuildings();
+  const wards = useWards();
+  const managers = useManagers();
+  const ensureAdmin = useEnsureBootstrapAdmin();
+
+  const [step, setStep] = useState<StepNumber>(1);
+
+  // Auto-add the bootstrap admin to kindooManagers on first wizard load
+  // so the `syncManagersClaims` trigger mints the manager claim that
+  // makes the rest of the wizard's writes pass the manager-rule
+  // predicates. Run once when the stake doc + principal email both
+  // resolve. Idempotent — `setDoc` with `merge: true` is safe to retry.
+  const adminEmail = stake.data?.bootstrap_admin_email;
+  const principalEmail = principal.email;
+  useEffect(() => {
+    if (!adminEmail || !principalEmail) return;
+    if (canonicalEmailFn(principalEmail) !== canonicalEmailFn(adminEmail)) return;
+    if (managers.data === undefined) return;
+    const already = managers.data.some(
+      (m) => m.member_canonical === canonicalEmailFn(adminEmail) && m.active,
+    );
+    if (already) return;
+    ensureAdmin.mutateAsync(adminEmail).catch((err) => {
+      toast(`Could not auto-add bootstrap admin: ${errorMessage(err)}`, 'error');
+    });
+    // adminEmail / principalEmail / managers.data are the trigger.
+    // ensureAdmin is stable per-mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminEmail, principalEmail, managers.data]);
+
+  const step1Done = useMemo(() => {
+    const s = stake.data;
+    return Boolean(
+      s &&
+      s.stake_name &&
+      s.callings_sheet_id &&
+      typeof s.stake_seat_cap === 'number' &&
+      s.stake_seat_cap >= 0,
+    );
+  }, [stake.data]);
+  const step2Done = (buildings.data?.length ?? 0) > 0;
+  const step3Done = (wards.data?.length ?? 0) > 0;
+  const canFinish = step1Done && step2Done && step3Done;
+
+  if (stake.isLoading || stake.data === undefined) {
+    return (
+      <main className="kd-bootstrap-wizard">
+        <LoadingSpinner />
+      </main>
+    );
+  }
+
+  return (
+    <main className="kd-bootstrap-wizard" data-testid="bootstrap-wizard">
+      <h1>Set up Stake Building Access</h1>
+      <p className="kd-page-subtitle">
+        This four-step wizard configures your stake for the first time. You can revisit any
+        completed step. Each row saves immediately when you click Add.
+      </p>
+
+      <nav className="kd-wizard-steps" role="tablist" aria-label="Bootstrap steps">
+        <StepTab
+          num={1}
+          label="Stake"
+          active={step === 1}
+          done={step1Done}
+          onClick={() => setStep(1)}
+        />
+        <StepTab
+          num={2}
+          label="Buildings"
+          active={step === 2}
+          done={step2Done}
+          onClick={() => setStep(2)}
+        />
+        <StepTab
+          num={3}
+          label="Wards"
+          active={step === 3}
+          done={step3Done}
+          onClick={() => setStep(3)}
+        />
+        <StepTab
+          num={4}
+          label="Managers"
+          active={step === 4}
+          done={true}
+          onClick={() => setStep(4)}
+        />
+      </nav>
+
+      <section className="kd-wizard-panel" data-testid={`wizard-step-${step}`}>
+        {step === 1 ? <Step1Form /> : null}
+        {step === 2 ? <Step2Buildings /> : null}
+        {step === 3 ? <Step3Wards /> : null}
+        {step === 4 ? <Step4Managers /> : null}
+      </section>
+
+      <div className="kd-wizard-finish">
+        {step > 1 ? (
+          <Button variant="secondary" onClick={() => setStep((s) => (s - 1) as StepNumber)}>
+            Back
+          </Button>
+        ) : null}
+        {step < 4 ? (
+          <Button onClick={() => setStep((s) => (s + 1) as StepNumber)}>Next</Button>
+        ) : null}
+        <CompleteSetupButton
+          enabled={canFinish}
+          onCompleted={() => {
+            // Navigation back to / lets the routing gate redirect to
+            // the manager default landing page now that
+            // setup_complete=true.
+            navigate({ to: '/', replace: true }).catch(() => {});
+          }}
+        />
+      </div>
+    </main>
+  );
+}
+
+interface StepTabProps {
+  num: StepNumber;
+  label: string;
+  active: boolean;
+  done: boolean;
+  onClick: () => void;
+}
+
+function StepTab({ num, label, active, done, onClick }: StepTabProps) {
+  const cls = `kd-wizard-step${active ? ' active' : ''}${done ? ' done' : ''}`;
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      className={cls}
+      onClick={onClick}
+      data-testid={`wizard-step-tab-${num}`}
+    >
+      <span className="kd-wizard-step-num">{num}</span>
+      <span className="kd-wizard-step-label">{label}</span>
+      {done ? (
+        <span aria-hidden className="kd-wizard-step-check">
+          ✓
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+// ---- Step 1 — Stake fields ------------------------------------------
+
+function Step1Form() {
+  const stake = useStakeDoc();
+  const mutation = useStep1Mutation();
+  const form = useForm<Step1Form>({
+    resolver: zodResolver(step1Schema),
+    defaultValues: {
+      stake_name: stake.data?.stake_name ?? '',
+      callings_sheet_id: stake.data?.callings_sheet_id ?? '',
+      stake_seat_cap: stake.data?.stake_seat_cap ?? 0,
+    },
+    ...(stake.data
+      ? {
+          values: {
+            stake_name: stake.data.stake_name ?? '',
+            callings_sheet_id: stake.data.callings_sheet_id ?? '',
+            stake_seat_cap: stake.data.stake_seat_cap ?? 0,
+          },
+        }
+      : {}),
+  });
+  const { register, handleSubmit, formState } = form;
+
+  async function onSubmit(input: Step1Form) {
+    try {
+      await mutation.mutateAsync(input);
+      toast('Stake settings saved.', 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  return (
+    <form className="kd-wizard-form" onSubmit={handleSubmit(onSubmit)}>
+      <h2>Stake settings</h2>
+      <label>
+        Stake name
+        <Input {...register('stake_name')} placeholder="My Stake" />
+      </label>
+      {formState.errors.stake_name ? (
+        <p role="alert" className="kd-form-error">
+          {formState.errors.stake_name.message}
+        </p>
+      ) : null}
+      <label>
+        Callings-sheet ID
+        <Input {...register('callings_sheet_id')} placeholder="1A2B3C..." />
+      </label>
+      {formState.errors.callings_sheet_id ? (
+        <p role="alert" className="kd-form-error">
+          {formState.errors.callings_sheet_id.message}
+        </p>
+      ) : null}
+      <label>
+        Stake seat cap
+        <Input type="number" min={0} {...register('stake_seat_cap', { valueAsNumber: true })} />
+      </label>
+      {formState.errors.stake_seat_cap ? (
+        <p role="alert" className="kd-form-error">
+          {formState.errors.stake_seat_cap.message}
+        </p>
+      ) : null}
+      <div className="form-actions">
+        <Button type="submit" disabled={mutation.isPending || formState.isSubmitting}>
+          {mutation.isPending ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ---- Step 2 — Buildings ---------------------------------------------
+
+function Step2Buildings() {
+  const buildings = useBuildings();
+  const addMutation = useAddBuildingMutation();
+  const deleteMutation = useDeleteBuildingMutation();
+
+  const form = useForm<BuildingForm>({
+    resolver: zodResolver(buildingSchema),
+    defaultValues: { building_name: '', address: '' },
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  async function onAdd(input: BuildingForm) {
+    try {
+      await addMutation.mutateAsync(input);
+      reset();
+      toast('Building added.', 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  return (
+    <div className="kd-wizard-form">
+      <h2>Buildings</h2>
+      <p>Add at least one building. The Wards step references buildings by name.</p>
+      <ul className="kd-wizard-row-list" data-testid="bootstrap-buildings-list">
+        {(buildings.data ?? []).map((b) => (
+          <li key={b.building_id}>
+            <span>
+              <strong>{b.building_name}</strong>
+              {b.address ? <> — {b.address}</> : null}
+            </span>
+            <Button
+              variant="danger"
+              onClick={() => {
+                deleteMutation
+                  .mutateAsync(b.building_id)
+                  .then(() => toast('Building deleted.', 'success'))
+                  .catch((err) => toast(errorMessage(err), 'error'));
+              }}
+              data-testid={`bootstrap-building-delete-${b.building_id}`}
+            >
+              Delete
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <form onSubmit={handleSubmit(onAdd)}>
+        <label>
+          Building name
+          <Input {...register('building_name')} placeholder="Cordera Building" />
+        </label>
+        {formState.errors.building_name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.building_name.message}
+          </p>
+        ) : null}
+        <label>
+          Address
+          <Input {...register('address')} placeholder="123 Main St" />
+        </label>
+        <div className="form-actions">
+          <Button type="submit" disabled={addMutation.isPending}>
+            {addMutation.isPending ? 'Adding…' : 'Add building'}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ---- Step 3 — Wards -------------------------------------------------
+
+function Step3Wards() {
+  const wards = useWards();
+  const buildings = useBuildings();
+  const addMutation = useAddWardMutation();
+  const deleteMutation = useDeleteWardMutation();
+
+  const form = useForm<WardForm>({
+    resolver: zodResolver(wardSchema),
+    defaultValues: { ward_code: '', ward_name: '', building_name: '', seat_cap: 20 },
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  async function onAdd(input: WardForm) {
+    try {
+      await addMutation.mutateAsync(input);
+      reset();
+      toast('Ward added.', 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  const buildingOptions = buildings.data ?? [];
+
+  return (
+    <div className="kd-wizard-form">
+      <h2>Wards</h2>
+      <p>Add at least one ward. Each ward maps to one of the buildings you set up in Step 2.</p>
+      <ul className="kd-wizard-row-list" data-testid="bootstrap-wards-list">
+        {(wards.data ?? []).map((w) => (
+          <li key={w.ward_code}>
+            <span>
+              <strong>
+                {w.ward_name} ({w.ward_code})
+              </strong>{' '}
+              — building: {w.building_name} · cap {w.seat_cap}
+            </span>
+            <Button
+              variant="danger"
+              onClick={() => {
+                deleteMutation
+                  .mutateAsync(w.ward_code)
+                  .then(() => toast('Ward deleted.', 'success'))
+                  .catch((err) => toast(errorMessage(err), 'error'));
+              }}
+              data-testid={`bootstrap-ward-delete-${w.ward_code}`}
+            >
+              Delete
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <form onSubmit={handleSubmit(onAdd)}>
+        <label>
+          Ward code
+          <Input {...register('ward_code')} placeholder="CO" maxLength={8} />
+        </label>
+        {formState.errors.ward_code ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.ward_code.message}
+          </p>
+        ) : null}
+        <label>
+          Ward name
+          <Input {...register('ward_name')} placeholder="Cordera Ward" />
+        </label>
+        {formState.errors.ward_name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.ward_name.message}
+          </p>
+        ) : null}
+        <label>
+          Building
+          <Select {...register('building_name')}>
+            <option value="">— Select a building —</option>
+            {buildingOptions.map((b) => (
+              <option key={b.building_id} value={b.building_name}>
+                {b.building_name}
+              </option>
+            ))}
+          </Select>
+        </label>
+        {formState.errors.building_name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.building_name.message}
+          </p>
+        ) : null}
+        <label>
+          Seat cap
+          <Input type="number" min={0} {...register('seat_cap', { valueAsNumber: true })} />
+        </label>
+        {formState.errors.seat_cap ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.seat_cap.message}
+          </p>
+        ) : null}
+        <div className="form-actions">
+          <Button type="submit" disabled={addMutation.isPending || buildingOptions.length === 0}>
+            {addMutation.isPending ? 'Adding…' : 'Add ward'}
+          </Button>
+        </div>
+        {buildingOptions.length === 0 ? (
+          <p className="kd-form-hint">Add a building first (Step 2) before adding wards.</p>
+        ) : null}
+      </form>
+    </div>
+  );
+}
+
+// ---- Step 4 — Managers ----------------------------------------------
+
+function Step4Managers() {
+  const managers = useManagers();
+  const stake = useStakeDoc();
+  const addMutation = useAddManagerMutation();
+  const updateMutation = useUpdateManagerActiveMutation();
+  const deleteMutation = useDeleteManagerMutation();
+
+  const adminCanonical = useMemo(
+    () =>
+      stake.data?.bootstrap_admin_email ? canonicalEmailFn(stake.data.bootstrap_admin_email) : '',
+    [stake.data?.bootstrap_admin_email],
+  );
+
+  const form = useForm<ManagerForm>({
+    resolver: zodResolver(managerSchema),
+    defaultValues: { member_email: '', name: '', active: true },
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  async function onAdd(input: ManagerForm) {
+    try {
+      await addMutation.mutateAsync(input);
+      reset();
+      toast('Manager added.', 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  return (
+    <div className="kd-wizard-form">
+      <h2>Kindoo Managers</h2>
+      <p>
+        Optional. The bootstrap admin is auto-added and can&rsquo;t be deleted from this step.
+        Additional managers can also be added later from the Configuration page.
+      </p>
+      <ul className="kd-wizard-row-list" data-testid="bootstrap-managers-list">
+        {(managers.data ?? []).map((m) => {
+          const isAdmin = m.member_canonical === adminCanonical;
+          return (
+            <li key={m.member_canonical}>
+              <span>
+                <strong>{m.name || m.member_email}</strong> <code>{m.member_email}</code>
+                {!m.active ? <em> (inactive)</em> : null}
+                {isAdmin ? <em> (bootstrap admin)</em> : null}
+              </span>
+              <span style={{ display: 'inline-flex', gap: 8 }}>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    updateMutation
+                      .mutateAsync({ canonical: m.member_canonical, active: !m.active })
+                      .then(() => toast('Manager updated.', 'success'))
+                      .catch((err) => toast(errorMessage(err), 'error'));
+                  }}
+                  data-testid={`bootstrap-manager-toggle-${m.member_canonical}`}
+                >
+                  {m.active ? 'Deactivate' : 'Activate'}
+                </Button>
+                {isAdmin ? null : (
+                  <Button
+                    variant="danger"
+                    onClick={() => {
+                      deleteMutation
+                        .mutateAsync(m.member_canonical)
+                        .then(() => toast('Manager removed.', 'success'))
+                        .catch((err) => toast(errorMessage(err), 'error'));
+                    }}
+                    data-testid={`bootstrap-manager-delete-${m.member_canonical}`}
+                  >
+                    Delete
+                  </Button>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <form onSubmit={handleSubmit(onAdd)}>
+        <label>
+          Email
+          <Input type="email" {...register('member_email')} placeholder="manager@example.com" />
+        </label>
+        {formState.errors.member_email ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.member_email.message}
+          </p>
+        ) : null}
+        <label>
+          Name
+          <Input {...register('name')} placeholder="Manager Name" />
+        </label>
+        {formState.errors.name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.name.message}
+          </p>
+        ) : null}
+        <label>
+          <input type="checkbox" {...register('active')} /> Active
+        </label>
+        <div className="form-actions">
+          <Button type="submit" disabled={addMutation.isPending}>
+            {addMutation.isPending ? 'Adding…' : 'Add manager'}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+interface CompleteSetupProps {
+  enabled: boolean;
+  onCompleted: () => void;
+}
+
+function CompleteSetupButton({ enabled, onCompleted }: CompleteSetupProps) {
+  const mutation = useCompleteSetupMutation();
+
+  async function complete() {
+    try {
+      await mutation.mutateAsync();
+      // Best-effort callable — Phase 8 ships the function. If it isn't
+      // deployed yet we surface a warn-toast but the setup completion
+      // is not rolled back.
+      try {
+        await invokeInstallScheduledJobs();
+      } catch (callErr) {
+        toast(
+          `Setup complete, but scheduled-jobs install warned: ${errorMessage(callErr)}`,
+          'warn',
+        );
+      }
+      toast('Setup complete!', 'success');
+      onCompleted();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  return (
+    <Button
+      variant="success"
+      onClick={complete}
+      disabled={!enabled || mutation.isPending}
+      data-testid="bootstrap-complete-setup"
+    >
+      {mutation.isPending ? 'Completing…' : 'Complete Setup'}
+    </Button>
+  );
+}
