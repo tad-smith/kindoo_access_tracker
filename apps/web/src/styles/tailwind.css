@@ -47,11 +47,13 @@
   --color-kd-danger-dark: #8a4340;
   --color-kd-danger-fg: #923834;
   --color-kd-danger-bg: #faf0f0;
+  --color-kd-danger-tint: #f5e4e4;
 
   /* Row tints + warn family */
   --color-kd-row-auto: #fafbff;
   --color-kd-row-temp: #fff8ea;
   --color-kd-warn-tint: #ffe3c2;
+  --color-kd-warn-tint-2: #fde4a1;
   --color-kd-warn-mid: #6b4a00;
   --color-kd-warn-dark: #7a4400;
 }

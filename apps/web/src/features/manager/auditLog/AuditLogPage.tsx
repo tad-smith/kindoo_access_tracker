@@ -1,17 +1,19 @@
 // Manager Audit Log page. Mirrors `src/ui/manager/AuditLog.html`.
 // Cursor-paginated (request-response), filterable by action /
 // entity_type / entity_id / actor_canonical / member_canonical / date
-// range. Per-row collapsed summary + `<details>` diff view.
-//
-// New in Phase 5 (per migration plan): filter by `member_canonical`
-// for cross-collection per-user view.
+// range. Per-row collapsed summary + `<details>` field-by-field diff
+// table (see `AuditDiffTable.tsx`). The `member_canonical` filter
+// produces cross-collection rows; the diff table walks each row's
+// before/after independently so heterogeneous shapes coexist.
 
 import { useMemo, useState } from 'react';
 import { Timestamp } from 'firebase/firestore';
 import { useNavigate } from '@tanstack/react-router';
 import type { AuditLog } from '@kindoo/shared';
 import { useAuditLogPage, PAGE_SIZE, type AuditLogFilters } from './hooks';
-import { summariseAuditRow } from './summarise';
+import { auditActionCategory, summariseAuditRow } from './summarise';
+import type { BadgeVariant } from '../../../components/ui/Badge';
+import { AuditDiffTable } from './AuditDiffTable';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { Button } from '../../../components/ui/Button';
@@ -234,19 +236,28 @@ function AuditCard({ row }: AuditCardProps) {
       </div>
       <details className="kd-audit-card-diff">
         <summary>details</summary>
-        <pre>{JSON.stringify({ before: row.before, after: row.after }, null, 2)}</pre>
+        <AuditDiffTable before={row.before} after={row.after} />
       </details>
     </div>
   );
 }
 
-function badgeVariantForAction(action: AuditLog['action']) {
-  if (action.includes('request')) return 'info' as const;
-  if (action.startsWith('delete') || action === 'over_cap_warning' || action === 'reject_request')
-    return 'danger' as const;
-  if (action.startsWith('import') || action === 'auto_expire') return 'warning' as const;
-  if (action.startsWith('create')) return 'success' as const;
-  return 'default' as const;
+/** Map an audit-action category onto the Badge variant that renders
+ *  the matching Apps Script color: blue for CRUD, green for request
+ *  lifecycle, red for system, amber for importer. */
+function badgeVariantForAction(action: AuditLog['action']): BadgeVariant {
+  switch (auditActionCategory(action)) {
+    case 'crud':
+      return 'audit-crud';
+    case 'request':
+      return 'audit-request';
+    case 'system':
+      return 'audit-system';
+    case 'import':
+      return 'audit-import';
+    default:
+      return 'default';
+  }
 }
 
 function stripEmpty(filters: AuditLogFilters): Record<string, string> {

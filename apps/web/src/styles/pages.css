@@ -168,8 +168,17 @@
   font-weight: 600;
 }
 
+/* Automated actor chip ("Importer", "ExpiryTrigger"). Mirrors Apps
+   Script's `.audit-log-actor-automated` (Styles.html lines 1863-
+   1869): primary-tint pill so the synthetic actors stand out from
+   real-user emails. */
 .kd-audit-card-actor.actor-automated {
-  color: var(--kd-warn-dark);
+  background: var(--kd-primary-tint);
+  color: var(--kd-primary);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.85em;
+  font-weight: 500;
 }
 
 .kd-audit-card-summary {
@@ -198,6 +207,82 @@
   font-size: 0.88em;
   overflow-x: auto;
   white-space: pre-wrap;
+}
+
+/* Field-by-field diff table inside the audit-card <details> expansion.
+   Three shapes: create (Field | After), update (Field | Before | After),
+   delete (Field | Before). Cells wrap so long values stay readable on
+   mobile. */
+.kd-audit-diff-table {
+  margin: 6px 0 0;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88em;
+  background: var(--kd-border-soft);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.kd-audit-diff-table th,
+.kd-audit-diff-table td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--kd-border);
+}
+
+.kd-audit-diff-table tr:last-child th,
+.kd-audit-diff-table tr:last-child td {
+  border-bottom: none;
+}
+
+.kd-audit-diff-table th {
+  font-weight: 600;
+  color: var(--kd-fg-2);
+  background: rgba(0, 0, 0, 0.025);
+}
+
+.kd-audit-diff-table td code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  color: var(--kd-fg-1);
+}
+
+.kd-audit-diff-table td {
+  word-break: break-word;
+}
+
+/* Diff cell coloring. Mirrors Apps Script's audit-diff-old / -new
+   exactly (Styles.html lines 1907-1908): red text for the deleted
+   side, green for the inserted side, monospace, word-break so long
+   values wrap inside the cell. */
+.kd-audit-diff-before {
+  color: var(--kd-danger-fg); /* #923834 */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-word;
+}
+
+.kd-audit-diff-after {
+  color: var(--kd-success-fg); /* #2f6f47 */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-word;
+}
+
+/* `(absent)` / `(empty)` placeholders sit on top of the colored cell;
+   italic + dim signals "no real value on this side." Overrides the
+   colored text. */
+.kd-audit-diff-muted {
+  color: var(--kd-fg-3);
+  font-style: italic;
+  font-family: inherit;
+}
+
+.kd-audit-diff-unchanged,
+.kd-audit-diff-empty {
+  margin-top: 6px;
+  color: var(--kd-fg-3);
+  font-size: 0.88em;
+  font-style: italic;
 }
 
 .kd-audit-pagination {

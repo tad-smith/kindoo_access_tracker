@@ -3,7 +3,7 @@
 // exercised without touching Firestore.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AuditLog } from '@kindoo/shared';
 import { makeAuditLog } from '../../../../test/fixtures';
@@ -114,7 +114,13 @@ describe('<AuditLogPage />', () => {
     expect(details.open).toBe(false);
     await user.click(details.querySelector('summary')!);
     expect(details.open).toBe(true);
-    expect(card.querySelector('pre')).toHaveTextContent(/bob@example\.com/);
+    // Expanded: field-by-field diff table renders one row per
+    // changed/added field; the value cell carries the after-side
+    // contents.
+    const table = within(card).getByTestId('audit-diff-table');
+    expect(within(table).getByText('bob@example.com')).toBeInTheDocument();
+    expect(within(table).getByText('CO')).toBeInTheDocument();
+    expect(within(table).getByText('auto')).toBeInTheDocument();
   });
 
   it('surfaces the completion_note inline on R-1 complete_request rows', () => {
@@ -149,5 +155,80 @@ describe('<AuditLogPage />', () => {
     // The hook was called with a non-null cursor on the second invocation.
     const lastCall = useAuditLogPageMock.mock.calls.at(-1);
     expect(lastCall?.[1]).not.toBeNull();
+  });
+
+  describe('action-badge color categories', () => {
+    // Each row's action chip should pick up the Apps Script color
+    // category for that action: blue (CRUD), green (request), red
+    // (system), amber (importer). The Tailwind classes that drive
+    // those colors come from the Badge component's `audit-*` variants;
+    // we verify the right variant landed by class-name match.
+    function renderRowWithAction(action: string) {
+      useAuditLogPageMock.mockReturnValue(
+        liveResult([makeAuditLog({ audit_id: 'a1', action: action as never })]),
+      );
+      render(<AuditLogPage />);
+      const card = screen.getByTestId('audit-row-a1');
+      // The Badge renders as a span with the action text + variant
+      // classes; find it by its action-text content.
+      const badge = within(card).getByText(action);
+      return badge;
+    }
+
+    it('paints CRUD actions with the audit-crud (blue) classes', () => {
+      const badge = renderRowWithAction('create_seat');
+      expect(badge.className).toContain('bg-kd-primary-tint');
+      expect(badge.className).toContain('text-kd-primary');
+    });
+
+    it('paints request-lifecycle actions with the audit-request (green) classes', () => {
+      const badge = renderRowWithAction('submit_request');
+      expect(badge.className).toContain('bg-kd-success-tint');
+      expect(badge.className).toContain('text-kd-success-fg');
+    });
+
+    it('paints system events with the audit-system (red) classes', () => {
+      const badge = renderRowWithAction('over_cap_warning');
+      expect(badge.className).toContain('bg-kd-danger-tint');
+      expect(badge.className).toContain('text-kd-danger-fg');
+    });
+
+    it('paints importer actions with the audit-import (amber) classes', () => {
+      const badge = renderRowWithAction('import_end');
+      expect(badge.className).toContain('bg-kd-warn-tint-2');
+      expect(badge.className).toContain('text-kd-warn-mid');
+    });
+  });
+
+  describe('automated-actor chip', () => {
+    it('paints the Importer actor with the actor-automated chip styling', () => {
+      useAuditLogPageMock.mockReturnValue(
+        liveResult([makeAuditLog({ audit_id: 'a1', actor_email: 'Importer' })]),
+      );
+      render(<AuditLogPage />);
+      const card = screen.getByTestId('audit-row-a1');
+      const actor = card.querySelector('.kd-audit-card-actor');
+      expect(actor?.className).toContain('actor-automated');
+    });
+
+    it('paints ExpiryTrigger the same way', () => {
+      useAuditLogPageMock.mockReturnValue(
+        liveResult([makeAuditLog({ audit_id: 'a1', actor_email: 'ExpiryTrigger' })]),
+      );
+      render(<AuditLogPage />);
+      const card = screen.getByTestId('audit-row-a1');
+      const actor = card.querySelector('.kd-audit-card-actor');
+      expect(actor?.className).toContain('actor-automated');
+    });
+
+    it('does not paint a real-user email as automated', () => {
+      useAuditLogPageMock.mockReturnValue(
+        liveResult([makeAuditLog({ audit_id: 'a1', actor_email: 'alice@example.com' })]),
+      );
+      render(<AuditLogPage />);
+      const card = screen.getByTestId('audit-row-a1');
+      const actor = card.querySelector('.kd-audit-card-actor');
+      expect(actor?.className ?? '').not.toContain('actor-automated');
+    });
   });
 });
