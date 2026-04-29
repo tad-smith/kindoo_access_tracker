@@ -28,7 +28,7 @@ import {
   type Query,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { queryKey } from './queryKeys.js';
 
 type CollectionCacheValue<T> = { value: readonly T[] | undefined };
@@ -63,11 +63,23 @@ export function useFirestoreCollection<T>(
 
   const key = query ? queryKey(query) : NULL_QUERY_KEY;
 
+  // Sticky guard: if `onSnapshot` synchronously threw for this query,
+  // don't retry until the query reference itself changes. Without this
+  // guard, `setState` on the throw triggers a re-render; if the parent
+  // component happens to pass a fresh query each render the effect
+  // re-runs and re-throws, looping until the browser locks up. Real
+  // callers `useMemo` their queries so identity is stable per logical
+  // query; the guard catches the case where they don't.
+  const subscribeFailedForRef = useRef<Query<T> | null>(null);
+
   useEffect(() => {
     if (!query) {
       setListenerError(null);
+      subscribeFailedForRef.current = null;
       return;
     }
+
+    if (subscribeFailedForRef.current === query) return;
 
     setListenerError(null);
 
@@ -104,6 +116,7 @@ export function useFirestoreCollection<T>(
         path: pathFor(query),
         subscribeErr,
       });
+      subscribeFailedForRef.current = query;
       setListenerError(coerceFirestoreError(subscribeErr));
       return;
     }

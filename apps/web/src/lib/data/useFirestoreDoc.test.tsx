@@ -268,6 +268,52 @@ describe('useFirestoreDoc', () => {
     }
   });
 
+  it('does not re-subscribe in a loop when onSnapshot throws and the caller passes a fresh ref each render', async () => {
+    // Repro of the staging incident: when `onSnapshot` throws
+    // synchronously and the parent passes a NEW `DocumentReference`
+    // instance each render (e.g., inline `stakeRef(db, STAKE_ID)`),
+    // the hook used to set state, re-render, see new ref identity,
+    // re-subscribe, throw again — looping thousands of times per
+    // second and locking up the browser. The hook must detect the
+    // path-stable identity and stop after the first throw.
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      onSnapshotMock.mockImplementation(() => {
+        throw Object.assign(new Error('subscribe panic'), {
+          code: 'permission-denied',
+          name: 'FirebaseError',
+        });
+      });
+
+      // Each render allocates a fresh ref object at the same logical path.
+      const { result, rerender } = renderHook(
+        () =>
+          useFirestoreDoc<unknown>(
+            fakeRef('stakes/csnorth') as unknown as Parameters<typeof useFirestoreDoc<unknown>>[0],
+          ),
+        { wrapper },
+      );
+
+      await waitFor(() => {
+        expect(result.current.status).toBe('error');
+      });
+
+      // Force several more renders; each creates a new ref at the same path.
+      rerender();
+      rerender();
+      rerender();
+      rerender();
+
+      // The whole point: one subscribe attempt total, not one per render.
+      expect(onSnapshotMock).toHaveBeenCalledTimes(1);
+      // Error state still surfaces so `gateDecision` can route on it.
+      expect(result.current.status).toBe('error');
+      expect(result.current.error?.code).toBe('permission-denied');
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
   it('swallows an unsubscribe throw on unmount without propagating', () => {
     // SDK can throw on `unsubscribe()` during teardown when its own
     // internal state is wedged. The cleanup must not propagate; the

@@ -31,6 +31,16 @@
 //     SDK can throw synchronously when the SDK is in a torn-down state
 //     (HMR re-eval, double-mount in StrictMode, internal listener
 //     registry inconsistency). A throw there must not unmount the tree.
+//   - The effect deps are keyed on the doc *path string*, not on the
+//     `DocumentReference` instance. Callers like
+//     `useFirestoreDoc(stakeRef(db, STAKE_ID))` produce a fresh ref each
+//     render; identity-keyed deps would tear down/re-subscribe on every
+//     parent render, and a throw on subscribe would loop the tree
+//     (setState → re-render → fresh ref → throws → setState …).
+//   - A `useRef` latch records "subscribe already threw for this path"
+//     so even within the same render pass we never retry a known-bad
+//     subscribe; cleared when the path changes (e.g., on sign-out, or
+//     when a new claim makes the read allowable).
 //   - The error callback logs the offending path + Firestore error code
 //     to the console so the operator can narrow which rule is denying.
 //   - `setQueryData` is called inside try/catch since the cache may be
@@ -47,7 +57,7 @@
 
 import { useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import { onSnapshot, type DocumentReference, type FirestoreError } from 'firebase/firestore';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { docKey } from './queryKeys.js';
 
 /**
@@ -89,13 +99,41 @@ export function useFirestoreDoc<T>(
 
   const key = ref ? docKey(ref) : NULL_DOC_KEY;
 
+  // Effect identity is the doc path string, not the ref instance.
+  // Callers like `useFirestoreDoc(stakeRef(db, STAKE_ID))` produce a
+  // fresh `DocumentReference` each render; if we keyed the effect on
+  // the ref, every parent re-render would tear down and re-subscribe.
+  // Worse, a synchronous `onSnapshot` throw would `setState` →
+  // re-render → fresh ref → effect re-runs → throws again, looping
+  // until the browser locks up. Path-keyed deps make the effect run
+  // once per logical doc.
+  const path = ref?.path ?? null;
+  // Read the latest ref through a mutable ref so the effect closure
+  // always sees the current `DocumentReference` instance even when
+  // identity churns across renders without the path changing.
+  const refRef = useRef(ref);
+  refRef.current = ref;
+
+  // Sticky guard: if `onSnapshot` synchronously threw for this path,
+  // don't retry until the path itself changes. Belt-and-braces with the
+  // path-keyed deps above; the deps stop the loop, this stops a stale
+  // closure or StrictMode double-invoke from re-attempting a known-bad
+  // subscribe within the same render pass.
+  const subscribeFailedForPathRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!ref) {
+    if (!path) {
       setListenerError(null);
+      subscribeFailedForPathRef.current = null;
       return;
     }
 
+    if (subscribeFailedForPathRef.current === path) return;
+
     setListenerError(null);
+
+    const liveRef = refRef.current;
+    if (!liveRef) return;
 
     // `onSnapshot` returns synchronously in normal operation, but can
     // throw under the SDK's internal-state edge cases (HMR re-eval,
@@ -105,15 +143,15 @@ export function useFirestoreDoc<T>(
     let unsubscribe: () => void;
     try {
       unsubscribe = onSnapshot(
-        ref,
+        liveRef,
         (snapshot) => {
           try {
             const value = snapshot.exists() ? snapshot.data() : undefined;
-            queryClient.setQueryData<DocCacheValue<T>>(docKey(ref), { value });
+            queryClient.setQueryData<DocCacheValue<T>>(docKey(liveRef), { value });
           } catch (cacheErr) {
             // Cache write failure during unmount race; drop silently.
             // The unsubscribe in the cleanup below will fire next.
-            console.warn('[useFirestoreDoc] cache write failed', { path: ref.path, cacheErr });
+            console.warn('[useFirestoreDoc] cache write failed', { path, cacheErr });
           }
         },
         (err) => {
@@ -122,7 +160,7 @@ export function useFirestoreDoc<T>(
           // per error rather than on every re-render to keep the
           // console useful.
           console.error('[useFirestoreDoc] listener error', {
-            path: ref.path,
+            path,
             code: err.code,
             message: err.message,
           });
@@ -130,7 +168,8 @@ export function useFirestoreDoc<T>(
         },
       );
     } catch (subscribeErr) {
-      console.error('[useFirestoreDoc] subscribe threw', { path: ref.path, subscribeErr });
+      console.error('[useFirestoreDoc] subscribe threw', { path, subscribeErr });
+      subscribeFailedForPathRef.current = path;
       setListenerError(coerceFirestoreError(subscribeErr));
       return;
     }
@@ -142,12 +181,12 @@ export function useFirestoreDoc<T>(
         // Best-effort teardown; an SDK-internal throw on unsubscribe
         // shouldn't propagate through the React effect cleanup chain.
         console.warn('[useFirestoreDoc] unsubscribe threw', {
-          path: ref.path,
+          path,
           unsubscribeErr,
         });
       }
     };
-  }, [ref, queryClient]);
+  }, [path, queryClient]);
 
   // Placeholder queryFn that never resolves. The listener inside the
   // `useEffect` above is the actual source of data; it pushes via
