@@ -8,15 +8,7 @@
 // bootstrap wizard fills in but Configuration also exposes are wired
 // here too — e.g., expiry_hour / import_day / import_hour / timezone.
 
-import {
-  deleteDoc,
-  getDocs,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-} from 'firebase/firestore';
+import { deleteDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
@@ -171,18 +163,20 @@ export function useUpsertBuildingMutation() {
 // silently breaks its building lookup. Firestore Security Rules can't
 // iterate a sibling collection, so this guard is client-side only
 // (documented gap in docs/firebase-migration.md).
+//
+// Caller passes the wards snapshot (already subscribed via useWards) so
+// the guard fires against the exact list the user just saw — no extra
+// Firestore read.
 export interface DeleteBuildingInput {
   buildingId: string;
   buildingName: string;
+  wards: ReadonlyArray<Ward>;
 }
 export function useDeleteBuildingMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: DeleteBuildingInput) => {
-      const snap = await getDocs(
-        query(wardsCol(db, STAKE_ID), where('building_name', '==', input.buildingName)),
-      );
-      const refs = snap.docs.map((d) => d.data() as Ward);
+      const refs = input.wards.filter((w) => w.building_name === input.buildingName);
       const blocker = buildingDeleteBlocker(refs);
       if (blocker) throw new Error(blocker);
       await deleteDoc(buildingRef(db, STAKE_ID, input.buildingId));

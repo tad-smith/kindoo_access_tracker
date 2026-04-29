@@ -11,15 +11,7 @@
 // load via `ensureBootstrapAdmin`, which gives the
 // `syncManagersClaims` trigger something to mint a manager claim from.
 
-import {
-  deleteDoc,
-  getDocs,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-} from 'firebase/firestore';
+import { deleteDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
@@ -143,18 +135,20 @@ export function useAddBuildingMutation() {
 // iterate a sibling collection so we cannot enforce this at the rules
 // layer; this client guard is the only line of defense (documented in
 // docs/firebase-migration.md as a known gap).
+//
+// The caller passes the live wards list (already subscribed via
+// useWards) so we don't need an extra getDocs round-trip; the ref-guard
+// is computed against the same snapshot the user just saw.
 export interface DeleteBuildingInput {
   buildingId: string;
   buildingName: string;
+  wards: ReadonlyArray<Ward>;
 }
 export function useDeleteBuildingMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: DeleteBuildingInput) => {
-      const snap = await getDocs(
-        query(wardsCol(db, STAKE_ID), where('building_name', '==', input.buildingName)),
-      );
-      const refs = snap.docs.map((d) => d.data() as Ward);
+      const refs = input.wards.filter((w) => w.building_name === input.buildingName);
       const blocker = buildingDeleteBlocker(refs);
       if (blocker) throw new Error(blocker);
       await deleteDoc(buildingRef(db, STAKE_ID, input.buildingId));

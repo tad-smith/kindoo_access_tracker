@@ -53,9 +53,19 @@ vi.mock('./hooks', () => ({
   useUpdateManagerActiveMutation: () => ({ mutateAsync: vi.fn() }),
   useDeleteManagerMutation: () => ({ mutateAsync: deleteManagerMutate }),
 }));
-vi.mock('../../lib/store/toast', () => ({
-  toast: (msg: string, kind?: string) => toastSpy(msg, kind),
-}));
+// `useToastStore` is consumed by the wizard's mounted <ToastHost />.
+// The component test only cares about toast() calls, so we stub the
+// store hook with an empty toast list. Mock acts like a Zustand store
+// hook (selector in, selected slice out).
+vi.mock('../../lib/store/toast', () => {
+  const state = { toasts: [] as unknown[], dismiss: () => {} };
+  type Selector<T> = (s: typeof state) => T;
+  const useToastStore = <T,>(sel: Selector<T>) => sel(state);
+  return {
+    toast: (msg: string, kind?: string) => toastSpy(msg, kind),
+    useToastStore,
+  };
+});
 vi.mock('../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
 }));
@@ -353,12 +363,16 @@ describe('<BootstrapWizardPage />', () => {
     );
   });
 
-  it('passes building name to the delete mutation so the ref-guard can scope its query', async () => {
+  it('passes building name + wards snapshot to the delete mutation so the ref-guard can compute', async () => {
     useBuildingsMock.mockReturnValue(
       liveResult<Building>([
         { building_id: 'main', building_name: 'Main Building', address: '' } as Building,
       ]),
     );
+    const wardsList = [
+      { ward_code: 'CO', ward_name: 'Cordera', building_name: 'Other', seat_cap: 1 } as Ward,
+    ];
+    useWardsMock.mockReturnValue(liveResult<Ward>(wardsList));
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('wizard-step-tab-2'));
@@ -367,6 +381,7 @@ describe('<BootstrapWizardPage />', () => {
       expect(deleteBuildingMutate).toHaveBeenCalledWith({
         buildingId: 'main',
         buildingName: 'Main Building',
+        wards: wardsList,
       }),
     );
   });

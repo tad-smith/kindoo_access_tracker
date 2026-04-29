@@ -242,6 +242,9 @@ function WardsTab() {
 
 function BuildingsTab() {
   const buildings = useBuildings();
+  // Subscribe to wards so the building delete ref-guard can block when
+  // any ward references this building (wards FK on building_name).
+  const wards = useWards();
   const upsert = useUpsertBuildingMutation();
   const del = useDeleteBuildingMutation();
 
@@ -279,7 +282,11 @@ function BuildingsTab() {
               variant="danger"
               onClick={() =>
                 del
-                  .mutateAsync({ buildingId: b.building_id, buildingName: b.building_name })
+                  .mutateAsync({
+                    buildingId: b.building_id,
+                    buildingName: b.building_name,
+                    wards: wards.data ?? [],
+                  })
                   .then(() => toast('Building deleted.', 'success'))
                   .catch((err) => toast(errorMessage(err), 'error'))
               }

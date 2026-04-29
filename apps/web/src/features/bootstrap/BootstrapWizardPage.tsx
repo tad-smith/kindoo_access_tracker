@@ -64,6 +64,7 @@ import {
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
+import { ToastHost } from '../../components/ui/Toast';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
 import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
@@ -192,6 +193,10 @@ export function BootstrapWizardPage() {
         </div>
         <CompleteSetupBlockers missing={completionBlockers({ step1Done, step2Done, step3Done })} />
       </div>
+      {/* The wizard renders outside <Shell> so the global toast host
+          isn't mounted by default. Mount it here so operator-visible
+          toasts (success / error) actually surface during bootstrap. */}
+      <ToastHost />
     </main>
   );
 }
@@ -353,6 +358,9 @@ function Step1Form() {
 
 function Step2Buildings() {
   const buildings = useBuildings();
+  // Subscribe to wards so the building ref-guard can compute against
+  // the same snapshot the user just saw (no extra Firestore round-trip).
+  const wards = useWards();
   const addMutation = useAddBuildingMutation();
   const deleteMutation = useDeleteBuildingMutation();
 
@@ -387,7 +395,11 @@ function Step2Buildings() {
               variant="danger"
               onClick={() => {
                 deleteMutation
-                  .mutateAsync({ buildingId: b.building_id, buildingName: b.building_name })
+                  .mutateAsync({
+                    buildingId: b.building_id,
+                    buildingName: b.building_name,
+                    wards: wards.data ?? [],
+                  })
                   .then(() => toast('Building deleted.', 'success'))
                   .catch((err) => toast(errorMessage(err), 'error'));
               }}
