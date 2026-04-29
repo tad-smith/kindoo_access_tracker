@@ -223,9 +223,11 @@ Phase: 3.5
 Resolved by pinning Node 22 project-wide. Root `package.json` carries `"volta": { "node": "22.22.2" }` so Volta auto-installs and resolves the right Node when the operator (or any contributor with Volta) `cd`s into the repo. `.nvmrc` (`22`) covers nvm/fnm contributors as defense-in-depth. `.npmrc` adds `engine-strict=true` so npm/pnpm refuses to install on a mismatched runtime. Root `engines.node` bumped from `>=20` to `>=22`. Functions still pin `engines.node: "22"` (matches Cloud Functions v2 runtime). Emulator no longer emits the version-mismatch warning. Closed at Phase 3.5 close — see `docs/changelog/phase-3-5-infra-refresh.md`.
 
 ## [T-15] Configure Firestore TTL on auditLog collection-group
-Status: open
+Status: done (2026-04-29)
 Owner: @infra-engineer (operator runs gcloud) + @tad
 Phase: 3 → due before Phase 8 importer ships (or any earlier deploy that writes auditLog rows)
+
+Closed 2026-04-29: operator configured Firestore TTL on the `auditLog` collection-group on both staging and production projects via `gcloud firestore fields ttls update ttl --collection-group=auditLog --enable-ttl`. The optional `platformAuditLog` TTL remains at the operator's discretion.
 
 `firebase-schema.md` §5.2 specifies a 365-day TTL on `auditLog.ttl`, configured once via `gcloud` per project. Firestore TTL policies are not declared in source — they're a project-level configuration applied via:
 
