@@ -99,7 +99,11 @@ function QueueCard({ request, buildings }: QueueCardProps) {
       data-request-type={request.type}
     >
       <div className="kd-queue-card-line1">
-        <Badge variant={request.type === 'add_temp' ? 'temp' : request.type === 'remove' ? 'danger' : 'manual'}>
+        <Badge
+          variant={
+            request.type === 'add_temp' ? 'temp' : request.type === 'remove' ? 'danger' : 'manual'
+          }
+        >
           {labelForType(request.type)}
         </Badge>
         <span className="roster-card-chip roster-card-scope">
@@ -148,7 +152,10 @@ function QueueCard({ request, buildings }: QueueCardProps) {
         </div>
       ) : null}
       {request.type !== 'remove' && dup.data ? (
-        <div className="kd-queue-card-warning" data-testid={`queue-duplicate-${request.request_id}`}>
+        <div
+          className="kd-queue-card-warning"
+          data-testid={`queue-duplicate-${request.request_id}`}
+        >
           <Badge variant="warning">Duplicate</Badge> Member already has a {dup.data.type} seat in{' '}
           {dup.data.scope}.
         </div>

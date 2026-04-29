@@ -17,6 +17,21 @@ vi.mock('../../lib/data', () => ({
   useFirestoreOnce: (ref: unknown) => useFirestoreOnceMock(ref),
 }));
 
+vi.mock('../requests/hooks', () => ({
+  usePendingRemoveRequests: () => ({
+    data: [],
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  }),
+  useSubmitRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 import { StakeRosterPage } from './RosterPage';
 
 function mockSeats(seats: Seat[] | undefined, isLoading = false) {

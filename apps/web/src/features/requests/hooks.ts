@@ -11,12 +11,7 @@
 // queue / my-requests features keeps each page's mutation set local
 // while sharing the rendering primitives below.
 
-import {
-  addDoc,
-  query,
-  serverTimestamp,
-  where,
-} from 'firebase/firestore';
+import { addDoc, query, serverTimestamp, where } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail } from '@kindoo/shared';

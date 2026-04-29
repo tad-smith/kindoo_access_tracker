@@ -19,7 +19,7 @@
 //     entered member in the chosen scope (live via `useSeatForMember`).
 //   - Submit writes a request doc; success → toast + form reset.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { canonicalEmail } from '@kindoo/shared';
@@ -246,7 +246,9 @@ export function NewRequestForm({ scopes, buildings }: NewRequestFormProps) {
             Buildings <small>(at least one required)</small>
           </legend>
           {buildings.length === 0 ? (
-            <p className="kd-empty-state">No buildings configured. Ask a Kindoo Manager to add buildings via Configuration.</p>
+            <p className="kd-empty-state">
+              No buildings configured. Ask a Kindoo Manager to add buildings via Configuration.
+            </p>
           ) : (
             <ul className="kd-checkbox-list">
               {buildings.map((b) => {
@@ -283,10 +285,14 @@ export function NewRequestForm({ scopes, buildings }: NewRequestFormProps) {
       ) : null}
 
       {dupHit ? (
-        <div className="kd-duplicate-warning" role="status" data-testid="new-request-duplicate-warning">
-          <Badge variant="warning">Heads up</Badge>{' '}
-          {dupHit.member_email} already has a {dupHit.type} seat in {dupHit.scope}. You can still
-          submit if you mean to; the manager will see the duplicate too.
+        <div
+          className="kd-duplicate-warning"
+          role="status"
+          data-testid="new-request-duplicate-warning"
+        >
+          <Badge variant="warning">Heads up</Badge> {dupHit.member_email} already has a{' '}
+          {dupHit.type} seat in {dupHit.scope}. You can still submit if you mean to; the manager
+          will see the duplicate too.
         </div>
       ) : null}
 
