@@ -1,6 +1,6 @@
 # .github/workflows/
 
-GitHub Actions workflows for the Kindoo repository.
+GitHub Actions workflows for the Stake Building Access repository.
 
 | Workflow | Source-of-truth | Triggers |
 |---|---|---|

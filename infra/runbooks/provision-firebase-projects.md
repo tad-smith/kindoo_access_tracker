@@ -243,7 +243,7 @@ gcloud firestore databases create \
 1. Firebase console → "Authentication" in the left nav → "Get started."
 2. The "Sign-in method" tab opens. Click "Google" under "Additional providers."
 3. Toggle **Enable** to on.
-4. **Project public-facing name:** `Kindoo Access Tracker`. (This shows in the Google sign-in popup.)
+4. **Project public-facing name:** `Stake Building Access`. (This shows in the Google sign-in popup.)
 5. **Project support email:** your operator email.
 6. Click "Save."
 
@@ -260,7 +260,7 @@ This is the explicit-credentials service account for any code path that uses the
 
 ```bash
 gcloud iam service-accounts create kindoo-app \
-  --display-name="Kindoo runtime service account" \
+  --display-name="Stake Building Access runtime service account" \
   --project=kindoo-staging
 ```
 
@@ -327,7 +327,7 @@ The web app needs Firebase config (API key, auth domain, etc.) to talk to this p
 
 1. Firebase console → gear icon → "Project settings" → "General" tab.
 2. Scroll to "Your apps" near the bottom. Click the web icon (`</>`) to register a web app.
-3. **App nickname:** `Kindoo Web (staging)` or similar.
+3. **App nickname:** `Stake Building Access Web (staging)` or similar.
 4. **Set up Firebase Hosting:** check this box. (If you skip this, Firebase auto-creates a default Hosting site at `kindoo-staging.web.app` later, but checking it now produces cleaner config.)
 5. Click "Register app."
 6. Firebase shows the config object — six values: `apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId`, `appId`. **Copy these now**; you can re-display them later from the same page if needed.
@@ -378,7 +378,7 @@ When done, you should have:
 - All 14 services enabled.
 - The default Hosting site initialized via the console wizard.
 - A Firestore database in `us-central1` Native mode.
-- Authentication with Google sign-in enabled, public name "Kindoo Access Tracker," authorized domains: `localhost`, `kindoo-prod.web.app`, `kindoo-prod.firebaseapp.com`.
+- Authentication with Google sign-in enabled, public name "Stake Building Access," authorized domains: `localhost`, `kindoo-prod.web.app`, `kindoo-prod.firebaseapp.com`.
 - A `kindoo-app` SA with the three F1 roles.
 - The default compute SA with `roles/datastore.user`, `roles/run.invoker`, `roles/secretmanager.secretAccessor`.
 - A registered web app — but **do not write its config to `apps/web/.env.local`** (which holds staging). Save it somewhere safe; it will land in CI secrets or an `.env.production` later. For now, copy it into a personal-notes scratchpad and forget it.

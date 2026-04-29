@@ -49,7 +49,7 @@ export function SignInPage() {
         gap: '1rem',
       }}
     >
-      <h1>Kindoo Access Tracker</h1>
+      <h1>Stake Building Access</h1>
       <p>Sign in to manage building access for your stake.</p>
       <Button onClick={handleClick} disabled={pending}>
         {pending ? 'Signing in…' : 'Sign in with Google'}

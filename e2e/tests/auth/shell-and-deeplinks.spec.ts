@@ -15,6 +15,7 @@ import {
   clearFirestore,
   createAuthUser,
   setCustomClaims,
+  writeDoc,
 } from '../../fixtures/emulator';
 
 const TEST_PASSWORD = 'test-password-12345';
@@ -99,6 +100,36 @@ test.describe('Phase 5 shell + deep-links', () => {
     await page.goForward();
     await expect(page.getByRole('heading', { name: /^Audit Log$/ })).toBeVisible();
     await expect(topbarBrand).toBeVisible();
+  });
+
+  test('topbar brand shows the stake name once the stake doc loads', async ({ page }) => {
+    // Seed a stake doc with a deterministic display name. The Shell's
+    // live `useFirestoreDoc(stakeRef(...))` subscription should swap
+    // the topbar brand from the product-name fallback to the
+    // `stake_name` value once the snapshot lands.
+    await writeDoc('stakes/csnorth', {
+      stake_id: 'csnorth',
+      stake_name: 'Test Stake (E2E)',
+    });
+
+    await signInAsManager(page, 'brand-bar@example.com');
+    await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
+
+    const brand = page.locator('.kd-topbar-brand');
+    await expect(brand).toHaveText('Test Stake (E2E)');
+  });
+
+  test('topbar brand falls back to the product name when the stake doc is missing', async ({
+    page,
+  }) => {
+    // No stake doc seeded — the live subscription resolves to "doc
+    // doesn't exist", and the Shell falls back to "Stake Building
+    // Access" so the topbar is never empty.
+    await signInAsManager(page, 'brand-bar-fallback@example.com');
+    await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
+
+    const brand = page.locator('.kd-topbar-brand');
+    await expect(brand).toHaveText('Stake Building Access');
   });
 
   test('mobile viewport (375x667) renders without horizontal scroll', async ({ page }) => {

@@ -1,6 +1,6 @@
-# Kindoo Access Tracker
+# Stake Building Access
 
-A Google Apps Script web app used by a stake of The Church of Jesus Christ of Latter-day Saints to manage Kindoo door-access seat assignments across its wards.
+A web app used by a stake of The Church of Jesus Christ of Latter-day Saints to manage Kindoo door-access seat assignments across its wards. Currently running on Google Apps Script in production; **migrating to Firebase as of 2026-04-27** — see [`docs/firebase-migration.md`](docs/firebase-migration.md). The product name was previously "Kindoo Access Tracker"; renamed to match the new domain `stakebuildingaccess.org` (per F17 in the migration plan).
 
 ## What it does
 
@@ -44,7 +44,7 @@ Specification: [`docs/spec.md`](docs/spec.md) (live — always describes the cur
    npm install
    ```
 2. Create the backing Google Sheet and its bound Apps Script project. Full instructions: [`docs/sheet-setup.md`](docs/sheet-setup.md). Summary:
-   1. In Google Drive, **New → Google Sheets**. Name it (e.g. `Kindoo Access Tracker — CS North`).
+   1. In Google Drive, **New → Google Sheets**. Name it (e.g. `Stake Building Access — CS North`).
    2. In the sheet, **Extensions → Apps Script**. This creates a bound script project.
    3. Copy the script ID from the Apps Script editor URL (`…/projects/<SCRIPT_ID>/edit`).
 3. Wire clasp to that script:

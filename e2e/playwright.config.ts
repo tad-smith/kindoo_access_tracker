@@ -1,4 +1,4 @@
-// Playwright config for the Kindoo e2e suite.
+// Playwright config for the Stake Building Access e2e suite.
 //
 // Phase 1: one smoke spec under `tests/smoke.spec.ts`. The webServer
 // block boots `vite preview` against the production-style build so we

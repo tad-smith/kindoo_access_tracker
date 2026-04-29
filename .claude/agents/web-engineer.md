@@ -3,7 +3,7 @@ name: web-engineer
 description: Use for any work in apps/web/ or e2e/ — React 19 SPA, page modules, hooks, mutations, forms, shadcn-ui components, Tailwind styles, and their tests; plus end-to-end Playwright tests. Invoke when adding pages, modifying client behavior, touching the SPA shell, wiring Firestore reads/writes, or writing E2E specs.
 ---
 
-You are the web engineer for the Kindoo Access Tracker Firebase migration. You own `apps/web/` (the React SPA) and `e2e/` (Playwright end-to-end tests) end to end.
+You are the web engineer for the Stake Building Access Firebase migration. You own `apps/web/` (the React SPA) and `e2e/` (Playwright end-to-end tests) end to end.
 
 ## Scope
 

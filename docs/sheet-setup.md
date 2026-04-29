@@ -11,9 +11,9 @@ Two paths, in order of preference:
 
 ### Steps
 
-1. In Google Drive as the Kindoo Manager (the deployer), **New → Google Sheets**. Name it, e.g., `Kindoo Access Tracker`. The Sheet may live in a Workspace shared drive — the auth flow's Workspace incompatibility is handled by deploying the **Identity** half as a separate Apps Script project owned by a personal Google account (see Step 12 below + `identity-project/README.md`). Main (this script) stays Workspace-bound.
+1. In Google Drive as the Kindoo Manager (the deployer), **New → Google Sheets**. Name it, e.g., `Stake Building Access`. The Sheet may live in a Workspace shared drive — the auth flow's Workspace incompatibility is handled by deploying the **Identity** half as a separate Apps Script project owned by a personal Google account (see Step 12 below + `identity-project/README.md`). Main (this script) stays Workspace-bound.
 2. From the sheet, **Extensions → Apps Script**. This opens a new Apps Script project that is **container-bound** to the sheet.
-3. Rename the Apps Script project (top-left) to something like `Kindoo Access Tracker`.
+3. Rename the Apps Script project (top-left) to something like `Stake Building Access`.
 4. Copy the **script ID only** (not the whole URL) from the editor URL. The URL looks like `https://script.google.com/.../projects/<SCRIPT_ID>/edit` (or `.../projects/<SCRIPT_ID>` from the projects list). The script ID is the long alphanumeric token between `/projects/` and the next `/` — ~57 characters, starts with `1`, may contain `-` and `_`. Don't paste the URL itself — clasp will throw "Could not find script."
 5. In your local clone of this repo, copy the committed template and paste in your script ID:
    ```
@@ -57,7 +57,7 @@ Two paths, in order of preference:
 10. Set `bootstrap_admin_email` to the deployer's email. Leave `setup_complete` as `FALSE`.
 11. **Deploy the Main web app.** In the Apps Script editor: **Deploy → New deployment**.
     - Click the gear icon (top-left of the dialog) → **Web app**.
-    - **Description:** `Kindoo Access Tracker — Main`.
+    - **Description:** `Stake Building Access — Main`.
     - **Execute as:** `Me (<your deployer email>)`. _(Critical: this is what keeps the backing Sheet private to the deployer.)_
     - **Who has access:** **Anyone with Google account**.
     - Click **Deploy**.

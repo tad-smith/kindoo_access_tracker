@@ -1,6 +1,6 @@
-# Kindoo Access Tracker — Claude Code guidance
+# Stake Building Access — Claude Code guidance
 
-A door-access tracker that manages Kindoo seat assignments across the wards of a single LDS stake. Currently running on Google Apps Script in production; **migrating to Firebase as of 2026-04-27** (target: as quickly as possible).
+A door-access tracker that manages Kindoo seat assignments across the wards of a single LDS stake. (Previously named "Kindoo Access Tracker"; renamed to match the new `stakebuildingaccess.org` domain locked in 2026-04-27 per F17.) Currently running on Google Apps Script in production; **migrating to Firebase as of 2026-04-27** (target: as quickly as possible).
 
 `docs/spec.md` is the authoritative description of runtime behaviour.
 

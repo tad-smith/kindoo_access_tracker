@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "0.0.0",
-  "description": "End-to-end Playwright suite for the Kindoo SPA. Phase 1 ships one smoke spec; flow-based suites land alongside Phases 4-10 of the Firebase migration.",
+  "description": "End-to-end Playwright suite for the Stake Building Access SPA. Phase 1 ships one smoke spec; flow-based suites land alongside Phases 4-10 of the Firebase migration.",
   "scripts": {
     "test": "playwright test",
     "test:e2e": "playwright test",

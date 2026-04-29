@@ -46,7 +46,7 @@ export function NotAuthorizedPage() {
     >
       <h1>Not authorized</h1>
       <p style={{ maxWidth: '50ch' }}>
-        Your account isn&rsquo;t yet authorized to use Kindoo. Common reasons:
+        Your account isn&rsquo;t yet authorized to use Stake Building Access. Common reasons:
       </p>
       <ul style={{ maxWidth: '50ch', textAlign: 'left' }}>
         <li>
