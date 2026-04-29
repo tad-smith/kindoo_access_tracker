@@ -44,6 +44,8 @@ const DEEP_LINK_TABLE: Record<string, string> = {
   'mgr/seats': '/manager/seats',
   'mgr/audit': '/manager/audit',
   'mgr/access': '/manager/access',
+  'mgr/configuration': '/manager/configuration',
+  'mgr/import': '/manager/import',
 
   // Cross-role MyRequests
   myreq: '/my-requests',

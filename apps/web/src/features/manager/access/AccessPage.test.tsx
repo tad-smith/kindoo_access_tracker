@@ -7,9 +7,18 @@ import type { Access } from '@kindoo/shared';
 import { makeAccess } from '../../../../test/fixtures';
 
 const useAccessListMock = vi.fn();
+const useStakeWardsMock = vi.fn();
+const addManualMutate = vi.fn().mockResolvedValue(undefined);
+const deleteManualMutate = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./hooks', () => ({
   useAccessList: () => useAccessListMock(),
+  useAddManualGrantMutation: () => ({ mutateAsync: addManualMutate, isPending: false }),
+  useDeleteManualGrantMutation: () => ({ mutateAsync: deleteManualMutate, isPending: false }),
+}));
+
+vi.mock('../dashboard/hooks', () => ({
+  useStakeWards: () => useStakeWardsMock(),
 }));
 
 import { AccessPage } from './AccessPage';
@@ -30,6 +39,7 @@ function liveResult<T>(data: T[] | undefined, isLoading = false) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useStakeWardsMock.mockReturnValue(liveResult([]));
 });
 
 describe('<AccessPage />', () => {
@@ -119,5 +129,57 @@ describe('<AccessPage />', () => {
     await u.selectOptions(screen.getByLabelText(/^Scope:/), 'CO');
     expect(screen.getByTestId('access-card-co@x.com')).toBeInTheDocument();
     expect(screen.queryByTestId('access-card-ge@x.com')).toBeNull();
+  });
+
+  it('renders the Add Manual Access form', () => {
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    expect(screen.getByTestId('add-manual-form')).toBeInTheDocument();
+  });
+
+  it('invokes the add-mutation when the form is submitted with valid input', async () => {
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    const u = userEvent.setup();
+    render(<AccessPage />);
+    const form = screen.getByTestId('add-manual-form');
+    await u.type(within(form).getByLabelText(/Email/i), 'sub@example.com');
+    await u.type(within(form).getByLabelText(/Name/i), 'Sub');
+    await u.type(within(form).getByLabelText(/Reason/i), 'Covering bishop');
+    await u.click(within(form).getByRole('button', { name: /Add manual access/i }));
+    expect(addManualMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ member_email: 'sub@example.com', reason: 'Covering bishop' }),
+    );
+  });
+
+  it('opens the delete confirmation dialog when a grant Delete is clicked', async () => {
+    const u = userEvent.setup();
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          manual_grants: {
+            stake: [
+              {
+                grant_id: 'g1',
+                reason: 'Covering bishop',
+                granted_by: { email: 'm@x.com', canonical: 'm@x.com' },
+                granted_at: {
+                  seconds: 0,
+                  nanoseconds: 0,
+                  toDate: () => new Date(),
+                  toMillis: () => 0,
+                },
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    const buttons = screen.getAllByRole('button', { name: /^Delete$/ });
+    await u.click(buttons[0]!);
+    expect(screen.getByText(/Remove manual access\?/i)).toBeInTheDocument();
+    // Confirm via the dialog's Remove button.
+    await u.click(screen.getByRole('button', { name: /^Remove$/ }));
+    expect(deleteManualMutate).toHaveBeenCalled();
   });
 });

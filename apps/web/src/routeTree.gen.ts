@@ -15,7 +15,9 @@ import { Route as AuthedMyRequestsRouteImport } from './routes/_authed/my-reques
 import { Route as AuthedStakeWardsRouteImport } from './routes/_authed/stake/wards'
 import { Route as AuthedStakeRosterRouteImport } from './routes/_authed/stake/roster'
 import { Route as AuthedManagerSeatsRouteImport } from './routes/_authed/manager/seats'
+import { Route as AuthedManagerImportRouteImport } from './routes/_authed/manager/import'
 import { Route as AuthedManagerDashboardRouteImport } from './routes/_authed/manager/dashboard'
+import { Route as AuthedManagerConfigurationRouteImport } from './routes/_authed/manager/configuration'
 import { Route as AuthedManagerAuditRouteImport } from './routes/_authed/manager/audit'
 import { Route as AuthedManagerAccessRouteImport } from './routes/_authed/manager/access'
 import { Route as AuthedBishopricRosterRouteImport } from './routes/_authed/bishopric/roster'
@@ -49,11 +51,22 @@ const AuthedManagerSeatsRoute = AuthedManagerSeatsRouteImport.update({
   path: '/manager/seats',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedManagerImportRoute = AuthedManagerImportRouteImport.update({
+  id: '/manager/import',
+  path: '/manager/import',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const AuthedManagerDashboardRoute = AuthedManagerDashboardRouteImport.update({
   id: '/manager/dashboard',
   path: '/manager/dashboard',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedManagerConfigurationRoute =
+  AuthedManagerConfigurationRouteImport.update({
+    id: '/manager/configuration',
+    path: '/manager/configuration',
+    getParentRoute: () => AuthedRoute,
+  } as any)
 const AuthedManagerAuditRoute = AuthedManagerAuditRouteImport.update({
   id: '/manager/audit',
   path: '/manager/audit',
@@ -76,7 +89,9 @@ export interface FileRoutesByFullPath {
   '/bishopric/roster': typeof AuthedBishopricRosterRoute
   '/manager/access': typeof AuthedManagerAccessRoute
   '/manager/audit': typeof AuthedManagerAuditRoute
+  '/manager/configuration': typeof AuthedManagerConfigurationRoute
   '/manager/dashboard': typeof AuthedManagerDashboardRoute
+  '/manager/import': typeof AuthedManagerImportRoute
   '/manager/seats': typeof AuthedManagerSeatsRoute
   '/stake/roster': typeof AuthedStakeRosterRoute
   '/stake/wards': typeof AuthedStakeWardsRoute
@@ -87,7 +102,9 @@ export interface FileRoutesByTo {
   '/bishopric/roster': typeof AuthedBishopricRosterRoute
   '/manager/access': typeof AuthedManagerAccessRoute
   '/manager/audit': typeof AuthedManagerAuditRoute
+  '/manager/configuration': typeof AuthedManagerConfigurationRoute
   '/manager/dashboard': typeof AuthedManagerDashboardRoute
+  '/manager/import': typeof AuthedManagerImportRoute
   '/manager/seats': typeof AuthedManagerSeatsRoute
   '/stake/roster': typeof AuthedStakeRosterRoute
   '/stake/wards': typeof AuthedStakeWardsRoute
@@ -100,7 +117,9 @@ export interface FileRoutesById {
   '/_authed/bishopric/roster': typeof AuthedBishopricRosterRoute
   '/_authed/manager/access': typeof AuthedManagerAccessRoute
   '/_authed/manager/audit': typeof AuthedManagerAuditRoute
+  '/_authed/manager/configuration': typeof AuthedManagerConfigurationRoute
   '/_authed/manager/dashboard': typeof AuthedManagerDashboardRoute
+  '/_authed/manager/import': typeof AuthedManagerImportRoute
   '/_authed/manager/seats': typeof AuthedManagerSeatsRoute
   '/_authed/stake/roster': typeof AuthedStakeRosterRoute
   '/_authed/stake/wards': typeof AuthedStakeWardsRoute
@@ -113,7 +132,9 @@ export interface FileRouteTypes {
     | '/bishopric/roster'
     | '/manager/access'
     | '/manager/audit'
+    | '/manager/configuration'
     | '/manager/dashboard'
+    | '/manager/import'
     | '/manager/seats'
     | '/stake/roster'
     | '/stake/wards'
@@ -124,7 +145,9 @@ export interface FileRouteTypes {
     | '/bishopric/roster'
     | '/manager/access'
     | '/manager/audit'
+    | '/manager/configuration'
     | '/manager/dashboard'
+    | '/manager/import'
     | '/manager/seats'
     | '/stake/roster'
     | '/stake/wards'
@@ -136,7 +159,9 @@ export interface FileRouteTypes {
     | '/_authed/bishopric/roster'
     | '/_authed/manager/access'
     | '/_authed/manager/audit'
+    | '/_authed/manager/configuration'
     | '/_authed/manager/dashboard'
+    | '/_authed/manager/import'
     | '/_authed/manager/seats'
     | '/_authed/stake/roster'
     | '/_authed/stake/wards'
@@ -191,11 +216,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedManagerSeatsRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/manager/import': {
+      id: '/_authed/manager/import'
+      path: '/manager/import'
+      fullPath: '/manager/import'
+      preLoaderRoute: typeof AuthedManagerImportRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/manager/dashboard': {
       id: '/_authed/manager/dashboard'
       path: '/manager/dashboard'
       fullPath: '/manager/dashboard'
       preLoaderRoute: typeof AuthedManagerDashboardRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/manager/configuration': {
+      id: '/_authed/manager/configuration'
+      path: '/manager/configuration'
+      fullPath: '/manager/configuration'
+      preLoaderRoute: typeof AuthedManagerConfigurationRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/manager/audit': {
@@ -227,7 +266,9 @@ interface AuthedRouteChildren {
   AuthedBishopricRosterRoute: typeof AuthedBishopricRosterRoute
   AuthedManagerAccessRoute: typeof AuthedManagerAccessRoute
   AuthedManagerAuditRoute: typeof AuthedManagerAuditRoute
+  AuthedManagerConfigurationRoute: typeof AuthedManagerConfigurationRoute
   AuthedManagerDashboardRoute: typeof AuthedManagerDashboardRoute
+  AuthedManagerImportRoute: typeof AuthedManagerImportRoute
   AuthedManagerSeatsRoute: typeof AuthedManagerSeatsRoute
   AuthedStakeRosterRoute: typeof AuthedStakeRosterRoute
   AuthedStakeWardsRoute: typeof AuthedStakeWardsRoute
@@ -238,7 +279,9 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedBishopricRosterRoute: AuthedBishopricRosterRoute,
   AuthedManagerAccessRoute: AuthedManagerAccessRoute,
   AuthedManagerAuditRoute: AuthedManagerAuditRoute,
+  AuthedManagerConfigurationRoute: AuthedManagerConfigurationRoute,
   AuthedManagerDashboardRoute: AuthedManagerDashboardRoute,
+  AuthedManagerImportRoute: AuthedManagerImportRoute,
   AuthedManagerSeatsRoute: AuthedManagerSeatsRoute,
   AuthedStakeRosterRoute: AuthedStakeRosterRoute,
   AuthedStakeWardsRoute: AuthedStakeWardsRoute,

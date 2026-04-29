@@ -1,16 +1,17 @@
 // Role-aware nav. Generates the link set from the active principal's
 // claims per the page map in `docs/spec.md` §5.
 //
-// Phase 5 ship-set (read-only pages):
+// Manager ship-set (post-Phase-7 swap; read-only pages + admin pages):
 //   - Bishopric: Roster (own ward), My Requests
 //   - Stake:     Roster, Ward Rosters, My Requests
-//   - Manager:   Dashboard, All Seats, Audit Log, Access, My Requests
+//   - Manager:   Dashboard, All Seats, Audit Log, Access, Configuration,
+//                Import, My Requests
 //
-// Phase 6 will re-add New Kindoo Request (bishopric + stake) and the
-// manager Requests Queue. Phase 7 adds Configuration / Import. Until
-// they ship the corresponding nav links don't appear at all (rather
-// than shipping disabled placeholders) — keeping the nav truthful
-// about what works today.
+// The request-lifecycle phase will re-add New Kindoo Request
+// (bishopric + stake) and the manager Requests Queue. Until they ship
+// the corresponding nav links don't appear at all (rather than
+// shipping disabled placeholders) — keeping the nav truthful about
+// what works today.
 //
 // "Highest-role priority" mirrors `Router_defaultPageFor_` from the
 // Apps Script Router: manager > stake > bishopric. Multi-role users
@@ -34,6 +35,8 @@ function managerLinks(): NavLinkSpec[] {
     { key: 'mgr/seats', label: 'All Seats', to: '/manager/seats' },
     { key: 'mgr/audit', label: 'Audit Log', to: '/manager/audit' },
     { key: 'mgr/access', label: 'Access', to: '/manager/access' },
+    { key: 'mgr/configuration', label: 'Configuration', to: '/manager/configuration' },
+    { key: 'mgr/import', label: 'Import', to: '/manager/import' },
     { key: 'myreq', label: 'My Requests', to: '/my-requests' },
   ];
 }

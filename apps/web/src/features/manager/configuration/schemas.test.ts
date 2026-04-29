@@ -1,0 +1,85 @@
+// Schema tests for the Configuration sub-forms.
+
+import { describe, expect, it } from 'vitest';
+import {
+  buildingSchema,
+  callingTemplateSchema,
+  configSchema,
+  managerSchema,
+  wardSchema,
+} from './schemas';
+
+describe('configuration wardSchema', () => {
+  it('accepts a valid ward', () => {
+    const r = wardSchema.safeParse({
+      ward_code: 'CO',
+      ward_name: 'Cordera',
+      building_name: 'Main',
+      seat_cap: 20,
+    });
+    expect(r.success).toBe(true);
+  });
+  it('rejects ward code with hyphens', () => {
+    const r = wardSchema.safeParse({
+      ward_code: 'C-O',
+      ward_name: 'X',
+      building_name: 'Main',
+      seat_cap: 1,
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe('configuration buildingSchema', () => {
+  it('rejects empty name', () => {
+    const r = buildingSchema.safeParse({ building_name: '', address: '' });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe('configuration managerSchema', () => {
+  it('rejects malformed email', () => {
+    const r = managerSchema.safeParse({ member_email: 'no', name: 'X', active: true });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe('configuration callingTemplateSchema', () => {
+  it('accepts a wildcard calling name', () => {
+    const r = callingTemplateSchema.safeParse({
+      calling_name: 'Counselor *',
+      give_app_access: true,
+      sheet_order: 5,
+    });
+    expect(r.success).toBe(true);
+  });
+});
+
+describe('configuration configSchema', () => {
+  it('accepts a fully populated config', () => {
+    const r = configSchema.safeParse({
+      stake_name: 'My Stake',
+      callings_sheet_id: 'sheet1',
+      stake_seat_cap: 200,
+      expiry_hour: 4,
+      import_day: 'MONDAY',
+      import_hour: 6,
+      timezone: 'America/Denver',
+      notifications_enabled: true,
+    });
+    expect(r.success).toBe(true);
+  });
+  it('rejects out-of-range hours', () => {
+    const r = configSchema.safeParse({
+      stake_name: 'X',
+      callings_sheet_id: 'X',
+      stake_seat_cap: 0,
+      expiry_hour: 25,
+      import_day: 'MONDAY',
+      import_hour: 0,
+      timezone: 'X',
+      notifications_enabled: false,
+    });
+    expect(r.success).toBe(false);
+  });
+});

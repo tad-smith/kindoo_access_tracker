@@ -70,6 +70,17 @@ test.describe('auth-flow', () => {
   });
 
   test('signed-in user with no role claims sees NotAuthorizedPage', async ({ page }) => {
+    // Seed a setup-complete stake so the Phase 7 setup-complete gate
+    // doesn't claim the user. With `setup_complete=true`, the noclaims
+    // user falls through to NotAuthorized as the test asserts.
+    // (Pre-Phase-7 the gate didn't exist; the implicit default was
+    // setup-complete-true.)
+    await writeDoc('stakes/csnorth', {
+      stake_id: 'csnorth',
+      stake_name: 'Test Stake',
+      bootstrap_admin_email: 'admin@example.com',
+      setup_complete: true,
+    });
     await createAuthUser({ email: 'noclaims@example.com' });
     await page.goto('/');
     await signInViaTestHatch(page, 'noclaims@example.com', TEST_PASSWORD);

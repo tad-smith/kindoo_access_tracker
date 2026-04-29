@@ -311,3 +311,42 @@ Decision blocker: nobody has used the audit log on real data on the new SPA yet.
 
 - `apps/web/src/features/manager/auditLog/summarise.ts` (the `diffKeys` helper)
 - The detail-row rendering inside `apps/web/src/features/manager/auditLog/AuditLogPage.tsx` (or wherever the `<details>` block lives)
+
+## [T-22] Bootstrap-wizard rules: allow bootstrap-admin writes when `setup_complete=false`
+Status: open
+Owner: @backend-engineer
+Phase: 7 (current — was discovered during Phase 7 wizard wiring)
+
+The Phase 7 bootstrap wizard (in `apps/web/src/features/bootstrap/`) writes to:
+
+- `stakes/{sid}/kindooManagers/{canonical}` — auto-adds the bootstrap admin on first wizard load.
+- `stakes/{sid}` parent doc — Step 1 (stake_name, callings_sheet_id, stake_seat_cap) and the final `setup_complete=true` flip.
+- `stakes/{sid}/buildings/{slug}` — Step 2.
+- `stakes/{sid}/wards/{ward_code}` — Step 3.
+
+The current rules (firestore/firestore.rules) gate every one of these writes on `isManager(stakeId)` — but the bootstrap admin doesn't yet hold a manager claim until the `syncManagersClaims` trigger fans the auto-added kindooManagers doc into a custom claim. That auto-add itself requires a write to kindooManagers, which the rule denies. **Chicken-and-egg.**
+
+Two clean ways out — backend-engineer's call:
+
+1. **Add a bootstrap-admin escape hatch** keyed off the parent stake doc:
+   ```
+   function isBootstrapAdmin(sid) {
+     let stake = get(/databases/$(database)/documents/stakes/$(sid));
+     return isAuthed()
+       && stake.data.setup_complete == false
+       && stake.data.bootstrap_admin_email == request.auth.token.email;
+   }
+   ```
+   Add `|| isBootstrapAdmin(stakeId)` to the write predicate on every collection the wizard touches. Note the `setup_complete=false` clause makes this strictly time-bounded: once the wizard flips that field, the predicate goes silent and the manager claim (already minted by `syncManagersClaims` after the auto-add) takes over.
+
+2. **Wrap wizard writes in a Cloud Function** (`runBootstrapWizardStep` callable). Functions bypass rules via Admin SDK; the callable verifies `auth.email == stake.bootstrap_admin_email && stake.setup_complete == false`. Keeps the rules clean but adds a network round-trip per step.
+
+Either fix needs the **one-shot wizard** invariant from `firebase-migration.md` Phase 7: every wizard mutation has a rule-level (or callable-level) check that `stake.setup_complete === false`. Once flipped, the wizard's writes are denied. Phase 7 acceptance test: hand-crafted POST after `setup_complete=true` is denied.
+
+Tests to add (in `firestore/tests/`):
+- Bootstrap admin write to kindooManagers when `setup_complete=false` → allowed.
+- Bootstrap admin write to kindooManagers when `setup_complete=true` → denied.
+- Non-admin authed user write to any wizard-managed collection during bootstrap → denied.
+- Bootstrap admin write to stake doc (`setup_complete: true`) is allowed and is a one-way flip (subsequent `setup_complete: false` write by bootstrap admin alone is denied — they need to be a manager for that, which they are post-flip via the kindooManagers auto-add).
+
+The web side is already wired to fail gracefully (each wizard mutation surfaces server errors as toast), so this is purely a server-side gap. Phase 7 SPA pushed the UI against a bare staging env in good faith; once the rules update lands, a fresh `setup_complete=false` stake walks through the wizard end-to-end.

@@ -37,13 +37,15 @@ describe('navLinksForPrincipal (pure derivation)', () => {
     expect(navLinksForPrincipal(makePrincipal())).toEqual([]);
   });
 
-  it('returns the Phase 5 manager link set for a manager principal', () => {
+  it('returns the manager link set including Phase 7 admin pages', () => {
     const links = navLinksForPrincipal(makePrincipal({ managerStakes: ['csnorth'] }));
     expect(links.map((l) => l.label)).toEqual([
       'Dashboard',
       'All Seats',
       'Audit Log',
       'Access',
+      'Configuration',
+      'Import',
       'My Requests',
     ]);
   });
