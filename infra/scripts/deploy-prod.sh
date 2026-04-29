@@ -28,8 +28,8 @@
 # What it requires:
 #   - You're on the `main` branch.
 #   - Local `main` is up-to-date with `origin/main`.
-#   - Working tree is clean (no uncommitted changes other than the
-#     stamper output the script itself produces).
+#   - Working tree is clean. The stamper writes only to gitignored
+#     `version.gen.ts` files, so the tree stays clean across runs.
 #
 # What it leaves behind:
 #   - Same artifacts as staging.
@@ -98,8 +98,9 @@ echo ""
 # branch's source, so a `hello` Cloud Function — already removed on
 # main — was created on staging.
 #
-# Three checks, run before the stamper (which itself dirties
-# apps/web/src/version.ts and functions/src/version.ts):
+# Three checks, run before the stamper (which writes only to gitignored
+# `version.gen.ts` files, so guard re-entry on the next deploy stays
+# clean):
 #   1. current branch == `main`
 #   2. local HEAD == origin/main (after a fresh fetch)
 #   3. working tree is clean

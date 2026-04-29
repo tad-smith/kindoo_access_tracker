@@ -1,9 +1,14 @@
-// Stamped by infra/scripts/stamp-version.js at deploy time.
+// Build-version stamp surface for the Cloud Functions bundle.
 //
-// During development this file holds the placeholder `0.0.0-dev`. The
-// deploy scripts (deploy-staging.sh, deploy-prod.sh) overwrite this
-// file before each build with the current git short SHA so the Cloud
-// Functions deploy artifact carries an identifiable build stamp; an
-// operator can confirm the served bundle matches the most recent
-// deploy by comparing the value committed here to function logs.
-export const KINDOO_FUNCTIONS_VERSION = '0.0.0-dev';
+// The values live in `version.gen.ts` (gitignored). At deploy time
+// `infra/scripts/stamp-version.js` overwrites the gen file with the
+// current git short SHA + UTC ISO build timestamp; outside of deploy
+// the gen file holds the dev placeholder ('0.0.0-dev' / 'dev') seeded
+// by `infra/scripts/ensure-version-gen.js` on `pnpm install`.
+//
+// Keeping the public surface in this committed file (and the
+// stamped-only payload in `version.gen.ts`) is what lets a deploy run
+// without dirtying the working tree, so the deploy guard's clean-tree
+// check passes after the stamper runs.
+
+export { KINDOO_FUNCTIONS_VERSION, KINDOO_FUNCTIONS_BUILT_AT } from './version.gen.js';

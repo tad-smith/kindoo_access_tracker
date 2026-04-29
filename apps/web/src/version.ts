@@ -1,20 +1,14 @@
-/*
- * Build-version stamp for the web SPA.
- *
- * Stamped by `infra/scripts/stamp-version.js` at deploy time (run by both
- * `infra/scripts/deploy-staging.sh` and `deploy-prod.sh` before
- * `pnpm build`). The deploy script overwrites this file with the git
- * short SHA + UTC ISO build timestamp, mirroring the Apps Script stamper.
- *
- * The default value below is the dev placeholder — kept in source so
- * `pnpm dev` and `pnpm test` work without running the stamper. The
- * stamper exports `VERSION` and `BUILT_AT`; this file ships an
- * additional `KINDOO_WEB_VERSION` constant so the SPA topbar (and any
- * future deploy-artifact consumer in the web bundle) can render the
- * stamp for operator verification.
- *
- * If you change the export shape here, update
- * `infra/scripts/stamp-version.js` to match.
- */
+// Build-version stamp surface for the web SPA.
+//
+// The values live in `version.gen.ts` (gitignored). At deploy time
+// `infra/scripts/stamp-version.js` overwrites the gen file with the
+// current git short SHA + UTC ISO build timestamp; outside of deploy
+// the gen file holds the dev placeholder ('0.0.0-dev' / 'dev') seeded
+// by `infra/scripts/ensure-version-gen.js` on `pnpm install`.
+//
+// Keeping the public surface in this committed file (and the
+// stamped-only payload in `version.gen.ts`) is what lets a deploy run
+// without dirtying the working tree, so the deploy guard's clean-tree
+// check passes after the stamper runs.
 
-export const KINDOO_WEB_VERSION = '0.0.0-dev';
+export { KINDOO_WEB_VERSION, KINDOO_WEB_BUILT_AT } from './version.gen';
