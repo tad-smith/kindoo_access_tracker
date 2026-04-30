@@ -98,9 +98,20 @@ export function useSubmitRequest() {
       if (!user || !user.email) {
         throw new Error('Not signed in.');
       }
-      const tokenResult = await user.getIdTokenResult();
-      const tokenCanonical =
-        (tokenResult.claims as { canonical?: string }).canonical ?? canonicalEmail(user.email);
+      // Force-refresh the ID token so a freshly-minted claim (e.g.
+      // operator just added themselves to kindooManagers / access)
+      // lands on this request. The default cached token can lag the
+      // server-side `setCustomUserClaims` + `revokeRefreshTokens` by
+      // up to an hour; rules then deny because
+      // `request.auth.token.canonical` / `.stakes[sid].stake` are
+      // absent or stale.
+      const tokenResult = await user.getIdTokenResult(true);
+      const claims = tokenResult.claims as {
+        canonical?: string;
+        email?: string;
+        stakes?: Record<string, { manager?: boolean; stake?: boolean; wards?: string[] }>;
+      };
+      const tokenCanonical = claims.canonical ?? canonicalEmail(user.email);
 
       const memberCanonical = canonicalEmail(input.member_email);
       const actor = { email: user.email, canonical: tokenCanonical };
@@ -144,7 +155,36 @@ export function useSubmitRequest() {
         // don't support queries).
         body.seat_member_canonical = memberCanonical;
       }
-      await setDoc(ref, body as unknown as AccessRequest);
+      // Diagnostic log: pasted into staging by the operator to surface
+      // which rule predicate denied a permission-error submit. Pairs
+      // the auth-token shape against the doc body so the rule check
+      // can be reproduced byte-by-byte. Quiet in tests (NODE_ENV).
+      // Remove or gate behind a flag once staging is happy.
+      if (typeof console !== 'undefined' && process.env['NODE_ENV'] !== 'test') {
+        console.log('[submit-request] payload', {
+          docPath: `stakes/${STAKE_ID}/requests/${ref.id}`,
+          body,
+          authEmail: user.email,
+          tokenEmail: claims.email,
+          tokenCanonical: claims.canonical,
+          tokenStakes: claims.stakes,
+        });
+      }
+      try {
+        await setDoc(ref, body as unknown as AccessRequest);
+      } catch (err) {
+        if (typeof console !== 'undefined' && process.env['NODE_ENV'] !== 'test') {
+          console.error('[submit-request] denied', {
+            docPath: `stakes/${STAKE_ID}/requests/${ref.id}`,
+            scope: input.scope,
+            type: input.type,
+            tokenCanonical: claims.canonical,
+            stakes: claims.stakes,
+            err,
+          });
+        }
+        throw err;
+      }
       return { id: ref.id };
     },
     onSuccess: () => {

@@ -312,6 +312,32 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
         ),
       );
     });
+
+    // Mirror of the SPA's `useSubmitRequest` payload — a manager
+    // submitting a stake-scope add_manual against the production
+    // staging shape. Each field is what the form actually sends; the
+    // tests above use a slimmer fixture that doesn't catch shape
+    // regressions in the form-driven path.
+    it('manager submits the exact stake-scope add_manual payload the form sends → ok', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      const formPayload: Record<string, unknown> = {
+        request_id: REQUEST_ID,
+        type: 'add_manual',
+        scope: 'stake',
+        member_email: 'New.Member@gmail.com',
+        member_canonical: 'newmember@gmail.com',
+        member_name: 'New Member',
+        reason: 'Visiting authority',
+        comment: 'Some context',
+        building_names: ['Cordera Building'],
+        status: 'pending',
+        requester_email: personas.manager.email,
+        requester_canonical: personas.manager.canonical,
+        requested_at: SERVER_TIMESTAMP(),
+        lastActor: lastActorOf(personas.manager),
+      };
+      await assertSucceeds(db.doc(PATH).set(formPayload));
+    });
   });
 
   describe('update — terminal state transitions', () => {
