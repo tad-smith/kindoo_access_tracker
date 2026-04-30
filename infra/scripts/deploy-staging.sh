@@ -66,11 +66,24 @@
 #                                                           # restores your branch
 #                                                           # on exit
 #   bash infra/scripts/deploy-staging.sh --from-pr 26 --dry-run
+#   bash infra/scripts/deploy-staging.sh --web-only         # deploy hosting only;
+#                                                           # skip the functions
+#                                                           # build + skip functions
+#                                                           # and firestore deploy
+#                                                           # targets. Stamper
+#                                                           # still runs (web bundle
+#                                                           # needs the version).
+#   bash infra/scripts/deploy-staging.sh --from-pr 26 --web-only
+#
+# `--web-only` composes with `--from-pr` in either order. It is
+# intentionally staging-only — production must always ship the full
+# stack so hosting + functions + rules stay in lockstep.
 
 set -euo pipefail
 
 DRY_RUN=0
 FROM_PR=''
+WEB_ONLY=0
 
 # Two-token flag parsing: --from-pr <number>.
 while [[ $# -gt 0 ]]; do
@@ -82,15 +95,19 @@ while [[ $# -gt 0 ]]; do
     --from-pr)
       if [[ $# -lt 2 ]]; then
         echo "error: --from-pr requires a PR number argument." >&2
-        echo "Usage: $0 [--dry-run] [--from-pr <number>]" >&2
+        echo "Usage: $0 [--dry-run] [--from-pr <number>] [--web-only]" >&2
         exit 2
       fi
       FROM_PR="$2"
       shift 2
       ;;
+    --web-only)
+      WEB_ONLY=1
+      shift
+      ;;
     *)
       echo "Unknown argument: $1" >&2
-      echo "Usage: $0 [--dry-run] [--from-pr <number>]" >&2
+      echo "Usage: $0 [--dry-run] [--from-pr <number>] [--web-only]" >&2
       exit 2
       ;;
   esac
@@ -126,6 +143,7 @@ fi
 echo "    repo root: $REPO_ROOT"
 echo "    dry run:   $DRY_RUN"
 echo "    from PR:   ${FROM_PR:-<none>}"
+echo "    web-only:  $WEB_ONLY"
 echo ""
 
 # Guard: deploys ship from `main`, full-stop.
@@ -285,7 +303,8 @@ else
   guard_main_clean
 fi
 
-# Step 1: stamp version.
+# Step 1: stamp version. Always runs — the web bundle reads
+# version.gen.ts at build time, so even --web-only needs it.
 run "node infra/scripts/stamp-version.js"
 
 # Step 2: typecheck across workspaces.
@@ -294,15 +313,30 @@ run "pnpm typecheck"
 # Step 3: build web.
 run "pnpm --filter ./apps/web build"
 
-# Step 4: build functions.
-run "pnpm --filter ./functions build"
+# Step 4: build functions. Skipped under --web-only since we won't
+# deploy them.
+if [[ "$WEB_ONLY" -eq 1 ]]; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "[dry-run] skip: pnpm --filter ./functions build (--web-only)"
+  else
+    echo "[skip] pnpm --filter ./functions build (--web-only)"
+  fi
+else
+  run "pnpm --filter ./functions build"
+fi
 
 # Step 5: deploy via Firebase CLI.
 # Note on what gets deployed:
-#   --only hosting,functions,firestore covers everything Phase 1 produces.
-#   firestore deploy = rules + indexes (firebase.json points at firestore/
-#   firestore.rules and firestore/firestore.indexes.json).
-run "firebase deploy --project staging --only hosting,functions,firestore"
+#   Default: --only hosting,functions,firestore covers everything
+#   Phase 1 produces. firestore deploy = rules + indexes (firebase.json
+#   points at firestore/firestore.rules and firestore/firestore.indexes.json).
+#   --web-only: --only hosting — narrows to the SPA bundle. Functions
+#   and rules+indexes already on staging keep their current revision.
+if [[ "$WEB_ONLY" -eq 1 ]]; then
+  run "firebase deploy --project staging --only hosting"
+else
+  run "firebase deploy --project staging --only hosting,functions,firestore"
+fi
 
 echo ""
 echo "=== deploy-staging.sh complete ==="
