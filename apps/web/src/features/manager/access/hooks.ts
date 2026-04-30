@@ -122,7 +122,14 @@ export function useAddManualGrantMutation() {
         lastActor: actor,
       });
     },
-    onSuccess: () => qc.invalidateQueries(),
+    // Fire-and-forget — awaiting `invalidateQueries()` would hang
+    // because the DIY live hooks use a never-resolving placeholder
+    // queryFn (the `onSnapshot` listener is the real source). Without
+    // this `void`, `mutateAsync` would chain on the invalidate promise
+    // and the button would stay stuck on its pending state.
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -168,6 +175,13 @@ export function useDeleteManualGrantMutation() {
         await deleteDoc(ref);
       }
     },
-    onSuccess: () => qc.invalidateQueries(),
+    // Fire-and-forget — awaiting `invalidateQueries()` would hang
+    // because the DIY live hooks use a never-resolving placeholder
+    // queryFn (the `onSnapshot` listener is the real source). Without
+    // this `void`, `mutateAsync` would chain on the invalidate promise
+    // and the button would stay stuck on its pending state.
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
   });
 }

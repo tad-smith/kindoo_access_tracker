@@ -9,8 +9,10 @@
 import { useMemo, useState } from 'react';
 import { Timestamp } from 'firebase/firestore';
 import { useNavigate } from '@tanstack/react-router';
+import { canonicalEmail } from '@kindoo/shared';
 import type { AuditLog } from '@kindoo/shared';
 import { useAuditLogPage, PAGE_SIZE, type AuditLogFilters } from './hooks';
+import { useStakeDoc } from '../dashboard/hooks';
 import { auditActionCategory, summariseAuditRow } from './summarise';
 import type { BadgeVariant } from '../../../components/ui/Badge';
 import { AuditDiffTable } from './AuditDiffTable';
@@ -20,6 +22,7 @@ import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
+import { formatDateTimeInStakeTz } from '../../../lib/datetime';
 
 export interface AuditLogPageProps {
   initialFilters?: AuditLogFilters;
@@ -37,6 +40,8 @@ export function AuditLogPage({ initialFilters }: AuditLogPageProps) {
   const result = useAuditLogPage(filters, cursor);
   const rows = useMemo<readonly AuditLog[]>(() => result.data ?? [], [result.data]);
   const hasMore = rows.length === PAGE_SIZE;
+  const stake = useStakeDoc();
+  const tz = stake.data?.timezone;
 
   const onApply = (next: AuditLogFilters) => {
     setFilters(next);
@@ -95,7 +100,7 @@ export function AuditLogPage({ initialFilters }: AuditLogPageProps) {
       ) : (
         <div className="kd-audit-log-cards" data-testid="audit-log-cards">
           {rows.map((row) => (
-            <AuditCard key={row.audit_id} row={row} />
+            <AuditCard key={row.audit_id} row={row} timezone={tz} />
           ))}
         </div>
       )}
@@ -175,28 +180,28 @@ function FilterRow({ filters, onApply, onReset }: FilterRowProps) {
           type="text"
           value={draft.entity_id ?? ''}
           onChange={(e) => update({ entity_id: e.target.value || undefined })}
-          placeholder="exact match"
+          placeholder="ID or email"
         />
       </label>
       <label>
-        Actor (canonical)
+        Actor
         <Input
           type="text"
           value={draft.actor_canonical ?? ''}
           onChange={(e) => update({ actor_canonical: e.target.value || undefined })}
-          placeholder="canonical email or 'Importer'"
+          placeholder="email or 'Importer'"
         />
       </label>
       <label>
-        Member (canonical)
+        Member
         <Input
           type="text"
           value={draft.member_canonical ?? ''}
           onChange={(e) => update({ member_canonical: e.target.value || undefined })}
-          placeholder="canonical email"
+          placeholder="email"
         />
       </label>
-      <Button onClick={() => onApply(draft)}>Apply</Button>
+      <Button onClick={() => onApply(canonicalizeFilters(draft))}>Apply</Button>
       <Button
         variant="secondary"
         onClick={() => {
@@ -212,13 +217,20 @@ function FilterRow({ filters, onApply, onReset }: FilterRowProps) {
 
 interface AuditCardProps {
   row: AuditLog;
+  timezone: string | undefined;
 }
 
-function AuditCard({ row }: AuditCardProps) {
+function AuditCard({ row, timezone }: AuditCardProps) {
   const summary = summariseAuditRow(row);
-  const ts = row.timestamp as unknown as { toDate?: () => Date };
-  const tsString = ts.toDate ? ts.toDate().toISOString().replace('T', ' ').slice(0, 19) + 'Z' : '';
+  // Stake-timezone formatting per spec.md §13: `YYYY-MM-DD h:mm am/pm`.
+  const tsString = formatDateTimeInStakeTz(row.timestamp, timezone);
   const automated = row.actor_email === 'Importer' || row.actor_email === 'ExpiryTrigger';
+  // Hide bare canonical-email entity ids in the compact row — surface
+  // the typed `member_email` from before/after when available so the
+  // user sees the same display form they typed in. Canonical-keyed
+  // entity types: seat, access, kindooManager. Other types (request /
+  // stake) keep entity_id as-is.
+  const entityIdDisplay = displayEntityId(row);
 
   return (
     <div className="kd-audit-card" data-testid={`audit-row-${row.audit_id}`}>
@@ -230,13 +242,13 @@ function AuditCard({ row }: AuditCardProps) {
         <Badge variant={badgeVariantForAction(row.action)}>{row.action}</Badge>
         <span>
           <code>{row.entity_type}</code>
-          {row.entity_id ? <span> {row.entity_id}</span> : null}
+          {entityIdDisplay ? <span> {entityIdDisplay}</span> : null}
         </span>
         <span className="kd-audit-card-summary">{summary}</span>
       </div>
       <details className="kd-audit-card-diff">
         <summary>details</summary>
-        <AuditDiffTable before={row.before} after={row.after} />
+        <AuditDiffTable before={row.before} after={row.after} {...(timezone ? { timezone } : {})} />
       </details>
     </div>
   );
@@ -258,6 +270,59 @@ function badgeVariantForAction(action: AuditLog['action']): BadgeVariant {
     default:
       return 'default';
   }
+}
+
+/** For canonical-keyed entities (seat / access / kindooManager) the
+ *  `entity_id` is a canonical email. Surface the typed `member_email`
+ *  from the before/after payload so the row display doesn't leak the
+ *  canonical form. For non-canonical-keyed entities (request / stake)
+ *  return entity_id as-is. */
+function displayEntityId(row: AuditLog): string {
+  const id = row.entity_id ?? '';
+  const canonicalKeyed =
+    row.entity_type === 'seat' ||
+    row.entity_type === 'access' ||
+    row.entity_type === 'kindooManager';
+  if (!canonicalKeyed) return id;
+  const typed = pickMemberEmail(row.after) ?? pickMemberEmail(row.before);
+  return typed ?? id;
+}
+
+function pickMemberEmail(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const obj = payload as Record<string, unknown>;
+  if (typeof obj.member_email === 'string' && obj.member_email) return obj.member_email;
+  return null;
+}
+
+/** Convert user-typed actor / member emails to canonical form for the
+ *  Firestore query. Literal automated actors (`Importer`,
+ *  `ExpiryTrigger`) pass through unchanged because they're not real
+ *  emails. The entity_id field is left unchanged here — the hook
+ *  fans out to a typed-OR-canonical match in the worst case (see
+ *  `useAuditLogPage`'s entity_id branch). */
+function canonicalizeFilters(filters: AuditLogFilters): AuditLogFilters {
+  const out: AuditLogFilters = { ...filters };
+  if (out.actor_canonical) {
+    const trimmed = out.actor_canonical.trim();
+    out.actor_canonical = isAutomatedActor(trimmed) ? trimmed : canonicalEmail(trimmed);
+  }
+  if (out.member_canonical) {
+    out.member_canonical = canonicalEmail(out.member_canonical.trim());
+  }
+  if (out.entity_id) {
+    const trimmed = out.entity_id.trim();
+    // For email-shaped entity ids, normalise to canonical form because
+    // seat / access / kindooManager doc ids are always canonical. The
+    // hook's query treats the value as exact-match either way; this
+    // just lets the user type the displayed (typed) form.
+    out.entity_id = trimmed.includes('@') ? canonicalEmail(trimmed) : trimmed;
+  }
+  return out;
+}
+
+function isAutomatedActor(s: string): boolean {
+  return s === 'Importer' || s === 'ExpiryTrigger';
 }
 
 function stripEmpty(filters: AuditLogFilters): Record<string, string> {

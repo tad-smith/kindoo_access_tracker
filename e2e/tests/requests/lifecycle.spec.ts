@@ -262,8 +262,10 @@ test.describe('Phase 6 — cancel + reject', () => {
     await expect(bishopricPage.locator('[data-status="rejected"]').first()).toBeVisible({
       timeout: 10_000,
     });
-    await bishopricPage.getByTestId('rejection-reason-btn').click();
-    await expect(bishopricPage.getByText(/Insufficient justification/)).toBeVisible();
+    // Inline rejection reason — no expand button.
+    await expect(bishopricPage.getByTestId('rejection-reason')).toContainText(
+      /Insufficient justification/,
+    );
   });
 });
 

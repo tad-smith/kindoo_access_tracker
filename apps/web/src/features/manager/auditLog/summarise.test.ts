@@ -70,22 +70,44 @@ describe('computeFieldDiff', () => {
     expect(r.unchangedCount).toBe(2);
   });
 
-  it('treats deep array changes as a change row', () => {
+  it('flattens manual_grants per scope (one row per scope-key)', () => {
     const r = computeFieldDiff(
       { manual_grants: { CO: ['alice@example.com'] } },
       { manual_grants: { CO: ['alice@example.com', 'bob@example.com'] } },
     );
     expect(r.rows).toHaveLength(1);
-    expect(r.rows[0]?.field).toBe('manual_grants');
+    expect(r.rows[0]?.field).toBe('manual_grants[CO]');
+    expect(r.rows[0]?.kind).toBe('change');
   });
 
-  it('treats nested map changes as a change row', () => {
+  it('flattens importer_callings per scope (added scope = add row)', () => {
     const r = computeFieldDiff(
       { importer_callings: { CO: ['Bishop'] } },
       { importer_callings: { CO: ['Bishop'], EN: ['Counselor'] } },
     );
     expect(r.rows).toHaveLength(1);
-    expect(r.rows[0]?.field).toBe('importer_callings');
+    expect(r.rows[0]?.field).toBe('importer_callings[EN]');
+    expect(r.rows[0]?.kind).toBe('add');
+  });
+
+  it('strips canonical-email fields from update diffs', () => {
+    const r = computeFieldDiff(
+      { member_canonical: 'old@x.com', member_email: 'old@x.com', scope: 'CO' },
+      { member_canonical: 'new@x.com', member_email: 'new@x.com', scope: 'EN' },
+    );
+    const fields = r.rows.map((x) => x.field).sort();
+    // member_canonical filtered out; member_email + scope still present.
+    expect(fields).toEqual(['member_email', 'scope']);
+  });
+
+  it('strips canonical-email fields from create diffs', () => {
+    const r = computeFieldDiff(null, {
+      member_canonical: 'a@x.com',
+      member_email: 'a@x.com',
+      scope: 'CO',
+    });
+    const fields = r.rows.map((x) => x.field).sort();
+    expect(fields).toEqual(['member_email', 'scope']);
   });
 
   it('flags a key present only in after as kind="add" inside an update', () => {
@@ -112,16 +134,17 @@ describe('computeFieldDiff', () => {
     expect(r2.rows[0]).toMatchObject({ field: 'note', kind: 'change' });
   });
 
-  it('handles cross-collection rows with disjoint key sets', () => {
+  it('handles cross-collection rows with disjoint key sets (manual_grants flattens)', () => {
     // A seats-shaped before paired with an access-shaped after — what
     // a member_canonical-filtered query can produce when paged across
-    // collections. Every key on either side should appear.
+    // collections. Every key on either side should appear; nested
+    // manual_grants flattens to per-scope rows.
     const before = { member_email: 'alice@example.com', scope: 'CO', type: 'auto' };
     const after = { manual_grants: { CO: ['alice@example.com'] } };
     const r = computeFieldDiff(before, after);
     expect(r.shape).toBe('update');
     const fields = r.rows.map((x) => x.field).sort();
-    expect(fields).toEqual(['manual_grants', 'member_email', 'scope', 'type']);
+    expect(fields).toEqual(['manual_grants[CO]', 'member_email', 'scope', 'type']);
   });
 
   it('sorts diff rows alphabetically for stable rendering', () => {
@@ -282,12 +305,15 @@ describe('auditActionCategory', () => {
     expect(auditActionCategory('update_stake')).toBe('crud');
   });
 
-  it('categorises request-lifecycle actions as "request"', () => {
+  it('categorises non-destructive request-lifecycle actions as "request"', () => {
     expect(auditActionCategory('submit_request')).toBe('request');
     expect(auditActionCategory('complete_request')).toBe('request');
-    expect(auditActionCategory('reject_request')).toBe('request');
     expect(auditActionCategory('cancel_request')).toBe('request');
     expect(auditActionCategory('create_request')).toBe('crud'); // CRUD wins on prefix
+  });
+
+  it('categorises reject_request as "system" (red) — destructive', () => {
+    expect(auditActionCategory('reject_request')).toBe('system');
   });
 
   it('categorises importer actions as "import"', () => {

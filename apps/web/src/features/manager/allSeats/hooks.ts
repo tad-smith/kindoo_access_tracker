@@ -78,7 +78,11 @@ export function useInlineSeatEditMutation() {
       if (input.end_date !== undefined) update.end_date = input.end_date;
       await updateDoc(ref, update);
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -137,6 +141,10 @@ export function useReconcileSeatMutation() {
       }
       await updateDoc(ref, update);
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }

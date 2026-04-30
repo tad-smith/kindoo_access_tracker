@@ -21,6 +21,24 @@ vi.mock('../dashboard/hooks', () => ({
   useStakeWards: () => useStakeWardsMock(),
 }));
 
+// AccessPage filters the scope dropdown by the principal's claims.
+// Default the test principal to a manager so all wards + 'stake'
+// surface; individual tests can override.
+vi.mock('../../../lib/principal', () => ({
+  usePrincipal: () => ({
+    isAuthenticated: true,
+    firebaseAuthSignedIn: true,
+    email: 'mgr@example.com',
+    canonical: 'mgr@example.com',
+    isPlatformSuperadmin: false,
+    managerStakes: ['csnorth'],
+    stakeMemberStakes: [],
+    bishopricWards: {},
+    hasAnyRole: () => true,
+    wardsInStake: () => [],
+  }),
+}));
+
 import { AccessPage } from './AccessPage';
 
 function liveResult<T>(data: T[] | undefined, isLoading = false) {
@@ -109,6 +127,14 @@ describe('<AccessPage />', () => {
 
   it('filters by scope', async () => {
     const u = userEvent.setup();
+    // Scope dropdown is sourced from the principal's claims + the wards
+    // collection. Seed wards so CO + GE surface in the picker.
+    useStakeWardsMock.mockReturnValue(
+      liveResult([
+        { ward_code: 'CO', ward_name: 'Cordera' },
+        { ward_code: 'GE', ward_name: 'Genoa' },
+      ]),
+    );
     useAccessListMock.mockReturnValue(
       liveResult([
         makeAccess({

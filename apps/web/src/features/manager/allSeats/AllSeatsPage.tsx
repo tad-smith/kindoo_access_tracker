@@ -154,7 +154,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
             <option value="temp">temp</option>
           </Select>
         </label>
-        <span style={{ alignSelf: 'center' }}>
+        <span className="kd-filter-summary">
           {filtered.length} row{filtered.length === 1 ? '' : 's'}
         </span>
       </div>

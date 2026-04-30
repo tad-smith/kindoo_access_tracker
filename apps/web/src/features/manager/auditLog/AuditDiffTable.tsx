@@ -14,9 +14,11 @@ import { computeFieldDiff, formatDiffValue } from './summarise';
 export interface AuditDiffTableProps {
   before: unknown;
   after: unknown;
+  /** Stake timezone for embedded timestamp formatting. */
+  timezone?: string;
 }
 
-export function AuditDiffTable({ before, after }: AuditDiffTableProps) {
+export function AuditDiffTable({ before, after, timezone }: AuditDiffTableProps) {
   const diff = computeFieldDiff(before, after);
 
   if (diff.shape === 'empty') {
@@ -46,10 +48,14 @@ export function AuditDiffTable({ before, after }: AuditDiffTableProps) {
                 <code>{row.field}</code>
               </td>
               {showBefore && (
-                <td className={cellClass('before', row.kind)}>{formatDiffValue(row.before)}</td>
+                <td className={cellClass('before', row.kind)}>
+                  {formatDiffValue(row.before, timezone)}
+                </td>
               )}
               {showAfter && (
-                <td className={cellClass('after', row.kind)}>{formatDiffValue(row.after)}</td>
+                <td className={cellClass('after', row.kind)}>
+                  {formatDiffValue(row.after, timezone)}
+                </td>
               )}
             </tr>
           ))}
