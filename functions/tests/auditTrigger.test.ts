@@ -504,6 +504,27 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     expect(rows[0]!.actor_canonical).toBe('unknown');
   });
 
+  it('access-doc write with lastActor=Importer produces actor_canonical=Importer', async () => {
+    const after = {
+      member_canonical: 'a@gmail.com',
+      member_email: 'a@gmail.com',
+      member_name: 'Alice',
+      importer_callings: { CO: ['Bishop'] },
+      manual_grants: {},
+      lastActor: { email: 'Importer', canonical: 'Importer' },
+    };
+    await auditAccessWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, memberCanonical: 'a@gmail.com' },
+        before: null,
+        after,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows[0]!.actor_canonical).toBe('Importer');
+    expect(rows[0]!.action).toBe('create_access');
+  });
+
   it('emitAuditRow stamps a ttl ~365 days after the event time', async () => {
     const eventTime = '2026-04-28T15:00:00.000Z';
     await emitAuditRow({

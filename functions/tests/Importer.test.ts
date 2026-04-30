@@ -400,4 +400,68 @@ describe.skipIf(!hasEmulators())('Importer (integration)', () => {
       /callings_sheet_id is not set/,
     );
   });
+
+  it('removed calling from template → matching auto-seat deleted', async () => {
+    await seedStake();
+    const r1 = fixture([
+      {
+        name: 'CO',
+        values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+    ]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+    } finally {
+      r1();
+    }
+
+    const { db } = requireEmulators();
+    await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/Bishop`).delete();
+
+    const r2 = fixture([
+      {
+        name: 'CO',
+        values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+    ]);
+    try {
+      const result = await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      expect(result.deleted).toBe(1);
+    } finally {
+      r2();
+    }
+    const seat = await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get();
+    expect(seat.exists).toBe(false);
+  });
+
+  it('importer-written docs carry lastActor=Importer for the audit trigger', async () => {
+    // The audit trigger isn't running automatically (we test against
+    // firestore+auth emulators only). Verify the stamped lastActor
+    // would feed through the trigger as actor=Importer.
+    await seedStake();
+    const restore = fixture([
+      {
+        name: 'CO',
+        values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+    ]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+    } finally {
+      restore();
+    }
+
+    const { db } = requireEmulators();
+    const seat = await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get();
+    expect((seat.data() as Record<string, unknown>)['lastActor']).toEqual({
+      email: 'Importer',
+      canonical: 'Importer',
+    });
+
+    const access = await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).get();
+    expect((access.data() as Record<string, unknown>)['lastActor']).toEqual({
+      email: 'Importer',
+      canonical: 'Importer',
+    });
+  });
 });
