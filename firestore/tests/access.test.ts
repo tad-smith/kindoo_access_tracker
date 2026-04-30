@@ -247,6 +247,51 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
       );
     });
 
+    // Operator's diagnostic-trace bug: an arrayUnion-style add-grant
+    // payload that ALSO carried member_email + member_name was getting
+    // denied by the affectedKeys() hasOnly check. The fix strips those
+    // fields from the update path; this pair of tests pins the rule
+    // contract end-to-end.
+    it('manager add-grant with member_email in payload → denied (operator staging trace)', async () => {
+      const seed = emptyAccessDoc({
+        importer_callings: {},
+        manual_grants: {},
+      });
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(seed);
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).update({
+          [`manual_grants.stake`]: [SAMPLE_GRANT],
+          member_email: 'tad.e.smith@gmail.com',
+          member_name: 'Tad',
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('manager add-grant without member_email / member_name → ok (the fixed payload shape)', async () => {
+      const seed = emptyAccessDoc({
+        importer_callings: {},
+        manual_grants: {},
+      });
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(seed);
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).update({
+          [`manual_grants.stake`]: [SAMPLE_GRANT],
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
     it('manager update with bad lastActor → denied', async () => {
       const seed = emptyAccessDoc({ manual_grants: { stake: [SAMPLE_GRANT] } });
       await seedAsAdmin(env, async (ctx) => {

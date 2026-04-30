@@ -184,12 +184,17 @@ export function useAddManualGrantMutation() {
         throw new Error(`A manual grant with that reason already exists for ${input.scope}.`);
       }
 
-      // Preserve member_email + member_name in case they came in fresh
-      // on this add (existing doc may pre-date the values from typing).
+      // Update payload — keys MUST be a subset of the rule's
+      // `affectedKeys()` allowlist:
+      //   ['manual_grants', 'last_modified_by', 'last_modified_at',
+      //    'lastActor']
+      // member_email + member_name are set-once on create; touching
+      // them here trips the `hasOnly()` check and the rule denies. If
+      // a manager wants to fix a typo in those fields, that's a
+      // separate flow (the access-doc rename path doesn't exist yet —
+      // tracked in spec §3.1 split-ownership).
       const updatePayload = {
         [`manual_grants.${input.scope}`]: arrayUnion(grant),
-        member_email: input.member_email.trim() || existing.member_email,
-        member_name: input.member_name.trim() || existing.member_name,
         last_modified_at: serverTimestamp(),
         last_modified_by: actor,
         lastActor: actor,

@@ -159,11 +159,6 @@ describe('useAddManualGrantMutation', () => {
     });
     await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
     const [, payload] = updateDocMock.mock.calls[0]!;
-    // Update predicate's affectedKeys allowlist:
-    //   ['manual_grants', 'last_modified_by', 'last_modified_at', 'lastActor']
-    // (member_email + member_name only re-write when blank — they pass
-    // through as-is here, so the rule's `affectedKeys` evaluation
-    // sees no change.)
     expect(payload).toMatchObject({
       'manual_grants.stake': expect.objectContaining({ __op: 'arrayUnion' }),
       lastActor: { email: 'Tad.E.Smith@gmail.com', canonical: 'tadesmith@gmail.com' },
@@ -171,6 +166,73 @@ describe('useAddManualGrantMutation', () => {
     });
     // Did NOT call setDoc on the update path.
     expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('UPDATE payload writes only keys in the rule allowlist (no member_email / member_name)', async () => {
+    // Regression guard for the staging "Missing or insufficient
+    // permissions" bug: the previous payload included member_email +
+    // member_name, which trips the access rule's
+    //   diff.affectedKeys().hasOnly(['manual_grants',
+    //     'last_modified_by', 'last_modified_at', 'lastActor'])
+    // check and denies the update.
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        member_canonical: 'subject@example.com',
+        member_email: 'subject@example.com',
+        member_name: 'Subject',
+        importer_callings: {},
+        manual_grants: {},
+      }),
+    });
+    const { result } = renderHook(() => useAddManualGrantMutation(), { wrapper });
+    await result.current.mutateAsync({
+      member_email: 'subject@example.com',
+      member_name: 'Subject',
+      scope: 'stake',
+      reason: 'Visiting helper',
+    });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const [, payload] = updateDocMock.mock.calls[0]!;
+    const allowed = new Set([
+      'manual_grants.stake',
+      'last_modified_at',
+      'last_modified_by',
+      'lastActor',
+    ]);
+    const actualKeys = new Set(Object.keys(payload as Record<string, unknown>));
+    expect([...actualKeys].sort()).toEqual([...allowed].sort());
+    // No member_email / member_name leak.
+    expect(payload).not.toHaveProperty('member_email');
+    expect(payload).not.toHaveProperty('member_name');
+  });
+
+  it('UPDATE payload omits member_* even when input typed values differ from the existing doc', async () => {
+    // Operator's exact diagnostic-trace shape: the form passed
+    // member_email='tad.e.smith@gmail.com' / member_name='Tad' against
+    // an existing access doc. The hook must NOT propagate those into
+    // the update.
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        member_canonical: 'tadesmith@gmail.com',
+        member_email: 'Tad.E.Smith@gmail.com',
+        member_name: 'Tad Smith',
+        importer_callings: {},
+        manual_grants: {},
+      }),
+    });
+    const { result } = renderHook(() => useAddManualGrantMutation(), { wrapper });
+    await result.current.mutateAsync({
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad',
+      scope: 'stake',
+      reason: 'Stake helper',
+    });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const [, payload] = updateDocMock.mock.calls[0]!;
+    expect(payload).not.toHaveProperty('member_email');
+    expect(payload).not.toHaveProperty('member_name');
   });
 
   it('throws when no auth user present', async () => {
