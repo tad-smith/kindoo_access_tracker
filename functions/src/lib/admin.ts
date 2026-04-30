@@ -16,6 +16,10 @@ import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getAuth as adminGetAuth, type Auth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 
+// Runtime SA for Sheets-needing functions; firebase-functions appends the
+// active project at deploy time so the same value works in staging + prod.
+export const APP_SA = 'kindoo-app@';
+
 let app: App | undefined;
 
 function ensureApp(): App {

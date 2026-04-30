@@ -4,7 +4,7 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions';
 import type { Stake } from '@kindoo/shared';
-import { getDb } from '../lib/admin.js';
+import { APP_SA, getDb } from '../lib/admin.js';
 import { shouldRunExpiry } from '../lib/schedule.js';
 import { runExpiryForStake } from '../services/Expiry.js';
 
@@ -14,6 +14,7 @@ export const runExpiry = onSchedule(
     timeZone: 'Etc/UTC',
     timeoutSeconds: 540,
     memory: '256MiB',
+    serviceAccount: APP_SA,
   },
   async () => {
     const db = getDb();

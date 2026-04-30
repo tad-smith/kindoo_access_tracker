@@ -6,13 +6,14 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { canonicalEmail } from '@kindoo/shared';
 import type { ImportSummary, KindooManager } from '@kindoo/shared';
-import { getDb } from '../lib/admin.js';
+import { APP_SA, getDb } from '../lib/admin.js';
 import { runImporterForStake } from '../services/Importer.js';
 
 export const runImportNow = onCall(
   {
     timeoutSeconds: 540,
     memory: '512MiB',
+    serviceAccount: APP_SA,
   },
   async (req): Promise<ImportSummary> => {
     if (!req.auth) {

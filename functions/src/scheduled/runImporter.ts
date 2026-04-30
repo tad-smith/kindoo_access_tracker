@@ -6,7 +6,7 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions';
 import type { Stake } from '@kindoo/shared';
-import { getDb } from '../lib/admin.js';
+import { APP_SA, getDb } from '../lib/admin.js';
 import { shouldRunImporter } from '../lib/schedule.js';
 import { runImporterForStake } from '../services/Importer.js';
 
@@ -16,6 +16,7 @@ export const runImporter = onSchedule(
     timeZone: 'Etc/UTC',
     timeoutSeconds: 540,
     memory: '512MiB',
+    serviceAccount: APP_SA,
   },
   async () => {
     const db = getDb();

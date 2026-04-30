@@ -378,3 +378,12 @@ Phase: 8 → cross-cutting
 The Phase 8 §1094 spec ("Manager clicks 'Import Now' → status updates → over-cap banner appears + clears on next clean run") is partially covered: the integration tests in `functions/tests/` exercise the callable's logic, and unit tests in `apps/web/src/features/manager/import/` cover the SPA mutation hook + the page's loading / success / error / banner states. The live-callable e2e is unwritten because Playwright's setup currently boots only the Auth + Firestore emulators, not the Functions emulator.
 
 **Scope:** wire the Functions emulator into Playwright's `globalSetup`; write the §1094 e2e plus a sibling for `installScheduledJobs` (the bootstrap wizard's "Complete Setup" path that should idempotently install Cloud Scheduler jobs).
+
+## [T-26] Phase 11 SA hardening pass
+Status: open
+Owner: @infra-engineer (verify SA roles, deploy) + @backend-engineer (function options)
+Phase: 11
+
+Pin the remaining Cloud Functions (audit fan-in × 9, claim sync × 4, `onAuthUserCreate`, `installScheduledJobs`, `removeSeatOnRequestComplete`) to `kindoo-app@` for single-identity audit traces and to allow revoking the project-default `roles/editor` from the default compute SA. Phase 8 pinned only the four Sheets-touching functions (`runImporter`, `runExpiry`, `reconcileAuditGaps`, `runImportNow`) because the LCR sheet is shared with `kindoo-app@` and the importer was 403'ing on the default compute SA; the rest stayed on default to defer the IAM review to cutover.
+
+**Pre-req:** confirm via `gcloud projects get-iam-policy` that `roles/editor` is still bound to `<projectnum>-compute@developer.gserviceaccount.com`, and that `kindoo-app@` has the roles needed for Auth Admin SDK calls (claim-sync triggers + `onAuthUserCreate` write `customClaims` + revoke refresh tokens; `removeSeatOnRequestComplete` writes Firestore; the audit fan-in functions write Firestore; `installScheduledJobs` creates Cloud Scheduler jobs).

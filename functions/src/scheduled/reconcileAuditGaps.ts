@@ -7,7 +7,7 @@
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions';
-import { getDb } from '../lib/admin.js';
+import { APP_SA, getDb } from '../lib/admin.js';
 
 const AUDITED_COLLECTIONS = [
   'wards',
@@ -26,6 +26,7 @@ export const reconcileAuditGaps = onSchedule(
     timeZone: 'America/Denver',
     timeoutSeconds: 540,
     memory: '256MiB',
+    serviceAccount: APP_SA,
   },
   async () => {
     const db = getDb();
