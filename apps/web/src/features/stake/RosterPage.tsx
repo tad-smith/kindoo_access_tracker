@@ -2,9 +2,6 @@
 // `src/ui/stake/Roster.html`. Scope is hard-locked to `'stake'`; rules
 // keep bishoprics out via the per-doc rule:
 //   `(resource.data.scope == 'stake' && isStakeMember(stakeId))`.
-//
-// Phase 5 is read-only; the X / removal-pending affordance is a
-// Phase-6 deliverable.
 
 import { useFirestoreOnce } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
@@ -14,6 +11,7 @@ import { useStakeRoster } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
 import { UtilizationBar } from '../../lib/render/UtilizationBar';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
+import { RemovalAffordance } from '../requests/components/RemovalAffordance';
 
 export function StakeRosterPage() {
   const seats = useStakeRoster();
@@ -41,7 +39,8 @@ export function StakeRosterPage() {
       ) : (
         <RosterCardList
           seats={seats.data}
-          emptyMessage="No stake seats yet. The next import seeds auto-seats from the LCR Stake tab; manual additions land via the New Kindoo Request page (Phase 6)."
+          emptyMessage="No stake seats yet. The next import seeds auto-seats from the LCR Stake tab; manual additions land via the New Kindoo Request page."
+          actions={(seat) => (seat.type === 'auto' ? null : <RemovalAffordance seat={seat} />)}
         />
       )}
     </section>

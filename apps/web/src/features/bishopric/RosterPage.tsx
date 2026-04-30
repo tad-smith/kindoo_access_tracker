@@ -29,6 +29,7 @@ import { RosterCardList } from '../../components/roster/RosterCardList';
 import { UtilizationBar } from '../../lib/render/UtilizationBar';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { Select } from '../../components/ui/Select';
+import { RemovalAffordance } from '../requests/components/RemovalAffordance';
 
 export interface BishopricRosterPageProps {
   /** Pre-selected ward code from `?ward=...`. */
@@ -117,7 +118,8 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
       ) : (
         <RosterCardList
           seats={seats.data}
-          emptyMessage="No seats assigned to this ward yet. A Kindoo Manager imports from LCR weekly; manual additions land via the New Kindoo Request page (Phase 6)."
+          emptyMessage="No seats assigned to this ward yet. A Kindoo Manager imports from LCR weekly; manual additions land via the New Kindoo Request page."
+          actions={(seat) => (seat.type === 'auto' ? null : <RemovalAffordance seat={seat} />)}
         />
       )}
     </section>

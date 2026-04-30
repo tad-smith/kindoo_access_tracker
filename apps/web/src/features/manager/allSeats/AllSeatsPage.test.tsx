@@ -30,6 +30,24 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 
+// The roster card's RemovalAffordance subscribes via these request
+// hooks; mock them so the component tree renders without a real
+// QueryClient / Firestore listener.
+vi.mock('../../requests/hooks', () => ({
+  usePendingRemoveRequests: () => ({
+    data: [],
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  }),
+  useSubmitRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 import { AllSeatsPage } from './AllSeatsPage';
 
 function liveResult<T>(data: T[] | undefined, isLoading = false) {

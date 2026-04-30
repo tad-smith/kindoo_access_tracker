@@ -96,7 +96,9 @@ export function useStep1Mutation() {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries();
+      // Fire-and-forget; live hooks have a never-resolving queryFn so
+      // awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
     },
   });
 }
@@ -124,7 +126,9 @@ export function useAddBuildingMutation() {
       } as unknown as Building);
     },
     onSuccess: () => {
-      qc.invalidateQueries();
+      // Fire-and-forget; live hooks have a never-resolving queryFn so
+      // awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
     },
   });
 }
@@ -154,7 +158,9 @@ export function useDeleteBuildingMutation() {
       await deleteDoc(buildingRef(db, STAKE_ID, input.buildingId));
     },
     onSuccess: () => {
-      qc.invalidateQueries();
+      // Fire-and-forget; live hooks have a never-resolving queryFn so
+      // awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
     },
   });
 }
@@ -197,7 +203,9 @@ export function useAddWardMutation() {
       } as unknown as Ward);
     },
     onSuccess: () => {
-      qc.invalidateQueries();
+      // Fire-and-forget; live hooks have a never-resolving queryFn so
+      // awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
     },
   });
 }
@@ -209,7 +217,9 @@ export function useDeleteWardMutation() {
       await deleteDoc(wardRef(db, STAKE_ID, wardCode));
     },
     onSuccess: () => {
-      qc.invalidateQueries();
+      // Fire-and-forget; live hooks have a never-resolving queryFn so
+      // awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
     },
   });
 }
@@ -240,7 +250,9 @@ export function useAddManagerMutation() {
       } as unknown as KindooManager);
     },
     onSuccess: () => {
-      qc.invalidateQueries();
+      // Fire-and-forget; live hooks have a never-resolving queryFn so
+      // awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
     },
   });
 }
@@ -257,7 +269,9 @@ export function useUpdateManagerActiveMutation() {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries();
+      // Fire-and-forget; live hooks have a never-resolving queryFn so
+      // awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
     },
   });
 }
@@ -269,7 +283,9 @@ export function useDeleteManagerMutation() {
       await deleteDoc(kindooManagerRef(db, STAKE_ID, canonical));
     },
     onSuccess: () => {
-      qc.invalidateQueries();
+      // Fire-and-forget; live hooks have a never-resolving queryFn so
+      // awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
     },
   });
 }
@@ -325,7 +341,9 @@ export function useCompleteSetupMutation() {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries();
+      // Fire-and-forget; live hooks have a never-resolving queryFn so
+      // awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
     },
   });
 }

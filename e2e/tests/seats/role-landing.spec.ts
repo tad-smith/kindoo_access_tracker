@@ -1,9 +1,9 @@
-// Phase-5 end-to-end specs: every role lands on its default page and
-// can click through to its other pages.
+// End-to-end specs: every role lands on its default page and can
+// click through to its other pages.
 //
-// Per `spec.md` §5: manager → /manager/dashboard, stake → /stake/roster
-// (Phase 5 leftmost; Phase 6 will reroute to /stake/new), bishopric →
-// /bishopric/roster.
+// Per `spec.md` §5: manager → /manager/dashboard, stake → /stake/new,
+// bishopric → /bishopric/new (the leftmost-tab rule places New
+// Request first for both bishopric and stake from Phase 6 on).
 //
 // We exercise:
 //   - Default landing for each role.
@@ -83,20 +83,20 @@ test.describe('Phase 5 default landings', () => {
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
   });
 
-  test('stake principal lands on /stake/roster', async ({ page }) => {
+  test('stake principal lands on /stake/new', async ({ page }) => {
     await signInWithClaims(page, 'stake@example.com', {
       stakes: { csnorth: { manager: false, stake: true, wards: [] } },
     });
-    await expect(page).toHaveURL(/\/stake\/roster$/);
-    await expect(page.getByRole('heading', { name: /^Stake Roster$/ })).toBeVisible();
+    await expect(page).toHaveURL(/\/stake\/new$/);
+    await expect(page.getByRole('heading', { name: /^New Stake Request$/ })).toBeVisible();
   });
 
-  test('bishopric principal lands on /bishopric/roster', async ({ page }) => {
+  test('bishopric principal lands on /bishopric/new', async ({ page }) => {
     await signInWithClaims(page, 'bishop@example.com', {
       stakes: { csnorth: { manager: false, stake: false, wards: ['CO'] } },
     });
-    await expect(page).toHaveURL(/\/bishopric\/roster$/);
-    await expect(page.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
+    await expect(page).toHaveURL(/\/bishopric\/new$/);
+    await expect(page.getByRole('heading', { name: /^New Kindoo Request$/ })).toBeVisible();
   });
 });
 
@@ -123,10 +123,15 @@ test.describe('Phase 5 nav click-through', () => {
     await expect(page.getByRole('heading', { name: /^Access$/ })).toBeVisible();
   });
 
-  test('stake can click through Roster → Ward Rosters → My Requests', async ({ page }) => {
+  test('stake can click through New Request → Roster → Ward Rosters → My Requests', async ({
+    page,
+  }) => {
     await signInWithClaims(page, 'stake-nav@example.com', {
       stakes: { csnorth: { manager: false, stake: true, wards: [] } },
     });
+    await expect(page.getByRole('heading', { name: /^New Stake Request$/ })).toBeVisible();
+
+    await page.getByRole('link', { name: /^Roster$/ }).click();
     await expect(page.getByRole('heading', { name: /^Stake Roster$/ })).toBeVisible();
 
     await page.getByRole('link', { name: /^Ward Rosters$/ }).click();

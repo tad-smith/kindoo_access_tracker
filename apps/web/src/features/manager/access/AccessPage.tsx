@@ -18,6 +18,8 @@ import { z } from 'zod';
 import type { Access, ManualGrant } from '@kindoo/shared';
 import { useAccessList, useAddManualGrantMutation, useDeleteManualGrantMutation } from './hooks';
 import { useStakeWards } from '../dashboard/hooks';
+import { usePrincipal } from '../../../lib/principal';
+import { STAKE_ID } from '../../../lib/constants';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
 import { Select } from '../../../components/ui/Select';
@@ -34,6 +36,7 @@ function errorMessage(err: unknown): string {
 export function AccessPage() {
   const access = useAccessList();
   const wards = useStakeWards();
+  const principal = usePrincipal();
   const [scopeFilter, setScopeFilter] = useState<string>('');
   const deleteMutation = useDeleteManualGrantMutation();
   const [pendingDelete, setPendingDelete] = useState<{
@@ -44,25 +47,27 @@ export function AccessPage() {
 
   const all = useMemo(() => access.data ?? [], [access.data]);
 
-  // Build the scope dropdown from every scope mentioned in any user's
-  // importer_callings or manual_grants, plus all known ward codes
-  // (ensures the "Add manual access" form scope dropdown is correct
-  // even before any access exists).
+  // Scope dropdown reflects the principal's authority:
+  //   - manager (full stake) → all wards + 'stake'
+  //   - stake claim only → 'stake'
+  //   - bishopric only → just those wards
+  // Sort: 'stake' first, wards alphabetical.
   const scopes = useMemo(() => {
     const seen = new Set<string>();
-    for (const a of all) {
-      for (const k of Object.keys(a.importer_callings ?? {})) seen.add(k);
-      for (const k of Object.keys(a.manual_grants ?? {})) seen.add(k);
+    if (principal.managerStakes.includes(STAKE_ID)) {
+      seen.add('stake');
+      for (const w of wards.data ?? []) seen.add(w.ward_code);
+    } else {
+      if (principal.stakeMemberStakes.includes(STAKE_ID)) seen.add('stake');
+      for (const w of principal.bishopricWards[STAKE_ID] ?? []) seen.add(w);
     }
-    for (const w of wards.data ?? []) seen.add(w.ward_code);
-    seen.add('stake');
     const list = Array.from(seen);
     return list.sort((a, b) => {
       if (a === 'stake') return -1;
       if (b === 'stake') return 1;
       return a.localeCompare(b);
     });
-  }, [all, wards.data]);
+  }, [principal.managerStakes, principal.stakeMemberStakes, principal.bishopricWards, wards.data]);
 
   // Filter rows by scope: a user-row is included if either side has a
   // grant for the selected scope.
@@ -126,7 +131,7 @@ export function AccessPage() {
             ))}
           </Select>
         </label>
-        <span style={{ alignSelf: 'center' }}>
+        <span className="kd-filter-summary">
           {sorted.length} user{sorted.length === 1 ? '' : 's'} ({manualCount} manual grant
           {manualCount === 1 ? '' : 's'})
         </span>
@@ -151,7 +156,7 @@ export function AccessPage() {
         </div>
       )}
 
-      <AddManualGrantForm scopes={scopes} />
+      <AddManualGrantForm />
 
       <Dialog
         open={pendingDelete !== null}
@@ -259,12 +264,18 @@ const addManualSchema = z.object({
 });
 type AddManualForm = z.infer<typeof addManualSchema>;
 
-interface AddManualGrantFormProps {
-  scopes: readonly string[];
-}
-
-function AddManualGrantForm({ scopes }: AddManualGrantFormProps) {
+function AddManualGrantForm() {
   const mutation = useAddManualGrantMutation();
+  // Form scope dropdown is data-driven: 'stake' plus one option per
+  // configured ward in `stakes/{stakeId}/wards`. A grant against a
+  // ward that doesn't exist in this stake is non-operational; the
+  // dropdown enforces that at the UX layer.
+  const wards = useStakeWards();
+  const wardsLoading = wards.isLoading || wards.data === undefined;
+  const wardOptions = useMemo(
+    () => [...(wards.data ?? [])].map((w) => w.ward_code).sort((a, b) => a.localeCompare(b)),
+    [wards.data],
+  );
   const form = useForm<AddManualForm>({
     resolver: zodResolver(addManualSchema),
     defaultValues: { member_email: '', member_name: '', scope: 'stake', reason: '' },
@@ -308,14 +319,22 @@ function AddManualGrantForm({ scopes }: AddManualGrantFormProps) {
       ) : null}
       <label>
         Scope
-        <Select {...register('scope')}>
-          {scopes.map((s) => (
-            <option key={s} value={s}>
-              {s === 'stake' ? 'Stake' : s}
+        <Select {...register('scope')} disabled={wardsLoading} data-testid="add-manual-scope">
+          <option value="stake">Stake</option>
+          {wardOptions.map((code) => (
+            <option key={code} value={code}>
+              {code}
             </option>
           ))}
         </Select>
       </label>
+      {wardsLoading ? (
+        <p className="kd-form-hint">Loading wards…</p>
+      ) : wardOptions.length === 0 ? (
+        <p className="kd-form-hint" data-testid="add-manual-no-wards">
+          No wards configured. Add wards via Configuration to grant ward-scope access.
+        </p>
+      ) : null}
       <label>
         Reason
         <Input {...register('reason')} placeholder="Covering bishop" />
@@ -326,7 +345,7 @@ function AddManualGrantForm({ scopes }: AddManualGrantFormProps) {
         </p>
       ) : null}
       <div className="form-actions">
-        <Button type="submit" disabled={mutation.isPending}>
+        <Button type="submit" disabled={mutation.isPending || wardsLoading}>
           {mutation.isPending ? 'Adding…' : 'Add manual access'}
         </Button>
       </div>

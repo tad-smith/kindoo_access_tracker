@@ -8,7 +8,7 @@
 // bootstrap wizard fills in but Configuration also exposes are wired
 // here too — e.g., expiry_hour / import_day / import_hour / timezone.
 
-import { deleteDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { deleteDoc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
@@ -112,7 +112,11 @@ export function useUpsertWardMutation() {
         { merge: true },
       );
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -122,7 +126,11 @@ export function useDeleteWardMutation() {
     mutationFn: async (wardCode: string) => {
       await deleteDoc(wardRef(db, STAKE_ID, wardCode));
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -154,7 +162,11 @@ export function useUpsertBuildingMutation() {
         { merge: true },
       );
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -181,7 +193,11 @@ export function useDeleteBuildingMutation() {
       if (blocker) throw new Error(blocker);
       await deleteDoc(buildingRef(db, STAKE_ID, input.buildingId));
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -202,6 +218,12 @@ export interface ManagerInput {
 // New managers default to active. The merge: true preserves any
 // existing `active=false` set by a prior deactivate. Activate/deactivate
 // is a separate Configuration-level mutation (Phase 8 candidate).
+//
+// Pre-check: refuse the add when a doc with the same canonical email
+// already exists. The doc-id keyed by canonical guarantees Firestore-
+// layer dedup (a re-add merges into the same doc), but the user-facing
+// UX is friendlier when the form yields an explicit "Already a
+// manager." error than a silent merge that looks like a no-op.
 export function useUpsertManagerMutation() {
   const principal = usePrincipal();
   const qc = useQueryClient();
@@ -209,8 +231,13 @@ export function useUpsertManagerMutation() {
     mutationFn: async (input: ManagerInput) => {
       const actor = actorOf(principal);
       const can = canonicalEmail(input.member_email);
+      const ref = kindooManagerRef(db, STAKE_ID, can);
+      const existing = await getDoc(ref);
+      if (existing.exists()) {
+        throw new Error('Already a manager.');
+      }
       await setDoc(
-        kindooManagerRef(db, STAKE_ID, can),
+        ref,
         {
           member_canonical: can,
           member_email: input.member_email.trim(),
@@ -223,7 +250,11 @@ export function useUpsertManagerMutation() {
         { merge: true },
       );
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -233,7 +264,11 @@ export function useDeleteManagerMutation() {
     mutationFn: async (canonical: string) => {
       await deleteDoc(kindooManagerRef(db, STAKE_ID, canonical));
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -265,7 +300,11 @@ export function useUpsertWardCallingTemplateMutation() {
         { merge: true },
       );
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -275,7 +314,11 @@ export function useDeleteWardCallingTemplateMutation() {
     mutationFn: async (callingName: string) => {
       await deleteDoc(wardCallingTemplateRef(db, STAKE_ID, callingName));
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -299,7 +342,11 @@ export function useUpsertStakeCallingTemplateMutation() {
         { merge: true },
       );
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -309,7 +356,11 @@ export function useDeleteStakeCallingTemplateMutation() {
     mutationFn: async (callingName: string) => {
       await deleteDoc(stakeCallingTemplateRef(db, STAKE_ID, callingName));
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }
 
@@ -346,6 +397,10 @@ export function useUpdateStakeConfigMutation() {
         lastActor: actor,
       });
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
   });
 }

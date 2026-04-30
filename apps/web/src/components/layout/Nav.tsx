@@ -1,17 +1,12 @@
 // Role-aware nav. Generates the link set from the active principal's
 // claims per the page map in `docs/spec.md` §5.
 //
-// Manager ship-set (post-Phase-7 swap; read-only pages + admin pages):
-//   - Bishopric: Roster (own ward), My Requests
-//   - Stake:     Roster, Ward Rosters, My Requests
-//   - Manager:   Dashboard, All Seats, Audit Log, Access, Configuration,
-//                Import, My Requests
-//
-// The request-lifecycle phase will re-add New Kindoo Request
-// (bishopric + stake) and the manager Requests Queue. Until they ship
-// the corresponding nav links don't appear at all (rather than
-// shipping disabled placeholders) — keeping the nav truthful about
-// what works today.
+// Per-role link sets, leftmost first (the leftmost link defines each
+// role's default landing page; see `defaultLandingFor`):
+//   - Bishopric: New Request, Roster (own ward), My Requests
+//   - Stake:     New Request, Roster, Ward Rosters, My Requests
+//   - Manager:   Dashboard, Queue, All Seats, Audit Log, Access,
+//                Configuration, Import, My Requests
 //
 // "Highest-role priority" mirrors `Router_defaultPageFor_` from the
 // Apps Script Router: manager > stake > bishopric. Multi-role users
@@ -32,6 +27,7 @@ interface NavLinkSpec {
 function managerLinks(): NavLinkSpec[] {
   return [
     { key: 'mgr/dashboard', label: 'Dashboard', to: '/manager/dashboard' },
+    { key: 'mgr/queue', label: 'Queue', to: '/manager/queue' },
     { key: 'mgr/seats', label: 'All Seats', to: '/manager/seats' },
     { key: 'mgr/audit', label: 'Audit Log', to: '/manager/audit' },
     { key: 'mgr/access', label: 'Access', to: '/manager/access' },
@@ -43,6 +39,7 @@ function managerLinks(): NavLinkSpec[] {
 
 function stakeLinks(): NavLinkSpec[] {
   return [
+    { key: 'stake/new', label: 'New Request', to: '/stake/new' },
     { key: 'stake/roster', label: 'Roster', to: '/stake/roster' },
     { key: 'stake/wards', label: 'Ward Rosters', to: '/stake/wards' },
     { key: 'myreq', label: 'My Requests', to: '/my-requests' },
@@ -51,6 +48,7 @@ function stakeLinks(): NavLinkSpec[] {
 
 function bishopricLinks(): NavLinkSpec[] {
   return [
+    { key: 'bish/new', label: 'New Request', to: '/bishopric/new' },
     { key: 'bish/roster', label: 'Roster', to: '/bishopric/roster' },
     { key: 'myreq', label: 'My Requests', to: '/my-requests' },
   ];

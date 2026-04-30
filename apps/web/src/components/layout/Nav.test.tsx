@@ -37,10 +37,11 @@ describe('navLinksForPrincipal (pure derivation)', () => {
     expect(navLinksForPrincipal(makePrincipal())).toEqual([]);
   });
 
-  it('returns the manager link set including Phase 7 admin pages', () => {
+  it('returns the manager link set with Queue + admin pages', () => {
     const links = navLinksForPrincipal(makePrincipal({ managerStakes: ['csnorth'] }));
     expect(links.map((l) => l.label)).toEqual([
       'Dashboard',
+      'Queue',
       'All Seats',
       'Audit Log',
       'Access',
@@ -50,14 +51,19 @@ describe('navLinksForPrincipal (pure derivation)', () => {
     ]);
   });
 
-  it('returns the Phase 5 stake link set for a stake-member principal', () => {
+  it('returns the stake link set with New Request leftmost', () => {
     const links = navLinksForPrincipal(makePrincipal({ stakeMemberStakes: ['csnorth'] }));
-    expect(links.map((l) => l.label)).toEqual(['Roster', 'Ward Rosters', 'My Requests']);
+    expect(links.map((l) => l.label)).toEqual([
+      'New Request',
+      'Roster',
+      'Ward Rosters',
+      'My Requests',
+    ]);
   });
 
-  it('returns the Phase 5 bishopric link set for a bishopric principal', () => {
+  it('returns the bishopric link set with New Request leftmost', () => {
     const links = navLinksForPrincipal(makePrincipal({ bishopricWards: { csnorth: ['CO'] } }));
-    expect(links.map((l) => l.label)).toEqual(['Roster', 'My Requests']);
+    expect(links.map((l) => l.label)).toEqual(['New Request', 'Roster', 'My Requests']);
   });
 
   it('orders priority manager > stake > bishopric in a multi-role union', () => {

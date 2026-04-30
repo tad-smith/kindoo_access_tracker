@@ -3,6 +3,21 @@
    and the utilization-bar host. Mechanical port of the matching
    selectors from Apps Script `Styles.html`. */
 
+/* Native `<select>` chrome. Owned here rather than as Tailwind
+   utilities because `tailwind-merge` collapses `bg-white` (color) and
+   `bg-[image:url(...)]` (image) into a single `bg-` slot. With color
+   stripped, the Tailwind preflight's `background-color: transparent`
+   showed through and the select rendered grey on top of the page
+   chrome. */
+.kd-select {
+  appearance: none;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><polyline points='6,8 10,12 14,8'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+}
+
 .kd-page-subtitle {
   color: var(--kd-fg-3);
   font-size: 0.95em;
@@ -49,6 +64,16 @@
 .kd-filter-row select,
 .kd-filter-row input {
   min-width: 160px;
+}
+
+/* Filter-row summary text ("N rows", "M users (K grants)"). The
+   parent's `align-items: end` puts the bottom of the span level with
+   the bottom of the select control — matching where the eye lands
+   when scanning across labels. */
+.kd-filter-summary {
+  font-size: 0.88em;
+  color: var(--kd-fg-2);
+  padding-bottom: 2px;
 }
 
 @media (max-width: 480px) {
@@ -483,8 +508,54 @@
   gap: 4px;
   font-size: 0.92em;
 }
+/* Checkbox-bearing labels lay out horizontally so the checkbox sits
+   tight against its text. The default column-stack for `.kd-wizard-form
+   label` would float the checkbox above the text and the text label of
+   the next row, which reads as misaligned. `:has()` targets the label
+   only when it contains a checkbox child. */
+.kd-wizard-form label:has(> input[type='checkbox']) {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
 .kd-wizard-form label > input[type='checkbox'] {
-  margin-right: 6px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+/* Buildings checkbox group (NewRequestForm + CompleteAddDialog).
+   Native `<fieldset>` has UA padding/border + a centered `<legend>`;
+   strip those. The checkbox list is a column of label-rows where each
+   label contains a checkbox + text on a single row. */
+.kd-buildings-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.kd-buildings-fieldset > legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-weight: 500;
+  font-size: 0.92em;
+}
+.kd-checkbox-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kd-checkbox-list > li > label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92em;
+}
+.kd-checkbox-list input[type='checkbox'] {
+  margin: 0;
+  flex: 0 0 auto;
 }
 
 .kd-wizard-row-list,

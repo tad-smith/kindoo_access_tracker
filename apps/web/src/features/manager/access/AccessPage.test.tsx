@@ -21,6 +21,24 @@ vi.mock('../dashboard/hooks', () => ({
   useStakeWards: () => useStakeWardsMock(),
 }));
 
+// AccessPage filters the scope dropdown by the principal's claims.
+// Default the test principal to a manager so all wards + 'stake'
+// surface; individual tests can override.
+vi.mock('../../../lib/principal', () => ({
+  usePrincipal: () => ({
+    isAuthenticated: true,
+    firebaseAuthSignedIn: true,
+    email: 'mgr@example.com',
+    canonical: 'mgr@example.com',
+    isPlatformSuperadmin: false,
+    managerStakes: ['csnorth'],
+    stakeMemberStakes: [],
+    bishopricWards: {},
+    hasAnyRole: () => true,
+    wardsInStake: () => [],
+  }),
+}));
+
 import { AccessPage } from './AccessPage';
 
 function liveResult<T>(data: T[] | undefined, isLoading = false) {
@@ -109,6 +127,14 @@ describe('<AccessPage />', () => {
 
   it('filters by scope', async () => {
     const u = userEvent.setup();
+    // Scope dropdown is sourced from the principal's claims + the wards
+    // collection. Seed wards so CO + GE surface in the picker.
+    useStakeWardsMock.mockReturnValue(
+      liveResult([
+        { ward_code: 'CO', ward_name: 'Cordera' },
+        { ward_code: 'GE', ward_name: 'Genoa' },
+      ]),
+    );
     useAccessListMock.mockReturnValue(
       liveResult([
         makeAccess({
@@ -135,6 +161,39 @@ describe('<AccessPage />', () => {
     useAccessListMock.mockReturnValue(liveResult<Access>([]));
     render(<AccessPage />);
     expect(screen.getByTestId('add-manual-form')).toBeInTheDocument();
+  });
+
+  it('add-form scope dropdown shows stake + one option per configured ward', () => {
+    useStakeWardsMock.mockReturnValue(
+      liveResult([
+        { ward_code: 'GE', ward_name: 'Genoa' },
+        { ward_code: 'CO', ward_name: 'Cordera' },
+      ]),
+    );
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    const dropdown = screen.getByTestId('add-manual-scope') as HTMLSelectElement;
+    const values = Array.from(dropdown.options).map((o) => o.value);
+    // 'stake' first; wards alphabetical.
+    expect(values).toEqual(['stake', 'CO', 'GE']);
+  });
+
+  it('add-form scope dropdown shows only stake when no wards are configured', () => {
+    useStakeWardsMock.mockReturnValue(liveResult([]));
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    const dropdown = screen.getByTestId('add-manual-scope') as HTMLSelectElement;
+    const values = Array.from(dropdown.options).map((o) => o.value);
+    expect(values).toEqual(['stake']);
+    expect(screen.getByTestId('add-manual-no-wards')).toBeInTheDocument();
+  });
+
+  it('add-form scope dropdown is disabled while wards are still loading', () => {
+    useStakeWardsMock.mockReturnValue(liveResult(undefined, true));
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    const dropdown = screen.getByTestId('add-manual-scope') as HTMLSelectElement;
+    expect(dropdown).toBeDisabled();
   });
 
   it('invokes the add-mutation when the form is submitted with valid input', async () => {

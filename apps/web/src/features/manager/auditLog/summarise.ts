@@ -15,6 +15,7 @@
 
 import type { AuditLog } from '@kindoo/shared';
 import { BOOKKEEPING_FIELDS } from '@kindoo/shared';
+import { formatDateTimeInStakeTz } from '../../../lib/datetime';
 
 export function summariseAuditRow(row: AuditLog): string {
   const { action, before, after } = row;
@@ -66,6 +67,16 @@ export function summariseAuditRow(row: AuditLog): string {
   return '';
 }
 
+// Canonical-email fields are plumbing, not user-facing. Skip them in
+// the inline summary too — the typed `member_email` / `actor_email`
+// already cover the user-display need.
+const SUMMARY_HIDDEN_KEYS = new Set([
+  'member_canonical',
+  'actor_canonical',
+  'requester_canonical',
+  'completer_canonical',
+]);
+
 function topKeysSummary(obj: Record<string, unknown>): string {
   const prefs = [
     'member_name',
@@ -89,6 +100,7 @@ function topKeysSummary(obj: Record<string, unknown>): string {
   for (const k of Object.keys(obj)) {
     if (bits.length >= 3) break;
     if (seen.has(k)) continue;
+    if (SUMMARY_HIDDEN_KEYS.has(k)) continue;
     bits.push(`${k}=${stringifyValue(obj[k])}`);
   }
   return bits.join(', ');
@@ -143,16 +155,80 @@ export interface FieldDiffResult {
   unchangedCount: number;
 }
 
+/** Fields whose values are `{ [scope]: <something> }` maps where each
+ *  scope-key carries useful diff signal (per-scope add/remove). For
+ *  these, `computeFieldDiff` flattens to one row per scope-key (e.g.
+ *  `manual_grants[CO]`, `manual_grants[stake]`) instead of dumping the
+ *  whole map as a single JSON cell. Listed by name so unknown nested
+ *  maps still render compactly (the field-by-field design is for
+ *  human-scale shapes; arbitrary deep nesting goes back to JSON).
+ *
+ *  See `firebase-schema.md` §4.5 (Access doc) for the source data
+ *  model — `manual_grants` and `importer_callings` are the two
+ *  maps we want to flatten. */
+const FLATTENED_MAP_FIELDS = new Set(['manual_grants', 'importer_callings']);
+
+/** Canonical-email fields stripped from the diff table — the typed
+ *  email field rendered alongside is the user-readable form. The
+ *  canonical version is plumbing that surfaces only inside the rule
+ *  comparison; surfacing it in the UI conflates "the user" with "the
+ *  doc id" and makes screenshots leak data the user expects to be
+ *  hidden behind their typed email. */
+const HIDDEN_CANONICAL_FIELDS = new Set([
+  'member_canonical',
+  'actor_canonical',
+  'requester_canonical',
+  'completer_canonical',
+]);
+
+function isHiddenField(field: string): boolean {
+  if (BOOKKEEPING_FIELDS.has(field)) return true;
+  if (HIDDEN_CANONICAL_FIELDS.has(field)) return true;
+  return false;
+}
+
+/** Expand a `field` whose value is a map-of-scopes into per-scope rows.
+ *  Each row's `field` becomes `parent[scope]`; before/after carry the
+ *  per-scope value. Empty / unchanged scopes collapse into the
+ *  unchanged-count tally rather than rendering their own row. */
+function flattenMapField(
+  parentField: string,
+  beforeMap: Record<string, unknown> | undefined,
+  afterMap: Record<string, unknown> | undefined,
+): { rows: FieldDiffRow[]; unchangedCount: number } {
+  const b = beforeMap ?? {};
+  const a = afterMap ?? {};
+  const keys = new Set<string>([...Object.keys(b), ...Object.keys(a)]);
+  const rows: FieldDiffRow[] = [];
+  let unchangedCount = 0;
+  for (const key of [...keys].sort()) {
+    const bv = b[key];
+    const av = a[key];
+    if (JSON.stringify(bv) === JSON.stringify(av)) {
+      unchangedCount += 1;
+      continue;
+    }
+    const inBefore = key in b;
+    const inAfter = key in a;
+    const kind: FieldDiffRow['kind'] = !inBefore ? 'add' : !inAfter ? 'remove' : 'change';
+    rows.push({ field: `${parentField}[${key}]`, kind, before: bv, after: av });
+  }
+  return { rows, unchangedCount };
+}
+
 /** Walk `before` + `after`, return only the fields that differ. The
  *  shape ('create' | 'update' | 'delete' | 'empty') captures the
  *  before/after presence and lets the renderer pick a sensible header
  *  per audit action.
  *
  *  Bookkeeping fields (`lastActor`, `last_modified_*`, `*_at`, `*_by`
- *  per `BOOKKEEPING_FIELDS` in `@kindoo/shared`) are filtered out
- *  entirely — the operator's view of the diff shouldn't be muddied by
- *  audit-trigger plumbing. The values are still in the stored
- *  `before`/`after` snapshots; we just don't render them.
+ *  per `BOOKKEEPING_FIELDS` in `@kindoo/shared`) plus
+ *  `*_canonical` fields are filtered out entirely — neither belongs in
+ *  the user-visible diff (one is plumbing, the other duplicates the
+ *  typed email).
+ *
+ *  Map-valued fields listed in `FLATTENED_MAP_FIELDS` (e.g.
+ *  `manual_grants`) flatten to per-scope rows.
  *
  *  Cross-collection rows (member_canonical filter spans seats / access
  *  / requests) work transparently: every row's keys are computed from
@@ -165,35 +241,58 @@ export function computeFieldDiff(before: unknown, after: unknown): FieldDiffResu
   if (!beforeObj && !afterObj) return { shape: 'empty', rows: [], unchangedCount: 0 };
 
   if (!beforeObj && afterObj) {
-    const rows: FieldDiffRow[] = Object.keys(afterObj)
-      .filter((field) => !BOOKKEEPING_FIELDS.has(field))
-      .sort()
-      .map((field) => ({ field, kind: 'add', before: undefined, after: afterObj[field] }));
+    const rows: FieldDiffRow[] = [];
+    for (const field of Object.keys(afterObj)
+      .filter((f) => !isHiddenField(f))
+      .sort()) {
+      const value = afterObj[field];
+      if (FLATTENED_MAP_FIELDS.has(field) && isPlainObject(value)) {
+        const flat = flattenMapField(field, undefined, value);
+        rows.push(...flat.rows);
+        continue;
+      }
+      rows.push({ field, kind: 'add', before: undefined, after: value });
+    }
     return { shape: 'create', rows, unchangedCount: 0 };
   }
   if (beforeObj && !afterObj) {
-    const rows: FieldDiffRow[] = Object.keys(beforeObj)
-      .filter((field) => !BOOKKEEPING_FIELDS.has(field))
-      .sort()
-      .map((field) => ({ field, kind: 'remove', before: beforeObj[field], after: undefined }));
+    const rows: FieldDiffRow[] = [];
+    for (const field of Object.keys(beforeObj)
+      .filter((f) => !isHiddenField(f))
+      .sort()) {
+      const value = beforeObj[field];
+      if (FLATTENED_MAP_FIELDS.has(field) && isPlainObject(value)) {
+        const flat = flattenMapField(field, value, undefined);
+        rows.push(...flat.rows);
+        continue;
+      }
+      rows.push({ field, kind: 'remove', before: value, after: undefined });
+    }
     return { shape: 'delete', rows, unchangedCount: 0 };
   }
 
   // Both sides present — compute the changed-keys set, build rows in a
   // stable sort order, count the unchanged fields for the trailer.
-  // Bookkeeping fields are dropped entirely; they don't add to the
-  // unchanged count either, since the trailer is already a hint that
-  // "non-shown user fields exist", and surfacing bookkeeping noise
-  // there would be confusing.
+  // Bookkeeping + canonical-email fields are dropped entirely.
   const allKeys = new Set<string>([
-    ...Object.keys(beforeObj!).filter((k) => !BOOKKEEPING_FIELDS.has(k)),
-    ...Object.keys(afterObj!).filter((k) => !BOOKKEEPING_FIELDS.has(k)),
+    ...Object.keys(beforeObj!).filter((k) => !isHiddenField(k)),
+    ...Object.keys(afterObj!).filter((k) => !isHiddenField(k)),
   ]);
   const rows: FieldDiffRow[] = [];
   let unchangedCount = 0;
   for (const field of [...allKeys].sort()) {
     const b = (beforeObj as Record<string, unknown>)[field];
     const a = (afterObj as Record<string, unknown>)[field];
+    if (FLATTENED_MAP_FIELDS.has(field)) {
+      const flat = flattenMapField(
+        field,
+        isPlainObject(b) ? b : undefined,
+        isPlainObject(a) ? a : undefined,
+      );
+      rows.push(...flat.rows);
+      unchangedCount += flat.unchangedCount;
+      continue;
+    }
     if (JSON.stringify(b) === JSON.stringify(a)) {
       unchangedCount += 1;
       continue;
@@ -209,49 +308,120 @@ export function computeFieldDiff(before: unknown, after: unknown): FieldDiffResu
 /** Render an arbitrary value into the diff cell text. Mirrors the Apps
  *  Script `stringifyValue_`: nulls render as `(empty)` instead of the
  *  literal `""`, timestamps render in human-readable form, primitives
- *  cap at 200 chars (Apps Script capped at 80 — bumped because the diff
- *  table cell is wider than the inline summary), arrays / maps render
- *  as compact JSON. */
-export function formatDiffValue(v: unknown): string {
+ *  cap at 200 chars, arrays render as comma-separated for primitives
+ *  or as readable per-item summaries for known shapes (manual grants,
+ *  actor refs).
+ *
+ *  Pass `timezone` (e.g. `stake.timezone`) to render any embedded
+ *  Firestore Timestamps in stake-local form. Omitting it falls back to
+ *  the `formatDateTimeInStakeTz` default (`America/Denver`). */
+export function formatDiffValue(v: unknown, timezone?: string): string {
   if (v === undefined) return '(absent)';
   if (v === null || v === '') return '(empty)';
   if (typeof v === 'string') {
-    // ISO-ish timestamp string: drop ms + "T" / "Z" for readability.
+    // ISO-ish timestamp string: re-render in stake-local time.
     const isoMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?Z?$/.exec(v);
-    if (isoMatch) return `${isoMatch[1]} ${isoMatch[2]} UTC`;
+    if (isoMatch) return formatDateTimeInStakeTz(new Date(v), timezone);
     return v.length > 200 ? `${v.substring(0, 197)}…` : v;
   }
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  if (isFirestoreTimestamp(v)) {
-    return v.toDate().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-  }
+  // Firestore Timestamp variants: SDK objects (with toDate) and
+  // already-serialised envelopes (`{ type: 'firestore/timestamp/1.0',
+  // seconds, nanoseconds }`) that surface in audit-trigger payloads.
+  const date = coerceTimestampLike(v);
+  if (date) return formatDateTimeInStakeTz(date, timezone);
   if (Array.isArray(v)) {
     if (v.length === 0) return '(empty list)';
-    // Comma-separated for primitive arrays; JSON for nested.
     if (v.every((x) => typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean')) {
       return v.join(', ');
     }
-    return JSON.stringify(v);
+    if (v.every(isManualGrantLike)) {
+      return v.map((g) => formatManualGrant(g, timezone)).join('; ');
+    }
+    // Heterogeneous / unknown shape — summarise each entry recursively.
+    return v.map((x) => formatDiffValue(x, timezone)).join('; ');
   }
   if (typeof v === 'object') {
+    if (isActorRef(v)) return formatActorRef(v);
     const entries = Object.entries(v as Record<string, unknown>);
     if (entries.length === 0) return '(empty map)';
-    return JSON.stringify(v);
+    // Render `key=value` pairs, recursively formatting each value, with
+    // canonical-email + bookkeeping keys stripped so the surface stays
+    // user-readable. The flat fallback isn't ideal for deeply-nested
+    // shapes but at our data scale the only nested map shapes that
+    // surface are well-modelled (grants, actor refs, callings) and
+    // covered above.
+    const bits = entries
+      .filter(([k]) => !isHiddenField(k))
+      .map(([k, val]) => `${k}=${formatDiffValue(val, timezone)}`);
+    return bits.join(', ');
   }
   return String(v);
 }
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
+/** Render a single `ManualGrant` row. Strips the `canonical` half of
+ *  `granted_by` and renders `granted_at` in stake-local time. */
+function formatManualGrant(grant: unknown, timezone?: string): string {
+  if (!grant || typeof grant !== 'object') return '';
+  const g = grant as Record<string, unknown>;
+  const reason = typeof g.reason === 'string' ? g.reason : '';
+  const grantedBy = isActorRef(g.granted_by) ? (g.granted_by as { email: string }).email : '';
+  const grantedAtDate = coerceTimestampLike(g.granted_at);
+  const grantedAt = grantedAtDate ? formatDateTimeInStakeTz(grantedAtDate, timezone) : '';
+  const bits: string[] = [];
+  if (reason) bits.push(reason);
+  if (grantedBy) bits.push(`by ${grantedBy}`);
+  if (grantedAt) bits.push(`at ${grantedAt}`);
+  return bits.join(' · ');
 }
 
-function isFirestoreTimestamp(v: unknown): v is { toDate: () => Date } {
+function isManualGrantLike(v: unknown): boolean {
+  if (!v || typeof v !== 'object') return false;
+  const g = v as Record<string, unknown>;
+  // grant_id is the unique fingerprint; reason and granted_by are
+  // present on every real grant.
+  return typeof g.grant_id === 'string' && typeof g.reason === 'string';
+}
+
+function isActorRef(v: unknown): v is { email: string; canonical?: string } {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
   return (
-    v !== null &&
-    typeof v === 'object' &&
-    'toDate' in v &&
-    typeof (v as { toDate: unknown }).toDate === 'function'
+    typeof r.email === 'string' && Object.keys(r).every((k) => k === 'email' || k === 'canonical')
   );
+}
+
+function formatActorRef(v: unknown): string {
+  const r = v as { email: string };
+  return r.email;
+}
+
+/** Coerce known timestamp-shaped values into a `Date`. Handles:
+ *   - Firestore SDK Timestamp instances (`.toDate()` available)
+ *   - Serialised envelopes like
+ *     `{ type: 'firestore/timestamp/1.0', seconds, nanoseconds }`
+ *     written by the audit trigger when it stores raw `before`/`after`
+ *     payloads through Firestore's reference encoder.
+ *   - Plain `{ seconds, nanoseconds }` shapes (TimestampLike). */
+function coerceTimestampLike(v: unknown): Date | null {
+  if (!v || typeof v !== 'object') return null;
+  const r = v as Record<string, unknown> & { toDate?: () => Date };
+  if (typeof r.toDate === 'function') {
+    try {
+      return r.toDate();
+    } catch {
+      return null;
+    }
+  }
+  if (typeof r.seconds === 'number') {
+    const nanos = typeof r.nanoseconds === 'number' ? r.nanoseconds : 0;
+    return new Date(r.seconds * 1000 + nanos / 1_000_000);
+  }
+  return null;
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
 /** Audit-action category. Drives the row-card action-badge color so
@@ -268,10 +438,14 @@ function isFirestoreTimestamp(v: unknown): v is { toDate: () => Date } {
 export type AuditActionCategory = 'crud' | 'request' | 'system' | 'import' | 'default';
 
 export function auditActionCategory(action: AuditLog['action']): AuditActionCategory {
+  // `reject_request` is destructive — surface it in red (system) so a
+  // manager can spot rejections at a glance, distinct from successful
+  // submit / complete / cancel rows that share the green-request hue.
+  if (action === 'reject_request') return 'system';
   if (action.startsWith('create_') || action.startsWith('update_') || action.startsWith('delete_'))
     return 'crud';
-  // `submit_request` / `complete_request` / `reject_request` /
-  // `cancel_request` / future `*_request` lifecycle events.
+  // `submit_request` / `complete_request` / `cancel_request` / future
+  // `*_request` lifecycle events. `reject_request` is excluded above.
   if (action.endsWith('_request')) return 'request';
   if (action.startsWith('import_')) return 'import';
   if (action === 'auto_expire' || action === 'over_cap_warning' || action === 'setup_complete')

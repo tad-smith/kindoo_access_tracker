@@ -96,7 +96,6 @@ interface MyRequestCardProps {
 function MyRequestCard({ request }: MyRequestCardProps) {
   const cancel = useCancelRequest();
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [reasonOpen, setReasonOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const onConfirmCancel = async () => {
@@ -173,15 +172,10 @@ function MyRequestCard({ request }: MyRequestCardProps) {
       ) : null}
 
       {request.status === 'rejected' && request.rejection_reason ? (
-        <div className="kd-myrequests-card-meta">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => setReasonOpen(true)}
-            data-testid="rejection-reason-btn"
-          >
-            Show rejection reason
-          </button>
+        <div className="kd-myrequests-card-meta" data-testid="rejection-reason">
+          <span>
+            <strong>Rejection reason:</strong> {request.rejection_reason}
+          </span>
         </div>
       ) : null}
       {request.status === 'complete' && request.completion_note ? (
@@ -213,17 +207,6 @@ function MyRequestCard({ request }: MyRequestCardProps) {
           >
             {cancel.isPending ? 'Cancelling…' : 'Cancel request'}
           </Dialog.ConfirmButton>
-        </Dialog.Footer>
-      </Dialog>
-
-      <Dialog
-        open={reasonOpen}
-        onOpenChange={setReasonOpen}
-        title="Rejection reason"
-        description={request.rejection_reason ?? '(no reason given)'}
-      >
-        <Dialog.Footer>
-          <Dialog.ConfirmButton onClick={() => setReasonOpen(false)}>OK</Dialog.ConfirmButton>
         </Dialog.Footer>
       </Dialog>
     </div>

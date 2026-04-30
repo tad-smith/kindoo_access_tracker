@@ -102,8 +102,7 @@ describe('<MyRequestsPage />', () => {
     expect(within(complete).queryByRole('button', { name: /^Cancel$/ })).toBeNull();
   });
 
-  it('opens the rejection-reason dialog when the rejected hint is clicked', async () => {
-    const user = userEvent.setup();
+  it('renders the rejection reason inline on rejected rows', () => {
     usePrincipalMock.mockReturnValue(principal());
     mockRequests([
       makeRequest({
@@ -113,8 +112,9 @@ describe('<MyRequestsPage />', () => {
       }),
     ]);
     render(<MyRequestsPage />);
-    await user.click(screen.getByTestId('rejection-reason-btn'));
-    expect(await screen.findByText(/already has stake access/i)).toBeInTheDocument();
+    const reason = screen.getByTestId('rejection-reason');
+    expect(reason).toHaveTextContent(/Already has stake access/i);
+    expect(reason).toHaveTextContent(/Rejection reason/i);
   });
 
   it('surfaces the completion_note inline on a completed remove request', () => {

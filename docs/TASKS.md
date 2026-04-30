@@ -353,3 +353,19 @@ Operator surfaced 7 issues during manual staging of the bootstrap wizard. Shippe
 - **"Deactivate" on bootstrap admin row was a no-op.** Bootstrap admin can't be deactivated (would lock themselves out). Hid both the deactivate and the delete buttons on the bootstrap admin row.
 - **Step indicator restyled.** Chevron-arrow stepper with labels-only (no numbers); steps turn green when their validation passes, neutral otherwise, ring-highlighted for the current step. Hand-rolled with Tailwind utilities + a CSS-triangle chevron — ~50 lines, no shadcn-ui stepper primitive needed.
 - **"Complete Setup" disabled with no indication.** Helper text below the button lists which prerequisites are missing (e.g., "Add at least one building").
+
+## [T-24] Audit-and-fix unscoped `qc.invalidateQueries()` calls (DIY-hook placeholder-queryFn footgun)
+Status: open
+Owner: @web-engineer
+Phase: cross-cutting
+
+The DIY Firestore hooks (`useFirestoreDoc`, `useFirestoreCollection`) at `apps/web/src/lib/data/` use a never-resolving placeholder `queryFn` so `onSnapshot` is the source of truth for cache writes (per architecture D11). Side-effect: `qc.invalidateQueries()` (no args, or any keyset that matches a live-listener entry) returns a Promise that never resolves, because TanStack awaits the matched queries' refetches and the placeholder `queryFn` never settles. Mutations that `await` the invalidate via `onSuccess` chain hang forever — `mutateAsync` never resolves → `mutation.isPending` stays `true` → the submit button reads "Adding…" until the page is refreshed.
+
+Two fix paths:
+
+1. **Audit + `void`** every callsite. Convert `onSuccess: () => qc.invalidateQueries()` (returns the promise) into `onSuccess: () => { void qc.invalidateQueries(); }` (fire-and-forget). Targeted invalidations keyed away from the DIY-hook prefix (`['kindoo', 'requests']`, etc.) are already safe because they don't match the live-listener cache keys.
+2. **Replace the placeholder.** Rewrite the DIY hooks' `queryFn` to resolve immediately to the cached value (or a sentinel-undefined wrapper). More invasive — the current shape relies on the never-resolving promise for state-machine reasons documented in `useFirestoreDoc.ts` — but eliminates the footgun structurally.
+
+PR #29 applied (1) selectively to mutations in `features/manager/configuration/`, `features/manager/access/`, `features/manager/allSeats/`, and `features/bootstrap/`. The rest of the codebase remains potentially affected — anywhere a future engineer writes `onSuccess: () => qc.invalidateQueries()` in expression-arrow form will reproduce the hang. A repo-wide audit (lint rule? grep + manual review?) plus the option-(2) refactor are both still open.
+
+Surfaces this footgun: the screenshot trail in PR #29 ("Add manual access" stuck on Adding…) is the canonical reproduction.

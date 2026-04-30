@@ -67,16 +67,17 @@ describe('<AuditDiffTable />', () => {
     expect(within(row).getByText('filled')).toBeInTheDocument();
   });
 
-  it('renders ISO-timestamp strings in human-readable form', () => {
+  it('renders ISO-timestamp strings in stake-local form', () => {
     render(
       <AuditDiffTable
         before={{ end_date: '2026-04-28T00:00:00Z' }}
         after={{ end_date: '2026-05-15T00:00:00Z' }}
+        timezone="UTC"
       />,
     );
     const row = screen.getByTestId('audit-diff-row-end_date');
-    expect(within(row).getByText('2026-04-28 00:00:00 UTC')).toBeInTheDocument();
-    expect(within(row).getByText('2026-05-15 00:00:00 UTC')).toBeInTheDocument();
+    expect(within(row).getByText('2026-04-28 12:00 am')).toBeInTheDocument();
+    expect(within(row).getByText('2026-05-15 12:00 am')).toBeInTheDocument();
   });
 
   it('renders primitive-array changes as comma-separated lists', () => {
@@ -88,18 +89,18 @@ describe('<AuditDiffTable />', () => {
     expect(within(row).getByText('CO, EN, CC')).toBeInTheDocument();
   });
 
-  it('renders nested map changes as JSON', () => {
+  it('flattens nested manual_grants into per-scope rows', () => {
     render(
       <AuditDiffTable
         before={{ manual_grants: { CO: ['alice@example.com'] } }}
         after={{ manual_grants: { CO: ['alice@example.com', 'bob@example.com'] } }}
       />,
     );
-    const row = screen.getByTestId('audit-diff-row-manual_grants');
-    const cells = row.querySelectorAll('td');
-    // Three cells: field name code, before, after.
-    expect(cells[1]?.textContent).toBe('{"CO":["alice@example.com"]}');
-    expect(cells[2]?.textContent).toBe('{"CO":["alice@example.com","bob@example.com"]}');
+    // The flatten produces a per-scope row keyed `manual_grants[CO]`,
+    // not a single JSON dump.
+    const row = screen.getByTestId('audit-diff-row-manual_grants[CO]');
+    expect(row).toBeInTheDocument();
+    expect(screen.queryByTestId('audit-diff-row-manual_grants')).toBeNull();
   });
 
   it('renders cross-collection rows with disjoint key sets transparently', () => {
@@ -112,7 +113,10 @@ describe('<AuditDiffTable />', () => {
     );
     expect(screen.getByTestId('audit-diff-row-member_email')).toBeInTheDocument();
     expect(screen.getByTestId('audit-diff-row-scope')).toBeInTheDocument();
-    expect(screen.getByTestId('audit-diff-row-manual_grants')).toBeInTheDocument();
+    // manual_grants flattens to a per-scope row; the bare-name row
+    // shouldn't exist anymore.
+    expect(screen.getByTestId('audit-diff-row-manual_grants[CO]')).toBeInTheDocument();
+    expect(screen.queryByTestId('audit-diff-row-manual_grants')).toBeNull();
   });
 
   describe('cell coloring (red/green diff convention)', () => {

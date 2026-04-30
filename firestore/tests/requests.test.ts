@@ -268,6 +268,76 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
         ),
       );
     });
+
+    // Pure-manager submission paths. A user holding only the manager
+    // claim (no stake / no wards) has stake-wide authority and must be
+    // able to submit any-scope requests — both for direct manager use
+    // and for the self-approval invariant (the same user later
+    // completes their own request).
+    it('stake-scope submit by a pure manager → ok', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).set(
+          pendingAddManualByStakeMember({
+            requester_email: personas.manager.email,
+            requester_canonical: personas.manager.canonical,
+            lastActor: lastActorOf(personas.manager),
+          }),
+        ),
+      );
+    });
+
+    it('ward-scope submit by a pure manager (no bishopric claim) → ok', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).set(
+          pendingAddTempByBishopric('01', {
+            requester_email: personas.manager.email,
+            requester_canonical: personas.manager.canonical,
+            lastActor: lastActorOf(personas.manager),
+          }),
+        ),
+      );
+    });
+
+    it('remove submit by a pure manager → ok', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).set(
+          pendingRemoveByBishopric('01', {
+            requester_email: personas.manager.email,
+            requester_canonical: personas.manager.canonical,
+            lastActor: lastActorOf(personas.manager),
+          }),
+        ),
+      );
+    });
+
+    // Mirror of the SPA's `useSubmitRequest` payload — a manager
+    // submitting a stake-scope add_manual against the production
+    // staging shape. Each field is what the form actually sends; the
+    // tests above use a slimmer fixture that doesn't catch shape
+    // regressions in the form-driven path.
+    it('manager submits the exact stake-scope add_manual payload the form sends → ok', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      const formPayload: Record<string, unknown> = {
+        request_id: REQUEST_ID,
+        type: 'add_manual',
+        scope: 'stake',
+        member_email: 'New.Member@gmail.com',
+        member_canonical: 'newmember@gmail.com',
+        member_name: 'New Member',
+        reason: 'Visiting authority',
+        comment: 'Some context',
+        building_names: ['Cordera Building'],
+        status: 'pending',
+        requester_email: personas.manager.email,
+        requester_canonical: personas.manager.canonical,
+        requested_at: SERVER_TIMESTAMP(),
+        lastActor: lastActorOf(personas.manager),
+      };
+      await assertSucceeds(db.doc(PATH).set(formPayload));
+    });
   });
 
   describe('update — terminal state transitions', () => {
@@ -405,16 +475,14 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       );
     });
 
-    it('self-approval allowed (manager completing their own request)', async () => {
-      // Manager submitted a stake-scope add (managers also have
-      // stake-scope claim in real data; here we set both flags on
-      // the same persona for the test).
-      const dual = contextFor(env, personas.manager, STAKE_ID, {
-        manager: true,
-        stake: true,
-      });
+    it('self-approval allowed (pure manager submits + completes their own request)', async () => {
+      // Pure manager — no stake / no wards. Invariant 7 says self-
+      // approval is allowed; this test exercises the path end-to-end
+      // against the fixed create rule (which used to require the
+      // submitter to also hold isStakeMember / bishopric).
+      const mgr = managerContext(env, STAKE_ID);
       await assertSucceeds(
-        dual
+        mgr
           .firestore()
           .doc(PATH)
           .set(
@@ -425,9 +493,8 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
             }),
           ),
       );
-      // Same manager completes — invariant 7 says this is allowed.
       await assertSucceeds(
-        dual
+        mgr
           .firestore()
           .doc(PATH)
           .update({

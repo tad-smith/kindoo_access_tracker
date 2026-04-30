@@ -37,6 +37,23 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 
+// RemovalAffordance subscribes via the requests hooks; mock so we
+// don't need a real QueryClient / Firestore listener.
+vi.mock('../requests/hooks', () => ({
+  usePendingRemoveRequests: () => ({
+    data: [],
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  }),
+  useSubmitRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 import { BishopricRosterPage } from './RosterPage';
 
 function principal(wards: string[]) {

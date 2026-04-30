@@ -23,6 +23,23 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 
+// Audit Log subscribes to the stake doc for the timezone setting.
+// Mock the dashboard hook with a stub stake (UTC) so the timestamp
+// column has a deterministic timezone in tests.
+vi.mock('../dashboard/hooks', () => ({
+  useStakeDoc: () => ({
+    data: { timezone: 'UTC' },
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  }),
+}));
+
 import { AuditLogPage } from './AuditLogPage';
 import { PAGE_SIZE } from './hooks';
 
@@ -89,10 +106,18 @@ describe('<AuditLogPage />', () => {
     expect(screen.getByRole('button', { name: /prev/i })).toBeDisabled();
   });
 
+  it('renders the timestamp in the stake-doc timezone', () => {
+    // Stake mocked to UTC. NOW = 2026-04-28T12:00:00Z → 12:00 pm UTC.
+    useAuditLogPageMock.mockReturnValue(liveResult([makeAuditLog({ audit_id: 'a1' })]));
+    render(<AuditLogPage />);
+    const card = screen.getByTestId('audit-row-a1');
+    expect(within(card).getByText('2026-04-28 12:00 pm')).toBeInTheDocument();
+  });
+
   it('seeds the entity_id filter from the deep-link prop', () => {
     useAuditLogPageMock.mockReturnValue(liveResult([makeAuditLog({ audit_id: 'a1' })]));
     render(<AuditLogPage initialFilters={{ entity_id: 'bob@example.com' }} />);
-    const entityIdInput = screen.getByPlaceholderText(/exact match/i) as HTMLInputElement;
+    const entityIdInput = screen.getByPlaceholderText(/ID or email/i) as HTMLInputElement;
     expect(entityIdInput.value).toBe('bob@example.com');
   });
 
@@ -189,6 +214,12 @@ describe('<AuditLogPage />', () => {
 
     it('paints system events with the audit-system (red) classes', () => {
       const badge = renderRowWithAction('over_cap_warning');
+      expect(badge.className).toContain('bg-kd-danger-tint');
+      expect(badge.className).toContain('text-kd-danger-fg');
+    });
+
+    it('paints reject_request with the audit-system (red) classes', () => {
+      const badge = renderRowWithAction('reject_request');
       expect(badge.className).toContain('bg-kd-danger-tint');
       expect(badge.className).toContain('text-kd-danger-fg');
     });

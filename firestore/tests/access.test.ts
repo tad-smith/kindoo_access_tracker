@@ -160,6 +160,36 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
         ),
       );
     });
+
+    // Mirror of the SPA's `useAddManualGrantMutation` create path —
+    // the EXACT field set the form writes when the access doc
+    // doesn't yet exist, by a pure manager (manager:true, no
+    // stake / no wards). Catches shape regressions in the form-
+    // driven path that the slim fixtures above miss.
+    it('pure manager creates the form-shaped manual-only doc → ok', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      const formPayload: Record<string, unknown> = {
+        member_canonical: TARGET_CANONICAL,
+        member_email: 'Alice@gmail.com',
+        member_name: 'Alice Smith',
+        importer_callings: {},
+        manual_grants: {
+          stake: [
+            {
+              grant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+              reason: 'Stake helper',
+              granted_by: lastActorOf(personas.manager),
+              granted_at: new Date(),
+            },
+          ],
+        },
+        created_at: new Date(),
+        last_modified_at: new Date(),
+        last_modified_by: lastActorOf(personas.manager),
+        lastActor: lastActorOf(personas.manager),
+      };
+      await assertSucceeds(db.doc(PATH).set(formPayload));
+    });
   });
 
   describe('update — split-ownership enforcement', () => {
@@ -212,6 +242,51 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
       await assertFails(
         db.doc(PATH).update({
           member_email: 'NewAlice@gmail.com',
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    // Operator's diagnostic-trace bug: an arrayUnion-style add-grant
+    // payload that ALSO carried member_email + member_name was getting
+    // denied by the affectedKeys() hasOnly check. The fix strips those
+    // fields from the update path; this pair of tests pins the rule
+    // contract end-to-end.
+    it('manager add-grant with member_email in payload → denied (operator staging trace)', async () => {
+      const seed = emptyAccessDoc({
+        importer_callings: {},
+        manual_grants: {},
+      });
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(seed);
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).update({
+          [`manual_grants.stake`]: [SAMPLE_GRANT],
+          member_email: 'tad.e.smith@gmail.com',
+          member_name: 'Tad',
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('manager add-grant without member_email / member_name → ok (the fixed payload shape)', async () => {
+      const seed = emptyAccessDoc({
+        importer_callings: {},
+        manual_grants: {},
+      });
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(seed);
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).update({
+          [`manual_grants.stake`]: [SAMPLE_GRANT],
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
           lastActor: lastActorOf(personas.manager),
         }),
       );
