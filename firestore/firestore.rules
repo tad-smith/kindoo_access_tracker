@@ -405,8 +405,12 @@ service cloud.firestore {
       // The requester_canonical must match the auth token's canonical
       // claim. Add-types require member_name; stake-scope add-types
       // require at least one building selection. Scope must match
-      // the requester's role: stake-scope requires stake membership,
-      // ward-scope requires that ward in the bishopric list.
+      // the requester's role:
+      //   - manager: any scope (stake-wide authority; spec §6 +
+      //     invariant 7 self-approval depends on this — a manager
+      //     can submit + complete their own request)
+      //   - stake-scope: stake membership
+      //   - ward-scope: that ward in the bishopric list
       //
       // Updates: pending → terminal only. Cancellation is requester-
       // only; complete / reject are manager-only. Reject requires a
@@ -432,7 +436,8 @@ service cloud.firestore {
               || request.resource.data.scope != 'stake'
               || request.resource.data.building_names.size() > 0)
           && (
-               (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
+               isManager(stakeId)
+            || (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
             || (request.resource.data.scope in bishopricWardOf(stakeId))
           );
 
