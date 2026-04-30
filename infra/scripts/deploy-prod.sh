@@ -52,6 +52,12 @@
 # `--from-pr` is intentionally staging-only (deploy-staging.sh).
 # Production must always ship from `main`; testing a PR on prod would
 # defeat the staging rehearsal. Don't add it here.
+#
+# `--web-only` is also intentionally staging-only. Production deploys
+# must always ship hosting + functions + rules together so the three
+# stay in lockstep; partial prod deploys are a foot-gun (a web bundle
+# that calls a function shape that hasn't shipped yet, or rules that
+# don't match the client's writes). Don't add it here.
 
 set -euo pipefail
 
