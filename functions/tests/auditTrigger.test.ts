@@ -270,6 +270,32 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
 
   // -------- Seats --------
 
+  it('seat delete with lastActor=ExpiryTrigger emits auto_expire', async () => {
+    const before = {
+      member_canonical: 's@gmail.com',
+      member_email: 's@gmail.com',
+      member_name: 'Sam',
+      scope: 'GE',
+      type: 'temp',
+      callings: [],
+      building_names: ['Greenwood'],
+      duplicate_grants: [],
+      end_date: '2026-04-25',
+      lastActor: { email: 'ExpiryTrigger', canonical: 'ExpiryTrigger' },
+    };
+    await auditSeatWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, memberCanonical: 's@gmail.com' },
+        before,
+        after: null,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('auto_expire');
+    expect(rows[0]!.actor_canonical).toBe('ExpiryTrigger');
+  });
+
   it('seat writes map to create/update/delete seat with member_canonical', async () => {
     const after = {
       member_canonical: 's@gmail.com',
