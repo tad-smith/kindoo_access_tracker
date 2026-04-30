@@ -5,9 +5,9 @@
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { canonicalEmail } from '@kindoo/shared';
-import type { KindooManager } from '@kindoo/shared';
+import type { ImportSummary, KindooManager } from '@kindoo/shared';
 import { getDb } from '../lib/admin.js';
-import { runImporterForStake, type ImportSummary } from '../services/Importer.js';
+import { runImporterForStake } from '../services/Importer.js';
 
 export const runImportNow = onCall(
   {

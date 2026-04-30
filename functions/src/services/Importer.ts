@@ -25,6 +25,7 @@ import type {
   Access,
   AuditLog,
   CallingTemplate,
+  ImportSummary,
   OverCapEntry,
   Seat,
   Stake,
@@ -48,21 +49,6 @@ import {
 import { computeOverCaps } from '../lib/overCaps.js';
 import { getSheetFetcher, type SheetTab } from '../lib/sheets.js';
 import { IMPORTER_ACTOR } from '../lib/systemActors.js';
-
-export type ImportSummary = {
-  ok: boolean;
-  inserted: number;
-  deleted: number;
-  updated: number;
-  access_added: number;
-  access_removed: number;
-  warnings: string[];
-  skipped_tabs: string[];
-  over_caps: OverCapEntry[];
-  elapsed_ms: number;
-  triggered_by: string;
-  error?: string;
-};
 
 const TTL_MS = 365 * 24 * 60 * 60 * 1000;
 

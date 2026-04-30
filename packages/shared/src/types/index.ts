@@ -15,6 +15,7 @@ export type {
 } from './audit.js';
 export type { CustomClaims, Principal, StakeClaims } from './auth.js';
 export type { Building } from './building.js';
+export type { ImportSummary } from './import.js';
 export type {
   CallingTemplate,
   StakeCallingTemplate,
