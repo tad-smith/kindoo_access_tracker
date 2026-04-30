@@ -75,9 +75,8 @@ for service accounts. Confirm anyway.
 
 ## Step 4 — Verify the share
 
-Run a manual import via the manager UI's "Import Now" button (or, from
-the Firebase console, invoke the `runImportNow` callable). Expected
-outcome:
+Run a manual import via the manager UI's "Import Now" button on the
+Configuration page. Expected outcome:
 
 - The import completes (`ok: true`) and the stake's `last_import_summary`
   reflects insert/delete counts.
