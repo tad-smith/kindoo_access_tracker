@@ -160,6 +160,36 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
         ),
       );
     });
+
+    // Mirror of the SPA's `useAddManualGrantMutation` create path —
+    // the EXACT field set the form writes when the access doc
+    // doesn't yet exist, by a pure manager (manager:true, no
+    // stake / no wards). Catches shape regressions in the form-
+    // driven path that the slim fixtures above miss.
+    it('pure manager creates the form-shaped manual-only doc → ok', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      const formPayload: Record<string, unknown> = {
+        member_canonical: TARGET_CANONICAL,
+        member_email: 'Alice@gmail.com',
+        member_name: 'Alice Smith',
+        importer_callings: {},
+        manual_grants: {
+          stake: [
+            {
+              grant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+              reason: 'Stake helper',
+              granted_by: lastActorOf(personas.manager),
+              granted_at: new Date(),
+            },
+          ],
+        },
+        created_at: new Date(),
+        last_modified_at: new Date(),
+        last_modified_by: lastActorOf(personas.manager),
+        lastActor: lastActorOf(personas.manager),
+      };
+      await assertSucceeds(db.doc(PATH).set(formPayload));
+    });
   });
 
   describe('update — split-ownership enforcement', () => {

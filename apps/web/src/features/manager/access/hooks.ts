@@ -21,21 +21,60 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Access, ManualGrant } from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../../lib/data';
-import { db } from '../../../lib/firebase';
+import { auth, db } from '../../../lib/firebase';
 import { accessCol, accessRef } from '../../../lib/docs';
 import { STAKE_ID } from '../../../lib/constants';
-import { usePrincipal } from '../../../lib/principal';
 
 export function useAccessList() {
   const q = useMemo(() => accessCol(db, STAKE_ID), []);
   return useFirestoreCollection<Access>(q);
 }
 
-function actorOf(principal: ReturnType<typeof usePrincipal>) {
-  return {
-    email: principal.email ?? '',
-    canonical: principal.canonical ?? canonicalEmail(principal.email ?? ''),
+interface RefreshedActor {
+  /** Typed email from auth.currentUser (Firebase Auth). */
+  email: string;
+  /** canonical custom-claim from the freshly-refreshed token. */
+  canonical: string;
+  /** The full claims payload — used by diagnostic logging only. */
+  claims: {
+    canonical?: string;
+    email?: string;
+    stakes?: Record<string, { manager?: boolean; stake?: boolean; wards?: string[] }>;
   };
+}
+
+/**
+ * Force-refresh the ID token + return the actor record the rules'
+ * `lastActorMatchesAuth` check expects (`{ email, canonical }`
+ * matching `request.auth.token.email` + `.canonical`).
+ *
+ * Why force-refresh: a manager freshly added to `kindooManagers` has
+ * `setCustomUserClaims` + `revokeRefreshTokens` minted server-side,
+ * but the in-browser cached token can lag by up to an hour. With the
+ * stale token, `request.auth.token.canonical` may be absent /
+ * `request.auth.token.stakes[sid].manager` may be false, and the
+ * `access` rules' create + update predicates deny on `isManager`. The
+ * `useSubmitRequest` hook does the same thing for the `requests` rule
+ * block. See PR #29 + the `[submit-request]` diagnostic prefix.
+ */
+async function readRefreshedActor(): Promise<RefreshedActor> {
+  const user = auth.currentUser;
+  if (!user || !user.email) {
+    throw new Error('Not signed in.');
+  }
+  const tokenResult = await user.getIdTokenResult(true);
+  const claims = tokenResult.claims as RefreshedActor['claims'];
+  return {
+    email: user.email,
+    canonical: claims.canonical ?? canonicalEmail(user.email),
+    claims,
+  };
+}
+
+const LOG_PREFIX = '[add-manual-grant]';
+
+function isLoggable(): boolean {
+  return typeof console !== 'undefined' && process.env['NODE_ENV'] !== 'test';
 }
 
 export interface AddManualGrantInput {
@@ -62,11 +101,15 @@ export interface AddManualGrantInput {
  * race-condition slip-through.
  */
 export function useAddManualGrantMutation() {
-  const principal = usePrincipal();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: AddManualGrantInput) => {
-      const actor = actorOf(principal);
+      // Force-refresh the ID token: a manager freshly minted (or whose
+      // canonical claim was set after their last sign-in) needs a
+      // round-trip before the rule's `isManager` + `lastActor`
+      // predicates resolve correctly. Same pattern as `useSubmitRequest`.
+      const refreshed = await readRefreshedActor();
+      const actor = { email: refreshed.email, canonical: refreshed.canonical };
       const can = canonicalEmail(input.member_email);
       const grant: ManualGrant = {
         grant_id: crypto.randomUUID(),
@@ -83,10 +126,24 @@ export function useAddManualGrantMutation() {
       const ref = accessRef(db, STAKE_ID, can);
       const snap = await getDoc(ref);
 
+      // Diagnostic: which path are we taking + what's on the token?
+      // Operator pastes from staging when a denial surfaces.
+      if (isLoggable()) {
+        console.log(`${LOG_PREFIX} resolved`, {
+          docPath: `stakes/${STAKE_ID}/access/${can}`,
+          docExists: snap.exists(),
+          scope: input.scope,
+          authEmail: refreshed.email,
+          tokenEmail: refreshed.claims.email,
+          tokenCanonical: refreshed.claims.canonical,
+          tokenStakes: refreshed.claims.stakes,
+        });
+      }
+
       if (!snap.exists()) {
         // Create a fresh manual-only access doc per the rule's `create`
         // gate — `importer_callings` must be empty.
-        await setDoc(ref, {
+        const body = {
           member_canonical: can,
           member_email: input.member_email.trim(),
           member_name: input.member_name.trim(),
@@ -96,7 +153,23 @@ export function useAddManualGrantMutation() {
           last_modified_at: serverTimestamp(),
           last_modified_by: actor,
           lastActor: actor,
-        } as unknown as Access);
+        };
+        if (isLoggable()) {
+          console.log(`${LOG_PREFIX} create payload`, { docPath: ref.path, body });
+        }
+        try {
+          await setDoc(ref, body as unknown as Access);
+        } catch (err) {
+          if (isLoggable()) {
+            console.error(`${LOG_PREFIX} create denied`, {
+              docPath: ref.path,
+              tokenCanonical: refreshed.claims.canonical,
+              stakes: refreshed.claims.stakes,
+              err,
+            });
+          }
+          throw err;
+        }
         return;
       }
 
@@ -113,14 +186,30 @@ export function useAddManualGrantMutation() {
 
       // Preserve member_email + member_name in case they came in fresh
       // on this add (existing doc may pre-date the values from typing).
-      await updateDoc(ref, {
+      const updatePayload = {
         [`manual_grants.${input.scope}`]: arrayUnion(grant),
         member_email: input.member_email.trim() || existing.member_email,
         member_name: input.member_name.trim() || existing.member_name,
         last_modified_at: serverTimestamp(),
         last_modified_by: actor,
         lastActor: actor,
-      });
+      };
+      if (isLoggable()) {
+        console.log(`${LOG_PREFIX} update payload`, { docPath: ref.path, updatePayload });
+      }
+      try {
+        await updateDoc(ref, updatePayload);
+      } catch (err) {
+        if (isLoggable()) {
+          console.error(`${LOG_PREFIX} update denied`, {
+            docPath: ref.path,
+            tokenCanonical: refreshed.claims.canonical,
+            stakes: refreshed.claims.stakes,
+            err,
+          });
+        }
+        throw err;
+      }
     },
     // Fire-and-forget — awaiting `invalidateQueries()` would hang
     // because the DIY live hooks use a never-resolving placeholder
@@ -148,11 +237,11 @@ export interface DeleteManualGrantInput {
  * the doc entirely (per the rules' delete predicate).
  */
 export function useDeleteManualGrantMutation() {
-  const principal = usePrincipal();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ member_canonical, scope, grant }: DeleteManualGrantInput) => {
-      const actor = actorOf(principal);
+      const refreshed = await readRefreshedActor();
+      const actor = { email: refreshed.email, canonical: refreshed.canonical };
       const ref = accessRef(db, STAKE_ID, member_canonical);
       await updateDoc(ref, {
         [`manual_grants.${scope}`]: arrayRemove(grant),
