@@ -1011,7 +1011,7 @@ _Importer service_
   - Calling matching against templates including `*` wildcards.
   - **No `source_row_hash`** — doc IDs are reconstructed directly (`access/{canonical}` and `seats/{canonical}`).
   - Diff against existing access docs: `importer_callings[scope]` replaced wholesale per tab (split-ownership). `manual_grants` left alone.
-  - Diff against existing seat docs: callings-list growth/shrink; primary scope determined by stake>ward priority, then alphabetical ward_code; cross-scope auto findings go to `duplicate_grants`. Promotion-on-empty-callings: if primary auto callings → empty AND a manual/temp duplicate exists, promote it.
+  - Diff against existing seat docs: callings-list growth/shrink; primary scope determined by stake>ward priority, then alphabetical ward_code; cross-scope auto findings go to `duplicate_grants`. Promotion-on-empty-callings: if primary auto callings → empty AND a manual/temp duplicate exists, promote it. **[RESOLVED 2026-04-29]** The doc-per-person split-ownership model makes this scenario unreachable. `seats/{canonical}` has manager-driven primary (`type='manual'`/`'temp'`) iff any manual/temp grant exists for that person; an `type='auto'` primary therefore cannot have a manual/temp entry in `duplicate_grants[]`. Cross-scope auto-to-auto promotion is implicit in the diff planner's per-run rebuild of `desiredAutoSeats` (`functions/src/lib/diff.ts:202–235`), not via `duplicate_grants[]`. See `packages/shared/src/types/seat.ts` for the canonical type definition.
   - Per-row audit (via Phase 8 audit trigger; importer code doesn't write audit directly).
   - Updates `last_import_at`, `last_import_summary` on stake doc.
   - Over-cap detection in a follow-up pass; persists snapshot to `stakes.{sid}.last_over_caps_json`; emails best-effort (Phase 9).
@@ -1071,12 +1071,12 @@ _Integration (Firestore emulator + Sheets API mocked)_
 - [ ] Over-cap detection: persists snapshot; emits `over_cap_warning` audit row; resolved condition clears snapshot.
 - [ ] Multi-calling person: importer adds second calling → seat doc's `callings[]` grows, no duplicate doc.
 - [ ] Cross-scope person (stake + ward): primary is stake (priority); ward goes to `duplicate_grants`.
-- [ ] Promotion: auto callings disappear, manual duplicate exists → promoted to primary.
+- [ ] Promotion: auto callings disappear, manual duplicate exists → promoted to primary. **[RESOLVED 2026-04-29]** Scenario unreachable under the shipped schema; no test needed. See the resolution note on the promotion sub-task line above.
 - [ ] Expiry: temp seat with `end_date < today` → deleted + `auto_expire` audit row.
 - [ ] Expiry: temp seat with `end_date == today` → NOT deleted.
 - [ ] Two consecutive expiry runs: second is no-op.
 - [ ] Stake with `setup_complete=false` → skipped by both jobs.
-- [ ] Concurrent run guard: hand-crafted simultaneous expiry + manual import → second invocation waits or returns "already running".
+- [ ] Concurrent run guard: hand-crafted simultaneous expiry + manual import → second invocation waits or returns "already running". **[RESOLVED 2026-04-29 — YAGNI]** Cloud Functions 2nd-gen scheduled jobs default to `max-instances=1` (single-runner per scheduled fire). The importer's idempotent design means concurrent manual `runImportNow` invocations converge to the same Firestore state. A Firestore-based mutex was deemed unnecessary for v1's 1–2 imports/week scale. Revisit if contention is observed.
 
 Audit trigger coverage:
 - [ ] Every audited collection's write produces an audit row within 1s.
