@@ -3,6 +3,21 @@
    and the utilization-bar host. Mechanical port of the matching
    selectors from Apps Script `Styles.html`. */
 
+/* Native `<select>` chrome. Owned here rather than as Tailwind
+   utilities because `tailwind-merge` collapses `bg-white` (color) and
+   `bg-[image:url(...)]` (image) into a single `bg-` slot. With color
+   stripped, the Tailwind preflight's `background-color: transparent`
+   showed through and the select rendered grey on top of the page
+   chrome. */
+.kd-select {
+  appearance: none;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><polyline points='6,8 10,12 14,8'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+}
+
 .kd-page-subtitle {
   color: var(--kd-fg-3);
   font-size: 0.95em;

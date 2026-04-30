@@ -100,6 +100,68 @@ describe('computeFieldDiff', () => {
     expect(fields).toEqual(['member_email', 'scope']);
   });
 
+  it('flattens manual_grants on create-shape rows (one row per scope)', () => {
+    // Regression guard for the bug surfaced in the staging screenshot:
+    // create_access rows skipped flattening because the create branch
+    // only handled the top-level field, not the per-scope expansion.
+    const after = {
+      member_canonical: 'a@x.com',
+      member_email: 'a@x.com',
+      member_name: 'Alice',
+      manual_grants: {
+        CO: [
+          {
+            grant_id: 'g1',
+            reason: 'Helper',
+            granted_by: { email: 'mgr@x.com', canonical: 'mgr@x.com' },
+            granted_at: { seconds: 1, nanoseconds: 0 },
+          },
+        ],
+        stake: [
+          {
+            grant_id: 'g2',
+            reason: 'Visitor',
+            granted_by: { email: 'mgr@x.com', canonical: 'mgr@x.com' },
+            granted_at: { seconds: 2, nanoseconds: 0 },
+          },
+        ],
+      },
+    };
+    const r = computeFieldDiff(null, after);
+    expect(r.shape).toBe('create');
+    const fields = r.rows.map((x) => x.field).sort();
+    // member_canonical stripped; manual_grants flattened to per-scope.
+    expect(fields).toEqual([
+      'manual_grants[CO]',
+      'manual_grants[stake]',
+      'member_email',
+      'member_name',
+    ]);
+    expect(r.rows.every((row) => row.kind === 'add')).toBe(true);
+  });
+
+  it('flattens manual_grants on delete-shape rows (one row per scope)', () => {
+    const before = {
+      member_canonical: 'a@x.com',
+      member_email: 'a@x.com',
+      manual_grants: {
+        CO: [
+          {
+            grant_id: 'g1',
+            reason: 'Helper',
+            granted_by: { email: 'mgr@x.com', canonical: 'mgr@x.com' },
+            granted_at: { seconds: 1, nanoseconds: 0 },
+          },
+        ],
+      },
+    };
+    const r = computeFieldDiff(before, null);
+    expect(r.shape).toBe('delete');
+    const fields = r.rows.map((x) => x.field).sort();
+    expect(fields).toEqual(['manual_grants[CO]', 'member_email']);
+    expect(r.rows.every((row) => row.kind === 'remove')).toBe(true);
+  });
+
   it('strips canonical-email fields from create diffs', () => {
     const r = computeFieldDiff(null, {
       member_canonical: 'a@x.com',
@@ -163,14 +225,31 @@ describe('formatDiffValue', () => {
     expect(formatDiffValue(undefined)).toBe('(absent)');
   });
 
-  it('renders ISO timestamp strings in human-readable form', () => {
-    expect(formatDiffValue('2026-04-28T12:34:56.789Z')).toBe('2026-04-28 12:34:56 UTC');
-    expect(formatDiffValue('2026-04-28T12:34:56Z')).toBe('2026-04-28 12:34:56 UTC');
+  it('renders ISO timestamp strings in stake-local form (default tz)', () => {
+    // No tz → default `America/Denver`. 12:34 UTC = 6:34 am MDT.
+    expect(formatDiffValue('2026-04-28T12:34:56.789Z')).toBe('2026-04-28 6:34 am');
+    expect(formatDiffValue('2026-04-28T12:34:56Z')).toBe('2026-04-28 6:34 am');
   });
 
-  it('renders Firestore Timestamps in human-readable form', () => {
+  it('renders ISO timestamps in the supplied timezone', () => {
+    expect(formatDiffValue('2026-04-28T12:34:56Z', 'UTC')).toBe('2026-04-28 12:34 pm');
+  });
+
+  it('renders Firestore Timestamps in stake-local form (default tz)', () => {
     const ts = Timestamp.fromDate(new Date('2026-04-28T12:34:56Z'));
-    expect(formatDiffValue(ts)).toBe('2026-04-28 12:34:56 UTC');
+    expect(formatDiffValue(ts)).toBe('2026-04-28 6:34 am');
+  });
+
+  it('renders serialised Firestore Timestamp envelopes', () => {
+    // Audit-trigger payloads can land with the SDK reference encoder's
+    // serialised form: `{ type, seconds, nanoseconds }`. The diff
+    // renderer should still format these as readable timestamps.
+    const envelope = {
+      type: 'firestore/timestamp/1.0',
+      seconds: Math.floor(Date.UTC(2026, 3, 28, 12, 34, 56) / 1000),
+      nanoseconds: 0,
+    };
+    expect(formatDiffValue(envelope, 'UTC')).toBe('2026-04-28 12:34 pm');
   });
 
   it('renders primitive arrays as comma-separated', () => {
@@ -178,9 +257,26 @@ describe('formatDiffValue', () => {
     expect(formatDiffValue([])).toBe('(empty list)');
   });
 
-  it('renders nested arrays / maps as JSON', () => {
-    expect(formatDiffValue({ CO: ['Bishop'] })).toBe('{"CO":["Bishop"]}');
-    expect(formatDiffValue([{ a: 1 }])).toBe('[{"a":1}]');
+  it('renders ManualGrant arrays as readable per-grant summaries', () => {
+    const grants = [
+      {
+        grant_id: 'g1',
+        reason: 'Helper',
+        granted_by: { email: 'tad.e.smith@gmail.com', canonical: 'tadesmith@gmail.com' },
+        granted_at: { seconds: Math.floor(Date.UTC(2026, 3, 28, 12, 34) / 1000), nanoseconds: 0 },
+      },
+    ];
+    const out = formatDiffValue(grants, 'UTC');
+    expect(out).toContain('Helper');
+    expect(out).toContain('by tad.e.smith@gmail.com');
+    // Canonical email never leaks.
+    expect(out).not.toContain('tadesmith@gmail.com');
+    expect(out).toContain('2026-04-28 12:34 pm');
+  });
+
+  it('renders maps as readable key=value lists with canonical fields stripped', () => {
+    expect(formatDiffValue({ CO: ['Bishop'] })).toBe('CO=Bishop');
+    expect(formatDiffValue({ email: 'a@b.c', canonical: 'a@b.c' })).toBe('a@b.c'); // ActorRef shape collapses to the typed email.
   });
 
   it('renders empty maps as "(empty map)"', () => {

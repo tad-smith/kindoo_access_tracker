@@ -106,6 +106,14 @@ describe('<AuditLogPage />', () => {
     expect(screen.getByRole('button', { name: /prev/i })).toBeDisabled();
   });
 
+  it('renders the timestamp in the stake-doc timezone', () => {
+    // Stake mocked to UTC. NOW = 2026-04-28T12:00:00Z → 12:00 pm UTC.
+    useAuditLogPageMock.mockReturnValue(liveResult([makeAuditLog({ audit_id: 'a1' })]));
+    render(<AuditLogPage />);
+    const card = screen.getByTestId('audit-row-a1');
+    expect(within(card).getByText('2026-04-28 12:00 pm')).toBeInTheDocument();
+  });
+
   it('seeds the entity_id filter from the deep-link prop', () => {
     useAuditLogPageMock.mockReturnValue(liveResult([makeAuditLog({ audit_id: 'a1' })]));
     render(<AuditLogPage initialFilters={{ entity_id: 'bob@example.com' }} />);

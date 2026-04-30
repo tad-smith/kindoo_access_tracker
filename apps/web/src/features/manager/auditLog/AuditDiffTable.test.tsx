@@ -67,16 +67,17 @@ describe('<AuditDiffTable />', () => {
     expect(within(row).getByText('filled')).toBeInTheDocument();
   });
 
-  it('renders ISO-timestamp strings in human-readable form', () => {
+  it('renders ISO-timestamp strings in stake-local form', () => {
     render(
       <AuditDiffTable
         before={{ end_date: '2026-04-28T00:00:00Z' }}
         after={{ end_date: '2026-05-15T00:00:00Z' }}
+        timezone="UTC"
       />,
     );
     const row = screen.getByTestId('audit-diff-row-end_date');
-    expect(within(row).getByText('2026-04-28 00:00:00 UTC')).toBeInTheDocument();
-    expect(within(row).getByText('2026-05-15 00:00:00 UTC')).toBeInTheDocument();
+    expect(within(row).getByText('2026-04-28 12:00 am')).toBeInTheDocument();
+    expect(within(row).getByText('2026-05-15 12:00 am')).toBeInTheDocument();
   });
 
   it('renders primitive-array changes as comma-separated lists', () => {

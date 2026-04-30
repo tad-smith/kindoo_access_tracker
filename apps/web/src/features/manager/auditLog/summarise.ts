@@ -15,6 +15,7 @@
 
 import type { AuditLog } from '@kindoo/shared';
 import { BOOKKEEPING_FIELDS } from '@kindoo/shared';
+import { formatDateTimeInStakeTz } from '../../../lib/datetime';
 
 export function summariseAuditRow(row: AuditLog): string {
   const { action, before, after } = row;
@@ -307,78 +308,120 @@ export function computeFieldDiff(before: unknown, after: unknown): FieldDiffResu
 /** Render an arbitrary value into the diff cell text. Mirrors the Apps
  *  Script `stringifyValue_`: nulls render as `(empty)` instead of the
  *  literal `""`, timestamps render in human-readable form, primitives
- *  cap at 200 chars (Apps Script capped at 80 — bumped because the diff
- *  table cell is wider than the inline summary), arrays / maps render
- *  as compact JSON.
+ *  cap at 200 chars, arrays render as comma-separated for primitives
+ *  or as readable per-item summaries for known shapes (manual grants,
+ *  actor refs).
  *
  *  Pass `timezone` (e.g. `stake.timezone`) to render any embedded
- *  Firestore Timestamps in the stake-local form. Omitting it falls back
- *  to UTC (only used by tests / non-stake contexts). */
+ *  Firestore Timestamps in stake-local form. Omitting it falls back to
+ *  the `formatDateTimeInStakeTz` default (`America/Denver`). */
 export function formatDiffValue(v: unknown, timezone?: string): string {
   if (v === undefined) return '(absent)';
   if (v === null || v === '') return '(empty)';
   if (typeof v === 'string') {
     // ISO-ish timestamp string: re-render in stake-local time.
     const isoMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?Z?$/.exec(v);
-    if (isoMatch) {
-      if (timezone) {
-        return formatTimestampInTz(new Date(v), timezone);
-      }
-      return `${isoMatch[1]} ${isoMatch[2]} UTC`;
-    }
+    if (isoMatch) return formatDateTimeInStakeTz(new Date(v), timezone);
     return v.length > 200 ? `${v.substring(0, 197)}…` : v;
   }
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  if (isFirestoreTimestamp(v)) {
-    if (timezone) return formatTimestampInTz(v.toDate(), timezone);
-    return v.toDate().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-  }
+  // Firestore Timestamp variants: SDK objects (with toDate) and
+  // already-serialised envelopes (`{ type: 'firestore/timestamp/1.0',
+  // seconds, nanoseconds }`) that surface in audit-trigger payloads.
+  const date = coerceTimestampLike(v);
+  if (date) return formatDateTimeInStakeTz(date, timezone);
   if (Array.isArray(v)) {
     if (v.length === 0) return '(empty list)';
-    // Comma-separated for primitive arrays; JSON for nested.
     if (v.every((x) => typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean')) {
       return v.join(', ');
     }
-    return JSON.stringify(v);
+    if (v.every(isManualGrantLike)) {
+      return v.map((g) => formatManualGrant(g, timezone)).join('; ');
+    }
+    // Heterogeneous / unknown shape — summarise each entry recursively.
+    return v.map((x) => formatDiffValue(x, timezone)).join('; ');
   }
   if (typeof v === 'object') {
+    if (isActorRef(v)) return formatActorRef(v);
     const entries = Object.entries(v as Record<string, unknown>);
     if (entries.length === 0) return '(empty map)';
-    return JSON.stringify(v);
+    // Render `key=value` pairs, recursively formatting each value, with
+    // canonical-email + bookkeeping keys stripped so the surface stays
+    // user-readable. The flat fallback isn't ideal for deeply-nested
+    // shapes but at our data scale the only nested map shapes that
+    // surface are well-modelled (grants, actor refs, callings) and
+    // covered above.
+    const bits = entries
+      .filter(([k]) => !isHiddenField(k))
+      .map(([k, val]) => `${k}=${formatDiffValue(val, timezone)}`);
+    return bits.join(', ');
   }
   return String(v);
 }
 
-function formatTimestampInTz(date: Date, tz: string): string {
-  const datePart = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  }).formatToParts(date);
-  const hour = parts.find((p) => p.type === 'hour')?.value ?? '';
-  const minute = parts.find((p) => p.type === 'minute')?.value ?? '';
-  const dayPeriod = (parts.find((p) => p.type === 'dayPeriod')?.value ?? '').toLowerCase();
-  return `${datePart} ${hour}:${minute} ${dayPeriod}`;
+/** Render a single `ManualGrant` row. Strips the `canonical` half of
+ *  `granted_by` and renders `granted_at` in stake-local time. */
+function formatManualGrant(grant: unknown, timezone?: string): string {
+  if (!grant || typeof grant !== 'object') return '';
+  const g = grant as Record<string, unknown>;
+  const reason = typeof g.reason === 'string' ? g.reason : '';
+  const grantedBy = isActorRef(g.granted_by) ? (g.granted_by as { email: string }).email : '';
+  const grantedAtDate = coerceTimestampLike(g.granted_at);
+  const grantedAt = grantedAtDate ? formatDateTimeInStakeTz(grantedAtDate, timezone) : '';
+  const bits: string[] = [];
+  if (reason) bits.push(reason);
+  if (grantedBy) bits.push(`by ${grantedBy}`);
+  if (grantedAt) bits.push(`at ${grantedAt}`);
+  return bits.join(' · ');
+}
+
+function isManualGrantLike(v: unknown): boolean {
+  if (!v || typeof v !== 'object') return false;
+  const g = v as Record<string, unknown>;
+  // grant_id is the unique fingerprint; reason and granted_by are
+  // present on every real grant.
+  return typeof g.grant_id === 'string' && typeof g.reason === 'string';
+}
+
+function isActorRef(v: unknown): v is { email: string; canonical?: string } {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return (
+    typeof r.email === 'string' && Object.keys(r).every((k) => k === 'email' || k === 'canonical')
+  );
+}
+
+function formatActorRef(v: unknown): string {
+  const r = v as { email: string };
+  return r.email;
+}
+
+/** Coerce known timestamp-shaped values into a `Date`. Handles:
+ *   - Firestore SDK Timestamp instances (`.toDate()` available)
+ *   - Serialised envelopes like
+ *     `{ type: 'firestore/timestamp/1.0', seconds, nanoseconds }`
+ *     written by the audit trigger when it stores raw `before`/`after`
+ *     payloads through Firestore's reference encoder.
+ *   - Plain `{ seconds, nanoseconds }` shapes (TimestampLike). */
+function coerceTimestampLike(v: unknown): Date | null {
+  if (!v || typeof v !== 'object') return null;
+  const r = v as Record<string, unknown> & { toDate?: () => Date };
+  if (typeof r.toDate === 'function') {
+    try {
+      return r.toDate();
+    } catch {
+      return null;
+    }
+  }
+  if (typeof r.seconds === 'number') {
+    const nanos = typeof r.nanoseconds === 'number' ? r.nanoseconds : 0;
+    return new Date(r.seconds * 1000 + nanos / 1_000_000);
+  }
+  return null;
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
-}
-
-function isFirestoreTimestamp(v: unknown): v is { toDate: () => Date } {
-  return (
-    v !== null &&
-    typeof v === 'object' &&
-    'toDate' in v &&
-    typeof (v as { toDate: unknown }).toDate === 'function'
-  );
 }
 
 /** Audit-action category. Drives the row-card action-badge color so

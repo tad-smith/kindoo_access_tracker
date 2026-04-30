@@ -6,7 +6,14 @@
 // All app-surfaced timestamps render in the stake's timezone (read
 // from `stake.timezone`, e.g. `America/Denver`) so the audit log,
 // dashboard, and roster cards all agree on local-time semantics.
-// Falls back to UTC when no timezone is provided.
+//
+// Fallback when no timezone is supplied (the stake doc snapshot is
+// still loading, or the field is missing): `America/Denver`. This
+// matches the v1 deploy's stake; multi-stake (Phase B) needs a
+// per-stake default seeded by `createStake`. UTC is wrong for our
+// only deployed stake — the operator hits a 6-hour negative offset on
+// every audit timestamp before this fallback applies.
+const DEFAULT_STAKE_TZ = 'America/Denver';
 
 /**
  * Format a Date / Firestore Timestamp / ISO string in the stake's
@@ -16,7 +23,7 @@
 export function formatDateTimeInStakeTz(value: unknown, timezone: string | undefined): string {
   const date = toDate(value);
   if (!date) return '';
-  const tz = timezone || 'UTC';
+  const tz = timezone || DEFAULT_STAKE_TZ;
   // `en-CA` for the date side because it formats `YYYY-MM-DD` natively.
   // `en-US` for the time side because `hour: 'numeric'` gives `9` (not
   // `09`) — the Apps Script equivalent of `h:mma`.
@@ -46,7 +53,7 @@ export function formatDateTimeInStakeTz(value: unknown, timezone: string | undef
 export function formatDateInStakeTz(value: unknown, timezone: string | undefined): string {
   const date = toDate(value);
   if (!date) return '';
-  const tz = timezone || 'UTC';
+  const tz = timezone || DEFAULT_STAKE_TZ;
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
     year: 'numeric',

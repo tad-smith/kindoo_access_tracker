@@ -31,9 +31,12 @@ describe('formatDateTimeInStakeTz', () => {
     expect(formatDateTimeInStakeTz(undefined, 'UTC')).toBe('');
   });
 
-  it('falls back to UTC when no timezone is provided', () => {
+  it('falls back to America/Denver when no timezone is provided', () => {
+    // 2026-04-29T18:30:00Z = 2026-04-29 12:30 pm in MDT (UTC-6).
+    // Default fallback fires because the stake doc snapshot may be
+    // mid-load when the audit row first renders.
     const d = new Date('2026-04-29T18:30:00Z');
-    expect(formatDateTimeInStakeTz(d, undefined)).toBe('2026-04-29 6:30 pm');
+    expect(formatDateTimeInStakeTz(d, undefined)).toBe('2026-04-29 12:30 pm');
   });
 });
 
