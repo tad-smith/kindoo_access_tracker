@@ -163,6 +163,39 @@ describe('<AccessPage />', () => {
     expect(screen.getByTestId('add-manual-form')).toBeInTheDocument();
   });
 
+  it('add-form scope dropdown shows stake + one option per configured ward', () => {
+    useStakeWardsMock.mockReturnValue(
+      liveResult([
+        { ward_code: 'GE', ward_name: 'Genoa' },
+        { ward_code: 'CO', ward_name: 'Cordera' },
+      ]),
+    );
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    const dropdown = screen.getByTestId('add-manual-scope') as HTMLSelectElement;
+    const values = Array.from(dropdown.options).map((o) => o.value);
+    // 'stake' first; wards alphabetical.
+    expect(values).toEqual(['stake', 'CO', 'GE']);
+  });
+
+  it('add-form scope dropdown shows only stake when no wards are configured', () => {
+    useStakeWardsMock.mockReturnValue(liveResult([]));
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    const dropdown = screen.getByTestId('add-manual-scope') as HTMLSelectElement;
+    const values = Array.from(dropdown.options).map((o) => o.value);
+    expect(values).toEqual(['stake']);
+    expect(screen.getByTestId('add-manual-no-wards')).toBeInTheDocument();
+  });
+
+  it('add-form scope dropdown is disabled while wards are still loading', () => {
+    useStakeWardsMock.mockReturnValue(liveResult(undefined, true));
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    const dropdown = screen.getByTestId('add-manual-scope') as HTMLSelectElement;
+    expect(dropdown).toBeDisabled();
+  });
+
   it('invokes the add-mutation when the form is submitted with valid input', async () => {
     useAccessListMock.mockReturnValue(liveResult<Access>([]));
     const u = userEvent.setup();

@@ -156,7 +156,7 @@ export function AccessPage() {
         </div>
       )}
 
-      <AddManualGrantForm scopes={scopes} />
+      <AddManualGrantForm />
 
       <Dialog
         open={pendingDelete !== null}
@@ -264,12 +264,18 @@ const addManualSchema = z.object({
 });
 type AddManualForm = z.infer<typeof addManualSchema>;
 
-interface AddManualGrantFormProps {
-  scopes: readonly string[];
-}
-
-function AddManualGrantForm({ scopes }: AddManualGrantFormProps) {
+function AddManualGrantForm() {
   const mutation = useAddManualGrantMutation();
+  // Form scope dropdown is data-driven: 'stake' plus one option per
+  // configured ward in `stakes/{stakeId}/wards`. A grant against a
+  // ward that doesn't exist in this stake is non-operational; the
+  // dropdown enforces that at the UX layer.
+  const wards = useStakeWards();
+  const wardsLoading = wards.isLoading || wards.data === undefined;
+  const wardOptions = useMemo(
+    () => [...(wards.data ?? [])].map((w) => w.ward_code).sort((a, b) => a.localeCompare(b)),
+    [wards.data],
+  );
   const form = useForm<AddManualForm>({
     resolver: zodResolver(addManualSchema),
     defaultValues: { member_email: '', member_name: '', scope: 'stake', reason: '' },
@@ -313,14 +319,22 @@ function AddManualGrantForm({ scopes }: AddManualGrantFormProps) {
       ) : null}
       <label>
         Scope
-        <Select {...register('scope')}>
-          {scopes.map((s) => (
-            <option key={s} value={s}>
-              {s === 'stake' ? 'Stake' : s}
+        <Select {...register('scope')} disabled={wardsLoading} data-testid="add-manual-scope">
+          <option value="stake">Stake</option>
+          {wardOptions.map((code) => (
+            <option key={code} value={code}>
+              {code}
             </option>
           ))}
         </Select>
       </label>
+      {wardsLoading ? (
+        <p className="kd-form-hint">Loading wards…</p>
+      ) : wardOptions.length === 0 ? (
+        <p className="kd-form-hint" data-testid="add-manual-no-wards">
+          No wards configured. Add wards via Configuration to grant ward-scope access.
+        </p>
+      ) : null}
       <label>
         Reason
         <Input {...register('reason')} placeholder="Covering bishop" />
@@ -331,7 +345,7 @@ function AddManualGrantForm({ scopes }: AddManualGrantFormProps) {
         </p>
       ) : null}
       <div className="form-actions">
-        <Button type="submit" disabled={mutation.isPending}>
+        <Button type="submit" disabled={mutation.isPending || wardsLoading}>
           {mutation.isPending ? 'Adding…' : 'Add manual access'}
         </Button>
       </div>
