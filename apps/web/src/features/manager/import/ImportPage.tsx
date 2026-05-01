@@ -61,7 +61,7 @@ export function ImportPage() {
   const lastError = run.error;
 
   return (
-    <section>
+    <section className="kd-page-medium">
       <h1>Import</h1>
       <p className="kd-page-subtitle">
         Pulls the latest state from the callings spreadsheet and updates Seats (auto) and Access.
@@ -110,7 +110,17 @@ export function ImportPage() {
           <dd data-testid="import-last-summary">{stake.data.last_import_summary || '—'}</dd>
           <dt>Callings sheet ID</dt>
           <dd data-testid="import-callings-sheet-id">
-            {stake.data.callings_sheet_id || '(not set — add to Config)'}
+            {stake.data.callings_sheet_id ? (
+              <a
+                href={`https://docs.google.com/spreadsheets/d/${stake.data.callings_sheet_id}/edit`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {stake.data.callings_sheet_id}
+              </a>
+            ) : (
+              '(not configured)'
+            )}
           </dd>
         </dl>
 

@@ -131,11 +131,16 @@ describe('NewRequestPage — scope derivation by role', () => {
     expect(readScopes()).toEqual(['stake::Stake', 'BA::Ward BA', 'CO::Ward CO', 'GR::Ward GR']);
   });
 
-  it('stake-only: stake scope only', () => {
+  it('stake-only: stake scope only (a stake claim grants no ward access)', () => {
     setPrincipal({ stakeMemberStakes: ['csnorth'] });
     setWards(['CO', 'BA']);
     render(<NewRequestPage />);
-    expect(readScopes()).toEqual(['stake::Stake']);
+    const scopes = readScopes();
+    expect(scopes).toEqual(['stake::Stake']);
+    // Sharpened assertion (#12): a stake-only user must not see any
+    // ward in the dropdown, even though wards exist in the catalogue.
+    expect(scopes.some((s) => s.startsWith('CO::'))).toBe(false);
+    expect(scopes.some((s) => s.startsWith('BA::'))).toBe(false);
   });
 
   it('bishopric-only: each claimed ward, sorted', () => {
@@ -163,6 +168,17 @@ describe('NewRequestPage — scope derivation by role', () => {
     setWards(['CO', 'BA', 'GR']);
     render(<NewRequestPage />);
     expect(readScopes()).toEqual(['stake::Stake', 'BA::Ward BA', 'CO::Ward CO']);
+  });
+
+  it('stake + bishopric in one ward: stake plus that ward only', () => {
+    setPrincipal({
+      stakeMemberStakes: ['csnorth'],
+      bishopricWards: { csnorth: ['CO'] },
+    });
+    setWards(['CO', 'BA', 'GR']);
+    render(<NewRequestPage />);
+    // Stake claim plus bishopric in CO surfaces stake + CO; not BA / GR.
+    expect(readScopes()).toEqual(['stake::Stake', 'CO::Ward CO']);
   });
 
   it('platform superadmin without explicit manager: stake + every ward', () => {
@@ -200,5 +216,12 @@ describe('NewRequestPage — scope derivation by role', () => {
     setWards([]);
     render(<NewRequestPage />);
     expect(screen.getByRole('heading', { name: 'New Request' })).toBeInTheDocument();
+  });
+
+  it('wraps the page in the narrow-width container (600px max)', () => {
+    setPrincipal({ managerStakes: ['csnorth'] });
+    setWards([]);
+    const { container } = render(<NewRequestPage />);
+    expect(container.querySelector('section.kd-page-narrow')).not.toBeNull();
   });
 });

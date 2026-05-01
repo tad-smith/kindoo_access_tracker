@@ -102,6 +102,28 @@ describe('<ImportPage />', () => {
     expect(screen.getByTestId('import-callings-sheet-id')).toHaveTextContent('sheet1');
   });
 
+  it('renders callings_sheet_id as a Google Sheets hyperlink in a new tab', () => {
+    useStakeDocMock.mockReturnValue(stakeResult(makeStake({ callings_sheet_id: 'abc123' })));
+    render(<ImportPage />);
+    const link = screen.getByRole('link', { name: 'abc123' });
+    expect(link).toHaveAttribute('href', 'https://docs.google.com/spreadsheets/d/abc123/edit');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('renders "(not configured)" plain text when callings_sheet_id is empty', () => {
+    useStakeDocMock.mockReturnValue(stakeResult(makeStake({ callings_sheet_id: '' })));
+    render(<ImportPage />);
+    expect(screen.getByTestId('import-callings-sheet-id')).toHaveTextContent('(not configured)');
+    expect(screen.queryByRole('link', { name: /not configured/i })).toBeNull();
+  });
+
+  it('wraps content in the medium-width page container', () => {
+    useStakeDocMock.mockReturnValue(stakeResult(makeStake()));
+    const { container } = render(<ImportPage />);
+    expect(container.querySelector('section.kd-page-medium')).not.toBeNull();
+  });
+
   it('renders the over-cap banner when stake.last_over_caps_json has entries', () => {
     useStakeDocMock.mockReturnValue(
       stakeResult(

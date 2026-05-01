@@ -1,7 +1,7 @@
-// Manager Configuration route. Phase 7 ships CRUD over every editable
-// table — wards, buildings, managers, ward + stake calling templates,
-// stake-doc config keys, and a triggers placeholder. Sub-tab is a
-// search param `?tab=<key>` so deep-links land on the right section.
+// Manager Configuration route. CRUD over every editable table — config
+// keys, managers, wards, buildings, ward + stake calling templates.
+// Sub-tab is a search param `?tab=<key>` so deep-links land on the
+// right section.
 
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
@@ -11,13 +11,12 @@ import {
 } from '../../../features/manager/configuration/ConfigurationPage';
 
 const tabSchema = z.enum([
+  'config',
+  'managers',
   'wards',
   'buildings',
-  'managers',
   'ward-callings',
   'stake-callings',
-  'config',
-  'triggers',
 ]);
 
 const searchSchema = z.object({

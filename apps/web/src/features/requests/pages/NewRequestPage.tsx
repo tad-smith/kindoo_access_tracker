@@ -79,13 +79,13 @@ export function NewRequestPage() {
   const wardsLoading = isManager && (wards.isLoading || wards.data === undefined);
 
   return (
-    <section>
+    <section className="kd-page-narrow">
       <h1>New Request</h1>
       <p className="kd-page-subtitle">Submit a manual or temporary access request.</p>
       {buildings.isLoading || buildings.data === undefined || wardsLoading ? (
         <LoadingSpinner />
       ) : (
-        <NewRequestForm scopes={scopes} buildings={buildings.data} />
+        <NewRequestForm scopes={scopes} buildings={buildings.data} wards={wards.data ?? []} />
       )}
     </section>
   );

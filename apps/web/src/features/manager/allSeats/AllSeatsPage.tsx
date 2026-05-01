@@ -1,9 +1,9 @@
 // Manager All Seats page (live). Mirrors `src/ui/manager/AllSeats.html`.
 // Full roster across every scope; ward / building / type filters via
-// URL search params; per-scope summary cards with utilization bars; a
-// total-utilization bar when the scope filter is "All".
+// URL search params; total-utilization bar when the scope filter is
+// "All". Per-scope utilization is surfaced on the Dashboard.
 //
-// Phase 7 wires:
+// Mutations:
 //   - Inline-edit dialog on manual / temp rows (auto rows are
 //     importer-owned and have no edit affordance).
 //   - Reconcile dialog on rows where `duplicate_grants.length > 0`.
@@ -92,26 +92,6 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   };
 
   const allSeats = seats.data ?? [];
-  const summaries = useMemo(() => {
-    type SummaryRow = { scope: string; label: string; count: number; cap: number | null };
-    const rows: SummaryRow[] = [];
-    const stakeCount = allSeats.filter((s) => s.scope === 'stake').length;
-    if (!ward || ward === 'stake') {
-      rows.push({ scope: 'stake', label: 'Stake', count: stakeCount, cap: null });
-    }
-    for (const w of wardsList) {
-      if (ward && ward !== w.ward_code) continue;
-      const count = allSeats.filter((s) => s.scope === w.ward_code).length;
-      rows.push({
-        scope: w.ward_code,
-        label: `${w.ward_name} (${w.ward_code})`,
-        count,
-        cap: w.seat_cap,
-      });
-    }
-    return rows;
-  }, [allSeats, wardsList, ward]);
-
   const totalCount = allSeats.length;
   const stakeSeatCap = stake.data?.stake_seat_cap;
   const showOverallBar = !ward && stakeSeatCap !== undefined && stakeSeatCap > 0;
@@ -166,21 +146,6 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
             cap={stakeSeatCap}
             overCap={totalCount > stakeSeatCap}
           />
-        </div>
-      ) : null}
-
-      {summaries.length > 0 ? (
-        <div className="kd-scope-summaries" data-testid="scope-summaries">
-          {summaries.map((s) => (
-            <div key={s.scope} className="kd-scope-summary-card">
-              <span className="kd-scope-label">{s.label}</span>
-              <UtilizationBar
-                total={s.count}
-                cap={s.cap}
-                overCap={s.cap !== null && s.count > s.cap}
-              />
-            </div>
-          ))}
         </div>
       ) : null}
 

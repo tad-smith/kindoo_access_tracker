@@ -43,7 +43,7 @@ export function ManagerQueuePage() {
 
   if (pending.isLoading || pending.data === undefined) {
     return (
-      <section>
+      <section className="kd-page-medium">
         <h1>Queue</h1>
         <LoadingSpinner />
       </section>
@@ -51,7 +51,7 @@ export function ManagerQueuePage() {
   }
 
   return (
-    <section>
+    <section className="kd-page-medium">
       <h1>Queue</h1>
       <p className="kd-page-subtitle">Pending requests, oldest first.</p>
 

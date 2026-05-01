@@ -1,5 +1,5 @@
 // Component tests for the manager Audit Log page. Mocks
-// `useAuditLogPage` so the cursor pagination + filter rendering is
+// `useAuditLogInfinite` so the infinite-scroll + filter rendering is
 // exercised without touching Firestore.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -8,14 +8,15 @@ import userEvent from '@testing-library/user-event';
 import type { AuditLog } from '@kindoo/shared';
 import { makeAuditLog } from '../../../../test/fixtures';
 
-const useAuditLogPageMock = vi.fn();
+const useAuditLogInfiniteMock = vi.fn();
+const fetchNextPageMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./hooks', async () => {
   const actual = await vi.importActual<typeof import('./hooks')>('./hooks');
   return {
     ...actual,
-    useAuditLogPage: (filters: unknown, cursor: unknown) => useAuditLogPageMock(filters, cursor),
+    useAuditLogInfinite: (filters: unknown) => useAuditLogInfiniteMock(filters),
   };
 });
 
@@ -24,8 +25,6 @@ vi.mock('@tanstack/react-router', () => ({
 }));
 
 // Audit Log subscribes to the stake doc for the timezone setting.
-// Mock the dashboard hook with a stub stake (UTC) so the timestamp
-// column has a deterministic timezone in tests.
 vi.mock('../dashboard/hooks', () => ({
   useStakeDoc: () => ({
     data: { timezone: 'UTC' },
@@ -41,81 +40,111 @@ vi.mock('../dashboard/hooks', () => ({
 }));
 
 import { AuditLogPage } from './AuditLogPage';
-import { PAGE_SIZE } from './hooks';
 
-function liveResult<T>(data: T[] | undefined, isLoading = false) {
+interface InfiniteResultOpts {
+  pages?: AuditLog[][];
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  isLoading?: boolean;
+}
+
+function infiniteResult(opts: InfiniteResultOpts = {}) {
+  const pages = opts.pages ?? [[]];
   return {
-    data,
+    data: { pages: pages.map((rows) => ({ rows, nextCursor: null })) },
     error: null,
-    status: isLoading ? 'pending' : 'success',
-    isPending: isLoading,
-    isLoading,
-    isSuccess: !isLoading,
+    status: opts.isLoading ? 'pending' : 'success',
+    isPending: opts.isLoading ?? false,
+    isLoading: opts.isLoading ?? false,
+    isSuccess: !(opts.isLoading ?? false),
     isError: false,
     isFetching: false,
     fetchStatus: 'idle',
+    hasNextPage: opts.hasNextPage ?? false,
+    isFetchingNextPage: opts.isFetchingNextPage ?? false,
+    fetchNextPage: fetchNextPageMock,
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   navigateMock.mockResolvedValue(undefined);
+  fetchNextPageMock.mockResolvedValue(undefined);
 });
 
 describe('<AuditLogPage />', () => {
   it('renders the empty-state copy when zero rows match', () => {
-    useAuditLogPageMock.mockReturnValue(liveResult<AuditLog>([]));
+    useAuditLogInfiniteMock.mockReturnValue(infiniteResult({ pages: [[]] }));
     render(<AuditLogPage />);
     expect(screen.getByText(/no audit rows match/i)).toBeInTheDocument();
   });
 
   it('renders one card per audit row', () => {
-    useAuditLogPageMock.mockReturnValue(
-      liveResult([
-        makeAuditLog({ audit_id: 'a1', action: 'create_seat' }),
-        makeAuditLog({ audit_id: 'a2', action: 'update_seat' }),
-      ]),
+    useAuditLogInfiniteMock.mockReturnValue(
+      infiniteResult({
+        pages: [
+          [
+            makeAuditLog({ audit_id: 'a1', action: 'create_seat' }),
+            makeAuditLog({ audit_id: 'a2', action: 'update_seat' }),
+          ],
+        ],
+      }),
     );
     render(<AuditLogPage />);
     expect(screen.getByTestId('audit-row-a1')).toBeInTheDocument();
     expect(screen.getByTestId('audit-row-a2')).toBeInTheDocument();
   });
 
-  it('shows Page 1 + the row count in the pagination header', () => {
-    useAuditLogPageMock.mockReturnValue(liveResult([makeAuditLog({ audit_id: 'a1' })]));
+  it('flattens multiple infinite-query pages into a single row list', () => {
+    useAuditLogInfiniteMock.mockReturnValue(
+      infiniteResult({
+        pages: [
+          [makeAuditLog({ audit_id: 'p1-a' }), makeAuditLog({ audit_id: 'p1-b' })],
+          [makeAuditLog({ audit_id: 'p2-a' })],
+        ],
+      }),
+    );
     render(<AuditLogPage />);
-    expect(screen.getByTestId('audit-page-counter')).toHaveTextContent(/page 1 · 1 row/i);
+    expect(screen.getByTestId('audit-row-p1-a')).toBeInTheDocument();
+    expect(screen.getByTestId('audit-row-p1-b')).toBeInTheDocument();
+    expect(screen.getByTestId('audit-row-p2-a')).toBeInTheDocument();
   });
 
-  it('disables Next when fewer rows than PAGE_SIZE returned', () => {
-    useAuditLogPageMock.mockReturnValue(liveResult([makeAuditLog({ audit_id: 'a1' })]));
+  it('shows "No more entries." when the infinite query has no more pages', () => {
+    useAuditLogInfiniteMock.mockReturnValue(
+      infiniteResult({
+        pages: [[makeAuditLog({ audit_id: 'a1' })]],
+        hasNextPage: false,
+      }),
+    );
     render(<AuditLogPage />);
-    expect(screen.getByRole('button', { name: /next/i })).toBeDisabled();
+    expect(screen.getByTestId('audit-log-end')).toHaveTextContent('No more entries.');
   });
 
-  it('enables Next when exactly PAGE_SIZE rows returned', () => {
-    const rows = Array.from({ length: PAGE_SIZE }, (_, i) => makeAuditLog({ audit_id: `a${i}` }));
-    useAuditLogPageMock.mockReturnValue(liveResult(rows));
+  it('does not show the "No more entries." marker while a next page is available', () => {
+    useAuditLogInfiniteMock.mockReturnValue(
+      infiniteResult({
+        pages: [[makeAuditLog({ audit_id: 'a1' })]],
+        hasNextPage: true,
+      }),
+    );
     render(<AuditLogPage />);
-    expect(screen.getByRole('button', { name: /next/i })).not.toBeDisabled();
-  });
-
-  it('disables Prev on the first page', () => {
-    useAuditLogPageMock.mockReturnValue(liveResult([makeAuditLog({ audit_id: 'a1' })]));
-    render(<AuditLogPage />);
-    expect(screen.getByRole('button', { name: /prev/i })).toBeDisabled();
+    expect(screen.queryByTestId('audit-log-end')).toBeNull();
   });
 
   it('renders the timestamp in the stake-doc timezone', () => {
-    // Stake mocked to UTC. NOW = 2026-04-28T12:00:00Z → 12:00 pm UTC.
-    useAuditLogPageMock.mockReturnValue(liveResult([makeAuditLog({ audit_id: 'a1' })]));
+    useAuditLogInfiniteMock.mockReturnValue(
+      infiniteResult({ pages: [[makeAuditLog({ audit_id: 'a1' })]] }),
+    );
     render(<AuditLogPage />);
     const card = screen.getByTestId('audit-row-a1');
     expect(within(card).getByText('2026-04-28 12:00 pm')).toBeInTheDocument();
   });
 
   it('seeds the entity_id filter from the deep-link prop', () => {
-    useAuditLogPageMock.mockReturnValue(liveResult([makeAuditLog({ audit_id: 'a1' })]));
+    useAuditLogInfiniteMock.mockReturnValue(
+      infiniteResult({ pages: [[makeAuditLog({ audit_id: 'a1' })]] }),
+    );
     render(<AuditLogPage initialFilters={{ entity_id: 'bob@example.com' }} />);
     const entityIdInput = screen.getByPlaceholderText(/ID or email/i) as HTMLInputElement;
     expect(entityIdInput.value).toBe('bob@example.com');
@@ -123,14 +152,18 @@ describe('<AuditLogPage />', () => {
 
   it('expands the diff details when the user clicks the summary', async () => {
     const user = userEvent.setup();
-    useAuditLogPageMock.mockReturnValue(
-      liveResult([
-        makeAuditLog({
-          audit_id: 'a1',
-          before: null,
-          after: { member_email: 'bob@example.com', scope: 'CO', type: 'auto' },
-        }),
-      ]),
+    useAuditLogInfiniteMock.mockReturnValue(
+      infiniteResult({
+        pages: [
+          [
+            makeAuditLog({
+              audit_id: 'a1',
+              before: null,
+              after: { member_email: 'bob@example.com', scope: 'CO', type: 'auto' },
+            }),
+          ],
+        ],
+      }),
     );
     render(<AuditLogPage />);
     const card = screen.getByTestId('audit-row-a1');
@@ -139,9 +172,6 @@ describe('<AuditLogPage />', () => {
     expect(details.open).toBe(false);
     await user.click(details.querySelector('summary')!);
     expect(details.open).toBe(true);
-    // Expanded: field-by-field diff table renders one row per
-    // changed/added field; the value cell carries the after-side
-    // contents.
     const table = within(card).getByTestId('audit-diff-table');
     expect(within(table).getByText('bob@example.com')).toBeInTheDocument();
     expect(within(table).getByText('CO')).toBeInTheDocument();
@@ -149,53 +179,59 @@ describe('<AuditLogPage />', () => {
   });
 
   it('surfaces the completion_note inline on R-1 complete_request rows', () => {
-    useAuditLogPageMock.mockReturnValue(
-      liveResult([
-        makeAuditLog({
-          audit_id: 'a1',
-          action: 'complete_request',
-          before: { status: 'pending' },
-          after: {
-            status: 'complete',
-            completion_note: 'Seat already removed at completion time (no-op).',
-          },
-        }),
-      ]),
+    useAuditLogInfiniteMock.mockReturnValue(
+      infiniteResult({
+        pages: [
+          [
+            makeAuditLog({
+              audit_id: 'a1',
+              action: 'complete_request',
+              before: { status: 'pending' },
+              after: {
+                status: 'complete',
+                completion_note: 'Seat already removed at completion time (no-op).',
+              },
+            }),
+          ],
+        ],
+      }),
     );
     render(<AuditLogPage />);
-    // The note shows up in the collapsed summary text.
     const card = screen.getByTestId('audit-row-a1');
     const summary = card.querySelector('.kd-audit-card-summary');
     expect(summary?.textContent).toMatch(/seat already removed at completion time/i);
   });
 
-  it('advances the cursor on Next click', async () => {
-    const user = userEvent.setup();
-    const rows = Array.from({ length: PAGE_SIZE }, (_, i) => makeAuditLog({ audit_id: `a${i}` }));
-    useAuditLogPageMock.mockReturnValue(liveResult(rows));
+  it('does not render Next/Prev pagination controls (replaced by infinite scroll)', () => {
+    useAuditLogInfiniteMock.mockReturnValue(
+      infiniteResult({ pages: [[makeAuditLog({ audit_id: 'a1' })]] }),
+    );
     render(<AuditLogPage />);
-    expect(screen.getByTestId('audit-page-counter')).toHaveTextContent(/page 1/i);
-    await user.click(screen.getByRole('button', { name: /next/i }));
-    expect(screen.getByTestId('audit-page-counter')).toHaveTextContent(/page 2/i);
-    // The hook was called with a non-null cursor on the second invocation.
-    const lastCall = useAuditLogPageMock.mock.calls.at(-1);
-    expect(lastCall?.[1]).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /next/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /prev/i })).toBeNull();
+    expect(screen.queryByTestId('audit-page-counter')).toBeNull();
+  });
+
+  it('renders the infinite-scroll sentinel when rows are present', () => {
+    useAuditLogInfiniteMock.mockReturnValue(
+      infiniteResult({
+        pages: [[makeAuditLog({ audit_id: 'a1' })]],
+        hasNextPage: true,
+      }),
+    );
+    render(<AuditLogPage />);
+    expect(screen.getByTestId('audit-log-sentinel')).toBeInTheDocument();
   });
 
   describe('action-badge color categories', () => {
-    // Each row's action chip should pick up the Apps Script color
-    // category for that action: blue (CRUD), green (request), red
-    // (system), amber (importer). The Tailwind classes that drive
-    // those colors come from the Badge component's `audit-*` variants;
-    // we verify the right variant landed by class-name match.
     function renderRowWithAction(action: string) {
-      useAuditLogPageMock.mockReturnValue(
-        liveResult([makeAuditLog({ audit_id: 'a1', action: action as never })]),
+      useAuditLogInfiniteMock.mockReturnValue(
+        infiniteResult({
+          pages: [[makeAuditLog({ audit_id: 'a1', action: action as never })]],
+        }),
       );
       render(<AuditLogPage />);
       const card = screen.getByTestId('audit-row-a1');
-      // The Badge renders as a span with the action text + variant
-      // classes; find it by its action-text content.
       const badge = within(card).getByText(action);
       return badge;
     }
@@ -233,8 +269,10 @@ describe('<AuditLogPage />', () => {
 
   describe('automated-actor chip', () => {
     it('paints the Importer actor with the actor-automated chip styling', () => {
-      useAuditLogPageMock.mockReturnValue(
-        liveResult([makeAuditLog({ audit_id: 'a1', actor_email: 'Importer' })]),
+      useAuditLogInfiniteMock.mockReturnValue(
+        infiniteResult({
+          pages: [[makeAuditLog({ audit_id: 'a1', actor_email: 'Importer' })]],
+        }),
       );
       render(<AuditLogPage />);
       const card = screen.getByTestId('audit-row-a1');
@@ -243,8 +281,10 @@ describe('<AuditLogPage />', () => {
     });
 
     it('paints ExpiryTrigger the same way', () => {
-      useAuditLogPageMock.mockReturnValue(
-        liveResult([makeAuditLog({ audit_id: 'a1', actor_email: 'ExpiryTrigger' })]),
+      useAuditLogInfiniteMock.mockReturnValue(
+        infiniteResult({
+          pages: [[makeAuditLog({ audit_id: 'a1', actor_email: 'ExpiryTrigger' })]],
+        }),
       );
       render(<AuditLogPage />);
       const card = screen.getByTestId('audit-row-a1');
@@ -253,8 +293,10 @@ describe('<AuditLogPage />', () => {
     });
 
     it('does not paint a real-user email as automated', () => {
-      useAuditLogPageMock.mockReturnValue(
-        liveResult([makeAuditLog({ audit_id: 'a1', actor_email: 'alice@example.com' })]),
+      useAuditLogInfiniteMock.mockReturnValue(
+        infiniteResult({
+          pages: [[makeAuditLog({ audit_id: 'a1', actor_email: 'alice@example.com' })]],
+        }),
       );
       render(<AuditLogPage />);
       const card = screen.getByTestId('audit-row-a1');

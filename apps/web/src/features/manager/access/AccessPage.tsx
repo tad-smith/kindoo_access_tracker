@@ -11,7 +11,7 @@
 //   - "Add manual access" form at the page foot.
 //   - Per-grant Delete button on manual rows (with confirm dialog).
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -111,6 +111,8 @@ export function AccessPage() {
     }
   }
 
+  const [addOpen, setAddOpen] = useState(false);
+
   return (
     <section>
       <h1>Access</h1>
@@ -135,28 +137,44 @@ export function AccessPage() {
           {sorted.length} user{sorted.length === 1 ? '' : 's'} ({manualCount} manual grant
           {manualCount === 1 ? '' : 's'})
         </span>
+        <Button
+          onClick={() => setAddOpen(true)}
+          data-testid="access-add-manual-button"
+          className="kd-filter-row-action"
+        >
+          Add Manual Access
+        </Button>
       </div>
 
       {access.isLoading || access.data === undefined ? (
         <LoadingSpinner />
       ) : sorted.length === 0 ? (
-        <EmptyState message="No access rows. Run the importer or add a manual grant below." />
+        <EmptyState message='No access rows. Run the importer or add a manual grant via "Add Manual Access".' />
       ) : (
-        <div className="kd-access-cards" data-testid="access-cards">
-          {sorted.map((a) => (
-            <AccessCard
-              key={a.member_canonical}
-              access={a}
-              scopeFilter={scopeFilter}
-              onDeleteRequest={(scope, grant) =>
-                setPendingDelete({ canonical: a.member_canonical, scope, grant })
-              }
-            />
-          ))}
-        </div>
+        <>
+          <AccessTable
+            users={sorted}
+            scopeFilter={scopeFilter}
+            onDeleteRequest={(canonical, scope, grant) =>
+              setPendingDelete({ canonical, scope, grant })
+            }
+          />
+          <div className="kd-access-cards kd-responsive-cards-phone" data-testid="access-cards">
+            {sorted.map((a) => (
+              <AccessCard
+                key={a.member_canonical}
+                access={a}
+                scopeFilter={scopeFilter}
+                onDeleteRequest={(scope, grant) =>
+                  setPendingDelete({ canonical: a.member_canonical, scope, grant })
+                }
+              />
+            ))}
+          </div>
+        </>
       )}
 
-      <AddManualGrantForm />
+      <AddManualGrantDialog open={addOpen} onClose={() => setAddOpen(false)} />
 
       <Dialog
         open={pendingDelete !== null}
@@ -178,6 +196,119 @@ export function AccessPage() {
         </Dialog.Footer>
       </Dialog>
     </section>
+  );
+}
+
+// Desktop table view — one row per (scope, calling/reason, email,
+// source) tuple, mirroring the Apps Script Access.html column shape.
+// The card list above renders the same data grouped per-user; CSS
+// picks which view is visible at 899px.
+
+interface AccessTableRow {
+  canonical: string;
+  email: string;
+  scope: string;
+  calling: string;
+  source: 'importer' | 'manual';
+  /** Set only when source === 'manual'; carries the grant for delete. */
+  grant?: ManualGrant;
+}
+
+function flattenAccess(users: readonly Access[], scopeFilter: string): AccessTableRow[] {
+  const rows: AccessTableRow[] = [];
+  for (const u of users) {
+    for (const [scope, callings] of Object.entries(u.importer_callings ?? {})) {
+      if (scopeFilter && scope !== scopeFilter) continue;
+      for (const calling of callings) {
+        rows.push({
+          canonical: u.member_canonical,
+          email: u.member_email,
+          scope,
+          calling,
+          source: 'importer',
+        });
+      }
+    }
+    for (const [scope, grants] of Object.entries(u.manual_grants ?? {})) {
+      if (scopeFilter && scope !== scopeFilter) continue;
+      for (const g of grants) {
+        rows.push({
+          canonical: u.member_canonical,
+          email: u.member_email,
+          scope,
+          calling: g.reason,
+          source: 'manual',
+          grant: g,
+        });
+      }
+    }
+  }
+  // Sort: scope (stake first, then alpha), calling, email.
+  rows.sort((a, b) => {
+    if (a.scope !== b.scope) {
+      if (a.scope === 'stake') return -1;
+      if (b.scope === 'stake') return 1;
+      return a.scope.localeCompare(b.scope);
+    }
+    if (a.calling !== b.calling) return a.calling.localeCompare(b.calling);
+    return a.email.localeCompare(b.email);
+  });
+  return rows;
+}
+
+interface AccessTableProps {
+  users: readonly Access[];
+  scopeFilter: string;
+  onDeleteRequest: (canonical: string, scope: string, grant: ManualGrant) => void;
+}
+
+function AccessTable({ users, scopeFilter, onDeleteRequest }: AccessTableProps) {
+  const rows = useMemo(() => flattenAccess(users, scopeFilter), [users, scopeFilter]);
+  return (
+    <table className="kd-access-table kd-responsive-table-desktop" data-testid="access-table">
+      <thead>
+        <tr>
+          <th>Scope</th>
+          <th>Calling / reason</th>
+          <th>Email</th>
+          <th>Source</th>
+          <th className="kd-access-table-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={`${r.canonical}|${r.scope}|${r.source}|${r.calling}|${i}`}>
+            <td>
+              <code>{r.scope}</code>
+            </td>
+            <td>{r.calling}</td>
+            <td>
+              <span className="roster-email" title={r.email}>
+                {r.email}
+              </span>
+            </td>
+            <td>
+              {r.source === 'manual' ? (
+                <Badge variant="manual">manual</Badge>
+              ) : (
+                <Badge variant="default">importer</Badge>
+              )}
+            </td>
+            <td className="kd-access-table-actions">
+              {r.source === 'manual' && r.grant ? (
+                <Button
+                  variant="danger"
+                  onClick={() => onDeleteRequest(r.canonical, r.scope, r.grant!)}
+                  data-testid={`access-table-delete-${r.canonical}-${r.grant.grant_id}`}
+                >
+                  Delete
+                </Button>
+              ) : null}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -207,7 +338,7 @@ function AccessCard({ access, scopeFilter, onDeleteRequest }: AccessCardProps) {
       {importerScopes.length > 0 ? (
         <div className="kd-access-section importer" data-testid="access-section-importer">
           <div className="kd-access-section-header">
-            <Badge variant="auto">importer</Badge> from LCR (read-only)
+            <Badge variant="default">importer</Badge> from LCR (read-only)
           </div>
           {importerScopes.map(([scope, callings]) => (
             <div key={`imp-${scope}`}>
@@ -264,7 +395,12 @@ const addManualSchema = z.object({
 });
 type AddManualForm = z.infer<typeof addManualSchema>;
 
-function AddManualGrantForm() {
+interface AddManualGrantDialogProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+function AddManualGrantDialog({ open, onClose }: AddManualGrantDialogProps) {
   const mutation = useAddManualGrantMutation();
   // Form scope dropdown is data-driven: 'stake' plus one option per
   // configured ward in `stakes/{stakeId}/wards`. A grant against a
@@ -282,73 +418,90 @@ function AddManualGrantForm() {
   });
   const { register, handleSubmit, reset, formState } = form;
 
+  // Reset whenever the dialog opens so a previous draft doesn't carry.
+  useEffect(() => {
+    if (open) reset({ member_email: '', member_name: '', scope: 'stake', reason: '' });
+  }, [open, reset]);
+
   async function onSubmit(input: AddManualForm) {
     try {
       await mutation.mutateAsync(input);
-      reset({ member_email: '', member_name: '', scope: 'stake', reason: '' });
       toast('Manual access added.', 'success');
+      onClose();
     } catch (err) {
       toast(errorMessage(err), 'error');
     }
   }
 
   return (
-    <form
-      className="kd-wizard-form"
-      onSubmit={handleSubmit(onSubmit)}
-      data-testid="add-manual-form"
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="Add Manual Access"
     >
-      <h2>Add manual access</h2>
-      <label>
-        Email
-        <Input type="email" {...register('member_email')} placeholder="member@example.com" />
-      </label>
-      {formState.errors.member_email ? (
-        <p role="alert" className="kd-form-error">
-          {formState.errors.member_email.message}
-        </p>
-      ) : null}
-      <label>
-        Name
-        <Input {...register('member_name')} />
-      </label>
-      {formState.errors.member_name ? (
-        <p role="alert" className="kd-form-error">
-          {formState.errors.member_name.message}
-        </p>
-      ) : null}
-      <label>
-        Scope
-        <Select {...register('scope')} disabled={wardsLoading} data-testid="add-manual-scope">
-          <option value="stake">Stake</option>
-          {wardOptions.map((code) => (
-            <option key={code} value={code}>
-              {code}
-            </option>
-          ))}
-        </Select>
-      </label>
-      {wardsLoading ? (
-        <p className="kd-form-hint">Loading wards…</p>
-      ) : wardOptions.length === 0 ? (
-        <p className="kd-form-hint" data-testid="add-manual-no-wards">
-          No wards configured. Add wards via Configuration to grant ward-scope access.
-        </p>
-      ) : null}
-      <label>
-        Reason
-        <Input {...register('reason')} placeholder="Covering bishop" />
-      </label>
-      {formState.errors.reason ? (
-        <p role="alert" className="kd-form-error">
-          {formState.errors.reason.message}
-        </p>
-      ) : null}
-      <div className="form-actions">
-        <Button type="submit" disabled={mutation.isPending || wardsLoading}>
-          {mutation.isPending ? 'Adding…' : 'Add manual access'}
-        </Button>
-      </div>
-    </form>
+      <form
+        className="kd-wizard-form"
+        onSubmit={handleSubmit(onSubmit)}
+        data-testid="add-manual-form"
+      >
+        <label>
+          Email
+          <Input type="email" {...register('member_email')} placeholder="member@example.com" />
+        </label>
+        {formState.errors.member_email ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.member_email.message}
+          </p>
+        ) : null}
+        <label>
+          Name
+          <Input {...register('member_name')} />
+        </label>
+        {formState.errors.member_name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.member_name.message}
+          </p>
+        ) : null}
+        <label>
+          Scope
+          <Select {...register('scope')} disabled={wardsLoading} data-testid="add-manual-scope">
+            <option value="stake">Stake</option>
+            {wardOptions.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </Select>
+        </label>
+        {wardsLoading ? (
+          <p className="kd-form-hint">Loading wards…</p>
+        ) : wardOptions.length === 0 ? (
+          <p className="kd-form-hint" data-testid="add-manual-no-wards">
+            No wards configured. Add wards via Configuration to grant ward-scope access.
+          </p>
+        ) : null}
+        <label>
+          Reason
+          <Input {...register('reason')} placeholder="Covering bishop" />
+        </label>
+        {formState.errors.reason ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.reason.message}
+          </p>
+        ) : null}
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Button
+            type="submit"
+            disabled={mutation.isPending || wardsLoading}
+            data-testid="access-add-manual-submit"
+          >
+            {mutation.isPending ? 'Creating…' : 'Create Access'}
+          </Button>
+        </Dialog.Footer>
+      </form>
+    </Dialog>
   );
 }
