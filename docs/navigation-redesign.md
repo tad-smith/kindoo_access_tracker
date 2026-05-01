@@ -71,7 +71,7 @@ Three sections, in this order. Each item lists the role(s) it's visible for.
 - Dashboard (Manager only)
 - Request Queue (Manager only)
 - New Request (bishopric or stake)
-- My Requests (everyone signed in)
+- My Requests (all authorized users)
 
 **Rosters**
 
@@ -100,7 +100,7 @@ The nav label is always "Ward Roster" (singular). The label refers to the naviga
 
 ## 10. My Requests visibility
 
-My Requests is always visible in Quick Links for any signed-in user. The page shows an empty-state message if the user has never submitted a request. A server-side flag to hide the entry when empty was considered and rejected — computing it adds a read per page load to suppress one nav row that already handles the empty case gracefully.
+My Requests is always visible in Quick Links for all authorized users (i.e., users with at minimum one role; no-role users hit "not authorized" per [`spec.md`](spec.md) §4 and never reach the nav). The page shows an empty-state message if the user has never submitted a request. A server-side flag to hide the entry when empty was considered and rejected — computing it adds a read per page load to suppress one nav row that already handles the empty case gracefully.
 
 ## 11. Icons (Lucide library)
 
