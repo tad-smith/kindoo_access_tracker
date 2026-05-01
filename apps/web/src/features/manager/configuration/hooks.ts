@@ -8,7 +8,14 @@
 // bootstrap wizard fills in but Configuration also exposes are wired
 // here too — e.g., expiry_hour / import_day / import_hour / timezone.
 
-import { deleteDoc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import {
+  deleteDoc,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  writeBatch,
+} from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
@@ -362,6 +369,245 @@ export function useDeleteStakeCallingTemplateMutation() {
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
       // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+// ---- Calling-template reorder + add-at-end + delete-resequence ------
+//
+// The Auto Callings tabs render a sortable table: lower `sheet_order`
+// renders higher. Three additional mutations shape the field:
+//
+// - `useReorder*Mutation` — write a new contiguous ordering across N
+//   rows. Atomic via Firestore `writeBatch`. Caller passes the
+//   already-reordered list of `calling_name` values; the mutation
+//   assigns 1..N. Optimistic update + rollback live on the caller via
+//   the standard TanStack `onMutate`/`onError` pattern.
+// - `useAdd*CallingTemplateMutation` — append a new row at
+//   `sheet_order = max(existing)+1`. Caller does not pass
+//   `sheet_order`; the hook reads the live cache through the passed
+//   `existing` array. Edits use the existing upsert mutation.
+// - `useDelete*WithResequenceMutation` — delete the row, then rewrite
+//   the remaining rows to 1..N-1 contiguous. One batch.
+//
+// Reorders touch only changed rows when possible; the helper
+// `assignSheetOrders` returns the {ref, sheet_order} writes that
+// actually differ from the current list.
+
+export interface ReorderInput {
+  /**
+   * The full ordered list of calling_names AFTER the reorder. Index 0
+   * gets sheet_order 1, index 1 gets 2, etc.
+   */
+  orderedCallingNames: string[];
+  /**
+   * The current list AS THE OPERATOR SAW IT — used to skip writes for
+   * rows whose position didn't change.
+   */
+  current: ReadonlyArray<{ calling_name: string; sheet_order: number }>;
+}
+
+function buildReorderBatch(
+  refForName: (name: string) => ReturnType<typeof wardCallingTemplateRef>,
+  input: ReorderInput,
+  actor: { email: string; canonical: string },
+) {
+  const batch = writeBatch(db);
+  const currentByName = new Map(input.current.map((c) => [c.calling_name, c.sheet_order]));
+  let writes = 0;
+  for (let i = 0; i < input.orderedCallingNames.length; i++) {
+    const name = input.orderedCallingNames[i]!;
+    const newOrder = i + 1;
+    if (currentByName.get(name) === newOrder) continue;
+    batch.set(refForName(name), { sheet_order: newOrder, lastActor: actor }, { merge: true });
+    writes++;
+  }
+  return { batch, writes };
+}
+
+export function useReorderWardCallingTemplatesMutation() {
+  const principal = usePrincipal();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: ReorderInput) => {
+      const actor = actorOf(principal);
+      const { batch, writes } = buildReorderBatch(
+        (name) => wardCallingTemplateRef(db, STAKE_ID, name),
+        input,
+        actor,
+      );
+      if (writes === 0) return;
+      await batch.commit();
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+export function useReorderStakeCallingTemplatesMutation() {
+  const principal = usePrincipal();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: ReorderInput) => {
+      const actor = actorOf(principal);
+      const { batch, writes } = buildReorderBatch(
+        (name) => stakeCallingTemplateRef(db, STAKE_ID, name),
+        input,
+        actor,
+      );
+      if (writes === 0) return;
+      await batch.commit();
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+export interface AddCallingTemplateInput {
+  calling_name: string;
+  give_app_access: boolean;
+  auto_kindoo_access: boolean;
+  /**
+   * The current list — the new row gets `max(existing.sheet_order) + 1`.
+   * Pass the caller's already-subscribed live snapshot so the mutation
+   * doesn't issue an extra read.
+   */
+  existing: ReadonlyArray<{ sheet_order: number }>;
+}
+
+function nextSheetOrder(existing: ReadonlyArray<{ sheet_order: number }>): number {
+  let max = 0;
+  for (const e of existing) if (e.sheet_order > max) max = e.sheet_order;
+  return max + 1;
+}
+
+export function useAddWardCallingTemplateMutation() {
+  const principal = usePrincipal();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AddCallingTemplateInput) => {
+      const actor = actorOf(principal);
+      const name = input.calling_name.trim();
+      if (!name) throw new Error('Calling name is required.');
+      const ref = wardCallingTemplateRef(db, STAKE_ID, name);
+      const existing = await getDoc(ref);
+      if (existing.exists()) throw new Error('A calling with that name already exists.');
+      await setDoc(
+        ref,
+        {
+          calling_name: name,
+          give_app_access: input.give_app_access,
+          auto_kindoo_access: input.auto_kindoo_access,
+          sheet_order: nextSheetOrder(input.existing),
+          created_at: serverTimestamp(),
+          lastActor: actor,
+        } as unknown as WardCallingTemplate,
+        { merge: true },
+      );
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+export function useAddStakeCallingTemplateMutation() {
+  const principal = usePrincipal();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AddCallingTemplateInput) => {
+      const actor = actorOf(principal);
+      const name = input.calling_name.trim();
+      if (!name) throw new Error('Calling name is required.');
+      const ref = stakeCallingTemplateRef(db, STAKE_ID, name);
+      const existing = await getDoc(ref);
+      if (existing.exists()) throw new Error('A calling with that name already exists.');
+      await setDoc(
+        ref,
+        {
+          calling_name: name,
+          give_app_access: input.give_app_access,
+          auto_kindoo_access: input.auto_kindoo_access,
+          sheet_order: nextSheetOrder(input.existing),
+          created_at: serverTimestamp(),
+          lastActor: actor,
+        } as unknown as StakeCallingTemplate,
+        { merge: true },
+      );
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+export interface DeleteWithResequenceInput {
+  callingName: string;
+  /** Current ordered list (any order). The remaining rows are renumbered 1..N-1. */
+  current: ReadonlyArray<{ calling_name: string; sheet_order: number }>;
+}
+
+function buildDeleteWithResequenceBatch(
+  refForName: (name: string) => ReturnType<typeof wardCallingTemplateRef>,
+  input: DeleteWithResequenceInput,
+  actor: { email: string; canonical: string },
+) {
+  const batch = writeBatch(db);
+  batch.delete(refForName(input.callingName));
+  const remaining = [...input.current]
+    .filter((c) => c.calling_name !== input.callingName)
+    .sort((a, b) => a.sheet_order - b.sheet_order);
+  for (let i = 0; i < remaining.length; i++) {
+    const expected = i + 1;
+    const row = remaining[i]!;
+    if (row.sheet_order === expected) continue;
+    batch.set(
+      refForName(row.calling_name),
+      { sheet_order: expected, lastActor: actor },
+      {
+        merge: true,
+      },
+    );
+  }
+  return batch;
+}
+
+export function useDeleteWardCallingTemplateWithResequenceMutation() {
+  const principal = usePrincipal();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: DeleteWithResequenceInput) => {
+      const actor = actorOf(principal);
+      const batch = buildDeleteWithResequenceBatch(
+        (name) => wardCallingTemplateRef(db, STAKE_ID, name),
+        input,
+        actor,
+      );
+      await batch.commit();
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+export function useDeleteStakeCallingTemplateWithResequenceMutation() {
+  const principal = usePrincipal();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: DeleteWithResequenceInput) => {
+      const actor = actorOf(principal);
+      const batch = buildDeleteWithResequenceBatch(
+        (name) => stakeCallingTemplateRef(db, STAKE_ID, name),
+        input,
+        actor,
+      );
+      await batch.commit();
+    },
+    onSuccess: () => {
       void qc.invalidateQueries();
     },
   });

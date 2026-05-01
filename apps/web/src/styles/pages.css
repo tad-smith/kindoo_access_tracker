@@ -850,6 +850,79 @@
   gap: 8px;
 }
 
+/* Auto Callings table — sortable list with grip + arrows. */
+.kd-callings-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+.kd-callings-table {
+  width: 100%;
+  border-collapse: collapse;
+  /* Suppress iOS Safari long-press context menu on rows. */
+  -webkit-touch-callout: none;
+}
+.kd-callings-table thead th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--kd-fg-2);
+  padding: 8px;
+  border-bottom: 1px solid var(--kd-border);
+}
+.kd-callings-table tbody td {
+  padding: 8px;
+  border-bottom: 1px solid var(--kd-border);
+  vertical-align: middle;
+}
+.kd-callings-table-col-grip {
+  width: 32px;
+  padding-right: 0;
+}
+.kd-callings-table-col-flag {
+  width: 12em;
+  text-align: center;
+}
+.kd-callings-table-col-actions {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+.kd-callings-table-col-name code {
+  word-break: break-word;
+}
+.kd-callings-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--kd-fg-3);
+  cursor: grab;
+  /* Hide grip on touch-only devices; long-press handles reorder there. */
+  visibility: hidden;
+}
+@media (hover: hover) and (pointer: fine) {
+  .kd-callings-row:hover .kd-callings-grip,
+  .kd-callings-grip:focus-visible {
+    visibility: visible;
+  }
+}
+.kd-callings-grip:active {
+  cursor: grabbing;
+}
+.kd-callings-row.touch-reorder {
+  background: var(--kd-bg-2, #f5f7fa);
+}
+.kd-callings-row-actions,
+.kd-callings-row-arrows {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
 /* Import page */
 
 .kd-import-card {
