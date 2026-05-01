@@ -34,6 +34,25 @@
   font-size: 1.05em;
 }
 
+.kd-brand-icon {
+  display: block;
+  flex-shrink: 0;
+  border-radius: 6px;
+}
+
+.kd-topbar-offline {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--kd-warn-tint);
+  color: var(--kd-warn-mid);
+  font-size: 0.75em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 .kd-topbar-meta {
   display: flex;
   align-items: center;

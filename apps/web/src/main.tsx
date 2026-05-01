@@ -31,6 +31,7 @@ import { createRouter, RouterProvider } from '@tanstack/react-router';
 // any consumer touches the Firebase SDK singletons.
 import './lib/firebase';
 import { RootErrorBoundary } from './components/RootErrorBoundary';
+import { PwaUpdatePrompt } from './components/layout/PwaUpdatePrompt';
 import { routeTree } from './routeTree.gen';
 import './styles/tokens.css';
 import './styles/tailwind.css';
@@ -74,6 +75,9 @@ createRoot(rootEl).render(
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>
+      {/* Mounted at the root so SW registers regardless of auth state
+          and the update prompt survives auth/route transitions. */}
+      <PwaUpdatePrompt />
     </RootErrorBoundary>
   </StrictMode>,
 );

@@ -77,6 +77,17 @@ vi.mock('../../lib/docs', () => ({
   stakeRef: () => ({ id: 'csnorth' }) as unknown,
 }));
 
+// Stub the vite-plugin-pwa virtual module so jsdom doesn't try to
+// resolve it. The Shell mounts <PwaUpdatePrompt /> which calls
+// `useRegisterSW`; under tests we just want it to behave as a no-op.
+vi.mock('virtual:pwa-register/react', () => ({
+  useRegisterSW: () => ({
+    needRefresh: [false, () => {}],
+    offlineReady: [false, () => {}],
+    updateServiceWorker: async () => {},
+  }),
+}));
+
 import { Shell } from './Shell';
 
 function setPrincipal(p: Principal) {
@@ -207,5 +218,18 @@ describe('Shell', () => {
     await renderShell(<p>Hello</p>);
     const brand = document.querySelector('.kd-topbar-brand');
     expect(brand).toHaveTextContent('Stake Building Access');
+  });
+
+  it('renders the brand-bar icon next to the wordmark', async () => {
+    await renderShell(<p>Hello</p>);
+    const brand = document.querySelector('.kd-topbar-brand');
+    const icon = brand?.querySelector('img.kd-brand-icon') as HTMLImageElement | null;
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute('src')).toBe('/favicon.svg');
+  });
+
+  it('does not render the offline indicator when navigator reports online', async () => {
+    await renderShell(<p>Hello</p>);
+    expect(screen.queryByTestId('offline-indicator')).toBeNull();
   });
 });

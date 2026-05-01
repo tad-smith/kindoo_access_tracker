@@ -387,3 +387,10 @@ Phase: 11
 Pin the remaining Cloud Functions (audit fan-in × 9, claim sync × 4, `onAuthUserCreate`, `installScheduledJobs`, `removeSeatOnRequestComplete`) to `kindoo-app@` for single-identity audit traces and to allow revoking the project-default `roles/editor` from the default compute SA. Phase 8 pinned only the four Sheets-touching functions (`runImporter`, `runExpiry`, `reconcileAuditGaps`, `runImportNow`) because the LCR sheet is shared with `kindoo-app@` and the importer was 403'ing on the default compute SA; the rest stayed on default to defer the IAM review to cutover.
 
 **Pre-req:** confirm via `gcloud projects get-iam-policy` that `roles/editor` is still bound to `<projectnum>-compute@developer.gserviceaccount.com`, and that `kindoo-app@` has the roles needed for Auth Admin SDK calls (claim-sync triggers + `onAuthUserCreate` write `customClaims` + revoke refresh tokens; `removeSeatOnRequestComplete` writes Firestore; the audit fan-in functions write Firestore; `installScheduledJobs` creates Cloud Scheduler jobs).
+
+## [T-27] Replace placeholder SBA monogram favicon + brand-bar icon with final designed mark before public launch
+Status: open
+Owner: @web-engineer (wire), blocked on operator-supplied design
+Phase: pre-launch (post Phase 10)
+
+Phase 10 shipped a temporary "SBA" monogram (white letters on `#2b6cb0` rounded-square field) for the favicon set + manifest icons + apple-touch-icon + brand-bar icon, generated inline because the existing `website/images/` assets carry the old Kindoo "K" branding. Operator-supplied final design replaces all eight assets in `apps/web/public/` (`favicon.ico`, `favicon.svg`, `favicon-16x16.png`, `favicon-32x32.png`, `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`); the manifest entries in `apps/web/vite.config.ts` and the `<link>` tags in `apps/web/index.html` are already wired to those filenames so the swap is a one-PR replacement. Maskable variant must keep content inside the inner 80% safe-zone circle. SVG favicon should remain a single mark that reads cleanly at 16×16.
