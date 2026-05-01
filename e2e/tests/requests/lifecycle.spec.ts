@@ -139,7 +139,7 @@ test.describe('Phase 6 — bishopric add_manual lifecycle', () => {
     await createSignedInUser(managerPage, 'manager@example.com', { manager: true });
     await expect(managerPage.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
     await managerPage.getByRole('link', { name: /^Request Queue$/ }).click();
-    await expect(managerPage.getByRole('heading', { name: /^Queue$/ })).toBeVisible();
+    await expect(managerPage.getByRole('heading', { name: /^Request Queue$/ })).toBeVisible();
     // Click Mark Complete on the first card.
     const completeButton = managerPage.locator('[data-testid^="queue-complete-"]').first();
     await completeButton.click();
