@@ -316,8 +316,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         </label>
         {watchedUrgent ? (
           <p className="kd-urgent-hint" data-testid="new-request-urgent-hint">
-            Urgent requests go to the top of the queue. A comment is required so the manager
-            understands why this jumped the line.
+            Add a comment explaining the urgency
           </p>
         ) : null}
       </div>
