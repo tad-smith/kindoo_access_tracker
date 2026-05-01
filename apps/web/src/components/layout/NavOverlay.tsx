@@ -76,8 +76,12 @@ export function NavOverlay({
       ? 'kd-nav-overlay kd-nav-overlay-panel'
       : 'kd-nav-overlay kd-nav-overlay-drawer';
 
+  // Flex container click = backdrop click. Any tap that doesn't land
+  // on the surface (which stops propagation) dismisses. Covers the
+  // 64px left gap on tablet panels and the right-of-drawer area on
+  // phone, both with a single handler.
   return (
-    <div className={`${className} is-open`}>
+    <div className={`${className} is-open`} onClick={onDismiss}>
       <div
         className="kd-nav-overlay-surface"
         role="dialog"
@@ -85,6 +89,9 @@ export function NavOverlay({
         aria-labelledby={labelId}
         ref={panelRef}
         tabIndex={-1}
+        onClick={(e) => {
+          e.stopPropagation();
+        }}
       >
         <h2 id={labelId} className="kd-visually-hidden">
           Navigation
@@ -110,7 +117,6 @@ export function NavOverlay({
       <div
         className="kd-nav-overlay-backdrop"
         data-testid="nav-overlay-backdrop"
-        onClick={onDismiss}
         aria-hidden="true"
       />
     </div>
