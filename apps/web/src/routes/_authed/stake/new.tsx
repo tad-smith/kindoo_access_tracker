@@ -1,8 +1,12 @@
-// Stake "New Kindoo Request" route. Thin wrapper.
+// Legacy redirect. The "New Request" form moved to `/new` in
+// Phase 10.1; this route stays alive so external bookmarks /
+// audit-log links / future email templates that reference
+// `/stake/new` keep working.
 
-import { createFileRoute } from '@tanstack/react-router';
-import { NewRequestPage } from '../../../features/requests/pages/NewRequestPage';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 
 export const Route = createFileRoute('/_authed/stake/new')({
-  component: () => <NewRequestPage role="stake" />,
+  beforeLoad: () => {
+    throw redirect({ to: '/new', replace: true });
+  },
 });

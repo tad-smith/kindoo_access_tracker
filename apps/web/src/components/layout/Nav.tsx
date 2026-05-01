@@ -1,113 +1,167 @@
-// Role-aware nav. Generates the link set from the active principal's
-// claims per the page map in `docs/spec.md` §5.
+// Sectioned nav. Renders a vertical list of section headers + nav
+// items. Used as the body of:
+//   - Desktop: persistent left rail (full labels visible).
+//   - Tablet:  floating overlay panel (full labels, opened from the
+//              icons-only rail).
+//   - Phone:   slide-in drawer (full labels).
 //
-// Per-role link sets, leftmost first (the leftmost link defines each
-// role's default landing page; see `defaultLandingFor`):
-//   - Bishopric: New Request, Roster (own ward), My Requests
-//   - Stake:     New Request, Roster, Ward Rosters, My Requests
-//   - Manager:   Dashboard, Queue, All Seats, Audit Log, Access,
-//                Configuration, Import, My Requests
+// Items come in two kinds (per `navModel.ts`):
+//   - `kind: 'link'` — renders as a TanStack `<Link>`. Standard
+//     navigation; `aria-current="page"` when active.
+//   - `kind: 'action'` — renders as a `<button>` that runs a side
+//     effect (currently just `sign-out`). No active state.
 //
-// "Highest-role priority" mirrors `Router_defaultPageFor_` from the
-// Apps Script Router: manager > stake > bishopric. Multi-role users
-// see the union of links (manager + stake + bishopric all visible).
+// The icons-only tablet rail uses a separate `<IconRail>` component;
+// see `IconRail.tsx`.
 
 import { Link, useRouterState } from '@tanstack/react-router';
 import type { Principal } from '../../lib/principal';
-import { STAKE_ID } from '../../lib/constants';
+import { navSectionsForPrincipal, type NavItem, type NavSection } from './navModel';
 import './Nav.css';
 
-interface NavLinkSpec {
-  key: string;
-  label: string;
-  /** Matches a route path. */
-  to: string;
-}
-
-function managerLinks(): NavLinkSpec[] {
-  return [
-    { key: 'mgr/dashboard', label: 'Dashboard', to: '/manager/dashboard' },
-    { key: 'mgr/queue', label: 'Queue', to: '/manager/queue' },
-    { key: 'mgr/seats', label: 'All Seats', to: '/manager/seats' },
-    { key: 'mgr/audit', label: 'Audit Log', to: '/manager/audit' },
-    { key: 'mgr/access', label: 'Access', to: '/manager/access' },
-    { key: 'mgr/configuration', label: 'Configuration', to: '/manager/configuration' },
-    { key: 'mgr/import', label: 'Import', to: '/manager/import' },
-    { key: 'myreq', label: 'My Requests', to: '/my-requests' },
-  ];
-}
-
-function stakeLinks(): NavLinkSpec[] {
-  return [
-    { key: 'stake/new', label: 'New Request', to: '/stake/new' },
-    { key: 'stake/roster', label: 'Roster', to: '/stake/roster' },
-    { key: 'stake/wards', label: 'Ward Rosters', to: '/stake/wards' },
-    { key: 'myreq', label: 'My Requests', to: '/my-requests' },
-  ];
-}
-
-function bishopricLinks(): NavLinkSpec[] {
-  return [
-    { key: 'bish/new', label: 'New Request', to: '/bishopric/new' },
-    { key: 'bish/roster', label: 'Roster', to: '/bishopric/roster' },
-    { key: 'myreq', label: 'My Requests', to: '/my-requests' },
-  ];
-}
-
-/** Build the link list for a principal in priority-merge order. */
-export function navLinksForPrincipal(principal: Principal): NavLinkSpec[] {
-  const out: NavLinkSpec[] = [];
-  const seen = new Set<string>();
-  const push = (links: NavLinkSpec[]) => {
-    for (const link of links) {
-      if (seen.has(link.key)) continue;
-      seen.add(link.key);
-      out.push(link);
-    }
-  };
-
-  if (principal.managerStakes.includes(STAKE_ID)) {
-    push(managerLinks());
-  }
-  if (principal.stakeMemberStakes.includes(STAKE_ID)) {
-    push(stakeLinks());
-  }
-  const wards = principal.bishopricWards[STAKE_ID];
-  if (Array.isArray(wards) && wards.length > 0) {
-    push(bishopricLinks());
-  }
-
-  return out;
-}
+export { navSectionsForPrincipal, wardRosterPathFor } from './navModel';
+export type { NavItem, NavSection, NavLinkItem, NavActionItem } from './navModel';
 
 interface NavProps {
   principal: Principal;
+  /** Called when a nav item is activated (link click or action click). */
+  onNavigate?: () => void;
+  /** Called when an action item with `action: 'sign-out'` is clicked. */
+  onSignOut?: () => void;
+  signingOut?: boolean;
+  /** ARIA label for the nav landmark. */
+  ariaLabel?: string;
+  /**
+   * Render the signed-in user's email as informational text just below
+   * the Account section's last item. Phone-drawer-only — desktop and
+   * tablet show the email in the brand bar instead. Pass `undefined`
+   * (the default) on those breakpoints to suppress.
+   */
+  userEmail?: string | undefined;
 }
 
-export function Nav({ principal }: NavProps) {
-  const links = navLinksForPrincipal(principal);
+export function Nav({
+  principal,
+  onNavigate,
+  onSignOut,
+  signingOut = false,
+  ariaLabel = 'Primary',
+  userEmail,
+}: NavProps) {
+  const sections = navSectionsForPrincipal(principal);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-  if (links.length === 0) return null;
+  if (sections.length === 0) return null;
 
   return (
-    <nav className="kd-nav" aria-label="Primary">
-      <ul>
-        {links.map((link) => {
-          const isActive = pathname === link.to;
-          return (
-            <li key={link.key}>
-              <Link
-                to={link.to}
-                className={`kd-nav-link${isActive ? ' active' : ''}`}
-                aria-current={isActive ? 'page' : undefined}
-              >
-                {link.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+    <nav className="kd-nav" aria-label={ariaLabel}>
+      {sections.map((section, idx) => (
+        <NavSectionRender
+          key={section.key}
+          section={section}
+          isFirst={idx === 0}
+          pathname={pathname}
+          onNavigate={onNavigate}
+          onSignOut={onSignOut}
+          signingOut={signingOut}
+          userEmail={section.key === 'account' ? userEmail : undefined}
+        />
+      ))}
     </nav>
+  );
+}
+
+interface NavSectionRenderProps {
+  section: NavSection;
+  isFirst: boolean;
+  pathname: string;
+  onNavigate: (() => void) | undefined;
+  onSignOut: (() => void) | undefined;
+  signingOut: boolean;
+  /** When set, rendered as the section's last list item (info-only, not interactive). */
+  userEmail: string | undefined;
+}
+
+function NavSectionRender({
+  section,
+  isFirst,
+  pathname,
+  onNavigate,
+  onSignOut,
+  signingOut,
+  userEmail,
+}: NavSectionRenderProps) {
+  return (
+    <div
+      className={`kd-nav-section${isFirst ? ' is-first' : ''}`}
+      aria-labelledby={`kd-nav-header-${section.key}`}
+    >
+      <h2 id={`kd-nav-header-${section.key}`} className="kd-nav-section-header">
+        {section.label}
+      </h2>
+      <ul className="kd-nav-list">
+        {section.items.map((item) => (
+          <li key={item.key}>
+            <NavItemRender
+              item={item}
+              pathname={pathname}
+              onNavigate={onNavigate}
+              onSignOut={onSignOut}
+              signingOut={signingOut}
+            />
+          </li>
+        ))}
+        {userEmail ? (
+          <li className="kd-nav-info" data-testid="nav-user-email" title={userEmail}>
+            {userEmail}
+          </li>
+        ) : null}
+      </ul>
+    </div>
+  );
+}
+
+interface NavItemRenderProps {
+  item: NavItem;
+  pathname: string;
+  onNavigate: (() => void) | undefined;
+  onSignOut: (() => void) | undefined;
+  signingOut: boolean;
+}
+
+function NavItemRender({ item, pathname, onNavigate, onSignOut, signingOut }: NavItemRenderProps) {
+  const Icon = item.icon;
+  if (item.kind === 'link') {
+    const isActive = pathname === item.to;
+    return (
+      <Link
+        to={item.to}
+        className={`kd-nav-link${isActive ? ' active' : ''}`}
+        aria-current={isActive ? 'page' : undefined}
+        onClick={onNavigate}
+      >
+        <Icon className="kd-nav-icon" size={20} aria-hidden="true" />
+        <span className="kd-nav-label">{item.label}</span>
+      </Link>
+    );
+  }
+  // Action item — currently only `sign-out`.
+  const handleClick = () => {
+    if (item.action === 'sign-out') {
+      onSignOut?.();
+      onNavigate?.();
+    }
+  };
+  const busy = item.action === 'sign-out' && signingOut;
+  return (
+    <button
+      type="button"
+      className="kd-nav-link kd-nav-action"
+      onClick={handleClick}
+      disabled={busy}
+    >
+      <Icon className="kd-nav-icon" size={20} aria-hidden="true" />
+      <span className="kd-nav-label">{busy ? 'Signing out…' : item.label}</span>
+    </button>
   );
 }

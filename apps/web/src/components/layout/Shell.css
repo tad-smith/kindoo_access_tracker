@@ -1,7 +1,16 @@
-/* Shell layout. Topbar + nav + content. Identical visual structure to
-   the Apps Script app's `topbar` block in `src/ui/Styles.html` — same
-   24px content padding, same brand + meta split, same border under
-   the topbar. */
+/* App shell. Brand bar always at top; rail (or icons-rail, or nothing
+   on phone) sits to the left of `<main>`.
+
+   `--kd-brandbar-h` is the brand bar's effective height (sticky top
+   offset for everything below it). The icons rail, the desktop rail,
+   and the tablet expand-panel all share this offset so the panel
+   doesn't jump vertically on open/close — it sits flush against the
+   brand bar's bottom edge, exactly where the icons-rail surface
+   already lives. */
+
+:root {
+  --kd-brandbar-h: 56px;
+}
 
 .kd-shell {
   display: flex;
@@ -9,29 +18,68 @@
   min-height: 100vh;
 }
 
-.kd-topbar {
+.kd-shell-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.kd-main {
+  /* Fills the remaining viewport width to the right of the rail; left-
+     edge sits flush against the rail. Per-page max-widths live on each
+     page's own root element. */
+  flex: 1;
+  min-width: 0;
+  padding: 24px 20px;
+  box-sizing: border-box;
+}
+
+@media (max-width: 480px) {
+  .kd-main {
+    padding: 16px 12px;
+  }
+}
+
+/* ---------- Brand bar ---------- */
+
+.kd-brandbar {
   background: #fff;
   color: var(--kd-chrome-fg);
   border-bottom: 1px solid var(--kd-chrome-border);
+  position: sticky;
+  top: 0;
+  z-index: 30;
 }
 
-.kd-topbar-inner {
+.kd-brandbar-inner {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 20px;
   gap: 12px;
-  max-width: 1440px;
-  margin: 0 auto;
 }
 
-.kd-topbar-brand {
+.kd-brandbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.kd-brandbar-brand {
   color: var(--kd-primary);
   font-weight: 600;
   display: flex;
   align-items: center;
   gap: 10px;
   font-size: 1.05em;
+  min-width: 0;
+}
+
+.kd-brandbar-stake {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kd-brand-icon {
@@ -40,7 +88,28 @@
   border-radius: 6px;
 }
 
-.kd-topbar-offline {
+.kd-brandbar-hamburger {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--kd-chrome-fg);
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kd-brandbar-hamburger:hover {
+  background: var(--kd-surface-alt);
+}
+
+.kd-brandbar-hamburger:focus-visible {
+  outline: 2px solid var(--kd-primary-tint-link);
+  outline-offset: 1px;
+}
+
+.kd-brandbar-offline {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
@@ -53,7 +122,7 @@
   text-transform: uppercase;
 }
 
-.kd-topbar-meta {
+.kd-brandbar-meta {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -63,43 +132,237 @@
   font-size: 0.9em;
 }
 
-.kd-topbar-stake-slot:empty {
+.kd-brandbar-stake-slot:empty {
   display: none;
 }
 
-.kd-topbar-email {
+.kd-brandbar-email {
   max-width: 32ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.kd-topbar-version {
-  font-size: 0.7em;
+@media (max-width: 480px) {
+  .kd-brandbar-inner {
+    padding: 10px 12px;
+  }
+}
+
+/* ---------- Desktop rail (>=1024px) ---------- */
+
+.kd-left-rail {
+  width: 248px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid var(--kd-chrome-border);
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - var(--kd-brandbar-h));
+  position: sticky;
+  top: var(--kd-brandbar-h); /* below the brand bar */
+  align-self: flex-start;
+  height: calc(100vh - var(--kd-brandbar-h));
+}
+
+.kd-left-rail-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 0;
+}
+
+.kd-left-rail-foot {
+  border-top: 1px solid var(--kd-chrome-border);
+  /* iOS PWA: keep logout above the home-indicator bar. */
+  padding: 10px 16px max(12px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ---------- Tablet icons-only rail (640–1023px) ---------- */
+
+.kd-icon-rail {
+  width: 64px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid var(--kd-chrome-border);
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - var(--kd-brandbar-h));
+  position: sticky;
+  top: var(--kd-brandbar-h);
+  align-self: flex-start;
+  height: calc(100vh - var(--kd-brandbar-h));
+}
+
+.kd-icon-rail-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 0;
+}
+
+.kd-icon-rail-section.is-first .kd-icon-rail-divider {
+  /* The first section has no preceding divider — match the desktop's
+     "no separator above the first section header" behavior. */
+  border-top: 0;
+  margin-top: 0;
+}
+
+.kd-icon-rail-divider {
+  /* Stands in for a section header. Height = 28px (header text +
+     vertical padding) so the icon Y-coordinates align with the
+     corresponding desktop labels per §14. The divider line itself is
+     the 1px top border; the rest of the height is whitespace. */
+  height: 28px;
+  border-top: 1px solid var(--kd-border-soft);
+  margin: 6px 12px 0;
+}
+
+.kd-icon-rail-section.is-first .kd-icon-rail-divider {
+  /* Even on the first section we preserve the same height so the
+     vertical rhythm matches desktop, but draw no border. */
+  height: 28px;
+}
+
+.kd-icon-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.kd-icon-rail-list li {
+  margin: 0;
+}
+
+.kd-icon-rail-link {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--kd-fg-2);
+  border-left: 3px solid transparent;
+  position: relative;
+}
+
+.kd-icon-rail-link:hover {
+  background: var(--kd-surface-alt);
+  color: var(--kd-fg-1);
+}
+
+.kd-icon-rail-link.active {
+  background: var(--kd-primary-tint);
+  border-left-color: var(--kd-primary);
+  color: var(--kd-primary);
+}
+
+.kd-icon-rail-link:focus-visible {
+  outline: 2px solid var(--kd-primary-tint-link);
+  outline-offset: -2px;
+}
+
+.kd-icon-rail-foot {
+  border-top: 1px solid var(--kd-chrome-border);
+  padding: 8px 0 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.kd-icon-rail-version {
+  font-size: 0.65em;
   color: var(--kd-chrome-fg-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   user-select: all;
 }
 
-.kd-main {
-  flex: 1;
-  padding: 24px 20px;
-  margin: 0 auto;
-  width: 100%;
-  max-width: 1200px;
-  box-sizing: border-box;
+/* ---------- Floating overlay (tablet panel + phone drawer) ---------- */
+
+.kd-nav-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
 }
 
-@media (max-width: 480px) {
-  .kd-topbar-inner {
-    padding: 10px 12px;
-  }
+/* Tablet panel: anchor below the brand bar so the panel sits flush
+   against the brand bar's bottom edge — same vertical positioning as
+   the icons rail it replaces. No vertical motion on open/close. */
+.kd-nav-overlay-panel {
+  top: var(--kd-brandbar-h);
+}
 
-  .kd-main {
-    padding: 16px 12px;
-  }
+/* Surface comes first in flex order (left side). Backdrop fills the
+   remaining space to the right via `flex: 1` — that keeps clicks on
+   the backdrop landing on the backdrop, never on the surface. */
+.kd-nav-overlay-surface {
+  position: relative;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  outline: none;
+  flex-shrink: 0;
+}
 
-  .kd-topbar-email {
-    max-width: 18ch;
-  }
+.kd-nav-overlay-backdrop {
+  flex: 1;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.kd-nav-overlay-panel .kd-nav-overlay-surface {
+  /* Tablet: rail expansion model. Anchored to the left viewport edge
+     and 248px wide so it visually replaces the 64px icons rail when
+     open (rather than sitting adjacent to it). The icons rail stays
+     rendered underneath and reappears on dismiss. Height is the same
+     as the icons rail (`100vh - brand bar`) so the panel sits flush
+     between the brand bar's bottom edge and the viewport bottom. */
+  margin-left: 0;
+  width: 248px;
+  max-width: 100vw;
+  height: calc(100vh - var(--kd-brandbar-h));
+}
+
+.kd-nav-overlay-drawer .kd-nav-overlay-surface {
+  /* Phone: full-height drawer from the left edge. */
+  width: 300px;
+  max-width: 88vw;
+  height: 100vh;
+}
+
+.kd-nav-overlay-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 0 12px;
+}
+
+.kd-nav-overlay-foot {
+  border-top: 1px solid var(--kd-chrome-border);
+  /* iOS PWA: keep logout above the home-indicator bar. Affects the
+     phone-drawer variant primarily; tablet panel hits this on iPadOS
+     home-indicator devices in landscape. */
+  padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kd-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

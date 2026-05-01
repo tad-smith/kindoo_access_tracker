@@ -94,35 +94,37 @@ test.describe('Phase 5 shell + deep-links', () => {
     await signInViaTestHatch(page, email, TEST_PASSWORD);
 
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
-    // Persistent shell — topbar build version + sign-out + email visible too.
-    await expect(page.getByLabel('Build version')).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Sign out$/i }).first()).toBeVisible();
+    // Persistent shell — build version visible (in the rail footer at
+    // desktop width) and Logout reachable (Account section, in the
+    // rail body).
+    await expect(page.getByLabel('Build version').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Logout$/i }).first()).toBeVisible();
   });
 
   test('clicking a nav link swaps content but keeps the shell mounted', async ({ page }) => {
     await signInAsManager(page, 'manager-bf@example.com');
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
 
-    const topbarBrand = page.locator('.kd-topbar-brand');
-    await expect(topbarBrand).toBeVisible();
+    const brandbar = page.locator('.kd-brandbar-brand');
+    await expect(brandbar).toBeVisible();
 
     await page.getByRole('link', { name: /^All Seats$/ }).click();
     await expect(page.getByRole('heading', { name: /^All Seats$/ })).toBeVisible();
-    await expect(topbarBrand).toBeVisible();
+    await expect(brandbar).toBeVisible();
 
     await page.getByRole('link', { name: /^Audit Log$/ }).click();
     await expect(page.getByRole('heading', { name: /^Audit Log$/ })).toBeVisible();
-    await expect(topbarBrand).toBeVisible();
+    await expect(brandbar).toBeVisible();
 
     // Back — shell stays mounted, content reverts.
     await page.goBack();
     await expect(page.getByRole('heading', { name: /^All Seats$/ })).toBeVisible();
-    await expect(topbarBrand).toBeVisible();
+    await expect(brandbar).toBeVisible();
 
     // Forward — same.
     await page.goForward();
     await expect(page.getByRole('heading', { name: /^Audit Log$/ })).toBeVisible();
-    await expect(topbarBrand).toBeVisible();
+    await expect(brandbar).toBeVisible();
   });
 
   test('topbar brand shows the stake name once the stake doc loads', async ({ page }) => {
@@ -135,7 +137,7 @@ test.describe('Phase 5 shell + deep-links', () => {
     await signInAsManager(page, 'brand-bar@example.com');
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
 
-    const brand = page.locator('.kd-topbar-brand');
+    const brand = page.locator('.kd-brandbar-brand');
     await expect(brand).toHaveText('Test Stake (E2E)');
   });
 
@@ -152,7 +154,7 @@ test.describe('Phase 5 shell + deep-links', () => {
     await signInAsManager(page, 'brand-bar-fallback@example.com');
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
 
-    const brand = page.locator('.kd-topbar-brand');
+    const brand = page.locator('.kd-brandbar-brand');
     await expect(brand).toHaveText('Stake Building Access');
   });
 
@@ -163,7 +165,11 @@ test.describe('Phase 5 shell + deep-links', () => {
 
     // Topbar legible — email visible (truncated is fine; the title
     // attribute carries the full address).
-    await expect(page.locator('.kd-topbar-email')).toBeVisible();
+    // Phone width hides the email in the brand bar (it moves to the
+    // drawer footer per the navigation redesign §7).
+    await expect(page.locator('.kd-brandbar-email')).toHaveCount(0);
+    // The hamburger replaces it.
+    await expect(page.getByRole('button', { name: /open navigation/i })).toBeVisible();
 
     // No horizontal scroll: documentElement.scrollWidth must not
     // exceed clientWidth at the configured viewport.

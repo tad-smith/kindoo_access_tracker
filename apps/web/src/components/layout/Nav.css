@@ -1,64 +1,97 @@
-/* Primary nav. Renders as a horizontal tab bar — text-style links
-   with a bottom-border accent on the active route, NOT button-pill
-   chrome. Phase 5's Tailwind/shadcn-ui bootstrap left this file
-   styling the links as bordered, rounded pills which read as buttons
-   instead of tabs (the Apps Script reference at
-   `src/ui/Styles.html` `.nav-link` / `.nav-link.active` is the
-   visual model: muted text inactive, primary-color + accent-border
-   active, no boxy chrome on either state).
+/* Sectioned vertical nav. Used inside the desktop rail, the tablet
+   floating panel, and the phone drawer.
 
-   Mobile: horizontal scroll-strip with `nowrap` so labels don't
-   wrap mid-word; matches Apps Script's `@media (max-width: 900px)`
-   rule (`white-space: nowrap; flex-shrink: 0`). 375px viewport
-   stays usable per the migration plan's Phase-4 acceptance
-   criterion. */
+   Each section renders:
+     - Header text (h2, no icon)
+     - A separator above the header (except the first section)
+     - A list of nav-item links
+
+   Active item: 3px vertical accent bar on the left + subtle bg tint.
+   Inactive items: text-link affordance, no boxy chrome. */
 
 .kd-nav {
-  background: #fff;
-  border-bottom: 1px solid var(--kd-chrome-border);
-}
-
-.kd-nav ul {
-  list-style: none;
-  margin: 0 auto;
-  padding: 0 20px;
-  max-width: 1440px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0;
-  align-items: stretch;
+  flex-direction: column;
 }
 
-.kd-nav li {
+.kd-nav-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.kd-nav-section + .kd-nav-section {
+  /* Separator above each non-first section. Uses the soft border
+     token to keep it visually quiet — the section header text does
+     the grouping work. */
+  border-top: 1px solid var(--kd-border-soft);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+.kd-nav-section-header {
+  /* 28px effective height (font-size 0.78em on 16px = ~12.5px text +
+     padding) — matched by `.kd-icon-rail-divider` height per §14. */
+  margin: 0;
+  padding: 6px 16px;
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--kd-fg-3);
+  height: 28px;
+  display: flex;
+  align-items: center;
+}
+
+.kd-nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.kd-nav-list li {
   margin: 0;
 }
 
-/* Inactive tab — plain text-link affordance: no border, no rounded
-   corners, no fill. The 2px transparent bottom-border reserves the
-   active-state geometry so toggling active doesn't shift the row by
-   2px. */
 .kd-nav-link {
-  display: inline-block;
-  padding: 12px 14px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 8px 13px; /* left padding compensates for the 3px accent strip */
   color: var(--kd-fg-2);
   text-decoration: none;
   font-size: 0.95em;
-  border: none;
-  border-radius: 0;
+  border-left: 3px solid transparent;
   background: transparent;
-  border-bottom: 2px solid transparent;
-  /* Compensate for the 1px chrome-border on .kd-nav so the active
-     accent visually sits ON the chrome border, not above it. */
-  margin-bottom: -1px;
-  transition:
-    color 120ms ease,
-    border-color 120ms ease;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-radius: 0;
+}
+
+/* Action items (Logout) render as `<button>` with the same `.kd-nav-link`
+   visual. Reset native button chrome so it matches the link variant. */
+button.kd-nav-link {
+  appearance: none;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button.kd-nav-link:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .kd-nav-link:hover:not(.active) {
+  background: var(--kd-surface-alt);
   color: var(--kd-fg-1);
   text-decoration: none;
-  border-bottom-color: var(--kd-border-soft);
 }
 
 .kd-nav-link:focus-visible {
@@ -66,34 +99,44 @@
   outline-offset: -2px;
 }
 
-/* Active tab — primary color text, bold, 2px bottom-border accent.
-   No fill, no surrounding box: this is the tab-vs-button distinction
-   the operator flagged. */
 .kd-nav-link.active {
   color: var(--kd-primary);
+  background: var(--kd-primary-tint);
+  border-left-color: var(--kd-primary);
   font-weight: 600;
-  border-bottom-color: var(--kd-primary);
-  background: transparent;
 }
 
-.kd-nav-link.kd-nav-disabled {
+.kd-nav-icon {
+  flex-shrink: 0;
+  color: currentColor;
+}
+
+.kd-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kd-nav-version {
+  font-size: 0.7em;
   color: var(--kd-chrome-fg-muted);
-  cursor: not-allowed;
-  opacity: 0.6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  user-select: all;
 }
 
-@media (max-width: 600px) {
-  .kd-nav ul {
-    padding: 0 12px;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    scrollbar-width: thin;
-  }
-
-  .kd-nav-link {
-    white-space: nowrap;
-    flex-shrink: 0;
-    padding: 10px 10px 8px;
-    font-size: 0.9em;
-  }
+/* Informational text inside a section's list — currently used to
+   surface the signed-in user's email below the Logout item in the
+   phone drawer. Not interactive; aligns with the icon-column geometry
+   so the email indents the same as a label. */
+.kd-nav-info {
+  /* Match the icon+gap span (icon size 20 + gap 12 = 32) plus the
+     link's left padding (13px including the 3px transparent accent
+     strip). */
+  padding: 6px 16px 10px 45px;
+  color: var(--kd-fg-3);
+  font-size: 0.85em;
+  word-break: break-word;
+  user-select: text;
 }

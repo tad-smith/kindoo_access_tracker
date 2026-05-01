@@ -120,11 +120,11 @@ test.describe('auth-flow', () => {
 
     // Manager default landing per spec.md §5: /manager/dashboard.
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
-    // Persistent shell stays mounted — topbar email + sign-out present.
-    await expect(page.getByRole('button', { name: /^Sign out$/i }).first()).toBeVisible();
+    // Persistent shell stays mounted — Logout (Account section) present.
+    await expect(page.getByRole('button', { name: /^Logout$/i }).first()).toBeVisible();
   });
 
-  test('sign-out from the Dashboard returns to SignInPage', async ({ page }) => {
+  test('Logout from the Dashboard returns to SignInPage', async ({ page }) => {
     // Same Phase 7 setup-complete-gate seed as above.
     await writeDoc('stakes/csnorth', {
       stake_id: 'csnorth',
@@ -145,7 +145,7 @@ test.describe('auth-flow', () => {
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
 
     await page
-      .getByRole('button', { name: /^Sign out$/i })
+      .getByRole('button', { name: /^Logout$/i })
       .first()
       .click();
 
