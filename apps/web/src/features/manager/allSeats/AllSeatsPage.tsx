@@ -28,6 +28,7 @@ import {
 } from './hooks';
 import { useStakeDoc } from '../dashboard/hooks';
 import { RosterCardList } from '../../../components/roster/RosterCardList';
+import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
 import { UtilizationBar } from '../../../lib/render/UtilizationBar';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { Select } from '../../../components/ui/Select';
@@ -63,12 +64,16 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
 
   const filtered = useMemo<readonly Seat[]>(() => {
     const all = seats.data ?? [];
-    return all.filter((s) => {
+    const matched = all.filter((s) => {
       if (ward && s.scope !== ward) return false;
       if (building && !s.building_names.includes(building)) return false;
       if (type && s.type !== type) return false;
       return true;
     });
+    // Single-scope view → within-scope ordering. Cross-scope view →
+    // primary by scope (stake first, wards alpha), secondary by the
+    // same type-banded rules.
+    return ward ? sortSeatsWithinScope(matched) : sortSeatsAcrossScopes(matched);
   }, [seats.data, ward, building, type]);
 
   const wardsList = useMemo(

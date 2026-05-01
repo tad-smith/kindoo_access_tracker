@@ -160,6 +160,42 @@ describe('<BishopricRosterPage />', () => {
     expect(screen.getByText(/2 \/ 10 seats used/)).toBeInTheDocument();
   });
 
+  it('sorts seats auto → manual → temp within the ward', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([
+      makeSeat({
+        member_canonical: 't@x.com',
+        member_email: 't@x.com',
+        member_name: 'Temp Person',
+        type: 'temp',
+        callings: [],
+        end_date: '2026-12-31',
+      }),
+      makeSeat({
+        member_canonical: 'm@x.com',
+        member_email: 'm@x.com',
+        member_name: 'Manual Person',
+        type: 'manual',
+        callings: [],
+      }),
+      makeSeat({
+        member_canonical: 'a@x.com',
+        member_email: 'a@x.com',
+        member_name: 'Auto Person',
+        type: 'auto',
+        sort_order: 5,
+      }),
+    ]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+    const cards = Array.from(document.querySelectorAll('.roster-card'));
+    expect(cards.map((c) => c.className)).toEqual([
+      'roster-card type-auto',
+      'roster-card type-manual',
+      'roster-card type-temp',
+    ]);
+  });
+
   it('renders a "no bishopric wards" message when the principal holds none', () => {
     usePrincipalMock.mockReturnValue(principal([]));
     mockSeats([]);

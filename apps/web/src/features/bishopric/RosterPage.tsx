@@ -17,7 +17,7 @@
 //                        multiple bishoprics. Ignored when the
 //                        principal isn't in that ward.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { usePrincipal } from '../../lib/principal';
 import { STAKE_ID } from '../../lib/constants';
@@ -26,6 +26,7 @@ import { wardRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
 import { useBishopricRoster } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
+import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { UtilizationBar } from '../../lib/render/UtilizationBar';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { Select } from '../../components/ui/Select';
@@ -53,6 +54,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
   const seats = useBishopricRoster(activeWard);
   const wardDocResult = useFirestoreOnce(activeWard ? wardRef(db, STAKE_ID, activeWard) : null);
   const wardDoc = wardDocResult.data;
+  const sortedSeats = useMemo(() => sortSeatsWithinScope(seats.data ?? []), [seats.data]);
 
   const handleWardChange = (next: string) => {
     setActiveWard(next);
@@ -117,7 +119,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
         <LoadingSpinner />
       ) : (
         <RosterCardList
-          seats={seats.data}
+          seats={sortedSeats}
           emptyMessage="No seats assigned to this ward yet. A Kindoo Manager imports from LCR weekly; manual additions land via the New Kindoo Request page."
           actions={(seat) => (seat.type === 'auto' ? null : <RemovalAffordance seat={seat} />)}
         />

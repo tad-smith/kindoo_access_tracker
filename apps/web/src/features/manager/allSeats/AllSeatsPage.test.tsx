@@ -206,6 +206,52 @@ describe('<AllSeatsPage />', () => {
     expect(host).toHaveTextContent(/cap unset/i);
   });
 
+  it('sorts cross-scope seats: stake first, then wards alpha; type-banded inside each scope', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'GE',
+          type: 'auto',
+          member_canonical: 'ge@x.com',
+          member_email: 'ge@x.com',
+          member_name: 'GE Auto',
+          sort_order: 1,
+        }),
+        makeSeat({
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          member_canonical: 'co-m@x.com',
+          member_email: 'co-m@x.com',
+          member_name: 'CO Manual',
+        }),
+        makeSeat({
+          scope: 'stake',
+          type: 'auto',
+          member_canonical: 'st@x.com',
+          member_email: 'st@x.com',
+          member_name: 'Stake Auto',
+          sort_order: 1,
+        }),
+        makeSeat({
+          scope: 'CO',
+          type: 'auto',
+          member_canonical: 'co-a@x.com',
+          member_email: 'co-a@x.com',
+          member_name: 'CO Auto',
+          sort_order: 1,
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' }), makeWard({ ward_code: 'GE' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const cards = Array.from(document.querySelectorAll('.roster-card'));
+    const order = cards.map((c) => c.getAttribute('data-seat-id'));
+    expect(order).toEqual(['st@x.com', 'co-a@x.com', 'co-m@x.com', 'ge@x.com']);
+  });
+
   it('does not render per-scope summary cards (utilization is on Dashboard)', () => {
     mockAll({
       seats: [
