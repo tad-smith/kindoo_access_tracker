@@ -151,11 +151,27 @@
   margin-top: 22px;
 }
 
+/* Centered text on a horizontal divider — `——— Urgent Requests ———`.
+   Pseudo-elements stretch to fill the available width on either side
+   of the heading text; gap controls the breathing room around the
+   text. Token `--kd-border` matches the queue-card border so the line
+   reads as part of the same family. */
 .kd-queue-section-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   font-size: 1em;
   font-weight: 600;
   color: var(--kd-fg-1);
   margin: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+.kd-queue-section-header::before,
+.kd-queue-section-header::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--kd-border);
 }
 
 .kd-queue-card-meta-row {
