@@ -413,17 +413,16 @@ function buildReorderBatch(
   input: ReorderInput,
   actor: { email: string; canonical: string },
 ) {
+  const writes = planReorderWrites(input.orderedCallingNames, input.current);
   const batch = writeBatch(db);
-  const currentByName = new Map(input.current.map((c) => [c.calling_name, c.sheet_order]));
-  let writes = 0;
-  for (let i = 0; i < input.orderedCallingNames.length; i++) {
-    const name = input.orderedCallingNames[i]!;
-    const newOrder = i + 1;
-    if (currentByName.get(name) === newOrder) continue;
-    batch.set(refForName(name), { sheet_order: newOrder, lastActor: actor }, { merge: true });
-    writes++;
+  for (const w of writes) {
+    batch.set(
+      refForName(w.calling_name),
+      { sheet_order: w.sheet_order, lastActor: actor },
+      { merge: true },
+    );
   }
-  return { batch, writes };
+  return { batch, writes: writes.length };
 }
 
 export function useReorderWardCallingTemplatesMutation() {
@@ -478,10 +477,57 @@ export interface AddCallingTemplateInput {
   existing: ReadonlyArray<{ sheet_order: number }>;
 }
 
-function nextSheetOrder(existing: ReadonlyArray<{ sheet_order: number }>): number {
+export function nextSheetOrder(existing: ReadonlyArray<{ sheet_order: number }>): number {
   let max = 0;
   for (const e of existing) if (e.sheet_order > max) max = e.sheet_order;
   return max + 1;
+}
+
+/**
+ * Pure planner: given a current ordered list and a desired ordered list
+ * of names, return the {calling_name, sheet_order} pairs that need to
+ * be written to make the desired order contiguous 1..N. Skips rows
+ * whose new order matches the current order.
+ *
+ * Exposed for testing; the reorder mutations build the same thing
+ * internally and feed a Firestore writeBatch.
+ */
+export function planReorderWrites(
+  orderedCallingNames: ReadonlyArray<string>,
+  current: ReadonlyArray<{ calling_name: string; sheet_order: number }>,
+): Array<{ calling_name: string; sheet_order: number }> {
+  const currentByName = new Map(current.map((c) => [c.calling_name, c.sheet_order]));
+  const writes: Array<{ calling_name: string; sheet_order: number }> = [];
+  for (let i = 0; i < orderedCallingNames.length; i++) {
+    const name = orderedCallingNames[i]!;
+    const newOrder = i + 1;
+    if (currentByName.get(name) === newOrder) continue;
+    writes.push({ calling_name: name, sheet_order: newOrder });
+  }
+  return writes;
+}
+
+/**
+ * Pure planner: given a current list and a name to delete, return the
+ * {calling_name, sheet_order} writes that renumber the survivors to
+ * 1..N-1 contiguous. Excludes the deleted row from the writes list
+ * (caller emits a separate delete for that doc).
+ */
+export function planDeleteResequenceWrites(
+  callingName: string,
+  current: ReadonlyArray<{ calling_name: string; sheet_order: number }>,
+): Array<{ calling_name: string; sheet_order: number }> {
+  const remaining = [...current]
+    .filter((c) => c.calling_name !== callingName)
+    .sort((a, b) => a.sheet_order - b.sheet_order);
+  const writes: Array<{ calling_name: string; sheet_order: number }> = [];
+  for (let i = 0; i < remaining.length; i++) {
+    const expected = i + 1;
+    const row = remaining[i]!;
+    if (row.sheet_order === expected) continue;
+    writes.push({ calling_name: row.calling_name, sheet_order: expected });
+  }
+  return writes;
 }
 
 export function useAddWardCallingTemplateMutation() {
@@ -557,19 +603,12 @@ function buildDeleteWithResequenceBatch(
 ) {
   const batch = writeBatch(db);
   batch.delete(refForName(input.callingName));
-  const remaining = [...input.current]
-    .filter((c) => c.calling_name !== input.callingName)
-    .sort((a, b) => a.sheet_order - b.sheet_order);
-  for (let i = 0; i < remaining.length; i++) {
-    const expected = i + 1;
-    const row = remaining[i]!;
-    if (row.sheet_order === expected) continue;
+  const writes = planDeleteResequenceWrites(input.callingName, input.current);
+  for (const w of writes) {
     batch.set(
-      refForName(row.calling_name),
-      { sheet_order: expected, lastActor: actor },
-      {
-        merge: true,
-      },
+      refForName(w.calling_name),
+      { sheet_order: w.sheet_order, lastActor: actor },
+      { merge: true },
     );
   }
   return batch;

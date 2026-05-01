@@ -53,8 +53,10 @@ export function useLongPress({
       if (event.pointerType !== 'touch') return;
       // Suppress iOS Safari's context-menu gesture.
       event.preventDefault();
-      startRef.current = { x: event.clientX, y: event.clientY };
+      // Clear any prior pending timer before recording the new origin.
+      // (Don't call cancel() AFTER setting startRef — cancel nulls it.)
       cancel();
+      startRef.current = { x: event.clientX, y: event.clientY };
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
         onLongPress();

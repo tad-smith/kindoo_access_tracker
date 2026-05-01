@@ -16,6 +16,15 @@ const useWardCallingTemplatesMock = vi.fn();
 const useStakeCallingTemplatesMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
+const addWardCallingTemplateMock = vi.fn();
+const upsertWardCallingTemplateMock = vi.fn();
+const deleteWardCallingTemplateWithResequenceMock = vi.fn();
+const reorderWardCallingTemplatesMock = vi.fn();
+const addStakeCallingTemplateMock = vi.fn();
+const upsertStakeCallingTemplateMock = vi.fn();
+const deleteStakeCallingTemplateWithResequenceMock = vi.fn();
+const reorderStakeCallingTemplatesMock = vi.fn();
+
 vi.mock('./hooks', () => ({
   useStakeDoc: () => useStakeDocMock(),
   useWards: () => useWardsMock(),
@@ -29,10 +38,34 @@ vi.mock('./hooks', () => ({
   useDeleteBuildingMutation: () => ({ mutateAsync: vi.fn() }),
   useUpsertManagerMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteManagerMutation: () => ({ mutateAsync: vi.fn() }),
-  useUpsertWardCallingTemplateMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useDeleteWardCallingTemplateMutation: () => ({ mutateAsync: vi.fn() }),
-  useUpsertStakeCallingTemplateMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useDeleteStakeCallingTemplateMutation: () => ({ mutateAsync: vi.fn() }),
+  useAddWardCallingTemplateMutation: () => ({
+    mutateAsync: addWardCallingTemplateMock,
+    isPending: false,
+  }),
+  useUpsertWardCallingTemplateMutation: () => ({
+    mutateAsync: upsertWardCallingTemplateMock,
+    isPending: false,
+  }),
+  useDeleteWardCallingTemplateWithResequenceMutation: () => ({
+    mutateAsync: deleteWardCallingTemplateWithResequenceMock,
+  }),
+  useReorderWardCallingTemplatesMutation: () => ({
+    mutateAsync: reorderWardCallingTemplatesMock,
+  }),
+  useAddStakeCallingTemplateMutation: () => ({
+    mutateAsync: addStakeCallingTemplateMock,
+    isPending: false,
+  }),
+  useUpsertStakeCallingTemplateMutation: () => ({
+    mutateAsync: upsertStakeCallingTemplateMock,
+    isPending: false,
+  }),
+  useDeleteStakeCallingTemplateWithResequenceMutation: () => ({
+    mutateAsync: deleteStakeCallingTemplateWithResequenceMock,
+  }),
+  useReorderStakeCallingTemplatesMutation: () => ({
+    mutateAsync: reorderStakeCallingTemplatesMock,
+  }),
   useUpdateStakeConfigMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
@@ -261,5 +294,109 @@ describe('<ConfigurationPage />', () => {
   it('wraps the page in the wide-width container (1023px max)', () => {
     const { container } = render(<ConfigurationPage />, { wrapper: Wrapper });
     expect(container.querySelector('section.kd-page-wide')).not.toBeNull();
+  });
+});
+
+describe('Auto Ward Callings tab', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mkTpl = (calling_name: string, sheet_order: number, overrides: any = {}) => ({
+    calling_name,
+    give_app_access: false,
+    auto_kindoo_access: false,
+    sheet_order,
+    ...overrides,
+  });
+
+  it('renders rows in sheet_order ascending', () => {
+    useWardCallingTemplatesMock.mockReturnValue(
+      liveResult([mkTpl('B', 2), mkTpl('A', 1), mkTpl('C', 3)]),
+    );
+    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
+    const rows = Array.from(
+      document.querySelectorAll('[data-testid^="config-ward-callings-row-"]'),
+    );
+    expect(rows.map((r) => r.getAttribute('data-testid'))).toEqual([
+      'config-ward-callings-row-A',
+      'config-ward-callings-row-B',
+      'config-ward-callings-row-C',
+    ]);
+  });
+
+  it('opens the Add modal with both flags blank and submits via Add Calling', async () => {
+    const user = userEvent.setup();
+    useWardCallingTemplatesMock.mockReturnValue(liveResult([mkTpl('A', 1)]));
+    addWardCallingTemplateMock.mockResolvedValue(undefined);
+    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-callings-add-button'));
+    expect(screen.getByRole('heading', { name: 'Add calling' })).toBeInTheDocument();
+    const callingName = screen.getByLabelText(/Calling name/i);
+    await user.type(callingName, 'Bishop');
+    await user.click(screen.getByLabelText('Auto Kindoo Access'));
+    await user.click(screen.getByLabelText('Can Request Access'));
+    await user.click(screen.getByRole('button', { name: 'Add Calling' }));
+    expect(addWardCallingTemplateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calling_name: 'Bishop',
+        give_app_access: true,
+        auto_kindoo_access: true,
+        existing: expect.any(Array),
+      }),
+    );
+  });
+
+  it('opens the Edit modal pre-populated with calling_name read-only', async () => {
+    const user = userEvent.setup();
+    useWardCallingTemplatesMock.mockReturnValue(
+      liveResult([mkTpl('Bishop', 1, { auto_kindoo_access: true, give_app_access: true })]),
+    );
+    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-callings-edit-Bishop'));
+    expect(screen.getByRole('heading', { name: /Edit calling — Bishop/ })).toBeInTheDocument();
+    const nameInput = screen.getByLabelText(/Calling name/i) as HTMLInputElement;
+    expect(nameInput.value).toBe('Bishop');
+    expect(nameInput).toHaveAttribute('readonly');
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeInTheDocument();
+  });
+
+  it('Edit submit calls upsert with original sheet_order preserved', async () => {
+    const user = userEvent.setup();
+    useWardCallingTemplatesMock.mockReturnValue(
+      liveResult([mkTpl('Bishop', 7, { auto_kindoo_access: true, give_app_access: true })]),
+    );
+    upsertWardCallingTemplateMock.mockResolvedValue(undefined);
+    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-callings-edit-Bishop'));
+    await user.click(screen.getByLabelText('Auto Kindoo Access')); // toggle off
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    expect(upsertWardCallingTemplateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calling_name: 'Bishop',
+        auto_kindoo_access: false,
+        give_app_access: true,
+        sheet_order: 7,
+      }),
+    );
+  });
+
+  it('Delete calls the resequence mutation with current snapshot', async () => {
+    const user = userEvent.setup();
+    const tpls = [mkTpl('A', 1), mkTpl('B', 2), mkTpl('C', 3)];
+    useWardCallingTemplatesMock.mockReturnValue(liveResult(tpls));
+    deleteWardCallingTemplateWithResequenceMock.mockResolvedValue(undefined);
+    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-callings-delete-B'));
+    expect(deleteWardCallingTemplateWithResequenceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callingName: 'B',
+        current: expect.any(Array),
+      }),
+    );
+  });
+
+  it('renders the grip handle button on every row', () => {
+    useWardCallingTemplatesMock.mockReturnValue(liveResult([mkTpl('A', 1), mkTpl('B', 2)]));
+    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-ward-callings-grip-A')).toBeInTheDocument();
+    expect(screen.getByTestId('config-ward-callings-grip-B')).toBeInTheDocument();
   });
 });
