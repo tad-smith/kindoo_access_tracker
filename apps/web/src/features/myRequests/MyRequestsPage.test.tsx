@@ -102,6 +102,18 @@ describe('<MyRequestsPage />', () => {
     expect(within(complete).queryByRole('button', { name: /^Cancel$/ })).toBeNull();
   });
 
+  it('places the Cancel button on the pill row in pill-height styling', () => {
+    usePrincipalMock.mockReturnValue(principal());
+    mockRequests([makeRequest({ request_id: 'r-pending', status: 'pending' })]);
+    render(<MyRequestsPage />);
+    const card = screen.getByTestId('myrequest-r-pending');
+    const line1 = card.querySelector('.kd-myrequests-card-line1');
+    expect(line1).not.toBeNull();
+    const cancelBtn = screen.getByTestId('myrequest-cancel-r-pending');
+    expect(line1?.contains(cancelBtn)).toBe(true);
+    expect(cancelBtn).toHaveClass('btn-pill');
+  });
+
   it('renders the rejection reason inline on rejected rows', () => {
     usePrincipalMock.mockReturnValue(principal());
     mockRequests([

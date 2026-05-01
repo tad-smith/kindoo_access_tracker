@@ -147,17 +147,109 @@ describe('<AllSeatsPage />', () => {
     expect(document.querySelector('.roster-card')).toHaveClass('type-manual');
   });
 
-  it('renders the overall utilization bar only when scope is "All"', () => {
+  it('renders the contextual utilization bar against stake_seat_cap when scope is "All"', () => {
     mockAll({
       seats: [makeSeat({ scope: 'stake' })],
       wards: [makeWard({ ward_code: 'CO', seat_cap: 20 })],
       buildings: [],
       stake: { stake_seat_cap: 200 },
     });
-    const { rerender } = render(<AllSeatsPage />);
-    expect(screen.getByText(/1 \/ 200 seats used/)).toBeInTheDocument();
-    rerender(<AllSeatsPage initialWard="CO" />);
-    expect(screen.queryByText(/1 \/ 200 seats used/)).toBeNull();
+    render(<AllSeatsPage />);
+    const host = screen.getByTestId('allseats-utilization');
+    expect(host).toHaveTextContent(/Entire-stake utilization/);
+    expect(host).toHaveTextContent(/1 \/ 200 seats used/);
+  });
+
+  it('renders the contextual utilization bar against ward.seat_cap when scope is a ward', () => {
+    mockAll({
+      seats: [
+        makeSeat({ scope: 'stake', member_canonical: 's@x.com', member_email: 's@x.com' }),
+        makeSeat({ scope: 'CO', member_canonical: 'a@x.com', member_email: 'a@x.com' }),
+        makeSeat({ scope: 'CO', member_canonical: 'b@x.com', member_email: 'b@x.com' }),
+      ],
+      wards: [makeWard({ ward_code: 'CO', seat_cap: 20 })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage initialWard="CO" />);
+    const host = screen.getByTestId('allseats-utilization');
+    expect(host).toHaveTextContent(/Ward CO utilization/);
+    expect(host).toHaveTextContent(/2 \/ 20 seats used/);
+  });
+
+  it('renders the contextual utilization bar against stake_seat_cap when scope is "stake"', () => {
+    mockAll({
+      seats: [
+        makeSeat({ scope: 'stake', member_canonical: 's1@x.com', member_email: 's1@x.com' }),
+        makeSeat({ scope: 'stake', member_canonical: 's2@x.com', member_email: 's2@x.com' }),
+        makeSeat({ scope: 'CO', member_canonical: 'a@x.com', member_email: 'a@x.com' }),
+      ],
+      wards: [makeWard({ ward_code: 'CO', seat_cap: 20 })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage initialWard="stake" />);
+    const host = screen.getByTestId('allseats-utilization');
+    expect(host).toHaveTextContent(/Stake-scope utilization/);
+    expect(host).toHaveTextContent(/2 \/ 200 seats used/);
+  });
+
+  it('renders the contextual utilization bar in cap-unset form when no cap is configured', () => {
+    mockAll({
+      seats: [makeSeat({ scope: 'CO' })],
+      wards: [makeWard({ ward_code: 'CO', seat_cap: 0 })],
+      buildings: [],
+      stake: { stake_seat_cap: 0 },
+    });
+    render(<AllSeatsPage initialWard="CO" />);
+    const host = screen.getByTestId('allseats-utilization');
+    expect(host).toHaveTextContent(/cap unset/i);
+  });
+
+  it('sorts cross-scope seats: stake first, then wards alpha; type-banded inside each scope', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'GE',
+          type: 'auto',
+          member_canonical: 'ge@x.com',
+          member_email: 'ge@x.com',
+          member_name: 'GE Auto',
+          sort_order: 1,
+        }),
+        makeSeat({
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          member_canonical: 'co-m@x.com',
+          member_email: 'co-m@x.com',
+          member_name: 'CO Manual',
+        }),
+        makeSeat({
+          scope: 'stake',
+          type: 'auto',
+          member_canonical: 'st@x.com',
+          member_email: 'st@x.com',
+          member_name: 'Stake Auto',
+          sort_order: 1,
+        }),
+        makeSeat({
+          scope: 'CO',
+          type: 'auto',
+          member_canonical: 'co-a@x.com',
+          member_email: 'co-a@x.com',
+          member_name: 'CO Auto',
+          sort_order: 1,
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' }), makeWard({ ward_code: 'GE' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const cards = Array.from(document.querySelectorAll('.roster-card'));
+    const order = cards.map((c) => c.getAttribute('data-seat-id'));
+    expect(order).toEqual(['st@x.com', 'co-a@x.com', 'co-m@x.com', 'ge@x.com']);
   });
 
   it('does not render per-scope summary cards (utilization is on Dashboard)', () => {

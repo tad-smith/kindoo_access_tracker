@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useStakeWards, useWardSeats } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
+import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { UtilizationBar } from '../../lib/render/UtilizationBar';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { Select } from '../../components/ui/Select';
@@ -41,6 +42,7 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
     () => (selected ? wardsList.find((w) => w.ward_code === selected) : undefined),
     [selected, wardsList],
   );
+  const sortedSeats = useMemo(() => sortSeatsWithinScope(seats.data ?? []), [seats.data]);
   const seatCount = seats.data?.length ?? 0;
 
   const handleChange = (next: string) => {
@@ -89,7 +91,7 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
             <LoadingSpinner />
           ) : (
             <RosterCardList
-              seats={seats.data}
+              seats={sortedSeats}
               emptyMessage={`No seats in ${wardDoc?.ward_name ?? selected} yet.`}
             />
           )}

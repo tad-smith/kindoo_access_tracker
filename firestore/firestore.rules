@@ -425,40 +425,79 @@ service cloud.firestore {
           || (resource.data.scope in bishopricWardOf(stakeId))
         );
 
+        // `urgent` typed as bool when present (missing → treated as
+        // false on read); rules forbid garbage like `urgent: 17` /
+        // `urgent: "yes"`. Immutable post-submit: the update predicate
+        // below uses an explicit field allowlist for each terminal
+        // transition (cancel/complete/reject) and `urgent` is not in
+        // any of those sets, so it cannot be modified.
+        //
+        // `add_temp` carries ISO `YYYY-MM-DD` start_date + end_date
+        // with `start_date <= end_date`. Phase 10.3's queue
+        // sectioning (Outstanding vs Future) depends on start_date
+        // being present and well-formed for every add_temp.
         allow create: if isAuthed()
           && request.resource.data.status == 'pending'
           && request.resource.data.requester_canonical == authedCanonical()
           && request.resource.data.requested_at == request.time
           && lastActorMatchesAuth(request.resource.data)
+          && (!('urgent' in request.resource.data)
+              || request.resource.data.urgent is bool)
           && (request.resource.data.type == 'remove'
               || request.resource.data.member_name.size() > 0)
           && (request.resource.data.type == 'remove'
               || request.resource.data.scope != 'stake'
               || request.resource.data.building_names.size() > 0)
+          && (request.resource.data.type != 'add_temp'
+              || (
+                   'start_date' in request.resource.data
+                && 'end_date' in request.resource.data
+                && request.resource.data.start_date is string
+                && request.resource.data.end_date is string
+                && request.resource.data.start_date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+                && request.resource.data.end_date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+                && request.resource.data.start_date <= request.resource.data.end_date
+              ))
           && (
                isManager(stakeId)
             || (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
             || (request.resource.data.scope in bishopricWardOf(stakeId))
           );
 
+        // `urgent` is requester-set on submit and immutable afterward.
+        // Each transition's affectedKeys allowlist below excludes it,
+        // and we additionally require the field's value (or absence)
+        // be byte-equal across the write so a client cannot toggle it
+        // even by smuggling it into an otherwise-allowed update.
         allow update: if resource.data.status == 'pending'
           && lastActorMatchesAuth(request.resource.data)
+          && (('urgent' in resource.data) == ('urgent' in request.resource.data))
+          && (!('urgent' in resource.data)
+              || request.resource.data.urgent == resource.data.urgent)
           && (
             // Cancel — only the original requester
             (request.resource.data.status == 'cancelled'
-             && resource.data.requester_canonical == authedCanonical())
+             && resource.data.requester_canonical == authedCanonical()
+             && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'lastActor']))
             ||
             // Complete — only managers (self-approval is allowed; rules
             // do not require requester != completer per F12 invariant 7)
             (request.resource.data.status == 'complete'
              && isManager(stakeId)
-             && request.resource.data.completer_canonical == authedCanonical())
+             && request.resource.data.completer_canonical == authedCanonical()
+             && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'completer_email', 'completer_canonical',
+                          'completed_at', 'completion_note', 'lastActor']))
             ||
             // Reject — only managers, with non-empty reason
             (request.resource.data.status == 'rejected'
              && isManager(stakeId)
              && request.resource.data.rejection_reason.size() > 0
-             && request.resource.data.completer_canonical == authedCanonical())
+             && request.resource.data.completer_canonical == authedCanonical()
+             && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'completer_email', 'completer_canonical',
+                          'completed_at', 'rejection_reason', 'lastActor']))
           );
 
         allow delete: if false;

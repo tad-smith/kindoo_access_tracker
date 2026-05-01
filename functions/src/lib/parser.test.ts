@@ -195,6 +195,7 @@ describe('parseTab', () => {
         email: 'alice@gmail.com',
         name: 'Alice Smith',
         giveAppAccess: true,
+        sheetOrder: 1,
       },
       {
         scope: 'CO',
@@ -202,6 +203,7 @@ describe('parseTab', () => {
         email: 'bob@example.org',
         name: 'Bob Jones',
         giveAppAccess: false,
+        sheetOrder: 2,
       },
       {
         scope: 'CO',
@@ -209,6 +211,7 @@ describe('parseTab', () => {
         email: 'dan@gmail.com',
         name: 'Dan Evans',
         giveAppAccess: true,
+        sheetOrder: 3,
       },
     ]);
   });
@@ -235,6 +238,7 @@ describe('parseTab', () => {
         email: 'alice@gmail.com',
         name: 'Alice Smith',
         giveAppAccess: true,
+        sheetOrder: 1,
       },
     ]);
   });
@@ -291,6 +295,7 @@ describe('parseTab', () => {
         email: 'alice@gmail.com',
         name: 'Alice Smith',
         giveAppAccess: false,
+        sheetOrder: 2,
       },
       {
         scope: 'CO',
@@ -298,6 +303,7 @@ describe('parseTab', () => {
         email: 'bob@gmail.com',
         name: 'Bob Jones',
         giveAppAccess: false,
+        sheetOrder: 2,
       },
       {
         scope: 'CO',
@@ -305,6 +311,7 @@ describe('parseTab', () => {
         email: 'carol@gmail.com',
         name: '',
         giveAppAccess: false,
+        sheetOrder: 2,
       },
     ]);
   });

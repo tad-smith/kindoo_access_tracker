@@ -126,6 +126,11 @@ describe('<ConfigurationPage />', () => {
     expect(screen.getByText('a@x.com')).toBeInTheDocument();
   });
 
+  it('renders the notifications-enabled checkbox with the email-specific label', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByLabelText(/Email Notifications Enabled/i)).toBeInTheDocument();
+  });
+
   it('does not render a Triggers tab', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
     expect(screen.queryByTestId('config-tab-triggers')).toBeNull();

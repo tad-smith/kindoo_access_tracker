@@ -20,6 +20,8 @@ export type ParsedRow = {
   name: string;
   /** `give_app_access` from the matched template. Drives Access doc. */
   giveAppAccess: boolean;
+  /** `sheet_order` from the matched template. Drives `sort_order` denormalisation. */
+  sheetOrder: number;
 };
 
 export type ParseWarning = {
@@ -249,6 +251,7 @@ export function parseTab(opts: {
         email,
         name,
         giveAppAccess: tpl.give_app_access === true,
+        sheetOrder: typeof tpl.sheet_order === 'number' ? tpl.sheet_order : 0,
       });
     }
   }

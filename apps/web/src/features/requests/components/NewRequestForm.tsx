@@ -70,6 +70,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       start_date: '',
       end_date: '',
       building_names: [],
+      urgent: false,
     },
   });
   const { register, handleSubmit, reset, watch, setValue, formState } = form;
@@ -77,6 +78,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   const watchedScope = watch('scope');
   const watchedEmail = watch('member_email');
   const watchedBuildings = watch('building_names');
+  const watchedUrgent = watch('urgent');
 
   // Live duplicate-warning. The seat doc id is the canonical email, so
   // we can subscribe directly without a query. Strip whitespace + run
@@ -124,6 +126,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         start_date: input.start_date,
         end_date: input.end_date,
         building_names: input.building_names,
+        urgent: input.urgent,
       });
       toast('Request submitted.', 'success');
       reset({
@@ -136,6 +139,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         start_date: '',
         end_date: '',
         building_names: [],
+        urgent: false,
       });
     } catch (err) {
       toast(errorMessage(err), 'error');
@@ -244,6 +248,9 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
 
       <label>
         Comment
+        {watchedUrgent ? (
+          <span className="kd-required-marker"> (Required for urgent requests)</span>
+        ) : null}
         <Input type="text" {...register('comment')} data-testid="new-request-comment" />
       </label>
 
@@ -302,6 +309,17 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
           will see the duplicate too.
         </div>
       ) : null}
+
+      <div className="kd-urgent-block">
+        <label className="kd-urgent-row">
+          <input type="checkbox" {...register('urgent')} data-testid="new-request-urgent" /> Urgent?
+        </label>
+        {watchedUrgent ? (
+          <p className="kd-urgent-hint" data-testid="new-request-urgent-hint">
+            Add a comment explaining the urgency
+          </p>
+        ) : null}
+      </div>
 
       <div className="form-actions">
         <Button type="submit" disabled={submit.isPending} data-testid="new-request-submit">

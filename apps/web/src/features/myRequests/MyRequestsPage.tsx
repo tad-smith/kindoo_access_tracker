@@ -108,11 +108,16 @@ function MyRequestCard({ request }: MyRequestCardProps) {
     }
   };
 
+  // Urgent top-bar fires only on pending — once the request is closed
+  // out the urgent treatment is informational noise; the status pill
+  // already conveys the outcome.
+  const showUrgentBar = request.urgent === true && request.status === 'pending';
   return (
     <div
-      className={`kd-myrequests-card status-${request.status}`}
+      className={`kd-myrequests-card status-${request.status}${showUrgentBar ? ' kd-card-urgent' : ''}`}
       data-testid={`myrequest-${request.request_id}`}
       data-status={request.status}
+      data-urgent={showUrgentBar ? 'true' : 'false'}
     >
       <div className="kd-myrequests-card-line1">
         <Badge variant={badgeVariantForType(request.type)}>{labelForType(request.type)}</Badge>
@@ -140,8 +145,10 @@ function MyRequestCard({ request }: MyRequestCardProps) {
           <span className="kd-myrequests-card-actions">
             <Button
               variant="danger"
+              className="btn-pill"
               onClick={() => setConfirmOpen(true)}
               disabled={cancel.isPending}
+              data-testid={`myrequest-cancel-${request.request_id}`}
             >
               Cancel
             </Button>

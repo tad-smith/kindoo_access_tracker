@@ -434,6 +434,194 @@ describe.skipIf(!hasEmulators())('Importer (integration)', () => {
     expect(seat.exists).toBe(false);
   });
 
+  it('seat + access docs carry sort_order denormalised from matched template sheet_order', async () => {
+    await seedStake();
+    const restore = fixture([
+      {
+        name: 'CO',
+        values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+      {
+        name: 'Stake',
+        values: [HEADER_ROW, ['Stake', '', 'Stake President', 'Carol Nguyen', 'carol@gmail.com']],
+      },
+    ]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      const { db } = requireEmulators();
+      const aliceSeat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+      ).data() as Seat;
+      // Bishop template seeded with sheet_order=1.
+      expect(aliceSeat.sort_order).toBe(1);
+      const aliceAccess = (
+        await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).get()
+      ).data() as Access;
+      expect(aliceAccess.sort_order).toBe(1);
+
+      const carolSeat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/carol@gmail.com`).get()
+      ).data() as Seat;
+      // Stake President template seeded with sheet_order=1.
+      expect(carolSeat.sort_order).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it('multi-calling collapse → sort_order = MIN across the seat callings', async () => {
+    await seedStake();
+    const { db } = requireEmulators();
+    // Add a higher-sheet_order template so the MIN is exercised.
+    await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/High%20Councilor`).set({
+      calling_name: 'High Councilor',
+      give_app_access: true,
+      sheet_order: 5,
+      created_at: Timestamp.now(),
+      lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    });
+    const restore = fixture([
+      {
+        name: 'CO',
+        values: [
+          HEADER_ROW,
+          ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com'],
+          ['CO', '', 'CO High Councilor', 'Alice Smith', 'alice@gmail.com'],
+        ],
+      },
+    ]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      expect(seat.callings.sort()).toEqual(['Bishop', 'High Councilor']);
+      // Bishop=1, High Councilor=5 → MIN=1.
+      expect(seat.sort_order).toBe(1);
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).get()
+      ).data() as Access;
+      expect(access.sort_order).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it('manual seat already exists → importer does not touch its sort_order (stays null)', async () => {
+    await seedStake();
+    const { db } = requireEmulators();
+    // Pre-seed a manual seat with sort_order: null.
+    await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).set({
+      member_canonical: 'alice@gmail.com',
+      member_email: 'alice@gmail.com',
+      member_name: 'Alice',
+      scope: 'CO',
+      type: 'manual',
+      callings: [],
+      reason: 'helper',
+      building_names: ['Cordera Building'],
+      duplicate_grants: [],
+      sort_order: null,
+      granted_by_request: 'req-x',
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      last_modified_by: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
+      lastActor: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
+    });
+    const restore = fixture([{ name: 'CO', values: [HEADER_ROW] }]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+    } finally {
+      restore();
+    }
+    const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+    expect(seat.type).toBe('manual');
+    expect(seat.sort_order ?? null).toBeNull();
+  });
+
+  it('access doc with manual_grants only after import → sort_order=null', async () => {
+    await seedStake();
+    const { db } = requireEmulators();
+    await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).set({
+      member_canonical: 'alice@gmail.com',
+      member_email: 'alice@gmail.com',
+      member_name: 'Alice',
+      importer_callings: { CO: ['Bishop'] },
+      manual_grants: {
+        BR: [
+          {
+            grant_id: 'g1',
+            reason: 'helping out',
+            granted_by: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
+            granted_at: Timestamp.now(),
+          },
+        ],
+      },
+      sort_order: 1,
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      last_modified_by: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+      lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    });
+    const restore = fixture([{ name: 'CO', values: [HEADER_ROW] }]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+    } finally {
+      restore();
+    }
+    const access = (
+      await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).get()
+    ).data() as Access;
+    expect(access.importer_callings).toEqual({});
+    expect(access.sort_order ?? null).toBeNull();
+  });
+
+  it('template sheet_order change between runs → seat + access docs get sort_order update', async () => {
+    await seedStake();
+    const { db } = requireEmulators();
+    const r1 = fixture([
+      {
+        name: 'CO',
+        values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+    ]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+    } finally {
+      r1();
+    }
+    const seat1 = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+    expect(seat1.sort_order).toBe(1);
+
+    // Bump the template's sheet_order from 1 to 7.
+    await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/Bishop`).set(
+      {
+        sheet_order: 7,
+        last_modified_at: Timestamp.now(),
+        lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+      },
+      { merge: true },
+    );
+
+    const r2 = fixture([
+      {
+        name: 'CO',
+        values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+    ]);
+    try {
+      const result = await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      // Counts as an update on the seat AND access doc.
+      expect(result.updated).toBeGreaterThanOrEqual(1);
+    } finally {
+      r2();
+    }
+    const seat2 = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+    expect(seat2.sort_order).toBe(7);
+    const access2 = (
+      await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).get()
+    ).data() as Access;
+    expect(access2.sort_order).toBe(7);
+  });
+
   it('importer-written docs carry lastActor=Importer for the audit trigger', async () => {
     // The audit trigger isn't running automatically (we test against
     // firestore+auth emulators only). Verify the stamped lastActor

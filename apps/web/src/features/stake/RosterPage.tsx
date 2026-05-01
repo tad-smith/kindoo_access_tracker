@@ -3,12 +3,14 @@
 // keep bishoprics out via the per-doc rule:
 //   `(resource.data.scope == 'stake' && isStakeMember(stakeId))`.
 
+import { useMemo } from 'react';
 import { useFirestoreOnce } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
 import { STAKE_ID } from '../../lib/constants';
 import { useStakeRoster } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
+import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { UtilizationBar } from '../../lib/render/UtilizationBar';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { RemovalAffordance } from '../requests/components/RemovalAffordance';
@@ -18,6 +20,7 @@ export function StakeRosterPage() {
   const stakeDocResult = useFirestoreOnce(stakeRef(db, STAKE_ID));
   const stakeDoc = stakeDocResult.data;
 
+  const sortedSeats = useMemo(() => sortSeatsWithinScope(seats.data ?? []), [seats.data]);
   const seatCount = seats.data?.length ?? 0;
   // Stake-scope is one slice of the stake_seat_cap; the dashboard's
   // "stake portion" math is implemented in the manager dashboard's
@@ -38,7 +41,7 @@ export function StakeRosterPage() {
         <LoadingSpinner />
       ) : (
         <RosterCardList
-          seats={seats.data}
+          seats={sortedSeats}
           emptyMessage="No stake seats yet. The next import seeds auto-seats from the LCR Stake tab; manual additions land via the New Kindoo Request page."
           actions={(seat) => (seat.type === 'auto' ? null : <RemovalAffordance seat={seat} />)}
         />

@@ -37,6 +37,15 @@ export type AccessRequest = {
    */
   building_names: string[];
 
+  /**
+   * Requester-set on submit and immutable thereafter. When `true`, the
+   * comment field is required at submit time and the request renders
+   * with a red top bar wherever it appears (My Requests, Queue urgent
+   * section). A missing field is treated as `false` (rendered
+   * non-urgent).
+   */
+  urgent?: boolean;
+
   status: RequestStatus;
 
   // ----- Submitter -----
