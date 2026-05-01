@@ -1264,6 +1264,22 @@ _Manual_
 
 ---
 
+## Phase 10.2 — Fix dialogs and UX issues
+
+**Goal:** UX polish across manager pages and the New Request flow. Modal dialogs replace inline forms (App Access, Configuration tabs); layout normalised to left-aligned with per-page max-widths; behaviour fixes (last-manager guard, audit infinite scroll, ward-scope auto-building, scope-dropdown audit); Configuration tab rename + reorder + Triggers tab removal; pill colours matched to the Apps Script roster.
+
+**Owner:** web-engineer.
+
+**Dependencies:** Phase 7 (manager admin pages — establishes the surface this phase polishes), Phase 8 (audit log — feeds the infinite-scroll fix).
+
+**Status:** [DONE — see [`docs/changelog/phase-10.2-fix-dialogs.md`](changelog/phase-10.2-fix-dialogs.md)]
+
+### Sub-tasks
+
+17 items grouped in 5 implementation batches (tab cleanup + AllSeats summary removal; layout polish + roster pill colours + sheet hyperlink; modal dialogs replacing inline forms; Access page table-vs-card responsive view; audit infinite scroll + ward-scope auto-building). See the changelog for the full surface.
+
+---
+
 ## Phase 10.5 — Push notifications via FCM Web (deferred)
 
 **Goal:** Managers receive a push notification when a new request is submitted, paralleling the email. Per-user opt-in respected. Email remains the source-of-truth channel.
