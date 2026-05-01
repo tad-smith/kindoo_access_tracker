@@ -2,9 +2,12 @@
 // footer (sign-out + version stamp; optionally the user email on
 // phone). Powers two surfaces:
 //
-//   - Tablet floating panel (`variant="panel"`): anchored to the left
-//     rail, narrow (~280px), backdrop covers the rest of the viewport.
-//     No user email — the brand bar already shows it on tablet.
+//   - Tablet expanded rail (`variant="panel"`): anchored to the left
+//     viewport edge (x=0), 248px wide. Visually replaces the 64px
+//     icons rail when open — the icons rail stays rendered beneath
+//     and reappears on dismiss. Backdrop covers the rest of the
+//     viewport. No user email — the brand bar already shows it on
+//     tablet.
 //   - Phone drawer (`variant="drawer"`): slides from the left edge,
 //     fixed width (~300px), backdrop covers everything to the right.
 //     Footer carries email + logout + version.

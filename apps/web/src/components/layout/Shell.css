@@ -326,10 +326,13 @@
 }
 
 .kd-nav-overlay-panel .kd-nav-overlay-surface {
-  /* Tablet: anchored to the left rail (64px), narrow panel. */
-  margin-left: 64px;
-  width: 280px;
-  max-width: calc(100vw - 64px);
+  /* Tablet: rail expansion model. Anchored to the left viewport edge
+     and 248px wide so it visually replaces the 64px icons rail when
+     open (rather than sitting adjacent to it). The icons rail stays
+     rendered underneath and reappears on dismiss. */
+  margin-left: 0;
+  width: 248px;
+  max-width: 100vw;
   height: 100vh;
 }
 
