@@ -192,7 +192,7 @@ kindoo/
 
 Phase 5 → 6 → 7 is web-engineer's serial path. Phase 8 → 9 is backend-engineer's serial path. Once Phase 4 ships, both arcs run in parallel until they converge for Phase 10. Phase 11 is everyone-on-deck for the cutover window. Phase 3.5 is a single-pass infra refresh (replacing reactfire + bumping major deps) that all downstream phases inherit.
 
-Phase 10.5 (FCM push notifications) is deferred and not shown in the tree above; it runs only after operator-driven re-prioritization and is not gated on Phase 11 cutover.
+Phase 10.1 (navigation redesign — left rail + sectioned nav) and Phase 10.5 (FCM push notifications) are not shown in the tree above; both are deferred and not gated on Phase 11 cutover. Phase 10.1 depends on Phases 4 + 7 (it replaces the Phase-4 nav once the Phase-7 admin pages have established the full nav-item set); Phase 10.5 depends on Phases 9 + 10. See [`navigation-redesign.md`](navigation-redesign.md) for Phase 10.1's design.
 
 ---
 
@@ -1244,6 +1244,23 @@ _Manual_
 
 - All FCM push notifications — Phase 10.5.
 - New icon / brand redesign — separate task if needed.
+- Navigation redesign (left-rail + sectioned nav) — Phase 10.1.
+
+---
+
+## Phase 10.1 — Navigation redesign (left rail + sectioned nav)
+
+**Goal:** Replace the Phase-4-vintage top-tab nav with a directory-browser-style left rail that adapts across phone / tablet / desktop breakpoints, sectioned navigation with conditional headers, role-aware items, and Lucide icons. Specification in [`docs/navigation-redesign.md`](navigation-redesign.md).
+
+**Owner:** web-engineer.
+
+**Dependencies:** Phase 4 (web SPA shell — establishes the layout shell + role-aware Nav this redesign replaces), Phase 7 (manager admin pages — establishes the full nav-item set the redesign must accommodate).
+
+**Status:** Design complete. Implementation deferred until operator schedules.
+
+### Sub-tasks
+
+(Deferred. See [`docs/navigation-redesign.md`](navigation-redesign.md) §1–§16 for the full design surface; sub-tasks will be enumerated when this phase is started.)
 
 ---
 

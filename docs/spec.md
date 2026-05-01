@@ -114,6 +114,8 @@ A user can hold multiple roles; the UI shows the union.
 
 ## 5. Page map
 
+**Nav structure.** The current Apps Script app uses a top-tab nav rendered by `src/ui/Nav.html`. The Firebase port replaces that with a left-rail + sectioned-nav design (Quick Links / Rosters / Settings) that adapts across phone / tablet / desktop breakpoints — see [`navigation-redesign.md`](navigation-redesign.md). The page map below describes the Apps Script reality; nav structure is documented separately, not restated here.
+
 **Default landing rule.** Every role's default page (returned by `Router_defaultPageFor_` for empty / unrecognised `?p=`) is that role's leftmost nav tab. Current defaults: manager → `mgr/dashboard`, stake → `new` (New Kindoo Request), bishopric → `new`. Multi-role users resolve via priority — manager > stake > bishopric — and land on the most-privileged role's leftmost tab.
 
 ### 5.1 Bishopric (scoped to own ward)
