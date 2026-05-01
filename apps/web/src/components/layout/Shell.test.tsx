@@ -252,27 +252,52 @@ describe('Shell — tablet icon rail', () => {
     expect(document.querySelector('.kd-left-rail')).toBeNull();
   });
 
-  it('clicking an icon opens the floating panel', async () => {
+  it('clicking an icon does NOT open the panel (icons navigate directly)', async () => {
     const user = userEvent.setup();
     await renderShell(<p>Hello</p>);
     expect(document.querySelector('.kd-nav-overlay')).toBeNull();
     const rail = document.querySelector('.kd-icon-rail') as HTMLElement;
-    const firstIcon = within(rail).getAllByRole('button')[0];
-    if (!firstIcon) throw new Error('icon rail had no buttons');
-    await user.click(firstIcon);
+    const firstIconLink = within(rail).getAllByRole('link')[0];
+    if (!firstIconLink) throw new Error('icon rail had no links');
+    await user.click(firstIconLink);
+    // Direct navigation; no overlay opens.
+    expect(document.querySelector('.kd-nav-overlay-panel')).toBeNull();
+  });
+
+  it('clicking a non-icon rail area opens the floating panel', async () => {
+    const user = userEvent.setup();
+    await renderShell(<p>Hello</p>);
+    expect(document.querySelector('.kd-nav-overlay')).toBeNull();
+    // The section divider sits between sections and is a non-icon
+    // hit-target; clicking it bubbles up to the rail's onClick which
+    // opens the panel.
+    const divider = document.querySelector('.kd-icon-rail-divider') as HTMLElement | null;
+    if (!divider) throw new Error('icon rail had no divider');
+    await user.click(divider);
     expect(document.querySelector('.kd-nav-overlay-panel')).not.toBeNull();
   });
 
   it('clicking the backdrop closes the panel', async () => {
     const user = userEvent.setup();
     await renderShell(<p>Hello</p>);
-    const rail = document.querySelector('.kd-icon-rail') as HTMLElement;
-    const firstIcon = within(rail).getAllByRole('button')[0];
-    if (!firstIcon) throw new Error('icon rail had no buttons');
-    await user.click(firstIcon);
+    // Open via non-icon area (gap click).
+    const divider = document.querySelector('.kd-icon-rail-divider') as HTMLElement | null;
+    if (!divider) throw new Error('icon rail had no divider');
+    await user.click(divider);
     expect(document.querySelector('.kd-nav-overlay-panel')).not.toBeNull();
     await user.click(screen.getByTestId('nav-overlay-backdrop'));
     expect(document.querySelector('.kd-nav-overlay-panel')).toBeNull();
+  });
+
+  it('clicking the logout icon does NOT open the panel (signs out directly)', async () => {
+    const user = userEvent.setup();
+    signOutMock.mockResolvedValueOnce(undefined);
+    await renderShell(<p>Hello</p>);
+    const rail = document.querySelector('.kd-icon-rail') as HTMLElement;
+    const logout = within(rail).getByRole('button', { name: /sign out/i });
+    await user.click(logout);
+    expect(document.querySelector('.kd-nav-overlay-panel')).toBeNull();
+    expect(signOutMock).toHaveBeenCalledTimes(1);
   });
 });
 

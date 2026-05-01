@@ -90,35 +90,88 @@ test.describe('Phase 10.1 navigation redesign', () => {
     await expect(page.locator('.kd-nav-overlay')).toHaveCount(0);
   });
 
-  test('tablet: icons-only rail; tap opens floating panel; backdrop + Escape close it', async ({
-    page,
-  }) => {
+  test('tablet: icons-only rail; tap icon navigates directly (no panel)', async ({ page }) => {
     await page.setViewportSize({ width: 800, height: 900 });
-    await signInAsManager(page, 'tablet-rail@example.com');
+    await signInAsManager(page, 'tablet-icon-nav@example.com');
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
 
     // Icons rail visible; persistent desktop rail not.
     await expect(page.locator('.kd-icon-rail')).toBeVisible();
     await expect(page.locator('.kd-left-rail')).toHaveCount(0);
 
-    // Tap an icon → floating panel opens.
+    // Tap an icon (All Seats) → navigates directly; no overlay opens.
     const iconRail = page.locator('.kd-icon-rail');
-    await iconRail.getByRole('button').first().click();
+    await iconRail.getByRole('link', { name: /All Seats/ }).click();
+    await expect(page.getByRole('heading', { name: /^All Seats$/ })).toBeVisible();
+    await expect(page.locator('.kd-nav-overlay-panel')).toHaveCount(0);
+  });
+
+  test('tablet: clicking a non-icon area expands the rail; backdrop + Escape collapse it', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await signInAsManager(page, 'tablet-expand@example.com');
+    await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
+
+    const iconRail = page.locator('.kd-icon-rail');
+    await expect(iconRail).toBeVisible();
+
+    // Click a section divider (a non-icon hit-target) → rail expands.
+    await iconRail.locator('.kd-icon-rail-divider').first().click();
     await expect(page.locator('.kd-nav-overlay-panel')).toBeVisible();
     await expect(
       page.locator('.kd-nav-overlay-panel').getByRole('heading', { name: 'Quick Links' }),
     ).toBeVisible();
 
-    // Backdrop tap closes.
+    // Backdrop tap collapses.
     await page.getByTestId('nav-overlay-backdrop').click();
     await expect(page.locator('.kd-nav-overlay-panel')).toHaveCount(0);
 
-    // Re-open.
-    await iconRail.getByRole('button').first().click();
+    // Re-expand by clicking a non-icon area.
+    await iconRail.locator('.kd-icon-rail-divider').first().click();
     await expect(page.locator('.kd-nav-overlay-panel')).toBeVisible();
 
-    // Escape closes.
+    // Escape collapses.
     await page.keyboard.press('Escape');
+    await expect(page.locator('.kd-nav-overlay-panel')).toHaveCount(0);
+  });
+
+  test('tablet: dragging the rail rightward past threshold expands it', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await signInAsManager(page, 'tablet-drag@example.com');
+    await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
+
+    const iconRail = page.locator('.kd-icon-rail');
+    const railBox = await iconRail.boundingBox();
+    if (!railBox) throw new Error('icon rail had no bounding box');
+
+    // Drag from inside the rail (use the foot area to avoid hitting an
+    // icon button) rightward by 80px (well past the 32px threshold).
+    const startX = railBox.x + railBox.width / 2;
+    const startY = railBox.y + railBox.height - 30;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + 80, startY, { steps: 8 });
+    await page.mouse.up();
+
+    await expect(page.locator('.kd-nav-overlay-panel')).toBeVisible();
+  });
+
+  test('tablet: tapping a labeled item in the expanded rail navigates + collapses', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await signInAsManager(page, 'tablet-expand-nav@example.com');
+    await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
+
+    // Expand via non-icon area.
+    await page.locator('.kd-icon-rail .kd-icon-rail-divider').first().click();
+    const panel = page.locator('.kd-nav-overlay-panel');
+    await expect(panel).toBeVisible();
+
+    // Tap All Seats inside the expanded rail → navigates + collapses.
+    await panel.getByRole('link', { name: /All Seats/ }).click();
+    await expect(page.getByRole('heading', { name: /^All Seats$/ })).toBeVisible();
     await expect(page.locator('.kd-nav-overlay-panel')).toHaveCount(0);
   });
 
@@ -169,8 +222,9 @@ test.describe('Phase 10.1 navigation redesign', () => {
     await signInAsManager(page, 'resize-t-d@example.com');
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
 
-    // Open the floating panel.
-    await page.locator('.kd-icon-rail').getByRole('button').first().click();
+    // Expand the rail via a non-icon area (icon taps now navigate
+    // directly; clicking a section divider opens the panel).
+    await page.locator('.kd-icon-rail .kd-icon-rail-divider').first().click();
     await expect(page.locator('.kd-nav-overlay-panel')).toBeVisible();
 
     // Cross to desktop.
