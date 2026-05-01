@@ -95,9 +95,10 @@ test.describe('Phase 5 shell + deep-links', () => {
 
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
     // Persistent shell — build version visible (in the rail footer at
-    // desktop width) and sign-out present (also in the rail footer).
+    // desktop width) and Logout reachable (Account section, in the
+    // rail body).
     await expect(page.getByLabel('Build version').first()).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Sign out$/i }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Logout$/i }).first()).toBeVisible();
   });
 
   test('clicking a nav link swaps content but keeps the shell mounted', async ({ page }) => {

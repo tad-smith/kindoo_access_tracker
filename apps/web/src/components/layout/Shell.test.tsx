@@ -212,27 +212,32 @@ describe('Shell — brand bar', () => {
 });
 
 describe('Shell — desktop rail', () => {
-  it('renders the persistent left rail with sign-out at the foot', async () => {
+  it("renders the persistent left rail with the Account section's Logout button", async () => {
     await renderShell(<p>Hello</p>);
     const rail = document.querySelector('.kd-left-rail');
     expect(rail).not.toBeNull();
-    const signOut = within(rail as HTMLElement).getByRole('button', { name: /sign out/i });
-    expect(signOut).toBeInTheDocument();
+    // Logout lives inside the Account section's nav body now, not at
+    // the rail foot.
+    const logout = within(rail as HTMLElement).getByRole('button', { name: /^Logout$/ });
+    expect(logout).toBeInTheDocument();
   });
 
-  it('clicking sign-out invokes the signOut helper', async () => {
+  it('clicking Logout invokes the signOut helper', async () => {
     const user = userEvent.setup();
     signOutMock.mockResolvedValueOnce(undefined);
     await renderShell(<p>Hello</p>);
     const rail = document.querySelector('.kd-left-rail') as HTMLElement;
-    await user.click(within(rail).getByRole('button', { name: /sign out/i }));
+    await user.click(within(rail).getByRole('button', { name: /^Logout$/ }));
     expect(signOutMock).toHaveBeenCalledTimes(1);
   });
 
-  it('renders the version stamp in the rail footer', async () => {
+  it('renders the version stamp in the rail footer (no Logout in foot)', async () => {
     await renderShell(<p>Hello</p>);
     const rail = document.querySelector('.kd-left-rail') as HTMLElement;
     expect(within(rail).getByLabelText('Build version')).toHaveTextContent('v4.0.0-test');
+    // No logout button at the foot — the foot holds only the version.
+    const foot = rail.querySelector('.kd-left-rail-foot') as HTMLElement;
+    expect(within(foot).queryByRole('button')).toBeNull();
   });
 });
 
@@ -289,12 +294,14 @@ describe('Shell — tablet icon rail', () => {
     expect(document.querySelector('.kd-nav-overlay-panel')).toBeNull();
   });
 
-  it('clicking the logout icon does NOT open the panel (signs out directly)', async () => {
+  it('clicking the Logout icon does NOT open the panel (signs out directly)', async () => {
     const user = userEvent.setup();
     signOutMock.mockResolvedValueOnce(undefined);
     await renderShell(<p>Hello</p>);
     const rail = document.querySelector('.kd-icon-rail') as HTMLElement;
-    const logout = within(rail).getByRole('button', { name: /sign out/i });
+    // Logout is now an action item inside the rail body (Account
+    // section), not a dedicated foot button.
+    const logout = within(rail).getByRole('button', { name: /^Logout$/ });
     await user.click(logout);
     expect(document.querySelector('.kd-nav-overlay-panel')).toBeNull();
     expect(signOutMock).toHaveBeenCalledTimes(1);
@@ -314,14 +321,18 @@ describe('Shell — phone drawer', () => {
     expect(document.querySelector('.kd-nav-overlay-drawer')).not.toBeNull();
   });
 
-  it('drawer footer carries the email + sign-out + version', async () => {
+  it('drawer footer carries the email + version (Logout moved into Account section)', async () => {
     const user = userEvent.setup();
     await renderShell(<p>Hello</p>);
     await user.click(screen.getByRole('button', { name: /open navigation/i }));
     const drawer = document.querySelector('.kd-nav-overlay-drawer') as HTMLElement;
     expect(within(drawer).getByText('alice@example.com')).toBeInTheDocument();
-    expect(within(drawer).getByRole('button', { name: /sign out/i })).toBeInTheDocument();
     expect(within(drawer).getByLabelText('Build version')).toHaveTextContent('v4.0.0-test');
+    // Logout is now an Account-section nav item inside the drawer
+    // body, not a foot button.
+    const foot = drawer.querySelector('.kd-nav-overlay-foot') as HTMLElement;
+    expect(within(foot).queryByRole('button')).toBeNull();
+    expect(within(drawer).getByRole('button', { name: /^Logout$/ })).toBeInTheDocument();
   });
 
   it('clicking the backdrop closes the drawer', async () => {

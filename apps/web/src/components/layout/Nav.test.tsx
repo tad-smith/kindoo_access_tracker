@@ -3,8 +3,9 @@
 // hit it directly without mounting a TanStack Router; for the
 // rendered-DOM cases we wrap a minimal in-memory router.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import {
   createMemoryHistory,
   createRootRoute,
@@ -38,49 +39,75 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     expect(navSectionsForPrincipal(makePrincipal())).toEqual([]);
   });
 
-  it('manager-only: shows all three sections, all manager items', () => {
+  it('manager-only: shows all four sections, all manager items', () => {
     const sections = navSectionsForPrincipal(makePrincipal({ managerStakes: ['csnorth'] }));
-    expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'settings']);
+    expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'settings', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
     expect(quick).toEqual(['Dashboard', 'Request Queue', 'My Requests']);
     const rosters = sections.find((s) => s.key === 'rosters')?.items.map((i) => i.label);
     expect(rosters).toEqual(['Ward Roster', 'Stake Roster', 'All Seats']);
     const settings = sections.find((s) => s.key === 'settings')?.items.map((i) => i.label);
     expect(settings).toEqual(['App Access', 'Import', 'Configuration', 'Audit Log']);
+    const account = sections.find((s) => s.key === 'account')?.items.map((i) => i.label);
+    expect(account).toEqual(['Logout']);
   });
 
-  it('bishopric-only: shows Quick Links + Rosters; hides Settings entirely', () => {
+  it('bishopric-only: shows Quick Links + Rosters + Account; hides Settings entirely', () => {
     const sections = navSectionsForPrincipal(
       makePrincipal({ bishopricWards: { csnorth: ['CO'] } }),
     );
-    expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters']);
+    expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
     expect(quick).toEqual(['New Request', 'My Requests']);
     const rosters = sections.find((s) => s.key === 'rosters')?.items.map((i) => i.label);
     expect(rosters).toEqual(['Ward Roster']);
+    const account = sections.find((s) => s.key === 'account')?.items.map((i) => i.label);
+    expect(account).toEqual(['Logout']);
   });
 
-  it('stake-only: shows Quick Links + Rosters; hides Settings entirely', () => {
+  it('stake-only: shows Quick Links + Rosters + Account; hides Settings entirely', () => {
     const sections = navSectionsForPrincipal(makePrincipal({ stakeMemberStakes: ['csnorth'] }));
-    expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters']);
+    expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
     expect(quick).toEqual(['New Request', 'My Requests']);
     const rosters = sections.find((s) => s.key === 'rosters')?.items.map((i) => i.label);
     expect(rosters).toEqual(['Ward Roster', 'Stake Roster']);
   });
 
-  it('manager + bishopric: all three sections; bishopric brings nothing new in Quick Links', () => {
+  it('manager + bishopric: all four sections; bishopric brings New Request to Quick Links', () => {
     const sections = navSectionsForPrincipal(
       makePrincipal({
         managerStakes: ['csnorth'],
         bishopricWards: { csnorth: ['CO'] },
       }),
     );
-    expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'settings']);
+    expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'settings', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
     // Manager keeps the leading Dashboard/Queue; New Request appears
     // because of the bishopric overlay.
     expect(quick).toEqual(['Dashboard', 'Request Queue', 'New Request', 'My Requests']);
+  });
+
+  it('Account section visible to every authorized user (manager / stake / bishopric)', () => {
+    const cases: Array<Partial<Principal>> = [
+      { managerStakes: ['csnorth'] },
+      { stakeMemberStakes: ['csnorth'] },
+      { bishopricWards: { csnorth: ['CO'] } },
+    ];
+    for (const overrides of cases) {
+      const sections = navSectionsForPrincipal(makePrincipal(overrides));
+      const account = sections.find((s) => s.key === 'account');
+      expect(account?.items.map((i) => i.label)).toEqual(['Logout']);
+    }
+  });
+
+  it('Logout is an action item, not a link', () => {
+    const sections = navSectionsForPrincipal(makePrincipal({ managerStakes: ['csnorth'] }));
+    const logout = sections.find((s) => s.key === 'account')?.items[0];
+    expect(logout?.kind).toBe('action');
+    if (logout?.kind === 'action') {
+      expect(logout.action).toBe('sign-out');
+    }
   });
 
   it('platform superadmin without explicit manager claim still sees Settings', () => {
@@ -172,7 +199,32 @@ describe('<Nav />', () => {
     expect(screen.getByRole('heading', { name: 'Quick Links' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Rosters' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Account' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Dashboard/ })).toBeInTheDocument();
+    // Account section's Logout renders as a button (action item).
+    expect(screen.getByRole('button', { name: /Logout/ })).toBeInTheDocument();
+  });
+
+  it('Logout button invokes onSignOut', async () => {
+    const principal = makePrincipal({ managerStakes: ['csnorth'] });
+    const onSignOut = vi.fn();
+    const rootRoute = createRootRoute({
+      component: () => <Nav principal={principal} onSignOut={onSignOut} />,
+    });
+    const catchAll = createRoute({
+      getParentRoute: () => rootRoute,
+      path: '$',
+      component: () => <Outlet />,
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([catchAll]),
+      history: createMemoryHistory({ initialEntries: ['/'] }),
+    });
+    await router.load();
+    render(<RouterProvider router={router} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Logout/ }));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 
   it('marks only the current page as active (single-active invariant)', async () => {

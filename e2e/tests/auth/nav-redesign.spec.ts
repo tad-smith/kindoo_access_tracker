@@ -60,7 +60,9 @@ test.describe('Phase 10.1 navigation redesign', () => {
     });
   });
 
-  test('desktop: persistent left rail with sectioned nav + sign-out in foot', async ({ page }) => {
+  test('desktop: persistent left rail with sectioned nav + Logout in Account section', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await signInAsManager(page, 'desktop-rail@example.com');
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
@@ -69,21 +71,22 @@ test.describe('Phase 10.1 navigation redesign', () => {
     const rail = page.locator('.kd-left-rail');
     await expect(rail).toBeVisible();
 
-    // All section headers render.
+    // All four section headers render.
     await expect(rail.getByRole('heading', { name: 'Quick Links' })).toBeVisible();
     await expect(rail.getByRole('heading', { name: 'Rosters' })).toBeVisible();
     await expect(rail.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(rail.getByRole('heading', { name: 'Account' })).toBeVisible();
 
     // Manager-side full nav-item set is visible (sample a few).
     await expect(rail.getByRole('link', { name: /Dashboard/ })).toBeVisible();
     await expect(rail.getByRole('link', { name: /Audit Log/ })).toBeVisible();
     await expect(rail.getByRole('link', { name: /All Seats/ })).toBeVisible();
 
-    // Logout pinned to the rail's foot.
-    await expect(rail.getByRole('button', { name: /sign out/i })).toBeVisible();
+    // Logout lives inside the Account section (rail body), not at the foot.
+    await expect(rail.getByRole('button', { name: /^Logout$/ })).toBeVisible();
     // Brand bar carries no logout button.
     const brandbar = page.locator('.kd-brandbar');
-    await expect(brandbar.getByRole('button', { name: /sign out/i })).toHaveCount(0);
+    await expect(brandbar.getByRole('button', { name: /^Logout$/ })).toHaveCount(0);
 
     // No icon rail, no drawer, no panel.
     await expect(page.locator('.kd-icon-rail')).toHaveCount(0);
@@ -193,10 +196,11 @@ test.describe('Phase 10.1 navigation redesign', () => {
     const drawer = page.locator('.kd-nav-overlay-drawer');
     await expect(drawer).toBeVisible();
 
-    // Drawer footer carries the email + sign-out + version.
+    // Drawer footer carries the email + version (no logout in foot).
     await expect(drawer.getByText('phone-drawer@example.com')).toBeVisible();
-    await expect(drawer.getByRole('button', { name: /sign out/i })).toBeVisible();
     await expect(drawer.getByLabel('Build version')).toBeVisible();
+    // Logout is reachable from the Account section in the drawer body.
+    await expect(drawer.getByRole('button', { name: /^Logout$/ })).toBeVisible();
 
     // Tap a nav item → drawer closes + navigation happens.
     await drawer.getByRole('link', { name: /All Seats/ }).click();

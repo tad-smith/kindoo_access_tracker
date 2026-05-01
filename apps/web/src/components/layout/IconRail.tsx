@@ -2,34 +2,37 @@
 // left of `<main>`. Three interaction patterns (per Phase 10.1
 // follow-up #3):
 //
-//   1. Tap an icon (nav item or logout) → directly navigates / signs
-//      out. No expansion step. Icons are `<Link>`s so middle-click /
-//      cmd-click open in a new tab as expected.
+//   1. Tap an icon (link or action) → directly navigates / runs the
+//      action (sign out). No expansion step. Link items are
+//      `<Link>`s so middle-click / cmd-click open in a new tab as
+//      expected; action items are `<button>`s.
 //   2. Tap the rail in any non-icon area → invokes `onActivate`,
-//      which opens the expanded floating rail.
-//   3. Drag the rail rightward past half the expansion delta
-//      (~92px from the rail's left edge) → invokes `onActivate`. The
+//      which expands the rail (floating overlay; see `NavOverlay`).
+//   3. Drag the rail rightward past 32px → invokes `onActivate`. The
 //      drag works for both touch and pointer (mouse).
 //
-// Section headers are replaced with a horizontal divider plus a
-// height-preserving spacer (per `docs/navigation-redesign.md` §14)
-// so nav-item Y-coordinates align with the desktop rail. Active
-// item: same vertical-bar + tint treatment as desktop.
+// Section headers (including the new "Account" section) are replaced
+// with a horizontal divider plus a height-preserving spacer per
+// `docs/navigation-redesign.md` §14, so nav-item Y-coordinates align
+// with the desktop rail. Active state for link items: vertical-bar
+// + tint treatment as desktop. Action items don't carry active state.
+//
+// The foot below the rail body holds only the version stamp now;
+// Logout moved into the Account section per Phase 10.1 follow-up #4.
 
 import { useRef } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
-import { LogOut, type LucideIcon } from 'lucide-react';
-import { navSectionsForPrincipal, type NavSection } from './navModel';
+import { navSectionsForPrincipal, type NavItem, type NavSection } from './navModel';
 import type { Principal } from '../../lib/principal';
 
-/** Drag distance past the rail's right edge that snaps to "expanded". */
+/** Horizontal drag distance that triggers expansion. */
 const DRAG_THRESHOLD_PX = 32;
 
 interface IconRailProps {
   principal: Principal;
   /** Open the expanded floating rail (called by tap-on-gap and drag-past-threshold). */
   onActivate: () => void;
-  /** Sign-out button click. */
+  /** Sign-out side-effect for action items. */
   onSignOut: () => void;
   signingOut: boolean;
   version: string;
@@ -41,10 +44,7 @@ export function IconRail({ principal, onActivate, onSignOut, signingOut, version
 
   // Drag tracking. Starts on `pointerdown`, latches `expanded` when
   // the pointer moves rightward past the threshold; emits onActivate
-  // exactly once per drag. A drag that never crosses the threshold
-  // collapses back to a tap; the click handler on the rail then runs
-  // normally (and only fires if the click landed on a non-icon area
-  // because icons stop propagation).
+  // exactly once per drag.
   const dragRef = useRef<{ startX: number; activated: boolean } | null>(null);
 
   function handlePointerDown(event: React.PointerEvent<HTMLElement>) {
@@ -65,10 +65,9 @@ export function IconRail({ principal, onActivate, onSignOut, signingOut, version
     dragRef.current = null;
   }
 
-  // Rail-level click. Fires for any click that wasn't `stopPropagation`'d
-  // by the icon buttons inside (i.e., gaps, divider, area below items).
-  // A drag that already activated suppresses the click via the same
-  // ref (the browser will fire a click after pointerup unless we check).
+  // Rail-level click. Fires for any click that wasn't
+  // `stopPropagation`'d by the icon items inside (i.e., gaps,
+  // dividers, area below items, foot).
   function handleRailClick() {
     onActivate();
   }
@@ -90,23 +89,12 @@ export function IconRail({ principal, onActivate, onSignOut, signingOut, version
             section={section}
             isFirst={idx === 0}
             pathname={pathname}
+            onSignOut={onSignOut}
+            signingOut={signingOut}
           />
         ))}
       </div>
       <div className="kd-icon-rail-foot">
-        <button
-          type="button"
-          className="kd-icon-rail-logout"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSignOut();
-          }}
-          disabled={signingOut}
-          title={signingOut ? 'Signing out…' : 'Sign out'}
-          aria-label={signingOut ? 'Signing out' : 'Sign out'}
-        >
-          <LogOut size={20} aria-hidden="true" />
-        </button>
         <span className="kd-icon-rail-version" aria-label="Build version">
           v{version}
         </span>
@@ -119,9 +107,17 @@ interface IconRailSectionProps {
   section: NavSection;
   isFirst: boolean;
   pathname: string;
+  onSignOut: () => void;
+  signingOut: boolean;
 }
 
-function IconRailSection({ section, isFirst, pathname }: IconRailSectionProps) {
+function IconRailSection({
+  section,
+  isFirst,
+  pathname,
+  onSignOut,
+  signingOut,
+}: IconRailSectionProps) {
   return (
     <div className={`kd-icon-rail-section${isFirst ? ' is-first' : ''}`}>
       {/* Divider + height-preserving gap stand in for the section
@@ -132,10 +128,10 @@ function IconRailSection({ section, isFirst, pathname }: IconRailSectionProps) {
         {section.items.map((item) => (
           <IconRailItem
             key={item.key}
-            label={item.label}
-            to={item.to}
-            icon={item.icon}
-            isActive={pathname === item.to}
+            item={item}
+            isActive={item.kind === 'link' && pathname === item.to}
+            onSignOut={onSignOut}
+            signingOut={signingOut}
           />
         ))}
       </ul>
@@ -144,29 +140,51 @@ function IconRailSection({ section, isFirst, pathname }: IconRailSectionProps) {
 }
 
 interface IconRailItemProps {
-  label: string;
-  to: string;
-  icon: LucideIcon;
+  item: NavItem;
   isActive: boolean;
+  onSignOut: () => void;
+  signingOut: boolean;
 }
 
-function IconRailItem({ label, to, icon: Icon, isActive }: IconRailItemProps) {
+function IconRailItem({ item, isActive, onSignOut, signingOut }: IconRailItemProps) {
+  const Icon = item.icon;
+  if (item.kind === 'link') {
+    return (
+      <li>
+        <Link
+          to={item.to}
+          className={`kd-icon-rail-link${isActive ? ' active' : ''}`}
+          title={item.label}
+          aria-label={item.label}
+          aria-current={isActive ? 'page' : undefined}
+          onClick={(e) => {
+            // Direct icon taps go straight to navigation; don't bubble
+            // to the rail's open-panel handler.
+            e.stopPropagation();
+          }}
+        >
+          <Icon size={22} aria-hidden="true" />
+        </Link>
+      </li>
+    );
+  }
+  // Action item — currently only `sign-out`.
+  const busy = item.action === 'sign-out' && signingOut;
   return (
     <li>
-      <Link
-        to={to}
-        className={`kd-icon-rail-link${isActive ? ' active' : ''}`}
-        title={label}
-        aria-label={label}
-        aria-current={isActive ? 'page' : undefined}
+      <button
+        type="button"
+        className="kd-icon-rail-link kd-icon-rail-action"
+        title={busy ? 'Signing out…' : item.label}
+        aria-label={busy ? 'Signing out' : item.label}
+        disabled={busy}
         onClick={(e) => {
-          // Don't let the rail's open-the-panel handler fire on direct
-          // icon taps — icons go straight to navigation.
           e.stopPropagation();
+          if (item.action === 'sign-out') onSignOut();
         }}
       >
         <Icon size={22} aria-hidden="true" />
-      </Link>
+      </button>
     </li>
   );
 }

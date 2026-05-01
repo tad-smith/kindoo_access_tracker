@@ -259,36 +259,11 @@
 
 .kd-icon-rail-foot {
   border-top: 1px solid var(--kd-chrome-border);
-  /* iOS PWA: keep logout above the home-indicator bar. */
-  padding: 8px 0 max(10px, env(safe-area-inset-bottom));
+  padding: 8px 0 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-}
-
-.kd-icon-rail-logout {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  color: var(--kd-fg-2);
-  height: 36px;
-  width: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-}
-
-.kd-icon-rail-logout:hover:not(:disabled) {
-  background: var(--kd-surface-alt);
-  color: var(--kd-fg-1);
-}
-
-.kd-icon-rail-logout:focus-visible {
-  outline: 2px solid var(--kd-primary-tint-link);
-  outline-offset: 1px;
 }
 
 .kd-icon-rail-version {
