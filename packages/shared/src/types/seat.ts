@@ -62,6 +62,18 @@ export type Seat = {
   /** Request UUID that justifies this seat. Absent for `type='auto'`. */
   granted_by_request?: string;
 
+  // ----- Sort priority -----
+  /**
+   * Denormalised from the matched calling template's `sheet_order` so
+   * roster pages can sort auto seats by template priority without a
+   * per-page template lookup. Importer-populated for `type='auto'`
+   * (MIN across `callings[]`); `null` for `'manual'` / `'temp'` seats
+   * and for auto-orphans whose calling no longer matches any template.
+   * Web-side sort treats `null` / missing as "after all numbered
+   * entries within the auto section."
+   */
+  sort_order?: number | null;
+
   // ----- Duplicates (informational) -----
   duplicate_grants: DuplicateGrant[];
 

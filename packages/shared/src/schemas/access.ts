@@ -21,6 +21,8 @@ export const accessSchema = z.object({
   importer_callings: z.record(z.string(), z.array(z.string())),
   manual_grants: z.record(z.string(), z.array(manualGrantSchema)),
 
+  sort_order: z.number().nullable().optional(),
+
   created_at: timestampLikeSchema,
   last_modified_at: timestampLikeSchema,
   last_modified_by: actorRefSchema,

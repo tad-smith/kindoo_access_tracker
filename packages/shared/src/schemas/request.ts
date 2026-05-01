@@ -27,6 +27,8 @@ export const accessRequestSchema = z.object({
   end_date: isoDateSchema.optional(),
   building_names: z.array(z.string()),
 
+  urgent: z.boolean().optional(),
+
   status: requestStatusSchema,
 
   requester_email: z.string(),

@@ -37,6 +37,8 @@ export const seatSchema = z.object({
 
   granted_by_request: z.string().optional(),
 
+  sort_order: z.number().nullable().optional(),
+
   duplicate_grants: z.array(duplicateGrantSchema),
 
   created_at: timestampLikeSchema,

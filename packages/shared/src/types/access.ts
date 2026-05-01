@@ -45,6 +45,14 @@ export type Access = {
    */
   manual_grants: Record<string, ManualGrant[]>;
 
+  /**
+   * Doc-level sort priority. MIN across every `importer_callings`
+   * calling's matched template `sheet_order`. Importer-populated;
+   * `null` when `importer_callings` is empty (manual-only access docs).
+   * Web-side sort treats `null` / missing as "after all numbered."
+   */
+  sort_order?: number | null;
+
   created_at: TimestampLike;
   last_modified_at: TimestampLike;
   last_modified_by: ActorRef;
