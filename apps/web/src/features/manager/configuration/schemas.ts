@@ -46,6 +46,7 @@ export type ManagerForm = z.infer<typeof managerSchema>;
 export const callingTemplateSchema = z.object({
   calling_name: z.string().trim().min(1, 'Calling name is required.'),
   give_app_access: z.boolean(),
+  auto_kindoo_access: z.boolean(),
   sheet_order: z.number({ message: 'Sheet order must be a number.' }).int(),
 });
 export type CallingTemplateForm = z.infer<typeof callingTemplateSchema>;

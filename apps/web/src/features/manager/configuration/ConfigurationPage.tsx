@@ -711,7 +711,9 @@ function CallingTemplatesPanel({
             <span>
               <code>{t.calling_name}</code>
               {' · '}
-              {t.give_app_access ? 'gives access' : 'no access'}
+              {t.auto_kindoo_access ? 'auto seat' : 'no auto seat'}
+              {' · '}
+              {t.give_app_access ? 'can request access' : 'no access'}
               {' · '}order {t.sheet_order}
             </span>
             <Button
@@ -760,13 +762,23 @@ function CallingTemplateFormDialog({
 }: CallingTemplateFormDialogProps) {
   const form = useForm<CallingTemplateForm>({
     resolver: zodResolver(callingTemplateSchema),
-    defaultValues: { calling_name: '', give_app_access: true, sheet_order: 0 },
+    defaultValues: {
+      calling_name: '',
+      give_app_access: false,
+      auto_kindoo_access: false,
+      sheet_order: 0,
+    },
   });
   const { register, handleSubmit, reset, formState } = form;
 
   useEffect(() => {
     if (!open) return;
-    reset({ calling_name: '', give_app_access: true, sheet_order: 0 });
+    reset({
+      calling_name: '',
+      give_app_access: false,
+      auto_kindoo_access: false,
+      sheet_order: 0,
+    });
   }, [open, reset]);
 
   const submit = handleSubmit(async (input) => {
@@ -797,7 +809,10 @@ function CallingTemplateFormDialog({
           </p>
         ) : null}
         <label>
-          <input type="checkbox" {...register('give_app_access')} /> Give app access
+          <input type="checkbox" {...register('auto_kindoo_access')} /> Auto Kindoo Access
+        </label>
+        <label>
+          <input type="checkbox" {...register('give_app_access')} /> Can Request Access
         </label>
         <label>
           Sheet order

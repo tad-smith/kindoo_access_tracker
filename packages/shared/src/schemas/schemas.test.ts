@@ -461,6 +461,7 @@ describe('callingTemplateSchema', () => {
     const seed = {
       calling_name: 'Bishop',
       give_app_access: true,
+      auto_kindoo_access: true,
       sheet_order: 1,
       created_at: T,
       lastActor: ACTOR,
@@ -472,11 +473,47 @@ describe('callingTemplateSchema', () => {
     const seed = {
       calling_name: 'Counselor *',
       give_app_access: false,
+      auto_kindoo_access: false,
       sheet_order: 14,
       created_at: T,
       lastActor: ACTOR,
     };
     expect(callingTemplateSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses give_app_access and auto_kindoo_access as independent flags', () => {
+    const seed = {
+      calling_name: 'Stake Clerk',
+      give_app_access: true,
+      auto_kindoo_access: false,
+      sheet_order: 5,
+      created_at: T,
+      lastActor: ACTOR,
+    };
+    expect(callingTemplateSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('rejects a non-boolean auto_kindoo_access', () => {
+    const seed = {
+      calling_name: 'Bishop',
+      give_app_access: true,
+      auto_kindoo_access: 'yes',
+      sheet_order: 1,
+      created_at: T,
+      lastActor: ACTOR,
+    };
+    expect(() => callingTemplateSchema.parse(seed)).toThrow();
+  });
+
+  it('rejects a missing auto_kindoo_access', () => {
+    const seed = {
+      calling_name: 'Bishop',
+      give_app_access: true,
+      sheet_order: 1,
+      created_at: T,
+      lastActor: ACTOR,
+    };
+    expect(() => callingTemplateSchema.parse(seed)).toThrow();
   });
 });
 

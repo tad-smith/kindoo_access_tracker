@@ -277,6 +277,7 @@ export function useDeleteManagerMutation() {
 export interface CallingTemplateInput {
   calling_name: string;
   give_app_access: boolean;
+  auto_kindoo_access: boolean;
   sheet_order: number;
 }
 
@@ -293,6 +294,7 @@ export function useUpsertWardCallingTemplateMutation() {
         {
           calling_name: name,
           give_app_access: input.give_app_access,
+          auto_kindoo_access: input.auto_kindoo_access,
           sheet_order: input.sheet_order,
           created_at: serverTimestamp(),
           lastActor: actor,
@@ -335,6 +337,7 @@ export function useUpsertStakeCallingTemplateMutation() {
         {
           calling_name: name,
           give_app_access: input.give_app_access,
+          auto_kindoo_access: input.auto_kindoo_access,
           sheet_order: input.sheet_order,
           created_at: serverTimestamp(),
           lastActor: actor,

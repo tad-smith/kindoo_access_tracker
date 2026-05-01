@@ -16,16 +16,22 @@ export type CallingTemplate = {
   /** Human form, with wildcards if any (e.g. `'Counselor *'`). */
   calling_name: string;
   /**
-   * Whether a row in the LCR Sheet matching this template should
-   * trigger an Access doc population for the holder. The importer's
-   * primary signal.
+   * Whether a holder of this calling can request app access. Surfaces
+   * in the UI as "Can Request Access"; Firestore field name kept stable.
    */
   give_app_access: boolean;
   /**
-   * Sheet-row order from the import source. Used as a tie-breaker
-   * among wildcard matches: Sheet order wins, so an earlier wildcard
-   * shadows a later one. Plain (non-wildcard) names always win against
-   * any wildcard regardless of sheet_order.
+   * Whether the importer should auto-create a Seat doc for holders of
+   * this calling. Independent of `give_app_access`. Absent on legacy
+   * docs → treated as `false` everywhere (read AND importer logic).
+   */
+  auto_kindoo_access: boolean;
+  /**
+   * Sheet-row order from the import source. Doubles as the row-position
+   * key for the Auto Callings tab UI; lower values render higher. Used
+   * as a tie-breaker among wildcard matches: Sheet order wins, so an
+   * earlier wildcard shadows a later one. Plain (non-wildcard) names
+   * always win against any wildcard regardless of sheet_order.
    */
   sheet_order: number;
   created_at: TimestampLike;
