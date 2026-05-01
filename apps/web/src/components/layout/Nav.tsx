@@ -1,113 +1,85 @@
-// Role-aware nav. Generates the link set from the active principal's
-// claims per the page map in `docs/spec.md` §5.
+// Sectioned nav. Renders a vertical list of section headers + nav
+// items. Used as the body of:
+//   - Desktop: persistent left rail (full labels visible).
+//   - Tablet:  floating overlay panel (full labels, opened from the
+//              icons-only rail).
+//   - Phone:   slide-in drawer (full labels).
 //
-// Per-role link sets, leftmost first (the leftmost link defines each
-// role's default landing page; see `defaultLandingFor`):
-//   - Bishopric: New Request, Roster (own ward), My Requests
-//   - Stake:     New Request, Roster, Ward Rosters, My Requests
-//   - Manager:   Dashboard, Queue, All Seats, Audit Log, Access,
-//                Configuration, Import, My Requests
-//
-// "Highest-role priority" mirrors `Router_defaultPageFor_` from the
-// Apps Script Router: manager > stake > bishopric. Multi-role users
-// see the union of links (manager + stake + bishopric all visible).
+// The icons-only tablet rail uses a separate `<IconRail>` component;
+// see `IconRail.tsx`.
 
 import { Link, useRouterState } from '@tanstack/react-router';
 import type { Principal } from '../../lib/principal';
-import { STAKE_ID } from '../../lib/constants';
+import { navSectionsForPrincipal, type NavSection } from './navModel';
 import './Nav.css';
 
-interface NavLinkSpec {
-  key: string;
-  label: string;
-  /** Matches a route path. */
-  to: string;
-}
-
-function managerLinks(): NavLinkSpec[] {
-  return [
-    { key: 'mgr/dashboard', label: 'Dashboard', to: '/manager/dashboard' },
-    { key: 'mgr/queue', label: 'Queue', to: '/manager/queue' },
-    { key: 'mgr/seats', label: 'All Seats', to: '/manager/seats' },
-    { key: 'mgr/audit', label: 'Audit Log', to: '/manager/audit' },
-    { key: 'mgr/access', label: 'Access', to: '/manager/access' },
-    { key: 'mgr/configuration', label: 'Configuration', to: '/manager/configuration' },
-    { key: 'mgr/import', label: 'Import', to: '/manager/import' },
-    { key: 'myreq', label: 'My Requests', to: '/my-requests' },
-  ];
-}
-
-function stakeLinks(): NavLinkSpec[] {
-  return [
-    { key: 'stake/new', label: 'New Request', to: '/stake/new' },
-    { key: 'stake/roster', label: 'Roster', to: '/stake/roster' },
-    { key: 'stake/wards', label: 'Ward Rosters', to: '/stake/wards' },
-    { key: 'myreq', label: 'My Requests', to: '/my-requests' },
-  ];
-}
-
-function bishopricLinks(): NavLinkSpec[] {
-  return [
-    { key: 'bish/new', label: 'New Request', to: '/bishopric/new' },
-    { key: 'bish/roster', label: 'Roster', to: '/bishopric/roster' },
-    { key: 'myreq', label: 'My Requests', to: '/my-requests' },
-  ];
-}
-
-/** Build the link list for a principal in priority-merge order. */
-export function navLinksForPrincipal(principal: Principal): NavLinkSpec[] {
-  const out: NavLinkSpec[] = [];
-  const seen = new Set<string>();
-  const push = (links: NavLinkSpec[]) => {
-    for (const link of links) {
-      if (seen.has(link.key)) continue;
-      seen.add(link.key);
-      out.push(link);
-    }
-  };
-
-  if (principal.managerStakes.includes(STAKE_ID)) {
-    push(managerLinks());
-  }
-  if (principal.stakeMemberStakes.includes(STAKE_ID)) {
-    push(stakeLinks());
-  }
-  const wards = principal.bishopricWards[STAKE_ID];
-  if (Array.isArray(wards) && wards.length > 0) {
-    push(bishopricLinks());
-  }
-
-  return out;
-}
+export { navSectionsForPrincipal, wardRosterPathFor } from './navModel';
+export type { NavItem, NavSection } from './navModel';
 
 interface NavProps {
   principal: Principal;
+  /** Called when a nav item is activated. Lets parents close panels / drawers. */
+  onNavigate?: () => void;
+  /** ARIA label for the nav landmark. */
+  ariaLabel?: string;
 }
 
-export function Nav({ principal }: NavProps) {
-  const links = navLinksForPrincipal(principal);
+export function Nav({ principal, onNavigate, ariaLabel = 'Primary' }: NavProps) {
+  const sections = navSectionsForPrincipal(principal);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-  if (links.length === 0) return null;
+  if (sections.length === 0) return null;
 
   return (
-    <nav className="kd-nav" aria-label="Primary">
-      <ul>
-        {links.map((link) => {
-          const isActive = pathname === link.to;
+    <nav className="kd-nav" aria-label={ariaLabel}>
+      {sections.map((section, idx) => (
+        <NavSectionRender
+          key={section.key}
+          section={section}
+          isFirst={idx === 0}
+          pathname={pathname}
+          onNavigate={onNavigate}
+        />
+      ))}
+    </nav>
+  );
+}
+
+interface NavSectionRenderProps {
+  section: NavSection;
+  isFirst: boolean;
+  pathname: string;
+  onNavigate: (() => void) | undefined;
+}
+
+function NavSectionRender({ section, isFirst, pathname, onNavigate }: NavSectionRenderProps) {
+  return (
+    <div
+      className={`kd-nav-section${isFirst ? ' is-first' : ''}`}
+      aria-labelledby={`kd-nav-header-${section.key}`}
+    >
+      <h2 id={`kd-nav-header-${section.key}`} className="kd-nav-section-header">
+        {section.label}
+      </h2>
+      <ul className="kd-nav-list">
+        {section.items.map((item) => {
+          const Icon = item.icon;
+          const isActive = pathname === item.to;
           return (
-            <li key={link.key}>
+            <li key={item.key}>
               <Link
-                to={link.to}
+                to={item.to}
                 className={`kd-nav-link${isActive ? ' active' : ''}`}
                 aria-current={isActive ? 'page' : undefined}
+                onClick={onNavigate}
               >
-                {link.label}
+                <Icon className="kd-nav-icon" size={20} aria-hidden="true" />
+                <span className="kd-nav-label">{item.label}</span>
               </Link>
             </li>
           );
         })}
       </ul>
-    </nav>
+    </div>
   );
 }

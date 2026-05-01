@@ -1,26 +1,25 @@
-// Persistent app shell. Topbar (brand + email + version + sign-out) +
-// Nav + content slot. Stable across navigation — TanStack Router's
-// `<Outlet />` renders the matched route into the content area.
+// Persistent app shell. Brand bar (always visible) + breakpoint-gated
+// nav surfaces + content slot. The shell stays mounted across route
+// transitions; TanStack Router's `<Outlet />` swaps the page below.
 //
-// Replaces Phase-2's `components/Topbar.tsx` + bare `<RouterProvider>`
-// composition. The Topbar code path here is a superset of the Phase-2
-// component: same email + version + sign-out trio, plus a Nav layer
-// below for role-aware page links and a stake-selector slot reserved
-// for Phase 12.
+// Layout per breakpoint (per `docs/navigation-redesign.md` §5–§7):
+//   - Phone (<640px): brand bar shows hamburger + brand icon + stake
+//     name. Content fills the viewport. A drawer slides in from the
+//     left when the hamburger is tapped; the drawer carries the full
+//     nav + email + sign-out + version stamp.
+//   - Tablet (640–1023px): brand bar shows brand icon + stake name +
+//     user email. A 64px icons-only rail sits below the brand bar.
+//     Tapping an icon opens a floating panel with the full nav.
+//   - Desktop (>=1024px): brand bar same as tablet. A 240–280px wide
+//     rail with full text labels lives below the brand bar; logout +
+//     version pinned to the rail's foot.
 //
 // Brand text. Authenticated principals see their stake's `stake_name`
-// (read live from `stakes/{STAKE_ID}`). The product name "Stake
-// Building Access" is the fallback when the stake doc is still loading
-// or hasn't been seeded yet, so the topbar is never empty. Anonymous
-// users hit `SignInPage` instead — the Shell isn't rendered for them.
-//
-// Stake selector (Phase 12). A placeholder slot exists in the topbar
-// so Phase 12 can drop the multi-stake `<StakeSelector />` in without
-// reflowing siblings. v1 single-stake users see the slot empty. The
-// brand-text source becomes principal-derived in Phase 12; the
-// constant `STAKE_ID` consumption here mirrors D11/F15.
+// (live from `stakes/{STAKE_ID}`). The product name "Stake Building
+// Access" is the fallback while the stake doc loads.
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Menu, X } from 'lucide-react';
 import { signOut } from '../../features/auth/signOut';
 import { usePrincipal } from '../../lib/principal';
 import { KINDOO_WEB_VERSION } from '../../version';
@@ -29,9 +28,12 @@ import { stakeRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
 import { STAKE_ID } from '../../lib/constants';
 import { useOnlineStatus } from '../../lib/pwa/useOnlineStatus';
-import { Nav } from './Nav';
+import { useBreakpoint } from '../../lib/useBreakpoint';
 import { BrandIcon } from './BrandIcon';
 import { PwaInstallButton } from './PwaInstallButton';
+import { LeftRail } from './LeftRail';
+import { IconRail } from './IconRail';
+import { NavOverlay } from './NavOverlay';
 import { ToastHost } from '../ui/Toast';
 import './Shell.css';
 
@@ -45,13 +47,22 @@ export function Shell({ children }: ShellProps) {
   const principal = usePrincipal();
   const [signingOut, setSigningOut] = useState(false);
   const online = useOnlineStatus();
+  const breakpoint = useBreakpoint();
+
+  // Drawer (phone) and panel (tablet) open-state. Both are kept
+  // separate so they don't share state across breakpoints — a single
+  // boolean would survive a phone→tablet crossing as the panel.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+
+  // Crossing a breakpoint closes any open nav UI per §13.
+  useEffect(() => {
+    setDrawerOpen(false);
+    setPanelOpen(false);
+  }, [breakpoint]);
 
   const version = (import.meta.env.VITE_APP_VERSION as string | undefined) ?? KINDOO_WEB_VERSION;
 
-  // Live subscription to the stake parent doc. The `stake_name` field
-  // (per `firebase-schema.md` §4.1) is the human-readable display name
-  // we want as the brand text. Fall back to the product name while the
-  // doc is loading or absent so the topbar is never empty.
   const stakeDocResult = useFirestoreDoc(principal.isAuthenticated ? stakeRef(db, STAKE_ID) : null);
   const brandText =
     principal.isAuthenticated && stakeDocResult.data?.stake_name
@@ -67,18 +78,48 @@ export function Shell({ children }: ShellProps) {
     }
   }
 
+  // Closing the drawer / panel after a nav-item tap. Same handler
+  // either way — only one is open at a time given the breakpoint
+  // scoping above.
+  function handleNavigate() {
+    setDrawerOpen(false);
+    setPanelOpen(false);
+  }
+
+  const showHamburger = principal.isAuthenticated && breakpoint === 'phone';
+  const showEmailInBar = principal.isAuthenticated && breakpoint !== 'phone';
+
   return (
-    <div className="kd-shell">
-      <header className="kd-topbar">
-        <div className="kd-topbar-inner">
-          <div className="kd-topbar-brand">
-            <BrandIcon size={28} />
-            <strong>{brandText}</strong>
+    <div className="kd-shell" data-breakpoint={breakpoint}>
+      <header className="kd-brandbar">
+        <div className="kd-brandbar-inner">
+          <div className="kd-brandbar-left">
+            {showHamburger ? (
+              <button
+                type="button"
+                className="kd-brandbar-hamburger"
+                aria-label={drawerOpen ? 'Close navigation' : 'Open navigation'}
+                aria-expanded={drawerOpen}
+                onClick={() => {
+                  setDrawerOpen((v) => !v);
+                }}
+              >
+                {drawerOpen ? (
+                  <X size={22} aria-hidden="true" />
+                ) : (
+                  <Menu size={22} aria-hidden="true" />
+                )}
+              </button>
+            ) : null}
+            <div className="kd-brandbar-brand">
+              <BrandIcon size={28} />
+              <strong className="kd-brandbar-stake">{brandText}</strong>
+            </div>
           </div>
-          <div className="kd-topbar-meta">
+          <div className="kd-brandbar-meta">
             {!online ? (
               <span
-                className="kd-topbar-offline"
+                className="kd-brandbar-offline"
                 role="status"
                 aria-live="polite"
                 data-testid="offline-indicator"
@@ -86,33 +127,73 @@ export function Shell({ children }: ShellProps) {
                 Offline
               </span>
             ) : null}
-            <div className="kd-topbar-stake-slot" data-testid="stake-selector-slot">
+            <div className="kd-brandbar-stake-slot" data-testid="stake-selector-slot">
               {/* Phase 12 stake selector lands here. Empty in v1. */}
             </div>
-            {principal.isAuthenticated ? (
-              <>
-                <span className="kd-topbar-email" title={principal.email}>
-                  {principal.email}
-                </span>
-                <PwaInstallButton />
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={handleSignOut}
-                  disabled={signingOut}
-                >
-                  {signingOut ? 'Signing out…' : 'Sign out'}
-                </button>
-              </>
+            {showEmailInBar ? (
+              <span className="kd-brandbar-email" title={principal.email}>
+                {principal.email}
+              </span>
             ) : null}
-            <span className="kd-topbar-version" aria-label="Build version">
-              v{version}
-            </span>
+            {principal.isAuthenticated ? <PwaInstallButton /> : null}
           </div>
         </div>
       </header>
-      {principal.isAuthenticated ? <Nav principal={principal} /> : null}
-      <main className="kd-main">{children}</main>
+
+      <div className="kd-shell-body">
+        {principal.isAuthenticated && breakpoint === 'desktop' ? (
+          <LeftRail
+            principal={principal}
+            signingOut={signingOut}
+            version={version}
+            onSignOut={handleSignOut}
+          />
+        ) : null}
+        {principal.isAuthenticated && breakpoint === 'tablet' ? (
+          <IconRail
+            principal={principal}
+            onActivate={() => {
+              setPanelOpen((v) => !v);
+            }}
+            onSignOut={handleSignOut}
+            signingOut={signingOut}
+            version={version}
+          />
+        ) : null}
+
+        <main className="kd-main">{children}</main>
+      </div>
+
+      {/* Tablet floating panel (full nav). */}
+      {principal.isAuthenticated && breakpoint === 'tablet' ? (
+        <NavOverlay
+          open={panelOpen}
+          variant="panel"
+          principal={principal}
+          email={principal.email}
+          version={version}
+          signingOut={signingOut}
+          onDismiss={() => setPanelOpen(false)}
+          onSignOut={handleSignOut}
+          onNavigate={handleNavigate}
+        />
+      ) : null}
+
+      {/* Phone drawer. */}
+      {principal.isAuthenticated && breakpoint === 'phone' ? (
+        <NavOverlay
+          open={drawerOpen}
+          variant="drawer"
+          principal={principal}
+          email={principal.email}
+          version={version}
+          signingOut={signingOut}
+          onDismiss={() => setDrawerOpen(false)}
+          onSignOut={handleSignOut}
+          onNavigate={handleNavigate}
+        />
+      ) : null}
+
       <ToastHost />
     </div>
   );

@@ -1,0 +1,170 @@
+// Sectioned nav model. Pure derivation — given a `Principal`, returns
+// the ordered list of nav sections (Quick Links, Rosters, Settings)
+// each containing the items visible to that principal. Sections with
+// zero visible items are omitted entirely (header + section both
+// disappear) per `docs/navigation-redesign.md` §8.
+//
+// The Ward Roster nav entry (§9) routes by role:
+//   - Manager OR stake (with or without bishopric) → /stake/wards
+//   - Bishopric only                                → /bishopric/roster
+
+import type { LucideIcon } from 'lucide-react';
+import {
+  Building2,
+  ClipboardList,
+  Download,
+  Inbox,
+  KeyRound,
+  LayoutDashboard,
+  PlusCircle,
+  ScrollText,
+  Settings,
+  Table,
+  Users,
+} from 'lucide-react';
+import { STAKE_ID } from '../../lib/constants';
+import type { Principal } from '../../lib/principal';
+
+export interface NavItem {
+  /** Stable key for React lists + active-state lookups. */
+  key: string;
+  label: string;
+  to: string;
+  icon: LucideIcon;
+}
+
+export interface NavSection {
+  /** Stable key. Section header text doubles as the screen-reader label. */
+  key: 'quick-links' | 'rosters' | 'settings';
+  label: string;
+  items: NavItem[];
+}
+
+function isManager(p: Principal): boolean {
+  return p.isPlatformSuperadmin || p.managerStakes.includes(STAKE_ID);
+}
+
+function isStake(p: Principal): boolean {
+  return p.stakeMemberStakes.includes(STAKE_ID);
+}
+
+function isBishopric(p: Principal): boolean {
+  const wards = p.bishopricWards[STAKE_ID];
+  return Array.isArray(wards) && wards.length > 0;
+}
+
+/**
+ * Resolve the Ward Roster nav target. Manager or stake users — even if
+ * they're also bishopric — go to the all-wards picker. Bishopric-only
+ * users go to their per-ward roster.
+ */
+export function wardRosterPathFor(principal: Principal): string {
+  if (isManager(principal) || isStake(principal)) return '/stake/wards';
+  return '/bishopric/roster';
+}
+
+/**
+ * Build the nav sections visible to a principal. Empty sections (no
+ * visible items) are omitted entirely.
+ */
+export function navSectionsForPrincipal(principal: Principal): NavSection[] {
+  const manager = isManager(principal);
+  const stake = isStake(principal);
+  const bishopric = isBishopric(principal);
+  const anyRole = manager || stake || bishopric;
+
+  const quickLinks: NavItem[] = [];
+  if (manager) {
+    quickLinks.push({
+      key: 'dashboard',
+      label: 'Dashboard',
+      to: '/manager/dashboard',
+      icon: LayoutDashboard,
+    });
+    quickLinks.push({
+      key: 'queue',
+      label: 'Request Queue',
+      to: '/manager/queue',
+      icon: Inbox,
+    });
+  }
+  if (bishopric || stake) {
+    quickLinks.push({
+      key: 'new-request',
+      label: 'New Request',
+      to: bishopric ? '/bishopric/new' : '/stake/new',
+      icon: PlusCircle,
+    });
+  }
+  if (anyRole) {
+    quickLinks.push({
+      key: 'my-requests',
+      label: 'My Requests',
+      to: '/my-requests',
+      icon: ClipboardList,
+    });
+  }
+
+  const rosters: NavItem[] = [];
+  if (manager || stake || bishopric) {
+    rosters.push({
+      key: 'ward-roster',
+      label: 'Ward Roster',
+      to: wardRosterPathFor(principal),
+      icon: Users,
+    });
+  }
+  if (manager || stake) {
+    rosters.push({
+      key: 'stake-roster',
+      label: 'Stake Roster',
+      to: '/stake/roster',
+      icon: Building2,
+    });
+  }
+  if (manager) {
+    rosters.push({
+      key: 'all-seats',
+      label: 'All Seats',
+      to: '/manager/seats',
+      icon: Table,
+    });
+  }
+
+  const settings: NavItem[] = [];
+  if (manager) {
+    settings.push({ key: 'access', label: 'App Access', to: '/manager/access', icon: KeyRound });
+    settings.push({ key: 'import', label: 'Import', to: '/manager/import', icon: Download });
+    settings.push({
+      key: 'configuration',
+      label: 'Configuration',
+      to: '/manager/configuration',
+      icon: Settings,
+    });
+    settings.push({
+      key: 'audit',
+      label: 'Audit Log',
+      to: '/manager/audit',
+      icon: ScrollText,
+    });
+  }
+
+  const out: NavSection[] = [];
+  if (quickLinks.length > 0) {
+    out.push({ key: 'quick-links', label: 'Quick Links', items: quickLinks });
+  }
+  if (rosters.length > 0) {
+    out.push({ key: 'rosters', label: 'Rosters', items: rosters });
+  }
+  if (settings.length > 0) {
+    out.push({ key: 'settings', label: 'Settings', items: settings });
+  }
+  return out;
+}
+
+/** Flatten a section list to its items in render order. */
+export function flattenNavItems(sections: NavSection[]): NavItem[] {
+  const out: NavItem[] = [];
+  for (const s of sections) out.push(...s.items);
+  return out;
+}

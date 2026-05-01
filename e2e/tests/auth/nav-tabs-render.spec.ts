@@ -1,30 +1,20 @@
-// Regression spec for the Phase-5 Nav. The nav links are intended to
-// render as a tab bar (text-link affordance with a bottom-border
-// accent on the active route), not as button-pill controls. Phase 5's
-// Tailwind/shadcn-ui bootstrap left `Nav.css` styling each link as a
-// bordered, rounded pill — visually a button, contradicting the
-// migration plan §Phase 4 ("Nav.tsx — role-aware links generated from
-// principal claims. Active route highlighted.") and the Apps Script
-// reference at `src/ui/Styles.html` `.nav-link` (folder-tab visual,
-// no boxy chrome on inactive items).
+// Regression spec for the navigation redesign (Phase 10.1). The
+// sectioned left rail / icons rail / drawer replaces the Phase 5 top
+// tab bar. This spec confirms:
 //
-// What this spec catches: the styled chrome of inactive links + the
-// underline-style accent on the active link. Three computed-style
-// assertions that fail fast if a future PR routes the nav through a
-// shadcn `<Button>` primitive or pill-styled wrapper:
+//   1. Active item gets the brand-color left-edge accent bar (§5
+//      "3–4px vertical bar on the left edge in the accent color"),
+//      not a bottom-border underline. Inactive items have a
+//      transparent left-edge marker so the geometry doesn't shift on
+//      activation.
+//   2. Active item carries the brand-tint background fill (§12
+//      "subtle background color change behind the entire item row").
+//      Inactive items are flat (no fill).
+//   3. The active link is rendered as an `<a>` with
+//      `aria-current="page"` — the tab-bar a11y pattern survived the
+//      redesign.
 //
-//   1. Inactive links have NO opaque background fill (a button-pill
-//      would set one — `.btn` ships with `--kd-primary` blue, the
-//      Phase-5 regression set `--kd-surface-alt` on hover via
-//      `border-radius: 4px` chrome).
-//   2. Inactive links have NO non-zero border-radius (a button pill
-//      has 4px+ rounding all around; tabs do not).
-//   3. The active link has a non-zero `border-bottom-width` rendered
-//      in the brand-primary color — that's the tab-active accent the
-//      Apps Script visual provides, and the cheapest CSS-level proof
-//      the link reads as a tab.
-//
-// Auth required (the Shell only renders the Nav for authenticated
+// Auth required (the Shell only renders the rail for authenticated
 // principals); we use the same `signInViaTestHatch` choreography as
 // the other auth-flow specs.
 
@@ -70,92 +60,84 @@ async function signInAsManager(page: Page, email: string): Promise<void> {
   await signInViaTestHatch(page, email, TEST_PASSWORD);
 }
 
-test.describe('Nav links render as tabs, not buttons', () => {
-  test.beforeEach(async () => {
+test.describe('Sectioned rail — active-state styling', () => {
+  test.beforeEach(async ({ page }) => {
     await clearAuth();
     await clearFirestore();
-    // Seed a setup-complete stake so the Phase 7 setup-complete gate
-    // doesn't intercept the manager into SetupInProgress. Per
-    // `apps/web/src/lib/setupGate.ts`, an absent stake doc is treated
-    // as `setup_complete=false` (Option A from the 2026-04-29
-    // staging-bug fix).
     await writeDoc('stakes/csnorth', {
       stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: true,
     });
+    // Force desktop width so the persistent rail renders.
+    await page.setViewportSize({ width: 1280, height: 900 });
   });
 
-  test('inactive links have no button-pill chrome and the active link has a brand-color bottom-border accent', async ({
+  test('active link has a brand-color left-edge accent + brand-tint background; inactive is flat', async ({
     page,
   }) => {
-    await signInAsManager(page, 'nav-tabs@example.com');
-    // Manager defaults to /manager/dashboard; "Dashboard" is the
-    // active link, the rest are inactive.
+    await signInAsManager(page, 'rail-active@example.com');
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
 
-    const activeLink = page.getByRole('link', { name: /^Dashboard$/ });
-    const inactiveLink = page.getByRole('link', { name: /^All Seats$/ });
+    const activeLink = page.getByRole('link', { name: /Dashboard/ });
+    const inactiveLink = page.getByRole('link', { name: /All Seats/ });
     await expect(activeLink).toBeVisible();
     await expect(inactiveLink).toBeVisible();
 
-    // ----- Inactive link: no button-pill chrome ---------------------
-
-    const inactiveStyles = await inactiveLink.evaluate((el) => {
-      const cs = window.getComputedStyle(el);
-      return {
-        backgroundColor: cs.backgroundColor,
-        borderTopLeftRadius: cs.borderTopLeftRadius,
-        borderTopRightRadius: cs.borderTopRightRadius,
-        borderBottomLeftRadius: cs.borderBottomLeftRadius,
-        borderBottomRightRadius: cs.borderBottomRightRadius,
-      };
-    });
-
-    // Inactive must NOT have an opaque background fill. The Phase-5
-    // regression had the active link filled with `--kd-primary-tint`
-    // and inactive links with `--kd-surface-alt` on hover; both are
-    // button-pill affordances. The tab style is transparent.
-    expect(inactiveStyles.backgroundColor).toMatch(/^(rgba\(0, 0, 0, 0\)|transparent)$/);
-
-    // Inactive must NOT have rounded all-around corners. Pre-fix CSS
-    // had `border-radius: 4px` on every link; tabs are right-angled
-    // (or only top-rounded for the folder-tab variant — neither has
-    // bottom-rounded corners).
-    expect(parseFloat(inactiveStyles.borderBottomLeftRadius)).toBe(0);
-    expect(parseFloat(inactiveStyles.borderBottomRightRadius)).toBe(0);
-
-    // ----- Active link: brand-color bottom-border accent ------------
+    // ----- Active link: left-edge brand accent + brand-tint bg -----
 
     const activeStyles = await activeLink.evaluate((el) => {
       const cs = window.getComputedStyle(el);
       return {
         color: cs.color,
-        borderBottomWidth: cs.borderBottomWidth,
-        borderBottomColor: cs.borderBottomColor,
         backgroundColor: cs.backgroundColor,
+        borderLeftWidth: cs.borderLeftWidth,
+        borderLeftColor: cs.borderLeftColor,
       };
     });
 
-    // The bottom-border accent is the tab-active indicator. Must be
-    // non-zero AND must NOT be transparent — Phase-5 had a 1px
-    // transparent border on every link, which fails this check.
-    expect(parseFloat(activeStyles.borderBottomWidth)).toBeGreaterThan(0);
-    expect(activeStyles.borderBottomColor).not.toBe('rgba(0, 0, 0, 0)');
-    expect(activeStyles.borderBottomColor).not.toBe('transparent');
+    // The left-edge accent is the new active indicator.
+    expect(parseFloat(activeStyles.borderLeftWidth)).toBeGreaterThan(0);
+    expect(activeStyles.borderLeftColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(activeStyles.borderLeftColor).not.toBe('transparent');
 
-    // The accent (and active text color) is the brand primary
-    // (`--kd-primary` = `#2b6cb0`). We assert via computed RGB so a
-    // future palette tweak doesn't churn this test — `2b6cb0` is the
-    // canonical brand blue from `tokens.css`.
+    // Brand primary `#2b6cb0` is the canonical accent color
+    // (`tokens.css`); both the accent stripe and the active text take
+    // that color.
     const expectedPrimary = 'rgb(43, 108, 176)';
-    expect(activeStyles.borderBottomColor).toBe(expectedPrimary);
+    expect(activeStyles.borderLeftColor).toBe(expectedPrimary);
     expect(activeStyles.color).toBe(expectedPrimary);
 
-    // Active link is also flat — no opaque background fill (Phase-5
-    // regression filled the active link with `--kd-primary-tint`,
-    // which made it look like a selected button).
-    expect(activeStyles.backgroundColor).toMatch(/^(rgba\(0, 0, 0, 0\)|transparent)$/);
+    // Background is the brand tint, not transparent.
+    expect(activeStyles.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(activeStyles.backgroundColor).not.toBe('transparent');
+
+    // ----- Inactive link: flat (no fill, transparent left edge) -----
+
+    const inactiveStyles = await inactiveLink.evaluate((el) => {
+      const cs = window.getComputedStyle(el);
+      return {
+        backgroundColor: cs.backgroundColor,
+        borderLeftWidth: cs.borderLeftWidth,
+        borderLeftColor: cs.borderLeftColor,
+      };
+    });
+
+    // Inactive left-edge marker is transparent (so geometry doesn't
+    // shift on activation), and there's no background fill.
+    expect(inactiveStyles.borderLeftColor).toMatch(/^(rgba\(0, 0, 0, 0\)|transparent)$/);
+    expect(inactiveStyles.backgroundColor).toMatch(/^(rgba\(0, 0, 0, 0\)|transparent)$/);
+  });
+
+  test('the active link advertises itself with aria-current="page"', async ({ page }) => {
+    await signInAsManager(page, 'rail-aria@example.com');
+    await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
+
+    const active = page.getByRole('link', { name: /Dashboard/ });
+    await expect(active).toHaveAttribute('aria-current', 'page');
+
+    const inactive = page.getByRole('link', { name: /All Seats/ });
+    await expect(inactive).not.toHaveAttribute('aria-current', 'page');
   });
 });

@@ -1,14 +1,16 @@
-// Component tests for the Shell layout. Verifies the topbar's three
-// promised slots — email, version, sign-out button — render for an
-// authenticated principal, plus the shell stays stable when a child
+// Component tests for the Shell layout. The brand bar's promised
+// slots — stake name, user email — render for an authenticated
+// principal at desktop / tablet widths; on phone the email moves
+// into the drawer footer. The shell stays stable when a child
 // route swaps. The brand-text source (stake.stake_name → fallback
-// product name) is exercised here too. Phase-2's principal hook,
-// signOut helper, and the Firestore stake-doc hook are mocked at the
-// module boundary so the test doesn't need a Firebase/reactfire
-// context.
+// product name) is exercised here too.
+//
+// `usePrincipal`, the `signOut` helper, and the Firestore stake-doc
+// hook are mocked at the module boundary so the test doesn't need a
+// Firebase / DIY-data context.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   createMemoryHistory,
@@ -21,7 +23,6 @@ import {
 import type { Principal } from '../../lib/principal';
 import type { Stake } from '@kindoo/shared';
 
-// Hoist-aware mocks so the imports below see the mocked module surface.
 const mockedPrincipal: { current: Principal } = {
   current: {
     isAuthenticated: true,
@@ -46,15 +47,10 @@ vi.mock('../../features/auth/signOut', () => ({
   signOut: () => signOutMock(),
 }));
 
-// Lock the version stamp so the test assertion doesn't drift.
 vi.mock('../../version', () => ({
   KINDOO_WEB_VERSION: '4.0.0-test',
 }));
 
-// Mock the live stake-doc hook so the Shell renders deterministically
-// in jsdom without a real Firestore connection. The default state is
-// "loaded with a stake_name"; individual tests override via
-// `setStakeDocResult`.
 type StakeDocState = {
   data: Partial<Stake> | undefined;
   isLoading: boolean;
@@ -67,9 +63,6 @@ vi.mock('../../lib/data', () => ({
   useFirestoreDoc: () => mockedStakeDocResult.current,
 }));
 
-// `Shell` imports `db` and `stakeRef` to feed the hook; both are
-// effectively no-ops here because the hook is mocked. Stub them to
-// avoid pulling in the real Firebase init module under jsdom.
 vi.mock('../../lib/firebase', () => ({
   db: {} as unknown,
 }));
@@ -77,15 +70,19 @@ vi.mock('../../lib/docs', () => ({
   stakeRef: () => ({ id: 'csnorth' }) as unknown,
 }));
 
-// Stub the vite-plugin-pwa virtual module so jsdom doesn't try to
-// resolve it. The Shell mounts <PwaUpdatePrompt /> which calls
-// `useRegisterSW`; under tests we just want it to behave as a no-op.
 vi.mock('virtual:pwa-register/react', () => ({
   useRegisterSW: () => ({
     needRefresh: [false, () => {}],
     offlineReady: [false, () => {}],
     updateServiceWorker: async () => {},
   }),
+}));
+
+// Breakpoint mock — defaults to desktop. Individual tests can swap.
+type BreakpointKind = 'phone' | 'tablet' | 'desktop';
+const mockedBreakpoint: { current: BreakpointKind } = { current: 'desktop' };
+vi.mock('../../lib/useBreakpoint', () => ({
+  useBreakpoint: () => mockedBreakpoint.current,
 }));
 
 import { Shell } from './Shell';
@@ -96,6 +93,10 @@ function setPrincipal(p: Principal) {
 
 function setStakeDocResult(state: StakeDocState) {
   mockedStakeDocResult.current = state;
+}
+
+function setBreakpoint(bp: BreakpointKind) {
+  mockedBreakpoint.current = bp;
 }
 
 function defaultPrincipal(overrides: Partial<Principal> = {}): Principal {
@@ -133,35 +134,189 @@ beforeEach(() => {
   signOutMock.mockReset();
   setPrincipal(defaultPrincipal());
   setStakeDocResult({ data: { stake_name: 'CS North Stake' }, isLoading: false });
+  setBreakpoint('desktop');
 });
 
-describe('Shell', () => {
-  it('renders the principal email + sign-out button + version stamp', async () => {
+describe('Shell — brand bar', () => {
+  it('renders the principal email + version stamp at desktop width', async () => {
     await renderShell(<p>Hello</p>);
     expect(screen.getByText('alice@example.com')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Sign out/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Build version')).toHaveTextContent('v4.0.0-test');
   });
 
-  it('renders the child content', async () => {
-    await renderShell(<p data-testid="content">child</p>);
-    expect(screen.getByTestId('content')).toHaveTextContent('child');
+  it('does NOT render a logout button in the brand bar at desktop width', async () => {
+    await renderShell(<p>Hello</p>);
+    const brandbar = document.querySelector('.kd-brandbar');
+    expect(brandbar).not.toBeNull();
+    // The brand bar carries no sign-out affordance; logout lives in
+    // the rail's footer.
+    expect(within(brandbar as HTMLElement).queryByRole('button', { name: /sign out/i })).toBeNull();
+  });
+
+  it('does NOT render a logout button in the brand bar at tablet width', async () => {
+    setBreakpoint('tablet');
+    await renderShell(<p>Hello</p>);
+    const brandbar = document.querySelector('.kd-brandbar');
+    expect(within(brandbar as HTMLElement).queryByRole('button', { name: /sign out/i })).toBeNull();
+  });
+
+  it('does NOT render a logout button in the brand bar at phone width', async () => {
+    setBreakpoint('phone');
+    await renderShell(<p>Hello</p>);
+    const brandbar = document.querySelector('.kd-brandbar');
+    expect(within(brandbar as HTMLElement).queryByRole('button', { name: /sign out/i })).toBeNull();
+  });
+
+  it('renders the brand-bar icon next to the wordmark', async () => {
+    await renderShell(<p>Hello</p>);
+    const brand = document.querySelector('.kd-brandbar-brand');
+    const icon = brand?.querySelector('img.kd-brand-icon') as HTMLImageElement | null;
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute('src')).toBe('/favicon.svg');
+  });
+
+  it('shows the stake name in the brand bar once the stake doc loads', async () => {
+    setStakeDocResult({ data: { stake_name: 'CS North Stake' }, isLoading: false });
+    await renderShell(<p>Hello</p>);
+    const brand = document.querySelector('.kd-brandbar-brand');
+    expect(brand).not.toBeNull();
+    expect(brand).toHaveTextContent('CS North Stake');
+    expect(brand).not.toHaveTextContent('Stake Building Access');
+  });
+
+  it('falls back to the product name while the stake doc is loading', async () => {
+    setStakeDocResult({ data: undefined, isLoading: true });
+    await renderShell(<p>Hello</p>);
+    const brand = document.querySelector('.kd-brandbar-brand');
+    expect(brand).toHaveTextContent('Stake Building Access');
+  });
+
+  it('hides the email in the brand bar at phone width', async () => {
+    setBreakpoint('phone');
+    await renderShell(<p>Hello</p>);
+    const brandbar = document.querySelector('.kd-brandbar');
+    expect(within(brandbar as HTMLElement).queryByText('alice@example.com')).toBeNull();
+  });
+
+  it('renders the hamburger button at phone width', async () => {
+    setBreakpoint('phone');
+    await renderShell(<p>Hello</p>);
+    expect(screen.getByRole('button', { name: /open navigation/i })).toBeInTheDocument();
+  });
+
+  it('does NOT render the hamburger at desktop width', async () => {
+    setBreakpoint('desktop');
+    await renderShell(<p>Hello</p>);
+    expect(screen.queryByRole('button', { name: /open navigation/i })).toBeNull();
+  });
+});
+
+describe('Shell — desktop rail', () => {
+  it('renders the persistent left rail with sign-out at the foot', async () => {
+    await renderShell(<p>Hello</p>);
+    const rail = document.querySelector('.kd-left-rail');
+    expect(rail).not.toBeNull();
+    const signOut = within(rail as HTMLElement).getByRole('button', { name: /sign out/i });
+    expect(signOut).toBeInTheDocument();
   });
 
   it('clicking sign-out invokes the signOut helper', async () => {
     const user = userEvent.setup();
     signOutMock.mockResolvedValueOnce(undefined);
     await renderShell(<p>Hello</p>);
-    await user.click(screen.getByRole('button', { name: /Sign out/ }));
+    const rail = document.querySelector('.kd-left-rail') as HTMLElement;
+    await user.click(within(rail).getByRole('button', { name: /sign out/i }));
     expect(signOutMock).toHaveBeenCalledTimes(1);
   });
 
-  it('renders nav for a principal with roles', async () => {
+  it('renders the version stamp in the rail footer', async () => {
     await renderShell(<p>Hello</p>);
-    expect(screen.getByRole('navigation', { name: /Primary/ })).toBeInTheDocument();
+    const rail = document.querySelector('.kd-left-rail') as HTMLElement;
+    expect(within(rail).getByLabelText('Build version')).toHaveTextContent('v4.0.0-test');
+  });
+});
+
+describe('Shell — tablet icon rail', () => {
+  beforeEach(() => {
+    setBreakpoint('tablet');
   });
 
-  it('does not render the email/sign-out pair for an unauthenticated principal', async () => {
+  it('renders the icons-only rail', async () => {
+    await renderShell(<p>Hello</p>);
+    const rail = document.querySelector('.kd-icon-rail');
+    expect(rail).not.toBeNull();
+  });
+
+  it('does not render the desktop rail', async () => {
+    await renderShell(<p>Hello</p>);
+    expect(document.querySelector('.kd-left-rail')).toBeNull();
+  });
+
+  it('clicking an icon opens the floating panel', async () => {
+    const user = userEvent.setup();
+    await renderShell(<p>Hello</p>);
+    expect(document.querySelector('.kd-nav-overlay')).toBeNull();
+    const rail = document.querySelector('.kd-icon-rail') as HTMLElement;
+    const firstIcon = within(rail).getAllByRole('button')[0];
+    if (!firstIcon) throw new Error('icon rail had no buttons');
+    await user.click(firstIcon);
+    expect(document.querySelector('.kd-nav-overlay-panel')).not.toBeNull();
+  });
+
+  it('clicking the backdrop closes the panel', async () => {
+    const user = userEvent.setup();
+    await renderShell(<p>Hello</p>);
+    const rail = document.querySelector('.kd-icon-rail') as HTMLElement;
+    const firstIcon = within(rail).getAllByRole('button')[0];
+    if (!firstIcon) throw new Error('icon rail had no buttons');
+    await user.click(firstIcon);
+    expect(document.querySelector('.kd-nav-overlay-panel')).not.toBeNull();
+    await user.click(screen.getByTestId('nav-overlay-backdrop'));
+    expect(document.querySelector('.kd-nav-overlay-panel')).toBeNull();
+  });
+});
+
+describe('Shell — phone drawer', () => {
+  beforeEach(() => {
+    setBreakpoint('phone');
+  });
+
+  it('clicking the hamburger opens the drawer', async () => {
+    const user = userEvent.setup();
+    await renderShell(<p>Hello</p>);
+    expect(document.querySelector('.kd-nav-overlay-drawer')).toBeNull();
+    await user.click(screen.getByRole('button', { name: /open navigation/i }));
+    expect(document.querySelector('.kd-nav-overlay-drawer')).not.toBeNull();
+  });
+
+  it('drawer footer carries the email + sign-out + version', async () => {
+    const user = userEvent.setup();
+    await renderShell(<p>Hello</p>);
+    await user.click(screen.getByRole('button', { name: /open navigation/i }));
+    const drawer = document.querySelector('.kd-nav-overlay-drawer') as HTMLElement;
+    expect(within(drawer).getByText('alice@example.com')).toBeInTheDocument();
+    expect(within(drawer).getByRole('button', { name: /sign out/i })).toBeInTheDocument();
+    expect(within(drawer).getByLabelText('Build version')).toHaveTextContent('v4.0.0-test');
+  });
+
+  it('clicking the backdrop closes the drawer', async () => {
+    const user = userEvent.setup();
+    await renderShell(<p>Hello</p>);
+    await user.click(screen.getByRole('button', { name: /open navigation/i }));
+    expect(document.querySelector('.kd-nav-overlay-drawer')).not.toBeNull();
+    await user.click(screen.getByTestId('nav-overlay-backdrop'));
+    expect(document.querySelector('.kd-nav-overlay-drawer')).toBeNull();
+  });
+
+  it('does not render the desktop rail or the icon rail', async () => {
+    await renderShell(<p>Hello</p>);
+    expect(document.querySelector('.kd-left-rail')).toBeNull();
+    expect(document.querySelector('.kd-icon-rail')).toBeNull();
+  });
+});
+
+describe('Shell — auth gating', () => {
+  it('does not render the email/sign-out for an unauthenticated principal', async () => {
     setPrincipal(
       defaultPrincipal({
         isAuthenticated: false,
@@ -173,63 +328,12 @@ describe('Shell', () => {
     );
     await renderShell(<p>Hello</p>);
     expect(screen.queryByText('alice@example.com')).toBeNull();
-    expect(screen.queryByRole('button', { name: /Sign out/ })).toBeNull();
-    // Nav suppressed for unauthenticated users — they only see the topbar.
-    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(screen.queryByRole('button', { name: /sign out/i })).toBeNull();
+    expect(document.querySelector('.kd-left-rail')).toBeNull();
   });
 
-  it('shows the stake name in the brand bar once the stake doc loads', async () => {
-    setStakeDocResult({ data: { stake_name: 'CS North Stake' }, isLoading: false });
-    await renderShell(<p>Hello</p>);
-    const brand = document.querySelector('.kd-topbar-brand');
-    expect(brand).not.toBeNull();
-    expect(brand).toHaveTextContent('CS North Stake');
-    expect(brand).not.toHaveTextContent('Stake Building Access');
-  });
-
-  it('falls back to the product name while the stake doc is loading', async () => {
-    setStakeDocResult({ data: undefined, isLoading: true });
-    await renderShell(<p>Hello</p>);
-    const brand = document.querySelector('.kd-topbar-brand');
-    expect(brand).toHaveTextContent('Stake Building Access');
-  });
-
-  it('falls back to the product name when the stake doc is missing', async () => {
-    setStakeDocResult({ data: undefined, isLoading: false });
-    await renderShell(<p>Hello</p>);
-    const brand = document.querySelector('.kd-topbar-brand');
-    expect(brand).toHaveTextContent('Stake Building Access');
-  });
-
-  it('falls back to the product name for unauthenticated users', async () => {
-    setPrincipal(
-      defaultPrincipal({
-        isAuthenticated: false,
-        firebaseAuthSignedIn: false,
-        email: '',
-        canonical: '',
-        managerStakes: [],
-      }),
-    );
-    // Even if a stale stake-doc were cached, the unauthenticated arm
-    // should never show stake_name — it should always show the product
-    // name. Clear the mock to simulate "no doc cached" too.
-    setStakeDocResult({ data: undefined, isLoading: false });
-    await renderShell(<p>Hello</p>);
-    const brand = document.querySelector('.kd-topbar-brand');
-    expect(brand).toHaveTextContent('Stake Building Access');
-  });
-
-  it('renders the brand-bar icon next to the wordmark', async () => {
-    await renderShell(<p>Hello</p>);
-    const brand = document.querySelector('.kd-topbar-brand');
-    const icon = brand?.querySelector('img.kd-brand-icon') as HTMLImageElement | null;
-    expect(icon).not.toBeNull();
-    expect(icon?.getAttribute('src')).toBe('/favicon.svg');
-  });
-
-  it('does not render the offline indicator when navigator reports online', async () => {
-    await renderShell(<p>Hello</p>);
-    expect(screen.queryByTestId('offline-indicator')).toBeNull();
+  it('renders the child content', async () => {
+    await renderShell(<p data-testid="content">child</p>);
+    expect(screen.getByTestId('content')).toHaveTextContent('child');
   });
 });
