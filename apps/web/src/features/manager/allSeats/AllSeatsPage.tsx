@@ -1,7 +1,8 @@
 // Manager All Seats page (live). Mirrors `src/ui/manager/AllSeats.html`.
 // Full roster across every scope; ward / building / type filters via
-// URL search params; total-utilization bar when the scope filter is
-// "All". Per-scope utilization is surfaced on the Dashboard.
+// URL search params; contextual utilization bar above the table that
+// tracks the Scope filter (entire stake / stake-scope / a specific
+// ward). Per-scope dashboards live on the Manager Dashboard.
 //
 // Mutations:
 //   - Inline-edit dialog on manual / temp rows (auto rows are
@@ -91,10 +92,31 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
     navigate({ to: '/manager/seats', search: merged, replace: true }).catch(() => {});
   };
 
+  // Contextual utilization: bar tracks the current Scope filter.
+  //   - All       → entire-stake count vs stake_seat_cap.
+  //   - 'stake'   → stake-scope count vs stake_seat_cap (per-spec the
+  //                 stake's portion math is dashboard-only; here the
+  //                 raw count vs license cap matches StakeRosterPage).
+  //   - <wardCode>→ that ward's count vs ward.seat_cap.
+  // Cap-unset / zero cap renders the neutral "(cap unset)" variant.
   const allSeats = seats.data ?? [];
-  const totalCount = allSeats.length;
   const stakeSeatCap = stake.data?.stake_seat_cap;
-  const showOverallBar = !ward && stakeSeatCap !== undefined && stakeSeatCap > 0;
+  const wardDoc = ward && ward !== 'stake' ? wardsList.find((w) => w.ward_code === ward) : null;
+  const utilizationLabel = !ward
+    ? 'Entire-stake utilization'
+    : ward === 'stake'
+      ? 'Stake-scope utilization'
+      : `Ward ${ward} utilization`;
+  const utilizationTotal = !ward
+    ? allSeats.length
+    : allSeats.filter((s) => s.scope === ward).length;
+  const utilizationCap: number | null | undefined = !ward
+    ? stakeSeatCap
+    : ward === 'stake'
+      ? stakeSeatCap
+      : (wardDoc?.seat_cap ?? null);
+  const utilizationOverCap =
+    typeof utilizationCap === 'number' && utilizationCap > 0 && utilizationTotal > utilizationCap;
 
   return (
     <section>
@@ -139,15 +161,14 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
         </span>
       </div>
 
-      {showOverallBar ? (
-        <div className="kd-utilization-host">
-          <UtilizationBar
-            total={totalCount}
-            cap={stakeSeatCap}
-            overCap={totalCount > stakeSeatCap}
-          />
-        </div>
-      ) : null}
+      <div className="kd-utilization-host" data-testid="allseats-utilization">
+        <div className="kd-utilization-label">{utilizationLabel}</div>
+        <UtilizationBar
+          total={utilizationTotal}
+          cap={utilizationCap}
+          overCap={utilizationOverCap}
+        />
+      </div>
 
       {seats.isLoading || seats.data === undefined ? (
         <LoadingSpinner />

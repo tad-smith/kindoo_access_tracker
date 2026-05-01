@@ -140,8 +140,10 @@ function MyRequestCard({ request }: MyRequestCardProps) {
           <span className="kd-myrequests-card-actions">
             <Button
               variant="danger"
+              className="btn-pill"
               onClick={() => setConfirmOpen(true)}
               disabled={cancel.isPending}
+              data-testid={`myrequest-cancel-${request.request_id}`}
             >
               Cancel
             </Button>

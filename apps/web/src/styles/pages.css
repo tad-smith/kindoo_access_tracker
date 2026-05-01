@@ -44,6 +44,13 @@
   max-width: 820px;
 }
 
+.kd-utilization-label {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--kd-fg-2);
+  margin-bottom: 4px;
+}
+
 /* Page-level filter rows — used by manager All Seats + Audit Log. */
 .kd-filter-row {
   display: flex;
