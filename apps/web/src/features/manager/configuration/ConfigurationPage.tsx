@@ -7,11 +7,22 @@
 // Sub-tabs are selected via a query param `?tab=<key>` so the URL
 // remains deep-linkable. The TanStack Router file-route validates the
 // param.
+//
+// Every list-bearing tab follows the same pattern: a top-right "Add X"
+// button opens a modal with the same react-hook-form + zod form used
+// for create. Wards / Buildings rows expose a per-row Edit button that
+// opens the modal pre-populated. Wards: `ward_code` is read-only when
+// editing (it's the doc id). Buildings: `building_id` is never shown
+// (it's a slug derived from `building_name` server-side).
+//
+// The Config tab is single-document; it keeps its inline form, no
+// modal.
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import type { Building, Ward, WardCallingTemplate } from '@kindoo/shared';
 import {
   buildingSchema,
   callingTemplateSchema,
@@ -44,6 +55,7 @@ import {
   useWards,
 } from './hooks';
 import { Button } from '../../../components/ui/Button';
+import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
@@ -118,6 +130,26 @@ export function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
   );
 }
 
+// ---- Section header (title + Add button) ----------------------------
+
+interface SectionHeaderProps {
+  title: string;
+  addLabel: string;
+  onAdd: () => void;
+  testid: string;
+}
+
+function SectionHeader({ title, addLabel, onAdd, testid }: SectionHeaderProps) {
+  return (
+    <div className="kd-config-section-header">
+      <h2>{title}</h2>
+      <Button onClick={onAdd} data-testid={`${testid}-add-button`}>
+        {addLabel}
+      </Button>
+    </div>
+  );
+}
+
 // ---- Wards tab ------------------------------------------------------
 
 function WardsTab() {
@@ -126,28 +158,23 @@ function WardsTab() {
   const upsert = useUpsertWardMutation();
   const del = useDeleteWardMutation();
 
-  const form = useForm<WardForm>({
-    resolver: zodResolver(wardSchema),
-    defaultValues: { ward_code: '', ward_name: '', building_name: '', seat_cap: 20 },
-  });
-  const { register, handleSubmit, reset, formState } = form;
+  const [openMode, setOpenMode] = useState<'closed' | 'add' | { kind: 'edit'; ward: Ward }>(
+    'closed',
+  );
 
-  async function onSubmit(input: WardForm) {
-    try {
-      await upsert.mutateAsync(input);
-      reset();
-      toast('Ward saved.', 'success');
-    } catch (err) {
-      toast(errorMessage(err), 'error');
-    }
-  }
-
-  const sorted = [...(wards.data ?? [])].sort((a, b) => a.ward_code.localeCompare(b.ward_code));
-  const buildingOptions = buildings.data ?? [];
+  const sorted = useMemo(
+    () => [...(wards.data ?? [])].sort((a, b) => a.ward_code.localeCompare(b.ward_code)),
+    [wards.data],
+  );
 
   return (
     <div className="kd-config-section">
-      <h2>Wards</h2>
+      <SectionHeader
+        title="Wards"
+        addLabel="Add Ward"
+        onAdd={() => setOpenMode('add')}
+        testid="config-wards"
+      />
       <ul className="kd-config-rows" data-testid="config-wards-list">
         {sorted.map((w) => (
           <li key={w.ward_code}>
@@ -157,27 +184,120 @@ function WardsTab() {
               </strong>{' '}
               — building: {w.building_name} · cap {w.seat_cap}
             </span>
-            <Button
-              variant="danger"
-              onClick={() =>
-                del
-                  .mutateAsync(w.ward_code)
-                  .then(() => toast('Ward deleted.', 'success'))
-                  .catch((err) => toast(errorMessage(err), 'error'))
-              }
-              data-testid={`config-ward-delete-${w.ward_code}`}
-            >
-              Delete
-            </Button>
+            <span className="kd-config-row-actions">
+              <Button
+                variant="secondary"
+                onClick={() => setOpenMode({ kind: 'edit', ward: w })}
+                data-testid={`config-ward-edit-${w.ward_code}`}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() =>
+                  del
+                    .mutateAsync(w.ward_code)
+                    .then(() => toast('Ward deleted.', 'success'))
+                    .catch((err) => toast(errorMessage(err), 'error'))
+                }
+                data-testid={`config-ward-delete-${w.ward_code}`}
+              >
+                Delete
+              </Button>
+            </span>
           </li>
         ))}
       </ul>
 
-      <form className="kd-wizard-form" onSubmit={handleSubmit(onSubmit)}>
-        <h3>Add or edit a ward</h3>
+      <WardFormDialog
+        mode={openMode}
+        buildingOptions={buildings.data ?? []}
+        isPending={upsert.isPending}
+        onSubmit={async (input) => {
+          await upsert.mutateAsync(input);
+          toast('Ward saved.', 'success');
+        }}
+        onClose={() => setOpenMode('closed')}
+      />
+    </div>
+  );
+}
+
+interface WardFormDialogProps {
+  mode: 'closed' | 'add' | { kind: 'edit'; ward: Ward };
+  buildingOptions: readonly Building[];
+  isPending: boolean;
+  onSubmit: (input: WardForm) => Promise<void>;
+  onClose: () => void;
+}
+
+function WardFormDialog({
+  mode,
+  buildingOptions,
+  isPending,
+  onSubmit,
+  onClose,
+}: WardFormDialogProps) {
+  const isEdit = typeof mode === 'object' && mode.kind === 'edit';
+  const editingWard = isEdit ? mode.ward : null;
+  const open = mode !== 'closed';
+
+  const form = useForm<WardForm>({
+    resolver: zodResolver(wardSchema),
+    defaultValues: editingWard
+      ? {
+          ward_code: editingWard.ward_code,
+          ward_name: editingWard.ward_name,
+          building_name: editingWard.building_name,
+          seat_cap: editingWard.seat_cap,
+        }
+      : { ward_code: '', ward_name: '', building_name: '', seat_cap: 20 },
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  // Reset whenever the dialog flips open/closed or the editing target
+  // changes — RHF doesn't automatically re-pick up new defaultValues.
+  useEffect(() => {
+    if (!open) return;
+    reset(
+      editingWard
+        ? {
+            ward_code: editingWard.ward_code,
+            ward_name: editingWard.ward_name,
+            building_name: editingWard.building_name,
+            seat_cap: editingWard.seat_cap,
+          }
+        : { ward_code: '', ward_name: '', building_name: '', seat_cap: 20 },
+    );
+  }, [open, editingWard, reset]);
+
+  const submit = handleSubmit(async (input) => {
+    try {
+      await onSubmit(input);
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title={isEdit ? `Edit ward — ${editingWard?.ward_code ?? ''}` : 'Add ward'}
+    >
+      <form onSubmit={submit} className="kd-wizard-form" data-testid="config-ward-form">
         <label>
           Ward code
-          <Input {...register('ward_code')} maxLength={8} placeholder="CO" />
+          <Input
+            {...register('ward_code')}
+            maxLength={8}
+            placeholder="CO"
+            readOnly={isEdit}
+            aria-readonly={isEdit}
+          />
         </label>
         {formState.errors.ward_code ? (
           <p role="alert" className="kd-form-error">
@@ -218,13 +338,14 @@ function WardsTab() {
             {formState.errors.seat_cap.message}
           </p>
         ) : null}
-        <div className="form-actions">
-          <Button type="submit" disabled={upsert.isPending}>
-            {upsert.isPending ? 'Saving…' : 'Save ward'}
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Button type="submit" disabled={isPending} data-testid="config-ward-submit">
+            {isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create ward'}
           </Button>
-        </div>
+        </Dialog.Footer>
       </form>
-    </div>
+    </Dialog>
   );
 }
 
@@ -238,29 +359,24 @@ function BuildingsTab() {
   const upsert = useUpsertBuildingMutation();
   const del = useDeleteBuildingMutation();
 
-  const form = useForm<BuildingForm>({
-    resolver: zodResolver(buildingSchema),
-    defaultValues: { building_name: '', address: '' },
-  });
-  const { register, handleSubmit, reset, formState } = form;
+  const [openMode, setOpenMode] = useState<'closed' | 'add' | { kind: 'edit'; building: Building }>(
+    'closed',
+  );
 
-  async function onSubmit(input: BuildingForm) {
-    try {
-      await upsert.mutateAsync(input);
-      reset();
-      toast('Building saved.', 'success');
-    } catch (err) {
-      toast(errorMessage(err), 'error');
-    }
-  }
-
-  const sorted = [...(buildings.data ?? [])].sort((a, b) =>
-    a.building_name.localeCompare(b.building_name),
+  const sorted = useMemo(
+    () =>
+      [...(buildings.data ?? [])].sort((a, b) => a.building_name.localeCompare(b.building_name)),
+    [buildings.data],
   );
 
   return (
     <div className="kd-config-section">
-      <h2>Buildings</h2>
+      <SectionHeader
+        title="Buildings"
+        addLabel="Add Building"
+        onAdd={() => setOpenMode('add')}
+        testid="config-buildings"
+      />
       <ul className="kd-config-rows" data-testid="config-buildings-list">
         {sorted.map((b) => (
           <li key={b.building_id}>
@@ -268,28 +384,95 @@ function BuildingsTab() {
               <strong>{b.building_name}</strong>
               {b.address ? <> — {b.address}</> : null}
             </span>
-            <Button
-              variant="danger"
-              onClick={() =>
-                del
-                  .mutateAsync({
-                    buildingId: b.building_id,
-                    buildingName: b.building_name,
-                    wards: wards.data ?? [],
-                  })
-                  .then(() => toast('Building deleted.', 'success'))
-                  .catch((err) => toast(errorMessage(err), 'error'))
-              }
-              data-testid={`config-building-delete-${b.building_id}`}
-            >
-              Delete
-            </Button>
+            <span className="kd-config-row-actions">
+              <Button
+                variant="secondary"
+                onClick={() => setOpenMode({ kind: 'edit', building: b })}
+                data-testid={`config-building-edit-${b.building_id}`}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() =>
+                  del
+                    .mutateAsync({
+                      buildingId: b.building_id,
+                      buildingName: b.building_name,
+                      wards: wards.data ?? [],
+                    })
+                    .then(() => toast('Building deleted.', 'success'))
+                    .catch((err) => toast(errorMessage(err), 'error'))
+                }
+                data-testid={`config-building-delete-${b.building_id}`}
+              >
+                Delete
+              </Button>
+            </span>
           </li>
         ))}
       </ul>
 
-      <form className="kd-wizard-form" onSubmit={handleSubmit(onSubmit)}>
-        <h3>Add or edit a building</h3>
+      <BuildingFormDialog
+        mode={openMode}
+        isPending={upsert.isPending}
+        onSubmit={async (input) => {
+          await upsert.mutateAsync(input);
+          toast('Building saved.', 'success');
+        }}
+        onClose={() => setOpenMode('closed')}
+      />
+    </div>
+  );
+}
+
+interface BuildingFormDialogProps {
+  mode: 'closed' | 'add' | { kind: 'edit'; building: Building };
+  isPending: boolean;
+  onSubmit: (input: BuildingForm) => Promise<void>;
+  onClose: () => void;
+}
+
+function BuildingFormDialog({ mode, isPending, onSubmit, onClose }: BuildingFormDialogProps) {
+  const isEdit = typeof mode === 'object' && mode.kind === 'edit';
+  const editingBuilding = isEdit ? mode.building : null;
+  const open = mode !== 'closed';
+
+  const form = useForm<BuildingForm>({
+    resolver: zodResolver(buildingSchema),
+    defaultValues: editingBuilding
+      ? { building_name: editingBuilding.building_name, address: editingBuilding.address ?? '' }
+      : { building_name: '', address: '' },
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  useEffect(() => {
+    if (!open) return;
+    reset(
+      editingBuilding
+        ? { building_name: editingBuilding.building_name, address: editingBuilding.address ?? '' }
+        : { building_name: '', address: '' },
+    );
+  }, [open, editingBuilding, reset]);
+
+  const submit = handleSubmit(async (input) => {
+    try {
+      await onSubmit(input);
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title={isEdit ? `Edit building — ${editingBuilding?.building_name ?? ''}` : 'Add building'}
+    >
+      <form onSubmit={submit} className="kd-wizard-form" data-testid="config-building-form">
         <label>
           Name
           <Input {...register('building_name')} placeholder="Cordera Building" />
@@ -303,13 +486,14 @@ function BuildingsTab() {
           Address
           <Input {...register('address')} placeholder="123 Main St" />
         </label>
-        <div className="form-actions">
-          <Button type="submit" disabled={upsert.isPending}>
-            {upsert.isPending ? 'Saving…' : 'Save building'}
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Button type="submit" disabled={isPending} data-testid="config-building-submit">
+            {isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create building'}
           </Button>
-        </div>
+        </Dialog.Footer>
       </form>
-    </div>
+    </Dialog>
   );
 }
 
@@ -320,29 +504,28 @@ function ManagersTab() {
   const upsert = useUpsertManagerMutation();
   const del = useDeleteManagerMutation();
 
-  const form = useForm<ManagerForm>({
-    resolver: zodResolver(managerSchema),
-    defaultValues: { member_email: '', name: '' },
-  });
-  const { register, handleSubmit, reset, formState } = form;
+  const [open, setOpen] = useState(false);
 
-  async function onSubmit(input: ManagerForm) {
-    try {
-      await upsert.mutateAsync(input);
-      reset();
-      toast('Manager saved.', 'success');
-    } catch (err) {
-      toast(errorMessage(err), 'error');
-    }
-  }
-
-  const sorted = [...(managers.data ?? [])].sort((a, b) =>
-    a.member_canonical.localeCompare(b.member_canonical),
+  const sorted = useMemo(
+    () =>
+      [...(managers.data ?? [])].sort((a, b) =>
+        a.member_canonical.localeCompare(b.member_canonical),
+      ),
+    [managers.data],
   );
+  // Last-manager guard. When only one manager remains, that row's
+  // Delete button is disabled with a tooltip — preventing the operator
+  // from locking themselves out of the app. Reactive to count changes.
+  const isLastManager = sorted.length === 1;
 
   return (
     <div className="kd-config-section">
-      <h2>Kindoo Managers</h2>
+      <SectionHeader
+        title="Kindoo Managers"
+        addLabel="Add Manager"
+        onAdd={() => setOpen(true)}
+        testid="config-managers"
+      />
       <ul className="kd-config-rows" data-testid="config-managers-list">
         {sorted.map((m) => (
           <li key={m.member_canonical}>
@@ -352,6 +535,8 @@ function ManagersTab() {
             </span>
             <Button
               variant="danger"
+              disabled={isLastManager}
+              title={isLastManager ? 'Cannot remove the last Kindoo Manager.' : undefined}
               onClick={() =>
                 del
                   .mutateAsync(m.member_canonical)
@@ -366,8 +551,56 @@ function ManagersTab() {
         ))}
       </ul>
 
-      <form className="kd-wizard-form" onSubmit={handleSubmit(onSubmit)}>
-        <h3>Add or edit a manager</h3>
+      <ManagerFormDialog
+        open={open}
+        isPending={upsert.isPending}
+        onSubmit={async (input) => {
+          await upsert.mutateAsync(input);
+          toast('Manager saved.', 'success');
+        }}
+        onClose={() => setOpen(false)}
+      />
+    </div>
+  );
+}
+
+interface ManagerFormDialogProps {
+  open: boolean;
+  isPending: boolean;
+  onSubmit: (input: ManagerForm) => Promise<void>;
+  onClose: () => void;
+}
+
+function ManagerFormDialog({ open, isPending, onSubmit, onClose }: ManagerFormDialogProps) {
+  const form = useForm<ManagerForm>({
+    resolver: zodResolver(managerSchema),
+    defaultValues: { member_email: '', name: '' },
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  useEffect(() => {
+    if (!open) return;
+    reset({ member_email: '', name: '' });
+  }, [open, reset]);
+
+  const submit = handleSubmit(async (input) => {
+    try {
+      await onSubmit(input);
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="Add Kindoo Manager"
+    >
+      <form onSubmit={submit} className="kd-wizard-form" data-testid="config-manager-form">
         <label>
           Email
           <Input type="email" {...register('member_email')} placeholder="manager@example.com" />
@@ -386,17 +619,18 @@ function ManagersTab() {
             {formState.errors.name.message}
           </p>
         ) : null}
-        <div className="form-actions">
-          <Button type="submit" disabled={upsert.isPending}>
-            {upsert.isPending ? 'Saving…' : 'Save manager'}
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Button type="submit" disabled={isPending} data-testid="config-manager-submit">
+            {isPending ? 'Saving…' : 'Create manager'}
           </Button>
-        </div>
+        </Dialog.Footer>
       </form>
-    </div>
+    </Dialog>
   );
 }
 
-// ---- Ward Calling Templates tab -------------------------------------
+// ---- Calling templates (ward + stake) -------------------------------
 
 function WardCallingsTab() {
   const templates = useWardCallingTemplates();
@@ -404,7 +638,8 @@ function WardCallingsTab() {
   const del = useDeleteWardCallingTemplateMutation();
   return (
     <CallingTemplatesPanel
-      title="Ward Calling Templates"
+      title="Auto Ward Callings"
+      addLabel="Add Ward Calling"
       testid="ward-callings"
       data={templates.data}
       onUpsert={upsert.mutateAsync}
@@ -421,7 +656,8 @@ function StakeCallingsTab() {
   const del = useDeleteStakeCallingTemplateMutation();
   return (
     <CallingTemplatesPanel
-      title="Stake Calling Templates"
+      title="Auto Stake Callings"
+      addLabel="Add Stake Calling"
       testid="stake-callings"
       data={templates.data}
       onUpsert={upsert.mutateAsync}
@@ -434,10 +670,9 @@ function StakeCallingsTab() {
 
 interface CallingTemplatesPanelProps {
   title: string;
+  addLabel: string;
   testid: string;
-  data:
-    | readonly { calling_name: string; give_app_access: boolean; sheet_order: number }[]
-    | undefined;
+  data: readonly WardCallingTemplate[] | undefined;
   onUpsert: (input: CallingTemplateForm) => Promise<unknown>;
   isPending: boolean;
   onDelete: (callingName: string) => Promise<unknown>;
@@ -446,6 +681,7 @@ interface CallingTemplatesPanelProps {
 
 function CallingTemplatesPanel({
   title,
+  addLabel,
   testid,
   data,
   onUpsert,
@@ -453,27 +689,21 @@ function CallingTemplatesPanel({
   onDelete,
   hint,
 }: CallingTemplatesPanelProps) {
-  const form = useForm<CallingTemplateForm>({
-    resolver: zodResolver(callingTemplateSchema),
-    defaultValues: { calling_name: '', give_app_access: true, sheet_order: 0 },
-  });
-  const { register, handleSubmit, reset, formState } = form;
+  const [open, setOpen] = useState(false);
 
-  async function onSubmit(input: CallingTemplateForm) {
-    try {
-      await onUpsert(input);
-      reset();
-      toast('Calling template saved.', 'success');
-    } catch (err) {
-      toast(errorMessage(err), 'error');
-    }
-  }
-
-  const sorted = [...(data ?? [])].sort((a, b) => a.sheet_order - b.sheet_order);
+  const sorted = useMemo(
+    () => [...(data ?? [])].sort((a, b) => a.sheet_order - b.sheet_order),
+    [data],
+  );
 
   return (
     <div className="kd-config-section">
-      <h2>{title}</h2>
+      <SectionHeader
+        title={title}
+        addLabel={addLabel}
+        onAdd={() => setOpen(true)}
+        testid={`config-${testid}`}
+      />
       <p className="kd-form-hint">{hint}</p>
       <ul className="kd-config-rows" data-testid={`config-${testid}-list`}>
         {sorted.map((t) => (
@@ -498,8 +728,65 @@ function CallingTemplatesPanel({
           </li>
         ))}
       </ul>
-      <form className="kd-wizard-form" onSubmit={handleSubmit(onSubmit)}>
-        <h3>Add or edit a calling template</h3>
+
+      <CallingTemplateFormDialog
+        open={open}
+        isPending={isPending}
+        testid={testid}
+        onSubmit={async (input) => {
+          await onUpsert(input);
+          toast('Calling template saved.', 'success');
+        }}
+        onClose={() => setOpen(false)}
+      />
+    </div>
+  );
+}
+
+interface CallingTemplateFormDialogProps {
+  open: boolean;
+  isPending: boolean;
+  testid: string;
+  onSubmit: (input: CallingTemplateForm) => Promise<void>;
+  onClose: () => void;
+}
+
+function CallingTemplateFormDialog({
+  open,
+  isPending,
+  testid,
+  onSubmit,
+  onClose,
+}: CallingTemplateFormDialogProps) {
+  const form = useForm<CallingTemplateForm>({
+    resolver: zodResolver(callingTemplateSchema),
+    defaultValues: { calling_name: '', give_app_access: true, sheet_order: 0 },
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  useEffect(() => {
+    if (!open) return;
+    reset({ calling_name: '', give_app_access: true, sheet_order: 0 });
+  }, [open, reset]);
+
+  const submit = handleSubmit(async (input) => {
+    try {
+      await onSubmit(input);
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="Add calling template"
+    >
+      <form onSubmit={submit} className="kd-wizard-form" data-testid={`config-${testid}-form`}>
         <label>
           Calling name
           <Input {...register('calling_name')} placeholder="Bishop or Counselor *" />
@@ -516,13 +803,14 @@ function CallingTemplatesPanel({
           Sheet order
           <Input type="number" {...register('sheet_order', { valueAsNumber: true })} />
         </label>
-        <div className="form-actions">
-          <Button type="submit" disabled={isPending}>
-            {isPending ? 'Saving…' : 'Save template'}
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Button type="submit" disabled={isPending} data-testid={`config-${testid}-submit`}>
+            {isPending ? 'Saving…' : 'Create template'}
           </Button>
-        </div>
+        </Dialog.Footer>
       </form>
-    </div>
+    </Dialog>
   );
 }
 

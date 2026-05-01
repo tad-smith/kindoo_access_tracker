@@ -11,7 +11,7 @@
 //   - "Add manual access" form at the page foot.
 //   - Per-grant Delete button on manual rows (with confirm dialog).
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -111,6 +111,8 @@ export function AccessPage() {
     }
   }
 
+  const [addOpen, setAddOpen] = useState(false);
+
   return (
     <section>
       <h1>Access</h1>
@@ -135,12 +137,19 @@ export function AccessPage() {
           {sorted.length} user{sorted.length === 1 ? '' : 's'} ({manualCount} manual grant
           {manualCount === 1 ? '' : 's'})
         </span>
+        <Button
+          onClick={() => setAddOpen(true)}
+          data-testid="access-add-manual-button"
+          className="kd-filter-row-action"
+        >
+          Add Manual Access
+        </Button>
       </div>
 
       {access.isLoading || access.data === undefined ? (
         <LoadingSpinner />
       ) : sorted.length === 0 ? (
-        <EmptyState message="No access rows. Run the importer or add a manual grant below." />
+        <EmptyState message='No access rows. Run the importer or add a manual grant via "Add Manual Access".' />
       ) : (
         <div className="kd-access-cards" data-testid="access-cards">
           {sorted.map((a) => (
@@ -156,7 +165,7 @@ export function AccessPage() {
         </div>
       )}
 
-      <AddManualGrantForm />
+      <AddManualGrantDialog open={addOpen} onClose={() => setAddOpen(false)} />
 
       <Dialog
         open={pendingDelete !== null}
@@ -264,7 +273,12 @@ const addManualSchema = z.object({
 });
 type AddManualForm = z.infer<typeof addManualSchema>;
 
-function AddManualGrantForm() {
+interface AddManualGrantDialogProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+function AddManualGrantDialog({ open, onClose }: AddManualGrantDialogProps) {
   const mutation = useAddManualGrantMutation();
   // Form scope dropdown is data-driven: 'stake' plus one option per
   // configured ward in `stakes/{stakeId}/wards`. A grant against a
@@ -282,73 +296,90 @@ function AddManualGrantForm() {
   });
   const { register, handleSubmit, reset, formState } = form;
 
+  // Reset whenever the dialog opens so a previous draft doesn't carry.
+  useEffect(() => {
+    if (open) reset({ member_email: '', member_name: '', scope: 'stake', reason: '' });
+  }, [open, reset]);
+
   async function onSubmit(input: AddManualForm) {
     try {
       await mutation.mutateAsync(input);
-      reset({ member_email: '', member_name: '', scope: 'stake', reason: '' });
       toast('Manual access added.', 'success');
+      onClose();
     } catch (err) {
       toast(errorMessage(err), 'error');
     }
   }
 
   return (
-    <form
-      className="kd-wizard-form"
-      onSubmit={handleSubmit(onSubmit)}
-      data-testid="add-manual-form"
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="Add Manual Access"
     >
-      <h2>Add manual access</h2>
-      <label>
-        Email
-        <Input type="email" {...register('member_email')} placeholder="member@example.com" />
-      </label>
-      {formState.errors.member_email ? (
-        <p role="alert" className="kd-form-error">
-          {formState.errors.member_email.message}
-        </p>
-      ) : null}
-      <label>
-        Name
-        <Input {...register('member_name')} />
-      </label>
-      {formState.errors.member_name ? (
-        <p role="alert" className="kd-form-error">
-          {formState.errors.member_name.message}
-        </p>
-      ) : null}
-      <label>
-        Scope
-        <Select {...register('scope')} disabled={wardsLoading} data-testid="add-manual-scope">
-          <option value="stake">Stake</option>
-          {wardOptions.map((code) => (
-            <option key={code} value={code}>
-              {code}
-            </option>
-          ))}
-        </Select>
-      </label>
-      {wardsLoading ? (
-        <p className="kd-form-hint">Loading wards…</p>
-      ) : wardOptions.length === 0 ? (
-        <p className="kd-form-hint" data-testid="add-manual-no-wards">
-          No wards configured. Add wards via Configuration to grant ward-scope access.
-        </p>
-      ) : null}
-      <label>
-        Reason
-        <Input {...register('reason')} placeholder="Covering bishop" />
-      </label>
-      {formState.errors.reason ? (
-        <p role="alert" className="kd-form-error">
-          {formState.errors.reason.message}
-        </p>
-      ) : null}
-      <div className="form-actions">
-        <Button type="submit" disabled={mutation.isPending || wardsLoading}>
-          {mutation.isPending ? 'Adding…' : 'Add manual access'}
-        </Button>
-      </div>
-    </form>
+      <form
+        className="kd-wizard-form"
+        onSubmit={handleSubmit(onSubmit)}
+        data-testid="add-manual-form"
+      >
+        <label>
+          Email
+          <Input type="email" {...register('member_email')} placeholder="member@example.com" />
+        </label>
+        {formState.errors.member_email ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.member_email.message}
+          </p>
+        ) : null}
+        <label>
+          Name
+          <Input {...register('member_name')} />
+        </label>
+        {formState.errors.member_name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.member_name.message}
+          </p>
+        ) : null}
+        <label>
+          Scope
+          <Select {...register('scope')} disabled={wardsLoading} data-testid="add-manual-scope">
+            <option value="stake">Stake</option>
+            {wardOptions.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </Select>
+        </label>
+        {wardsLoading ? (
+          <p className="kd-form-hint">Loading wards…</p>
+        ) : wardOptions.length === 0 ? (
+          <p className="kd-form-hint" data-testid="add-manual-no-wards">
+            No wards configured. Add wards via Configuration to grant ward-scope access.
+          </p>
+        ) : null}
+        <label>
+          Reason
+          <Input {...register('reason')} placeholder="Covering bishop" />
+        </label>
+        {formState.errors.reason ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.reason.message}
+          </p>
+        ) : null}
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Button
+            type="submit"
+            disabled={mutation.isPending || wardsLoading}
+            data-testid="access-add-manual-submit"
+          >
+            {mutation.isPending ? 'Creating…' : 'Create Access'}
+          </Button>
+        </Dialog.Footer>
+      </form>
+    </Dialog>
   );
 }

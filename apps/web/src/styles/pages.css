@@ -692,6 +692,21 @@
 .kd-config-section h3 {
   margin: 8px 0;
 }
+.kd-config-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.kd-config-section-header h2 {
+  margin: 0;
+}
+.kd-config-row-actions {
+  display: inline-flex;
+  gap: 8px;
+}
 
 /* Import page */
 

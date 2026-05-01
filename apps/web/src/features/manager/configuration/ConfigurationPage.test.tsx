@@ -147,17 +147,110 @@ describe('<ConfigurationPage />', () => {
     ]);
   });
 
-  it('shows ward-form validation error on empty submit', async () => {
+  it('shows ward-form validation error on empty submit (modal-driven)', async () => {
     const user = userEvent.setup();
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    await user.click(screen.getByRole('button', { name: /Save ward/i }));
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    await user.click(screen.getByTestId('config-ward-submit'));
     expect(await screen.findByText(/Ward code is required/i)).toBeInTheDocument();
   });
 
-  it('manager add form has no Active checkbox', () => {
+  it('opens the Add Ward modal from the section header', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    expect(screen.queryByTestId('config-ward-form')).toBeNull();
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    expect(screen.getByTestId('config-ward-form')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Add ward' })).toBeInTheDocument();
+  });
+
+  it('opens the Edit Ward modal pre-populated; ward_code is read-only', async () => {
+    const user = userEvent.setup();
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'CO',
+          ward_name: 'Cordera',
+          building_name: 'Cordera Building',
+          seat_cap: 22,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const wardCodeInput = screen.getByLabelText(/Ward code/i) as HTMLInputElement;
+    expect(wardCodeInput.value).toBe('CO');
+    expect(wardCodeInput).toHaveAttribute('readonly');
+    expect(screen.getByRole('heading', { name: /Edit ward — CO/ })).toBeInTheDocument();
+  });
+
+  it('renders an Edit button on each Building row; building_id is never shown in form', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        {
+          building_id: 'cordera-building',
+          building_name: 'Cordera Building',
+          address: '123 Main',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-building-edit-cordera-building'));
+    expect(screen.getByLabelText(/Name/i)).toHaveValue('Cordera Building');
+    expect(screen.queryByLabelText(/building.?id/i)).toBeNull();
+  });
+
+  it('manager add modal has no Active checkbox', async () => {
+    const user = userEvent.setup();
     render(<ConfigurationPage initialTab="managers" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-managers-add-button'));
     expect(screen.queryByLabelText(/^Active$/)).not.toBeInTheDocument();
     expect(screen.queryByRole('checkbox', { name: /Active/i })).not.toBeInTheDocument();
+  });
+
+  it('disables the Delete button when only one Kindoo Manager remains', () => {
+    useManagersMock.mockReturnValue(
+      liveResult<KindooManager>([
+        {
+          member_canonical: 'lonely@x.com',
+          member_email: 'lonely@x.com',
+          name: 'Lonely',
+          active: true,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="managers" />, { wrapper: Wrapper });
+    const btn = screen.getByTestId('config-manager-delete-lonely@x.com');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Cannot remove the last Kindoo Manager.');
+  });
+
+  it('enables Delete on every Kindoo Manager when two or more exist', () => {
+    useManagersMock.mockReturnValue(
+      liveResult<KindooManager>([
+        {
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          name: 'A',
+          active: true,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+        {
+          member_canonical: 'b@x.com',
+          member_email: 'b@x.com',
+          name: 'B',
+          active: true,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="managers" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-manager-delete-a@x.com')).not.toBeDisabled();
+    expect(screen.getByTestId('config-manager-delete-b@x.com')).not.toBeDisabled();
   });
 
   it('wraps the page in the wide-width container (1023px max)', () => {

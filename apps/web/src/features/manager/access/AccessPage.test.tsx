@@ -157,13 +157,24 @@ describe('<AccessPage />', () => {
     expect(screen.queryByTestId('access-card-ge@x.com')).toBeNull();
   });
 
-  it('renders the Add Manual Access form', () => {
+  it('renders the Add Manual Access button (form is in a modal)', () => {
     useAccessListMock.mockReturnValue(liveResult<Access>([]));
     render(<AccessPage />);
-    expect(screen.getByTestId('add-manual-form')).toBeInTheDocument();
+    expect(screen.getByTestId('access-add-manual-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('add-manual-form')).toBeNull();
   });
 
-  it('add-form scope dropdown shows stake + one option per configured ward', () => {
+  it('opens the Add Manual Access modal when the button is clicked', async () => {
+    const u = userEvent.setup();
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    await u.click(screen.getByTestId('access-add-manual-button'));
+    expect(screen.getByTestId('add-manual-form')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Add Manual Access' })).toBeInTheDocument();
+  });
+
+  it('add-modal scope dropdown shows stake + one option per configured ward', async () => {
+    const u = userEvent.setup();
     useStakeWardsMock.mockReturnValue(
       liveResult([
         { ward_code: 'GE', ward_name: 'Genoa' },
@@ -172,39 +183,45 @@ describe('<AccessPage />', () => {
     );
     useAccessListMock.mockReturnValue(liveResult<Access>([]));
     render(<AccessPage />);
+    await u.click(screen.getByTestId('access-add-manual-button'));
     const dropdown = screen.getByTestId('add-manual-scope') as HTMLSelectElement;
     const values = Array.from(dropdown.options).map((o) => o.value);
     // 'stake' first; wards alphabetical.
     expect(values).toEqual(['stake', 'CO', 'GE']);
   });
 
-  it('add-form scope dropdown shows only stake when no wards are configured', () => {
+  it('add-modal scope dropdown shows only stake when no wards are configured', async () => {
+    const u = userEvent.setup();
     useStakeWardsMock.mockReturnValue(liveResult([]));
     useAccessListMock.mockReturnValue(liveResult<Access>([]));
     render(<AccessPage />);
+    await u.click(screen.getByTestId('access-add-manual-button'));
     const dropdown = screen.getByTestId('add-manual-scope') as HTMLSelectElement;
     const values = Array.from(dropdown.options).map((o) => o.value);
     expect(values).toEqual(['stake']);
     expect(screen.getByTestId('add-manual-no-wards')).toBeInTheDocument();
   });
 
-  it('add-form scope dropdown is disabled while wards are still loading', () => {
+  it('add-modal scope dropdown is disabled while wards are still loading', async () => {
+    const u = userEvent.setup();
     useStakeWardsMock.mockReturnValue(liveResult(undefined, true));
     useAccessListMock.mockReturnValue(liveResult<Access>([]));
     render(<AccessPage />);
+    await u.click(screen.getByTestId('access-add-manual-button'));
     const dropdown = screen.getByTestId('add-manual-scope') as HTMLSelectElement;
     expect(dropdown).toBeDisabled();
   });
 
-  it('invokes the add-mutation when the form is submitted with valid input', async () => {
+  it('invokes the add-mutation when the modal form is submitted with valid input', async () => {
     useAccessListMock.mockReturnValue(liveResult<Access>([]));
     const u = userEvent.setup();
     render(<AccessPage />);
+    await u.click(screen.getByTestId('access-add-manual-button'));
     const form = screen.getByTestId('add-manual-form');
     await u.type(within(form).getByLabelText(/Email/i), 'sub@example.com');
     await u.type(within(form).getByLabelText(/Name/i), 'Sub');
     await u.type(within(form).getByLabelText(/Reason/i), 'Covering bishop');
-    await u.click(within(form).getByRole('button', { name: /Add manual access/i }));
+    await u.click(screen.getByTestId('access-add-manual-submit'));
     expect(addManualMutate).toHaveBeenCalledWith(
       expect.objectContaining({ member_email: 'sub@example.com', reason: 'Covering bishop' }),
     );
