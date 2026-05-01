@@ -20,6 +20,8 @@ export type ParsedRow = {
   name: string;
   /** `give_app_access` from the matched template. Drives Access doc. */
   giveAppAccess: boolean;
+  /** `auto_kindoo_access` from the matched template. Gates auto-Seat creation. */
+  autoKindooAccess: boolean;
   /** `sheet_order` from the matched template. Drives `sort_order` denormalisation. */
   sheetOrder: number;
 };
@@ -39,6 +41,7 @@ export type ParseResult = {
 export type TemplateRow = {
   calling_name: string;
   give_app_access: boolean;
+  auto_kindoo_access: boolean;
   sheet_order: number;
 };
 
@@ -251,6 +254,7 @@ export function parseTab(opts: {
         email,
         name,
         giveAppAccess: tpl.give_app_access === true,
+        autoKindooAccess: tpl.auto_kindoo_access === true,
         sheetOrder: typeof tpl.sheet_order === 'number' ? tpl.sheet_order : 0,
       });
     }
