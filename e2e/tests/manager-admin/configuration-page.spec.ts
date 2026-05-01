@@ -120,8 +120,9 @@ test.describe('Manager admin pages (Phase 7)', () => {
     await expect(rows.first()).toHaveAttribute('data-testid', 'config-ward-callings-row-Bishop');
     // Add modal exposes both flag checkboxes labeled per the rename.
     await page.getByTestId('config-ward-callings-add-button').click();
-    await expect(page.getByLabel('Auto Kindoo Access')).toBeVisible();
-    await expect(page.getByLabel('Can Request Access')).toBeVisible();
+    const form = page.getByTestId('config-ward-callings-form');
+    await expect(form.getByLabel('Auto Kindoo Access', { exact: true })).toBeVisible();
+    await expect(form.getByLabel('Can Request Access', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Add Calling' })).toBeVisible();
   });
 
