@@ -201,4 +201,11 @@ describe('NewRequestPage — scope derivation by role', () => {
     render(<NewRequestPage />);
     expect(screen.getByRole('heading', { name: 'New Request' })).toBeInTheDocument();
   });
+
+  it('wraps the page in the narrow-width container (600px max)', () => {
+    setPrincipal({ managerStakes: ['csnorth'] });
+    setWards([]);
+    const { container } = render(<NewRequestPage />);
+    expect(container.querySelector('section.kd-page-narrow')).not.toBeNull();
+  });
 });

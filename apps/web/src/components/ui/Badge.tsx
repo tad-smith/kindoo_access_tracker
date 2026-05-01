@@ -34,11 +34,15 @@ export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   variant?: BadgeVariant;
 }
 
+// Roster type-pill colors mirror Apps Script `Styles.html` lines 814-
+// 816 exactly: auto = blue (primary-tint / primary), manual = warm
+// amber (warn-tint / warn-dark), temp = light amber (warn-tint-2 /
+// warn-mid).
 const VARIANT_CLASSES: Record<BadgeVariant, string> = {
   default: 'bg-kd-border-soft text-kd-fg-2',
-  auto: 'bg-kd-row-auto text-kd-fg-2 border border-kd-border-soft',
-  manual: 'bg-kd-primary-tint text-kd-primary-hover border border-kd-primary-tint',
-  temp: 'bg-kd-row-temp text-kd-warn-dark border border-kd-warn-tint',
+  auto: 'bg-kd-primary-tint text-kd-primary',
+  manual: 'bg-kd-warn-tint text-kd-warn-dark',
+  temp: 'bg-kd-warn-tint-2 text-kd-warn-mid',
   success: 'bg-kd-success-tint text-kd-success-fg border border-kd-success-br',
   warning: 'bg-kd-warn-tint text-kd-warn-mid',
   danger: 'bg-kd-danger-bg text-kd-danger-fg border border-kd-danger',

@@ -207,7 +207,7 @@ function AccessCard({ access, scopeFilter, onDeleteRequest }: AccessCardProps) {
       {importerScopes.length > 0 ? (
         <div className="kd-access-section importer" data-testid="access-section-importer">
           <div className="kd-access-section-header">
-            <Badge variant="auto">importer</Badge> from LCR (read-only)
+            <Badge variant="default">importer</Badge> from LCR (read-only)
           </div>
           {importerScopes.map(([scope, callings]) => (
             <div key={`imp-${scope}`}>

@@ -115,6 +115,12 @@ describe('<ManagerQueuePage />', () => {
     expect(screen.getByText(/no pending requests/i)).toBeInTheDocument();
   });
 
+  it('wraps the page in the medium-width container (800px max)', () => {
+    usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
+    const { container } = render(<ManagerQueuePage />);
+    expect(container.querySelector('section.kd-page-medium')).not.toBeNull();
+  });
+
   it('renders one card per pending request with action buttons', () => {
     const requests = [
       makeRequest({ request_id: 'r1', type: 'add_manual', scope: 'CO', member_email: 'a@x.com' }),

@@ -85,7 +85,7 @@ export function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
   };
 
   return (
-    <section>
+    <section className="kd-page-wide">
       <h1>Configuration</h1>
       <p className="kd-page-subtitle">
         Edit Wards, Buildings, Managers, Calling Templates, and stake-level config.

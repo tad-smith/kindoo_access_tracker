@@ -159,4 +159,9 @@ describe('<ConfigurationPage />', () => {
     expect(screen.queryByLabelText(/^Active$/)).not.toBeInTheDocument();
     expect(screen.queryByRole('checkbox', { name: /Active/i })).not.toBeInTheDocument();
   });
+
+  it('wraps the page in the wide-width container (1023px max)', () => {
+    const { container } = render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(container.querySelector('section.kd-page-wide')).not.toBeNull();
+  });
 });
