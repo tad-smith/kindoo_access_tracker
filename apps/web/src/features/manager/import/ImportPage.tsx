@@ -1,20 +1,20 @@
 // Manager Import page. Mirrors `src/ui/manager/Import.html`:
-//   - "Import Now" button → calls `runImportNow` callable. Phase 8
-//     wires the function; until it's deployed, the wrapper throws a
-//     friendly "not yet enabled" error and we surface it as an info
-//     toast.
-//   - Status block: last import time + summary + callings sheet ID.
+//   - "Import Now" button → calls the `runImportNow` callable via
+//     `useRunImportNowMutation`. Shows an inline busy state, the
+//     returned `ImportSummary` after success, and the error message on
+//     failure. Also fires a toast for top-of-page feedback.
+//   - Status block: last import time + summary + callings sheet ID,
+//     read live from the stake doc.
 //   - Over-cap banner reads `stake.last_over_caps_json` and renders
-//     each pool with a deep-link to the filtered All Seats view.
+//     each pool with a deep-link to the filtered All Seats view. The
+//     banner clears reactively when the field empties.
 
-import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
+import type { ImportSummary } from '@kindoo/shared';
 import { Button } from '../../../components/ui/Button';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { toast } from '../../../lib/store/toast';
-import { invokeRunImportNow } from '../../bootstrap/callables';
-import { STAKE_ID } from '../../../lib/constants';
-import { useStakeDoc } from './hooks';
+import { useRunImportNowMutation, useStakeDoc } from './hooks';
 
 function formatTimestamp(ts: { toDate?: () => Date } | undefined): string {
   if (!ts || !ts.toDate) return 'never';
@@ -29,25 +29,26 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
 export function ImportPage() {
   const stake = useStakeDoc();
-  const [running, setRunning] = useState(false);
+  const run = useRunImportNowMutation();
 
   async function runImport() {
-    setRunning(true);
     try {
-      const res = await invokeRunImportNow(STAKE_ID);
-      const summary = res.summary || 'Import complete.';
-      toast(summary, res.warnings && res.warnings.length > 0 ? 'warn' : 'success');
+      const summary = await run.mutateAsync();
+      const tone =
+        summary.ok && summary.warnings.length === 0 ? 'success' : summary.ok ? 'warn' : 'error';
+      const headline = summary.ok
+        ? `Import complete — ${summary.inserted} inserts, ${summary.updated} updates, ${summary.deleted} deletes.`
+        : `Import failed: ${summary.error ?? 'unknown error'}`;
+      toast(headline, tone);
     } catch (err) {
-      const msg = errorMessage(err);
-      // The "not yet enabled" path bubbles up from `invokeRunImportNow`
-      // — show as info rather than error since it's an expected
-      // pre-Phase-8 state.
-      const isPending = /not yet enabled/i.test(msg);
-      toast(msg, isPending ? 'info' : 'error');
-    } finally {
-      setRunning(false);
+      toast(errorMessage(err), 'error');
     }
   }
 
@@ -56,6 +57,8 @@ export function ImportPage() {
   }
 
   const overCaps = stake.data.last_over_caps_json ?? [];
+  const lastResult = run.data;
+  const lastError = run.error;
 
   return (
     <section>
@@ -95,8 +98,8 @@ export function ImportPage() {
 
       <div className="kd-import-card">
         <div className="form-actions">
-          <Button onClick={runImport} disabled={running} data-testid="import-now-button">
-            {running ? 'Working…' : 'Import Now'}
+          <Button onClick={runImport} disabled={run.isPending} data-testid="import-now-button">
+            {run.isPending ? 'Importing…' : 'Import Now'}
           </Button>
         </div>
 
@@ -110,7 +113,71 @@ export function ImportPage() {
             {stake.data.callings_sheet_id || '(not set — add to Config)'}
           </dd>
         </dl>
+
+        {lastError ? (
+          <div className="kd-import-error" role="alert" data-testid="import-error">
+            <strong>Import failed.</strong> {errorMessage(lastError)}
+          </div>
+        ) : null}
+
+        {lastResult ? <ImportSummaryCard summary={lastResult} /> : null}
       </div>
     </section>
+  );
+}
+
+interface ImportSummaryCardProps {
+  summary: ImportSummary;
+}
+
+function ImportSummaryCard({ summary }: ImportSummaryCardProps) {
+  const tone = summary.ok ? (summary.warnings.length > 0 ? 'warn' : 'ok') : 'fail';
+  return (
+    <div
+      className={`kd-import-result kd-import-result-${tone}`}
+      data-testid="import-summary"
+      data-summary-status={summary.ok ? 'ok' : 'fail'}
+    >
+      <h2>{summary.ok ? 'Last run summary' : 'Last run failed'}</h2>
+      <dl className="kd-import-result-grid">
+        <dt>Inserts</dt>
+        <dd data-testid="import-summary-inserted">{summary.inserted}</dd>
+        <dt>Updates</dt>
+        <dd data-testid="import-summary-updated">{summary.updated}</dd>
+        <dt>Deletes</dt>
+        <dd data-testid="import-summary-deleted">{summary.deleted}</dd>
+        <dt>Access added</dt>
+        <dd data-testid="import-summary-access-added">{summary.access_added}</dd>
+        <dt>Access removed</dt>
+        <dd data-testid="import-summary-access-removed">{summary.access_removed}</dd>
+        <dt>Duration</dt>
+        <dd data-testid="import-summary-elapsed">{formatElapsed(summary.elapsed_ms)}</dd>
+        <dt>Triggered by</dt>
+        <dd data-testid="import-summary-triggered-by">{summary.triggered_by}</dd>
+      </dl>
+
+      {!summary.ok && summary.error ? (
+        <p className="kd-import-result-error" data-testid="import-summary-error">
+          <strong>Error:</strong> {summary.error}
+        </p>
+      ) : null}
+
+      {summary.warnings.length > 0 ? (
+        <div data-testid="import-summary-warnings">
+          <strong>Warnings ({summary.warnings.length})</strong>
+          <ul>
+            {summary.warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {summary.skipped_tabs.length > 0 ? (
+        <div data-testid="import-summary-skipped">
+          <strong>Skipped tabs:</strong> {summary.skipped_tabs.join(', ')}
+        </div>
+      ) : null}
+    </div>
   );
 }

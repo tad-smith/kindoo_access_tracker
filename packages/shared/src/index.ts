@@ -24,6 +24,7 @@ export type {
   CustomClaims,
   DuplicateGrant,
   ImportDay,
+  ImportSummary,
   KindooManager,
   ManualGrant,
   OverCapEntry,

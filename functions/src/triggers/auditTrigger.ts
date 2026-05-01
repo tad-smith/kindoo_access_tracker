@@ -323,6 +323,18 @@ function resolveAction(
     return resolveRequestAction(before, after);
   }
 
+  // Seat deletes by the daily expiry trigger map to `auto_expire`.
+  // Detection: Expiry stamps `lastActor.canonical='ExpiryTrigger'` on
+  // the seat just before deleting; the bookkeeping-only update is
+  // skipped by `isNoOpUpdate`, then this trigger fires on the delete
+  // with that stamped BEFORE state.
+  if (ctx.entityType === 'seat' && before && !after) {
+    const lastActor = before['lastActor'] as { canonical?: unknown } | undefined;
+    if (lastActor?.canonical === 'ExpiryTrigger') {
+      return 'auto_expire';
+    }
+  }
+
   if (!before) return CREATE_ACTION[ctx.entityType];
   if (!after) return DELETE_ACTION[ctx.entityType];
   return UPDATE_ACTION[ctx.entityType];

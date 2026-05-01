@@ -270,6 +270,32 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
 
   // -------- Seats --------
 
+  it('seat delete with lastActor=ExpiryTrigger emits auto_expire', async () => {
+    const before = {
+      member_canonical: 's@gmail.com',
+      member_email: 's@gmail.com',
+      member_name: 'Sam',
+      scope: 'GE',
+      type: 'temp',
+      callings: [],
+      building_names: ['Greenwood'],
+      duplicate_grants: [],
+      end_date: '2026-04-25',
+      lastActor: { email: 'ExpiryTrigger', canonical: 'ExpiryTrigger' },
+    };
+    await auditSeatWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, memberCanonical: 's@gmail.com' },
+        before,
+        after: null,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('auto_expire');
+    expect(rows[0]!.actor_canonical).toBe('ExpiryTrigger');
+  });
+
   it('seat writes map to create/update/delete seat with member_canonical', async () => {
     const after = {
       member_canonical: 's@gmail.com',
@@ -476,6 +502,27 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     const rows = await readAuditRows();
     expect(rows[0]!.actor_email).toBe('unknown');
     expect(rows[0]!.actor_canonical).toBe('unknown');
+  });
+
+  it('access-doc write with lastActor=Importer produces actor_canonical=Importer', async () => {
+    const after = {
+      member_canonical: 'a@gmail.com',
+      member_email: 'a@gmail.com',
+      member_name: 'Alice',
+      importer_callings: { CO: ['Bishop'] },
+      manual_grants: {},
+      lastActor: { email: 'Importer', canonical: 'Importer' },
+    };
+    await auditAccessWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, memberCanonical: 'a@gmail.com' },
+        before: null,
+        after,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows[0]!.actor_canonical).toBe('Importer');
+    expect(rows[0]!.action).toBe('create_access');
   });
 
   it('emitAuditRow stamps a ttl ~365 days after the event time', async () => {

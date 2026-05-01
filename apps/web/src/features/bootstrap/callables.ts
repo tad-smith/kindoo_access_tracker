@@ -1,18 +1,16 @@
-// Cloud Function callable stubs invoked from the bootstrap wizard +
-// the manager Import page. Phase 7 wires the UI; Phase 8 (backend
-// engineer) ships the actual function implementations:
+// Cloud Function callable wrappers used by the bootstrap wizard and
+// the manager Import page:
 //   - `installScheduledJobs` — bootstrap-wizard "Complete Setup" calls
 //     this to install Cloud Scheduler jobs for the importer + expiry
 //     triggers; idempotent (Cloud Scheduler jobs are platform-managed).
 //   - `runImportNow` — manager-invoked one-shot importer run. Returns
-//     a summary of inserted/deleted/warnings.
+//     the typed `ImportSummary` from `@kindoo/shared`.
 //
 // Both wrappers `httpsCallable` the function and surface a friendly
-// error message when the function isn't deployed yet ("not-found"). The
-// caller (BootstrapWizardPage / ImportPage) decides whether to surface
-// that as a warn toast vs error toast.
+// error message when the function isn't deployed yet ("not-found").
 
 import { getFunctions, httpsCallable, type HttpsCallableResult } from 'firebase/functions';
+import type { ImportSummary } from '@kindoo/shared';
 import { firebaseApp } from '../../lib/firebase';
 
 const functions = getFunctions(firebaseApp);
@@ -41,23 +39,15 @@ export async function invokeInstallScheduledJobs(): Promise<InstallScheduledJobs
   }
 }
 
-export interface RunImportNowResult {
-  ok: boolean;
-  summary?: string;
-  inserted?: number;
-  deleted?: number;
-  warnings?: string[];
-}
-
 /**
- * Invoke `runImportNow` for the current stake. The Phase 8 backend
- * passes the stake id; v1 single-stake hardcodes `csnorth` (per F15)
- * and the function reads `STAKE_ID` from the request payload.
+ * Invoke `runImportNow` for the named stake. Returns the full
+ * `ImportSummary` (insert / update / delete counts, duration, errors,
+ * over-cap pools) — the SPA renders this inline on the Import page.
  */
-export async function invokeRunImportNow(stakeId: string): Promise<RunImportNowResult> {
-  const fn = httpsCallable<{ stakeId: string }, RunImportNowResult>(functions, 'runImportNow');
+export async function invokeRunImportNow(stakeId: string): Promise<ImportSummary> {
+  const fn = httpsCallable<{ stakeId: string }, ImportSummary>(functions, 'runImportNow');
   try {
-    const res: HttpsCallableResult<RunImportNowResult> = await fn({ stakeId });
+    const res: HttpsCallableResult<ImportSummary> = await fn({ stakeId });
     return res.data;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
