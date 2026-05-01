@@ -1280,6 +1280,22 @@ _Manual_
 
 ---
 
+## Phase 10.3 — UI polish (urgent flag, queue sections, sort, contextual utilization)
+
+**Goal:** Six UX polish items across request and roster surfaces. Adds an `urgent: boolean` field on requests with a red top-bar visual marker on pending cards; restructures the manager Queue into Urgent / Outstanding / Future sections by computed `comparison_date` (start_date for `add_temp`; submitted_at otherwise) with a today+7 cutoff at user-local midnight; relocates the My Requests Cancel button onto the pill row; renames "Notifications enabled" to "Email Notifications Enabled"; adds a contextual `<UtilizationBar>` above the All Seats table that follows the current scope filter; introduces a denormalized `sort_order` on seats and access docs (sourced from calling-template `sheet_order` via the importer's `TemplateIndex`) so rosters and All Seats sort by calling priority within each scope.
+
+**Owner:** web-engineer (web + shared schema); backend-engineer (`firestore.rules` tightening + importer denormalization).
+
+**Dependencies:** Phase 6 (request lifecycle — the `urgent` field and queue sectioning extend the pending-request surface), Phase 8 (importer — populates new `sort_order` on seats and access docs).
+
+**Status:** [DONE — see [`docs/changelog/phase-10.3-ui-polish.md`](changelog/phase-10.3-ui-polish.md)]
+
+### Sub-tasks
+
+Six items shipped over seven commits (one shared-schema prep, four feature batches, one backend lane, one E2E follow-up). See the changelog for the full surface and operator-decided deviations from the pre-phase brief.
+
+---
+
 ## Phase 10.5 — Push notifications via FCM Web (deferred)
 
 **Goal:** Managers receive a push notification when a new request is submitted, paralleling the email. Per-user opt-in respected. Email remains the source-of-truth channel.
