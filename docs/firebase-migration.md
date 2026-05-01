@@ -1296,6 +1296,24 @@ Six items shipped over seven commits (one shared-schema prep, four feature batch
 
 ---
 
+## Phase 10.4 — Auto Kindoo Access overhaul
+
+**Goal:** Decouple "auto-seat creation" from "matched-a-template" by introducing a new `auto_kindoo_access: boolean` field on calling-template docs alongside the existing `give_app_access`. The Auto Ward Callings + Auto Stake Callings tabs are rebuilt as table views with three columns (Calling Name, Auto Kindoo Access, Can Request Access) and drag-to-reorder (mouse) / tap-and-hold + arrows (touch). The `give_app_access` field is renamed in the UI to "Can Request Access" (Firestore field name unchanged).
+
+**Owner:** web-engineer (web + shared schema + UI + drag-and-drop + post-deploy runbook); backend-engineer (importer gate change).
+
+**Dependencies:** Phase 8 (importer — adds the new gate condition), Phase 10.3 (sort_order denorm — new filter must preserve the MIN-across-callings invariant).
+
+**Status:** [DONE — see [`docs/changelog/phase-10.4-auto-kindoo-access.md`](changelog/phase-10.4-auto-kindoo-access.md)]
+
+**Destructive-on-first-import warning:** the importer's seat-creation gate moves from "calling matches a template" to "calling matches a template AND `auto_kindoo_access === true`." Existing templates have no field → treated as false → all auto seats whose calling no longer flags `auto_kindoo_access=true` are deleted on the first import after deploy. Operator runs [`docs/runbooks/post-10.4-deploy.md`](runbooks/post-10.4-deploy.md) before triggering.
+
+### Sub-tasks
+
+Four sub-changes (A schema, B importer, C UI, D drag-and-drop) shipped on one branch. See the changelog for the full surface and the operator runbook for pre-import setup.
+
+---
+
 ## Phase 10.5 — Push notifications via FCM Web (deferred)
 
 **Goal:** Managers receive a push notification when a new request is submitted, paralleling the email. Per-user opt-in respected. Email remains the source-of-truth channel.
