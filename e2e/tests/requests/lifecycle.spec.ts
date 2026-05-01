@@ -143,8 +143,12 @@ test.describe('Phase 6 — bishopric add_manual lifecycle', () => {
     // Click Mark Complete on the first card.
     const completeButton = managerPage.locator('[data-testid^="queue-complete-"]').first();
     await completeButton.click();
-    // Tick a building and confirm.
-    await managerPage.locator('[data-testid="complete-building-cordera-building"]').click();
+    // Ward-scope requests auto-populate building_names from the ward's
+    // building_name on submit, so the building is already ticked in the
+    // Mark Complete dialog. Confirm directly.
+    await expect(
+      managerPage.locator('[data-testid="complete-building-cordera-building"]'),
+    ).toBeChecked();
     await managerPage.getByTestId('complete-add-confirm').click();
 
     // Bishopric: request flips to complete on MyRequests.
