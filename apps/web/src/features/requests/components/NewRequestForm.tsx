@@ -23,7 +23,7 @@ import { useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { canonicalEmail } from '@kindoo/shared';
-import type { Building, Seat } from '@kindoo/shared';
+import type { Building, Seat, Ward } from '@kindoo/shared';
 import { newRequestSchema, type NewRequestForm } from '../schemas';
 import { useSubmitRequest, useSeatForMember } from '../hooks';
 import { Input } from '../../../components/ui/Input';
@@ -44,13 +44,18 @@ export interface NewRequestFormProps {
   scopes: ScopeOption[];
   /** Buildings available for stake-scope requests; pre-loaded from Firestore. */
   buildings: readonly Building[];
+  /** Wards catalogue. Used to auto-populate `building_names` for ward-scope
+   *  requests from each ward's `building_name`. Empty when no wards are
+   *  loaded yet — submission falls back to an empty list and the manager
+   *  picks at completion. */
+  wards: readonly Ward[];
 }
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function NewRequestForm({ scopes, buildings }: NewRequestFormProps) {
+export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps) {
   const submit = useSubmitRequest();
   const initialScope = scopes[0]?.value ?? '';
   const form = useForm<NewRequestForm>({
@@ -94,16 +99,18 @@ export function NewRequestForm({ scopes, buildings }: NewRequestFormProps) {
     return null;
   }, [dupSeat, watchedScope]);
 
-  // Some renderers (e.g. RHF + uncontrolled checkboxes) need an
-  // explicit reset of the building_names array when the scope flips
-  // away from `'stake'`. Bishopric scope renders no buildings selector;
-  // any prior selection persisting after a scope change would silently
-  // submit. Clear on scope change to keep the wire shape honest.
+  // Ward-scope requests skip the buildings UI entirely; the form
+  // auto-populates `building_names` from the ward's `building_name`.
+  // Stake-scope still shows checkboxes. Empty `building_name` (ward
+  // not yet bound to a building) submits `[]` and the manager picks
+  // at completion. Stake-scope clears any inherited ward populating
+  // so the user's checkbox selection is the only source.
   useEffect(() => {
-    if (watchedScope !== 'stake') {
-      setValue('building_names', [], { shouldValidate: false });
-    }
-  }, [watchedScope, setValue]);
+    if (watchedScope === 'stake') return;
+    const ward = wards.find((w) => w.ward_code === watchedScope);
+    const next = ward && ward.building_name ? [ward.building_name] : [];
+    setValue('building_names', next, { shouldValidate: false });
+  }, [watchedScope, wards, setValue]);
 
   const onSubmit = handleSubmit(async (input) => {
     try {

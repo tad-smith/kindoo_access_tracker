@@ -360,12 +360,17 @@
   font-style: italic;
 }
 
-.kd-audit-pagination {
+/* Infinite-scroll sentinel + end-of-list marker for the Audit Log. */
+.kd-audit-infinite-sentinel {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 12px 0;
-  flex-wrap: wrap;
+  justify-content: center;
+  padding: 16px 0;
+}
+.kd-audit-end {
+  color: var(--kd-fg-3);
+  font-size: 0.88em;
+  font-style: italic;
+  margin: 0;
 }
 
 /* Access page card list. Mirrors the Apps Script split-ownership

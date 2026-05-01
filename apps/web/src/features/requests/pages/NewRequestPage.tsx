@@ -85,7 +85,7 @@ export function NewRequestPage() {
       {buildings.isLoading || buildings.data === undefined || wardsLoading ? (
         <LoadingSpinner />
       ) : (
-        <NewRequestForm scopes={scopes} buildings={buildings.data} />
+        <NewRequestForm scopes={scopes} buildings={buildings.data} wards={wards.data ?? []} />
       )}
     </section>
   );

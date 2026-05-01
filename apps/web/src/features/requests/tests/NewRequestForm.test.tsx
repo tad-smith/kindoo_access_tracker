@@ -14,7 +14,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Building, Seat } from '@kindoo/shared';
+import type { Building, Seat, Ward } from '@kindoo/shared';
 
 const submitMock = vi.fn().mockResolvedValue({ id: 'req-stub' });
 const useSeatForMemberMock = vi.fn();
@@ -43,6 +43,22 @@ function liveSeatResult(seat: Seat | undefined) {
     isFetching: false,
     fetchStatus: 'idle',
   } as const;
+}
+
+function wards(opts: { code: string; building_name: string }[] = []): Ward[] {
+  const stamp = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+  return opts.map(
+    ({ code, building_name }) =>
+      ({
+        ward_code: code,
+        ward_name: `Ward ${code}`,
+        building_name,
+        seat_cap: 20,
+        created_at: stamp,
+        last_modified_at: stamp,
+        lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+      }) as unknown as Ward,
+  );
 }
 
 function buildings(): Building[] {
@@ -83,13 +99,19 @@ beforeEach(() => {
 
 describe('<NewRequestForm /> — validation', () => {
   it('renders an error when the principal has no scopes available', () => {
-    render(<NewRequestForm scopes={[]} buildings={buildings()} />);
+    render(<NewRequestForm scopes={[]} buildings={buildings()} wards={[]} />);
     expect(screen.getByText(/don't hold a bishopric or stake role/i)).toBeInTheDocument();
   });
 
   it('blocks submit on empty member name', async () => {
     const user = userEvent.setup();
-    render(<NewRequestForm scopes={[{ value: 'CO', label: 'Ward CO' }]} buildings={buildings()} />);
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
     await user.type(screen.getByTestId('new-request-reason'), 'sub teacher');
     await user.click(screen.getByTestId('new-request-submit'));
@@ -99,7 +121,13 @@ describe('<NewRequestForm /> — validation', () => {
 
   it('blocks submit on empty reason', async () => {
     const user = userEvent.setup();
-    render(<NewRequestForm scopes={[{ value: 'CO', label: 'Ward CO' }]} buildings={buildings()} />);
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
     await user.type(screen.getByTestId('new-request-name'), 'Bob');
     await user.click(screen.getByTestId('new-request-submit'));
@@ -109,7 +137,13 @@ describe('<NewRequestForm /> — validation', () => {
 
   it('shows date inputs when type is add_temp and requires both dates', async () => {
     const user = userEvent.setup();
-    render(<NewRequestForm scopes={[{ value: 'CO', label: 'Ward CO' }]} buildings={buildings()} />);
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
     await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
     expect(screen.getByTestId('new-request-start-date')).toBeInTheDocument();
     expect(screen.getByTestId('new-request-end-date')).toBeInTheDocument();
@@ -123,7 +157,13 @@ describe('<NewRequestForm /> — validation', () => {
 
   it('rejects an end date before the start date', async () => {
     const user = userEvent.setup();
-    render(<NewRequestForm scopes={[{ value: 'CO', label: 'Ward CO' }]} buildings={buildings()} />);
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
     await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
     await user.type(screen.getByTestId('new-request-name'), 'Bob');
@@ -138,14 +178,24 @@ describe('<NewRequestForm /> — validation', () => {
   });
 
   it('hides the buildings fieldset for ward (bishopric) scope', () => {
-    render(<NewRequestForm scopes={[{ value: 'CO', label: 'Ward CO' }]} buildings={buildings()} />);
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
     expect(screen.queryByTestId('new-request-buildings')).toBeNull();
   });
 
   it('shows the buildings fieldset for stake scope and requires ≥1 ticked', async () => {
     const user = userEvent.setup();
     render(
-      <NewRequestForm scopes={[{ value: 'stake', label: 'Stake' }]} buildings={buildings()} />,
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
     );
     expect(screen.getByTestId('new-request-buildings')).toBeInTheDocument();
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
@@ -158,10 +208,57 @@ describe('<NewRequestForm /> — validation', () => {
     expect(submitMock).not.toHaveBeenCalled();
   });
 
+  it('auto-populates building_names from the ward.building_name on ward-scope', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    // Ward-scope hides the buildings fieldset.
+    expect(screen.queryByTestId('new-request-buildings')).toBeNull();
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    const call = submitMock.mock.calls[0]?.[0];
+    expect(call).toMatchObject({
+      scope: 'CO',
+      building_names: ['Cordera Building'],
+    });
+  });
+
+  it('submits with empty building_names when the ward has no building_name', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: '' }])}
+      />,
+    );
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({
+      scope: 'CO',
+      building_names: [],
+    });
+  });
+
   it('submits the cleaned payload when stake-scope add_manual is valid', async () => {
     const user = userEvent.setup();
     render(
-      <NewRequestForm scopes={[{ value: 'stake', label: 'Stake' }]} buildings={buildings()} />,
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
     );
     await user.type(screen.getByTestId('new-request-email'), 'Bob@Example.com');
     await user.type(screen.getByTestId('new-request-name'), '  Bob  ');
@@ -209,7 +306,11 @@ describe('<NewRequestForm /> — duplicate warning', () => {
       } as Seat),
     );
     render(
-      <NewRequestForm scopes={[{ value: 'stake', label: 'Stake' }]} buildings={buildings()} />,
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
     );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
     expect(await screen.findByTestId('new-request-duplicate-warning')).toBeInTheDocument();
@@ -239,7 +340,11 @@ describe('<NewRequestForm /> — duplicate warning', () => {
       } as Seat),
     );
     render(
-      <NewRequestForm scopes={[{ value: 'stake', label: 'Stake' }]} buildings={buildings()} />,
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
     );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
     expect(screen.queryByTestId('new-request-duplicate-warning')).toBeNull();

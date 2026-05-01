@@ -1,17 +1,15 @@
 // Manager Audit Log page. Mirrors `src/ui/manager/AuditLog.html`.
-// Cursor-paginated (request-response), filterable by action /
+// Infinite scroll (50 rows per page); fetches the next batch when the
+// user scrolls within ~300px of the bottom. Filterable by action /
 // entity_type / entity_id / actor_canonical / member_canonical / date
 // range. Per-row collapsed summary + `<details>` field-by-field diff
-// table (see `AuditDiffTable.tsx`). The `member_canonical` filter
-// produces cross-collection rows; the diff table walks each row's
-// before/after independently so heterogeneous shapes coexist.
+// table (see `AuditDiffTable.tsx`).
 
-import { useMemo, useState } from 'react';
-import { Timestamp } from 'firebase/firestore';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { canonicalEmail } from '@kindoo/shared';
 import type { AuditLog } from '@kindoo/shared';
-import { useAuditLogPage, PAGE_SIZE, type AuditLogFilters } from './hooks';
+import { useAuditLogInfinite, type AuditLogFilters } from './hooks';
 import { useStakeDoc } from '../dashboard/hooks';
 import { auditActionCategory, summariseAuditRow } from './summarise';
 import type { BadgeVariant } from '../../../components/ui/Badge';
@@ -31,21 +29,23 @@ export interface AuditLogPageProps {
 export function AuditLogPage({ initialFilters }: AuditLogPageProps) {
   const navigate = useNavigate();
   const [filters, setFilters] = useState<AuditLogFilters>(initialFilters ?? {});
-  // Stack of cursor timestamps — index 0 is the timestamp BEFORE the
-  // first page (no cursor); pushing a new cursor pages forward; popping
-  // pages back. The current page's cursor is `cursorStack[cursorStack.length - 1]`.
-  const [cursorStack, setCursorStack] = useState<(Timestamp | null)[]>([null]);
-  const cursor = cursorStack[cursorStack.length - 1] ?? null;
 
-  const result = useAuditLogPage(filters, cursor);
-  const rows = useMemo<readonly AuditLog[]>(() => result.data ?? [], [result.data]);
-  const hasMore = rows.length === PAGE_SIZE;
+  const result = useAuditLogInfinite(filters);
+  const rows = useMemo<readonly AuditLog[]>(
+    () => (result.data?.pages ?? []).flatMap((p) => p.rows),
+    [result.data],
+  );
   const stake = useStakeDoc();
   const tz = stake.data?.timezone;
 
   const onApply = (next: AuditLogFilters) => {
+    // Filter changes reset scroll position; the infinite query restarts
+    // by virtue of the new query-key. URL preserves filters but never
+    // scroll position.
     setFilters(next);
-    setCursorStack([null]);
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo({ top: 0 });
+    }
     navigate({
       to: '/manager/audit',
       search: stripEmpty(next),
@@ -53,24 +53,40 @@ export function AuditLogPage({ initialFilters }: AuditLogPageProps) {
     }).catch(() => {});
   };
 
-  const onNext = () => {
-    if (!hasMore) return;
-    const last = rows[rows.length - 1];
-    if (!last) return;
-    const ts = last.timestamp as unknown as Timestamp;
-    setCursorStack((prev) => [...prev, ts]);
-  };
-
-  const onPrev = () => {
-    if (cursorStack.length <= 1) return;
-    setCursorStack((prev) => prev.slice(0, -1));
-  };
-
   const onReset = () => {
     setFilters({});
-    setCursorStack([null]);
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo({ top: 0 });
+    }
     navigate({ to: '/manager/audit', search: {}, replace: true }).catch(() => {});
   };
+
+  // Sentinel-driven infinite scroll. The sentinel sits below the row
+  // list; when it intersects within 300px of the viewport bottom, we
+  // call fetchNextPage. IntersectionObserver fires once per state
+  // change, not per scroll event, so this is cheap.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const fetchNextPage = result.fetchNextPage;
+  const hasNextPage = result.hasNextPage;
+  const isFetchingNextPage = result.isFetchingNextPage;
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node) return undefined;
+    if (!hasNextPage || isFetchingNextPage) return undefined;
+    if (typeof IntersectionObserver === 'undefined') return undefined;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            fetchNextPage();
+          }
+        }
+      },
+      { rootMargin: '300px 0px' },
+    );
+    obs.observe(node);
+    return () => obs.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, rows.length]);
 
   return (
     <section>
@@ -81,28 +97,31 @@ export function AuditLogPage({ initialFilters }: AuditLogPageProps) {
 
       <FilterRow filters={filters} onApply={onApply} onReset={onReset} />
 
-      <div className="kd-audit-pagination">
-        <span data-testid="audit-page-counter">
-          Page {cursorStack.length} · {rows.length} row{rows.length === 1 ? '' : 's'}
-        </span>
-        <Button variant="secondary" onClick={onPrev} disabled={cursorStack.length <= 1}>
-          ← Prev
-        </Button>
-        <Button variant="secondary" onClick={onNext} disabled={!hasMore}>
-          Next →
-        </Button>
-      </div>
-
       {result.isLoading ? (
         <LoadingSpinner />
       ) : rows.length === 0 ? (
         <EmptyState message="No audit rows match the current filters." />
       ) : (
-        <div className="kd-audit-log-cards" data-testid="audit-log-cards">
-          {rows.map((row) => (
-            <AuditCard key={row.audit_id} row={row} timezone={tz} />
-          ))}
-        </div>
+        <>
+          <div className="kd-audit-log-cards" data-testid="audit-log-cards">
+            {rows.map((row) => (
+              <AuditCard key={row.audit_id} row={row} timezone={tz} />
+            ))}
+          </div>
+          <div
+            ref={sentinelRef}
+            className="kd-audit-infinite-sentinel"
+            data-testid="audit-log-sentinel"
+          >
+            {isFetchingNextPage ? (
+              <LoadingSpinner />
+            ) : !hasNextPage ? (
+              <p className="kd-audit-end" data-testid="audit-log-end">
+                No more entries.
+              </p>
+            ) : null}
+          </div>
+        </>
       )}
     </section>
   );
@@ -225,11 +244,6 @@ function AuditCard({ row, timezone }: AuditCardProps) {
   // Stake-timezone formatting per spec.md §13: `YYYY-MM-DD h:mm am/pm`.
   const tsString = formatDateTimeInStakeTz(row.timestamp, timezone);
   const automated = row.actor_email === 'Importer' || row.actor_email === 'ExpiryTrigger';
-  // Hide bare canonical-email entity ids in the compact row — surface
-  // the typed `member_email` from before/after when available so the
-  // user sees the same display form they typed in. Canonical-keyed
-  // entity types: seat, access, kindooManager. Other types (request /
-  // stake) keep entity_id as-is.
   const entityIdDisplay = displayEntityId(row);
 
   return (
@@ -298,9 +312,7 @@ function pickMemberEmail(payload: unknown): string | null {
 /** Convert user-typed actor / member emails to canonical form for the
  *  Firestore query. Literal automated actors (`Importer`,
  *  `ExpiryTrigger`) pass through unchanged because they're not real
- *  emails. The entity_id field is left unchanged here — the hook
- *  fans out to a typed-OR-canonical match in the worst case (see
- *  `useAuditLogPage`'s entity_id branch). */
+ *  emails. */
 function canonicalizeFilters(filters: AuditLogFilters): AuditLogFilters {
   const out: AuditLogFilters = { ...filters };
   if (out.actor_canonical) {
@@ -312,10 +324,6 @@ function canonicalizeFilters(filters: AuditLogFilters): AuditLogFilters {
   }
   if (out.entity_id) {
     const trimmed = out.entity_id.trim();
-    // For email-shaped entity ids, normalise to canonical form because
-    // seat / access / kindooManager doc ids are always canonical. The
-    // hook's query treats the value as exact-match either way; this
-    // just lets the user type the displayed (typed) form.
     out.entity_id = trimmed.includes('@') ? canonicalEmail(trimmed) : trimmed;
   }
   return out;
