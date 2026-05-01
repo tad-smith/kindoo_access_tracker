@@ -1,7 +1,7 @@
 # Phase 10.3 — UI polish (urgent flag, queue sections, sort, contextual utilization)
 
 **Shipped:** 2026-04-29
-**Commits:** see PR [#37](https://github.com/tad-smith/kindoo_access_tracker/pull/37) (7 commits on `phase-10.3-ui-polish`).
+**Commits:** see PR [#37](https://github.com/tad-smith/kindoo_access_tracker/pull/37) (8 commits on `phase-10.3-ui-polish`).
 
 ## What shipped
 
@@ -9,7 +9,7 @@ Six UX polish items across the request and roster surfaces. A new `urgent: boole
 
 The backend lane on the same branch tightened `firestore.rules` (urgent validation, `add_temp` ISO date enforcement with start ≤ end, terminal-transition `affectedKeys` allowlists made explicit) and taught the importer to denormalize `sort_order` on every write, with the diff planner honouring it for change detection.
 
-The phase shipped over 7 commits: one shared-schema prep, four feature batches, one backend lane, one E2E follow-up.
+The phase shipped over 8 commits: one shared-schema prep, four feature batches, one backend lane, one E2E follow-up, and one urgent-checkbox refinement.
 
 ### Shared schema prep (`b6eece7`)
 
@@ -56,6 +56,15 @@ New `apps/web/src/features/rosters/sort.ts` helper. The auto section of every ro
 ### E2E follow-up (`a4da749`)
 
 `e2e/tests/` — the Playwright spec exercising the queue heading was asserting on the pre-phase title; updated to expect "Request Queue". No production code change.
+
+### Urgent-checkbox refinement (`46f8d26`)
+
+Three operator-driven UI tweaks layered on top of #0:
+
+- **Right-aligned `.kd-urgent-block`.** New CSS wrapper flex-aligns the Urgent checkbox + helper text to the right edge so they sit directly above the right-aligned Submit button. Helper text uses `text-align: right` so it stays under the checkbox when revealed.
+- **Helper copy refreshed.** Now reads: *"Urgent requests go to the top of the queue. A comment is required so the manager understands why this jumped the line."* Replaces the original error-styled hint.
+- **Inline form-error dropped under Comment** when urgent is checked. The right-aligned helper above conveys the same information; the duplicate was visual noise. Submit-gate is unchanged (still enforced at the schema level); the test was simplified to assert the observable (submit blocked) without the inline-text assertion.
+- **Comment label suffix wording** changed from "(required)" to "(Require for urgent requests)" per operator copy.
 
 ## Decisions made during the phase
 
