@@ -33,7 +33,7 @@ The pure-client + minimal-Cloud-Functions approach trades a centralised service 
 | F8 | **Audit log via Cloud Function triggers** (Option A) writing to a flat `auditLog` collection per stake. Eventually consistent (~<1s). Nightly reconciliation job catches any gaps. | Conventional pattern; simpler client code; Admin-SDK paths (importer/expiry) fan in audit identically to client paths. Option B (embedded history with `getAfter()`) considered and parked — its atomicity advantage covered <50% of audit volume due to Admin-SDK rule bypass. |
 | F9 | **Two Firebase projects: `kindoo-staging` and `kindoo-prod`.** Same code, different data. | Standard practice; lets the migration script rehearse against a snapshot in staging without risking production. |
 | F10 | **HTTPS via Firebase Hosting auto-provisioned certs.** Required for PWA service workers. | Free with Hosting; eliminates the prior plan's F12 trade-off (HTTP-only). |
-| F11 | **PWA from day one via `vite-plugin-pwa`.** Service worker, manifest, install prompt all configured early. Push via FCM lands in Phase 10. | User specifically requested PWA-readiness as a long-term capability. Building this in early is cheaper than retrofitting. |
+| F11 | **PWA from day one via `vite-plugin-pwa`.** Service worker, manifest, install prompt all configured early. Push via FCM is deferred to Phase 10.5. | User specifically requested PWA-readiness as a long-term capability. Building this in early is cheaper than retrofitting. |
 | F12 | **Big-bang cutover** during a maintenance window. Apps Script stays as rollback for ~one week, then retires. | 1–2 requests/week; no dual-writes worth the complexity. Same as prior plan. |
 | F13 | **Tests are non-negotiable; CI gates every PR.** Vitest (unit + integration), `@firebase/rules-unit-testing` (rules), Playwright (E2E), React Testing Library (component). No phase merges without green CI. | Past pain on the Apps Script side: integration bugs surfaced only at user-facing-flow time. Rigor up front makes each phase independently shippable. |
 | F14 | **Repo layout side-by-side during migration.** New code in monorepo at repo root (`apps/web/`, `functions/`, `firestore/`, `packages/shared/`, `infra/`, `e2e/`); existing `src/` and `identity-project/` untouched until Phase 11's cutover. | Keeps the live app deployable for rollback throughout. Phase 11 retires `src/` and `identity-project/`; their git history is preserved. |
@@ -182,7 +182,7 @@ kindoo/
              │   ├─ 5 Read-side pages
              │   │   └─ 6 Write-side pages — request lifecycle
              │   │       └─ 7 Manager admin pages + bootstrap wizard
-             │   │           └─ 10 PWA + push notifications
+             │   │           └─ 10 PWA shell + branding
              │   │               └─ 11 Data migration + cutover  ◄─── end of Phase A
              │   │                   └─ 12 Multi-stake (Phase B)
              │   └─ 8 Importer + Expiry + audit triggers
@@ -191,6 +191,8 @@ kindoo/
 ```
 
 Phase 5 → 6 → 7 is web-engineer's serial path. Phase 8 → 9 is backend-engineer's serial path. Once Phase 4 ships, both arcs run in parallel until they converge for Phase 10. Phase 11 is everyone-on-deck for the cutover window. Phase 3.5 is a single-pass infra refresh (replacing reactfire + bumping major deps) that all downstream phases inherit.
+
+Phase 10.5 (FCM push notifications) is deferred and not shown in the tree above; it runs only after operator-driven re-prioritization and is not gated on Phase 11 cutover.
 
 ---
 
@@ -1183,17 +1185,17 @@ _Manual (during phase ship; not CI-gated)_
 - HTML templates — plain text for v1.
 - Bounce handling, suppression lists, click tracking.
 - Test-send admin button.
-- Push notifications — Phase 10.
+- Push notifications — Phase 10.5 (deferred).
 
 ---
 
-## Phase 10 — PWA + push notifications
+## Phase 10 — PWA shell + branding
 
-**Goal:** App is installable as a PWA on mobile + desktop; service worker caches static assets and shell; users can opt into push notifications via FCM Web. Managers receive a push notification when a new request is submitted (paralleling the email).
+**Goal:** App is installable as a PWA on mobile + desktop; service worker caches static assets and shell; users see "Update available" prompts when a new version deploys. Favicon + brand-bar icon land alongside the install-time branding.
 
-**Owner:** web-engineer (PWA shell + push UI); backend-engineer (FCM registration triggers + push send Cloud Functions).
+**Owner:** web-engineer.
 
-**Dependencies:** Phase 6 (request lifecycle), Phase 9 (email patterns extended to push).
+**Dependencies:** Phase 4 (web SPA shell).
 
 ### Sub-tasks
 
@@ -1205,6 +1207,57 @@ _PWA shell_
 - [ ] Install-prompt UX: small "Install Stake Building Access" affordance in topbar when `beforeinstallprompt` event fires.
 - [ ] Update prompt: when SW detects a new version, toast "Update available — refresh to update."
 - [ ] Offline shell: app shell loads from cache when offline; data layer surfaces "Offline" toast.
+
+_Branding_
+
+- [ ] Migrate existing favicon assets from `website/images/` (`favicon.ico`, `favicon.svg`, `favicon-16x16.png`, `favicon-32x32.png`, `apple-touch-icon.png`) to `apps/web/public/`. Wire `<link rel="icon">` and Apple touch icon in `apps/web/index.html`.
+- [ ] If the existing assets visually mismatch the new "Stake Building Access" brand (F17), flag for operator review before proceeding — do not ship wrong-brand icons.
+- [ ] Brand-bar icon: add the icon next to the wordmark in the topbar (small variant, same source as the favicon).
+
+### Tests
+
+_Unit_
+
+- [ ] Install-prompt UX shown only when `beforeinstallprompt` fired.
+
+_E2E (Playwright + service worker support)_
+
+- [ ] PWA install prompt appears on first sign-in.
+- [ ] Service worker registers; cached assets load offline.
+- [ ] Update flow: deploy new version → SW detects → toast prompts user.
+
+_Manual_
+
+- [ ] iOS install (Safari → Add to Home Screen) — verify icon + standalone mode.
+- [ ] Android install (Chrome) — verify install banner.
+- [ ] Favicon renders correctly in Chrome / Safari / Firefox tabs.
+- [ ] Brand-bar icon renders correctly at the topbar's intended size.
+
+### Acceptance criteria
+
+- App installable on iOS, Android, desktop (Chrome/Edge).
+- Service worker caches shell; offline mode surfaces gracefully.
+- Update prompt surfaces when a new version deploys.
+- Favicon + brand-bar icon ship.
+
+### Out of scope
+
+- All FCM push notifications — Phase 10.5.
+- New icon / brand redesign — separate task if needed.
+
+---
+
+## Phase 10.5 — Push notifications via FCM Web (deferred)
+
+**Goal:** Managers receive a push notification when a new request is submitted, paralleling the email. Per-user opt-in respected. Email remains the source-of-truth channel.
+
+**Owner:** web-engineer (PWA shell + push UI); backend-engineer (FCM registration triggers + push send Cloud Functions).
+
+**Dependencies:** Phase 9 (email patterns extended to push), Phase 10 (PWA shell registers the service worker that handles background push).
+
+**Status:** Deferred. Move out of "deferred" when the operator decides push is needed.
+
+### Sub-tasks
 
 _FCM Web push_
 
@@ -1226,13 +1279,12 @@ _Cloud Function push send_
 _Per-user notification preferences_
 
 - [ ] `userIndex/{canonical}.notificationPrefs.push.newRequest = true|false` (default true if registered).
-- [ ] Future: per-category toggles. Phase 10 only ships "new request" push.
+- [ ] Future: per-category toggles. Phase 10.5 only ships "new request" push.
 
 ### Tests
 
 _Unit_
 
-- [ ] Install-prompt UX shown only when `beforeinstallprompt` fired.
 - [ ] FCM token write helper appends deterministically (no duplicate tokens for same device).
 
 _Integration (FCM mock)_
@@ -1241,29 +1293,19 @@ _Integration (FCM mock)_
 - [ ] Invalid token returns from FCM → token removed from userIndex.
 - [ ] No tokens registered → push silently skipped (email path covers).
 
-_E2E (Playwright + service worker support)_
-
-- [ ] PWA install prompt appears on first sign-in.
-- [ ] Service worker registers; cached assets load offline.
-- [ ] Update flow: deploy new version → SW detects → toast prompts user.
-
 _Manual_
 
 - [ ] Real push to a registered device.
-- [ ] iOS install (Safari → Add to Home Screen) — verify icon + standalone mode.
-- [ ] Android install (Chrome) — verify install banner.
 
 ### Acceptance criteria
 
-- App installable on iOS, Android, desktop (Chrome/Edge).
-- Service worker caches shell; offline mode surfaces gracefully.
 - Push notifications work for at least one notification type (new request).
 - Per-user push opt-in respected.
 - Email continues to work as the source-of-truth channel.
 
 ### Out of scope
 
-- Push for completion / rejection / cancellation / over-cap — Phase 10.5 if measured need.
+- Push for completion / rejection / cancellation / over-cap — separate follow-up if measured need.
 - iOS push (requires PWA installed; Safari support is recent).
 - Notification grouping / silencing windows.
 
@@ -1275,7 +1317,7 @@ _Manual_
 
 **Owner:** All agents on deck. infra-engineer leads the cutover; backend-engineer owns the migration script; web-engineer validates the deployed app; docs-keeper updates spec/architecture in lockstep.
 
-**Dependencies:** Phases 1–10.
+**Dependencies:** Phases 1–10. (Phase 10.5 is deferred; Phase 11 cutover is not gated on it.)
 
 ### Sub-tasks
 
