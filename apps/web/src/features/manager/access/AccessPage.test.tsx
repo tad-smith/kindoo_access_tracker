@@ -101,7 +101,9 @@ describe('<AccessPage />', () => {
     render(<AccessPage />);
     expect(screen.queryByTestId('access-section-importer')).toBeNull();
     expect(screen.getByTestId('access-section-manual')).toBeInTheDocument();
-    expect(screen.getByText(/covering bishop/i)).toBeInTheDocument();
+    // "Covering bishop" appears in both the desktop table and the
+    // mobile-card view; both are mounted, CSS picks which is visible.
+    expect(screen.getAllByText(/covering bishop/i).length).toBeGreaterThan(0);
   });
 
   it('renders both sections for a split-ownership user', () => {
@@ -225,6 +227,39 @@ describe('<AccessPage />', () => {
     expect(addManualMutate).toHaveBeenCalledWith(
       expect.objectContaining({ member_email: 'sub@example.com', reason: 'Covering bishop' }),
     );
+  });
+
+  it('renders a desktop table with the Apps Script column order', () => {
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          importer_callings: { CO: ['Bishop'] },
+          manual_grants: {
+            stake: [
+              {
+                grant_id: 'g1',
+                reason: 'Covering bishop',
+                granted_by: { email: 'm@x.com', canonical: 'm@x.com' },
+                granted_at: {
+                  seconds: 0,
+                  nanoseconds: 0,
+                  toDate: () => new Date(),
+                  toMillis: () => 0,
+                },
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    const table = screen.getByTestId('access-table');
+    const headers = Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent);
+    expect(headers).toEqual(['Scope', 'Calling / reason', 'Email', 'Source', 'Actions']);
+    // Two rows: one importer (CO/Bishop) + one manual (stake/Covering bishop).
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(2);
   });
 
   it('opens the delete confirmation dialog when a grant Delete is clicked', async () => {

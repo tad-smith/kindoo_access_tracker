@@ -151,18 +151,27 @@ export function AccessPage() {
       ) : sorted.length === 0 ? (
         <EmptyState message='No access rows. Run the importer or add a manual grant via "Add Manual Access".' />
       ) : (
-        <div className="kd-access-cards" data-testid="access-cards">
-          {sorted.map((a) => (
-            <AccessCard
-              key={a.member_canonical}
-              access={a}
-              scopeFilter={scopeFilter}
-              onDeleteRequest={(scope, grant) =>
-                setPendingDelete({ canonical: a.member_canonical, scope, grant })
-              }
-            />
-          ))}
-        </div>
+        <>
+          <AccessTable
+            users={sorted}
+            scopeFilter={scopeFilter}
+            onDeleteRequest={(canonical, scope, grant) =>
+              setPendingDelete({ canonical, scope, grant })
+            }
+          />
+          <div className="kd-access-cards kd-responsive-cards-phone" data-testid="access-cards">
+            {sorted.map((a) => (
+              <AccessCard
+                key={a.member_canonical}
+                access={a}
+                scopeFilter={scopeFilter}
+                onDeleteRequest={(scope, grant) =>
+                  setPendingDelete({ canonical: a.member_canonical, scope, grant })
+                }
+              />
+            ))}
+          </div>
+        </>
       )}
 
       <AddManualGrantDialog open={addOpen} onClose={() => setAddOpen(false)} />
@@ -187,6 +196,119 @@ export function AccessPage() {
         </Dialog.Footer>
       </Dialog>
     </section>
+  );
+}
+
+// Desktop table view — one row per (scope, calling/reason, email,
+// source) tuple, mirroring the Apps Script Access.html column shape.
+// The card list above renders the same data grouped per-user; CSS
+// picks which view is visible at 899px.
+
+interface AccessTableRow {
+  canonical: string;
+  email: string;
+  scope: string;
+  calling: string;
+  source: 'importer' | 'manual';
+  /** Set only when source === 'manual'; carries the grant for delete. */
+  grant?: ManualGrant;
+}
+
+function flattenAccess(users: readonly Access[], scopeFilter: string): AccessTableRow[] {
+  const rows: AccessTableRow[] = [];
+  for (const u of users) {
+    for (const [scope, callings] of Object.entries(u.importer_callings ?? {})) {
+      if (scopeFilter && scope !== scopeFilter) continue;
+      for (const calling of callings) {
+        rows.push({
+          canonical: u.member_canonical,
+          email: u.member_email,
+          scope,
+          calling,
+          source: 'importer',
+        });
+      }
+    }
+    for (const [scope, grants] of Object.entries(u.manual_grants ?? {})) {
+      if (scopeFilter && scope !== scopeFilter) continue;
+      for (const g of grants) {
+        rows.push({
+          canonical: u.member_canonical,
+          email: u.member_email,
+          scope,
+          calling: g.reason,
+          source: 'manual',
+          grant: g,
+        });
+      }
+    }
+  }
+  // Sort: scope (stake first, then alpha), calling, email.
+  rows.sort((a, b) => {
+    if (a.scope !== b.scope) {
+      if (a.scope === 'stake') return -1;
+      if (b.scope === 'stake') return 1;
+      return a.scope.localeCompare(b.scope);
+    }
+    if (a.calling !== b.calling) return a.calling.localeCompare(b.calling);
+    return a.email.localeCompare(b.email);
+  });
+  return rows;
+}
+
+interface AccessTableProps {
+  users: readonly Access[];
+  scopeFilter: string;
+  onDeleteRequest: (canonical: string, scope: string, grant: ManualGrant) => void;
+}
+
+function AccessTable({ users, scopeFilter, onDeleteRequest }: AccessTableProps) {
+  const rows = useMemo(() => flattenAccess(users, scopeFilter), [users, scopeFilter]);
+  return (
+    <table className="kd-access-table kd-responsive-table-desktop" data-testid="access-table">
+      <thead>
+        <tr>
+          <th>Scope</th>
+          <th>Calling / reason</th>
+          <th>Email</th>
+          <th>Source</th>
+          <th className="kd-access-table-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={`${r.canonical}|${r.scope}|${r.source}|${r.calling}|${i}`}>
+            <td>
+              <code>{r.scope}</code>
+            </td>
+            <td>{r.calling}</td>
+            <td>
+              <span className="roster-email" title={r.email}>
+                {r.email}
+              </span>
+            </td>
+            <td>
+              {r.source === 'manual' ? (
+                <Badge variant="manual">manual</Badge>
+              ) : (
+                <Badge variant="default">importer</Badge>
+              )}
+            </td>
+            <td className="kd-access-table-actions">
+              {r.source === 'manual' && r.grant ? (
+                <Button
+                  variant="danger"
+                  onClick={() => onDeleteRequest(r.canonical, r.scope, r.grant!)}
+                  data-testid={`access-table-delete-${r.canonical}-${r.grant.grant_id}`}
+                >
+                  Delete
+                </Button>
+              ) : null}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

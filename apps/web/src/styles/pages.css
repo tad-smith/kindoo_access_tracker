@@ -378,6 +378,55 @@
   max-width: 820px;
 }
 
+/* Responsive table-vs-card switch at 899px (Apps Script's breakpoint
+   from `Styles.html` lines 833-836). Render both, CSS picks. */
+.kd-responsive-cards-phone {
+  display: none;
+}
+.kd-responsive-table-desktop {
+  display: table;
+}
+@media (max-width: 899px) {
+  .kd-responsive-cards-phone {
+    display: flex;
+  }
+  .kd-responsive-table-desktop {
+    display: none;
+  }
+}
+
+/* Access page desktop table. Column order mirrors Apps Script
+   `manager/Access.html` lines 92-95: Scope, Calling/reason, Email,
+   Source, Actions. */
+.kd-access-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid var(--kd-border);
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 0.92em;
+}
+.kd-access-table th,
+.kd-access-table td {
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--kd-border-soft);
+}
+.kd-access-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.kd-access-table th {
+  background: var(--kd-border-soft);
+  font-weight: 600;
+  color: var(--kd-fg-2);
+}
+.kd-access-table-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
 .kd-access-card {
   border: 1px solid var(--kd-border);
   border-radius: 6px;
