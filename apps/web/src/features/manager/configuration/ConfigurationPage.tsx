@@ -903,7 +903,8 @@ function ConfigKeysTab() {
         <Input {...register('timezone')} />
       </label>
       <label>
-        <input type="checkbox" {...register('notifications_enabled')} /> Notifications enabled
+        <input type="checkbox" {...register('notifications_enabled')} /> Email Notifications
+        Enabled
       </label>
       {formState.errors.stake_name ? (
         <p role="alert" className="kd-form-error">
