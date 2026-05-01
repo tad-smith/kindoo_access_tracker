@@ -28,7 +28,10 @@ import { useFirestoreDoc } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
 import { STAKE_ID } from '../../lib/constants';
+import { useOnlineStatus } from '../../lib/pwa/useOnlineStatus';
 import { Nav } from './Nav';
+import { BrandIcon } from './BrandIcon';
+import { PwaInstallButton } from './PwaInstallButton';
 import { ToastHost } from '../ui/Toast';
 import './Shell.css';
 
@@ -41,6 +44,7 @@ interface ShellProps {
 export function Shell({ children }: ShellProps) {
   const principal = usePrincipal();
   const [signingOut, setSigningOut] = useState(false);
+  const online = useOnlineStatus();
 
   const version = (import.meta.env.VITE_APP_VERSION as string | undefined) ?? KINDOO_WEB_VERSION;
 
@@ -68,9 +72,20 @@ export function Shell({ children }: ShellProps) {
       <header className="kd-topbar">
         <div className="kd-topbar-inner">
           <div className="kd-topbar-brand">
+            <BrandIcon size={28} />
             <strong>{brandText}</strong>
           </div>
           <div className="kd-topbar-meta">
+            {!online ? (
+              <span
+                className="kd-topbar-offline"
+                role="status"
+                aria-live="polite"
+                data-testid="offline-indicator"
+              >
+                Offline
+              </span>
+            ) : null}
             <div className="kd-topbar-stake-slot" data-testid="stake-selector-slot">
               {/* Phase 12 stake selector lands here. Empty in v1. */}
             </div>
@@ -79,6 +94,7 @@ export function Shell({ children }: ShellProps) {
                 <span className="kd-topbar-email" title={principal.email}>
                   {principal.email}
                 </span>
+                <PwaInstallButton />
                 <button
                   type="button"
                   className="btn btn-secondary"

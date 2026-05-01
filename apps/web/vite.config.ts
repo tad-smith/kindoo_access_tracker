@@ -1,27 +1,26 @@
-// Vite config for the Kindoo SPA.
+// Vite config for the Stake Building Access SPA.
 //
-// Phase 4 wires:
+// Plugins (order matters):
 //   - `@tanstack/router-plugin/vite` (T-17): generates
-//     `src/routeTree.gen.ts` from file-based routes under
-//     `src/routes/`; `autoCodeSplitting: true` produces per-route JS
-//     chunks so heavyweight pages don't bloat the initial bundle.
-//   - React 19 plugin (must come AFTER the router plugin so route
-//     transforms see the file-based-route exports).
-//   - Dev server on 5173, preview on 4173 (Playwright targets preview).
+//     `src/routeTree.gen.ts` from file-based routes under `src/routes/`;
+//     `autoCodeSplitting: true` produces per-route JS chunks.
+//   - React 19 plugin must come AFTER the router plugin so route
+//     transforms see the file-based-route exports.
+//   - `@tailwindcss/vite` (T-18) reads `@theme` blocks from
+//     `src/styles/tailwind.css`.
+//   - `vite-plugin-pwa` last so its `injectManifest` build pass picks up
+//     the final asset list. Workbox strategies:
+//       * cache-first for fingerprinted static assets (JS/CSS/fonts/images)
+//       * network-first for `index.html` (avoid stale-shell lockout)
+//       * never cache Firebase traffic (Firestore/Auth/Installations)
 //
-// Phase 5 (T-18) adds Tailwind v4 via `@tailwindcss/vite`. Tailwind v4
-// reads its theme config from CSS (`@theme` in `src/styles/tailwind.css`)
-// rather than a JS config file; the design tokens from
-// `src/styles/tokens.css` are mirrored into Tailwind's color/spacing
-// scales so utility classes (`bg-kd-primary`, etc.) compose with the
-// existing component CSS without duplicating values.
-//
-// vite-plugin-pwa is deferred to Phase 10.
+// Dev server on 5173, preview on 4173 (Playwright targets preview).
 
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite';
 import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   plugins: [
@@ -29,11 +28,98 @@ export default defineConfig({
       routesDirectory: './src/routes',
       generatedRouteTree: './src/routeTree.gen.ts',
       autoCodeSplitting: true,
-      // Skip colocated test files (`*.test.tsx` / `*.test.ts`) during route scanning.
       routeFileIgnorePattern: '\\.test\\.',
     }),
     react(),
     tailwindcss(),
+    VitePWA({
+      registerType: 'prompt',
+      injectRegister: null,
+      includeAssets: [
+        'favicon.ico',
+        'favicon.svg',
+        'favicon-16x16.png',
+        'favicon-32x32.png',
+        'apple-touch-icon.png',
+      ],
+      manifest: {
+        name: 'Stake Building Access',
+        short_name: 'Building Access',
+        description: 'Door-access tracker for stake building keypad seats.',
+        theme_color: '#2b6cb0',
+        background_color: '#ffffff',
+        display: 'standalone',
+        orientation: 'portrait',
+        scope: '/',
+        start_url: '/',
+        icons: [
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+          {
+            src: '/icon-maskable-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
+      },
+      workbox: {
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/__\//],
+        // Network-first for the SPA shell; cache-first for fingerprinted
+        // bundle chunks (handled by precache); explicitly never cache
+        // Firebase backend traffic.
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) => url.pathname === '/' || url.pathname === '/index.html',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'sba-shell',
+              networkTimeoutSeconds: 3,
+              expiration: { maxEntries: 4, maxAgeSeconds: 60 * 60 * 24 * 7 },
+            },
+          },
+          {
+            urlPattern: ({ request, sameOrigin }) =>
+              sameOrigin && (request.destination === 'image' || request.destination === 'font'),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'sba-static-assets',
+              expiration: { maxEntries: 64, maxAgeSeconds: 60 * 60 * 24 * 30 },
+            },
+          },
+          {
+            urlPattern: /^https:\/\/firestore\.googleapis\.com\/.*/i,
+            handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: /^https:\/\/firebaseinstallations\.googleapis\.com\/.*/i,
+            handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: /^https:\/\/securetoken\.googleapis\.com\/.*/i,
+            handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: /^https:\/\/identitytoolkit\.googleapis\.com\/.*/i,
+            handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: /^https:\/\/.*\.firebaseio\.com\/.*/i,
+            handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: /^https:\/\/.*\.cloudfunctions\.net\/.*/i,
+            handler: 'NetworkOnly',
+          },
+        ],
+      },
+      devOptions: {
+        // Keep the SW out of `pnpm dev` to avoid HMR cache conflicts.
+        // Preview build (Playwright) registers it normally.
+        enabled: false,
+      },
+    }),
   ],
   server: {
     port: 5173,

@@ -1,0 +1,38 @@
+/* Update prompt strip. Pinned to the bottom of the viewport with
+   safe-area-inset padding so iOS standalone PWAs don't hide it under
+   the home indicator. */
+
+.kd-pwa-update {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  background: #fff;
+  color: var(--kd-fg-1);
+  border: 1px solid var(--kd-chrome-border);
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: 0.9em;
+  max-width: calc(100vw - 24px);
+}
+
+.kd-pwa-update-message {
+  font-weight: 500;
+}
+
+.kd-pwa-update-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.kd-pwa-update-action,
+.kd-pwa-update-dismiss {
+  padding: 6px 12px;
+  font-size: 0.9em;
+  border-radius: 999px;
+}
