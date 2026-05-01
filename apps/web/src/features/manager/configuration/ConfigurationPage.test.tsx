@@ -91,9 +91,9 @@ beforeEach(() => {
 });
 
 describe('<ConfigurationPage />', () => {
-  it('renders the wards tab by default', () => {
+  it('renders the Config tab by default (leftmost)', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
-    expect(screen.getByRole('heading', { name: /^Wards$/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^Stake config$/ })).toBeInTheDocument();
   });
 
   it('switches to the Buildings tab when clicked', async () => {
@@ -126,10 +126,25 @@ describe('<ConfigurationPage />', () => {
     expect(screen.getByText('a@x.com')).toBeInTheDocument();
   });
 
-  it('renders the Triggers placeholder', () => {
-    render(<ConfigurationPage initialTab="triggers" />, { wrapper: Wrapper });
-    expect(screen.getByTestId('config-triggers')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /Scheduled triggers/i })).toBeInTheDocument();
+  it('does not render a Triggers tab', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.queryByTestId('config-tab-triggers')).toBeNull();
+    expect(screen.queryByTestId('config-triggers')).toBeNull();
+  });
+
+  it('renders tabs in the operator-specified order', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    const labels = Array.from(document.querySelectorAll('.kd-config-tab')).map(
+      (el) => el.textContent,
+    );
+    expect(labels).toEqual([
+      'Config',
+      'Managers',
+      'Wards',
+      'Buildings',
+      'Auto Ward Callings',
+      'Auto Stake Callings',
+    ]);
   });
 
   it('shows ward-form validation error on empty submit', async () => {

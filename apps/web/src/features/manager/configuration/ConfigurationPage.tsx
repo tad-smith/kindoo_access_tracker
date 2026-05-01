@@ -1,21 +1,14 @@
 // Manager Configuration page — multi-tab CRUD over every editable
-// table. Mirrors `src/ui/manager/Config.html` from the Apps Script app
-// and the configuration sub-tasks in `firebase-migration.md` §Phase 7.
+// table. Mirrors `src/ui/manager/Config.html` from the Apps Script app.
 //
-// Tabs:
-//   - Wards
-//   - Buildings
-//   - Kindoo Managers
-//   - Ward Calling Templates
-//   - Stake Calling Templates
-//   - Config keys (stake-doc-level fields)
-//   - Triggers (placeholder; Cloud Scheduler is platform-managed)
+// Tabs (left → right): Config, Managers, Wards, Buildings,
+// Auto Ward Callings, Auto Stake Callings.
 //
 // Sub-tabs are selected via a query param `?tab=<key>` so the URL
-// remains deep-linkable (e.g. a manager links a colleague directly to
-// the Wards tab). The TanStack Router file-route validates the param.
+// remains deep-linkable. The TanStack Router file-route validates the
+// param.
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -57,22 +50,20 @@ import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { toast } from '../../../lib/store/toast';
 
 export type ConfigTabKey =
+  | 'config'
+  | 'managers'
   | 'wards'
   | 'buildings'
-  | 'managers'
   | 'ward-callings'
-  | 'stake-callings'
-  | 'config'
-  | 'triggers';
+  | 'stake-callings';
 
 const TABS: Array<{ key: ConfigTabKey; label: string }> = [
+  { key: 'config', label: 'Config' },
+  { key: 'managers', label: 'Managers' },
   { key: 'wards', label: 'Wards' },
   { key: 'buildings', label: 'Buildings' },
-  { key: 'managers', label: 'Managers' },
-  { key: 'ward-callings', label: 'Ward Callings' },
-  { key: 'stake-callings', label: 'Stake Callings' },
-  { key: 'config', label: 'Config' },
-  { key: 'triggers', label: 'Triggers' },
+  { key: 'ward-callings', label: 'Auto Ward Callings' },
+  { key: 'stake-callings', label: 'Auto Stake Callings' },
 ];
 
 function errorMessage(err: unknown): string {
@@ -84,7 +75,7 @@ export interface ConfigurationPageProps {
 }
 
 export function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
-  const tab = initialTab ?? 'wards';
+  const tab = initialTab ?? 'config';
   const navigate = useNavigate();
 
   const switchTab = (next: ConfigTabKey) => {
@@ -116,13 +107,12 @@ export function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
       </nav>
 
       <div className="kd-config-panel">
+        {tab === 'config' ? <ConfigKeysTab /> : null}
+        {tab === 'managers' ? <ManagersTab /> : null}
         {tab === 'wards' ? <WardsTab /> : null}
         {tab === 'buildings' ? <BuildingsTab /> : null}
-        {tab === 'managers' ? <ManagersTab /> : null}
         {tab === 'ward-callings' ? <WardCallingsTab /> : null}
         {tab === 'stake-callings' ? <StakeCallingsTab /> : null}
-        {tab === 'config' ? <ConfigKeysTab /> : null}
-        {tab === 'triggers' ? <TriggersTab /> : null}
       </div>
     </section>
   );
@@ -638,47 +628,5 @@ function ConfigKeysTab() {
         </Button>
       </div>
     </form>
-  );
-}
-
-// ---- Triggers tab (placeholder) -------------------------------------
-
-function TriggersTab() {
-  const [acked, setAcked] = useState(false);
-  return (
-    <div className="kd-config-section" data-testid="config-triggers">
-      <h2>Scheduled triggers</h2>
-      <p>
-        On Firebase, scheduled jobs are platform-managed by Cloud Scheduler. Two periodic jobs run
-        for this stake:
-      </p>
-      <ul>
-        <li>
-          <strong>runImporter</strong> — fires hourly; only runs the importer when the stake&rsquo;s
-          configured <code>import_day</code> + <code>import_hour</code> match the current local
-          time.
-        </li>
-        <li>
-          <strong>runExpiry</strong> — fires hourly; only runs expiry when the stake&rsquo;s
-          configured <code>expiry_hour</code> matches.
-        </li>
-      </ul>
-      <p>
-        These jobs are installed by the bootstrap wizard&rsquo;s <em>Complete Setup</em> step (Phase
-        8 wires <code>installScheduledJobs</code>). Re-installation is idempotent and supported by
-        the same callable.
-      </p>
-      <Button
-        onClick={() => {
-          setAcked(true);
-          toast('Scheduled jobs are platform-managed; nothing to reinstall here.', 'info');
-        }}
-      >
-        Reinstall triggers
-      </Button>
-      {acked ? (
-        <p className="kd-form-hint">No-op confirmed. Cloud Scheduler ownership lives in Phase 8.</p>
-      ) : null}
-    </div>
   );
 }

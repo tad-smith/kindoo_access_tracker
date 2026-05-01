@@ -160,7 +160,7 @@ describe('<AllSeatsPage />', () => {
     expect(screen.queryByText(/1 \/ 200 seats used/)).toBeNull();
   });
 
-  it('renders one summary card per scope (with stake first)', () => {
+  it('does not render per-scope summary cards (utilization is on Dashboard)', () => {
     mockAll({
       seats: [
         makeSeat({ scope: 'stake' }),
@@ -171,9 +171,8 @@ describe('<AllSeatsPage />', () => {
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);
-    const cards = document.querySelectorAll('.kd-scope-summary-card');
-    expect(cards).toHaveLength(2);
-    expect(cards[0]).toHaveTextContent(/Stake/);
+    expect(document.querySelectorAll('.kd-scope-summary-card')).toHaveLength(0);
+    expect(screen.queryByTestId('scope-summaries')).toBeNull();
   });
 
   it('updates the URL when a filter changes', async () => {

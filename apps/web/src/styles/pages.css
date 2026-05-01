@@ -132,30 +132,6 @@
   margin: 4px 0 6px;
 }
 
-/* Per-scope summaries on All Seats. Same card density as the
-   dashboard utilization rows. */
-.kd-scope-summaries {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 12px;
-  margin: 0 0 16px;
-}
-
-.kd-scope-summary-card {
-  border: 1px solid var(--kd-border);
-  border-radius: 6px;
-  background: #fff;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.kd-scope-summary-card .kd-scope-label {
-  font-weight: 600;
-  color: var(--kd-fg-1);
-}
-
 /* Audit log card list. Stacked rows, same density as roster cards but
    with a wider max-width since the diff details can be long. */
 .kd-audit-log-cards {
