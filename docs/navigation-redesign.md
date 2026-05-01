@@ -11,7 +11,7 @@ Phase entry in [`firebase-migration.md`](firebase-migration.md#phase-101--naviga
 The Chunk 10 responsive pass made the Apps Script app legible on phones, but the underlying nav stayed top-tab. With three roles overlaid (manager + bishopric + stake) a multi-role user can hold ten or more tabs, and at phone widths the tab strip wraps or horizontal-scrolls. The redesign:
 
 - **Mobile.** Phone gets a hamburger drawer; tablet gets an icons-only rail; desktop gets a full rail.
-- **Visual organization.** Eleven nav items collapse cleanly into three sections — Quick Links, Rosters, Settings — instead of one long list.
+- **Visual organization.** Nav items collapse cleanly into four sections — Quick Links, Rosters, Settings, Account — instead of one long list.
 - **Persistent affordance.** A left rail keeps navigation visible while the user works, instead of competing with the page header.
 
 ## 3. Breakpoints
@@ -38,19 +38,28 @@ Below the brand bar, a persistent left rail fills the remaining viewport height.
 
 Each nav item renders a Lucide icon plus text label. Section headers — text labels, no icon — sit above their groups, with a horizontal separator above each except the first. Active item: 3–4px vertical bar on the left edge in the accent color plus a subtle background tint.
 
-Logout anchors to the bottom of the rail — not after the last nav item, but pinned (e.g. `margin-top: auto`) so it stays at the foot regardless of how many nav items show. Version stamp renders below logout. Content fills the viewport to the right of the rail; max width is per-page.
+Logout lives in the Account section in the rail, like any other nav item (see §8). The version stamp remains at the bottom of the rail as small uninteractive text. Content fills the viewport to the right of the rail; max width is per-page.
 
-**Logout location decision.** Logout lives only in the rail footer. The brand bar shows the user's email but no sign-out affordance, avoiding two logout buttons on screen and keeping the brand bar consistent across breakpoints.
+**Logout location decision.** Logout is a regular nav item in the Account section, not a pinned footer button. The brand bar shows the user's email but no sign-out affordance, avoiding two logout buttons on screen and keeping the brand bar consistent across breakpoints.
 
 ## 6. Tablet mode (640–1023px)
 
-Brand bar matches desktop. Left rail is visible but icons-only, fixed 64px width; each nav item renders only the Lucide icon. Section headers can't render as text in 64px — they're replaced with a horizontal divider line plus a vertical gap matching the desktop section header's height. See §14 for why the gap is preserved.
+Brand bar matches desktop. Left rail is visible but icons-only at rest, fixed 64px width; each nav item renders only the Lucide icon. Section headers can't render as text in 64px — they're replaced with a horizontal divider line plus a vertical gap matching the desktop section header's height. See §14 for why the gap is preserved.
 
-Active item uses the same vertical-bar-plus-background treatment as desktop. Hovering an icon with a mouse surfaces a tooltip with the label. A touch or click opens a floating overlay panel.
+Active item uses the same vertical-bar-plus-background treatment as desktop. Hovering an icon with a mouse surfaces a tooltip with the label.
 
-The floating panel is anchored to the left rail and covers the content area with a backdrop. Inside: the full nav with text labels and section headers, identical to the desktop rail. Tapping a panel item closes the panel, swaps content, and returns the rail to icons-only. Tapping outside the panel (the backdrop included), tapping the same icon that opened it, or pressing Escape closes the panel without navigating.
+**Rail-expansion-in-place.** The rail itself expands in place from 64px (icons-only) to ~248px (labeled), anchored to the left viewport edge (x=0). It floats over content; the page beneath does not reflow. The icons-only state and the labeled state are the same rail in two widths — there is no separate panel adjacent to the rail.
 
-Logout anchors to the bottom of the icons-only rail with the `log-out` icon, version stamp directly below. The floating panel also includes logout in its footer.
+**Interaction model.**
+
+- **Tap an icon** → directly navigates to that page. No expansion.
+- **Tap the rail in a non-icon area** → expands the rail in place. "Non-icon area" means anywhere on the rail that isn't a nav-item icon or an action icon: section dividers, gaps between icons, the foot region around the version stamp all expand the rail.
+- **Drag the rail rightward** (touch or pointer) → expands the rail. Snap threshold is ~32px (half of icons-rail width); no partial states.
+- **Hover an icon** (mouse) → tooltip with label.
+
+Expanded rail dismissal: tap outside the rail, tap the same area that opened it, press Escape, or click a nav item to navigate. Selecting a nav item collapses the rail back to icons-only and swaps content.
+
+Logout is no longer at the bottom of the icons rail or in an expanded rail's footer. It appears as the Account section's only item, like any other nav item, in both icons-only and expanded states (see §8). The version stamp remains at the bottom of the rail.
 
 ## 7. Phone mode (<640px)
 
@@ -58,13 +67,13 @@ Brand bar contains the hamburger (far left), brand icon, and stake name. User em
 
 No persistent rail; the entire viewport width below the brand bar belongs to content.
 
-Tapping the hamburger slides a drawer in from the left. Drawer width is fixed (typical 280–320px; implementation's call) with a backdrop dim overlay behind it. Inside: the full nav with text labels and section headers, identical to the desktop rail. The drawer footer carries the user email, the logout row, and the version stamp.
+Tapping the hamburger slides a drawer in from the left. Drawer width is fixed (typical 280–320px; implementation's call) with a backdrop dim overlay behind it. Inside: the full nav with text labels and section headers, identical to the desktop rail. Logout appears as the Account section's only item in the drawer's nav body, like any other nav item (see §8). The drawer footer carries only the user email and the version stamp.
 
 Dismissal: tap a nav item, tap the backdrop, tap the hamburger again, swipe the drawer left, or press Escape. Selecting a nav item closes the drawer and swaps content in one motion.
 
 ## 8. Sectioned navigation
 
-Three sections, in this order. Each item lists the role(s) it's visible for.
+Four sections, in this order. Each item lists the role(s) it's visible for.
 
 **Quick Links**
 
@@ -86,7 +95,11 @@ Three sections, in this order. Each item lists the role(s) it's visible for.
 - Configuration (Manager only)
 - Audit Log (Manager only)
 
-**Conditional section visibility.** If a user has access to zero items in a section, the section header AND the section entirely do not render. A bishopric-only user sees "Quick Links" (My Requests, New Request) and "Rosters" (Ward Roster); the "Settings" header doesn't appear. A stake-only user sees "Quick Links" + "Rosters" with no Settings.
+**Account**
+
+- Logout (`log-out` icon, visible to all authorized users — i.e., anyone reaching the nav)
+
+**Conditional section visibility.** If a user has access to zero items in a section, the section header AND the section entirely do not render. A bishopric-only user sees "Quick Links" (My Requests, New Request) and "Rosters" (Ward Roster); the "Settings" header doesn't appear. A stake-only user sees "Quick Links" + "Rosters" with no Settings. The Account section always renders because Logout is always visible.
 
 ## 9. Ward Roster routing logic
 
@@ -135,11 +148,11 @@ Only one nav item is active at a time: the page currently displayed. On a sub-pa
 
 General rule: **crossing a breakpoint closes any open nav UI; resizing within a breakpoint maintains state.**
 
-- Tablet → desktop with floating panel open: panel closes (full rail takes over).
-- Tablet → phone with floating panel open: panel closes.
-- Phone → tablet with drawer open: drawer closes; icons-only rail visible. User can tap an icon to open a fresh panel.
+- Tablet → desktop with rail expanded: rail collapses (full desktop rail takes over).
+- Tablet → phone with rail expanded: rail collapses.
+- Phone → tablet with drawer open: drawer closes; icons-only rail visible. User can tap a non-icon area or drag to expand a fresh rail.
 - Phone → desktop with drawer open: drawer closes; full rail visible.
-- Resizing within tablet with panel open: panel stays.
+- Resizing within tablet with rail expanded: expansion stays.
 - Resizing within phone with drawer open: drawer stays.
 - Resizing within desktop: rail always visible; no state to preserve.
 
@@ -158,3 +171,5 @@ With hamburger + brand icon + stake name + (truncated or hidden) user email, the
 ## 16. Implementation timing and dependencies
 
 Not implemented in the Apps Script production app. Lands during Firebase migration Phase 10.1 — see [`firebase-migration.md`](firebase-migration.md#phase-101--navigation-redesign-left-rail--sectioned-nav). Phase 10.1 depends on Phase 4 (web SPA shell with topbar + Nav scaffolding) and Phase 7 (manager admin pages, which establish the full nav-item set). Implementation begins when the operator schedules the phase.
+
+The first implementation of this design landed in PR #35 / branch `phase-10.1-navigation-redesign`. This design doc remains the canonical spec for any future re-implementation or refactor.
