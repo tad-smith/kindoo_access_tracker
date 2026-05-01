@@ -1,5 +1,16 @@
 /* App shell. Brand bar always at top; rail (or icons-rail, or nothing
-   on phone) sits to the left of `<main>`. */
+   on phone) sits to the left of `<main>`.
+
+   `--kd-brandbar-h` is the brand bar's effective height (sticky top
+   offset for everything below it). The icons rail, the desktop rail,
+   and the tablet expand-panel all share this offset so the panel
+   doesn't jump vertically on open/close — it sits flush against the
+   brand bar's bottom edge, exactly where the icons-rail surface
+   already lives. */
+
+:root {
+  --kd-brandbar-h: 56px;
+}
 
 .kd-shell {
   display: flex;
@@ -147,11 +158,11 @@
   border-right: 1px solid var(--kd-chrome-border);
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - var(--kd-brandbar-h));
   position: sticky;
-  top: 56px; /* below the brand bar */
+  top: var(--kd-brandbar-h); /* below the brand bar */
   align-self: flex-start;
-  height: calc(100vh - 56px);
+  height: calc(100vh - var(--kd-brandbar-h));
 }
 
 .kd-left-rail-scroll {
@@ -178,11 +189,11 @@
   border-right: 1px solid var(--kd-chrome-border);
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - var(--kd-brandbar-h));
   position: sticky;
-  top: 56px;
+  top: var(--kd-brandbar-h);
   align-self: flex-start;
-  height: calc(100vh - 56px);
+  height: calc(100vh - var(--kd-brandbar-h));
 }
 
 .kd-icon-rail-scroll {
@@ -282,6 +293,13 @@
   display: flex;
 }
 
+/* Tablet panel: anchor below the brand bar so the panel sits flush
+   against the brand bar's bottom edge — same vertical positioning as
+   the icons rail it replaces. No vertical motion on open/close. */
+.kd-nav-overlay-panel {
+  top: var(--kd-brandbar-h);
+}
+
 /* Surface comes first in flex order (left side). Backdrop fills the
    remaining space to the right via `flex: 1` — that keeps clicks on
    the backdrop landing on the backdrop, never on the surface. */
@@ -304,11 +322,13 @@
   /* Tablet: rail expansion model. Anchored to the left viewport edge
      and 248px wide so it visually replaces the 64px icons rail when
      open (rather than sitting adjacent to it). The icons rail stays
-     rendered underneath and reappears on dismiss. */
+     rendered underneath and reappears on dismiss. Height is the same
+     as the icons rail (`100vh - brand bar`) so the panel sits flush
+     between the brand bar's bottom edge and the viewport bottom. */
   margin-left: 0;
   width: 248px;
   max-width: 100vw;
-  height: 100vh;
+  height: calc(100vh - var(--kd-brandbar-h));
 }
 
 .kd-nav-overlay-drawer .kd-nav-overlay-surface {
