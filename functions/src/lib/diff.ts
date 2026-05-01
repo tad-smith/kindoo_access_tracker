@@ -15,7 +15,7 @@
 
 import { canonicalEmail } from '@kindoo/shared';
 import type { Access, Seat } from '@kindoo/shared';
-import type { ParsedRow } from './parser.js';
+import { matchTemplate, type ParsedRow, type TemplateIndex } from './parser.js';
 
 export type CurrentState = {
   /** All access docs in the stake, keyed by canonical email. */
@@ -31,6 +31,11 @@ export type AccessUpsert = {
   member_name: string;
   /** Final desired `importer_callings` map after the run. */
   importer_callings: Record<string, string[]>;
+  /**
+   * MIN sheet_order across every calling in `importer_callings` (across
+   * all scopes). `null` when `importer_callings` is empty.
+   */
+  sort_order: number | null;
 };
 
 export type AccessDelete = {
@@ -53,6 +58,11 @@ export type SeatAutoNew = {
   callings: string[];
   building_names: string[];
   duplicate_grants: Seat['duplicate_grants'];
+  /**
+   * MIN sheet_order across `callings[]` for this seat. `null` when no
+   * calling matches a template (orphaned auto seat).
+   */
+  sort_order: number | null;
 };
 
 export type DiffPlan = {
@@ -73,6 +83,14 @@ export type ScopeMeta = {
   stakeBuildings: string[];
   /** Set of recognised ward_codes in stake. */
   wardCodes: ReadonlySet<string>;
+  /**
+   * Template indexes by scope, used to resolve `sheet_order` for any
+   * calling-name (including preserved-scope callings whose tab wasn't
+   * processed this run). `'stake'` → stake templates; ward_code → ward
+   * templates. A missing scope or no template match → `null` for
+   * sort_order (orphaned calling).
+   */
+  templateIndexByScope: Map<string, TemplateIndex>;
 };
 
 /**
@@ -91,7 +109,10 @@ export function planDiff(opts: {
   const warnings: string[] = [];
 
   // Group parsed rows by canonical email. One Seat per canonical, with
-  // potentially multiple `(scope, calling)` pairs.
+  // potentially multiple `(scope, calling)` pairs. `sheetOrderByCalling`
+  // captures the MIN sheet_order seen for each (scope,calling) so the
+  // applier can compute MIN-across-callings for sort_order on the seat
+  // and access docs.
   type RowGroup = {
     canonical: string;
     typedEmail: string;
@@ -100,6 +121,8 @@ export function planDiff(opts: {
     callingsByScope: Map<string, string[]>;
     /** Whether ANY parsed row for this canonical had give_app_access=true. */
     accessByScope: Map<string, string[]>;
+    /** Map "scope:calling" → MIN sheet_order across rows. */
+    sheetOrderByCalling: Map<string, number>;
   };
 
   const groups = new Map<string, RowGroup>();
@@ -114,6 +137,7 @@ export function planDiff(opts: {
         name: row.name,
         callingsByScope: new Map(),
         accessByScope: new Map(),
+        sheetOrderByCalling: new Map(),
       };
       groups.set(canonical, g);
     } else {
@@ -128,6 +152,11 @@ export function planDiff(opts: {
       if (!accessList.includes(row.calling)) accessList.push(row.calling);
       g.accessByScope.set(row.scope, accessList);
     }
+    const key = `${row.scope}:${row.calling}`;
+    const prior = g.sheetOrderByCalling.get(key);
+    if (prior === undefined || row.sheetOrder < prior) {
+      g.sheetOrderByCalling.set(key, row.sheetOrder);
+    }
   }
 
   // ----- Access diff -----
@@ -136,7 +165,8 @@ export function planDiff(opts: {
 
   // Build the desired importer_callings per canonical, scoping replacement
   // to scopesSeen — for any scope not seen this run, preserve the current
-  // doc's importer_callings[scope].
+  // doc's importer_callings[scope]. (sort_order is recomputed below
+  // alongside finalImporter so preserved-scope callings contribute.)
   const desiredAccessByCanonical = new Map<string, AccessUpsert>();
   for (const [canonical, g] of groups) {
     const desired: Record<string, string[]> = {};
@@ -148,6 +178,7 @@ export function planDiff(opts: {
       member_email: g.typedEmail,
       member_name: g.name,
       importer_callings: desired,
+      sort_order: null,
     });
   }
 
@@ -193,6 +224,9 @@ export function planDiff(opts: {
       member_email: desired?.member_email ?? cur?.member_email ?? canonical,
       member_name: desired?.member_name ?? cur?.member_name ?? '',
       importer_callings: finalImporter,
+      sort_order: finalImporterEmpty
+        ? null
+        : minSheetOrderAcrossImporter(finalImporter, scopeMeta.templateIndexByScope),
     });
   }
 
@@ -231,6 +265,11 @@ export function planDiff(opts: {
       callings: primaryCallings,
       building_names: defaultBuildings(primaryScope, scopeMeta),
       duplicate_grants: dupGrants,
+      sort_order: minSheetOrderForCallings(
+        primaryScope,
+        primaryCallings,
+        scopeMeta.templateIndexByScope,
+      ),
     });
   }
 
@@ -339,7 +378,39 @@ function autoSeatChanged(cur: Seat, desired: SeatAutoNew): boolean {
   if (!arrEq(cur.callings, desired.callings)) return true;
   if (!arrEq(cur.building_names, desired.building_names)) return true;
   if (duplicateGrantsChanged(cur.duplicate_grants ?? [], desired.duplicate_grants)) return true;
+  if ((cur.sort_order ?? null) !== (desired.sort_order ?? null)) return true;
   return false;
+}
+
+/** MIN sheet_order across `callings[]` under one scope. `null` when no calling resolves. */
+function minSheetOrderForCallings(
+  scope: string,
+  callings: string[],
+  templates: Map<string, TemplateIndex>,
+): number | null {
+  const idx = templates.get(scope);
+  if (!idx) return null;
+  let min: number | null = null;
+  for (const c of callings) {
+    const tpl = matchTemplate(idx, c);
+    if (!tpl) continue;
+    const order = typeof tpl.sheet_order === 'number' ? tpl.sheet_order : 0;
+    if (min === null || order < min) min = order;
+  }
+  return min;
+}
+
+/** MIN sheet_order across every (scope, calling) pair in `importer_callings`. */
+function minSheetOrderAcrossImporter(
+  importerCallings: Record<string, string[]>,
+  templates: Map<string, TemplateIndex>,
+): number | null {
+  let min: number | null = null;
+  for (const [scope, callings] of Object.entries(importerCallings)) {
+    const m = minSheetOrderForCallings(scope, callings, templates);
+    if (m !== null && (min === null || m < min)) min = m;
+  }
+  return min;
 }
 
 function arrEq(a: string[], b: string[]): boolean {

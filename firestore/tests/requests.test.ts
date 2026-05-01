@@ -338,6 +338,88 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       };
       await assertSucceeds(db.doc(PATH).set(formPayload));
     });
+
+    // urgent: bool validation. Field is requester-set on submit and
+    // missing → treated as false on read.
+    describe('urgent field', () => {
+      it('urgent: true → ok', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingAddManualByStakeMember({ urgent: true })));
+      });
+
+      it('urgent: false → ok', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingAddManualByStakeMember({ urgent: false })));
+      });
+
+      it('urgent missing → ok (treated as false on read)', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingAddManualByStakeMember()));
+      });
+
+      it('urgent: "yes" (string) → denied', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertFails(db.doc(PATH).set(pendingAddManualByStakeMember({ urgent: 'yes' })));
+      });
+
+      it('urgent: 1 (number) → denied', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertFails(db.doc(PATH).set(pendingAddManualByStakeMember({ urgent: 1 })));
+      });
+    });
+
+    // add_temp date enforcement — start_date / end_date must be ISO
+    // YYYY-MM-DD strings and start <= end. Other request types are
+    // unaffected (preserve existing behavior).
+    describe('add_temp date enforcement', () => {
+      it('add_temp with both ISO dates and end >= start → ok', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingAddTempByBishopric('01')));
+      });
+
+      it('add_temp with no start_date → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        const payload = pendingAddTempByBishopric('01');
+        delete payload['start_date'];
+        await assertFails(db.doc(PATH).set(payload));
+      });
+
+      it('add_temp with no end_date → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        const payload = pendingAddTempByBishopric('01');
+        delete payload['end_date'];
+        await assertFails(db.doc(PATH).set(payload));
+      });
+
+      it('add_temp with start_date "not-a-date" → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingAddTempByBishopric('01', { start_date: 'not-a-date' })),
+        );
+      });
+
+      it('add_temp with start > end → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric('01', {
+              start_date: '2026-06-10',
+              end_date: '2026-06-01',
+            }),
+          ),
+        );
+      });
+
+      it('add_manual with no dates → ok (preserve existing behavior)', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingAddManualByStakeMember()));
+      });
+
+      it('remove with no dates → ok (preserve existing behavior)', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingRemoveByBishopric('01')));
+      });
+    });
   });
 
   describe('update — terminal state transitions', () => {
@@ -471,6 +553,43 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
           completer_canonical: personas.manager.canonical,
           rejection_reason: 'rethought',
           lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('manager attempts to flip urgent post-submit during complete → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(pendingAddManualByStakeMember({ urgent: false }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).update({
+          status: 'complete',
+          completer_email: personas.manager.email,
+          completer_canonical: personas.manager.canonical,
+          completed_at: new Date(),
+          urgent: true,
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('requester attempts to flip urgent during cancel → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(pendingAddManualByStakeMember({ urgent: false }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).update({
+          status: 'cancelled',
+          urgent: true,
+          lastActor: lastActorOf(personas.stakeMember),
         }),
       );
     });

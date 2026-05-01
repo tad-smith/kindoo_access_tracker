@@ -168,6 +168,13 @@ async function runImporterCore(db: Firestore, stakeId: string): Promise<CoreResu
   const stakeTpls = await loadCallingTemplates(db, stakeId, 'stakeCallingTemplates');
   const wardIndex = buildTemplateIndex(wardTpls);
   const stakeIndex = buildTemplateIndex(stakeTpls);
+  // Scope-keyed template indexes the diff planner uses to resolve
+  // `sheet_order` for both this-run-seen and preserved-scope callings.
+  // All wards share `wardIndex` (templates are stake-wide); stake gets
+  // its own.
+  const templateIndexByScope = new Map<string, typeof wardIndex>();
+  templateIndexByScope.set('stake', stakeIndex);
+  for (const w of wards) templateIndexByScope.set(w.ward_code, wardIndex);
 
   const allRows: ParsedRow[] = [];
   const warnings: string[] = [];
@@ -207,7 +214,7 @@ async function runImporterCore(db: Firestore, stakeId: string): Promise<CoreResu
     parsedRows: allRows,
     scopesSeen,
     current,
-    scopeMeta: { wardBuildings, stakeBuildings, wardCodes },
+    scopeMeta: { wardBuildings, stakeBuildings, wardCodes, templateIndexByScope },
   });
   const counters = await applyPlan(db, stakeId, current, plan);
 
@@ -302,11 +309,13 @@ async function applyPlan(
     const ref = db.doc(`stakes/${stakeId}/access/${u.canonical}`);
     if (cur) {
       // Skip if importer_callings byte-equal to current AND member name/email
-      // unchanged — avoids a no-op write that fires the audit trigger.
+      // and sort_order unchanged — avoids a no-op write that fires the
+      // audit trigger.
       if (
         objEqualSimple(u.importer_callings, cur.importer_callings) &&
         cur.member_email === u.member_email &&
-        cur.member_name === u.member_name
+        cur.member_name === u.member_name &&
+        (cur.sort_order ?? null) === u.sort_order
       ) {
         continue;
       }
@@ -315,6 +324,7 @@ async function applyPlan(
           importer_callings: u.importer_callings,
           member_email: u.member_email,
           member_name: u.member_name,
+          sort_order: u.sort_order,
           last_modified_at: now,
           last_modified_by: importerActor,
           lastActor: importerActor,
@@ -330,6 +340,7 @@ async function applyPlan(
           member_name: u.member_name,
           importer_callings: u.importer_callings,
           manual_grants: {},
+          sort_order: u.sort_order,
           created_at: now,
           last_modified_at: now,
           last_modified_by: importerActor,
@@ -369,6 +380,7 @@ async function applyPlan(
           callings: w.seat.callings,
           building_names: w.seat.building_names,
           duplicate_grants: dupGrants,
+          sort_order: w.seat.sort_order,
           ...(isNew ? { created_at: now } : {}),
           last_modified_at: now,
           last_modified_by: importerActor,

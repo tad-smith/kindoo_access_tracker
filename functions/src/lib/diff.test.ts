@@ -5,8 +5,23 @@
 
 import { describe, expect, it } from 'vitest';
 import { pickPrimaryScope, planDiff } from './diff.js';
-import type { ParsedRow } from './parser.js';
+import { buildTemplateIndex, type ParsedRow } from './parser.js';
 import type { Access, Seat } from '@kindoo/shared';
+
+const wardIndex = buildTemplateIndex([
+  { calling_name: 'Bishop', give_app_access: true, sheet_order: 1 },
+  { calling_name: 'Bishopric Secretary', give_app_access: true, sheet_order: 2 },
+  { calling_name: 'High Councilor', give_app_access: true, sheet_order: 5 },
+]);
+const stakeIndex = buildTemplateIndex([
+  { calling_name: 'Stake President', give_app_access: true, sheet_order: 1 },
+]);
+const TEMPLATE_INDEX_BY_SCOPE = new Map([
+  ['stake', stakeIndex],
+  ['CO', wardIndex],
+  ['BR', wardIndex],
+  ['ZZ', wardIndex],
+]);
 
 const META = {
   wardBuildings: new Map<string, string[]>([
@@ -15,6 +30,7 @@ const META = {
   ]),
   stakeBuildings: ['Cordera Building', 'Briargate Building'],
   wardCodes: new Set(['CO', 'BR']),
+  templateIndexByScope: TEMPLATE_INDEX_BY_SCOPE,
 };
 
 describe('pickPrimaryScope', () => {
@@ -42,6 +58,7 @@ const row = (overrides: Partial<ParsedRow> = {}): ParsedRow => ({
   email: 'alice@gmail.com',
   name: 'Alice',
   giveAppAccess: true,
+  sheetOrder: 1,
   ...overrides,
 });
 
@@ -122,6 +139,7 @@ describe('planDiff', () => {
       callings: ['Bishop'],
       building_names: ['Cordera Building'],
       duplicate_grants: [],
+      sort_order: 1,
       created_at: null as unknown as Seat['created_at'],
       last_modified_at: null as unknown as Seat['last_modified_at'],
       last_modified_by: { email: 'Importer', canonical: 'Importer' },
@@ -133,6 +151,7 @@ describe('planDiff', () => {
       member_name: 'Alice',
       importer_callings: { CO: ['Bishop'] },
       manual_grants: {},
+      sort_order: 1,
       created_at: null as unknown as Access['created_at'],
       last_modified_at: null as unknown as Access['last_modified_at'],
       last_modified_by: { email: 'Importer', canonical: 'Importer' },
@@ -152,6 +171,7 @@ describe('planDiff', () => {
     // test, we check the value matches what is already there.
     expect(plan.accessUpserts).toHaveLength(1);
     expect(plan.accessUpserts[0]!.importer_callings).toEqual({ CO: ['Bishop'] });
+    expect(plan.accessUpserts[0]!.sort_order).toBe(1);
     // Seat: byte-equal → no seatWrites entry.
     expect(plan.seatWrites).toEqual([]);
   });
@@ -309,6 +329,146 @@ describe('planDiff', () => {
     expect(w.kind).toBe('duplicates-update');
     if (w.kind !== 'duplicates-update') throw new Error('expected duplicates-update');
     expect(w.duplicate_grants.some((d) => d.type === 'auto' && d.scope === 'CO')).toBe(true);
+  });
+
+  describe('sort_order', () => {
+    it('seat with single calling matching template sheet_order=1 → sort_order=1', () => {
+      const plan = planDiff({
+        parsedRows: [row({ calling: 'Bishop', sheetOrder: 1 })],
+        scopesSeen: SCOPES_SEEN,
+        current: EMPTY_STATE,
+        scopeMeta: META,
+      });
+      const w = plan.seatWrites[0]!;
+      if (w.kind !== 'auto-upsert') throw new Error('expected auto-upsert');
+      expect(w.seat.sort_order).toBe(1);
+      expect(plan.accessUpserts[0]!.sort_order).toBe(1);
+    });
+
+    it('seat with multi-callings (sheet_order 1 and 5) → sort_order=1 (MIN)', () => {
+      const plan = planDiff({
+        parsedRows: [
+          row({ calling: 'Bishop', sheetOrder: 1 }),
+          row({ calling: 'High Councilor', sheetOrder: 5 }),
+        ],
+        scopesSeen: SCOPES_SEEN,
+        current: EMPTY_STATE,
+        scopeMeta: META,
+      });
+      const w = plan.seatWrites[0]!;
+      if (w.kind !== 'auto-upsert') throw new Error('expected auto-upsert');
+      expect(w.seat.callings.sort()).toEqual(['Bishop', 'High Councilor']);
+      expect(w.seat.sort_order).toBe(1);
+      expect(plan.accessUpserts[0]!.sort_order).toBe(1);
+    });
+
+    it('orphaned auto seat (calling has no matching template) → sort_order=null', () => {
+      // Empty template index for scope 'XX'
+      const META_WITH_ORPHAN_SCOPE = {
+        ...META,
+        wardCodes: new Set(['CO', 'BR', 'XX']),
+        wardBuildings: new Map([...META.wardBuildings, ['XX', ['XX Building']]]),
+        templateIndexByScope: new Map([...TEMPLATE_INDEX_BY_SCOPE, ['XX', buildTemplateIndex([])]]),
+      };
+      const plan = planDiff({
+        parsedRows: [row({ scope: 'XX', calling: 'Unknown', sheetOrder: 0 })],
+        scopesSeen: new Set(['XX']),
+        current: EMPTY_STATE,
+        scopeMeta: META_WITH_ORPHAN_SCOPE,
+      });
+      const w = plan.seatWrites[0]!;
+      if (w.kind !== 'auto-upsert') throw new Error('expected auto-upsert');
+      expect(w.seat.sort_order).toBeNull();
+      expect(plan.accessUpserts[0]!.sort_order).toBeNull();
+    });
+
+    it('access doc with importer_callings across scopes (sheet_orders 1, 5, 7) → sort_order=1 (MIN across scopes)', () => {
+      // stake president=1, ward Bishopric Secretary=2 (gives access).
+      const plan = planDiff({
+        parsedRows: [
+          row({ scope: 'stake', calling: 'Stake President', sheetOrder: 1 }),
+          row({ scope: 'CO', calling: 'Bishopric Secretary', sheetOrder: 2 }),
+        ],
+        scopesSeen: SCOPES_SEEN,
+        current: EMPTY_STATE,
+        scopeMeta: META,
+      });
+      // Primary scope is stake; CO is duplicate. Access importer_callings
+      // includes both since both give app access.
+      expect(plan.accessUpserts[0]!.importer_callings).toEqual({
+        stake: ['Stake President'],
+        CO: ['Bishopric Secretary'],
+      });
+      expect(plan.accessUpserts[0]!.sort_order).toBe(1);
+    });
+
+    it('access doc with empty importer_callings (manual_grants only) → sort_order=null', () => {
+      const access: Access = {
+        member_canonical: 'alice@gmail.com',
+        member_email: 'alice@gmail.com',
+        member_name: 'Alice',
+        importer_callings: { CO: ['Bishop'] },
+        manual_grants: {
+          BR: [
+            {
+              grant_id: 'g1',
+              reason: 'helper',
+              granted_by: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
+              granted_at: null as unknown as Access['manual_grants'][string][number]['granted_at'],
+            },
+          ],
+        },
+        sort_order: 1,
+        created_at: null as unknown as Access['created_at'],
+        last_modified_at: null as unknown as Access['last_modified_at'],
+        last_modified_by: { email: 'Importer', canonical: 'Importer' },
+        lastActor: { email: 'Importer', canonical: 'Importer' },
+      };
+      const plan = planDiff({
+        parsedRows: [],
+        scopesSeen: SCOPES_SEEN,
+        current: {
+          accessByCanonical: new Map([['alice@gmail.com', access]]),
+          seatsByCanonical: new Map(),
+        },
+        scopeMeta: META,
+      });
+      expect(plan.accessUpserts).toHaveLength(1);
+      expect(plan.accessUpserts[0]!.importer_callings).toEqual({});
+      expect(plan.accessUpserts[0]!.sort_order).toBeNull();
+    });
+
+    it('template sheet_order change between runs surfaces as a sort_order diff on the seat', () => {
+      // Existing seat with sort_order=5. Template now says sheet_order=1.
+      const seat: Seat = {
+        member_canonical: 'alice@gmail.com',
+        member_email: 'alice@gmail.com',
+        member_name: 'Alice',
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Bishop'],
+        building_names: ['Cordera Building'],
+        duplicate_grants: [],
+        sort_order: 5,
+        created_at: null as unknown as Seat['created_at'],
+        last_modified_at: null as unknown as Seat['last_modified_at'],
+        last_modified_by: { email: 'Importer', canonical: 'Importer' },
+        lastActor: { email: 'Importer', canonical: 'Importer' },
+      };
+      const plan = planDiff({
+        parsedRows: [row({ calling: 'Bishop', sheetOrder: 1 })],
+        scopesSeen: SCOPES_SEEN,
+        current: {
+          accessByCanonical: new Map(),
+          seatsByCanonical: new Map([['alice@gmail.com', seat]]),
+        },
+        scopeMeta: META,
+      });
+      expect(plan.seatWrites).toHaveLength(1);
+      const w = plan.seatWrites[0]!;
+      if (w.kind !== 'auto-upsert') throw new Error('expected auto-upsert');
+      expect(w.seat.sort_order).toBe(1);
+    });
   });
 
   it('current auto seat in scope-seen + no longer in source → auto-delete', () => {
