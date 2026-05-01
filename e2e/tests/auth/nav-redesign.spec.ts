@@ -145,17 +145,30 @@ test.describe('Phase 10.1 navigation redesign', () => {
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
 
     const iconRail = page.locator('.kd-icon-rail');
-    const railBox = await iconRail.boundingBox();
-    if (!railBox) throw new Error('icon rail had no bounding box');
+    await expect(iconRail).toBeVisible();
 
-    // Drag from inside the rail (use the foot area to avoid hitting an
-    // icon button) rightward by 80px (well past the 32px threshold).
-    const startX = railBox.x + railBox.width / 2;
-    const startY = railBox.y + railBox.height - 30;
-    await page.mouse.move(startX, startY);
-    await page.mouse.down();
-    await page.mouse.move(startX + 80, startY, { steps: 8 });
-    await page.mouse.up();
+    // Dispatch native pointer events via the DOM so the React
+    // pointer-event handlers fire deterministically across Playwright
+    // versions. (Playwright's `page.mouse` API on Chromium fires
+    // mouse-event variants only; React's `onPointerDown` listens for
+    // native `pointerdown` and won't pick those up reliably.)
+    await iconRail.evaluate((el) => {
+      const dispatch = (type: 'pointerdown' | 'pointermove' | 'pointerup', clientX: number) => {
+        el.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            clientX,
+            clientY: 200,
+            pointerType: 'touch',
+          }),
+        );
+      };
+      dispatch('pointerdown', 32);
+      // Single 80px move past the 32px threshold.
+      dispatch('pointermove', 112);
+      dispatch('pointerup', 112);
+    });
 
     await expect(page.locator('.kd-nav-overlay-panel')).toBeVisible();
   });
