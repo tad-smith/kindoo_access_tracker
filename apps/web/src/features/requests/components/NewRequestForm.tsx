@@ -247,14 +247,12 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       ) : null}
 
       <label>
-        Comment{watchedUrgent ? <span className="kd-required-marker"> (required)</span> : null}
+        Comment
+        {watchedUrgent ? (
+          <span className="kd-required-marker"> (Require for urgent requests)</span>
+        ) : null}
         <Input type="text" {...register('comment')} data-testid="new-request-comment" />
       </label>
-      {formState.errors.comment ? (
-        <p className="kd-form-error" role="alert">
-          {formState.errors.comment.message}
-        </p>
-      ) : null}
 
       {watchedScope === 'stake' ? (
         <fieldset className="kd-buildings-fieldset" data-testid="new-request-buildings">
@@ -312,15 +310,17 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         </div>
       ) : null}
 
-      <label className="kd-urgent-row">
-        <input type="checkbox" {...register('urgent')} data-testid="new-request-urgent" /> Urgent?
-      </label>
-      {watchedUrgent ? (
-        <p className="kd-urgent-hint" data-testid="new-request-urgent-hint">
-          Urgent requests render at the top of the manager queue. A comment is required so the
-          manager understands why this jumped the line.
-        </p>
-      ) : null}
+      <div className="kd-urgent-block">
+        <label className="kd-urgent-row">
+          <input type="checkbox" {...register('urgent')} data-testid="new-request-urgent" /> Urgent?
+        </label>
+        {watchedUrgent ? (
+          <p className="kd-urgent-hint" data-testid="new-request-urgent-hint">
+            Urgent requests go to the top of the queue. A comment is required so the manager
+            understands why this jumped the line.
+          </p>
+        ) : null}
+      </div>
 
       <div className="form-actions">
         <Button type="submit" disabled={submit.isPending} data-testid="new-request-submit">

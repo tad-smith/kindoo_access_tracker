@@ -752,8 +752,15 @@
   font-size: 0.85em;
 }
 
-/* Urgent flag on the New Request form. Inline checkbox row with a
-   red follow-on hint when ticked. */
+/* Urgent flag on the New Request form. Right-aligned block sitting
+   directly above the Submit button (which is also right-aligned via
+   `.form-actions`). */
+.kd-urgent-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
 .kd-urgent-row {
   display: inline-flex;
   align-items: center;
@@ -765,6 +772,7 @@
   color: var(--kd-danger-fg);
   font-size: 0.85em;
   margin: 0;
+  text-align: right;
 }
 .kd-required-marker {
   color: var(--kd-danger-fg);

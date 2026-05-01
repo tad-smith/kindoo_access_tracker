@@ -321,9 +321,9 @@ describe('<NewRequestForm /> — urgent flag', () => {
     await user.type(screen.getByTestId('new-request-reason'), 'visit');
     await user.click(screen.getByTestId('new-request-urgent'));
     await user.click(screen.getByTestId('new-request-submit'));
-    expect(
-      await screen.findByText(/comment is required when the request is marked urgent/i),
-    ).toBeInTheDocument();
+    // Inline form error suppressed; the right-aligned helper under the
+    // Urgent? checkbox already conveys "comment required". Submit is
+    // still gated by the schema; assert only the observable.
     expect(submitMock).not.toHaveBeenCalled();
   });
 
