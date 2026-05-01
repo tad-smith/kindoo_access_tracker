@@ -30,7 +30,7 @@ Fixed at the top of the viewport, always visible during scroll. Brand icon (left
 
 The brand bar **never** carries the logout button at any breakpoint. Logout lives inside the rail or drawer (§5, §6, §7).
 
-Phone (<640px): hamburger button at far left, brand icon immediately to its right. The user email truncates or hides entirely; it remains accessible from the drawer footer (§7, §15). Tablet (640–1023px): brand bar matches desktop — icon, stake name, email; no hamburger, no logout.
+Phone (<640px): hamburger button at far left, brand icon immediately to its right. The user email truncates or hides entirely; it remains accessible inside the drawer's Account section, displayed beneath Logout (§7, §15). Tablet (640–1023px): brand bar matches desktop — icon, stake name, email; no hamburger, no logout.
 
 ## 5. Desktop mode (≥1024px)
 
@@ -50,6 +50,8 @@ Active item uses the same vertical-bar-plus-background treatment as desktop. Hov
 
 **Rail-expansion-in-place.** The rail itself expands in place from 64px (icons-only) to ~248px (labeled), anchored to the left viewport edge (x=0). It floats over content; the page beneath does not reflow. The icons-only state and the labeled state are the same rail in two widths — there is no separate panel adjacent to the rail.
 
+The expanded rail shares the icons rail's vertical position — top edge flush with the brand bar's bottom edge, height equal to viewport height minus the brand bar. Expand and collapse change only the rail's width (64px ↔ ~248px); there is **no vertical motion** on open or close. The brand bar stays visible in both states; the rail does not jump to viewport top when expanded.
+
 **Interaction model.**
 
 - **Tap an icon** → directly navigates to that page. No expansion.
@@ -63,11 +65,11 @@ Logout is no longer at the bottom of the icons rail or in an expanded rail's foo
 
 ## 7. Phone mode (<640px)
 
-Brand bar contains the hamburger (far left), brand icon, and stake name. User email and logout are not in the brand bar — they live in the drawer footer.
+Brand bar contains the hamburger (far left), brand icon, and stake name. User email and logout are not in the brand bar — the email moves into the drawer's Account section and logout is a regular nav item there.
 
 No persistent rail; the entire viewport width below the brand bar belongs to content.
 
-Tapping the hamburger slides a drawer in from the left. Drawer width is fixed (typical 280–320px; implementation's call) with a backdrop dim overlay behind it. Inside: the full nav with text labels and section headers, identical to the desktop rail. Logout appears as the Account section's only item in the drawer's nav body, like any other nav item (see §8). The drawer footer carries only the user email and the version stamp.
+Tapping the hamburger slides a drawer in from the left. Drawer width is fixed (typical 280–320px; implementation's call) with a backdrop dim overlay behind it. Inside: the full nav with text labels and section headers, identical to the desktop rail. The Account section contains Logout (a regular nav item — see §8) and, immediately below Logout, the signed-in user's email rendered as informational, non-interactive text. The email appears here only on phone; tablet expanded rail and desktop rail do **not** show the email in the Account section because both breakpoints surface it in the brand bar (§4). The drawer footer carries only the version stamp.
 
 Dismissal: tap a nav item, tap the backdrop, tap the hamburger again, swipe the drawer left, or press Escape. Selecting a nav item closes the drawer and swaps content in one motion.
 
@@ -98,6 +100,8 @@ Four sections, in this order. Each item lists the role(s) it's visible for.
 **Account**
 
 - Logout (`log-out` icon, visible to all authorized users — i.e., anyone reaching the nav)
+
+On phone only, the signed-in user's email is appended below Logout as informational, non-interactive text (see §7). Tablet and desktop show the email in the brand bar instead.
 
 **Conditional section visibility.** If a user has access to zero items in a section, the section header AND the section entirely do not render. A bishopric-only user sees "Quick Links" (My Requests, New Request) and "Rosters" (Ward Roster); the "Settings" header doesn't appear. A stake-only user sees "Quick Links" + "Rosters" with no Settings. The Account section always renders because Logout is always visible.
 
@@ -166,7 +170,7 @@ The point is muscle memory. The Dashboard icon sits at the same vertical positio
 
 ## 15. Brand bar sizing on phone
 
-With hamburger + brand icon + stake name + (truncated or hidden) user email, the brand bar may need adjustments at very narrow widths (320–380px). Implementation choice: truncate stake name with ellipsis if needed; hide the user email entirely (it's accessible from the drawer footer per §7). Brand icon and stake name are the minimum visible elements at any phone width.
+With hamburger + brand icon + stake name + (truncated or hidden) user email, the brand bar may need adjustments at very narrow widths (320–380px). Implementation choice: truncate stake name with ellipsis if needed; hide the user email entirely (it's accessible from the drawer's Account section per §7). Brand icon and stake name are the minimum visible elements at any phone width.
 
 ## 16. Implementation timing and dependencies
 
