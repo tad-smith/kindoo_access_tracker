@@ -1,13 +1,9 @@
 // Manager Requests Queue page (live). Mirrors `src/ui/manager/RequestsQueue.html`.
-// FIFO list of pending requests; per-row Mark Complete + Reject actions.
-//
-// Phase 6 ships only the pending view. Apps Script's "Complete" filter
-// (resolved requests) is not part of Phase 6's scope; the existing
-// MyRequests page surfaces the same data per-requester. Adding the
-// resolved view is a follow-up if the operator needs a queue-side
-// historical view.
+// Pending-only; rendered as three ordered sections (Urgent / Outstanding
+// / Future) using the `comparison_date` rule in `./sections.ts`. Per-row
+// Mark Complete + Reject actions.
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { AccessRequest, Building } from '@kindoo/shared';
@@ -17,6 +13,7 @@ import {
   usePendingRequests,
   useRejectRequest,
 } from './hooks';
+import { partitionPendingRequests } from './sections';
 import { useBuildings } from '../allSeats/hooks';
 import { useSeatForMember } from '../../requests/hooks';
 import {
@@ -41,34 +38,79 @@ export function ManagerQueuePage() {
   const pending = usePendingRequests();
   const buildings = useBuildings();
 
+  // Compute "now" once per render. Time advancement during a session
+  // shifts the Outstanding/Future boundary by at most a tick — well
+  // below the day-level resolution the section cutoff cares about.
+  const sections = useMemo(
+    () => partitionPendingRequests(pending.data ?? [], new Date()),
+    [pending.data],
+  );
+
   if (pending.isLoading || pending.data === undefined) {
     return (
       <section className="kd-page-medium">
-        <h1>Queue</h1>
+        <h1>Request Queue</h1>
         <LoadingSpinner />
       </section>
     );
   }
 
+  const buildingsList = buildings.data ?? [];
+  const total = pending.data.length;
+
   return (
     <section className="kd-page-medium">
-      <h1>Queue</h1>
-      <p className="kd-page-subtitle">Pending requests, oldest first.</p>
+      <h1>Request Queue</h1>
+      <p className="kd-page-subtitle">Pending requests, sectioned by urgency.</p>
 
-      {pending.data.length === 0 ? (
+      {total === 0 ? (
         <EmptyState message="No pending requests. Nice." />
       ) : (
-        <div className="kd-queue-cards" data-testid="queue-cards">
-          {pending.data.map((request) => (
-            <QueueCard
-              key={request.request_id}
-              request={request}
-              buildings={buildings.data ?? []}
-            />
-          ))}
+        <div data-testid="queue-cards">
+          <QueueSection
+            title="Urgent Requests"
+            testid="queue-section-urgent"
+            requests={sections.urgent}
+            buildings={buildingsList}
+          />
+          <QueueSection
+            title="Outstanding Requests"
+            testid="queue-section-outstanding"
+            requests={sections.outstanding}
+            buildings={buildingsList}
+          />
+          <QueueSection
+            title="Future Requests"
+            testid="queue-section-future"
+            requests={sections.future}
+            buildings={buildingsList}
+          />
         </div>
       )}
     </section>
+  );
+}
+
+interface QueueSectionProps {
+  title: string;
+  testid: string;
+  requests: readonly AccessRequest[];
+  buildings: readonly Building[];
+}
+
+function QueueSection({ title, testid, requests, buildings }: QueueSectionProps) {
+  // Hide the entire section (header + body) when empty — the operator
+  // brief is unambiguous on this.
+  if (requests.length === 0) return null;
+  return (
+    <div className="kd-queue-section" data-testid={testid}>
+      <h2 className="kd-queue-section-header">{title}</h2>
+      <div className="kd-queue-cards">
+        {requests.map((request) => (
+          <QueueCard key={request.request_id} request={request} buildings={buildings} />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -92,11 +134,13 @@ function QueueCard({ request, buildings }: QueueCardProps) {
     return '';
   })();
 
+  const isUrgent = request.urgent === true;
   return (
     <div
-      className="kd-queue-card"
+      className={`kd-queue-card${isUrgent ? ' kd-card-urgent' : ''}`}
       data-testid={`queue-card-${request.request_id}`}
       data-request-type={request.type}
+      data-urgent={isUrgent ? 'true' : 'false'}
     >
       <div className="kd-queue-card-line1">
         <Badge
@@ -120,12 +164,12 @@ function QueueCard({ request, buildings }: QueueCardProps) {
           )}
         </span>
       </div>
-      <div className="kd-queue-card-meta">
+      <div className="kd-queue-card-meta kd-queue-card-meta-row">
         <span>
           <strong>Requester:</strong> {request.requester_email}
         </span>
         {reqDate ? (
-          <span>
+          <span className="kd-queue-card-submitted">
             <strong>Submitted:</strong> {reqDate}
           </span>
         ) : null}

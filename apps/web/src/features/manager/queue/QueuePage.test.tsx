@@ -109,6 +109,12 @@ beforeEach(() => {
 });
 
 describe('<ManagerQueuePage />', () => {
+  it('renders the page title as "Request Queue"', () => {
+    usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
+    render(<ManagerQueuePage />);
+    expect(screen.getByRole('heading', { name: /^Request Queue$/ })).toBeInTheDocument();
+  });
+
   it('renders the empty-state copy when there are no pending requests', () => {
     usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
     render(<ManagerQueuePage />);
@@ -192,6 +198,77 @@ describe('<ManagerQueuePage />', () => {
     await user.click(within(form).getByTestId('reject-confirm'));
     expect(rejectMutate).not.toHaveBeenCalled();
     expect(within(form).getByText(/rejection reason is required/i)).toBeInTheDocument();
+  });
+
+  it('renders only sections that contain at least one request', () => {
+    // Two non-urgent add_manual requests with old requested_at land
+    // in Outstanding; no urgent or far-future requests are seeded so
+    // Urgent and Future should not render.
+    const requests = [
+      makeRequest({
+        request_id: 'r-outstanding',
+        type: 'add_manual',
+        requested_at: {
+          seconds: Math.floor(new Date('2026-04-20').getTime() / 1000),
+          nanoseconds: 0,
+          toDate: () => new Date('2026-04-20'),
+          toMillis: () => new Date('2026-04-20').getTime(),
+        },
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    expect(screen.getByTestId('queue-section-outstanding')).toBeInTheDocument();
+    expect(screen.queryByTestId('queue-section-urgent')).toBeNull();
+    expect(screen.queryByTestId('queue-section-future')).toBeNull();
+  });
+
+  it('places urgent requests in the Urgent section with a red top-bar marker', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r-urgent',
+        type: 'add_manual',
+        urgent: true,
+      }),
+      makeRequest({
+        request_id: 'r-normal',
+        type: 'add_manual',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const urgentSection = screen.getByTestId('queue-section-urgent');
+    expect(within(urgentSection).getByTestId('queue-card-r-urgent')).toBeInTheDocument();
+    const card = screen.getByTestId('queue-card-r-urgent');
+    expect(card).toHaveClass('kd-card-urgent');
+    expect(card).toHaveAttribute('data-urgent', 'true');
+    // And the non-urgent card is NOT marked.
+    const normal = screen.getByTestId('queue-card-r-normal');
+    expect(normal).not.toHaveClass('kd-card-urgent');
+  });
+
+  it('puts add_temp requests with start_date > today+7 in the Future section', () => {
+    const farIso = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() + 30);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    })();
+    const requests = [
+      makeRequest({
+        request_id: 'r-far',
+        type: 'add_temp',
+        start_date: farIso,
+        end_date: farIso,
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const future = screen.getByTestId('queue-section-future');
+    expect(within(future).getByTestId('queue-card-r-far')).toBeInTheDocument();
+    expect(screen.queryByTestId('queue-section-outstanding')).toBeNull();
   });
 
   it('surfaces a duplicate-warning chip on add cards when the member already has a seat', () => {

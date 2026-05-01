@@ -4,6 +4,7 @@
 //   - `add_manual` / `add_temp`: member_name is required.
 //   - `add_temp`: start_date + end_date both ISO YYYY-MM-DD; end ≥ start.
 //   - stake-scope add types: at least one building selected.
+//   - `urgent=true`: comment becomes required.
 //
 // Same schema fuels both the client form and (where `notifyOnRequestWrite`
 // or future callable validation needs it) the server side.
@@ -32,6 +33,7 @@ export const newRequestSchema = z
     start_date: z.string(),
     end_date: z.string(),
     building_names: z.array(z.string()),
+    urgent: z.boolean(),
   })
   .superRefine((val, ctx) => {
     if (val.type === 'add_temp') {
@@ -67,6 +69,13 @@ export const newRequestSchema = z
         code: 'custom',
         path: ['building_names'],
         message: 'Pick at least one building for a stake-scope request.',
+      });
+    }
+    if (val.urgent && val.comment.trim().length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['comment'],
+        message: 'A comment is required when the request is marked urgent.',
       });
     }
   });

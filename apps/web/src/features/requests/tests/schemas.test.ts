@@ -22,6 +22,7 @@ describe('newRequestSchema', () => {
       start_date: '',
       end_date: '',
       building_names: [],
+      urgent: false,
     });
     expect(result.success).toBe(true);
   });
@@ -37,6 +38,7 @@ describe('newRequestSchema', () => {
       start_date: '',
       end_date: '',
       building_names: [],
+      urgent: false,
     });
     expect(result.success).toBe(false);
   });
@@ -52,6 +54,7 @@ describe('newRequestSchema', () => {
       start_date: '',
       end_date: '',
       building_names: [],
+      urgent: false,
     });
     expect(result.success).toBe(false);
   });
@@ -67,6 +70,7 @@ describe('newRequestSchema', () => {
       start_date: '2026-05-01',
       end_date: '2026-05-08',
       building_names: [],
+      urgent: false,
     });
     expect(result.success).toBe(true);
   });
@@ -82,6 +86,7 @@ describe('newRequestSchema', () => {
       start_date: '2026-05-10',
       end_date: '2026-05-01',
       building_names: [],
+      urgent: false,
     });
     expect(result.success).toBe(false);
   });
@@ -97,6 +102,55 @@ describe('newRequestSchema', () => {
       start_date: '2026-5-1',
       end_date: '2026-05-08',
       building_names: [],
+      urgent: false,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts urgent=true when comment is non-empty', () => {
+    const result = newRequestSchema.safeParse({
+      type: 'add_manual',
+      scope: 'CO',
+      member_email: 'bob@example.com',
+      member_name: 'Bob',
+      reason: 'r',
+      comment: 'why this is urgent',
+      start_date: '',
+      end_date: '',
+      building_names: [],
+      urgent: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects urgent=true with empty comment', () => {
+    const result = newRequestSchema.safeParse({
+      type: 'add_manual',
+      scope: 'CO',
+      member_email: 'bob@example.com',
+      member_name: 'Bob',
+      reason: 'r',
+      comment: '',
+      start_date: '',
+      end_date: '',
+      building_names: [],
+      urgent: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects urgent=true with whitespace-only comment', () => {
+    const result = newRequestSchema.safeParse({
+      type: 'add_manual',
+      scope: 'CO',
+      member_email: 'bob@example.com',
+      member_name: 'Bob',
+      reason: 'r',
+      comment: '   ',
+      start_date: '',
+      end_date: '',
+      building_names: [],
+      urgent: true,
     });
     expect(result.success).toBe(false);
   });

@@ -281,6 +281,89 @@ describe('<NewRequestForm /> — validation', () => {
   });
 });
 
+describe('<NewRequestForm /> — urgent flag', () => {
+  it('renders the Urgent? checkbox above the submit button', () => {
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    expect(screen.getByTestId('new-request-urgent')).toBeInTheDocument();
+  });
+
+  it('reveals the red helper text only when urgent is checked', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    expect(screen.queryByTestId('new-request-urgent-hint')).toBeNull();
+    await user.click(screen.getByTestId('new-request-urgent'));
+    expect(screen.getByTestId('new-request-urgent-hint')).toBeInTheDocument();
+  });
+
+  it('blocks submit on empty comment when urgent is checked', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-urgent'));
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(
+      await screen.findByText(/comment is required when the request is marked urgent/i),
+    ).toBeInTheDocument();
+    expect(submitMock).not.toHaveBeenCalled();
+  });
+
+  it('passes urgent=true through to the submit mutation', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.type(screen.getByTestId('new-request-comment'), 'covering for sub teacher');
+    await user.click(screen.getByTestId('new-request-urgent'));
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({ urgent: true });
+  });
+
+  it('passes urgent=false (default) when the box is not checked', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({ urgent: false });
+  });
+});
+
 describe('<NewRequestForm /> — duplicate warning', () => {
   it('renders the warning when the live seat hook returns a hit in the same scope', async () => {
     const user = userEvent.setup();

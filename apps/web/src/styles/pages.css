@@ -131,6 +131,44 @@
   gap: 8px;
 }
 
+/* Urgent visual marker — shared by Queue and My Requests cards. 3px
+   red top bar; the rest of the card stays in place so a non-urgent
+   row reads identically. */
+.kd-card-urgent {
+  border-top: 3px solid var(--kd-danger-red);
+}
+
+/* Queue page section headers (Urgent / Outstanding / Future). Section
+   hidden via JS when empty; this rule only fires when the heading
+   actually renders. */
+.kd-queue-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.kd-queue-section + .kd-queue-section {
+  margin-top: 22px;
+}
+
+.kd-queue-section-header {
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--kd-fg-1);
+  margin: 0;
+}
+
+.kd-queue-card-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: baseline;
+}
+
+.kd-queue-card-meta-row .kd-queue-card-submitted {
+  margin-left: auto;
+}
+
 .kd-queue-card-line1 {
   display: flex;
   flex-wrap: wrap;
@@ -712,6 +750,25 @@
 .kd-form-hint {
   color: var(--kd-fg-3);
   font-size: 0.85em;
+}
+
+/* Urgent flag on the New Request form. Inline checkbox row with a
+   red follow-on hint when ticked. */
+.kd-urgent-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--kd-fg-1);
+}
+.kd-urgent-hint {
+  color: var(--kd-danger-fg);
+  font-size: 0.85em;
+  margin: 0;
+}
+.kd-required-marker {
+  color: var(--kd-danger-fg);
+  font-weight: 600;
 }
 
 /* Configuration tabs */

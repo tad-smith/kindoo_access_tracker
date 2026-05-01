@@ -80,6 +80,8 @@ export interface SubmitRequestInput {
   start_date?: string;
   end_date?: string;
   building_names: string[];
+  /** Defaults to false on the wire; missing → false on read. */
+  urgent?: boolean;
 }
 
 /**
@@ -154,6 +156,11 @@ export function useSubmitRequest() {
         // the seat doc without a query (Firestore client transactions
         // don't support queries).
         body.seat_member_canonical = memberCanonical;
+      }
+      if (input.urgent === true) {
+        // Stamp only when truthy; missing field reads as false. Keeps
+        // the on-disk doc lean for the common non-urgent path.
+        body.urgent = true;
       }
       // Diagnostic log: pasted into staging by the operator to surface
       // which rule predicate denied a permission-error submit. Pairs

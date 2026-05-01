@@ -172,6 +172,40 @@ describe('useSubmitRequest payload shape', () => {
     expect(setDocMock).not.toHaveBeenCalled();
   });
 
+  it('stamps urgent=true on the doc body when input.urgent is true', async () => {
+    const { result } = renderHook(() => useSubmitRequest(), { wrapper });
+    await result.current.mutateAsync({
+      type: 'add_manual',
+      scope: 'stake',
+      member_email: 'subject@example.com',
+      member_name: 'Subject',
+      reason: 'Sub teacher',
+      comment: 'Out of town this weekend',
+      building_names: ['Cordera Building'],
+      urgent: true,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body.urgent).toBe(true);
+  });
+
+  it('omits urgent from the doc body when input.urgent is false', async () => {
+    const { result } = renderHook(() => useSubmitRequest(), { wrapper });
+    await result.current.mutateAsync({
+      type: 'add_manual',
+      scope: 'stake',
+      member_email: 'subject@example.com',
+      member_name: 'Subject',
+      reason: 'r',
+      comment: '',
+      building_names: ['Cordera Building'],
+      urgent: false,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect('urgent' in body).toBe(false);
+  });
+
   it('falls back to canonicalEmail(user.email) when the token lacks a canonical claim', async () => {
     currentUserStub = {
       email: 'Tad.E.Smith@gmail.com',

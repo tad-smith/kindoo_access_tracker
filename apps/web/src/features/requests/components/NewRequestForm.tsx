@@ -70,6 +70,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       start_date: '',
       end_date: '',
       building_names: [],
+      urgent: false,
     },
   });
   const { register, handleSubmit, reset, watch, setValue, formState } = form;
@@ -77,6 +78,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   const watchedScope = watch('scope');
   const watchedEmail = watch('member_email');
   const watchedBuildings = watch('building_names');
+  const watchedUrgent = watch('urgent');
 
   // Live duplicate-warning. The seat doc id is the canonical email, so
   // we can subscribe directly without a query. Strip whitespace + run
@@ -124,6 +126,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         start_date: input.start_date,
         end_date: input.end_date,
         building_names: input.building_names,
+        urgent: input.urgent,
       });
       toast('Request submitted.', 'success');
       reset({
@@ -136,6 +139,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         start_date: '',
         end_date: '',
         building_names: [],
+        urgent: false,
       });
     } catch (err) {
       toast(errorMessage(err), 'error');
@@ -243,9 +247,14 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       ) : null}
 
       <label>
-        Comment
+        Comment{watchedUrgent ? <span className="kd-required-marker"> (required)</span> : null}
         <Input type="text" {...register('comment')} data-testid="new-request-comment" />
       </label>
+      {formState.errors.comment ? (
+        <p className="kd-form-error" role="alert">
+          {formState.errors.comment.message}
+        </p>
+      ) : null}
 
       {watchedScope === 'stake' ? (
         <fieldset className="kd-buildings-fieldset" data-testid="new-request-buildings">
@@ -301,6 +310,16 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
           {dupHit.type} seat in {dupHit.scope}. You can still submit if you mean to; the manager
           will see the duplicate too.
         </div>
+      ) : null}
+
+      <label className="kd-urgent-row">
+        <input type="checkbox" {...register('urgent')} data-testid="new-request-urgent" /> Urgent?
+      </label>
+      {watchedUrgent ? (
+        <p className="kd-urgent-hint" data-testid="new-request-urgent-hint">
+          Urgent requests render at the top of the manager queue. A comment is required so the
+          manager understands why this jumped the line.
+        </p>
       ) : null}
 
       <div className="form-actions">
