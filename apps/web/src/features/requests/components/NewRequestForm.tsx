@@ -249,7 +249,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       <label>
         Comment
         {watchedUrgent ? (
-          <span className="kd-required-marker"> (Require for urgent requests)</span>
+          <span className="kd-required-marker"> (Required for urgent requests)</span>
         ) : null}
         <Input type="text" {...register('comment')} data-testid="new-request-comment" />
       </label>
