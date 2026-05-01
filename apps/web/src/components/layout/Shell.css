@@ -14,12 +14,12 @@
 }
 
 .kd-main {
+  /* Fills the remaining viewport width to the right of the rail; left-
+     edge sits flush against the rail. Per-page max-widths live on each
+     page's own root element. */
   flex: 1;
   min-width: 0;
   padding: 24px 20px;
-  margin: 0 auto;
-  width: 100%;
-  max-width: 1200px;
   box-sizing: border-box;
 }
 
