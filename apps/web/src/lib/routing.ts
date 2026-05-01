@@ -29,20 +29,20 @@ import { STAKE_ID } from './constants';
  * working page rather than a 404 placeholder.
  */
 const DEEP_LINK_TABLE: Record<string, string> = {
-  // Bishopric + stake pages
+  // Bishopric + stake pages. The Phase 10.1 consolidation collapsed
+  // `/bishopric/new` and `/stake/new` into a single `/new` route;
+  // both legacy `?p=` keys forward there. The old paths still exist
+  // as redirects so direct-URL bookmarks resolve correctly.
   'bish/roster': '/bishopric/roster',
-  'bish/new': '/bishopric/new',
+  'bish/new': '/new',
   'bish/myreq': '/my-requests',
   'stake/roster': '/stake/roster',
   'stake/wards': '/stake/wards',
-  'stake/new': '/stake/new',
+  'stake/new': '/new',
 
-  // Apps Script's bare `new` key — the live shared NewRequest page
-  // dispatches by principal role. Bishopric + stake users land on
-  // their own per-role new-request page; multi-role users with
-  // bishopric coverage prefer that route (matches `defaultLandingFor`
-  // priority).
-  new: '/bishopric/new',
+  // Apps Script's bare `new` key — single shared NewRequest page in
+  // the SPA, role-aware scope dropdown.
+  new: '/new',
 
   // Manager pages
   'mgr/dashboard': '/manager/dashboard',
@@ -68,22 +68,25 @@ export function deepLinkPath(p: string | undefined): string | null {
  * Per-principal default landing route. Mirrors `Router_defaultPageFor_`
  * in `src/web/Router.html` of the Apps Script app:
  *   - manager → `/manager/dashboard` (leftmost tab is Dashboard)
- *   - stake   → `/stake/new` (leftmost tab is New Kindoo Request)
- *   - bishopric → `/bishopric/new` (same)
+ *   - stake   → `/new` (leftmost tab is New Request)
+ *   - bishopric → `/new` (same)
  *   - multi-role → highest-priority role's leftmost tab (manager wins)
  *   - no role → null-equivalent ('/'); the route gate surfaces
  *               NotAuthorizedPage in that case.
+ *
+ * Phase 10.1 unified `/bishopric/new` + `/stake/new` into a single
+ * `/new` route; non-manager defaults now both target it.
  */
 export function defaultLandingFor(principal: Principal): string {
   if (principal.managerStakes.includes(STAKE_ID) || principal.isPlatformSuperadmin) {
     return '/manager/dashboard';
   }
   if (principal.stakeMemberStakes.includes(STAKE_ID)) {
-    return '/stake/new';
+    return '/new';
   }
   const wards = principal.bishopricWards[STAKE_ID];
   if (Array.isArray(wards) && wards.length > 0) {
-    return '/bishopric/new';
+    return '/new';
   }
   // Authenticated principal with no role in this stake. Falls through
   // to the route-tree's auth gate which surfaces NotAuthorizedPage.

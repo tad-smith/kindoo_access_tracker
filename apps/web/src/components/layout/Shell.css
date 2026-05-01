@@ -305,12 +305,9 @@
   display: flex;
 }
 
-.kd-nav-overlay-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.4);
-}
-
+/* Surface comes first in flex order (left side). Backdrop fills the
+   remaining space to the right via `flex: 1` — that keeps clicks on
+   the backdrop landing on the backdrop, never on the surface. */
 .kd-nav-overlay-surface {
   position: relative;
   background: #fff;
@@ -318,6 +315,12 @@
   flex-direction: column;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
   outline: none;
+  flex-shrink: 0;
+}
+
+.kd-nav-overlay-backdrop {
+  flex: 1;
+  background: rgba(15, 23, 42, 0.4);
 }
 
 .kd-nav-overlay-panel .kd-nav-overlay-surface {

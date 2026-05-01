@@ -124,9 +124,7 @@ test.describe('Phase 6 — bishopric add_manual lifecycle', () => {
     const managerPage = await managerCtx.newPage();
 
     await createSignedInUser(bishopricPage, 'bishop@example.com', { wards: ['CO'] });
-    await expect(
-      bishopricPage.getByRole('heading', { name: /^New Kindoo Request$/ }),
-    ).toBeVisible();
+    await expect(bishopricPage.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
     // Submit the request.
     await bishopricPage.getByTestId('new-request-email').fill('bob@example.com');
@@ -140,7 +138,7 @@ test.describe('Phase 6 — bishopric add_manual lifecycle', () => {
     // Manager logs in and completes.
     await createSignedInUser(managerPage, 'manager@example.com', { manager: true });
     await expect(managerPage.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
-    await managerPage.getByRole('link', { name: /^Queue$/ }).click();
+    await managerPage.getByRole('link', { name: /^Request Queue$/ }).click();
     await expect(managerPage.getByRole('heading', { name: /^Queue$/ })).toBeVisible();
     // Click Mark Complete on the first card.
     const completeButton = managerPage.locator('[data-testid^="queue-complete-"]').first();
@@ -155,7 +153,7 @@ test.describe('Phase 6 — bishopric add_manual lifecycle', () => {
     });
 
     // Bishopric roster shows the new seat.
-    await bishopricPage.getByRole('link', { name: /^Roster$/ }).click();
+    await bishopricPage.getByRole('link', { name: /^Ward Roster$/ }).click();
     await expect(bishopricPage.getByText('Bob Example')).toBeVisible();
   });
 });
@@ -176,7 +174,7 @@ test.describe('Phase 6 — stake add_temp with two buildings', () => {
     const managerPage = await managerCtx.newPage();
 
     await createSignedInUser(stakePage, 'sp@example.com', { stake: true });
-    await expect(stakePage.getByRole('heading', { name: /^New Stake Request$/ })).toBeVisible();
+    await expect(stakePage.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
     await stakePage.getByTestId('new-request-type').selectOption('add_temp');
     await stakePage.getByTestId('new-request-start-date').fill('2026-05-01');
@@ -190,7 +188,7 @@ test.describe('Phase 6 — stake add_temp with two buildings', () => {
 
     // Manager completes.
     await createSignedInUser(managerPage, 'mgr@example.com', { manager: true });
-    await managerPage.getByRole('link', { name: /^Queue$/ }).click();
+    await managerPage.getByRole('link', { name: /^Request Queue$/ }).click();
     const completeButton = managerPage.locator('[data-testid^="queue-complete-"]').first();
     await completeButton.click();
     // Both buildings should be pre-ticked from the requester's selection.
@@ -252,7 +250,7 @@ test.describe('Phase 6 — cancel + reject', () => {
     await bishopricPage.getByTestId('new-request-submit').click();
 
     await createSignedInUser(managerPage, 'mgr2@example.com', { manager: true });
-    await managerPage.getByRole('link', { name: /^Queue$/ }).click();
+    await managerPage.getByRole('link', { name: /^Request Queue$/ }).click();
     const rejectButton = managerPage.locator('[data-testid^="queue-reject-"]').first();
     await rejectButton.click();
     await managerPage.getByTestId('reject-reason').fill('Insufficient justification');
@@ -301,7 +299,7 @@ test.describe('Phase 6 — removal flow', () => {
     const managerPage = await managerCtx.newPage();
 
     await createSignedInUser(bishopricPage, 'bishop4@example.com', { wards: ['CO'] });
-    await bishopricPage.getByRole('link', { name: /^Roster$/ }).click();
+    await bishopricPage.getByRole('link', { name: /^Ward Roster$/ }).click();
 
     await expect(
       bishopricPage.locator('[data-seat-id="charlie@example.com"]').first(),
@@ -318,7 +316,7 @@ test.describe('Phase 6 — removal flow', () => {
     // Manager completes the remove. The Phase 8 cloud function would
     // delete the seat; without it, we only assert the request flips.
     await createSignedInUser(managerPage, 'mgr3@example.com', { manager: true });
-    await managerPage.getByRole('link', { name: /^Queue$/ }).click();
+    await managerPage.getByRole('link', { name: /^Request Queue$/ }).click();
     const completeBtn = managerPage.locator('[data-testid^="queue-complete-"]').first();
     await completeBtn.click();
     await managerPage.getByTestId('complete-remove-confirm').click();

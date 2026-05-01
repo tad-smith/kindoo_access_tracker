@@ -79,12 +79,6 @@ export function NavOverlay({
   return (
     <div className={`${className} is-open`}>
       <div
-        className="kd-nav-overlay-backdrop"
-        data-testid="nav-overlay-backdrop"
-        onClick={onDismiss}
-        aria-hidden="true"
-      />
-      <div
         className="kd-nav-overlay-surface"
         role="dialog"
         aria-modal="true"
@@ -113,6 +107,12 @@ export function NavOverlay({
           </span>
         </div>
       </div>
+      <div
+        className="kd-nav-overlay-backdrop"
+        data-testid="nav-overlay-backdrop"
+        onClick={onDismiss}
+        aria-hidden="true"
+      />
     </div>
   );
 }

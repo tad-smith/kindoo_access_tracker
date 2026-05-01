@@ -83,20 +83,20 @@ test.describe('Phase 5 default landings', () => {
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
   });
 
-  test('stake principal lands on /stake/new', async ({ page }) => {
+  test('stake principal lands on /new', async ({ page }) => {
     await signInWithClaims(page, 'stake@example.com', {
       stakes: { csnorth: { manager: false, stake: true, wards: [] } },
     });
-    await expect(page).toHaveURL(/\/stake\/new$/);
-    await expect(page.getByRole('heading', { name: /^New Stake Request$/ })).toBeVisible();
+    await expect(page).toHaveURL(/\/new$/);
+    await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
   });
 
-  test('bishopric principal lands on /bishopric/new', async ({ page }) => {
+  test('bishopric principal lands on /new', async ({ page }) => {
     await signInWithClaims(page, 'bishop@example.com', {
       stakes: { csnorth: { manager: false, stake: false, wards: ['CO'] } },
     });
-    await expect(page).toHaveURL(/\/bishopric\/new$/);
-    await expect(page.getByRole('heading', { name: /^New Kindoo Request$/ })).toBeVisible();
+    await expect(page).toHaveURL(/\/new$/);
+    await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
   });
 });
 
@@ -107,7 +107,9 @@ test.describe('Phase 5 nav click-through', () => {
     await seedSetupCompleteStake();
   });
 
-  test('manager can click through Dashboard → All Seats → Audit Log → Access', async ({ page }) => {
+  test('manager can click through Dashboard → All Seats → Audit Log → App Access', async ({
+    page,
+  }) => {
     await signInWithClaims(page, 'manager-nav@example.com', {
       stakes: { csnorth: { manager: true, stake: false, wards: [] } },
     });
@@ -119,22 +121,26 @@ test.describe('Phase 5 nav click-through', () => {
     await page.getByRole('link', { name: /^Audit Log$/ }).click();
     await expect(page.getByRole('heading', { name: /^Audit Log$/ })).toBeVisible();
 
-    await page.getByRole('link', { name: /^Access$/ }).click();
+    // Phase 10.1 nav rename: nav label is "App Access" but the page H1
+    // is still "Access".
+    await page.getByRole('link', { name: /^App Access$/ }).click();
     await expect(page.getByRole('heading', { name: /^Access$/ })).toBeVisible();
   });
 
-  test('stake can click through New Request → Roster → Ward Rosters → My Requests', async ({
+  test('stake can click through New Request → Stake Roster → Ward Roster → My Requests', async ({
     page,
   }) => {
     await signInWithClaims(page, 'stake-nav@example.com', {
       stakes: { csnorth: { manager: false, stake: true, wards: [] } },
     });
-    await expect(page.getByRole('heading', { name: /^New Stake Request$/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
-    await page.getByRole('link', { name: /^Roster$/ }).click();
+    await page.getByRole('link', { name: /^Stake Roster$/ }).click();
     await expect(page.getByRole('heading', { name: /^Stake Roster$/ })).toBeVisible();
 
-    await page.getByRole('link', { name: /^Ward Rosters$/ }).click();
+    // Phase 10.1: single "Ward Roster" nav entry; for stake users it
+    // routes to the all-wards picker, whose page H1 is "Ward Rosters".
+    await page.getByRole('link', { name: /^Ward Roster$/ }).click();
     await expect(page.getByRole('heading', { name: /^Ward Rosters$/ })).toBeVisible();
 
     await page.getByRole('link', { name: /^My Requests$/ }).click();

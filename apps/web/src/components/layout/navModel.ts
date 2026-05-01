@@ -92,7 +92,7 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
     quickLinks.push({
       key: 'new-request',
       label: 'New Request',
-      to: bishopric ? '/bishopric/new' : '/stake/new',
+      to: '/new',
       icon: PlusCircle,
     });
   }

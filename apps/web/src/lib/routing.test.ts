@@ -29,14 +29,12 @@ describe('defaultLandingFor', () => {
     expect(defaultLandingFor(principal({ managerStakes: [STAKE_ID] }))).toBe('/manager/dashboard');
   });
 
-  it('returns /stake/new for a stake-member principal', () => {
-    expect(defaultLandingFor(principal({ stakeMemberStakes: [STAKE_ID] }))).toBe('/stake/new');
+  it('returns /new for a stake-member principal', () => {
+    expect(defaultLandingFor(principal({ stakeMemberStakes: [STAKE_ID] }))).toBe('/new');
   });
 
-  it('returns /bishopric/new for a bishopric principal', () => {
-    expect(defaultLandingFor(principal({ bishopricWards: { [STAKE_ID]: ['CO'] } }))).toBe(
-      '/bishopric/new',
-    );
+  it('returns /new for a bishopric principal', () => {
+    expect(defaultLandingFor(principal({ bishopricWards: { [STAKE_ID]: ['CO'] } }))).toBe('/new');
   });
 
   it('priorities manager > stake > bishopric for multi-role unions', () => {
@@ -56,7 +54,7 @@ describe('defaultLandingFor', () => {
           bishopricWards: { [STAKE_ID]: ['CO'] },
         }),
       ),
-    ).toBe('/stake/new');
+    ).toBe('/new');
   });
 
   it('prefers manager when the principal is a platform superadmin', () => {
@@ -94,18 +92,12 @@ describe('deepLinkPath', () => {
     expect(deepLinkPath('mgr/queue')).toBe('/manager/queue');
   });
 
-  it('resolves the per-role new-request keys', () => {
-    expect(deepLinkPath('stake/new')).toBe('/stake/new');
-    expect(deepLinkPath('bish/new')).toBe('/bishopric/new');
-  });
-
-  it('resolves the bare new-request key to the bishopric page', () => {
-    // Apps Script shipped one shared `new` page; the SPA splits per
-    // role, so the bare key resolves to the higher-priority leftmost
-    // (bishopric / stake share the New Request leftmost; bishopric
-    // wins arbitrarily here — multi-role principals land on the
-    // role-specific route via `defaultLandingFor`).
-    expect(deepLinkPath('new')).toBe('/bishopric/new');
+  it('resolves all new-request keys to the unified /new route', () => {
+    // Phase 10.1 collapsed `/bishopric/new` and `/stake/new` into
+    // `/new`; the legacy `?p=` keys resolve straight there.
+    expect(deepLinkPath('stake/new')).toBe('/new');
+    expect(deepLinkPath('bish/new')).toBe('/new');
+    expect(deepLinkPath('new')).toBe('/new');
   });
 
   it('resolves both the legacy and new MyRequests keys to a shared route', () => {
