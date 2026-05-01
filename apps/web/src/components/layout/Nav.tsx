@@ -31,6 +31,13 @@ interface NavProps {
   signingOut?: boolean;
   /** ARIA label for the nav landmark. */
   ariaLabel?: string;
+  /**
+   * Render the signed-in user's email as informational text just below
+   * the Account section's last item. Phone-drawer-only — desktop and
+   * tablet show the email in the brand bar instead. Pass `undefined`
+   * (the default) on those breakpoints to suppress.
+   */
+  userEmail?: string | undefined;
 }
 
 export function Nav({
@@ -39,6 +46,7 @@ export function Nav({
   onSignOut,
   signingOut = false,
   ariaLabel = 'Primary',
+  userEmail,
 }: NavProps) {
   const sections = navSectionsForPrincipal(principal);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -56,6 +64,7 @@ export function Nav({
           onNavigate={onNavigate}
           onSignOut={onSignOut}
           signingOut={signingOut}
+          userEmail={section.key === 'account' ? userEmail : undefined}
         />
       ))}
     </nav>
@@ -69,6 +78,8 @@ interface NavSectionRenderProps {
   onNavigate: (() => void) | undefined;
   onSignOut: (() => void) | undefined;
   signingOut: boolean;
+  /** When set, rendered as the section's last list item (info-only, not interactive). */
+  userEmail: string | undefined;
 }
 
 function NavSectionRender({
@@ -78,6 +89,7 @@ function NavSectionRender({
   onNavigate,
   onSignOut,
   signingOut,
+  userEmail,
 }: NavSectionRenderProps) {
   return (
     <div
@@ -99,6 +111,11 @@ function NavSectionRender({
             />
           </li>
         ))}
+        {userEmail ? (
+          <li className="kd-nav-info" data-testid="nav-user-email" title={userEmail}>
+            {userEmail}
+          </li>
+        ) : null}
       </ul>
     </div>
   );

@@ -8,7 +8,9 @@
 //     viewport. Footer: version stamp only.
 //   - Phone drawer (`variant="drawer"`): slides from the left edge,
 //     fixed width (~300px), backdrop covers everything to the right.
-//     Footer: user email + version stamp.
+//     The user email renders inside the Account section just below
+//     the Logout item; the drawer footer holds only the version
+//     stamp.
 //
 // Logout lives inside the nav body now (Account section, per
 // Phase 10.1 follow-up #4). The Nav renders the action item as a
@@ -103,14 +105,10 @@ export function NavOverlay({
             onSignOut={onSignOut}
             signingOut={signingOut}
             ariaLabel="Primary"
+            userEmail={variant === 'drawer' ? email : undefined}
           />
         </div>
         <div className="kd-nav-overlay-foot">
-          {variant === 'drawer' && email ? (
-            <div className="kd-nav-overlay-email" title={email}>
-              {email}
-            </div>
-          ) : null}
           <span className="kd-nav-version" aria-label="Build version">
             v{version}
           </span>

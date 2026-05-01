@@ -209,11 +209,17 @@ test.describe('Phase 10.1 navigation redesign', () => {
     const drawer = page.locator('.kd-nav-overlay-drawer');
     await expect(drawer).toBeVisible();
 
-    // Drawer footer carries the email + version (no logout in foot).
-    await expect(drawer.getByText('phone-drawer@example.com')).toBeVisible();
-    await expect(drawer.getByLabel('Build version')).toBeVisible();
-    // Logout is reachable from the Account section in the drawer body.
-    await expect(drawer.getByRole('button', { name: /^Logout$/ })).toBeVisible();
+    // Account section: Logout button + email immediately below it.
+    const logout = drawer.getByRole('button', { name: /^Logout$/ });
+    await expect(logout).toBeVisible();
+    const emailEl = drawer.getByTestId('nav-user-email');
+    await expect(emailEl).toHaveText('phone-drawer@example.com');
+
+    // Drawer footer holds only the version stamp (no email, no buttons).
+    const foot = drawer.locator('.kd-nav-overlay-foot');
+    await expect(foot.getByLabel('Build version')).toBeVisible();
+    await expect(foot.getByText('phone-drawer@example.com')).toHaveCount(0);
+    await expect(foot.getByRole('button')).toHaveCount(0);
 
     // Tap a nav item → drawer closes + navigation happens.
     await drawer.getByRole('link', { name: /All Seats/ }).click();

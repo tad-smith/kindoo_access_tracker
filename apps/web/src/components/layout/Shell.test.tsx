@@ -306,6 +306,16 @@ describe('Shell — tablet icon rail', () => {
     expect(document.querySelector('.kd-nav-overlay-panel')).toBeNull();
     expect(signOutMock).toHaveBeenCalledTimes(1);
   });
+
+  it('expanded panel does NOT render the user email in the body (tablet keeps it in the brand bar)', async () => {
+    const user = userEvent.setup();
+    await renderShell(<p>Hello</p>);
+    const divider = document.querySelector('.kd-icon-rail-divider') as HTMLElement | null;
+    if (!divider) throw new Error('icon rail had no divider');
+    await user.click(divider);
+    const panel = document.querySelector('.kd-nav-overlay-panel') as HTMLElement;
+    expect(within(panel).queryByTestId('nav-user-email')).toBeNull();
+  });
 });
 
 describe('Shell — phone drawer', () => {
@@ -321,18 +331,37 @@ describe('Shell — phone drawer', () => {
     expect(document.querySelector('.kd-nav-overlay-drawer')).not.toBeNull();
   });
 
-  it('drawer footer carries the email + version (Logout moved into Account section)', async () => {
+  it('drawer Account section: Logout button + user email immediately below it; foot just has version', async () => {
     const user = userEvent.setup();
     await renderShell(<p>Hello</p>);
     await user.click(screen.getByRole('button', { name: /open navigation/i }));
     const drawer = document.querySelector('.kd-nav-overlay-drawer') as HTMLElement;
-    expect(within(drawer).getByText('alice@example.com')).toBeInTheDocument();
-    expect(within(drawer).getByLabelText('Build version')).toHaveTextContent('v4.0.0-test');
-    // Logout is now an Account-section nav item inside the drawer
-    // body, not a foot button.
+
+    // Logout button + email both appear in the drawer body.
+    const logout = within(drawer).getByRole('button', { name: /^Logout$/ });
+    const emailNode = within(drawer).getByTestId('nav-user-email');
+    expect(logout).toBeInTheDocument();
+    expect(emailNode).toHaveTextContent('alice@example.com');
+
+    // Email immediately follows the Logout button in DOM order.
+    const logoutLi = logout.closest('li');
+    expect(logoutLi).not.toBeNull();
+    expect(logoutLi?.nextElementSibling).toBe(emailNode);
+
+    // Foot now holds only the version stamp — no email, no buttons.
     const foot = drawer.querySelector('.kd-nav-overlay-foot') as HTMLElement;
     expect(within(foot).queryByRole('button')).toBeNull();
-    expect(within(drawer).getByRole('button', { name: /^Logout$/ })).toBeInTheDocument();
+    expect(within(foot).queryByText('alice@example.com')).toBeNull();
+    expect(within(foot).getByLabelText('Build version')).toHaveTextContent('v4.0.0-test');
+  });
+
+  it('drawer renders the email exactly once (in body, not in foot)', async () => {
+    const user = userEvent.setup();
+    await renderShell(<p>Hello</p>);
+    await user.click(screen.getByRole('button', { name: /open navigation/i }));
+    const drawer = document.querySelector('.kd-nav-overlay-drawer') as HTMLElement;
+    const emails = within(drawer).getAllByText('alice@example.com');
+    expect(emails).toHaveLength(1);
   });
 
   it('clicking the backdrop closes the drawer', async () => {

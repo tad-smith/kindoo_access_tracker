@@ -125,3 +125,18 @@ button.kd-nav-link:disabled {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   user-select: all;
 }
+
+/* Informational text inside a section's list — currently used to
+   surface the signed-in user's email below the Logout item in the
+   phone drawer. Not interactive; aligns with the icon-column geometry
+   so the email indents the same as a label. */
+.kd-nav-info {
+  /* Match the icon+gap span (icon size 20 + gap 12 = 32) plus the
+     link's left padding (13px including the 3px transparent accent
+     strip). */
+  padding: 6px 16px 10px 45px;
+  color: var(--kd-fg-3);
+  font-size: 0.85em;
+  word-break: break-word;
+  user-select: text;
+}
