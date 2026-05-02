@@ -186,6 +186,7 @@ Jointly owned by the Importer (`source='importer'`) and Kindoo Managers (`source
 | `scope` | string | `ward_code` or `"stake"`. |
 | `calling` | string | For importer rows: the calling that granted access (someone holding two access-granting callings in the same scope has two rows). For manual rows: a free-text reason the manager typed (e.g. "Covering bishop — temporary"). Shared column because the composite PK `(canonical_email, scope, calling)` applies identically. |
 | `source` | enum | `"importer"` or `"manual"`. Empty cells read as `"importer"` (TASKS.md #1 migration: existing rows predate the column). |
+| `sort_order` | number / null | Doc-level. MIN of `sheet_order` across every `(scope, calling)` pair in `importer_callings`. `null` for manual-only access docs (no `importer_callings`). |
 
 Uniqueness is on the composite PK regardless of source. The importer skips insert if the key is already occupied by any row (importer or manual), and the manager UI rejects a manual insert that collides with an existing row. Deletes from the manager UI are limited to `source='manual'` rows.
 
@@ -218,6 +219,7 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 | `start_date` | ISO date (YYYY-MM-DD) | Temp only; optional on manual (blank for auto). |
 | `end_date` | ISO date (YYYY-MM-DD) | Temp only. Expires at end of this day (local tz). |
 | `building_names` | string | Comma-separated `building_name` values (FK to `Buildings.building_name`). Auto-seat defaults at importer insert time: ward callings → the ward's `building_name`; stake callings → every `Buildings.building_name` (stake-level callings cross ward boundaries, so the member needs access to every building in the stake). Editable by managers on manual/temp rows. |
+| `sort_order` | number / null | Auto seats: MIN of `sheet_order` across the seat's `callings[]` (the matched calling templates' `sheet_order` values); multi-calling collapsed seats get the lowest-priority template's order. Manual / temp seats: always `null` (created by request completion, never the importer). Orphaned auto seats whose calling no longer matches any template: `null`. |
 | `created_by` | string | Email or automated actor (`Importer`, `ExpiryTrigger`). |
 | `created_at` | timestamp | |
 | `last_modified_by` | string | |
@@ -245,6 +247,7 @@ Live roster. No active/soft-delete flag — rows are inserted on add, deleted on
 | `member_name` | string | For display. |
 | `reason` | string | Required for all types. |
 | `comment` | string | Free text (e.g. multi-building notes on adds, removal context). |
+| `urgent` | boolean | Requester flag; defaults `FALSE`. Drives the manager queue's "urgent" section and the comment-required UX gate. Set at submit time and immutable thereafter. |
 | `start_date` | ISO date | Temp only. |
 | `end_date` | ISO date | Temp only. |
 | `building_names` | string | Comma-separated `Buildings.building_name` tokens — the requester's pick of which buildings the person will access. Stake-scope submits render a building checkbox group in NewRequest.html and **require at least one ticked** (client-side gate + server-side check in `RequestsService_submit`). Bishopric-scope submits hide the selector and store an empty string; the manager's Complete dialog pre-ticks the ward's default `building_name` instead. Remove submits force the field empty. `RequestsService_complete` re-enforces at-least-one on the resolved list before the Seat is inserted, so a hand-crafted rpc bypassing the UI still can't commit an empty selection. |
