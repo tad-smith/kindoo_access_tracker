@@ -149,6 +149,89 @@ describe('<AccessPage />', () => {
     expect(ids).toEqual(['access-card-a@x.com', 'access-card-b@x.com']);
   });
 
+  it('groups cards by scope band: stake users top, then ward users alpha by ward_code', () => {
+    // Even though the GE user has the lowest sort_order, the stake
+    // users sit in the top band and the GE user goes to its own band
+    // (after CO).
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'co1@x.com',
+          member_email: 'co1@x.com',
+          importer_callings: { CO: ['Bishop'] },
+          manual_grants: {},
+          sort_order: 4,
+        }),
+        makeAccess({
+          member_canonical: 'ge1@x.com',
+          member_email: 'ge1@x.com',
+          importer_callings: { GE: ['Bishop'] },
+          manual_grants: {},
+          sort_order: 1,
+        }),
+        makeAccess({
+          member_canonical: 'stake-b@x.com',
+          member_email: 'stake-b@x.com',
+          importer_callings: { stake: ['Stake Clerk'] },
+          manual_grants: {},
+          sort_order: 5,
+        }),
+        makeAccess({
+          member_canonical: 'stake-a@x.com',
+          member_email: 'stake-a@x.com',
+          importer_callings: { stake: ['Stake President'] },
+          manual_grants: {},
+          sort_order: 2,
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    const cards = screen.getByTestId('access-cards');
+    const ids = Array.from(cards.querySelectorAll('[data-testid^="access-card-"]')).map((c) =>
+      c.getAttribute('data-testid'),
+    );
+    expect(ids).toEqual([
+      'access-card-stake-a@x.com',
+      'access-card-stake-b@x.com',
+      'access-card-co1@x.com',
+      'access-card-ge1@x.com',
+    ]);
+  });
+
+  it('places manual-only users in the right ward band based on their first manual scope', () => {
+    const grant = {
+      grant_id: 'g1',
+      reason: 'Covering bishop',
+      granted_by: { email: 'm@example.com', canonical: 'm@example.com' },
+      granted_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+    };
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'manual-co@x.com',
+          member_email: 'manual-co@x.com',
+          importer_callings: {},
+          manual_grants: { CO: [grant] },
+          sort_order: 99,
+        }),
+        makeAccess({
+          member_canonical: 'stake-a@x.com',
+          member_email: 'stake-a@x.com',
+          importer_callings: { stake: ['Stake President'] },
+          manual_grants: {},
+          sort_order: 2,
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    const cards = screen.getByTestId('access-cards');
+    const ids = Array.from(cards.querySelectorAll('[data-testid^="access-card-"]')).map((c) =>
+      c.getAttribute('data-testid'),
+    );
+    // Stake band first, then CO band.
+    expect(ids).toEqual(['access-card-stake-a@x.com', 'access-card-manual-co@x.com']);
+  });
+
   it('renders only the importer section for an importer-only user', () => {
     useAccessListMock.mockReturnValue(
       liveResult([makeAccess({ importer_callings: { CO: ['Bishop'] }, manual_grants: {} })]),
@@ -330,6 +413,155 @@ describe('<AccessPage />', () => {
     expect(headers).toEqual(['Scope', 'Calling / reason', 'Email', 'Source', 'Actions']);
     // Two rows: one importer (CO/Bishop) + one manual (stake/Covering bishop).
     expect(table.querySelectorAll('tbody tr')).toHaveLength(2);
+  });
+
+  it('table view sorts rows by scope band, then per-row sheet_order from the calling-template lookup', () => {
+    // Stake templates: Stake President = 1, Stake Clerk = 5.
+    // Ward templates: Bishop = 1, Counselor = 3, EQ President = 7.
+    useStakeCallingTemplatesMock.mockReturnValue(
+      liveResult([
+        {
+          calling_name: 'Stake President',
+          give_app_access: true,
+          auto_kindoo_access: true,
+          sheet_order: 1,
+        },
+        {
+          calling_name: 'Stake Clerk',
+          give_app_access: true,
+          auto_kindoo_access: true,
+          sheet_order: 5,
+        },
+      ]),
+    );
+    useWardCallingTemplatesMock.mockReturnValue(
+      liveResult([
+        { calling_name: 'Bishop', give_app_access: true, auto_kindoo_access: true, sheet_order: 1 },
+        {
+          calling_name: 'Counselor',
+          give_app_access: true,
+          auto_kindoo_access: true,
+          sheet_order: 3,
+        },
+        {
+          calling_name: 'EQ President',
+          give_app_access: true,
+          auto_kindoo_access: true,
+          sheet_order: 7,
+        },
+      ]),
+    );
+    useStakeWardsMock.mockReturnValue(
+      liveResult([
+        { ward_code: 'CO', ward_name: 'Cordera' },
+        { ward_code: 'GE', ward_name: 'Genoa' },
+      ]),
+    );
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        // Mixed users — assertions read every flat row.
+        makeAccess({
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          // Stake Clerk (5) — should land BELOW Stake President (1).
+          importer_callings: { stake: ['Stake Clerk'] },
+          manual_grants: {},
+        }),
+        makeAccess({
+          member_canonical: 'b@x.com',
+          member_email: 'b@x.com',
+          importer_callings: { stake: ['Stake President'] },
+          manual_grants: {},
+        }),
+        makeAccess({
+          member_canonical: 'c@x.com',
+          member_email: 'c@x.com',
+          // EQ President (7) → bottom of CO band.
+          importer_callings: { CO: ['EQ President'] },
+          manual_grants: {},
+        }),
+        makeAccess({
+          member_canonical: 'd@x.com',
+          member_email: 'd@x.com',
+          importer_callings: { CO: ['Bishop'] },
+          manual_grants: {},
+        }),
+        makeAccess({
+          member_canonical: 'e@x.com',
+          member_email: 'e@x.com',
+          importer_callings: { GE: ['Counselor'] },
+          manual_grants: {},
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    const table = screen.getByTestId('access-table');
+    const rows = Array.from(table.querySelectorAll('tbody tr')).map((tr) => {
+      const cells = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent?.trim() ?? '');
+      return `${cells[0]}|${cells[1]}`;
+    });
+    expect(rows).toEqual([
+      'stake|Stake President', // sheet_order 1
+      'stake|Stake Clerk', // sheet_order 5
+      'CO|Bishop', // sheet_order 1, CO band
+      'CO|EQ President', // sheet_order 7, CO band
+      'GE|Counselor', // GE band (only row)
+    ]);
+  });
+
+  it('table view places manual grants at the bottom of their scope band (no template match)', () => {
+    useStakeCallingTemplatesMock.mockReturnValue(
+      liveResult([
+        {
+          calling_name: 'Stake President',
+          give_app_access: true,
+          auto_kindoo_access: true,
+          sheet_order: 1,
+        },
+      ]),
+    );
+    useWardCallingTemplatesMock.mockReturnValue(liveResult([]));
+    useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Cordera' }]));
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'm@x.com',
+          member_email: 'm@x.com',
+          importer_callings: {},
+          manual_grants: {
+            stake: [
+              {
+                grant_id: 'g1',
+                reason: 'Covering bishop',
+                granted_by: { email: 'mgr@x.com', canonical: 'mgr@x.com' },
+                granted_at: {
+                  seconds: 0,
+                  nanoseconds: 0,
+                  toDate: () => new Date(),
+                  toMillis: () => 0,
+                },
+              },
+            ],
+          },
+        }),
+        makeAccess({
+          member_canonical: 'p@x.com',
+          member_email: 'p@x.com',
+          importer_callings: { stake: ['Stake President'] },
+          manual_grants: {},
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    const table = screen.getByTestId('access-table');
+    const rows = Array.from(table.querySelectorAll('tbody tr')).map((tr) => {
+      const cells = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent?.trim() ?? '');
+      return `${cells[0]}|${cells[1]}`;
+    });
+    expect(rows).toEqual([
+      'stake|Stake President', // sheet_order 1
+      'stake|Covering bishop', // manual → +Infinity → bottom of stake band
+    ]);
   });
 
   it('opens the delete confirmation dialog when a grant Delete is clicked', async () => {
