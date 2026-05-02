@@ -65,7 +65,12 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/__\//],
+        // Exclude the firebase-messaging-sw.js path so Workbox doesn't
+        // serve `index.html` when the browser fetches the FCM SW. The
+        // FCM SW lives at scope `/firebase-cloud-messaging-push-scope`
+        // and must always come from disk (network-fresh). Workbox
+        // owns the rest of `/`.
+        navigateFallbackDenylist: [/^\/__\//, /^\/firebase-messaging-sw\.js$/],
         // Network-first for the SPA shell; cache-first for fingerprinted
         // bundle chunks (handled by precache); explicitly never cache
         // Firebase backend traffic.

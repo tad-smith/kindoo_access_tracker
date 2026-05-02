@@ -65,6 +65,7 @@ import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { toast } from '../../../lib/store/toast';
+import { PushNotificationsPanel } from '../../notifications/components/PushNotificationsPanel';
 
 export type ConfigTabKey =
   | 'config'
@@ -852,67 +853,79 @@ function ConfigKeysTab() {
   }
 
   return (
-    <form className="kd-wizard-form" onSubmit={handleSubmit(onSubmit)}>
-      <h2>Stake config</h2>
-      <label>
-        Stake name
-        <Input {...register('stake_name')} />
-      </label>
-      <label>
-        Callings sheet ID
-        <Input {...register('callings_sheet_id')} />
-      </label>
-      <label>
-        Stake seat cap
-        <Input type="number" min={0} {...register('stake_seat_cap', { valueAsNumber: true })} />
-      </label>
-      <label>
-        Expiry hour (0–23)
-        <Input
-          type="number"
-          min={0}
-          max={23}
-          {...register('expiry_hour', { valueAsNumber: true })}
-        />
-      </label>
-      <label>
-        Import day
-        <Select {...register('import_day')}>
-          {(
-            ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'] as const
-          ).map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </Select>
-      </label>
-      <label>
-        Import hour (0–23)
-        <Input
-          type="number"
-          min={0}
-          max={23}
-          {...register('import_hour', { valueAsNumber: true })}
-        />
-      </label>
-      <label>
-        Timezone (IANA, e.g. America/Denver)
-        <Input {...register('timezone')} />
-      </label>
-      <label>
-        <input type="checkbox" {...register('notifications_enabled')} /> Email Notifications Enabled
-      </label>
-      {formState.errors.stake_name ? (
-        <p role="alert" className="kd-form-error">
-          {formState.errors.stake_name.message}
-        </p>
-      ) : null}
-      <div className="form-actions">
-        <Button type="submit" disabled={update.isPending}>
-          {update.isPending ? 'Saving…' : 'Save config'}
-        </Button>
-      </div>
-    </form>
+    <>
+      <form className="kd-wizard-form" onSubmit={handleSubmit(onSubmit)}>
+        <h2>Stake config</h2>
+        <label>
+          Stake name
+          <Input {...register('stake_name')} />
+        </label>
+        <label>
+          Callings sheet ID
+          <Input {...register('callings_sheet_id')} />
+        </label>
+        <label>
+          Stake seat cap
+          <Input type="number" min={0} {...register('stake_seat_cap', { valueAsNumber: true })} />
+        </label>
+        <label>
+          Expiry hour (0–23)
+          <Input
+            type="number"
+            min={0}
+            max={23}
+            {...register('expiry_hour', { valueAsNumber: true })}
+          />
+        </label>
+        <label>
+          Import day
+          <Select {...register('import_day')}>
+            {(
+              [
+                'MONDAY',
+                'TUESDAY',
+                'WEDNESDAY',
+                'THURSDAY',
+                'FRIDAY',
+                'SATURDAY',
+                'SUNDAY',
+              ] as const
+            ).map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label>
+          Import hour (0–23)
+          <Input
+            type="number"
+            min={0}
+            max={23}
+            {...register('import_hour', { valueAsNumber: true })}
+          />
+        </label>
+        <label>
+          Timezone (IANA, e.g. America/Denver)
+          <Input {...register('timezone')} />
+        </label>
+        <label>
+          <input type="checkbox" {...register('notifications_enabled')} /> Email Notifications
+          Enabled
+        </label>
+        {formState.errors.stake_name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.stake_name.message}
+          </p>
+        ) : null}
+        <div className="form-actions">
+          <Button type="submit" disabled={update.isPending}>
+            {update.isPending ? 'Saving…' : 'Save config'}
+          </Button>
+        </div>
+      </form>
+      <PushNotificationsPanel />
+    </>
   );
 }

@@ -73,6 +73,13 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 
+// Stub the Push Notifications panel — it owns its own data hooks +
+// browser APIs that aren't relevant to the Configuration test surface.
+// The panel's own component test exercises its rendering states.
+vi.mock('../../notifications/components/PushNotificationsPanel', () => ({
+  PushNotificationsPanel: () => <div data-testid="push-notifications-panel-stub" />,
+}));
+
 import { ConfigurationPage } from './ConfigurationPage';
 
 function liveResult<T>(data: T[]) {
