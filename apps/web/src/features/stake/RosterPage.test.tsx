@@ -8,7 +8,7 @@ import { makeSeat, makeWard } from '../../../test/fixtures';
 
 const useStakeRosterMock = vi.fn();
 const useStakeWardsMock = vi.fn();
-const useFirestoreOnceMock = vi.fn();
+const useFirestoreDocMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   useStakeRoster: () => useStakeRosterMock(),
@@ -16,7 +16,7 @@ vi.mock('./hooks', () => ({
 }));
 
 vi.mock('../../lib/data', () => ({
-  useFirestoreOnce: (ref: unknown) => useFirestoreOnceMock(ref),
+  useFirestoreDoc: (ref: unknown) => useFirestoreDocMock(ref),
 }));
 
 vi.mock('../requests/hooks', () => ({
@@ -65,7 +65,7 @@ function mockWards(wards: Ward[]) {
 }
 
 function mockStakeDoc(stake: Partial<Stake> | undefined) {
-  useFirestoreOnceMock.mockReturnValue({
+  useFirestoreDocMock.mockReturnValue({
     data: stake,
     error: null,
     status: 'success',
@@ -122,5 +122,18 @@ describe('<StakeRosterPage />', () => {
     render(<StakeRosterPage />);
     // 200 - (50 + 50 + 50) = 50.
     expect(screen.getByText(/1 \/ 50 seats used/)).toBeInTheDocument();
+  });
+
+  it('renders the computed cap (not the cap-unset variant) when stake doc + wards are loaded', () => {
+    // Regression: with `useFirestoreOnce` the stake doc was reliably
+    // empty in production and the helper returned null, falling
+    // through to "(cap unset)". The live `useFirestoreDoc` keeps the
+    // doc populated so the bar renders the real ratio.
+    mockSeats([makeSeat({ scope: 'stake' })]);
+    mockStakeDoc({ stake_seat_cap: 200 });
+    mockWards([makeWard({ ward_code: 'CO', seat_cap: 20 })]);
+    render(<StakeRosterPage />);
+    expect(screen.queryByText(/cap unset/i)).toBeNull();
+    expect(screen.getByText(/1 \/ 180 seats used/)).toBeInTheDocument();
   });
 });

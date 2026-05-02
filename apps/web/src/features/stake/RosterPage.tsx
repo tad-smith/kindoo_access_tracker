@@ -4,7 +4,7 @@
 //   `(resource.data.scope == 'stake' && isStakeMember(stakeId))`.
 
 import { useMemo } from 'react';
-import { useFirestoreOnce } from '../../lib/data';
+import { useFirestoreDoc } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
 import { STAKE_ID } from '../../lib/constants';
@@ -19,7 +19,10 @@ import { RemovalAffordance } from '../requests/components/RemovalAffordance';
 export function StakeRosterPage() {
   const seats = useStakeRoster();
   const wards = useStakeWards();
-  const stakeDocResult = useFirestoreOnce(stakeRef(db, STAKE_ID));
+  // Live subscription — `useFirestoreOnce` was reliably empty in
+  // production for this page (TanStack cache miss + no listener to
+  // populate it), so the cap fell through to the "(cap unset)" path.
+  const stakeDocResult = useFirestoreDoc(stakeRef(db, STAKE_ID));
   const stakeDoc = stakeDocResult.data;
 
   const sortedSeats = useMemo(() => sortSeatsWithinScope(seats.data ?? []), [seats.data]);
