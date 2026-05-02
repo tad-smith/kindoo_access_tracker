@@ -403,3 +403,18 @@ Owner: @docs-keeper
 Phase: post Phase 10.3
 
 Phase 10.3 added `urgent: boolean` to Request and `sort_order: number | null` to Seat and Access without updating the schema reference. Add `urgent` to `firebase-schema.md` §4.7 (Request) and `data-model.md`'s Request shape; add `sort_order` to `firebase-schema.md` §4.5 (Access) and §4.6 (Seat) with the operator-decided semantics — doc-level for Access (MIN of `sheet_order` across `importer_callings`), seat-level for Seat (MIN of `sheet_order` across `callings[]`), `null` for orphaned-calling seats and manual-only access docs. Cross-reference the importer-denormalization commit (`be93970`) and note the "wait for next importer run" migration posture (no backfill). Land in a docs-only commit; keep separate from the Phase 10.3 PR so that PR stays bounded.
+
+## [T-29] Per-row `sheet_order` sort on the Access page table view
+Status: open
+Owner: @web-engineer
+Phase: post Phase 10.4
+
+Phase 10.4 fixed the Access page **card view** to sort by the doc-level `sort_order` (Phase 10.3 importer denormalization). The **table view** (`flattenAccess` at `apps/web/src/features/manager/access/AccessPage.tsx`, the rows it produces are `(scope, calling, email)` triples) still sorts by `scope → calling → email`. Per-row `sheet_order` would be the right denominator there, but each row's calling needs to be matched against the corresponding template (`wardCallingTemplates` for ward scopes, `stakeCallingTemplates` for stake) to look up its `sheet_order`, including wildcard matching (the `Counselor *` family).
+
+Doing this correctly requires:
+1. Two new live subscriptions on the Access page (`useWardCallingTemplates` and `useStakeCallingTemplates`).
+2. Porting `matchTemplate` + `wildcardToRegex` from `functions/src/lib/parser.ts` into a shared helper (probably `apps/web/src/lib/sort/calling-templates.ts` or moved into `packages/shared/`) so both client and importer use the same wildcard semantics.
+3. Cache layer so the table doesn't re-resolve every render (one `Map<scope, TemplateIndex>` is enough; rebuild only when templates change).
+4. Manual-grant rows (where `calling` is a free-text reason) get `+Infinity` sort_order — bottom of the band per scope.
+
+Skipped in Phase 10.4 because the operator named only the card-view sort as the immediate priority, and this work has reasonable complexity (two new subscriptions + a parser port). Revisit after staging if the table view's `scope → calling` sort proves insufficient on real data.

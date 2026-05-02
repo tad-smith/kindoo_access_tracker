@@ -79,6 +79,69 @@ describe('<AccessPage />', () => {
     expect(screen.getByTestId('access-card-b@x.com')).toBeInTheDocument();
   });
 
+  it('orders cards by sort_order ascending; lower sort_order renders higher', () => {
+    // Email order (z, a, m) deliberately does NOT match sort_order
+    // order (1, 2, 5) — only the sort_order ordering should win.
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({ member_canonical: 'z@x.com', member_email: 'z@x.com', sort_order: 5 }),
+        makeAccess({ member_canonical: 'a@x.com', member_email: 'a@x.com', sort_order: 1 }),
+        makeAccess({ member_canonical: 'm@x.com', member_email: 'm@x.com', sort_order: 2 }),
+      ]),
+    );
+    render(<AccessPage />);
+    const cards = screen.getByTestId('access-cards');
+    const ids = Array.from(cards.querySelectorAll('[data-testid^="access-card-"]')).map((c) =>
+      c.getAttribute('data-testid'),
+    );
+    expect(ids).toEqual(['access-card-a@x.com', 'access-card-m@x.com', 'access-card-z@x.com']);
+  });
+
+  it('places rows with null/undefined sort_order at the bottom (tie-broken alpha by email)', () => {
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'orphan-z@x.com',
+          member_email: 'orphan-z@x.com',
+          // sort_order omitted → bottom.
+        }),
+        makeAccess({ member_canonical: 'a@x.com', member_email: 'a@x.com', sort_order: 1 }),
+        makeAccess({
+          member_canonical: 'orphan-a@x.com',
+          member_email: 'orphan-a@x.com',
+          // sort_order omitted → bottom; tie-broken alpha vs orphan-z.
+        }),
+        makeAccess({ member_canonical: 'b@x.com', member_email: 'b@x.com', sort_order: 2 }),
+      ]),
+    );
+    render(<AccessPage />);
+    const cards = screen.getByTestId('access-cards');
+    const ids = Array.from(cards.querySelectorAll('[data-testid^="access-card-"]')).map((c) =>
+      c.getAttribute('data-testid'),
+    );
+    expect(ids).toEqual([
+      'access-card-a@x.com',
+      'access-card-b@x.com',
+      'access-card-orphan-a@x.com',
+      'access-card-orphan-z@x.com',
+    ]);
+  });
+
+  it('breaks sort_order ties alphabetically by member_email', () => {
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({ member_canonical: 'b@x.com', member_email: 'b@x.com', sort_order: 1 }),
+        makeAccess({ member_canonical: 'a@x.com', member_email: 'a@x.com', sort_order: 1 }),
+      ]),
+    );
+    render(<AccessPage />);
+    const cards = screen.getByTestId('access-cards');
+    const ids = Array.from(cards.querySelectorAll('[data-testid^="access-card-"]')).map((c) =>
+      c.getAttribute('data-testid'),
+    );
+    expect(ids).toEqual(['access-card-a@x.com', 'access-card-b@x.com']);
+  });
+
   it('renders only the importer section for an importer-only user', () => {
     useAccessListMock.mockReturnValue(
       liveResult([makeAccess({ importer_callings: { CO: ['Bishop'] }, manual_grants: {} })]),

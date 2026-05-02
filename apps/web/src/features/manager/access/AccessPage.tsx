@@ -80,10 +80,16 @@ export function AccessPage() {
     );
   }, [all, scopeFilter]);
 
-  // Stable display order: by member_email A-Z, then canonical for tie-breaking.
+  // Display order: `sort_order` ascending (importer-denormalized MIN of
+  // matched `importer_callings` sheet_orders per Phase 10.3); null /
+  // undefined → bottom of the list (`+Infinity`, same convention as
+  // `lib/sort/seats.ts`'s auto band). Tie-break alpha by member_email.
   const sorted = useMemo(
     () =>
       [...filtered].sort((a, b) => {
+        const aOrder = typeof a.sort_order === 'number' ? a.sort_order : Number.POSITIVE_INFINITY;
+        const bOrder = typeof b.sort_order === 'number' ? b.sort_order : Number.POSITIVE_INFINITY;
+        if (aOrder !== bOrder) return aOrder - bOrder;
         const aKey = a.member_email || a.member_canonical;
         const bKey = b.member_email || b.member_canonical;
         return aKey.localeCompare(bKey);
