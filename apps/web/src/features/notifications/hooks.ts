@@ -33,7 +33,7 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { deleteField, serverTimestamp, setDoc, type FieldValue } from 'firebase/firestore';
+import { deleteField, setDoc } from 'firebase/firestore';
 import { deleteToken, getMessaging, getToken } from 'firebase/messaging';
 import type { UserIndexEntry } from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
@@ -131,17 +131,16 @@ export function useEnablePushMutation() {
 
       const deviceId = getDeviceId();
       const actor = actorOf(principal);
-      // Merge-write — never clobbers `uid` / `typedEmail` / `lastSignIn`
-      // (rules forbid us touching those keys regardless). The dotted
-      // path notation overwrites just the deviceId slot in fcmTokens.
+      // Merge-write. Rules permit only `fcmTokens`, `notificationPrefs`,
+      // `lastActor` in `affectedKeys()` — anything else here would be
+      // rejected. `uid` / `typedEmail` / `lastSignIn` stay server-only.
       await setDoc(
         userIndexRef(db, principal.canonical),
         {
           fcmTokens: { [deviceId]: token },
           notificationPrefs: { push: { newRequest: true } },
           lastActor: actor,
-          lastTouched: serverTimestamp(),
-        } as Partial<UserIndexEntry> & { lastActor: typeof actor; lastTouched: FieldValue },
+        } as Partial<UserIndexEntry> & { lastActor: typeof actor },
         { merge: true },
       );
       return 'granted';
@@ -184,11 +183,7 @@ export function useDisablePushMutation() {
           fcmTokens: { [deviceId]: deleteField() },
           notificationPrefs: { push: { newRequest: false } },
           lastActor: actor,
-          lastTouched: serverTimestamp(),
-        } as unknown as Partial<UserIndexEntry> & {
-          lastActor: typeof actor;
-          lastTouched: FieldValue;
-        },
+        } as unknown as Partial<UserIndexEntry> & { lastActor: typeof actor },
         { merge: true },
       );
     },
@@ -217,8 +212,7 @@ export function useUpdateNewRequestPrefMutation() {
         {
           notificationPrefs: { push: { newRequest: enabled } },
           lastActor: actor,
-          lastTouched: serverTimestamp(),
-        } as Partial<UserIndexEntry> & { lastActor: typeof actor; lastTouched: FieldValue },
+        } as Partial<UserIndexEntry> & { lastActor: typeof actor },
         { merge: true },
       );
     },

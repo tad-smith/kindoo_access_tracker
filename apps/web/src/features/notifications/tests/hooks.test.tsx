@@ -18,7 +18,6 @@ import type { UserIndexEntry } from '@kindoo/shared';
 
 const setDocMock = vi.fn();
 const deleteFieldSentinel = { __deleteField: true };
-const serverTimestampSentinel = { __serverTimestamp: true };
 
 vi.mock('firebase/firestore', async () => {
   const actual = await vi.importActual<typeof import('firebase/firestore')>('firebase/firestore');
@@ -26,7 +25,6 @@ vi.mock('firebase/firestore', async () => {
     ...actual,
     setDoc: (...args: unknown[]) => setDocMock(...args),
     deleteField: () => deleteFieldSentinel,
-    serverTimestamp: () => serverTimestampSentinel,
   };
 });
 
