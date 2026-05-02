@@ -268,6 +268,10 @@ Per-user role-grant doc. Doc exists iff the user has *any* importer or manual ac
     }>;
   };
 
+  // Doc-level sort key. MIN of `sheet_order` across every (scope, calling) pair in
+  // `importer_callings`. `null` for manual-only access docs (no `importer_callings`).
+  sort_order: number | null;
+
   created_at: Timestamp;
   last_modified_at: Timestamp;
   last_modified_by: { email: string; canonical: string };
@@ -308,6 +312,7 @@ Per-user Kindoo seat. One doc per user per stake. The `duplicate_grants[]` field
   start_date?: string;         // temp only, ISO date (YYYY-MM-DD)
   end_date?: string;           // temp only, ISO date
   building_names: string[];
+  sort_order: number | null;   // see "Sort order" below
 
   // Manual/temp linkage
   granted_by_request?: string; // request_id; absent for auto seats
@@ -341,6 +346,11 @@ Per-user Kindoo seat. One doc per user per stake. The `duplicate_grants[]` field
 - Auto seats have `callings.length >= 1` and `type='auto'`. Removing the last calling deletes the seat (or promotes a manual/temp duplicate to primary, see importer logic).
 - Manual/temp seats have `granted_by_request` set; auto seats do not.
 
+**Sort order:**
+- **Auto seats:** denormalized at importer run as the **MIN** of `sheet_order` across the seat's `callings[]` (the matched calling templates' `sheet_order` values). Multi-calling collapsed seats get the lowest-priority template's order.
+- **Manual / temp seats:** always `null`. These seats are created by request completion, never the importer.
+- **Orphaned auto seats** (calling no longer matches any template): `null`.
+
 ### 4.7 `stakes/{stakeId}/requests/{requestId}`
 
 Request lifecycle docs. Still UUID-keyed because a member can have many requests over time.
@@ -361,6 +371,7 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 
   reason: string;
   comment: string;
+  urgent: boolean;             // requester flag; defaults false. Client gates the comment-required UX on it.
   start_date?: string;         // temp only
   end_date?: string;           // temp only
   building_names: string[];    // requester's selection (stake-scope add types only)
@@ -392,6 +403,7 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 - `pending` is the only legal starting status; terminal statuses (`complete`, `rejected`, `cancelled`) are one-way flips.
 - Only the original requester can cancel; only managers can complete or reject.
 - For `remove`, server-side guards (rules + client tx): no pending-pending duplicate for same (scope, member); no remove against a non-existent manual/temp seat (the latter caught by client tx, not rules).
+- `urgent` is set at create time (rules validate `urgent is bool`) and immutable thereafter — the cancel/complete/reject `affectedKeys()` allowlists exclude it.
 
 ### 4.8 `stakes/{stakeId}/wardCallingTemplates/{callingName}`
 

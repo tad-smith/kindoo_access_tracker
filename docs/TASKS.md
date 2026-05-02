@@ -398,8 +398,8 @@ Phase 10 shipped a temporary "SBA" monogram (white letters on `#2b6cb0` rounded-
 ---
 
 ## [T-28] Sync `firebase-schema.md` + `data-model.md` with Phase 10.3 fields (`urgent`, `sort_order`)
-Status: open
+Status: done (2026-04-29)
 Owner: @docs-keeper
 Phase: post Phase 10.3
 
-Phase 10.3 added `urgent: boolean` to Request and `sort_order: number | null` to Seat and Access without updating the schema reference. Add `urgent` to `firebase-schema.md` §4.7 (Request) and `data-model.md`'s Request shape; add `sort_order` to `firebase-schema.md` §4.5 (Access) and §4.6 (Seat) with the operator-decided semantics — doc-level for Access (MIN of `sheet_order` across `importer_callings`), seat-level for Seat (MIN of `sheet_order` across `callings[]`), `null` for orphaned-calling seats and manual-only access docs. Cross-reference the importer-denormalization commit (`be93970`) and note the "wait for next importer run" migration posture (no backfill). Land in a docs-only commit; keep separate from the Phase 10.3 PR so that PR stays bounded.
+Closed 2026-04-29 via `docs/schema-sync-urgent-sort-order`. `urgent: boolean` added to `firebase-schema.md` §4.7 (Request) and `data-model.md`'s Request shape, with the rules note that `urgent` is validated as `bool` on create and excluded from the cancel/complete/reject `affectedKeys()` allowlists (immutable post-submit). `sort_order: number | null` added to `firebase-schema.md` §4.5 (Access) and §4.6 (Seat) plus the corresponding rows in `data-model.md`, with the operator-decided semantics: doc-level for Access (MIN of `sheet_order` across every `(scope, calling)` pair in `importer_callings`; `null` for manual-only access docs), seat-level for Seat (MIN of `sheet_order` across the seat's `callings[]`; `null` for manual / temp seats and for orphaned auto seats whose calling no longer matches any template).
