@@ -1322,7 +1322,7 @@ Four sub-changes (A schema, B importer, C UI, D drag-and-drop) shipped on one br
 
 **Dependencies:** Phase 9 (email patterns extended to push), Phase 10 (PWA shell registers the service worker that handles background push).
 
-**Status:** Deferred. Move out of "deferred" when the operator decides push is needed.
+**Status:** [DONE — see [`docs/changelog/phase-10.5-fcm-push.md`](changelog/phase-10.5-fcm-push.md)]
 
 ### Sub-tasks
 
