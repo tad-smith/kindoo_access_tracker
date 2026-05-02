@@ -160,6 +160,22 @@ describe('<ManagerDashboardPage />', () => {
     expect(within(util).getByText(/1 \/ 20 seats used/)).toBeInTheDocument(); // Genoa
   });
 
+  it('uses the stake-presidency pool size (stake_seat_cap minus ward caps) for the Stake bar', async () => {
+    mockAll({
+      seats: [makeSeat({ scope: 'stake', member_canonical: 's1@x.com', member_email: 's1@x.com' })],
+      wards: [
+        makeWard({ ward_code: 'CO', seat_cap: 50 }),
+        makeWard({ ward_code: 'GE', seat_cap: 50 }),
+        makeWard({ ward_code: 'PR', seat_cap: 50 }),
+      ],
+      stake: { stake_seat_cap: 200, last_over_caps_json: [] },
+    });
+    await renderWithRouter();
+    const util = screen.getByTestId('dashboard-card-utilization');
+    // 200 - (50 + 50 + 50) = 50.
+    expect(within(util).getByText(/1 \/ 50 seats used/)).toBeInTheDocument();
+  });
+
   it('renders the warnings card with one row per over-cap pool', async () => {
     mockAll({
       stake: {

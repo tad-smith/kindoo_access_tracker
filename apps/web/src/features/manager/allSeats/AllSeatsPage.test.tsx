@@ -177,7 +177,7 @@ describe('<AllSeatsPage />', () => {
     expect(host).toHaveTextContent(/2 \/ 20 seats used/);
   });
 
-  it('renders the contextual utilization bar against stake_seat_cap when scope is "stake"', () => {
+  it('renders the contextual utilization bar against the stake-presidency pool size when scope is "stake"', () => {
     mockAll({
       seats: [
         makeSeat({ scope: 'stake', member_canonical: 's1@x.com', member_email: 's1@x.com' }),
@@ -191,7 +191,25 @@ describe('<AllSeatsPage />', () => {
     render(<AllSeatsPage initialWard="stake" />);
     const host = screen.getByTestId('allseats-utilization');
     expect(host).toHaveTextContent(/Stake-scope utilization/);
-    expect(host).toHaveTextContent(/2 \/ 200 seats used/);
+    // 200 - 20 (CO) = 180.
+    expect(host).toHaveTextContent(/2 \/ 180 seats used/);
+  });
+
+  it('subtracts every ward seat_cap from stake_seat_cap for the Stake-scope pool denominator', () => {
+    mockAll({
+      seats: [makeSeat({ scope: 'stake' })],
+      wards: [
+        makeWard({ ward_code: 'CO', seat_cap: 50 }),
+        makeWard({ ward_code: 'GE', seat_cap: 50 }),
+        makeWard({ ward_code: 'PR', seat_cap: 50 }),
+      ],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage initialWard="stake" />);
+    const host = screen.getByTestId('allseats-utilization');
+    // 200 - (50 + 50 + 50) = 50.
+    expect(host).toHaveTextContent(/1 \/ 50 seats used/);
   });
 
   it('renders the contextual utilization bar in cap-unset form when no cap is configured', () => {
