@@ -148,6 +148,37 @@ describe('<ManagerQueuePage />', () => {
     expect(screen.getByTestId('queue-reject-r1')).toBeInTheDocument();
   });
 
+  it('shows buildings on a dedicated card row as a comma-delimited list', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        building_names: ['CO Building', 'BR Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const row = screen.getByTestId('queue-buildings-r1');
+    expect(row).toHaveTextContent(/^Buildings:\s*CO Building, BR Building$/);
+  });
+
+  it('omits the buildings row when building_names is empty', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        building_names: [],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    expect(screen.queryByTestId('queue-buildings-r1')).toBeNull();
+  });
+
   it('disables Confirm in the complete dialog when no buildings are ticked', async () => {
     const user = userEvent.setup();
     const requests = [
