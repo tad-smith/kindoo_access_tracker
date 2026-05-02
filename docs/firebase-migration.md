@@ -1138,7 +1138,7 @@ Coverage gate: every diff plan branch has at least one fixture test.
   - `notifyManagersCancelled(stake, request)`
   - `notifyManagersOverCap(stake, pools, source)`
 - [ ] Plain-text bodies (preserve current shape).
-- [ ] "From" address: `<stake.stake_name> — Stake Building Access <noreply@stakebuildingaccess.org>` (display name from `stake.stake_name`; domain per F17).
+- [ ] "From" address: `<stake.stake_name> — Stake Building Access <noreply@mail.stakebuildingaccess.org>` (display name from `stake.stake_name`; mail-subdomain verified in Resend per T-04).
 - [ ] `notifications_enabled` kill-switch on stake doc — `false` skips every send and logs only.
 - [ ] Firestore triggers that invoke email service:
   - [ ] `functions/src/triggers/notifyOnRequestWrite.ts` — fires on requests writes; matches lifecycle transition; calls appropriate notification.
