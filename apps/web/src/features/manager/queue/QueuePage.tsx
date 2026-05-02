@@ -188,6 +188,13 @@ function QueueCard({ request, buildings }: QueueCardProps) {
           </span>
         </div>
       ) : null}
+      {request.building_names.length > 0 ? (
+        <div className="kd-queue-card-meta" data-testid={`queue-buildings-${request.request_id}`}>
+          <span>
+            <strong>Buildings:</strong> {request.building_names.join(', ')}
+          </span>
+        </div>
+      ) : null}
       {request.comment ? (
         <div className="kd-queue-card-meta">
           <span>

@@ -4,29 +4,33 @@
 //   `(resource.data.scope == 'stake' && isStakeMember(stakeId))`.
 
 import { useMemo } from 'react';
-import { useFirestoreOnce } from '../../lib/data';
+import { useFirestoreDoc } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
 import { STAKE_ID } from '../../lib/constants';
-import { useStakeRoster } from './hooks';
+import { useStakeRoster, useStakeWards } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { UtilizationBar } from '../../lib/render/UtilizationBar';
+import { stakeAvailablePoolSize } from '../../lib/render/stakePool';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { RemovalAffordance } from '../requests/components/RemovalAffordance';
 
 export function StakeRosterPage() {
   const seats = useStakeRoster();
-  const stakeDocResult = useFirestoreOnce(stakeRef(db, STAKE_ID));
+  const wards = useStakeWards();
+  // Live subscription — `useFirestoreOnce` was reliably empty in
+  // production for this page (TanStack cache miss + no listener to
+  // populate it), so the cap fell through to the "(cap unset)" path.
+  const stakeDocResult = useFirestoreDoc(stakeRef(db, STAKE_ID));
   const stakeDoc = stakeDocResult.data;
 
   const sortedSeats = useMemo(() => sortSeatsWithinScope(seats.data ?? []), [seats.data]);
   const seatCount = seats.data?.length ?? 0;
-  // Stake-scope is one slice of the stake_seat_cap; the dashboard's
-  // "stake portion" math is implemented in the manager dashboard's
-  // utilization card. Here we just show the raw count vs the stake_seat_cap
-  // headline figure so a stake president knows roughly where they stand.
-  const cap = stakeDoc?.stake_seat_cap ?? null;
+  // Stake-presidency pool size: stake_seat_cap minus what wards have
+  // pre-allocated. The headroom the presidency actually owns. Same
+  // denominator the Dashboard + AllSeats Stake-scope bars use.
+  const cap = stakeAvailablePoolSize(stakeDoc?.stake_seat_cap, wards.data ?? []);
 
   return (
     <section>
@@ -34,7 +38,11 @@ export function StakeRosterPage() {
       <p className="kd-page-subtitle">Stake</p>
 
       <div className="kd-utilization-host">
-        <UtilizationBar total={seatCount} cap={cap} overCap={cap !== null && seatCount > cap} />
+        <UtilizationBar
+          total={seatCount}
+          cap={cap}
+          overCap={typeof cap === 'number' && cap > 0 && seatCount > cap}
+        />
       </div>
 
       {seats.isLoading || seats.data === undefined ? (

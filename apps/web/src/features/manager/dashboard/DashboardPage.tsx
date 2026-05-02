@@ -24,6 +24,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/Card';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { UtilizationBar } from '../../../lib/render/UtilizationBar';
+import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
 import { summariseAuditRow } from '../auditLog/summarise';
 
 export function ManagerDashboardPage() {
@@ -150,6 +151,9 @@ function UtilizationCard({ loading, seats, wards, stakeSeatCap }: UtilizationCar
   }
   const sortedWards = [...wards].sort((a, b) => a.ward_code.localeCompare(b.ward_code));
 
+  // Stake pool denominator nets out wards' pre-allocated reservations.
+  const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wards);
+
   return (
     <Card data-testid="dashboard-card-utilization">
       <CardHeader>
@@ -163,8 +167,10 @@ function UtilizationCard({ loading, seats, wards, stakeSeatCap }: UtilizationCar
             </Link>
             <UtilizationBar
               total={stakeCount}
-              cap={stakeSeatCap ?? null}
-              overCap={stakeSeatCap !== undefined && stakeCount > stakeSeatCap}
+              cap={stakePoolCap}
+              overCap={
+                typeof stakePoolCap === 'number' && stakePoolCap > 0 && stakeCount > stakePoolCap
+              }
             />
           </li>
           {sortedWards.map((w) => {

@@ -87,6 +87,7 @@ async function seedStake(opts: { stakeSeatCap?: number } = {}): Promise<void> {
   await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/Bishop`).set({
     calling_name: 'Bishop',
     give_app_access: true,
+    auto_kindoo_access: true,
     sheet_order: 1,
     created_at: Timestamp.now(),
     lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
@@ -94,6 +95,7 @@ async function seedStake(opts: { stakeSeatCap?: number } = {}): Promise<void> {
   await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/Bishopric%20Secretary`).set({
     calling_name: 'Bishopric Secretary',
     give_app_access: false,
+    auto_kindoo_access: true,
     sheet_order: 2,
     created_at: Timestamp.now(),
     lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
@@ -101,6 +103,7 @@ async function seedStake(opts: { stakeSeatCap?: number } = {}): Promise<void> {
   await db.doc(`stakes/${STAKE_ID}/stakeCallingTemplates/Stake%20President`).set({
     calling_name: 'Stake President',
     give_app_access: true,
+    auto_kindoo_access: true,
     sheet_order: 1,
     created_at: Timestamp.now(),
     lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
@@ -476,6 +479,7 @@ describe.skipIf(!hasEmulators())('Importer (integration)', () => {
     await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/High%20Councilor`).set({
       calling_name: 'High Councilor',
       give_app_access: true,
+      auto_kindoo_access: true,
       sheet_order: 5,
       created_at: Timestamp.now(),
       lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
@@ -650,6 +654,240 @@ describe.skipIf(!hasEmulators())('Importer (integration)', () => {
     expect((access.data() as Record<string, unknown>)['lastActor']).toEqual({
       email: 'Importer',
       canonical: 'Importer',
+    });
+  });
+
+  describe('auto_kindoo_access flag', () => {
+    it('flag matrix: give=T/auto=T, give=T/auto=F, give=F/auto=T, give=F/auto=F', async () => {
+      await seedStake();
+      const { db } = requireEmulators();
+
+      // Re-seed templates with each combo. Use distinct calling names.
+      await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/AccessAndSeat`).set({
+        calling_name: 'AccessAndSeat',
+        give_app_access: true,
+        auto_kindoo_access: true,
+        sheet_order: 10,
+        created_at: Timestamp.now(),
+        lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+      });
+      await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/AccessOnly`).set({
+        calling_name: 'AccessOnly',
+        give_app_access: true,
+        auto_kindoo_access: false,
+        sheet_order: 11,
+        created_at: Timestamp.now(),
+        lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+      });
+      await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/SeatOnly`).set({
+        calling_name: 'SeatOnly',
+        give_app_access: false,
+        auto_kindoo_access: true,
+        sheet_order: 12,
+        created_at: Timestamp.now(),
+        lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+      });
+      await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/Neither`).set({
+        calling_name: 'Neither',
+        give_app_access: false,
+        auto_kindoo_access: false,
+        sheet_order: 13,
+        created_at: Timestamp.now(),
+        lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+      });
+
+      const restore = fixture([
+        {
+          name: 'CO',
+          values: [
+            HEADER_ROW,
+            ['CO', '', 'CO AccessAndSeat', 'Alice', 'alice@gmail.com'],
+            ['CO', '', 'CO AccessOnly', 'Bob', 'bob@gmail.com'],
+            ['CO', '', 'CO SeatOnly', 'Carol', 'carol@gmail.com'],
+            ['CO', '', 'CO Neither', 'Dan', 'dan@gmail.com'],
+          ],
+        },
+      ]);
+      try {
+        await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      } finally {
+        restore();
+      }
+
+      // Alice: access + seat.
+      expect((await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).exists).toBe(true);
+      expect((await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).get()).exists).toBe(true);
+      // Bob: access only, no seat.
+      expect((await db.doc(`stakes/${STAKE_ID}/seats/bob@gmail.com`).get()).exists).toBe(false);
+      expect((await db.doc(`stakes/${STAKE_ID}/access/bob@gmail.com`).get()).exists).toBe(true);
+      // Carol: seat only, no access.
+      expect((await db.doc(`stakes/${STAKE_ID}/seats/carol@gmail.com`).get()).exists).toBe(true);
+      expect((await db.doc(`stakes/${STAKE_ID}/access/carol@gmail.com`).get()).exists).toBe(false);
+      // Dan: neither.
+      expect((await db.doc(`stakes/${STAKE_ID}/seats/dan@gmail.com`).get()).exists).toBe(false);
+      expect((await db.doc(`stakes/${STAKE_ID}/access/dan@gmail.com`).get()).exists).toBe(false);
+    });
+
+    it('stale-deletion: existing auto seat whose template flips auto_kindoo_access=false → seat deleted', async () => {
+      await seedStake();
+      const { db } = requireEmulators();
+
+      // First run: Bishop has auto_kindoo_access=true (seeded). Seat created.
+      const r1 = fixture([
+        {
+          name: 'CO',
+          values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+        },
+      ]);
+      try {
+        await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      } finally {
+        r1();
+      }
+      expect((await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).exists).toBe(true);
+
+      // Flip the template flag to false. give_app_access stays true so the
+      // access doc isn't disturbed.
+      await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/Bishop`).set(
+        {
+          auto_kindoo_access: false,
+          last_modified_at: Timestamp.now(),
+          lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+        },
+        { merge: true },
+      );
+
+      const r2 = fixture([
+        {
+          name: 'CO',
+          values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+        },
+      ]);
+      try {
+        const result = await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+        expect(result.deleted).toBe(1);
+      } finally {
+        r2();
+      }
+      expect((await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).exists).toBe(false);
+      // Access doc survives (give_app_access=true).
+      expect((await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).get()).exists).toBe(true);
+    });
+
+    it('mixed callings: one flagged, one not → seat persists with only the flagged calling; sort_order reflects it', async () => {
+      await seedStake();
+      const { db } = requireEmulators();
+
+      // Add High Councilor template with auto=false. Bishop auto=true.
+      await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/High%20Councilor`).set({
+        calling_name: 'High Councilor',
+        give_app_access: true,
+        auto_kindoo_access: false,
+        sheet_order: 5,
+        created_at: Timestamp.now(),
+        lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+      });
+
+      const restore = fixture([
+        {
+          name: 'CO',
+          values: [
+            HEADER_ROW,
+            ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com'],
+            ['CO', '', 'CO High Councilor', 'Alice Smith', 'alice@gmail.com'],
+          ],
+        },
+      ]);
+      try {
+        await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      } finally {
+        restore();
+      }
+
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      expect(seat.callings).toEqual(['Bishop']);
+      // Bishop sheet_order=1.
+      expect(seat.sort_order).toBe(1);
+
+      // Access still includes both callings (give_app_access=true on both).
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).get()
+      ).data() as Access;
+      expect(access.importer_callings['CO']?.sort()).toEqual(['Bishop', 'High Councilor']);
+    });
+
+    it('two flagged callings of differing sheet_order → seat sort_order = MIN', async () => {
+      await seedStake();
+      const { db } = requireEmulators();
+
+      await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/High%20Councilor`).set({
+        calling_name: 'High Councilor',
+        give_app_access: true,
+        auto_kindoo_access: true,
+        sheet_order: 5,
+        created_at: Timestamp.now(),
+        lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+      });
+
+      const restore = fixture([
+        {
+          name: 'CO',
+          values: [
+            HEADER_ROW,
+            ['CO', '', 'CO Bishop', 'Alice', 'alice@gmail.com'],
+            ['CO', '', 'CO High Councilor', 'Alice', 'alice@gmail.com'],
+          ],
+        },
+      ]);
+      try {
+        await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      } finally {
+        restore();
+      }
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      expect(seat.callings.sort()).toEqual(['Bishop', 'High Councilor']);
+      expect(seat.sort_order).toBe(1);
+    });
+
+    it('idempotency with mixed flagged/unflagged: rerun with no source change → zero writes', async () => {
+      await seedStake();
+      const { db } = requireEmulators();
+
+      await db.doc(`stakes/${STAKE_ID}/wardCallingTemplates/High%20Councilor`).set({
+        calling_name: 'High Councilor',
+        give_app_access: true,
+        auto_kindoo_access: false,
+        sheet_order: 5,
+        created_at: Timestamp.now(),
+        lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+      });
+
+      const sheet = [
+        {
+          name: 'CO',
+          values: [
+            HEADER_ROW,
+            ['CO', '', 'CO Bishop', 'Alice', 'alice@gmail.com'],
+            ['CO', '', 'CO High Councilor', 'Alice', 'alice@gmail.com'],
+          ],
+        },
+      ];
+      const r1 = fixture(sheet);
+      try {
+        await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      } finally {
+        r1();
+      }
+
+      const r2 = fixture(sheet);
+      try {
+        const result = await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+        expect(result.inserted).toBe(0);
+        expect(result.deleted).toBe(0);
+        expect(result.updated).toBe(0);
+      } finally {
+        r2();
+      }
     });
   });
 });

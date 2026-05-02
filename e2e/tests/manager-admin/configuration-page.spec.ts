@@ -90,4 +90,60 @@ test.describe('Manager admin pages (Phase 7)', () => {
     await expect(page.getByTestId('import-now-button')).toBeVisible();
     await expect(page.getByTestId('import-callings-sheet-id')).toHaveText('sheet1');
   });
+
+  test('Auto Ward Callings tab renders the table + Add modal with both flag checkboxes', async ({
+    page,
+  }) => {
+    await signInAsManager(page, 'mgr-callings@example.com');
+    await writeDoc('stakes/csnorth/wardCallingTemplates/Bishop', {
+      calling_name: 'Bishop',
+      give_app_access: true,
+      auto_kindoo_access: true,
+      sheet_order: 1,
+      created_at: new Date().toISOString(),
+      lastActor: { email: 'seed@example.com', canonical: 'seed@example.com' },
+    });
+    await writeDoc('stakes/csnorth/wardCallingTemplates/Counselor%20%2A', {
+      calling_name: 'Counselor *',
+      give_app_access: false,
+      auto_kindoo_access: true,
+      sheet_order: 2,
+      created_at: new Date().toISOString(),
+      lastActor: { email: 'seed@example.com', canonical: 'seed@example.com' },
+    });
+    await page.goto('/manager/configuration?tab=ward-callings');
+    await expect(page.getByRole('heading', { name: /Auto Ward Callings/ })).toBeVisible();
+    await expect(page.getByTestId('config-ward-callings-row-Bishop')).toBeVisible();
+    await expect(page.getByTestId('config-ward-callings-row-Counselor *')).toBeVisible();
+    // Order: Bishop (1) before Counselor * (2).
+    const rows = page.locator('[data-testid^="config-ward-callings-row-"]');
+    await expect(rows.first()).toHaveAttribute('data-testid', 'config-ward-callings-row-Bishop');
+    // Add modal exposes both flag checkboxes labeled per the rename.
+    await page.getByTestId('config-ward-callings-add-button').click();
+    const form = page.getByTestId('config-ward-callings-form');
+    await expect(form.getByLabel('Auto Kindoo Access', { exact: true })).toBeVisible();
+    await expect(form.getByLabel('Can Request Access', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add Calling' })).toBeVisible();
+  });
+
+  test('Auto Ward Callings Edit modal pre-populates with calling_name read-only', async ({
+    page,
+  }) => {
+    await signInAsManager(page, 'mgr-callings-edit@example.com');
+    await writeDoc('stakes/csnorth/wardCallingTemplates/Bishop', {
+      calling_name: 'Bishop',
+      give_app_access: true,
+      auto_kindoo_access: true,
+      sheet_order: 1,
+      created_at: new Date().toISOString(),
+      lastActor: { email: 'seed@example.com', canonical: 'seed@example.com' },
+    });
+    await page.goto('/manager/configuration?tab=ward-callings');
+    await page.getByTestId('config-ward-callings-edit-Bishop').click();
+    await expect(page.getByRole('heading', { name: /Edit calling — Bishop/ })).toBeVisible();
+    const nameInput = page.getByLabel('Calling name');
+    await expect(nameInput).toHaveValue('Bishop');
+    await expect(nameInput).toHaveAttribute('readonly', '');
+    await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible();
+  });
 });

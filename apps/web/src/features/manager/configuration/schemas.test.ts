@@ -49,9 +49,29 @@ describe('configuration callingTemplateSchema', () => {
     const r = callingTemplateSchema.safeParse({
       calling_name: 'Counselor *',
       give_app_access: true,
+      auto_kindoo_access: true,
       sheet_order: 5,
     });
     expect(r.success).toBe(true);
+  });
+
+  it('accepts independent give_app_access and auto_kindoo_access flags', () => {
+    const r = callingTemplateSchema.safeParse({
+      calling_name: 'Stake Clerk',
+      give_app_access: true,
+      auto_kindoo_access: false,
+      sheet_order: 3,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects a missing auto_kindoo_access', () => {
+    const r = callingTemplateSchema.safeParse({
+      calling_name: 'Bishop',
+      give_app_access: true,
+      sheet_order: 1,
+    });
+    expect(r.success).toBe(false);
   });
 });
 

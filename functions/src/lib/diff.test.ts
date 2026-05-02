@@ -9,12 +9,27 @@ import { buildTemplateIndex, type ParsedRow } from './parser.js';
 import type { Access, Seat } from '@kindoo/shared';
 
 const wardIndex = buildTemplateIndex([
-  { calling_name: 'Bishop', give_app_access: true, sheet_order: 1 },
-  { calling_name: 'Bishopric Secretary', give_app_access: true, sheet_order: 2 },
-  { calling_name: 'High Councilor', give_app_access: true, sheet_order: 5 },
+  { calling_name: 'Bishop', give_app_access: true, auto_kindoo_access: true, sheet_order: 1 },
+  {
+    calling_name: 'Bishopric Secretary',
+    give_app_access: true,
+    auto_kindoo_access: true,
+    sheet_order: 2,
+  },
+  {
+    calling_name: 'High Councilor',
+    give_app_access: true,
+    auto_kindoo_access: true,
+    sheet_order: 5,
+  },
 ]);
 const stakeIndex = buildTemplateIndex([
-  { calling_name: 'Stake President', give_app_access: true, sheet_order: 1 },
+  {
+    calling_name: 'Stake President',
+    give_app_access: true,
+    auto_kindoo_access: true,
+    sheet_order: 1,
+  },
 ]);
 const TEMPLATE_INDEX_BY_SCOPE = new Map([
   ['stake', stakeIndex],
@@ -58,6 +73,7 @@ const row = (overrides: Partial<ParsedRow> = {}): ParsedRow => ({
   email: 'alice@gmail.com',
   name: 'Alice',
   giveAppAccess: true,
+  autoKindooAccess: true,
   sheetOrder: 1,
   ...overrides,
 });
@@ -496,5 +512,154 @@ describe('planDiff', () => {
       scopeMeta: META,
     });
     expect(plan.seatWrites).toEqual([{ kind: 'auto-delete', canonical: 'alice@gmail.com' }]);
+  });
+
+  describe('auto_kindoo_access flag matrix', () => {
+    it('give_app_access=true, auto_kindoo_access=true → access row + seat', () => {
+      const plan = planDiff({
+        parsedRows: [row({ giveAppAccess: true, autoKindooAccess: true })],
+        scopesSeen: SCOPES_SEEN,
+        current: EMPTY_STATE,
+        scopeMeta: META,
+      });
+      expect(plan.accessUpserts).toHaveLength(1);
+      expect(plan.accessUpserts[0]!.importer_callings).toEqual({ CO: ['Bishop'] });
+      expect(plan.seatWrites).toHaveLength(1);
+      const w = plan.seatWrites[0]!;
+      if (w.kind !== 'auto-upsert') throw new Error('expected auto-upsert');
+      expect(w.seat.callings).toEqual(['Bishop']);
+    });
+
+    it('give_app_access=true, auto_kindoo_access=false → access row only, no seat', () => {
+      const plan = planDiff({
+        parsedRows: [row({ giveAppAccess: true, autoKindooAccess: false })],
+        scopesSeen: SCOPES_SEEN,
+        current: EMPTY_STATE,
+        scopeMeta: META,
+      });
+      expect(plan.accessUpserts).toHaveLength(1);
+      expect(plan.accessUpserts[0]!.importer_callings).toEqual({ CO: ['Bishop'] });
+      expect(plan.seatWrites).toEqual([]);
+    });
+
+    it('give_app_access=false, auto_kindoo_access=true → seat only, no access row', () => {
+      const plan = planDiff({
+        parsedRows: [row({ giveAppAccess: false, autoKindooAccess: true })],
+        scopesSeen: SCOPES_SEEN,
+        current: EMPTY_STATE,
+        scopeMeta: META,
+      });
+      expect(plan.accessUpserts).toEqual([]);
+      expect(plan.seatWrites).toHaveLength(1);
+      const w = plan.seatWrites[0]!;
+      if (w.kind !== 'auto-upsert') throw new Error('expected auto-upsert');
+      expect(w.seat.callings).toEqual(['Bishop']);
+    });
+
+    it('give_app_access=false, auto_kindoo_access=false → neither (calling silently ignored)', () => {
+      const plan = planDiff({
+        parsedRows: [row({ giveAppAccess: false, autoKindooAccess: false })],
+        scopesSeen: SCOPES_SEEN,
+        current: EMPTY_STATE,
+        scopeMeta: META,
+      });
+      expect(plan.accessUpserts).toEqual([]);
+      expect(plan.seatWrites).toEqual([]);
+    });
+
+    it('mixed callings on one member: only flagged calling lands on the seat; sort_order reflects it', () => {
+      const plan = planDiff({
+        parsedRows: [
+          row({ calling: 'Bishop', autoKindooAccess: false, sheetOrder: 1 }),
+          row({ calling: 'High Councilor', autoKindooAccess: true, sheetOrder: 5 }),
+        ],
+        scopesSeen: SCOPES_SEEN,
+        current: EMPTY_STATE,
+        scopeMeta: META,
+      });
+      expect(plan.seatWrites).toHaveLength(1);
+      const w = plan.seatWrites[0]!;
+      if (w.kind !== 'auto-upsert') throw new Error('expected auto-upsert');
+      expect(w.seat.callings).toEqual(['High Councilor']);
+      expect(w.seat.sort_order).toBe(5);
+    });
+
+    it('seat sort_order is MIN across flagged callings only', () => {
+      const plan = planDiff({
+        parsedRows: [
+          row({ calling: 'Bishop', autoKindooAccess: true, sheetOrder: 1 }),
+          row({ calling: 'High Councilor', autoKindooAccess: true, sheetOrder: 5 }),
+        ],
+        scopesSeen: SCOPES_SEEN,
+        current: EMPTY_STATE,
+        scopeMeta: META,
+      });
+      const w = plan.seatWrites[0]!;
+      if (w.kind !== 'auto-upsert') throw new Error('expected auto-upsert');
+      expect(w.seat.callings.sort()).toEqual(['Bishop', 'High Councilor']);
+      expect(w.seat.sort_order).toBe(1);
+    });
+
+    it('flag flips false on next run → existing auto seat deleted via existing diff branch', () => {
+      const seat: Seat = {
+        member_canonical: 'alice@gmail.com',
+        member_email: 'alice@gmail.com',
+        member_name: 'Alice',
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Bishop'],
+        building_names: ['Cordera Building'],
+        duplicate_grants: [],
+        sort_order: 1,
+        created_at: null as unknown as Seat['created_at'],
+        last_modified_at: null as unknown as Seat['last_modified_at'],
+        last_modified_by: { email: 'Importer', canonical: 'Importer' },
+        lastActor: { email: 'Importer', canonical: 'Importer' },
+      };
+      const plan = planDiff({
+        parsedRows: [row({ calling: 'Bishop', autoKindooAccess: false, giveAppAccess: true })],
+        scopesSeen: SCOPES_SEEN,
+        current: {
+          accessByCanonical: new Map(),
+          seatsByCanonical: new Map([['alice@gmail.com', seat]]),
+        },
+        scopeMeta: META,
+      });
+      expect(plan.seatWrites).toEqual([{ kind: 'auto-delete', canonical: 'alice@gmail.com' }]);
+      // Access still flows through because give_app_access=true.
+      expect(plan.accessUpserts).toHaveLength(1);
+      expect(plan.accessUpserts[0]!.importer_callings).toEqual({ CO: ['Bishop'] });
+    });
+
+    it('all calling rows have auto=false → existing auto seat deleted; access doc upserts unchanged', () => {
+      const seat: Seat = {
+        member_canonical: 'alice@gmail.com',
+        member_email: 'alice@gmail.com',
+        member_name: 'Alice',
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Bishop'],
+        building_names: ['Cordera Building'],
+        duplicate_grants: [],
+        sort_order: 1,
+        created_at: null as unknown as Seat['created_at'],
+        last_modified_at: null as unknown as Seat['last_modified_at'],
+        last_modified_by: { email: 'Importer', canonical: 'Importer' },
+        lastActor: { email: 'Importer', canonical: 'Importer' },
+      };
+      const plan = planDiff({
+        parsedRows: [
+          row({ calling: 'Bishop', autoKindooAccess: false, giveAppAccess: true }),
+          row({ calling: 'High Councilor', autoKindooAccess: false, giveAppAccess: true }),
+        ],
+        scopesSeen: SCOPES_SEEN,
+        current: {
+          accessByCanonical: new Map(),
+          seatsByCanonical: new Map([['alice@gmail.com', seat]]),
+        },
+        scopeMeta: META,
+      });
+      expect(plan.seatWrites).toEqual([{ kind: 'auto-delete', canonical: 'alice@gmail.com' }]);
+    });
   });
 });

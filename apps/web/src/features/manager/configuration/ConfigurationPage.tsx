@@ -22,27 +22,29 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import type { Building, Ward, WardCallingTemplate } from '@kindoo/shared';
+import type { Building, StakeCallingTemplate, Ward, WardCallingTemplate } from '@kindoo/shared';
 import {
   buildingSchema,
-  callingTemplateSchema,
   configSchema,
   managerSchema,
   wardSchema,
   type BuildingForm,
-  type CallingTemplateForm,
   type ConfigForm,
   type ManagerForm,
   type WardForm,
 } from './schemas';
 import {
+  useAddStakeCallingTemplateMutation,
+  useAddWardCallingTemplateMutation,
   useBuildings,
   useDeleteBuildingMutation,
   useDeleteManagerMutation,
-  useDeleteStakeCallingTemplateMutation,
-  useDeleteWardCallingTemplateMutation,
+  useDeleteStakeCallingTemplateWithResequenceMutation,
+  useDeleteWardCallingTemplateWithResequenceMutation,
   useDeleteWardMutation,
   useManagers,
+  useReorderStakeCallingTemplatesMutation,
+  useReorderWardCallingTemplatesMutation,
   useStakeCallingTemplates,
   useStakeDoc,
   useUpdateStakeConfigMutation,
@@ -54,6 +56,9 @@ import {
   useWardCallingTemplates,
   useWards,
 } from './hooks';
+import { CallingTemplateFormDialog } from './CallingTemplateFormDialog';
+import type { CallingTemplateDialogMode } from './CallingTemplateFormDialog';
+import { CallingTemplatesTable } from './CallingTemplatesTable';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
@@ -631,39 +636,106 @@ function ManagerFormDialog({ open, isPending, onSubmit, onClose }: ManagerFormDi
 }
 
 // ---- Calling templates (ward + stake) -------------------------------
+//
+// Two tabs share the same table + dialog component. Order column NOT
+// shown — implicit from row position; lower `sheet_order` renders
+// higher. Drag-to-reorder is mouse + keyboard via @dnd-kit; touch goes
+// through the per-row long-press path inside `CallingTemplatesTable`.
 
 function WardCallingsTab() {
   const templates = useWardCallingTemplates();
+  const add = useAddWardCallingTemplateMutation();
   const upsert = useUpsertWardCallingTemplateMutation();
-  const del = useDeleteWardCallingTemplateMutation();
+  const del = useDeleteWardCallingTemplateWithResequenceMutation();
+  const reorder = useReorderWardCallingTemplatesMutation();
   return (
     <CallingTemplatesPanel
       title="Auto Ward Callings"
       addLabel="Add Ward Calling"
       testid="ward-callings"
       data={templates.data}
-      onUpsert={upsert.mutateAsync}
-      isPending={upsert.isPending}
-      onDelete={del.mutateAsync}
-      hint="Wildcards (`Counselor *`) are supported. Sheet order breaks ties between wildcard matches."
+      isPending={add.isPending || upsert.isPending}
+      onAdd={async (input) => {
+        await add.mutateAsync({
+          calling_name: input.calling_name,
+          give_app_access: input.give_app_access,
+          auto_kindoo_access: input.auto_kindoo_access,
+          existing: templates.data ?? [],
+        });
+        toast('Calling added.', 'success');
+      }}
+      onEdit={async (input) => {
+        await upsert.mutateAsync({
+          calling_name: input.calling_name,
+          give_app_access: input.give_app_access,
+          auto_kindoo_access: input.auto_kindoo_access,
+          sheet_order: input.sheet_order,
+        });
+        toast('Calling saved.', 'success');
+      }}
+      onDelete={async (template) => {
+        await del.mutateAsync({
+          callingName: template.calling_name,
+          current: templates.data ?? [],
+        });
+        toast('Calling deleted.', 'success');
+      }}
+      onReorder={async (orderedCallingNames) => {
+        await reorder.mutateAsync({
+          orderedCallingNames,
+          current: templates.data ?? [],
+        });
+      }}
+      hint="Wildcards (`Counselor *`) are supported. Sheet order breaks ties between wildcard matches. Drag rows to reorder."
     />
   );
 }
 
 function StakeCallingsTab() {
   const templates = useStakeCallingTemplates();
+  const add = useAddStakeCallingTemplateMutation();
   const upsert = useUpsertStakeCallingTemplateMutation();
-  const del = useDeleteStakeCallingTemplateMutation();
+  const del = useDeleteStakeCallingTemplateWithResequenceMutation();
+  const reorder = useReorderStakeCallingTemplatesMutation();
   return (
     <CallingTemplatesPanel
       title="Auto Stake Callings"
       addLabel="Add Stake Calling"
       testid="stake-callings"
       data={templates.data}
-      onUpsert={upsert.mutateAsync}
-      isPending={upsert.isPending}
-      onDelete={del.mutateAsync}
-      hint="Same shape as ward callings; applied to the Stake tab of the LCR sheet."
+      isPending={add.isPending || upsert.isPending}
+      onAdd={async (input) => {
+        await add.mutateAsync({
+          calling_name: input.calling_name,
+          give_app_access: input.give_app_access,
+          auto_kindoo_access: input.auto_kindoo_access,
+          existing: templates.data ?? [],
+        });
+        toast('Calling added.', 'success');
+      }}
+      onEdit={async (input) => {
+        await upsert.mutateAsync({
+          calling_name: input.calling_name,
+          give_app_access: input.give_app_access,
+          auto_kindoo_access: input.auto_kindoo_access,
+          sheet_order: input.sheet_order,
+        });
+        toast('Calling saved.', 'success');
+      }}
+      onDelete={async (template) => {
+        await del.mutateAsync({
+          callingName: template.calling_name,
+          current: templates.data ?? [],
+        });
+        toast('Calling deleted.', 'success');
+      }}
+      onReorder={async (orderedCallingNames) => {
+        await reorder.mutateAsync({
+          orderedCallingNames,
+          current: templates.data ?? [],
+        });
+      }}
+      hint="Same shape as ward callings; applied to the Stake tab of the LCR sheet. Drag rows to reorder."
     />
   );
 }
@@ -672,10 +744,22 @@ interface CallingTemplatesPanelProps {
   title: string;
   addLabel: string;
   testid: string;
-  data: readonly WardCallingTemplate[] | undefined;
-  onUpsert: (input: CallingTemplateForm) => Promise<unknown>;
+  data: readonly (WardCallingTemplate | StakeCallingTemplate)[] | undefined;
   isPending: boolean;
-  onDelete: (callingName: string) => Promise<unknown>;
+  onAdd: (input: {
+    calling_name: string;
+    give_app_access: boolean;
+    auto_kindoo_access: boolean;
+    sheet_order: number;
+  }) => Promise<void>;
+  onEdit: (input: {
+    calling_name: string;
+    give_app_access: boolean;
+    auto_kindoo_access: boolean;
+    sheet_order: number;
+  }) => Promise<void>;
+  onDelete: (template: WardCallingTemplate) => Promise<void>;
+  onReorder: (orderedCallingNames: string[]) => Promise<void>;
   hint: string;
 }
 
@@ -684,12 +768,14 @@ function CallingTemplatesPanel({
   addLabel,
   testid,
   data,
-  onUpsert,
   isPending,
+  onAdd,
+  onEdit,
   onDelete,
+  onReorder,
   hint,
 }: CallingTemplatesPanelProps) {
-  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<CallingTemplateDialogMode>('closed');
 
   const sorted = useMemo(
     () => [...(data ?? [])].sort((a, b) => a.sheet_order - b.sheet_order),
@@ -701,116 +787,28 @@ function CallingTemplatesPanel({
       <SectionHeader
         title={title}
         addLabel={addLabel}
-        onAdd={() => setOpen(true)}
+        onAdd={() => setMode('add')}
         testid={`config-${testid}`}
       />
       <p className="kd-form-hint">{hint}</p>
-      <ul className="kd-config-rows" data-testid={`config-${testid}-list`}>
-        {sorted.map((t) => (
-          <li key={t.calling_name}>
-            <span>
-              <code>{t.calling_name}</code>
-              {' · '}
-              {t.give_app_access ? 'gives access' : 'no access'}
-              {' · '}order {t.sheet_order}
-            </span>
-            <Button
-              variant="danger"
-              onClick={() =>
-                onDelete(t.calling_name)
-                  .then(() => toast('Template deleted.', 'success'))
-                  .catch((err) => toast(errorMessage(err), 'error'))
-              }
-              data-testid={`config-${testid}-delete-${t.calling_name}`}
-            >
-              Delete
-            </Button>
-          </li>
-        ))}
-      </ul>
-
+      <CallingTemplatesTable
+        testid={testid}
+        templates={sorted}
+        onEdit={(t) => setMode({ kind: 'edit', template: t })}
+        onDelete={(t) => onDelete(t).catch((err) => toast(errorMessage(err), 'error'))}
+        onReorder={(orderedCallingNames) =>
+          onReorder(orderedCallingNames).catch((err) => toast(errorMessage(err), 'error'))
+        }
+      />
       <CallingTemplateFormDialog
-        open={open}
+        mode={mode}
         isPending={isPending}
         testid={testid}
-        onSubmit={async (input) => {
-          await onUpsert(input);
-          toast('Calling template saved.', 'success');
-        }}
-        onClose={() => setOpen(false)}
+        onSubmitAdd={onAdd}
+        onSubmitEdit={onEdit}
+        onClose={() => setMode('closed')}
       />
     </div>
-  );
-}
-
-interface CallingTemplateFormDialogProps {
-  open: boolean;
-  isPending: boolean;
-  testid: string;
-  onSubmit: (input: CallingTemplateForm) => Promise<void>;
-  onClose: () => void;
-}
-
-function CallingTemplateFormDialog({
-  open,
-  isPending,
-  testid,
-  onSubmit,
-  onClose,
-}: CallingTemplateFormDialogProps) {
-  const form = useForm<CallingTemplateForm>({
-    resolver: zodResolver(callingTemplateSchema),
-    defaultValues: { calling_name: '', give_app_access: true, sheet_order: 0 },
-  });
-  const { register, handleSubmit, reset, formState } = form;
-
-  useEffect(() => {
-    if (!open) return;
-    reset({ calling_name: '', give_app_access: true, sheet_order: 0 });
-  }, [open, reset]);
-
-  const submit = handleSubmit(async (input) => {
-    try {
-      await onSubmit(input);
-      onClose();
-    } catch (err) {
-      toast(errorMessage(err), 'error');
-    }
-  });
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
-      title="Add calling template"
-    >
-      <form onSubmit={submit} className="kd-wizard-form" data-testid={`config-${testid}-form`}>
-        <label>
-          Calling name
-          <Input {...register('calling_name')} placeholder="Bishop or Counselor *" />
-        </label>
-        {formState.errors.calling_name ? (
-          <p role="alert" className="kd-form-error">
-            {formState.errors.calling_name.message}
-          </p>
-        ) : null}
-        <label>
-          <input type="checkbox" {...register('give_app_access')} /> Give app access
-        </label>
-        <label>
-          Sheet order
-          <Input type="number" {...register('sheet_order', { valueAsNumber: true })} />
-        </label>
-        <Dialog.Footer>
-          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
-          <Button type="submit" disabled={isPending} data-testid={`config-${testid}-submit`}>
-            {isPending ? 'Saving…' : 'Create template'}
-          </Button>
-        </Dialog.Footer>
-      </form>
-    </Dialog>
   );
 }
 

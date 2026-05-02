@@ -252,6 +252,7 @@ async function loadCallingTemplates(
     return {
       calling_name: data.calling_name,
       give_app_access: data.give_app_access === true,
+      auto_kindoo_access: data.auto_kindoo_access === true,
       sheet_order: typeof data.sheet_order === 'number' ? data.sheet_order : 0,
     };
   });

@@ -144,9 +144,11 @@ export function planDiff(opts: {
       // First non-empty name wins; preserve typed email from first row.
       if (!g.name && row.name) g.name = row.name;
     }
-    const seatList = g.callingsByScope.get(row.scope) ?? [];
-    if (!seatList.includes(row.calling)) seatList.push(row.calling);
-    g.callingsByScope.set(row.scope, seatList);
+    if (row.autoKindooAccess) {
+      const seatList = g.callingsByScope.get(row.scope) ?? [];
+      if (!seatList.includes(row.calling)) seatList.push(row.calling);
+      g.callingsByScope.set(row.scope, seatList);
+    }
     if (row.giveAppAccess) {
       const accessList = g.accessByScope.get(row.scope) ?? [];
       if (!accessList.includes(row.calling)) accessList.push(row.calling);

@@ -30,6 +30,7 @@ import { useStakeDoc } from '../dashboard/hooks';
 import { RosterCardList } from '../../../components/roster/RosterCardList';
 import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
 import { UtilizationBar } from '../../../lib/render/UtilizationBar';
+import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { Select } from '../../../components/ui/Select';
 import { Input } from '../../../components/ui/Input';
@@ -98,14 +99,16 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   };
 
   // Contextual utilization: bar tracks the current Scope filter.
-  //   - All       → entire-stake count vs stake_seat_cap.
-  //   - 'stake'   → stake-scope count vs stake_seat_cap (per-spec the
-  //                 stake's portion math is dashboard-only; here the
-  //                 raw count vs license cap matches StakeRosterPage).
+  //   - All       → entire-stake count vs stake_seat_cap (license cap).
+  //   - 'stake'   → stake-scope count vs the stake-presidency pool size,
+  //                 which is stake_seat_cap minus the sum of every
+  //                 ward's pre-allocated seat_cap (the headroom the
+  //                 presidency owns after wards have taken their slice).
   //   - <wardCode>→ that ward's count vs ward.seat_cap.
   // Cap-unset / zero cap renders the neutral "(cap unset)" variant.
   const allSeats = seats.data ?? [];
   const stakeSeatCap = stake.data?.stake_seat_cap;
+  const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wardsList);
   const wardDoc = ward && ward !== 'stake' ? wardsList.find((w) => w.ward_code === ward) : null;
   const utilizationLabel = !ward
     ? 'Entire-stake utilization'
@@ -118,7 +121,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   const utilizationCap: number | null | undefined = !ward
     ? stakeSeatCap
     : ward === 'stake'
-      ? stakeSeatCap
+      ? stakePoolCap
       : (wardDoc?.seat_cap ?? null);
   const utilizationOverCap =
     typeof utilizationCap === 'number' && utilizationCap > 0 && utilizationTotal > utilizationCap;

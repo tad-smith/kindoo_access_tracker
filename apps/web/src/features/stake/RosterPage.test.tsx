@@ -3,18 +3,20 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import type { Seat, Stake } from '@kindoo/shared';
-import { makeSeat } from '../../../test/fixtures';
+import type { Seat, Stake, Ward } from '@kindoo/shared';
+import { makeSeat, makeWard } from '../../../test/fixtures';
 
 const useStakeRosterMock = vi.fn();
-const useFirestoreOnceMock = vi.fn();
+const useStakeWardsMock = vi.fn();
+const useFirestoreDocMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   useStakeRoster: () => useStakeRosterMock(),
+  useStakeWards: () => useStakeWardsMock(),
 }));
 
 vi.mock('../../lib/data', () => ({
-  useFirestoreOnce: (ref: unknown) => useFirestoreOnceMock(ref),
+  useFirestoreDoc: (ref: unknown) => useFirestoreDocMock(ref),
 }));
 
 vi.mock('../requests/hooks', () => ({
@@ -48,8 +50,22 @@ function mockSeats(seats: Seat[] | undefined, isLoading = false) {
   });
 }
 
+function mockWards(wards: Ward[]) {
+  useStakeWardsMock.mockReturnValue({
+    data: wards,
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  });
+}
+
 function mockStakeDoc(stake: Partial<Stake> | undefined) {
-  useFirestoreOnceMock.mockReturnValue({
+  useFirestoreDocMock.mockReturnValue({
     data: stake,
     error: null,
     status: 'success',
@@ -64,6 +80,9 @@ function mockStakeDoc(stake: Partial<Stake> | undefined) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: no wards. Tests that exercise the new pool denominator
+  // override via mockWards.
+  mockWards([]);
 });
 
 describe('<StakeRosterPage />', () => {
@@ -84,10 +103,37 @@ describe('<StakeRosterPage />', () => {
     expect(document.querySelectorAll('.roster-card')).toHaveLength(2);
   });
 
-  it('displays the utilization bar against the stake_seat_cap', () => {
+  it('displays the utilization bar against the stake-presidency pool size', () => {
+    // No wards seeded → pool size equals stake_seat_cap.
     mockSeats([makeSeat({ scope: 'stake' })]);
     mockStakeDoc({ stake_seat_cap: 200 });
     render(<StakeRosterPage />);
     expect(screen.getByText(/1 \/ 200 seats used/)).toBeInTheDocument();
+  });
+
+  it('subtracts every ward seat_cap from the stake cap for the pool denominator', () => {
+    mockSeats([makeSeat({ scope: 'stake' })]);
+    mockStakeDoc({ stake_seat_cap: 200 });
+    mockWards([
+      makeWard({ ward_code: 'CO', seat_cap: 50 }),
+      makeWard({ ward_code: 'GE', seat_cap: 50 }),
+      makeWard({ ward_code: 'PR', seat_cap: 50 }),
+    ]);
+    render(<StakeRosterPage />);
+    // 200 - (50 + 50 + 50) = 50.
+    expect(screen.getByText(/1 \/ 50 seats used/)).toBeInTheDocument();
+  });
+
+  it('renders the computed cap (not the cap-unset variant) when stake doc + wards are loaded', () => {
+    // Regression: with `useFirestoreOnce` the stake doc was reliably
+    // empty in production and the helper returned null, falling
+    // through to "(cap unset)". The live `useFirestoreDoc` keeps the
+    // doc populated so the bar renders the real ratio.
+    mockSeats([makeSeat({ scope: 'stake' })]);
+    mockStakeDoc({ stake_seat_cap: 200 });
+    mockWards([makeWard({ ward_code: 'CO', seat_cap: 20 })]);
+    render(<StakeRosterPage />);
+    expect(screen.queryByText(/cap unset/i)).toBeNull();
+    expect(screen.getByText(/1 \/ 180 seats used/)).toBeInTheDocument();
   });
 });

@@ -39,9 +39,19 @@ describe('wildcardToRegex', () => {
 
 describe('matchTemplate', () => {
   const idx = buildTemplateIndex([
-    { calling_name: 'Bishop', give_app_access: true, sheet_order: 1 },
-    { calling_name: 'Counselor *', give_app_access: false, sheet_order: 2 },
-    { calling_name: '*Clerk*', give_app_access: false, sheet_order: 3 },
+    { calling_name: 'Bishop', give_app_access: true, auto_kindoo_access: true, sheet_order: 1 },
+    {
+      calling_name: 'Counselor *',
+      give_app_access: false,
+      auto_kindoo_access: false,
+      sheet_order: 2,
+    },
+    {
+      calling_name: '*Clerk*',
+      give_app_access: false,
+      auto_kindoo_access: false,
+      sheet_order: 3,
+    },
   ]);
 
   it('returns null for a non-matching calling', () => {
@@ -60,8 +70,13 @@ describe('matchTemplate', () => {
 
   it('among wildcards, sheet_order ascending wins', () => {
     const idx2 = buildTemplateIndex([
-      { calling_name: 'Foo*', give_app_access: false, sheet_order: 5 },
-      { calling_name: '*', give_app_access: true, sheet_order: 1 },
+      {
+        calling_name: 'Foo*',
+        give_app_access: false,
+        auto_kindoo_access: false,
+        sheet_order: 5,
+      },
+      { calling_name: '*', give_app_access: true, auto_kindoo_access: true, sheet_order: 1 },
     ]);
     const got = matchTemplate(idx2, 'Foo Bar');
     // sheet_order=1 (`*`) lands first, so it wins even though `Foo*` is more specific.
@@ -167,9 +182,19 @@ describe('resolveTabScope', () => {
 
 describe('parseTab', () => {
   const wardTemplates = buildTemplateIndex([
-    { calling_name: 'Bishop', give_app_access: true, sheet_order: 1 },
-    { calling_name: 'Bishopric Secretary', give_app_access: false, sheet_order: 2 },
-    { calling_name: 'Counselor *', give_app_access: true, sheet_order: 3 },
+    { calling_name: 'Bishop', give_app_access: true, auto_kindoo_access: true, sheet_order: 1 },
+    {
+      calling_name: 'Bishopric Secretary',
+      give_app_access: false,
+      auto_kindoo_access: true,
+      sheet_order: 2,
+    },
+    {
+      calling_name: 'Counselor *',
+      give_app_access: true,
+      auto_kindoo_access: true,
+      sheet_order: 3,
+    },
   ]);
 
   it('parses a ward tab — strips prefix; matches template; emits one row per email', () => {
@@ -195,6 +220,7 @@ describe('parseTab', () => {
         email: 'alice@gmail.com',
         name: 'Alice Smith',
         giveAppAccess: true,
+        autoKindooAccess: true,
         sheetOrder: 1,
       },
       {
@@ -203,6 +229,7 @@ describe('parseTab', () => {
         email: 'bob@example.org',
         name: 'Bob Jones',
         giveAppAccess: false,
+        autoKindooAccess: true,
         sheetOrder: 2,
       },
       {
@@ -211,6 +238,7 @@ describe('parseTab', () => {
         email: 'dan@gmail.com',
         name: 'Dan Evans',
         giveAppAccess: true,
+        autoKindooAccess: true,
         sheetOrder: 3,
       },
     ]);
@@ -218,7 +246,12 @@ describe('parseTab', () => {
 
   it('parses Stake tab with prefix=""; verbatim Position', () => {
     const stakeTemplates = buildTemplateIndex([
-      { calling_name: 'Stake President', give_app_access: true, sheet_order: 1 },
+      {
+        calling_name: 'Stake President',
+        give_app_access: true,
+        auto_kindoo_access: true,
+        sheet_order: 1,
+      },
     ]);
     const values = [
       ['Organization', 'Forwarding Email', 'Position', 'Name', 'Personal Email'],
@@ -238,6 +271,7 @@ describe('parseTab', () => {
         email: 'alice@gmail.com',
         name: 'Alice Smith',
         giveAppAccess: true,
+        autoKindooAccess: true,
         sheetOrder: 1,
       },
     ]);
@@ -295,6 +329,7 @@ describe('parseTab', () => {
         email: 'alice@gmail.com',
         name: 'Alice Smith',
         giveAppAccess: false,
+        autoKindooAccess: true,
         sheetOrder: 2,
       },
       {
@@ -303,6 +338,7 @@ describe('parseTab', () => {
         email: 'bob@gmail.com',
         name: 'Bob Jones',
         giveAppAccess: false,
+        autoKindooAccess: true,
         sheetOrder: 2,
       },
       {
@@ -311,6 +347,7 @@ describe('parseTab', () => {
         email: 'carol@gmail.com',
         name: '',
         giveAppAccess: false,
+        autoKindooAccess: true,
         sheetOrder: 2,
       },
     ]);
@@ -346,5 +383,34 @@ describe('parseTab', () => {
     expect(rows).toEqual([]);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]!.message).toContain('header row not found');
+  });
+
+  it('emits give_app_access and auto_kindoo_access independently from the matched template', () => {
+    const idx = buildTemplateIndex([
+      { calling_name: 'A', give_app_access: true, auto_kindoo_access: true, sheet_order: 1 },
+      { calling_name: 'B', give_app_access: true, auto_kindoo_access: false, sheet_order: 2 },
+      { calling_name: 'C', give_app_access: false, auto_kindoo_access: true, sheet_order: 3 },
+      { calling_name: 'D', give_app_access: false, auto_kindoo_access: false, sheet_order: 4 },
+    ]);
+    const values = [
+      ['Organization', 'Forwarding Email', 'Position', 'Name', 'Personal Email'],
+      ['CO', '', 'CO A', 'Alice', 'alice@gmail.com'],
+      ['CO', '', 'CO B', 'Bob', 'bob@gmail.com'],
+      ['CO', '', 'CO C', 'Carol', 'carol@gmail.com'],
+      ['CO', '', 'CO D', 'Dan', 'dan@gmail.com'],
+    ];
+    const { rows } = parseTab({
+      tabName: 'CO',
+      values,
+      scope: 'CO',
+      prefix: 'CO',
+      templateIndex: idx,
+    });
+    expect(rows.map((r) => ({ c: r.calling, g: r.giveAppAccess, a: r.autoKindooAccess }))).toEqual([
+      { c: 'A', g: true, a: true },
+      { c: 'B', g: true, a: false },
+      { c: 'C', g: false, a: true },
+      { c: 'D', g: false, a: false },
+    ]);
   });
 });
