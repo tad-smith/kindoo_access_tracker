@@ -8,6 +8,8 @@ import { makeAccess } from '../../../../test/fixtures';
 
 const useAccessListMock = vi.fn();
 const useStakeWardsMock = vi.fn();
+const useStakeCallingTemplatesMock = vi.fn();
+const useWardCallingTemplatesMock = vi.fn();
 const addManualMutate = vi.fn().mockResolvedValue(undefined);
 const deleteManualMutate = vi.fn().mockResolvedValue(undefined);
 
@@ -15,6 +17,8 @@ vi.mock('./hooks', () => ({
   useAccessList: () => useAccessListMock(),
   useAddManualGrantMutation: () => ({ mutateAsync: addManualMutate, isPending: false }),
   useDeleteManualGrantMutation: () => ({ mutateAsync: deleteManualMutate, isPending: false }),
+  useStakeCallingTemplates: () => useStakeCallingTemplatesMock(),
+  useWardCallingTemplates: () => useWardCallingTemplatesMock(),
 }));
 
 vi.mock('../dashboard/hooks', () => ({
@@ -58,6 +62,9 @@ function liveResult<T>(data: T[] | undefined, isLoading = false) {
 beforeEach(() => {
   vi.clearAllMocks();
   useStakeWardsMock.mockReturnValue(liveResult([]));
+  // Default to empty template collections; specific tests override.
+  useStakeCallingTemplatesMock.mockReturnValue(liveResult([]));
+  useWardCallingTemplatesMock.mockReturnValue(liveResult([]));
 });
 
 describe('<AccessPage />', () => {

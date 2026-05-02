@@ -18,16 +18,36 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { Access, ManualGrant } from '@kindoo/shared';
+import type {
+  Access,
+  ManualGrant,
+  StakeCallingTemplate,
+  WardCallingTemplate,
+} from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../../lib/data';
 import { auth, db } from '../../../lib/firebase';
-import { accessCol, accessRef } from '../../../lib/docs';
+import {
+  accessCol,
+  accessRef,
+  stakeCallingTemplatesCol,
+  wardCallingTemplatesCol,
+} from '../../../lib/docs';
 import { STAKE_ID } from '../../../lib/constants';
 
 export function useAccessList() {
   const q = useMemo(() => accessCol(db, STAKE_ID), []);
   return useFirestoreCollection<Access>(q);
+}
+
+export function useStakeCallingTemplates() {
+  const q = useMemo(() => stakeCallingTemplatesCol(db, STAKE_ID), []);
+  return useFirestoreCollection<StakeCallingTemplate>(q);
+}
+
+export function useWardCallingTemplates() {
+  const q = useMemo(() => wardCallingTemplatesCol(db, STAKE_ID), []);
+  return useFirestoreCollection<WardCallingTemplate>(q);
 }
 
 interface RefreshedActor {
