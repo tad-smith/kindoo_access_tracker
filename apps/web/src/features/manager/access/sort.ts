@@ -15,7 +15,8 @@
 // (functions/src/lib/parser.ts) handles `Counselor *` at write time
 // and denormalises `sort_order` onto the seat / access docs anyway.
 // Most callings are exact ("Bishop", "EQ President"); upgrade to
-// wildcard semantics if the operator surfaces a problem.
+// wildcard semantics (port `matchTemplate` from the importer) if the
+// operator surfaces a problem.
 
 import type { Access, CallingTemplate } from '@kindoo/shared';
 
