@@ -398,7 +398,7 @@ Phase 10 shipped a temporary "SBA" monogram (white letters on `#2b6cb0` rounded-
 ---
 
 ## [T-28] Sync `firebase-schema.md` + `data-model.md` with Phase 10.3 fields (`urgent`, `sort_order`)
-Status: open
+Status: done (2026-04-29)
 Owner: @docs-keeper
 Phase: post Phase 10.3
 
