@@ -406,6 +406,32 @@ Phase: post Phase 10.3
 
 Phase 10.3 added `urgent: boolean` to Request and `sort_order: number | null` to Seat and Access without updating the schema reference. Add `urgent` to `firebase-schema.md` §4.7 (Request) and `data-model.md`'s Request shape; add `sort_order` to `firebase-schema.md` §4.5 (Access) and §4.6 (Seat) with the operator-decided semantics — doc-level for Access (MIN of `sheet_order` across `importer_callings`), seat-level for Seat (MIN of `sheet_order` across `callings[]`), `null` for orphaned-calling seats and manual-only access docs. Cross-reference the importer-denormalization commit (`be93970`) and note the "wait for next importer run" migration posture (no backfill). Land in a docs-only commit; keep separate from the Phase 10.3 PR so that PR stays bounded.
 
+## [T-30] Phase 10.5 backend lane — userIndex self-update rule + `pushOnRequestSubmit` trigger
+Status: open
+Owner: @backend-engineer
+Phase: 10.5
+
+Web-engineer shipped sub-changes A (schema) + B+C+D (SW + panel + token registration) on branch `phase-10.5-fcm-push` (PR #40, draft). Backend lane outstanding:
+
+1. **Rules** (`firestore/firestore.rules` userIndex block at line 178). Currently `allow write: if false;`. Permit self-update of just `fcmTokens` + `notificationPrefs` + `lastActor` + `lastTouched` keys when `request.auth.uid == resource.data.uid`. Pattern:
+   ```
+   allow update: if isAuthed()
+                 && resource.data.uid == request.auth.uid
+                 && request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['fcmTokens', 'notificationPrefs', 'lastActor', 'lastTouched']);
+   ```
+   Add rules tests covering: allowed self-update with allowed keys; denied if uid mismatch; denied if write touches `uid` / `typedEmail` / `lastSignIn`.
+
+2. **Trigger** (`functions/src/triggers/pushOnRequestSubmit.ts`). `onDocumentCreated('stakes/{stakeId}/requests/{requestId}', ...)`. Pattern follows `auditTrigger.ts` and the manager-active filter at `functions/src/lib/seedClaims.ts:71` (`managerSnap.data().active === true`). For each active manager with `notificationPrefs.push.newRequest === true` and non-empty `fcmTokens`, build a `MulticastMessage` (data-only payload — the SW renders the notification) and call `getMessaging().sendEachForMulticast(...)`. On invalid-token responses (`messaging/registration-token-not-registered` or `messaging/invalid-registration-token`), remove that token from the owning userIndex doc via `FieldValue.delete()`. No-tokens-registered case: silent skip (Phase 9 will extend this with email fallback).
+
+   Title/body copy in v1: title `"New request"`, body `"<requester_name> requested <type> for <calling>"`. Data payload includes `{ requestId, deepLink: "/manager/queue?focus=<rid>" }` so the SW's `notificationclick` handler navigates correctly.
+
+3. **Re-export** in `functions/src/index.ts`.
+
+4. **Tests** — vitest + emulator, FCM Admin SDK mocked: reads only active managers; respects `notificationPrefs.push.newRequest`; skips managers with no tokens; cleans up invalid tokens.
+
+Schema (sub-change A) is already committed; types + zod schemas live in `packages/shared/src/{types,schemas}/userIndex.ts`. Dependencies satisfied; ship on the same `phase-10.5-fcm-push` branch (rebase before pushing).
+
 ## [T-29] Per-row `sheet_order` sort on the Access page table view
 Status: open
 Owner: @web-engineer

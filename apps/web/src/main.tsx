@@ -32,6 +32,7 @@ import { createRouter, RouterProvider } from '@tanstack/react-router';
 import './lib/firebase';
 import { RootErrorBoundary } from './components/RootErrorBoundary';
 import { PwaUpdatePrompt } from './components/layout/PwaUpdatePrompt';
+import { registerNotificationClickRouter } from './features/notifications/serviceWorkerMessenger';
 import { routeTree } from './routeTree.gen';
 import './styles/tokens.css';
 import './styles/tailwind.css';
@@ -50,6 +51,14 @@ declare module '@tanstack/react-router' {
     router: typeof router;
   }
 }
+
+// Bridge SW notificationclick events to the router so taps on push
+// notifications honour the `data.deepLink` payload. iOS standalone
+// PWAs ignore `client.navigate()` from inside the SW; the SW posts
+// the target back instead and we route on the main thread here.
+// No-op when there's no service worker (jsdom tests, Safari paths
+// outside the installed PWA).
+registerNotificationClickRouter(router);
 
 // Single QueryClient for the app. The DIY Firestore hooks push live
 // snapshots into this cache via `setQueryData`; request-response paths

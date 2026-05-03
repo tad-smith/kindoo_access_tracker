@@ -4,7 +4,10 @@
 // they need for `setCustomUserClaims`.
 //
 // The doc is written by `onAuthUserCreate` (first sign-in) and by the
-// `bumpLastSignIn` callable (per-session, debounced ~1/hour).
+// `bumpLastSignIn` callable (per-session, debounced ~1/hour). The two
+// optional fields below (`fcmTokens`, `notificationPrefs`) are written
+// directly by the user from the SPA — userIndex rules permit
+// self-update of those keys only.
 
 /**
  * Structural Timestamp shape. Both `firebase/firestore`'s `Timestamp`
@@ -34,4 +37,21 @@ export type UserIndexEntry = {
   uid: string;
   typedEmail: string;
   lastSignIn: TimestampLike;
+  /**
+   * FCM registration tokens keyed by stable per-device id. The deviceId
+   * is generated client-side (UUID stored in `localStorage`) so the
+   * same device always overwrites the same slot rather than
+   * accumulating. Absent on docs from devices that never opted in.
+   */
+  fcmTokens?: Record<string, string>;
+  /**
+   * Per-channel notification preferences. Only `push.newRequest` ships
+   * in v1; the nested shape leaves room for future categories without
+   * a migration. `true` on subscribe = clicking "Enable" is the opt-in.
+   */
+  notificationPrefs?: {
+    push?: {
+      newRequest: boolean;
+    };
+  };
 };

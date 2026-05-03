@@ -2,8 +2,17 @@
 // Pending-only; rendered as three ordered sections (Urgent / Outstanding
 // / Future) using the `comparison_date` rule in `./sections.ts`. Per-row
 // Mark Complete + Reject actions.
+//
+// `focus` prop carries a request_id from a tapped push notification's
+// deep-link (typed search param at the route level). On first render
+// where it matches a request in the rendered list, the page scrolls
+// the card into view, applies the `is-focused` class for ~2s, and
+// strips the param from the URL so reload + back-forward stay clean.
+// A `focus` value with no matching request (request was completed/
+// cancelled before the user tapped) is silently dropped.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { AccessRequest, Building } from '@kindoo/shared';
@@ -30,13 +39,26 @@ import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
 import { toast } from '../../../lib/store/toast';
 
+const FOCUS_HIGHLIGHT_MS = 2000;
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function ManagerQueuePage() {
+export interface ManagerQueuePageProps {
+  /**
+   * Request id that arrived via the `?focus=<rid>` deep-link. When set
+   * AND a matching request is in the rendered list, the card scrolls
+   * into view + flashes the `is-focused` highlight, then the param is
+   * stripped from the URL.
+   */
+  focus?: string;
+}
+
+export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   const pending = usePendingRequests();
   const buildings = useBuildings();
+  const navigate = useNavigate();
 
   // Compute "now" once per render. Time advancement during a session
   // shifts the Outstanding/Future boundary by at most a tick — well
@@ -45,6 +67,56 @@ export function ManagerQueuePage() {
     () => partitionPendingRequests(pending.data ?? [], new Date()),
     [pending.data],
   );
+
+  // Currently-highlighted card id. Driven by the `focus` effect below;
+  // applied as the `is-focused` class to the matching card so the CSS
+  // animation runs. Cleared after FOCUS_HIGHLIGHT_MS.
+  const [focusedId, setFocusedId] = useState<string | undefined>(undefined);
+
+  // First-render-with-this-focus effect. Re-fires when `focus` changes
+  // (consecutive notifications targeting different request ids). When
+  // the matching card is in the rendered list:
+  //   1. Scroll into view (smooth, centred). The DOM lookup happens in
+  //      a microtask via `queueMicrotask` so React has committed the
+  //      cards before we read.
+  //   2. Set focusedId so the matching card picks up `is-focused`.
+  //   3. Schedule a timeout to clear focusedId so the highlight fades.
+  //   4. Strip `?focus=` from the URL via `replace` navigation so
+  //      reload + back-forward do not re-trigger.
+  // A focus value with no matching request silently does nothing —
+  // the request was likely completed/cancelled before the user tapped.
+  useEffect(() => {
+    if (!focus) return;
+    if (!pending.data) return;
+    const exists = pending.data.some((r) => r.request_id === focus);
+    if (!exists) {
+      // Still strip the param so a stale deep-link does not linger.
+      navigate({
+        to: '/manager/queue',
+        search: (prev: Record<string, unknown>) => ({ ...prev, focus: undefined }),
+        replace: true,
+      }).catch(() => {});
+      return;
+    }
+    setFocusedId(focus);
+    queueMicrotask(() => {
+      const el = document.querySelector(`[data-testid="queue-card-${focus}"]`);
+      if (el && 'scrollIntoView' in el) {
+        (el as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+    const timer = window.setTimeout(() => {
+      setFocusedId((current) => (current === focus ? undefined : current));
+    }, FOCUS_HIGHLIGHT_MS);
+    navigate({
+      to: '/manager/queue',
+      search: (prev: Record<string, unknown>) => ({ ...prev, focus: undefined }),
+      replace: true,
+    }).catch(() => {});
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [focus, pending.data, navigate]);
 
   if (pending.isLoading || pending.data === undefined) {
     return (
@@ -72,18 +144,21 @@ export function ManagerQueuePage() {
             testid="queue-section-urgent"
             requests={sections.urgent}
             buildings={buildingsList}
+            focusedId={focusedId}
           />
           <QueueSection
             title="Outstanding Requests"
             testid="queue-section-outstanding"
             requests={sections.outstanding}
             buildings={buildingsList}
+            focusedId={focusedId}
           />
           <QueueSection
             title="Future Requests"
             testid="queue-section-future"
             requests={sections.future}
             buildings={buildingsList}
+            focusedId={focusedId}
           />
         </div>
       )}
@@ -96,9 +171,10 @@ interface QueueSectionProps {
   testid: string;
   requests: readonly AccessRequest[];
   buildings: readonly Building[];
+  focusedId: string | undefined;
 }
 
-function QueueSection({ title, testid, requests, buildings }: QueueSectionProps) {
+function QueueSection({ title, testid, requests, buildings, focusedId }: QueueSectionProps) {
   // Hide the entire section (header + body) when empty — the operator
   // brief is unambiguous on this.
   if (requests.length === 0) return null;
@@ -107,7 +183,12 @@ function QueueSection({ title, testid, requests, buildings }: QueueSectionProps)
       <h2 className="kd-queue-section-header">{title}</h2>
       <div className="kd-queue-cards">
         {requests.map((request) => (
-          <QueueCard key={request.request_id} request={request} buildings={buildings} />
+          <QueueCard
+            key={request.request_id}
+            request={request}
+            buildings={buildings}
+            isFocused={focusedId === request.request_id}
+          />
         ))}
       </div>
     </div>
@@ -117,9 +198,10 @@ function QueueSection({ title, testid, requests, buildings }: QueueSectionProps)
 interface QueueCardProps {
   request: AccessRequest;
   buildings: readonly Building[];
+  isFocused: boolean;
 }
 
-function QueueCard({ request, buildings }: QueueCardProps) {
+function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
   const [completeOpen, setCompleteOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
 
@@ -135,9 +217,16 @@ function QueueCard({ request, buildings }: QueueCardProps) {
   })();
 
   const isUrgent = request.urgent === true;
+  const className = [
+    'kd-queue-card',
+    isUrgent ? 'kd-card-urgent' : '',
+    isFocused ? 'is-focused' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   return (
     <div
-      className={`kd-queue-card${isUrgent ? ' kd-card-urgent' : ''}`}
+      className={className}
       data-testid={`queue-card-${request.request_id}`}
       data-request-type={request.type}
       data-urgent={isUrgent ? 'true' : 'false'}
