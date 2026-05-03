@@ -138,6 +138,27 @@
   border-top: 3px solid var(--kd-danger-red);
 }
 
+/* Focus highlight — applied for ~2s after a deep-link from a tapped
+   push notification (`?focus=<rid>` on `/manager/queue`). Brief tinted
+   background + accent-coloured outline that fades out so the manager
+   can locate the card the notification referred to. The class is
+   removed on the JS side after FOCUS_HIGHLIGHT_MS so the card returns
+   to its resting state. The animation runs once per class application;
+   reapplying the class via a fresh notification re-runs it. */
+@keyframes kd-queue-focus-flash {
+  0% {
+    background-color: var(--kd-primary-tint);
+    box-shadow: 0 0 0 2px var(--kd-primary);
+  }
+  100% {
+    background-color: #fff;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.kd-queue-card.is-focused {
+  animation: kd-queue-focus-flash 2s ease-out;
+}
+
 /* Queue page section headers (Urgent / Outstanding / Future). Section
    hidden via JS when empty; this rule only fires when the heading
    actually renders. */

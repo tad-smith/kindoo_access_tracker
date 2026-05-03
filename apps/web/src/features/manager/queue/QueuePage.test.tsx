@@ -1,8 +1,8 @@
 // Component tests for the Manager Queue page. Mocks every hook so the
 // test exercises just the rendering shape + the per-row dialog gating.
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AccessRequest, Building } from '@kindoo/shared';
 import { makeRequest } from '../../../../test/fixtures';
@@ -13,6 +13,7 @@ const completeAddMutate = vi.fn().mockResolvedValue(undefined);
 const completeRemoveMutate = vi.fn().mockResolvedValue(undefined);
 const rejectMutate = vi.fn().mockResolvedValue(undefined);
 const useSeatForMemberMock = vi.fn();
+const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./hooks', () => ({
   usePendingRequests: () => usePendingMock(),
@@ -39,6 +40,10 @@ vi.mock('../../requests/hooks', () => ({
     fetchStatus: 'idle',
   }),
   useSubmitRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => navigateMock,
 }));
 
 import { ManagerQueuePage } from './QueuePage';
@@ -106,6 +111,19 @@ beforeEach(() => {
   vi.clearAllMocks();
   useBuildingsMock.mockReturnValue(liveResult(buildings()));
   useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
+  // jsdom does not implement scrollIntoView; stub on the prototype so
+  // the focus-card effect does not throw. Using `Object.defineProperty`
+  // sidesteps the readonly-element-prototype TS check; restoreAllMocks
+  // in afterEach takes care of cleanup.
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    configurable: true,
+    writable: true,
+    value: vi.fn(),
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('<ManagerQueuePage />', () => {
@@ -336,5 +354,97 @@ describe('<ManagerQueuePage />', () => {
     );
     render(<ManagerQueuePage />);
     expect(screen.getByTestId('queue-duplicate-r1')).toBeInTheDocument();
+  });
+});
+
+describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
+  it('applies the is-focused class to the matching card', async () => {
+    const requests = [
+      makeRequest({ request_id: 'abc123', type: 'add_manual' }),
+      makeRequest({ request_id: 'other', type: 'add_manual' }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage focus="abc123" />);
+    await waitFor(() => {
+      expect(screen.getByTestId('queue-card-abc123')).toHaveClass('is-focused');
+    });
+    expect(screen.getByTestId('queue-card-other')).not.toHaveClass('is-focused');
+  });
+
+  it('scrolls the matching card into view', async () => {
+    const scrollIntoViewSpy = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(() => {});
+    const requests = [makeRequest({ request_id: 'abc123', type: 'add_manual' })];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage focus="abc123" />);
+    await waitFor(() => {
+      expect(scrollIntoViewSpy).toHaveBeenCalledWith({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+  });
+
+  it('strips the focus param from the URL after the effect runs', async () => {
+    const requests = [makeRequest({ request_id: 'abc123', type: 'add_manual' })];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage focus="abc123" />);
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalled();
+    });
+    const arg = navigateMock.mock.calls[0]?.[0] as {
+      to: string;
+      replace: boolean;
+      search: (prev: Record<string, unknown>) => Record<string, unknown>;
+    };
+    expect(arg.to).toBe('/manager/queue');
+    expect(arg.replace).toBe(true);
+    // The search reducer should drop `focus` while preserving any
+    // sibling params the URL might have carried.
+    expect(arg.search({ focus: 'abc123', other: 'x' })).toEqual({
+      focus: undefined,
+      other: 'x',
+    });
+  });
+
+  it('still strips the param when no request matches the focus value', async () => {
+    const requests = [makeRequest({ request_id: 'r1', type: 'add_manual' })];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage focus="missing" />);
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalled();
+    });
+    // No card highlights; no error; the rendered card is untouched.
+    expect(screen.getByTestId('queue-card-r1')).not.toHaveClass('is-focused');
+  });
+
+  it('does not highlight any card when focus is unset', () => {
+    const requests = [makeRequest({ request_id: 'r1', type: 'add_manual' })];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    expect(screen.getByTestId('queue-card-r1')).not.toHaveClass('is-focused');
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('removes the is-focused class after the highlight timeout elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      const requests = [makeRequest({ request_id: 'abc123', type: 'add_manual' })];
+      usePendingMock.mockReturnValue(liveResult(requests));
+      render(<ManagerQueuePage focus="abc123" />);
+      // Flush queueMicrotask + the synchronous setFocusedId so the class lands.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId('queue-card-abc123')).toHaveClass('is-focused');
+      // Advance past the highlight window.
+      act(() => {
+        vi.advanceTimersByTime(2500);
+      });
+      expect(screen.getByTestId('queue-card-abc123')).not.toHaveClass('is-focused');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
