@@ -51,13 +51,6 @@ vi.mock('../../../lib/data', () => ({
 vi.mock('../../../lib/firebase', () => ({
   db: { __db: true },
   firebaseApp: { __app: true },
-  firebaseConfig: {
-    apiKey: 'test-key',
-    authDomain: 'test.example.com',
-    projectId: 'kindoo-staging',
-    appId: 'test-app',
-    messagingSenderId: 'sender-1',
-  },
 }));
 
 vi.mock('../../../lib/docs', () => ({
@@ -72,8 +65,6 @@ import {
   useUpdateNewRequestPrefMutation,
 } from '../hooks';
 
-const swRegisterMock = vi.fn();
-
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
@@ -85,22 +76,16 @@ beforeEach(() => {
   });
 
   // Stub Notification API
-  const notificationStub = vi.fn().mockResolvedValue('granted') as unknown as {
-    requestPermission: () => Promise<NotificationPermission>;
-    permission: NotificationPermission;
-  };
   (globalThis as { Notification?: unknown }).Notification = {
     requestPermission: () => Promise.resolve('granted' as NotificationPermission),
     permission: 'default',
   };
-  void notificationStub;
 
-  Object.defineProperty(navigator, 'serviceWorker', {
-    configurable: true,
-    value: {
-      register: swRegisterMock.mockResolvedValue({ __swReg: true }),
-    },
-  });
+  // The hooks no longer call `navigator.serviceWorker.register` — the
+  // FCM SDK auto-registers the baked-in SW. We don't stub
+  // navigator.serviceWorker here; if the production code path
+  // regresses and tries to register, jsdom will throw and the test
+  // will fail loudly.
 
   getMessagingMock.mockReturnValue({ __messaging: true });
   getTokenMock.mockResolvedValue('fcm-token-aaa');
@@ -167,12 +152,14 @@ describe('useEnablePushMutation', () => {
     });
     expect(outcome).toBe('granted');
 
-    // Token registration was called with the right vapid + sw reg.
+    // Token registration was called with the vapid key only —
+    // letting the FCM SDK auto-register the baked-in SW. A
+    // `serviceWorkerRegistration` arg here would re-introduce the
+    // bare-vs-parameterized URL mismatch that broke deleteToken in
+    // staging.
     expect(getTokenMock).toHaveBeenCalledTimes(1);
-    expect(getTokenMock.mock.calls[0]?.[1]).toMatchObject({
-      vapidKey: 'test-vapid-key',
-      serviceWorkerRegistration: { __swReg: true },
-    });
+    expect(getTokenMock.mock.calls[0]?.[1]).toEqual({ vapidKey: 'test-vapid-key' });
+    expect(getTokenMock.mock.calls[0]?.[1]).not.toHaveProperty('serviceWorkerRegistration');
 
     // userIndex write carried the deviceId-keyed token + newRequest=true.
     expect(setDocMock).toHaveBeenCalledTimes(1);

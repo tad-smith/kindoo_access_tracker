@@ -4,12 +4,13 @@
 //   1. User clicks "Enable push" → `useEnablePushMutation`:
 //        a. Call `Notification.requestPermission()` (must be inside the
 //           click gesture — iOS Safari rejects otherwise).
-//        b. Register the firebase-messaging-sw.js explicitly at its own
-//           scope so vite-plugin-pwa's Workbox SW (scope `/`) doesn't
-//           collide. Distinct scopes coexist cleanly per the
+//        b. Call `getToken(messaging, { vapidKey })`. The FCM SDK
+//           auto-registers the bare `/firebase-messaging-sw.js` URL
+//           at its default scope `/firebase-cloud-messaging-push-scope`.
+//           That scope is distinct from vite-plugin-pwa's Workbox SW
+//           (scope `/`), so the two coexist cleanly per the
 //           ServiceWorker spec.
-//        c. Call `getToken(messaging, { vapidKey, serviceWorkerRegistration })`.
-//        d. Write `userIndex/{canonical}` with merge:
+//        c. Write `userIndex/{canonical}` with merge:
 //             - `fcmTokens[deviceId] = token`
 //             - `notificationPrefs.push.newRequest = true`
 //             - `lastActor: { email, canonical }`
@@ -23,6 +24,19 @@
 //   3. Toggle "New requests" pref while already subscribed →
 //      `useUpdateNewRequestPrefMutation` flips the boolean only;
 //      tokens stay in place.
+//
+// Why no explicit `navigator.serviceWorker.register(...)` call: the
+// initial implementation registered the SW with config-as-query-params
+// so the static SW could `firebase.initializeApp({...})` against the
+// right project. The browser treats `/firebase-messaging-sw.js` and
+// `/firebase-messaging-sw.js?apiKey=X` as different scripts, so the
+// FCM SDK's internal `getToken`/`deleteToken` paths — which look up
+// the registration at the bare URL — saw an unconfigured (or never-
+// registered) SW and threw `messaging/failed-service-worker-
+// registration`. Build-time substitution (see
+// `vite.config.ts:firebaseMessagingSwPlugin`) bakes the public Firebase
+// config into the SW directly, so subscribe AND deleteToken hit the
+// same fully-configured SW at the bare path.
 //
 // Defensive guarding everywhere — managers might not be the only ones
 // with `userIndex` docs (every signed-in user has one), but rules
@@ -38,14 +52,11 @@ import { deleteToken, getMessaging, getToken } from 'firebase/messaging';
 import type { UserIndexEntry } from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import { useFirestoreDoc } from '../../lib/data';
-import { db, firebaseApp, firebaseConfig } from '../../lib/firebase';
+import { db, firebaseApp } from '../../lib/firebase';
 import { userIndexRef } from '../../lib/docs';
 import { usePrincipal } from '../../lib/principal';
 import type { Principal } from '../../lib/principal';
 import { getDeviceId, getVapidPublicKey } from './lib';
-
-const FCM_SW_PATH = '/firebase-messaging-sw.js';
-const FCM_SW_SCOPE = '/firebase-cloud-messaging-push-scope';
 
 /**
  * Live `userIndex/{canonical}` doc for the signed-in user. Returns
@@ -109,22 +120,14 @@ export function useEnablePushMutation() {
         return 'denied';
       }
 
-      // Register the firebase-messaging-sw.js explicitly at its own
-      // scope to avoid the FCM SDK auto-registering at root and fighting
-      // vite-plugin-pwa's Workbox SW (which claims scope `/`). Pass the
-      // (public) firebase config as query params so the SW — which is
-      // a static file at build time — can run `initializeApp()` without
-      // hardcoded values per environment.
-      const swUrl = withFirebaseConfigParams(FCM_SW_PATH);
-      const swReg = await navigator.serviceWorker.register(swUrl, {
-        scope: FCM_SW_SCOPE,
-      });
-
+      // Let the FCM SDK auto-register the bare `/firebase-messaging-sw.js`
+      // at its default scope (`/firebase-cloud-messaging-push-scope`).
+      // The SW already has Firebase config baked in at build time
+      // (see vite.config.ts:firebaseMessagingSwPlugin), so no
+      // serviceWorkerRegistration arg is required and subscribe +
+      // deleteToken both target the same registration.
       const messaging = getMessaging(firebaseApp);
-      const token = await getToken(messaging, {
-        vapidKey,
-        serviceWorkerRegistration: swReg,
-      });
+      const token = await getToken(messaging, { vapidKey });
       if (!token) {
         throw new Error('Failed to obtain FCM registration token.');
       }
@@ -227,23 +230,4 @@ function actorOf(principal: Principal): { email: string; canonical: string } {
     email: principal.email ?? '',
     canonical: principal.canonical ?? canonicalEmail(principal.email ?? ''),
   };
-}
-
-/**
- * Append the public firebase config to the SW URL as query params so
- * the service worker (which is a static file at build time) can call
- * `firebase.initializeApp(...)` without each deployment shipping its
- * own committed copy.
- */
-function withFirebaseConfigParams(path: string): string {
-  const params = new URLSearchParams();
-  if (firebaseConfig.apiKey) params.set('apiKey', firebaseConfig.apiKey);
-  if (firebaseConfig.authDomain) params.set('authDomain', firebaseConfig.authDomain);
-  if (firebaseConfig.projectId) params.set('projectId', firebaseConfig.projectId);
-  if (firebaseConfig.messagingSenderId) {
-    params.set('messagingSenderId', firebaseConfig.messagingSenderId);
-  }
-  if (firebaseConfig.appId) params.set('appId', firebaseConfig.appId);
-  const qs = params.toString();
-  return qs ? `${path}?${qs}` : path;
 }
