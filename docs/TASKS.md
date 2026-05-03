@@ -130,11 +130,13 @@ End-to-end runbook now lives at `infra/runbooks/provision-firebase-projects.md` 
 Closed 2026-04-28: operator successfully walked `infra/runbooks/provision-firebase-projects.md` end-to-end against both staging and prod projects.
 
 ## [T-04] Operator setup B2 — domain registration + Resend domain verification
-Status: open
+Status: done (2026-05-02)
 Owner: @tad
 Phase: 1 → due before Phase 9
 
 Domain `stakebuildingaccess.org` chosen 2026-04-27 (per F17). Resend chosen as the email vendor (per F16). Operator work: register the domain at any registrar (~$10/year), then verify it in Resend's dashboard (DKIM CNAME + DMARC TXT records added at the registrar's DNS panel; ~5–60 min DNS propagation). Doesn't block Phase 1 emulator-local work; needed before Phase 9 ships email triggers in earnest. Spec: `docs/firebase-migration.md` B2 + F16 + F17.
+
+Closed 2026-05-02: domain `mail.stakebuildingaccess.org` registered and Resend confirmed verification (DKIM CNAME + DMARC TXT records propagated). Phase 9 (email triggers via Resend) is unblocked.
 
 ## [T-05] Operator setup B4 — LCR Sheet sharing protocol for importer
 Status: done (2026-04-28)
