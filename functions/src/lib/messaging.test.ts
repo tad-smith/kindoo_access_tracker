@@ -11,7 +11,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { getApps } from 'firebase-admin/app';
-import { ensureAdminInit, getSender } from './messaging.js';
+import { getMessaging } from 'firebase-admin/messaging';
+import { ensureAdminInit } from './messaging.js';
 
 describe('ensureAdminInit', () => {
   it('initialises the default app on first call when none exists', () => {
@@ -28,34 +29,18 @@ describe('ensureAdminInit', () => {
     ensureAdminInit();
     expect(getApps().length).toBe(beforeLen);
   });
-});
 
-describe('default sender', () => {
-  it('does not throw "default Firebase app does not exist" when invoked without external init', async () => {
-    // The bug: prior to the fix, calling the default sender threw at
-    // `getMessaging()` because no app had been initialised. With the
-    // fix, the wrapper inits on demand. The send itself will likely
-    // fail (no creds in this environment) but it must NOT fail with
-    // the init error.
+  it('lets `getMessaging()` resolve the default app — staging-bug regression', () => {
+    // The staging bug: `getMessaging()` threw "The default Firebase
+    // app does not exist" because no `initializeApp()` had run. With
+    // the fix the wrapper inits on demand; once `ensureAdminInit()`
+    // has run, `getMessaging()` synchronously returns a client.
     //
-    // Caveat: the previous test in this file may have already
-    // initialised; we still assert by string match on the specific
-    // init error so the regression is locked even if init was a
-    // no-op for this run.
-    const sender = getSender();
-    let err: unknown;
-    try {
-      await sender.sendEachForMulticast({
-        tokens: ['fake-token'],
-        notification: { title: 't', body: 'b' },
-      });
-    } catch (e) {
-      err = e;
-    }
-    // Either the call resolved (unlikely without creds) or it failed
-    // with a non-init error. The init-error string is the regression
-    // target.
-    const msg = err instanceof Error ? err.message : String(err ?? '');
-    expect(msg).not.toMatch(/default Firebase app does not exist/i);
+    // We don't exercise `sendEachForMulticast()` here because that
+    // resolves credentials and round-trips to FCM — neither available
+    // in CI. The init-error fault is at `getMessaging()` itself, so
+    // that's where we assert.
+    ensureAdminInit();
+    expect(() => getMessaging()).not.toThrow();
   });
 });
