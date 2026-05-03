@@ -420,3 +420,14 @@ Doing this correctly requires:
 4. Manual-grant rows (where `calling` is a free-text reason) get `+Infinity` sort_order — bottom of the band per scope.
 
 Skipped in Phase 10.4 because the operator named only the card-view sort as the immediate priority, and this work has reasonable complexity (two new subscriptions + a parser port). Revisit after staging if the table view's `scope → calling` sort proves insufficient on real data.
+
+## [T-31] Role-aware redirect gates on routes a user can't access
+Status: open
+Owner: @web-engineer
+Phase: post Phase 10.5
+
+Today most manager-only routes (`/manager/queue`, `/manager/dashboard`, `/manager/access`, `/manager/configuration`, `/manager/audit`, `/manager/seats`, `/manager/import`) rely on the nav not exposing them to non-managers — there's no per-route redirect for users who deep-link directly. The `/notifications` route (Phase 10.5) is the only one with an explicit gate today.
+
+Add consistent role-aware redirect gates to every route that's role-gated, mirroring the principal-loading-aware pattern from `routes/_authed/notifications.tsx` (which derives `claimsLoading` from `firebaseAuthSignedIn && !isAuthenticated` to avoid race-redirecting during principal load). Same treatment for bishopric-only and stake-only routes if any exist.
+
+Likely shape: a small reusable hook or HOC (e.g., `useRequireRole(role)`) that handles loading + redirect together, applied via `Route.beforeLoad` or a top-level `useEffect`. Mirror whatever pattern the codebase settles on for `/notifications` so all role-gated routes use the same idiom.
