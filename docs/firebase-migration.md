@@ -1126,6 +1126,8 @@ Coverage gate: every diff plan branch has at least one fixture test.
 
 **Dependencies:** Phase 6 (request lifecycle invokes notifications) + Phase 8 (importer over-cap email) + the new domain (per F17) registered and verified with Resend.
 
+**Status:** [DONE — see [`docs/changelog/phase-9-resend-email.md`](changelog/phase-9-resend-email.md)]
+
 ### Sub-tasks
 
 - [ ] Resend free-tier signup (100/day, 3000/month).
