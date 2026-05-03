@@ -60,6 +60,53 @@ describe('userIndexEntrySchema', () => {
   it('rejects missing uid', () => {
     expect(() => userIndexEntrySchema.parse({ typedEmail: 'a@b.com', lastSignIn: T })).toThrow();
   });
+
+  it('parses an entry with fcmTokens and notificationPrefs populated', () => {
+    const seed = {
+      uid: 'firebase-uid-1',
+      typedEmail: 'Alice@gmail.com',
+      lastSignIn: T,
+      fcmTokens: {
+        'device-uuid-1': 'fcm-token-aaaaaa',
+        'device-uuid-2': 'fcm-token-bbbbbb',
+      },
+      notificationPrefs: {
+        push: { newRequest: true },
+      },
+    };
+    expect(userIndexEntrySchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses an entry with empty fcmTokens map', () => {
+    const seed = {
+      uid: 'firebase-uid-1',
+      typedEmail: 'Alice@gmail.com',
+      lastSignIn: T,
+      fcmTokens: {},
+      notificationPrefs: { push: { newRequest: false } },
+    };
+    expect(userIndexEntrySchema.parse(seed)).toEqual(seed);
+  });
+
+  it('rejects a non-string fcm token value', () => {
+    const bad = {
+      uid: 'firebase-uid-1',
+      typedEmail: 'a@b.com',
+      lastSignIn: T,
+      fcmTokens: { 'device-1': 42 },
+    };
+    expect(() => userIndexEntrySchema.parse(bad)).toThrow();
+  });
+
+  it('rejects a non-boolean notificationPrefs.push.newRequest', () => {
+    const bad = {
+      uid: 'firebase-uid-1',
+      typedEmail: 'a@b.com',
+      lastSignIn: T,
+      notificationPrefs: { push: { newRequest: 'yes' } },
+    };
+    expect(() => userIndexEntrySchema.parse(bad)).toThrow();
+  });
 });
 
 describe('platformSuperadminSchema', () => {

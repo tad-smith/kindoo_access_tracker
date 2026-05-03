@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthedNotificationsRouteImport } from './routes/_authed/notifications'
 import { Route as AuthedNewRouteImport } from './routes/_authed/new'
 import { Route as AuthedMyRequestsRouteImport } from './routes/_authed/my-requests'
 import { Route as AuthedStakeWardsRouteImport } from './routes/_authed/stake/wards'
@@ -34,6 +35,11 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthedNotificationsRoute = AuthedNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedNewRoute = AuthedNewRouteImport.update({
   id: '/new',
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/my-requests': typeof AuthedMyRequestsRoute
   '/new': typeof AuthedNewRoute
+  '/notifications': typeof AuthedNotificationsRoute
   '/bishopric/new': typeof AuthedBishopricNewRoute
   '/bishopric/roster': typeof AuthedBishopricRosterRoute
   '/manager/access': typeof AuthedManagerAccessRoute
@@ -128,6 +135,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/my-requests': typeof AuthedMyRequestsRoute
   '/new': typeof AuthedNewRoute
+  '/notifications': typeof AuthedNotificationsRoute
   '/bishopric/new': typeof AuthedBishopricNewRoute
   '/bishopric/roster': typeof AuthedBishopricRosterRoute
   '/manager/access': typeof AuthedManagerAccessRoute
@@ -147,6 +155,7 @@ export interface FileRoutesById {
   '/_authed': typeof AuthedRouteWithChildren
   '/_authed/my-requests': typeof AuthedMyRequestsRoute
   '/_authed/new': typeof AuthedNewRoute
+  '/_authed/notifications': typeof AuthedNotificationsRoute
   '/_authed/bishopric/new': typeof AuthedBishopricNewRoute
   '/_authed/bishopric/roster': typeof AuthedBishopricRosterRoute
   '/_authed/manager/access': typeof AuthedManagerAccessRoute
@@ -166,6 +175,7 @@ export interface FileRouteTypes {
     | '/'
     | '/my-requests'
     | '/new'
+    | '/notifications'
     | '/bishopric/new'
     | '/bishopric/roster'
     | '/manager/access'
@@ -183,6 +193,7 @@ export interface FileRouteTypes {
     | '/'
     | '/my-requests'
     | '/new'
+    | '/notifications'
     | '/bishopric/new'
     | '/bishopric/roster'
     | '/manager/access'
@@ -201,6 +212,7 @@ export interface FileRouteTypes {
     | '/_authed'
     | '/_authed/my-requests'
     | '/_authed/new'
+    | '/_authed/notifications'
     | '/_authed/bishopric/new'
     | '/_authed/bishopric/roster'
     | '/_authed/manager/access'
@@ -235,6 +247,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authed/notifications': {
+      id: '/_authed/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof AuthedNotificationsRouteImport
+      parentRoute: typeof AuthedRoute
     }
     '/_authed/new': {
       id: '/_authed/new'
@@ -340,6 +359,7 @@ declare module '@tanstack/react-router' {
 interface AuthedRouteChildren {
   AuthedMyRequestsRoute: typeof AuthedMyRequestsRoute
   AuthedNewRoute: typeof AuthedNewRoute
+  AuthedNotificationsRoute: typeof AuthedNotificationsRoute
   AuthedBishopricNewRoute: typeof AuthedBishopricNewRoute
   AuthedBishopricRosterRoute: typeof AuthedBishopricRosterRoute
   AuthedManagerAccessRoute: typeof AuthedManagerAccessRoute
@@ -357,6 +377,7 @@ interface AuthedRouteChildren {
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedMyRequestsRoute: AuthedMyRequestsRoute,
   AuthedNewRoute: AuthedNewRoute,
+  AuthedNotificationsRoute: AuthedNotificationsRoute,
   AuthedBishopricNewRoute: AuthedBishopricNewRoute,
   AuthedBishopricRosterRoute: AuthedBishopricRosterRoute,
   AuthedManagerAccessRoute: AuthedManagerAccessRoute,

@@ -47,7 +47,13 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     const rosters = sections.find((s) => s.key === 'rosters')?.items.map((i) => i.label);
     expect(rosters).toEqual(['Ward Roster', 'Stake Roster', 'All Seats']);
     const settings = sections.find((s) => s.key === 'settings')?.items.map((i) => i.label);
-    expect(settings).toEqual(['App Access', 'Import', 'Configuration', 'Audit Log']);
+    expect(settings).toEqual([
+      'App Access',
+      'Import',
+      'Configuration',
+      'Notifications',
+      'Audit Log',
+    ]);
     const account = sections.find((s) => s.key === 'account')?.items.map((i) => i.label);
     expect(account).toEqual(['Logout']);
   });

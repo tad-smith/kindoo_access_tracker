@@ -173,11 +173,20 @@ service cloud.firestore {
 
     // userIndex/{canonical} — written by `onAuthUserCreate` (Admin
     // SDK bypass); read by the user themselves so the SPA can confirm
-    // the bridge entry exists with the expected uid. Phase 2's
-    // match block, preserved verbatim into Phase 3.
+    // the bridge entry exists with the expected uid.
+    //
+    // Self-update is permitted ONLY for `fcmTokens` + `notificationPrefs`
+    // + `lastActor` (push-subscribe write surface). Create/delete remain
+    // server-only. The `lastActor` integrity check stamps the writer so
+    // any audit-trail tooling sees who toggled push state.
     match /userIndex/{memberCanonical} {
       allow read: if isAuthed() && resource.data.uid == request.auth.uid;
-      allow write: if false;
+      allow update: if isAuthed()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['fcmTokens', 'notificationPrefs', 'lastActor'])
+        && lastActorMatchesAuth(request.resource.data);
+      allow create, delete: if false;
     }
 
     // platformSuperadmins — allow-list for the cross-stake superadmin

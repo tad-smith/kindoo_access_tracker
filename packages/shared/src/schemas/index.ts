@@ -24,5 +24,5 @@ export { accessRequestSchema, requestStatusSchema, requestTypeSchema } from './r
 export { duplicateGrantSchema, seatSchema, seatTypeSchema } from './seat.js';
 export { importDaySchema, overCapEntrySchema, stakeSchema } from './stake.js';
 export { timestampLikeSchema } from './timestampLike.js';
-export { userIndexEntrySchema } from './userIndex.js';
+export { notificationPrefsSchema, userIndexEntrySchema } from './userIndex.js';
 export { wardSchema } from './ward.js';

@@ -129,6 +129,14 @@ describe('<ConfigurationPage />', () => {
     expect(screen.getByRole('heading', { name: /^Stake config$/ })).toBeInTheDocument();
   });
 
+  it('does not render the Push Notifications panel inside the Config tab', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    // Panel lives at /notifications now; Configuration's Config tab
+    // ends at the Save button.
+    expect(screen.queryByTestId('push-notifications-panel')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Push Notifications' })).toBeNull();
+  });
+
   it('switches to the Buildings tab when clicked', async () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
