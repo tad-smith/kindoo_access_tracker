@@ -2,9 +2,15 @@
 // manager-only for-now; non-managers redirect to `/`. The page itself
 // (rendered when gated through) is exercised by NotificationsPage's
 // own component test.
+//
+// Loading-window coverage: `usePrincipal()` is component-scoped state.
+// On a fresh mount, claims start `null` and the derived Principal
+// looks identical to a no-role user (`isAuthenticated: false`). The
+// gate must NOT redirect during that window — only after claims have
+// arrived (i.e., `isAuthenticated: true`).
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import type { Principal } from '../../lib/principal';
 
 const mockedPrincipal: { current: Principal } = {
@@ -52,6 +58,7 @@ describe('/_authed/notifications route gate', () => {
   it('renders the page for a manager principal', () => {
     mockedPrincipal.current = {
       ...mockedPrincipal.current,
+      isAuthenticated: true,
       managerStakes: ['csnorth'],
     };
     render(<NotificationsRoute />);
@@ -62,6 +69,7 @@ describe('/_authed/notifications route gate', () => {
   it('renders the page for a platform superadmin', () => {
     mockedPrincipal.current = {
       ...mockedPrincipal.current,
+      isAuthenticated: true,
       managerStakes: [],
       isPlatformSuperadmin: true,
     };
@@ -73,6 +81,7 @@ describe('/_authed/notifications route gate', () => {
   it('redirects a non-manager (bishopric only) to /', () => {
     mockedPrincipal.current = {
       ...mockedPrincipal.current,
+      isAuthenticated: true,
       managerStakes: [],
       isPlatformSuperadmin: false,
       bishopricWards: { csnorth: ['CO'] },
@@ -85,6 +94,7 @@ describe('/_authed/notifications route gate', () => {
   it('redirects a non-manager (stake only) to /', () => {
     mockedPrincipal.current = {
       ...mockedPrincipal.current,
+      isAuthenticated: true,
       managerStakes: [],
       isPlatformSuperadmin: false,
       bishopricWards: {},
@@ -93,5 +103,57 @@ describe('/_authed/notifications route gate', () => {
     render(<NotificationsRoute />);
     expect(screen.queryByTestId('notifications-page')).toBeNull();
     expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true });
+  });
+
+  it('does not redirect during the principal-loading window (signed in but claims not arrived)', () => {
+    // Fresh mount of `usePrincipal()` inside an `_authed` child route:
+    // the user is signed in (Firebase Auth), but custom claims are
+    // still being fetched. The derived Principal looks like a no-role
+    // user. Past the `_authed` gate this combination unambiguously
+    // means "claims still loading."
+    mockedPrincipal.current = {
+      ...mockedPrincipal.current,
+      firebaseAuthSignedIn: true,
+      isAuthenticated: false,
+      canonical: '',
+      managerStakes: [],
+      isPlatformSuperadmin: false,
+      bishopricWards: {},
+      stakeMemberStakes: [],
+    };
+    render(<NotificationsRoute />);
+    // Loading affordance, not the page, not a redirect.
+    expect(screen.queryByTestId('notifications-page')).toBeNull();
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/loading/i)).toBeInTheDocument();
+  });
+
+  it('renders the page once claims arrive after the loading window', () => {
+    // First render — claims pending.
+    mockedPrincipal.current = {
+      ...mockedPrincipal.current,
+      firebaseAuthSignedIn: true,
+      isAuthenticated: false,
+      canonical: '',
+      managerStakes: [],
+      isPlatformSuperadmin: false,
+      bishopricWards: {},
+      stakeMemberStakes: [],
+    };
+    const { rerender } = render(<NotificationsRoute />);
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    // Second render — claims arrive, user is a manager.
+    mockedPrincipal.current = {
+      ...mockedPrincipal.current,
+      isAuthenticated: true,
+      canonical: 'a@x.com',
+      managerStakes: ['csnorth'],
+    };
+    act(() => {
+      rerender(<NotificationsRoute />);
+    });
+    expect(screen.getByTestId('notifications-page')).toBeInTheDocument();
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 });
