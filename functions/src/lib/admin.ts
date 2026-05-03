@@ -2,10 +2,14 @@
 // codebase. Every trigger / callable / scheduled job that needs
 // Firestore or Auth imports `getDb()` / `getAuth()` from here.
 //
-// `initializeApp()` must be called exactly once per process; calling
-// twice throws. Module-load time is the natural single-call site,
-// since the Cloud Functions runtime keeps each instance's modules
-// loaded for the lifetime of the container.
+// We initialise the DEFAULT-named app explicitly. firebase-functions
+// v7 internally creates a NAMED app (`__FIREBASE_FUNCTIONS_SDK__`)
+// when its providers build snapshots for triggers that don't have a
+// default app yet. Picking `getApps()[0]` would silently grab that
+// named app, which then breaks `getMessaging()` (and any other
+// service that resolves the default app). The right invariant is
+// "the [DEFAULT] app exists and we own it" — that's what `ensureApp()`
+// enforces.
 //
 // In the emulator, FIREBASE_CONFIG / FIREBASE_AUTH_EMULATOR_HOST /
 // FIRESTORE_EMULATOR_HOST are already injected by the runtime; the
@@ -21,6 +25,9 @@ import { logger } from 'firebase-functions';
 // active project at deploy time so the same value works in staging + prod.
 export const APP_SA = 'kindoo-app@';
 
+/** firebase-admin's default-app name; the constant isn't exported. */
+const DEFAULT_APP_NAME = '[DEFAULT]';
+
 let app: App | undefined;
 
 function ensureApp(): App {
@@ -29,15 +36,17 @@ function ensureApp(): App {
     return app;
   }
   const existing = getApps();
-  logger.info('[admin.ensureApp] no cached app; getApps() length', {
+  const defaultApp = existing.find((a) => a.name === DEFAULT_APP_NAME);
+  logger.info('[admin.ensureApp] no cached app; getApps() snapshot', {
     count: existing.length,
     names: existing.map((a) => a.name),
+    hasDefault: defaultApp !== undefined,
   });
-  if (existing.length > 0) {
-    app = existing[0] as App;
-    logger.info('[admin.ensureApp] using pre-existing app', { name: app.name });
+  if (defaultApp) {
+    app = defaultApp;
+    logger.info('[admin.ensureApp] using pre-existing default app', { name: app.name });
   } else {
-    logger.info('[admin.ensureApp] calling initializeApp()');
+    logger.info('[admin.ensureApp] no default app; calling initializeApp()');
     app = initializeApp();
     logger.info('[admin.ensureApp] initializeApp() returned', { name: app.name });
   }

@@ -5,9 +5,17 @@
 //
 // Unlike `firebase-admin/firestore`'s `getFirestore()` (which auto-inits
 // from `GCLOUD_PROJECT`), `getMessaging()` requires an explicit
-// `initializeApp()` first or it throws "default Firebase app does not
-// exist". `ensureInit()` is idempotent and a no-op when another module
-// (or the test harness) already set up the app.
+// default-app `initializeApp()` first or it throws "default Firebase app
+// does not exist". `ensureAdminInit()` is idempotent and a no-op when
+// another module (or the test harness) already set up the default app.
+//
+// Why we can't just check `getApps().length === 0`: firebase-functions
+// v7 internally creates a NAMED app (`__FIREBASE_FUNCTIONS_SDK__`) when
+// it builds the snapshot for an `onDocumentCreated` trigger and no
+// default app exists yet. That makes `getApps()` non-empty, but the
+// default app is still missing and `getMessaging()` still throws. The
+// correct check is "does an app named `[DEFAULT]` exist?", not "are
+// there any apps?".
 
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging as adminGetMessaging } from 'firebase-admin/messaging';
@@ -19,18 +27,23 @@ export type Sender = {
   sendEachForMulticast(message: MulticastMessage): Promise<BatchResponse>;
 };
 
+/** firebase-admin's internal default-app name; constants.ts not exported. */
+const DEFAULT_APP_NAME = '[DEFAULT]';
+
 /**
- * Idempotent admin-app init. Exported for tests; the default sender
+ * Idempotent default-app init. Exported for tests; the default sender
  * calls it before every send so the trigger doesn't have to.
  */
 export function ensureAdminInit(): void {
   const before = getApps();
+  const hasDefault = before.some((a) => a.name === DEFAULT_APP_NAME);
   logger.info('[messaging.ensureAdminInit] entry', {
     appsBefore: before.length,
     appNames: before.map((a) => a.name),
+    hasDefault,
   });
-  if (before.length === 0) {
-    logger.info('[messaging.ensureAdminInit] calling initializeApp()');
+  if (!hasDefault) {
+    logger.info('[messaging.ensureAdminInit] no default app; calling initializeApp()');
     try {
       const app = initializeApp();
       logger.info('[messaging.ensureAdminInit] initializeApp() returned', {
