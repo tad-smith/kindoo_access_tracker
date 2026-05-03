@@ -12,6 +12,7 @@
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging as adminGetMessaging } from 'firebase-admin/messaging';
 import type { BatchResponse, MulticastMessage } from 'firebase-admin/messaging';
+import { logger } from 'firebase-functions';
 
 /** Surface the trigger consumes — narrower than full `Messaging` so tests can stub it. */
 export type Sender = {
@@ -23,13 +24,44 @@ export type Sender = {
  * calls it before every send so the trigger doesn't have to.
  */
 export function ensureAdminInit(): void {
-  if (getApps().length === 0) initializeApp();
+  const before = getApps();
+  logger.info('[messaging.ensureAdminInit] entry', {
+    appsBefore: before.length,
+    appNames: before.map((a) => a.name),
+  });
+  if (before.length === 0) {
+    logger.info('[messaging.ensureAdminInit] calling initializeApp()');
+    try {
+      const app = initializeApp();
+      logger.info('[messaging.ensureAdminInit] initializeApp() returned', {
+        appName: app.name,
+        appOptionsKeys: Object.keys(app.options ?? {}),
+      });
+    } catch (err) {
+      logger.error('[messaging.ensureAdminInit] initializeApp() threw', {
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      throw err;
+    }
+  }
+  const after = getApps();
+  logger.info('[messaging.ensureAdminInit] exit', {
+    appsAfter: after.length,
+    appNames: after.map((a) => a.name),
+  });
 }
 
 const defaultSender: Sender = {
   sendEachForMulticast: (message) => {
+    logger.info('[messaging.defaultSender.sendEachForMulticast] entry', {
+      tokenCount: message.tokens?.length ?? 0,
+    });
     ensureAdminInit();
-    return adminGetMessaging().sendEachForMulticast(message);
+    logger.info('[messaging.defaultSender.sendEachForMulticast] calling adminGetMessaging()');
+    const m = adminGetMessaging();
+    logger.info('[messaging.defaultSender.sendEachForMulticast] got messaging client; sending');
+    return m.sendEachForMulticast(message);
   },
 };
 
@@ -37,6 +69,9 @@ let activeSender: Sender = defaultSender;
 
 /** Active sender — production goes through `firebase-admin/messaging`. */
 export function getSender(): Sender {
+  logger.info('[messaging.getSender] called', {
+    isDefault: activeSender === defaultSender,
+  });
   return activeSender;
 }
 

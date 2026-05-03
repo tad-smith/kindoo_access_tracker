@@ -15,6 +15,7 @@
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getAuth as adminGetAuth, type Auth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { logger } from 'firebase-functions';
 
 // Runtime SA for Sheets-needing functions; firebase-functions appends the
 // active project at deploy time so the same value works in staging + prod.
@@ -23,9 +24,23 @@ export const APP_SA = 'kindoo-app@';
 let app: App | undefined;
 
 function ensureApp(): App {
-  if (app) return app;
+  if (app) {
+    logger.info('[admin.ensureApp] returning cached app', { name: app.name });
+    return app;
+  }
   const existing = getApps();
-  app = existing.length > 0 ? (existing[0] as App) : initializeApp();
+  logger.info('[admin.ensureApp] no cached app; getApps() length', {
+    count: existing.length,
+    names: existing.map((a) => a.name),
+  });
+  if (existing.length > 0) {
+    app = existing[0] as App;
+    logger.info('[admin.ensureApp] using pre-existing app', { name: app.name });
+  } else {
+    logger.info('[admin.ensureApp] calling initializeApp()');
+    app = initializeApp();
+    logger.info('[admin.ensureApp] initializeApp() returned', { name: app.name });
+  }
   return app;
 }
 

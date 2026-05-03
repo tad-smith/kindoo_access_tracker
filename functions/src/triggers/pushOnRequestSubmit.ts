@@ -34,12 +34,15 @@ export const pushOnRequestSubmit = onDocumentCreated(
     serviceAccount: APP_SA,
   },
   async (event) => {
+    logger.info('[pushOnRequestSubmit] entry');
     const snap = event.data;
     if (!snap) return;
     const req = snap.data() as AccessRequest;
     const { stakeId, requestId } = event.params as { stakeId: string; requestId: string };
 
+    logger.info('[pushOnRequestSubmit] calling getDb()');
     const db = getDb();
+    logger.info('[pushOnRequestSubmit] getDb() returned');
 
     // Active managers — same shape as `seedClaims.ts`'s manager check.
     const managersSnap = await db
@@ -87,7 +90,11 @@ export const pushOnRequestSubmit = onDocumentCreated(
       tokens: perToken.map((p) => p.token),
     };
 
+    logger.info('[pushOnRequestSubmit] about to call getSender().sendEachForMulticast', {
+      tokenCount: perToken.map((p) => p.token).length,
+    });
     const response = await getSender().sendEachForMulticast(message);
+    logger.info('[pushOnRequestSubmit] sendEachForMulticast returned');
 
     let tokensInvalid = 0;
     let tokensCleaned = 0;
