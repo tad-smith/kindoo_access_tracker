@@ -15,6 +15,7 @@
 
 import type { LucideIcon } from 'lucide-react';
 import {
+  Bell,
   Building2,
   ClipboardList,
   Download,
@@ -178,6 +179,16 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
       label: 'Configuration',
       to: '/manager/configuration',
       icon: Settings,
+    });
+    // Manager-only for-now; future expansion to bishopric/stake users
+    // is planned when Phase 9 ships push for completed/rejected/
+    // cancelled requests.
+    settings.push({
+      kind: 'link',
+      key: 'notifications',
+      label: 'Notifications',
+      to: '/notifications',
+      icon: Bell,
     });
     settings.push({
       kind: 'link',

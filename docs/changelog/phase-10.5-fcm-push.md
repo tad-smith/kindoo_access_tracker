@@ -5,7 +5,7 @@
 
 ## What shipped
 
-Managers receive a Web push notification when a new request is submitted, paralleling the existing email. Email remains the source-of-truth channel; push is additive opt-in. Per-device subscription is managed from a new "Push Notifications" panel inside the Configuration → Config tab. Each device is keyed by a stable `crypto.randomUUID()` persisted in localStorage, so disabling push on one device leaves other devices' tokens intact. The fanout trigger reads active managers' `userIndex` entries, filters on `notificationPrefs.push.newRequest === true` plus non-empty `fcmTokens`, calls FCM `sendEachForMulticast`, and prunes invalid tokens via `FieldValue.delete()`.
+Managers receive a Web push notification when a new request is submitted, paralleling the existing email. Email remains the source-of-truth channel; push is additive opt-in. Per-device subscription is managed from a new "Push Notifications" panel on the dedicated Notifications page under the Settings nav section. Each device is keyed by a stable `crypto.randomUUID()` persisted in localStorage, so disabling push on one device leaves other devices' tokens intact. The fanout trigger reads active managers' `userIndex` entries, filters on `notificationPrefs.push.newRequest === true` plus non-empty `fcmTokens`, calls FCM `sendEachForMulticast`, and prunes invalid tokens via `FieldValue.delete()`.
 
 The phase shipped over five commits across two parallel lanes (web + backend) on a single branch:
 
@@ -23,9 +23,11 @@ The phase shipped over five commits across two parallel lanes (web + backend) on
 
 `apps/web/public/firebase-messaging-sw.js` (new). Compat-SDK style as FCM convention dictates. The static SW receives Firebase config via URL query params from the SPA's `register()` call so the file itself stays environment-agnostic. Background push renders via `self.registration.showNotification`; `notificationclick` focuses an existing window or opens `/manager/queue`. Workbox `navigateFallbackDenylist` extended to skip the SW path so the existing PWA SW (vite-plugin-pwa) doesn't intercept the FCM SW request. Coexists at distinct scope: FCM SW at `/firebase-cloud-messaging-push-scope`, Workbox SW at `/`.
 
-### Sub-change C — settings UI (`9d0cc59`)
+### Sub-change C — settings UI (`9d0cc59`, relocated post-phase)
 
-`PushNotificationsPanel` rendered as a section inside `ConfigKeysTab` of `ConfigurationPage` — the operator decision was to nest it inside Configuration → Config rather than introduce a new top-level Settings route. Manager-only by transitivity (the Configuration page is already manager-gated). Five render branches keyed by testid: `push-unsupported` / `push-requires-install` / `push-vapid-missing` / `push-denied` / `push-enable-button` / `push-subscribed-with-toggle`. The `requires-install` branch handles the iOS gotcha: iOS Web push requires the PWA installed to home screen (Phase 10 shipped that prerequisite).
+`PushNotificationsPanel` lives on a dedicated Notifications page under the Settings nav section (`/notifications`). The route is manager-only for-now; the page component itself is role-agnostic so future expansion (Phase 9 push for completed/rejected/cancelled requests visible to bishopric + stake users) only needs the route gate relaxed. Five render branches keyed by testid: `push-unsupported` / `push-requires-install` / `push-vapid-missing` / `push-denied` / `push-enable-button` / `push-subscribed-with-toggle`. The `requires-install` branch handles the iOS gotcha: iOS Web push requires the PWA installed to home screen (Phase 10 shipped that prerequisite).
+
+The panel was initially placed inside `ConfigKeysTab` of `ConfigurationPage` per an early operator decision; relocated to its own page in a follow-up before phase close so the Settings nav has an obvious entry-point and the page is structured for future per-event toggles.
 
 ### Sub-change D — token registration (`9d0cc59`)
 
@@ -50,7 +52,7 @@ Operator-decided departures from the original brief, plus discoveries during imp
 - **`notificationPrefs.push.newRequest` defaults to `true` on subscribe.** Clicking "Enable" implies opt-in. Future per-category toggles can override on the Phase 10.5 follow-up if measured need exists.
 - **VAPID private key NOT in Secret Manager.** Operator decision — the Admin SDK uses service-account auth for the send path, so the VAPID private key is never needed server-side. The VAPID *public* key ships as `VITE_FCM_VAPID_PUBLIC_KEY` (build-time env var, public by design).
 - **No audit-row fanout for userIndex writes.** Operator decision — push subscription is ephemeral per-device noise; subscription state has full audit lineage via `lastActor` on the doc itself. Audit-trigger collection list does not include `userIndex` for push writes.
-- **Push panel placed inside Configuration → Config tab.** Operator decision against introducing a new top-level Settings route. Keeps the navigation surface unchanged.
+- **Push panel moved from Configuration → Config tab to a dedicated Notifications page under Settings.** Initial operator decision was to nest the panel inside Configuration; reversed before phase close so the Settings nav has a clear entry-point (`bell` icon, between Configuration and Audit Log) and the page is structured for future per-event toggles. Manager-only for-now; the page component itself is role-agnostic so Phase 9's bishopric/stake push categories only need the route gate relaxed.
 - **iOS push gotcha rendered as its own branch.** `push-requires-install` testid; copy points at the home-screen install. Phase 10 shipped the install prerequisite, so the path is in place.
 
 ## Cross-cutting decisions

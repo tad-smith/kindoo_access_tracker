@@ -95,6 +95,7 @@ Four sections, in this order. Each item lists the role(s) it's visible for.
 - App Access (Manager only)
 - Import (Manager only)
 - Configuration (Manager only)
+- Notifications (Manager only for-now; future expansion to bishopric/stake users planned when Phase 9 ships push for completed/rejected/cancelled requests)
 - Audit Log (Manager only)
 
 **Account**
@@ -135,6 +136,7 @@ Implementation pulls icons from `lucide-react` (or `lucide` for vanilla TS) per 
 | App Access | `key-round` |
 | Import | `download` |
 | Configuration | `settings` |
+| Notifications | `bell` |
 | Audit Log | `scroll-text` |
 | Logout | `log-out` |
 

@@ -73,13 +73,6 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 
-// Stub the Push Notifications panel — it owns its own data hooks +
-// browser APIs that aren't relevant to the Configuration test surface.
-// The panel's own component test exercises its rendering states.
-vi.mock('../../notifications/components/PushNotificationsPanel', () => ({
-  PushNotificationsPanel: () => <div data-testid="push-notifications-panel-stub" />,
-}));
-
 import { ConfigurationPage } from './ConfigurationPage';
 
 function liveResult<T>(data: T[]) {
@@ -134,6 +127,14 @@ describe('<ConfigurationPage />', () => {
   it('renders the Config tab by default (leftmost)', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
     expect(screen.getByRole('heading', { name: /^Stake config$/ })).toBeInTheDocument();
+  });
+
+  it('does not render the Push Notifications panel inside the Config tab', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    // Panel lives at /notifications now; Configuration's Config tab
+    // ends at the Save button.
+    expect(screen.queryByTestId('push-notifications-panel')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Push Notifications' })).toBeNull();
   });
 
   it('switches to the Buildings tab when clicked', async () => {
