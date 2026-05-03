@@ -16,8 +16,9 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { MulticastMessage } from 'firebase-admin/messaging';
-import type { AccessRequest, KindooManager, RequestType, UserIndexEntry } from '@kindoo/shared';
+import type { AccessRequest, RequestType, UserIndexEntry } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
+import { activeManagers } from '../lib/managers.js';
 import { getSender } from '../lib/messaging.js';
 
 type PerToken = { canonical: string; deviceId: string; token: string };
@@ -56,17 +57,13 @@ export const pushOnRequestSubmit = onDocumentCreated(
     const db = getDb();
     logger.info('[pushOnRequestSubmit] getDb() returned');
 
-    // Active managers — same shape as `seedClaims.ts`'s manager check.
-    const managersSnap = await db
-      .collection(`stakes/${stakeId}/kindooManagers`)
-      .where('active', '==', true)
-      .get();
-    if (managersSnap.empty) return;
+    // Active managers — shared helper used by both notification triggers.
+    const managers = await activeManagers(db, stakeId);
+    if (managers.length === 0) return;
 
     // Resolve userIndex per manager; filter to subscribed + has tokens.
     const indexFetches = await Promise.all(
-      managersSnap.docs.map(async (mDoc) => {
-        const canonical = (mDoc.data() as KindooManager).member_canonical ?? mDoc.id;
+      managers.map(async ({ canonical }) => {
         const idxSnap = await db.doc(`userIndex/${canonical}`).get();
         return { canonical, idxSnap };
       }),

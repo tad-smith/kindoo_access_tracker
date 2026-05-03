@@ -447,6 +447,19 @@ Doing this correctly requires:
 
 Skipped in Phase 10.4 because the operator named only the card-view sort as the immediate priority, and this work has reasonable complexity (two new subscriptions + a parser port). Revisit after staging if the table view's `scope → calling` sort proves insufficient on real data.
 
+## [T-32] Phase 9 schema additions — audit enum + stake fields
+Status: open
+Owner: @backend-engineer
+Phase: 9
+
+Phase 9 (`phase-9-resend-email` branch) adds three append-only-safe fields to `packages/shared`:
+
+1. `AuditAction` enum — new member `'email_send_failed'` for the per-failure system audit row written by `EmailService` when Resend errors.
+2. `Stake.notifications_reply_to?: string` — optional reply-to address used by EmailService.
+3. `Stake.last_import_triggered_by?: 'manual' | 'weekly'` — populated by `Importer.runImporterForStake` on every run; read by `notifyOnOverCap` to attribute the over-cap email subject.
+
+Append-only — no rename, no removal — so web consumers (`apps/web/`) only need to handle the new enum case in any audit-action display surface. Currently no surface renders distinct copy per audit action, so no follow-up edit is required; the new code just falls through to the generic action label.
+
 ## [T-31] Role-aware redirect gates on routes a user can't access
 Status: open
 Owner: @web-engineer

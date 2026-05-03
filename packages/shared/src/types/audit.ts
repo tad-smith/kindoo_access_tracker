@@ -30,10 +30,11 @@ export type AuditAction =
   // Stake parent
   | 'update_stake'
   | 'setup_complete'
-  // System (importer / over-cap; no underlying entity write)
+  // System (importer / over-cap / email; no underlying entity write)
   | 'import_start'
   | 'import_end'
-  | 'over_cap_warning';
+  | 'over_cap_warning'
+  | 'email_send_failed';
 
 /** Entity classes the audit log covers per stake. */
 export type AuditEntityType = 'seat' | 'request' | 'access' | 'kindooManager' | 'stake' | 'system';
