@@ -54,24 +54,39 @@ messaging.onBackgroundMessage((payload) => {
   });
 });
 
-// Notification click → focus an existing app window if one is open at
-// any path; otherwise open a new one at the deep-link target.
+// Notification click → focus an existing app window and ask the SPA
+// to route to the deep-link target via postMessage. iOS standalone
+// PWAs silently ignore `client.navigate()` from the SW (the PWA
+// always relaunches at the manifest's `start_url` regardless), but
+// they DO honour `postMessage` between the SW and the page. The SPA
+// listens at module scope (see `serviceWorkerMessenger.ts`) and
+// dispatches the navigation through TanStack Router.
+//
+// `openWindow` is the fallback when no existing client is open
+// (cold launch). It accepts a path-plus-query string directly, which
+// iOS DOES honour because the URL is the launch URL, not a runtime
+// navigate. The fresh page mounts at that path; the SPA's router
+// resolves the route and search params normally.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const target = (event.notification.data && event.notification.data.deepLink) || '/manager/queue';
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-      for (const client of windowClients) {
-        if ('focus' in client) {
-          client.focus();
-          if ('navigate' in client) client.navigate(target);
-          return;
+    (async () => {
+      const windowClients = await clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true,
+      });
+      const existing = windowClients[0];
+      if (existing) {
+        existing.postMessage({ type: 'kindoo:notification-click', target });
+        if ('focus' in existing) {
+          await existing.focus();
         }
+        return;
       }
       if (clients.openWindow) {
-        return clients.openWindow(target);
+        await clients.openWindow(target);
       }
-      return undefined;
-    }),
+    })(),
   );
 });
