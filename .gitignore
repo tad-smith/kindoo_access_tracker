@@ -29,6 +29,7 @@ Thumbs.db
 .env.*.local
 .env.production
 .env.*.production
+functions/.env*
 
 # Claude Code local state (subagent definitions under .claude/agents/ ARE committed)
 .claude/worktrees/
