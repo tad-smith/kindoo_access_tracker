@@ -33,11 +33,26 @@ at cutover).
 
 ### 2. Stash the key in Secret Manager
 
+> **Simplest path: skip steps 2 + 3 entirely.** Run `pnpm
+> deploy:staging` and Firebase CLI auto-prompts for the secret value
+> on the first deploy of a function declaring
+> `secrets: ['RESEND_API_KEY']`. The CLI creates the
+> `RESEND_API_KEY` secret in Secret Manager and grants the runtime SA
+> `roles/secretmanager.secretAccessor` in one step. The gcloud
+> commands below are the manual alternative for ops automation or
+> when the prompt isn't an option (e.g., scripted bootstrap).
+
+The secret name is `RESEND_API_KEY` (uppercase) — must match the
+`secrets: ['RESEND_API_KEY']` declaration in
+`functions/src/triggers/notifyOnRequestWrite.ts` /
+`functions/src/triggers/notifyOnOverCap.ts`. Cloud Functions mounts
+the secret as the `RESEND_API_KEY` env var at runtime.
+
 ```bash
 # Replace <RESEND_API_KEY> with the value from step 1.
 # `printf` (not `echo`) avoids a trailing newline that would
 # corrupt the secret value.
-printf '%s' "<RESEND_API_KEY>" | gcloud secrets create resend_api_key \
+printf '%s' "<RESEND_API_KEY>" | gcloud secrets create RESEND_API_KEY \
   --project=kindoo-staging \
   --replication-policy=automatic \
   --data-file=-
@@ -46,8 +61,8 @@ printf '%s' "<RESEND_API_KEY>" | gcloud secrets create resend_api_key \
 Verify the secret exists and is one version, no extra whitespace:
 
 ```bash
-gcloud secrets versions list resend_api_key --project=kindoo-staging
-gcloud secrets versions access latest --secret=resend_api_key \
+gcloud secrets versions list RESEND_API_KEY --project=kindoo-staging
+gcloud secrets versions access latest --secret=RESEND_API_KEY \
   --project=kindoo-staging | wc -c
 # Should print the exact byte length of the key (no newline).
 ```
@@ -58,7 +73,7 @@ The function runtime is `kindoo-app@<project>.iam.gserviceaccount.com`
 (per `functions/src/lib/admin.ts` and `infra/CLAUDE.md`).
 
 ```bash
-gcloud secrets add-iam-policy-binding resend_api_key \
+gcloud secrets add-iam-policy-binding RESEND_API_KEY \
   --project=kindoo-staging \
   --member=serviceAccount:kindoo-app@kindoo-staging.iam.gserviceaccount.com \
   --role=roles/secretmanager.secretAccessor
@@ -141,12 +156,12 @@ When a key is rotated (lost, leaked, employee turnover):
 ```bash
 # 1. Generate a fresh key in Resend, scoped the same way.
 # 2. Add a new version to the existing secret.
-printf '%s' "<NEW_KEY>" | gcloud secrets versions add resend_api_key \
+printf '%s' "<NEW_KEY>" | gcloud secrets versions add RESEND_API_KEY \
   --project=kindoo-staging --data-file=-
 
 # 3. Disable the old version after a redeploy verifies the new one
 #    is live.
-gcloud secrets versions disable <OLD_VERSION> --secret=resend_api_key \
+gcloud secrets versions disable <OLD_VERSION> --secret=RESEND_API_KEY \
   --project=kindoo-staging
 ```
 
