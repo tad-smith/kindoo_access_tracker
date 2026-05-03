@@ -271,7 +271,7 @@ describe.skipIf(!hasEmulators())('pushOnRequestSubmit', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('does not clean tokens for unrelated FCM error codes', async () => {
+  it('does not clean tokens for transient FCM error codes', async () => {
     await seedManager('alice@gmail.com', true);
     await seedUserIndex('alice@gmail.com', {
       fcmTokens: { d1: 'tok-alice' },
@@ -286,5 +286,26 @@ describe.skipIf(!hasEmulators())('pushOnRequestSubmit', () => {
     const idx = await db.doc('userIndex/alice@gmail.com').get();
     const tokens = (idx.data() as { fcmTokens?: Record<string, string> }).fcmTokens ?? {};
     expect(tokens).toEqual({ d1: 'tok-alice' }); // preserved
+  });
+
+  it('cleans tokens for additional unrecoverable codes (mismatched-credential, sender-id-mismatch)', async () => {
+    await seedManager('alice@gmail.com', true);
+    await seedUserIndex('alice@gmail.com', {
+      fcmTokens: { d1: 'tok-mismatch', d2: 'tok-senderid', d3: 'tok-keep' },
+      notificationPrefs: { push: { newRequest: true } },
+    });
+    const { sender } = mockSender([
+      { success: false, errorCode: 'messaging/mismatched-credential' },
+      { success: false, errorCode: 'messaging/sender-id-mismatch' },
+      { success: true },
+    ]);
+    restoreSender = _setSender(sender);
+
+    await pushOnRequestSubmit.run(makeEvent(baseRequest));
+
+    const { db } = requireEmulators();
+    const idx = await db.doc('userIndex/alice@gmail.com').get();
+    const tokens = (idx.data() as { fcmTokens?: Record<string, string> }).fcmTokens ?? {};
+    expect(tokens).toEqual({ d3: 'tok-keep' });
   });
 });

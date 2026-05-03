@@ -28,6 +28,18 @@ const TYPE_LABEL: Record<RequestType, string> = {
   remove: 'remove',
 };
 
+// FCM error codes for which the offending token will never succeed for
+// THIS sender and should be pruned from `userIndex.fcmTokens`. Anything
+// else (transient: quota-exceeded, server-unavailable, internal-error,
+// authentication-error) leaves the token in place for the next fire.
+const UNRECOVERABLE_CODES = new Set<string>([
+  'messaging/registration-token-not-registered',
+  'messaging/invalid-registration-token',
+  'messaging/mismatched-credential',
+  'messaging/sender-id-mismatch',
+  'messaging/invalid-argument',
+]);
+
 export const pushOnRequestSubmit = onDocumentCreated(
   {
     document: 'stakes/{stakeId}/requests/{requestId}',
@@ -98,19 +110,27 @@ export const pushOnRequestSubmit = onDocumentCreated(
 
     let tokensInvalid = 0;
     let tokensCleaned = 0;
-    // FieldValue.delete for each invalid token's slot, grouped by owning doc.
+    // FieldValue.delete for each unrecoverable token's slot, grouped by
+    // owning doc. Per-failure log emits the FCM code + message + token
+    // prefix so operators can tell at a glance what the cluster of
+    // failures looks like (auth misconfig vs stale tokens vs transient).
     const cleanups = new Map<string, Record<string, unknown>>();
     response.responses.forEach((res, i) => {
       if (res.success) return;
       tokensInvalid++;
-      const code = res.error?.code;
-      if (
-        code !== 'messaging/registration-token-not-registered' &&
-        code !== 'messaging/invalid-registration-token'
-      ) {
-        return;
-      }
       const slot = perToken[i];
+      const code = res.error?.code;
+      logger.warn('[pushOnRequestSubmit] FCM rejected token', {
+        requestId,
+        stakeId,
+        index: i,
+        canonical: slot?.canonical,
+        deviceId: slot?.deviceId,
+        tokenPrefix: slot?.token.slice(0, 16),
+        code,
+        message: res.error?.message,
+      });
+      if (!code || !UNRECOVERABLE_CODES.has(code)) return;
       if (!slot) return;
       const existing = cleanups.get(slot.canonical) ?? {};
       existing[`fcmTokens.${slot.deviceId}`] = FieldValue.delete();
