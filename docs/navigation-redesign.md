@@ -92,10 +92,10 @@ Four sections, in this order. Each item lists the role(s) it's visible for.
 
 **Settings**
 
+- Notifications (Manager only for-now; future expansion to bishopric/stake users planned when Phase 9 ships push for completed/rejected/cancelled requests)
+- Configuration (Manager only)
 - App Access (Manager only)
 - Import (Manager only)
-- Configuration (Manager only)
-- Notifications (Manager only for-now; future expansion to bishopric/stake users planned when Phase 9 ships push for completed/rejected/cancelled requests)
 - Audit Log (Manager only)
 
 **Account**

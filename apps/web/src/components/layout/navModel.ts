@@ -159,6 +159,27 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
 
   const settings: NavItem[] = [];
   if (manager) {
+    // Operator-specified order: Notifications, Configuration,
+    // App Access, Import, Audit Log. Notifications leads because it
+    // is the first per-user setting most operators reach for after
+    // landing; Audit Log stays at the bottom as a less-frequent path.
+    // Manager-only for-now on Notifications; future expansion to
+    // bishopric/stake users is planned when Phase 9 ships push for
+    // completed/rejected/cancelled requests.
+    settings.push({
+      kind: 'link',
+      key: 'notifications',
+      label: 'Notifications',
+      to: '/notifications',
+      icon: Bell,
+    });
+    settings.push({
+      kind: 'link',
+      key: 'configuration',
+      label: 'Configuration',
+      to: '/manager/configuration',
+      icon: Settings,
+    });
     settings.push({
       kind: 'link',
       key: 'access',
@@ -172,23 +193,6 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
       label: 'Import',
       to: '/manager/import',
       icon: Download,
-    });
-    settings.push({
-      kind: 'link',
-      key: 'configuration',
-      label: 'Configuration',
-      to: '/manager/configuration',
-      icon: Settings,
-    });
-    // Manager-only for-now; future expansion to bishopric/stake users
-    // is planned when Phase 9 ships push for completed/rejected/
-    // cancelled requests.
-    settings.push({
-      kind: 'link',
-      key: 'notifications',
-      label: 'Notifications',
-      to: '/notifications',
-      icon: Bell,
     });
     settings.push({
       kind: 'link',
