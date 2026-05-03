@@ -90,12 +90,19 @@ export const pushOnRequestSubmit = onDocumentCreated(
       return;
     }
 
+    // Data-only payload — no `notification` block. With both blocks
+    // present, Chrome auto-displays the `notification` AND the SW's
+    // `onBackgroundMessage` handler also fires for the `data` payload,
+    // resulting in two notifications. Data-only routes 100% through the
+    // SW (`firebase-messaging-sw.template.js`), which reads `data.title`
+    // / `data.body` and calls `showNotification` exactly once.
+    //
+    // FCM `data` values must all be strings — coerce non-string fields
+    // here rather than at the SW boundary.
     const message: MulticastMessage = {
-      notification: {
+      data: {
         title: 'New request',
         body: buildBody(req),
-      },
-      data: {
         requestId,
         deepLink: `/manager/queue?focus=${requestId}`,
       },

@@ -202,12 +202,22 @@ describe.skipIf(!hasEmulators())('pushOnRequestSubmit', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.tokens?.sort()).toEqual(['tok-a1', 'tok-a2', 'tok-e1'].sort());
+    // Data-only payload — `notification` block must be absent so the SW
+    // is the single display path; double-fire bug regression.
+    expect(calls[0]!.notification).toBeUndefined();
     expect(calls[0]!.data).toEqual({
+      title: 'New request',
+      body: expect.stringContaining('Subject Person'),
       requestId: REQUEST_ID,
       deepLink: `/manager/queue?focus=${REQUEST_ID}`,
     });
-    expect(calls[0]!.notification?.title).toBe('New request');
-    expect(calls[0]!.notification?.body).toContain('Subject Person');
+    // FCM constraint: every `data` value must be a string.
+    for (const [k, v] of Object.entries(calls[0]!.data ?? {})) {
+      expect(typeof v).toBe('string');
+      expect(v).not.toBe('');
+      // Reference k to keep the loop traceable on assertion failure.
+      void k;
+    }
   });
 
   it('removes a token reported as registration-token-not-registered', async () => {
