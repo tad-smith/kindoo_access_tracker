@@ -167,9 +167,11 @@ describe('<ConfigurationPage />', () => {
     expect(screen.getByText('a@x.com')).toBeInTheDocument();
   });
 
-  it('renders the notifications-enabled checkbox with the email-specific label', () => {
+  it('renders the email-notifications switch with the email-specific label', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
-    expect(screen.getByLabelText(/Email Notifications Enabled/i)).toBeInTheDocument();
+    const sw = screen.getByLabelText(/Email Notifications Enabled/i);
+    expect(sw).toBeInTheDocument();
+    expect(sw).toHaveAttribute('role', 'switch');
   });
 
   it('does not render a Triggers tab', () => {

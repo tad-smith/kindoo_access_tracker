@@ -20,7 +20,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { Building, StakeCallingTemplate, Ward, WardCallingTemplate } from '@kindoo/shared';
 import {
@@ -63,6 +63,7 @@ import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
+import { Switch } from '../../../components/ui/Switch';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { toast } from '../../../lib/store/toast';
 
@@ -836,7 +837,7 @@ function ConfigKeysTab() {
     resolver: zodResolver(configSchema),
     values: defaults,
   });
-  const { register, handleSubmit, formState } = form;
+  const { control, register, handleSubmit, formState } = form;
 
   async function onSubmit(input: ConfigForm) {
     try {
@@ -900,8 +901,20 @@ function ConfigKeysTab() {
         Timezone (IANA, e.g. America/Denver)
         <Input {...register('timezone')} />
       </label>
-      <label>
-        <input type="checkbox" {...register('notifications_enabled')} /> Email Notifications Enabled
+      <label className="kd-switch-label" htmlFor="config-notifications-enabled">
+        <Controller
+          name="notifications_enabled"
+          control={control}
+          render={({ field }) => (
+            <Switch
+              id="config-notifications-enabled"
+              checked={field.value === true}
+              onCheckedChange={field.onChange}
+              data-testid="config-notifications-enabled"
+            />
+          )}
+        />
+        <span>Email Notifications Enabled</span>
       </label>
       {formState.errors.stake_name ? (
         <p role="alert" className="kd-form-error">

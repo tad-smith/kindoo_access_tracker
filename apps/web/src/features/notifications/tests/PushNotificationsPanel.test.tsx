@@ -167,7 +167,12 @@ describe('PushNotificationsPanel', () => {
       </Wrapper>,
     );
     expect(screen.getByTestId('push-subscribed')).toBeInTheDocument();
-    expect(screen.getByTestId('push-newrequest-toggle')).toBeChecked();
+    const toggle = screen.getByTestId('push-newrequest-toggle');
+    expect(toggle).toBeChecked();
+    // Regression guard: the new-request toggle is a shadcn Switch
+    // (Radix `role="switch"`), not a bare checkbox. Switching back
+    // would silently regress the visual treatment.
+    expect(toggle).toHaveAttribute('role', 'switch');
     expect(screen.getByTestId('push-disable-button')).toBeInTheDocument();
   });
 

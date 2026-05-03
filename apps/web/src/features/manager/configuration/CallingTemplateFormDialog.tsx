@@ -9,13 +9,14 @@
 // computed as max+1 from `existing`).
 
 import { useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { WardCallingTemplate } from '@kindoo/shared';
 import { callingTemplateSchema, type CallingTemplateForm } from './schemas';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
+import { Switch } from '../../../components/ui/Switch';
 import { toast } from '../../../lib/store/toast';
 
 export type CallingTemplateDialogMode =
@@ -64,7 +65,7 @@ export function CallingTemplateFormDialog({
           sheet_order: 0,
         },
   });
-  const { register, handleSubmit, reset, formState } = form;
+  const { control, register, handleSubmit, reset, formState } = form;
 
   useEffect(() => {
     if (!open) return;
@@ -118,11 +119,35 @@ export function CallingTemplateFormDialog({
             {formState.errors.calling_name.message}
           </p>
         ) : null}
-        <label>
-          <input type="checkbox" {...register('auto_kindoo_access')} /> Auto Kindoo Access
+        <label className="kd-switch-label" htmlFor={`config-${testid}-auto-kindoo`}>
+          <Controller
+            name="auto_kindoo_access"
+            control={control}
+            render={({ field }) => (
+              <Switch
+                id={`config-${testid}-auto-kindoo`}
+                checked={field.value === true}
+                onCheckedChange={field.onChange}
+                data-testid={`config-${testid}-auto-kindoo`}
+              />
+            )}
+          />
+          <span>Auto Kindoo Access</span>
         </label>
-        <label>
-          <input type="checkbox" {...register('give_app_access')} /> Can Request Access
+        <label className="kd-switch-label" htmlFor={`config-${testid}-can-request`}>
+          <Controller
+            name="give_app_access"
+            control={control}
+            render={({ field }) => (
+              <Switch
+                id={`config-${testid}-can-request`}
+                checked={field.value === true}
+                onCheckedChange={field.onChange}
+                data-testid={`config-${testid}-can-request`}
+              />
+            )}
+          />
+          <span>Can Request Access</span>
         </label>
         <Dialog.Footer>
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>

@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui/Button';
+import { Switch } from '../../../components/ui/Switch';
 import { toast } from '../../../lib/store/toast';
 import {
   getNewRequestPref,
@@ -135,13 +136,12 @@ export function PushNotificationsPanel() {
       <p className="kd-form-hint" data-testid="push-subscribed">
         This device is subscribed to push notifications.
       </p>
-      <label>
-        <input
-          type="checkbox"
+      <label className="kd-switch-label" htmlFor="push-newrequest-toggle">
+        <Switch
+          id="push-newrequest-toggle"
           checked={newRequestPref}
           disabled={updatePref.isPending}
-          onChange={(e) => {
-            const next = e.target.checked;
+          onCheckedChange={(next) => {
             updatePref
               .mutateAsync(next)
               .then(() =>
@@ -150,8 +150,8 @@ export function PushNotificationsPanel() {
               .catch((err) => toast(errorMessage(err), 'error'));
           }}
           data-testid="push-newrequest-toggle"
-        />{' '}
-        New request notifications
+        />
+        <span>New request notifications</span>
       </label>
       <div className="form-actions">
         <Button
