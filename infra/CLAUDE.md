@@ -27,7 +27,9 @@ infra/
 │   ├── deploy.md
 │   ├── restore.md
 │   ├── observability.md
-│   ├── sendgrid-dns-setup.md
+│   ├── provision-firebase-projects.md
+│   ├── resend-api-key-setup.md
+│   ├── custom-domain.md
 │   ├── granting-importer-sheet-access.md
 │   └── (Phase 11) cutover.md, rollback.md
 ├── ci/
