@@ -337,6 +337,20 @@ function buildPayload(opts: {
   return payload;
 }
 
+/**
+ * Read `WEB_BASE_URL.value()` defensively for diagnostic logging. Never
+ * throws; returns `null` if even the param read errors. The
+ * `safeBuildLink` log entry uses this to surface what the param
+ * actually resolved to, separate from the buildLink() throw message.
+ */
+function tryReadWebBaseUrl(): string | null {
+  try {
+    return WEB_BASE_URL.value();
+  } catch {
+    return null;
+  }
+}
+
 /** Wrap `buildLink` so a missing env var lands as an audit row, not a throw. */
 function safeBuildLink(
   deps: { db: Firestore; stakeId: string },
@@ -346,10 +360,16 @@ function safeBuildLink(
     return buildLink(route);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    const webBaseUrlValue = tryReadWebBaseUrl();
     logger.error('email skipped — link build failed', {
       stakeId: deps.stakeId,
       route,
-      message,
+      errorMessage: message,
+      errorStack: stack,
+      webBaseUrlValue,
+      webBaseUrlType: typeof webBaseUrlValue,
+      processEnvWebBaseUrl: process.env['WEB_BASE_URL'] ?? null,
     });
     void writeEmailFailedAudit(deps.db, deps.stakeId, {
       type: 'config',
