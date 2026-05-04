@@ -39,7 +39,7 @@ The pure-client + minimal-Cloud-Functions approach trades a centralised service 
 | F14 | **Repo layout side-by-side during migration.** New code in monorepo at repo root (`apps/web/`, `functions/`, `firestore/`, `packages/shared/`, `infra/`, `e2e/`); existing `src/` and `identity-project/` untouched until Phase 11's cutover. | Keeps the live app deployable for rollback throughout. Phase 11 retires `src/` and `identity-project/`; their git history is preserved. |
 | F15 | **`stakeId` parameterized from day one.** Even though there's only one stake (`csnorth`) for v1, every collection path and rule takes `{stakeId}` as a path segment. Phase B is then a routing change, not a data refactor. | Prior plan's lesson learned. The hardcoded `csnorth` constant is consolidated in one place (`apps/web/src/lib/constants.ts`) so Phase B is grep-and-fix. |
 | F16 | **Email via Resend** (100/day free tier; 3000/month). Domain verification via DKIM CNAME + DMARC TXT records (~10 min setup, no significant DNS lead time). Locked in 2026-04-27. | Resend has the cleanest developer experience among free transactional-email vendors at this scale. SendGrid (originally proposed) and Brevo are equivalent fallbacks if needed; vendor swap is a Cloud Function wrapper change of ~30 lines. |
-| F17 | **Custom domain `stakebuildingaccess.org`** (chosen 2026-04-27), split across two surfaces: Firebase Hosting serves on the apex `stakebuildingaccess.org`; Resend "From" branding uses the `mail.stakebuildingaccess.org` subdomain (verified 2026-05-02 per T-04 — DKIM CNAME + DMARC TXT records on the `mail.` subdomain). Both share the same brand identity. The legacy `kindoo.csnorth.org` GitHub-Pages-iframe-wrapper URL is decommissioned at Phase 11 cutover (decision on whether to redirect or take down deferred to runbook). | User explicitly chose a fresh domain over staying on `kindoo.csnorth.org`. The apex/subdomain split keeps Resend's DNS records scoped to `mail.` so the apex SPF/DMARC posture is independent of the transactional-email vendor — vendor swap (per F16's fallback note) is a subdomain-only DNS change. |
+| F17 | **Custom domain `stakebuildingaccess.org`** (chosen 2026-04-27), split across two surfaces: Firebase Hosting serves on the apex `stakebuildingaccess.org`; Resend "From" branding uses the `mail.stakebuildingaccess.org` subdomain (verified 2026-05-02 per T-04 — DKIM CNAME + DMARC TXT records on the `mail.` subdomain). Both share the same brand identity. The apex-pointing procedure (and the staging-subdomain rehearsal that precedes it) lives in `infra/runbooks/custom-domain.md`. The legacy `kindoo.csnorth.org` GitHub-Pages-iframe-wrapper URL is decommissioned at Phase 11 cutover (the redirect-vs-takedown decision itself is deferred to the cutover runbook, separate from the apex-pointing procedure). | User explicitly chose a fresh domain over staying on `kindoo.csnorth.org`. The apex/subdomain split keeps Resend's DNS records scoped to `mail.` so the apex SPF/DMARC posture is independent of the transactional-email vendor — vendor swap (per F16's fallback note) is a subdomain-only DNS change. |
 
 ## Team composition
 
@@ -1429,14 +1429,14 @@ _Cutover (production maintenance window)_
 
 _DNS for the new domain_
 
-- [ ] Per F17, the user-chosen new domain points to Firebase Hosting (custom domain configured in Firebase Hosting console; auto-provisioned Let's Encrypt cert).
+- [ ] Per F17, the user-chosen new domain points to Firebase Hosting (custom domain configured in Firebase Hosting console; auto-provisioned Let's Encrypt cert). Procedure: `infra/runbooks/custom-domain.md` Section 2 (apex → `kindoo-prod`).
 - [ ] HTTPS verified end-to-end on the new domain.
 - [ ] Smoke test on the new domain's URL as each role; sign-in works; PWA install still works.
 - [ ] Re-enable write access on the legacy LCR Sheet (no longer source of truth; stays human-readable as archive).
 
 _Legacy `kindoo.csnorth.org` decommission_
 
-- [ ] Decision: redirect to the new domain, leave dormant pointing to a "moved" page on GitHub Pages, or take down entirely. Document the chosen path in `infra/runbooks/cutover.md` before the window opens.
+- [ ] Decision: redirect to the new domain, leave dormant pointing to a "moved" page on GitHub Pages, or take down entirely. Document the chosen path in `infra/runbooks/cutover.md` before the window opens (not yet written; will capture the legacy-domain decommission decision and the full cutover sequence — separate from `custom-domain.md`, which only covers the Firebase Hosting apex-pointing).
 - [ ] If redirect chosen: update `website/index.html` to a meta-refresh + JS redirect to the new domain; keep GitHub Pages alive at the old path.
 - [ ] Communicate the URL change to managers / bishopric / stake leads in the cutover communication (E3).
 
