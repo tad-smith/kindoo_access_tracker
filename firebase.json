@@ -1,7 +1,6 @@
 {
   "hosting": {
     "public": "apps/web/dist",
-    "predeploy": ["pnpm --filter @kindoo/web build"],
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       {
