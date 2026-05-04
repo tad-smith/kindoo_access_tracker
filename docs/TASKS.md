@@ -457,3 +457,15 @@ Today most manager-only routes (`/manager/queue`, `/manager/dashboard`, `/manage
 Add consistent role-aware redirect gates to every route that's role-gated, mirroring the principal-loading-aware pattern from `routes/_authed/notifications.tsx` (which derives `claimsLoading` from `firebaseAuthSignedIn && !isAuthenticated` to avoid race-redirecting during principal load). Same treatment for bishopric-only and stake-only routes if any exist.
 
 Likely shape: a small reusable hook or HOC (e.g., `useRequireRole(role)`) that handles loading + redirect together, applied via `Route.beforeLoad` or a top-level `useEffect`. Mirror whatever pattern the codebase settles on for `/notifications` so all role-gated routes use the same idiom.
+
+## [T-35] Manual completion-note UI on Mark Complete dialog
+Status: open
+Owner: @web-engineer
+
+Today `request.completion_note` is only auto-populated by the system in the R-1 race case (`apps/web/src/features/manager/queue/hooks.ts:206`): when a manager marks a remove-type request complete and the seat is already gone, the code auto-writes `"Seat already removed at completion time (no-op)."`. There's no UI for managers to add a custom note.
+
+Spec §9 says the completion email surfaces a `Note:` line for the requester ("so the requester knows nothing visibly changed"). The R-1 auto-note covers that one specific case but doesn't allow managers to leave a note for any other scenario (e.g., "I removed them but had to wait for the door system to sync overnight").
+
+Add a small free-text textarea to the Mark Complete dialog (`apps/web/src/features/manager/queue/...`) — optional, only visible on `type='remove'` requests (or on all types — operator decides). Wire the value through to `update.completion_note` in the existing complete mutation. Phase 9's `notifyRequesterCompleted` already surfaces `completion_note` in the email body; no backend change needed.
+
+Effort: small. Surface during a future polish pass.
