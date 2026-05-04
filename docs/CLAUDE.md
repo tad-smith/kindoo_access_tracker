@@ -10,12 +10,12 @@ Spec, architecture, decisions, runbooks-summaries, changelog. The narrative laye
 docs/
 ├── spec.md                        # live source of truth for runtime behaviour
 ├── architecture.md                # numbered design decisions (D1, D2, ...)
-├── data-model.md                  # data shape (current); cross-refs firebase-schema.md post-cutover
-├── firebase-migration.md          # ACTIVE migration plan
-├── firebase-schema.md         # data + rules reference for the migration
+├── firebase-schema.md             # authoritative data model + rules + indexes
+├── data-model.md                  # legacy Apps Script Sheet schema (historical)
+├── firebase-migration.md          # phase plan (Phase A complete; Phase 12 deferred)
 ├── open-questions.md              # active ambiguities + [RESOLVED] trail
-├── build-plan.md                  # Apps Script chunk plan (historical post-cutover)
-├── sheet-setup.md                 # Apps Script Sheet schema (historical post-cutover)
+├── build-plan.md                  # legacy Apps Script chunk plan (historical)
+├── sheet-setup.md                 # legacy Apps Script Sheet schema (historical)
 ├── TASKS.md                       # cross-cutting work-in-flight
 ├── BUGS.md                        # cross-cutting defects
 ├── changelog/                     # per-chunk and per-phase entries
@@ -47,11 +47,6 @@ docs/
 - **Engineering agent ships a phase** → you write the `changelog/phase-N-*.md` entry.
 - **TASKS.md / BUGS.md** structure is yours; content is appended by any agent. You archive resolved entries weekly.
 
-## Migration-period special handling
+## Migration history
 
-During Phases 1–11, both worlds (Apps Script in `src/`, Firebase monorepo) coexist. The docs reflect this:
-
-- `spec.md` describes Apps Script reality until Phase 11. Behaviour-preserving Phases 4–7 don't change `spec.md`. Phase 11 cutover commits update `spec.md` to describe Firebase reality.
-- `architecture.md` gets new D-numbers for migration-era decisions; old D1–D10 retained as historical record.
-- `firebase-migration.md` is the live plan; updates as phases ship.
-- Per-phase changelog entries land alongside each phase's final commit.
+Phase 11 cutover landed 2026-05-03. From that point forward `spec.md` describes Firebase reality; the Apps Script-era D-numbers (D1-D10) in `architecture.md` are retained as historical record alongside the Firebase decisions (D11+). The legacy `build-plan.md`, `sheet-setup.md`, and `data-model.md` describe the Apps Script implementation and are kept as historical reference; they are not updated. See [`changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md).

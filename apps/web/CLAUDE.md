@@ -1,6 +1,6 @@
 # apps/web — Claude Code guidance
 
-The user-facing SPA. React 19 + TypeScript + Vite + Firebase SDK direct-to-Firestore. Built across Phases 4–10 of the migration; deployed to Firebase Hosting at cutover.
+The user-facing SPA. React 19 + TypeScript + Vite + Firebase SDK direct-to-Firestore. Live in production on Firebase Hosting since Phase 11 cutover (2026-05-03).
 
 **Owner agent:** `web-engineer`. Also responsible for `e2e/`.
 
@@ -78,4 +78,4 @@ src/
 
 - vite-plugin-pwa configured in `vite.config.ts`. Workbox: cache-first for static assets, network-first for `index.html`, never cache Firestore traffic.
 - Manifest auto-generated from config.
-- Push notifications via FCM Web — Phase 10. Service worker at `public/firebase-messaging-sw.js` handles background pushes.
+- Push notifications via FCM Web. Service worker at `public/firebase-messaging-sw.js` handles background pushes; coexists with the vite-plugin-pwa SW at distinct scope.

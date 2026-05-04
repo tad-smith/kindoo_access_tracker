@@ -11,7 +11,7 @@ Cloud Functions: Firestore triggers, scheduled jobs (importer, expiry, reconcili
 - Firebase Admin SDK
 - `firebase-functions` v6+ (2nd gen — runs on Cloud Run under the hood)
 - `googleapis` for Sheets API (importer)
-- `@sendgrid/mail` (email)
+- `resend` SDK (email; per F16)
 - Vitest for tests, against Firebase emulators
 - Secrets via Secret Manager (env-injected at deploy)
 
@@ -36,7 +36,7 @@ src/
 │   ├── createStake.ts             # superadmin-only (Phase 12)
 │   └── runImportNow.ts            # manager-invoked; calls Importer for one stake
 ├── services/                      # business logic (Importer, Expiry, EmailService)
-├── lib/                           # admin SDK init, sendgrid client, sheets client, helpers
+├── lib/                           # admin SDK init, resend client, sheets client, helpers
 ├── tests/                         # vitest suites mirroring src/
 └── index.ts                       # function exports for Firebase deploy
 ```
@@ -48,7 +48,7 @@ src/
 - **All shared types from `packages/shared/`.** No duplicated `Seat`/`Request`/`Access` types.
 - **Canonical email helper from `packages/shared/canonicalEmail.ts`.** Don't re-implement.
 - **Wrap all multi-doc writes in `db.runTransaction(...)`** — same atomicity guarantees as client transactions.
-- **All secrets via env injection** (`process.env.SENDGRID_API_KEY`); never in code.
+- **All secrets via env injection** (`process.env.RESEND_API_KEY`); never in code.
 - **Cloud Functions 2nd gen** for everything (Cloud Run under the hood). Default timeout 60s; bump to 540s for importer/expiry. Default memory 256MB; bump for importer if needed.
 
 ## Don't
@@ -69,7 +69,7 @@ src/
 ## Tests
 
 - **Vitest + Firebase emulator.** No mocks for Firestore or Auth — emulator is the test database.
-- **Mock external services** (SendGrid, Sheets API) at the wrapper level only.
+- **Mock external services** (Resend, Sheets API, FCM) at the wrapper level only.
 - **Each trigger / scheduled / callable function has at least:** happy path, error path, idempotency case (where applicable).
 - **Importer is the highest-stakes test surface.** Heavy unit coverage on parsing + diff math; integration tests against fixture LCR sheets.
 

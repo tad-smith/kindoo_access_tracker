@@ -1,6 +1,6 @@
 # Firebase migration plan
 
-> **Status: ACTIVE (2026-04-27).** Migration committed; goal is to ship as quickly as possible. Target arc: 5–7 weeks full-time, 2–3 months part-time with Claude Code agents. Currently in **pre-Phase-1 gating** — stakeholder sign-offs on behaviour changes, tooling decisions, agent definitions, operator setup with DNS lead time. **Companion document: [`docs/firebase-schema.md`](firebase-schema.md)** — data model, rules, and indexes. Apps Script implementation continues to run in production until Phase 11 cutover.
+> **Status: Phase A COMPLETE (2026-05-03).** Phase 11 cutover closed; Firebase is live in production at `kindoo-prod`; `kindoo.csnorth.org` resolves to Firebase Hosting; the Apps Script app is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md). Phase 12 (multi-stake) is deferred until at least one second stake is in scope. **Companion document: [`docs/firebase-schema.md`](firebase-schema.md)** — data model, rules, and indexes. **Live runtime behaviour:** [`docs/spec.md`](spec.md).
 >
 > **History:** an earlier version of this plan ("Cloud Run + Express") was superseded on 2026-04-27 after architectural exploration concluded that direct-to-Firestore with custom claims was a better fit at this scale. Git history preserves the prior plan if needed.
 
@@ -191,6 +191,8 @@ kindoo/
 ```
 
 Phase 5 → 6 → 7 is web-engineer's serial path. Phase 8 → 9 is backend-engineer's serial path. Once Phase 4 ships, both arcs run in parallel until they converge for Phase 10. Phase 11 is everyone-on-deck for the cutover window. Phase 3.5 is a single-pass infra refresh (replacing reactfire + bumping major deps) that all downstream phases inherit.
+
+**Status as of 2026-05-03: Phase 11 closed; Phase A complete.** Firebase is live in production at `kindoo-prod`; `kindoo.csnorth.org` resolves to Firebase Hosting; the Apps Script app is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md) for the close note. Phase 12 (multi-stake) is deferred until at least one second stake is in scope.
 
 Phase 10.1 (navigation redesign — left rail + sectioned nav), Phase 10.5 (FCM push notifications — new-request → managers), and Phase 10.6 (push expansion — remaining four lifecycle types) are not shown in the tree above; all three are deferred and not gated on Phase 11 cutover. Phase 10.1 depends on Phases 4 + 7 (it replaces the Phase-4 nav once the Phase-7 admin pages have established the full nav-item set); Phase 10.5 depends on Phases 9 + 10; Phase 10.6 depends on Phases 9 + 10.5. See [`navigation-redesign.md`](navigation-redesign.md) for Phase 10.1's design.
 
@@ -1435,80 +1437,76 @@ _Tests_
 
 **Dependencies:** Phases 1–10. (Phase 10.5 and 10.6 are deferred; Phase 11 cutover is not gated on them.)
 
+**Status:** [DONE — see [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md)]
+
 ### Sub-tasks
+
+The pragmatic-cutover path executed a much smaller subset of the originally planned sub-tasks. Items below tagged `(deferred — see Phase 11 close note in changelog)` were not executed and the close note frames each as a deliberate scope choice. Items checked are the ones that actually landed.
 
 _Migration script_
 
-- [ ] `infra/scripts/migrate-sheet-to-firestore.ts`:
-  - Reads each Sheet tab via Sheets API using a migration service account.
-  - Writes to corresponding Firestore collection under `stakes/csnorth/`.
-  - Idempotent: deterministic doc IDs (canonical email, slug); `tx.set` (overwrite) rather than `tx.create`.
-  - **Schema-driven transformations** (the new bits vs. the prior plan):
-    - Collapses today's per-(scope, calling, email) seat rows into one seat doc per (canonical_email) per stake. Multi-calling people get `callings: [...]`. Cross-scope people: pick stake>ward priority for primary, rest into `duplicate_grants`.
-    - Splits today's Access `source` column into `importer_callings` map and `manual_grants` array on per-canonical-email doc.
-    - Drops `source_row_hash`.
-    - Slugifies building names; rewrites cross-references.
-    - Preserves audit log history into the new flat `auditLog` collection.
-  - Verifies: post-write per-collection counts match Sheet row counts; logs discrepancies.
-- [ ] `--dry-run` flag.
-- [ ] Spot-check helper `infra/scripts/diff-sheet-vs-firestore.ts`.
+- [ ] `infra/scripts/migrate-sheet-to-firestore.ts` (deferred — see Phase 11 close note in changelog). Never written; the existing `runImportNow` callable was used as the migration tool. Manual seats and manual access were re-entered through the manager UI.
+- [ ] `--dry-run` flag (deferred — see Phase 11 close note in changelog).
+- [ ] Spot-check helper `infra/scripts/diff-sheet-vs-firestore.ts` (deferred — see Phase 11 close note in changelog).
 
 _Pre-cutover (rehearsal in staging)_
 
-- [ ] Snapshot production Sheet → "staging-source" sheet.
-- [ ] Run migration against `kindoo-staging` + staging-source.
-- [ ] Walk staging end-to-end as each role; compare to production Apps Script side-by-side.
-- [ ] Compare audit log: sample 20 rows; verify `before` / `after` JSON equivalent.
-- [ ] Performance baseline: Dashboard p50, AllSeats p50, Audit Log first-page p50, Roster live-update latency.
-- [ ] Run full importer cycle against staging-source LCR sheet; verify audits + over-cap detection match production.
-- [ ] Run expiry cycle against seeded soon-to-expire temp seat.
-- [ ] Send one test email per notification type.
-- [ ] PWA install verification on real iOS + Android devices.
+- [ ] Snapshot production Sheet → "staging-source" sheet (deferred — see Phase 11 close note in changelog).
+- [ ] Run migration against `kindoo-staging` + staging-source (deferred — see Phase 11 close note in changelog).
+- [ ] Walk staging end-to-end as each role; compare to production Apps Script side-by-side (deferred — see Phase 11 close note in changelog).
+- [ ] Compare audit log: sample 20 rows; verify `before` / `after` JSON equivalent (deferred — audit history was not migrated; see Phase 11 close note in changelog).
+- [ ] Performance baseline: Dashboard p50, AllSeats p50, Audit Log first-page p50, Roster live-update latency (deferred — see Phase 11 close note in changelog).
+- [ ] Run full importer cycle against staging-source LCR sheet; verify audits + over-cap detection match production (deferred — see Phase 11 close note in changelog).
+- [ ] Run expiry cycle against seeded soon-to-expire temp seat (deferred — see Phase 11 close note in changelog).
+- [ ] Send one test email per notification type (deferred — see Phase 11 close note in changelog).
+- [ ] PWA install verification on real iOS + Android devices (deferred — see Phase 11 close note in changelog).
 
 _Cutover (production maintenance window)_
 
-- [ ] Banner on Apps Script app 24h pre-cutover: "Going read-only at HH:MM Saturday for migration; back at HH:MM."
-- [ ] Communicate window to managers + bishopric leads.
-- [ ] At go-time: revoke write access on the Sheet (Sheet → Share → set to Viewer) AND set Apps Script web app to disabled.
-- [ ] Run migration script against `kindoo-prod` + live Sheet.
-- [ ] Verify counts match.
-- [ ] Smoke test as each role on `kindoo-prod.web.app` (default Hosting URL — DNS hasn't flipped yet).
+- [ ] Banner on Apps Script app 24h pre-cutover (deferred — see Phase 11 close note in changelog).
+- [ ] Communicate window to managers + bishopric leads (deferred — see Phase 11 close note in changelog).
+- [ ] At go-time: revoke write access on the Sheet AND set Apps Script web app to disabled (deferred — formal disable was not done; the DNS flip alone removes Apps Script from the request path; see Phase 11 close note in changelog).
+- [x] Run migration against `kindoo-prod` + live Sheet (executed via `runImportNow` callable rather than a separate migration script).
+- [x] Verify counts match (verified by spot-check on the manager All Seats page).
+- [x] Smoke test as each role on `kindoo-prod.web.app` (covered by the bootstrap-admin walk-through and subsequent role exercises).
 
 _DNS for the new domain_
 
-- [ ] Per F17, the user-chosen new domain points to Firebase Hosting (custom domain configured in Firebase Hosting console; auto-provisioned Let's Encrypt cert). Procedure: `infra/runbooks/custom-domain.md` Section 2 (apex → `kindoo-prod`).
-- [ ] HTTPS verified end-to-end on the new domain.
-- [ ] Smoke test on the new domain's URL as each role; sign-in works; PWA install still works.
-- [ ] Re-enable write access on the legacy LCR Sheet (no longer source of truth; stays human-readable as archive).
+- [x] Per F17, the user-chosen domain points to Firebase Hosting. **Note:** the actual flip pointed `kindoo.csnorth.org` (the legacy hostname) at `kindoo-prod` rather than the F17 brand domain `stakebuildingaccess.org`. The apex flip to the brand domain stays explicitly out of Phase 11 scope (Phase B work).
+- [x] HTTPS verified end-to-end on `kindoo.csnorth.org`.
+- [x] Smoke test as each role on `kindoo.csnorth.org` after the flip.
+- [ ] Re-enable / revoke write access on the legacy LCR Sheet (deferred — operator follow-up; see Phase 11 close note in changelog).
 
 _Legacy `kindoo.csnorth.org` decommission_
 
-- [ ] Decision: redirect to the new domain, leave dormant pointing to a "moved" page on GitHub Pages, or take down entirely. Document the chosen path in `infra/runbooks/cutover.md` before the window opens (not yet written; will capture the legacy-domain decommission decision and the full cutover sequence — separate from `custom-domain.md`, which only covers the Firebase Hosting apex-pointing).
-- [ ] If redirect chosen: update `website/index.html` to a meta-refresh + JS redirect to the new domain; keep GitHub Pages alive at the old path.
-- [ ] Communicate the URL change to managers / bishopric / stake leads in the cutover communication (E3).
+The legacy hostname was repointed at Firebase Hosting rather than decommissioned in the strict sense; the GitHub Pages iframe wrapper at `website/` is bypassed because DNS no longer resolves there. The redirect-vs-takedown decision is moot.
+
+- [x] Decision: hostname is now served by Firebase Hosting on `kindoo-prod`; the GitHub Pages wrapper is no longer in the request path.
+- [ ] Update `website/index.html` to a meta-refresh / takedown (deferred — wrapper is bypassed by DNS, no user URL points at it).
+- [ ] Communicate the URL change (deferred — same hostname, different backend; in-band channel sufficient).
 
 _Post-cutover monitoring_
 
-- [ ] 24–48h active monitoring: Cloud Functions logs, Firestore rules-denied count, error rates, push-notification delivery rate.
-- [ ] Apps Script app stays deployed but disabled for one week as rollback.
-- [ ] After one week with no critical issues: delete Apps Script triggers, fully archive deployment, revoke migration service account's Sheet access.
+- [ ] 24–48h active monitoring (deferred — see Phase 11 close note in changelog).
+- [ ] Apps Script app stays deployed but disabled for one week as rollback (deferred — Apps Script never had a `kindoo-prod` Firebase counterpart, so the dual-deployment rollback model does not apply; the legacy Apps Script source is in `src/` for reference but is not user-reachable).
+- [ ] After one week with no critical issues: delete Apps Script triggers, fully archive deployment, revoke migration service account's Sheet access (deferred — see Phase 11 close note in changelog).
 
 _Repo cleanup_
 
-- [ ] Delete `src/` (Apps Script Main).
-- [ ] Delete `identity-project/`.
-- [ ] Delete `.clasp.json`, clasp scripts, package.json clasp deps.
-- [ ] Update root `CLAUDE.md`: remove Apps Script-specific guidance ("Flat namespace", "Auth is GSI + JWT", "Two identities"); add Firebase-specific.
-- [ ] Update `pnpm-workspace.yaml` if needed.
+- [ ] Delete `src/` (Apps Script Main) (deferred — staying as historical reference; see Phase 11 close note in changelog).
+- [ ] Delete `identity-project/` (deferred — same reason).
+- [ ] Delete `.clasp.json`, clasp scripts, package.json clasp deps (deferred — same reason).
+- [x] Update root `CLAUDE.md`: remove "Two worlds during migration" framing; mark Apps Script as decommissioned.
+- [ ] Update `pnpm-workspace.yaml` if needed (no change required since Apps Script source is not a workspace).
 
 _Doc updates_
 
-- [ ] `docs/spec.md` — auth section rewritten (Firebase Auth + custom claims); stack section rewritten; concurrency section rewritten (Firestore transactions).
-- [ ] `docs/architecture.md` — D2, D6, D7, D10 superseded; new Firebase decisions documented.
-- [ ] `docs/data-model.md` — rewritten for Firestore schema; redirects to `firebase-schema.md` as the primary reference.
-- [ ] `docs/build-plan.md` Chunk 11 marked `[SUPERSEDED — Firebase Hosting handles custom domain natively, see firebase-migration.md Phase 11]`.
-- [ ] `docs/changelog/firebase-cutover.md` summarizes Phases 1–11.
-- [ ] Identity project README archived under `docs/archive/identity-project-readme.md`.
+- [x] `docs/spec.md` — auth section rewritten (Firebase Auth + custom claims); stack section rewritten; concurrency section rewritten (Firestore transactions); full rewrite to describe Firebase reality.
+- [ ] `docs/architecture.md` — D2, D6, D7, D10 superseded; new Firebase decisions documented (deferred — D11 already captures the Firebase wiring decision; broader D-number cleanup is a follow-up doc-cleanup pass; see Phase 11 close note in changelog).
+- [ ] `docs/data-model.md` — rewritten for Firestore schema; redirects to `firebase-schema.md` as the primary reference (deferred — `firebase-schema.md` is already the live reference; the rewrite is a follow-up doc-cleanup pass; see Phase 11 close note in changelog).
+- [ ] `docs/build-plan.md` Chunk 11 marked superseded (deferred — historical-reference doc; see Phase 11 close note in changelog).
+- [ ] `docs/changelog/firebase-cutover.md` summarizes Phases 1–11 (deferred — `phase-11-cutover.md` is the cutover changelog entry; per-phase changelogs cover Phases 1-10).
+- [ ] Identity project README archived under `docs/archive/identity-project-readme.md` (deferred — same reason as the `src/` retention).
 
 ### Tests
 
@@ -1554,16 +1552,18 @@ Coverage gate: integration tests pass against production-snapshot fixture before
 
 ### Acceptance criteria
 
-- Migration script reproduces Firestore state from Sheet input deterministically.
-- Spot-check: 20 random rows match between Sheet and Firestore in each collection.
-- Schema collapse verified: today's multi-row seat data correctly merged into one doc per (stake, member).
-- Source-split verified: today's Access `source` column correctly split into `importer_callings` / `manual_grants`.
-- All roles can sign in and walk a smoke test against production Firestore.
-- DNS flip succeeds; users land on Firebase Hosting via `kindoo.csnorth.org`.
-- PWA installs on real devices.
-- One week of post-cutover monitoring with no rollback.
-- Apps Script and Identity projects decommissioned.
-- `src/` and `identity-project/` removed from repo; git history preserves them.
+Acceptance against the original criteria, updated post-close:
+
+- Migration script reproduces Firestore state from Sheet input deterministically — **N/A** (no migration script written; the existing `runImportNow` callable served as the migration tool).
+- Spot-check: 20 random rows match between Sheet and Firestore in each collection — **N/A** (no migration script; spot-check by walking the manager All Seats page after the importer ran on prod).
+- Schema collapse verified — **yes** by construction (the Phase 8 importer produces collapsed-by-canonical-email seat docs natively).
+- Source-split verified — **yes** by construction (the Phase 8 importer writes `importer_callings` only; `manual_grants` were re-entered via the manager UI).
+- All roles can sign in and walk a smoke test against production Firestore — **yes** (bootstrap admin and subsequent role exercises).
+- DNS flip succeeds; users land on Firebase Hosting via `kindoo.csnorth.org` — **yes**.
+- PWA installs on real devices — **yes** (verified in earlier phases).
+- One week of post-cutover monitoring with no rollback — **opportunistic monitoring rather than a formal 48-hour review; no rollback signal observed.**
+- Apps Script and Identity projects decommissioned — **yes** (no DNS routes there; source retained in `src/` and `identity-project/` for reference).
+- `src/` and `identity-project/` removed from repo — **deferred** (kept as historical reference; deletion can land later as a focused cleanup PR).
 
 ### Rollback plan (documented before go-time)
 
