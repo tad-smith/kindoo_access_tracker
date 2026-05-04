@@ -14,7 +14,7 @@ export const runExpiry = onSchedule(
     timeZone: 'Etc/UTC',
     timeoutSeconds: 540,
     memory: '256MiB',
-    serviceAccount: APP_SA.value(),
+    serviceAccount: APP_SA,
   },
   async () => {
     const db = getDb();

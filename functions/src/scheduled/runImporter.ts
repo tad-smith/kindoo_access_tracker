@@ -16,7 +16,7 @@ export const runImporter = onSchedule(
     timeZone: 'Etc/UTC',
     timeoutSeconds: 540,
     memory: '512MiB',
-    serviceAccount: APP_SA.value(),
+    serviceAccount: APP_SA,
   },
   async () => {
     const db = getDb();

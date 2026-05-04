@@ -44,7 +44,7 @@ const UNRECOVERABLE_CODES = new Set<string>([
 export const pushOnRequestSubmit = onDocumentCreated(
   {
     document: 'stakes/{stakeId}/requests/{requestId}',
-    serviceAccount: APP_SA.value(),
+    serviceAccount: APP_SA,
   },
   async (event) => {
     logger.info('[pushOnRequestSubmit] entry');

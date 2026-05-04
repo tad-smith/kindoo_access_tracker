@@ -26,7 +26,7 @@ export const reconcileAuditGaps = onSchedule(
     timeZone: 'America/Denver',
     timeoutSeconds: 540,
     memory: '256MiB',
-    serviceAccount: APP_SA.value(),
+    serviceAccount: APP_SA,
   },
   async () => {
     const db = getDb();

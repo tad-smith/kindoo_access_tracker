@@ -13,7 +13,7 @@ export const runImportNow = onCall(
   {
     timeoutSeconds: 540,
     memory: '512MiB',
-    serviceAccount: APP_SA.value(),
+    serviceAccount: APP_SA,
   },
   async (req): Promise<ImportSummary> => {
     if (!req.auth) {
