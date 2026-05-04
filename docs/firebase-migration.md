@@ -244,7 +244,7 @@ _Hosting + emulators_
 
 - [ ] `firebase.json` configured for Hosting, Functions, Firestore, Auth emulators.
 - [ ] `pnpm dev` runs all emulators + Vite + Functions in parallel. One command, all green.
-- [ ] `.env.local` template documenting env vars.
+- [ ] `apps/web/.env.example` template documenting env vars (consumed by per-mode `apps/web/.env.staging` / `.env.production`, both gitignored).
 
 _Deploy pipeline_
 

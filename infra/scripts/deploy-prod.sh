@@ -35,10 +35,15 @@
 #   - Same artifacts as staging.
 #   - A deploy is now live in production.
 #
-# REQUIRES: Operator task **B1** in docs/firebase-migration.md must be
-# complete. Additionally, do NOT run this until Phase 11 cutover has been
-# scheduled and rehearsed against staging. Migration plan F12 (big-bang
-# cutover during a maintenance window) means prod is empty until then.
+# REQUIRES: Operator task **B1** (Phase 1 of the
+# provision-firebase-projects runbook for `kindoo-prod`) must be complete:
+# project provisioned, Firestore created, Auth enabled, web app
+# registered, `apps/web/.env.production` populated. Pre-Phase-11
+# prod deploys are how the live infrastructure (rules, indexes,
+# functions, hosting) gets stood up; data migration + DNS flip remain
+# the Phase 11 cutover work. Run this script as soon as B1 is done so
+# rules + functions + an empty SPA are live on prod ahead of the
+# migration window.
 #
 # Usage:
 #   bash infra/scripts/deploy-prod.sh                   # full deploy

@@ -310,8 +310,12 @@ run "node infra/scripts/stamp-version.js"
 # Step 2: typecheck across workspaces.
 run "pnpm typecheck"
 
-# Step 3: build web.
-run "pnpm --filter ./apps/web build"
+# Step 3: build web. `build:staging` invokes `vite build --mode staging`,
+# which loads `apps/web/.env.staging` (and skips `.env.production`).
+# Without the explicit mode, vite defaults to mode=production, picks up
+# `.env.production`, and bakes the prod Firebase config into the staging
+# bundle.
+run "pnpm --filter ./apps/web build:staging"
 
 # Step 4: build functions. Skipped under --web-only since we won't
 # deploy them.
