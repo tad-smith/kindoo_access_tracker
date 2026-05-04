@@ -83,32 +83,69 @@ The triggers (`notifyOnRequestWrite`, `notifyOnOverCap`) declare
 `secrets: [RESEND_API_KEY]` in their options block; Cloud Functions
 mounts the secret as the `RESEND_API_KEY` env var at runtime.
 
-### 4. Set `WEB_BASE_URL` on the functions deploy
+### 4. Set `WEB_BASE_URL` and `APP_SA` on the functions deploy
 
 The link builder in `functions/src/services/EmailService.ts` reads
 `process.env.WEB_BASE_URL` to compose deep-link URLs in email bodies.
 Declared via `defineString('WEB_BASE_URL')` in both notification
 triggers — operator sets the value at deploy time.
 
+The runtime service-account email is also a per-project param:
+declared via `defineString('APP_SA')` in `functions/src/lib/admin.ts`
+and consumed by every function as its `serviceAccount` option. The
+trailing-`@` shorthand works for runtime-SA assignment but NOT for
+Firebase CLI's secret-IAM-grant step (which uses the literal string as
+the IAM member and rejects shorthand with "Invalid service account").
+Resolving the full email per project avoids that.
+
 **Option A — `.env.<project>` file (recommended).** Cloud Functions
-auto-injects values from `functions/.env.<project>` at deploy time per
-the [Firebase docs](https://firebase.google.com/docs/functions/config-env).
+auto-injects values from `.env.<project>` at deploy time per the
+[Firebase docs](https://firebase.google.com/docs/functions/config-env).
+
+Maintain the file in `functions/` (the source-of-truth location):
 
 ```bash
 # Create the file once per project. Stay out of git — these files
 # are gitignored.
 cat > functions/.env.kindoo-staging <<EOF
 WEB_BASE_URL=https://stakebuildingaccess.org
+APP_SA=kindoo-app@kindoo-staging.iam.gserviceaccount.com
 EOF
 ```
 
-Repeat with `WEB_BASE_URL=https://stakebuildingaccess.org` (same value
-for prod) in `functions/.env.kindoo-prod`.
+For prod:
 
-**Option B — interactive prompt.** If no `.env.<project>` is present,
-`firebase deploy --only functions` will prompt for the value and stash
-it in `functions/.env.<project>` automatically. This is convenient for
-the first deploy but harder to scrip; prefer Option A.
+```bash
+cat > functions/.env.kindoo-prod <<EOF
+WEB_BASE_URL=https://stakebuildingaccess.org
+APP_SA=kindoo-app@kindoo-prod.iam.gserviceaccount.com
+EOF
+```
+
+**Where the build puts these files.** `firebase.json` sets
+`source: functions/lib`, so Firebase CLI reads `.env.<project>` from
+`functions/lib/`, _not_ `functions/`. The `functions/` build script
+(`functions/scripts/build.mjs`) copies any `.env.*` from
+`functions/` into `functions/lib/` after `tsc`/`esbuild` emit, so the
+source-of-truth file flows into the deploy artifact automatically.
+The copy is no-overwrite: if `functions/lib/.env.<project>` already
+exists (e.g., from a prior interactive CLI prompt — see Option B),
+the build leaves it alone. If you intend a source edit to take
+effect, delete the matching `functions/lib/.env.<project>` and
+rebuild — the next `pnpm --filter @kindoo/functions build` repopulates
+it from source.
+
+If you see "duplicate" `.env.<project>` files at both paths, that's
+expected: `functions/.env.<project>` is the source you edit;
+`functions/lib/.env.<project>` is the build-output copy Firebase CLI
+reads. Keep them in sync (or delete the lib copy to let source win).
+
+**Option B — interactive prompt.** If no `.env.<project>` is present
+in `functions/lib/`, `firebase deploy --only functions` will prompt
+for the value and stash it in `functions/lib/.env.<project>`
+automatically. This is convenient for the first deploy but harder
+to script and lives only in build output (not committed-anywhere
+source); prefer Option A.
 
 ### 5. Deploy and verify
 
@@ -175,8 +212,12 @@ the next function cold start. No code change needed.
   `secretmanager.secretAccessor` on it, and (c) the trigger's options
   block declares `secrets: [RESEND_API_KEY]`. Redeploy.
 - **Function logs show `WEB_BASE_URL is not set on the function`** —
-  no `.env.<project>` value or interactive deploy prompt was answered.
-  Set per Step 4 and redeploy.
+  no `.env.<project>` value reached the deploy artifact. Check both
+  `functions/.env.<project>` (source) AND `functions/lib/.env.<project>`
+  (build output Firebase CLI actually reads). If `lib/` has an empty
+  or missing value, delete `functions/lib/.env.<project>` and run
+  `pnpm --filter @kindoo/functions build` to repopulate from source,
+  then redeploy.
 - **Emails go to spam in Gmail** — first send for a new sender domain
   often does. Mark one not-spam; subsequent sends train cleanly.
 - **Resend dashboard shows the request "delivered" but no inbox

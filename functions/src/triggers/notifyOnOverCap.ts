@@ -25,7 +25,7 @@ const WEB_BASE_URL = defineString('WEB_BASE_URL', {
 export const notifyOnOverCap = onDocumentWritten(
   {
     document: 'stakes/{stakeId}',
-    serviceAccount: APP_SA,
+    serviceAccount: APP_SA.value(),
     secrets: [RESEND_API_KEY],
   },
   async (event) => {

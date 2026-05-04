@@ -10,6 +10,13 @@
 // esbuild inlines @kindoo/shared into lib/index.js; firebase-admin and
 // firebase-functions stay external (Cloud Build installs them via the
 // generated lib/package.json).
+//
+// Env files: firebase.json's `source: functions/lib` also makes lib/ the
+// directory Firebase CLI reads `.env.<projectId>` from when resolving
+// `defineString`/`defineSecret` params. We copy any `.env.*` from
+// functions/ into lib/ as a no-overwrite step so operator-edited values
+// in source flow into the deploy artifact, while preserving any values
+// the CLI's interactive prompt wrote into lib/ on a previous deploy.
 
 import { build } from 'esbuild';
 import fs from 'node:fs/promises';
@@ -89,6 +96,40 @@ try {
 }
 await fs.symlink('../node_modules', linkPath, 'dir');
 
+// Copy .env.* files from functions/ → functions/lib/ so Firebase CLI
+// (which reads them from `source` = functions/lib/) picks up values
+// maintained in source. No-overwrite: if lib/.env.<project> already
+// exists from a prior CLI auto-prompt, we leave it alone.
+const sourceEntries = await fs.readdir(FUNCTIONS_ROOT, { withFileTypes: true });
+const envFiles = sourceEntries
+  .filter((e) => e.isFile() && e.name.startsWith('.env.'))
+  .map((e) => e.name);
+const copiedEnv = [];
+const skippedEnv = [];
+for (const name of envFiles) {
+  const dest = path.join(LIB_DIR, name);
+  try {
+    await fs.copyFile(
+      path.join(FUNCTIONS_ROOT, name),
+      dest,
+      fs.constants.COPYFILE_EXCL,
+    );
+    copiedEnv.push(name);
+  } catch (err) {
+    if (err.code === 'EEXIST') {
+      skippedEnv.push(name);
+      continue;
+    }
+    throw err;
+  }
+}
+
 console.log(`Built ${path.relative(FUNCTIONS_ROOT, LIB_DIR)}/index.js + package.json`);
 console.log(`Symlinked ${path.relative(FUNCTIONS_ROOT, LIB_DIR)}/node_modules → ../node_modules`);
 console.log(`External (Cloud Build installs): ${externalNames.join(', ')}`);
+if (copiedEnv.length > 0) {
+  console.log(`Copied env files: ${copiedEnv.join(', ')}`);
+}
+if (skippedEnv.length > 0) {
+  console.log(`Preserved existing lib/ env files: ${skippedEnv.join(', ')}`);
+}
