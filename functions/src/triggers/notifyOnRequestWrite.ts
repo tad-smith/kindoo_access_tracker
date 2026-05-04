@@ -16,7 +16,7 @@
 // trigger has the same identity as the rest of the function suite.
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
-import { defineSecret, defineString } from 'firebase-functions/params';
+import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions';
 import type { AccessRequest, RequestStatus, Stake } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
@@ -28,13 +28,9 @@ import {
   notifyRequesterRejected,
 } from '../services/EmailService.js';
 
+// `WEB_BASE_URL` is registered at module load by `lib/params.ts`,
+// imported transitively via EmailService. No re-import needed here.
 const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
-// Operator sets this at deploy time. EmailService reads it via
-// `process.env.WEB_BASE_URL` from the link builder.
-const WEB_BASE_URL = defineString('WEB_BASE_URL', {
-  description:
-    'Base URL of the web app (e.g. https://stakebuildingaccess.org). Used in email body deep-links.',
-});
 
 export const notifyOnRequestWrite = onDocumentWritten(
   {
@@ -50,11 +46,6 @@ export const notifyOnRequestWrite = onDocumentWritten(
 
     const transition = classify(before, after);
     if (transition === null) return;
-
-    // Touch the param so firebase-functions registers it on the
-    // function spec at deploy time. The actual value is read via
-    // `process.env.WEB_BASE_URL` inside EmailService's link builder.
-    void WEB_BASE_URL.value();
 
     const db = getDb();
     const stakeSnap = await db.doc(`stakes/${stakeId}`).get();

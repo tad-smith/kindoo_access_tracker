@@ -9,18 +9,16 @@
 // importer run that confirms the same condition.
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
-import { defineSecret, defineString } from 'firebase-functions/params';
+import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions';
 import type { OverCapEntry, Stake } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
 import { activeManagerEmails } from '../lib/managers.js';
 import { notifyManagersOverCap } from '../services/EmailService.js';
 
+// `WEB_BASE_URL` is registered at module load by `lib/params.ts`,
+// imported transitively via EmailService. No re-import needed here.
 const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
-const WEB_BASE_URL = defineString('WEB_BASE_URL', {
-  description:
-    'Base URL of the web app (e.g. https://stakebuildingaccess.org). Used in email body deep-links.',
-});
 
 export const notifyOnOverCap = onDocumentWritten(
   {
@@ -37,8 +35,6 @@ export const notifyOnOverCap = onDocumentWritten(
     const beforePools = before?.last_over_caps_json ?? [];
     const afterPools = after.last_over_caps_json ?? [];
     if (!isEmptyToNonEmptyTransition(beforePools, afterPools)) return;
-
-    void WEB_BASE_URL.value();
 
     const { stakeId } = event.params as { stakeId: string };
     const source: 'manual' | 'weekly' = after.last_import_triggered_by ?? 'manual';

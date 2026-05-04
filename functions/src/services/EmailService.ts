@@ -22,6 +22,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 import { auditId } from '@kindoo/shared';
 import type { AccessRequest, AuditLog, OverCapEntry, RequestType, Stake } from '@kindoo/shared';
+import { WEB_BASE_URL } from '../lib/params.js';
 import { getResendSender, type EmailPayload } from '../lib/resend.js';
 
 // 365 days in ms — same TTL the audit trigger writes.
@@ -58,13 +59,18 @@ export function buildFromAddress(stake: Pick<Stake, 'stake_name'>): string {
 }
 
 /**
- * Read `WEB_BASE_URL` and append a route. Throws if the env var is
- * unset — the trigger surface catches and writes an
+ * Read `WEB_BASE_URL` (Firebase Functions param) and append a route.
+ * Throws if unset — the trigger surface catches and writes an
  * `email_send_failed` audit row, so deploy-time misconfiguration is
  * visible-but-not-silent.
+ *
+ * Firebase params do NOT populate `process.env` automatically; their
+ * values are reached via `.value()` at runtime. `StringParam.value()`
+ * returns `''` for unset params, so the empty-check below catches both
+ * "missing" and "empty string" the same way.
  */
 export function buildLink(route: string): string {
-  const base = process.env['WEB_BASE_URL'];
+  const base = WEB_BASE_URL.value();
   if (!base) {
     throw new Error('WEB_BASE_URL is not set on the function. Set it at deploy time.');
   }
