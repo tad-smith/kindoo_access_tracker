@@ -13,10 +13,11 @@
 //
 // Env files: firebase.json's `source: functions/lib` also makes lib/ the
 // directory Firebase CLI reads `.env.<projectId>` from when resolving
-// `defineString`/`defineSecret` params. We copy any `.env.*` from
-// functions/ into lib/ as a no-overwrite step so operator-edited values
-// in source flow into the deploy artifact, while preserving any values
-// the CLI's interactive prompt wrote into lib/ on a previous deploy.
+// `defineString` params. Every build copies `.env.*` from functions/
+// into lib/ unconditionally — source is the single source of truth.
+// (Earlier no-overwrite behaviour was too defensive: a stale empty
+// lib/.env.<projectId> from a CLI prompt would silently shadow the
+// real source value.)
 
 import { build } from 'esbuild';
 import fs from 'node:fs/promises';
@@ -98,30 +99,22 @@ await fs.symlink('../node_modules', linkPath, 'dir');
 
 // Copy .env.* files from functions/ → functions/lib/ so Firebase CLI
 // (which reads them from `source` = functions/lib/) picks up values
-// maintained in source. No-overwrite: if lib/.env.<project> already
-// exists from a prior CLI auto-prompt, we leave it alone.
+// maintained in source. Source is authoritative: every build
+// overwrites lib/.env.<project> from functions/.env.<project> so
+// stale values (including empty placeholders the CLI's interactive
+// prompt may have stashed) can't poison the deploy artifact.
+//
+// Workflow: if Firebase CLI prompts on first deploy and writes the
+// answer into lib/.env.<project>, copy that value into the matching
+// functions/.env.<project> immediately so the next build preserves it.
 const sourceEntries = await fs.readdir(FUNCTIONS_ROOT, { withFileTypes: true });
 const envFiles = sourceEntries
   .filter((e) => e.isFile() && e.name.startsWith('.env.'))
   .map((e) => e.name);
 const copiedEnv = [];
-const skippedEnv = [];
 for (const name of envFiles) {
-  const dest = path.join(LIB_DIR, name);
-  try {
-    await fs.copyFile(
-      path.join(FUNCTIONS_ROOT, name),
-      dest,
-      fs.constants.COPYFILE_EXCL,
-    );
-    copiedEnv.push(name);
-  } catch (err) {
-    if (err.code === 'EEXIST') {
-      skippedEnv.push(name);
-      continue;
-    }
-    throw err;
-  }
+  await fs.copyFile(path.join(FUNCTIONS_ROOT, name), path.join(LIB_DIR, name));
+  copiedEnv.push(name);
 }
 
 console.log(`Built ${path.relative(FUNCTIONS_ROOT, LIB_DIR)}/index.js + package.json`);
@@ -129,7 +122,4 @@ console.log(`Symlinked ${path.relative(FUNCTIONS_ROOT, LIB_DIR)}/node_modules �
 console.log(`External (Cloud Build installs): ${externalNames.join(', ')}`);
 if (copiedEnv.length > 0) {
   console.log(`Copied env files: ${copiedEnv.join(', ')}`);
-}
-if (skippedEnv.length > 0) {
-  console.log(`Preserved existing lib/ env files: ${skippedEnv.join(', ')}`);
 }

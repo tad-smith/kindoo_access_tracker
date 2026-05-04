@@ -121,27 +121,25 @@ EOF
 **Where the build puts these files.** `firebase.json` sets
 `source: functions/lib`, so Firebase CLI reads `.env.<project>` from
 `functions/lib/`, _not_ `functions/`. The `functions/` build script
-(`functions/scripts/build.mjs`) copies any `.env.*` from
+(`functions/scripts/build.mjs`) copies every `.env.*` from
 `functions/` into `functions/lib/` after `tsc`/`esbuild` emit, so the
 source-of-truth file flows into the deploy artifact automatically.
-The copy is no-overwrite: if `functions/lib/.env.<project>` already
-exists (e.g., from a prior interactive CLI prompt — see Option B),
-the build leaves it alone. If you intend a source edit to take
-effect, delete the matching `functions/lib/.env.<project>` and
-rebuild — the next `pnpm --filter @kindoo/functions build` repopulates
-it from source.
+The copy is unconditional — source overwrites lib/ on every build.
+This is intentional: a stale empty `lib/.env.<project>` from a prior
+CLI prompt would otherwise silently shadow the real source value.
 
 If you see "duplicate" `.env.<project>` files at both paths, that's
 expected: `functions/.env.<project>` is the source you edit;
 `functions/lib/.env.<project>` is the build-output copy Firebase CLI
-reads. Keep them in sync (or delete the lib copy to let source win).
+reads. The next build will resync lib/ to match source.
 
 **Option B — interactive prompt.** If no `.env.<project>` is present
 in `functions/lib/`, `firebase deploy --only functions` will prompt
 for the value and stash it in `functions/lib/.env.<project>`
-automatically. This is convenient for the first deploy but harder
-to script and lives only in build output (not committed-anywhere
-source); prefer Option A.
+automatically. **Important:** copy that value into the matching
+`functions/.env.<project>` immediately so it survives the next build
+(which always overwrites `lib/` from source). This is convenient for
+the first deploy but easy to forget; prefer Option A.
 
 ### 5. Deploy and verify
 
