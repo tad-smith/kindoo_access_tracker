@@ -83,20 +83,18 @@ The triggers (`notifyOnRequestWrite`, `notifyOnOverCap`) declare
 `secrets: [RESEND_API_KEY]` in their options block; Cloud Functions
 mounts the secret as the `RESEND_API_KEY` env var at runtime.
 
-### 4. Set `WEB_BASE_URL` and `APP_SA` on the functions deploy
+### 4. Set `WEB_BASE_URL` on the functions deploy
 
 The link builder in `functions/src/services/EmailService.ts` reads
 `process.env.WEB_BASE_URL` to compose deep-link URLs in email bodies.
 Declared via `defineString('WEB_BASE_URL')` in both notification
 triggers — operator sets the value at deploy time.
 
-The runtime service-account email is also a per-project param:
-declared via `defineString('APP_SA')` in `functions/src/lib/admin.ts`
-and consumed by every function as its `serviceAccount` option. The
-trailing-`@` shorthand works for runtime-SA assignment but NOT for
-Firebase CLI's secret-IAM-grant step (which uses the literal string as
-the IAM member and rejects shorthand with "Invalid service account").
-Resolving the full email per project avoids that.
+(The runtime service-account email is mechanically derived from
+`GCLOUD_PROJECT` in `functions/src/lib/admin.ts` —
+`kindoo-app@${GCLOUD_PROJECT}.iam.gserviceaccount.com`. No env var
+needed; Firebase CLI sets `GCLOUD_PROJECT` at deploy-analysis time and
+at runtime.)
 
 **Option A — `.env.<project>` file (recommended).** Cloud Functions
 auto-injects values from `.env.<project>` at deploy time per the
@@ -109,7 +107,6 @@ Maintain the file in `functions/` (the source-of-truth location):
 # are gitignored.
 cat > functions/.env.kindoo-staging <<EOF
 WEB_BASE_URL=https://stakebuildingaccess.org
-APP_SA=kindoo-app@kindoo-staging.iam.gserviceaccount.com
 EOF
 ```
 
@@ -118,7 +115,6 @@ For prod:
 ```bash
 cat > functions/.env.kindoo-prod <<EOF
 WEB_BASE_URL=https://stakebuildingaccess.org
-APP_SA=kindoo-app@kindoo-prod.iam.gserviceaccount.com
 EOF
 ```
 

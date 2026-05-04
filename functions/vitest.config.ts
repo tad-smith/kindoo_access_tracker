@@ -20,6 +20,14 @@
 // migration guide ("Pool rework").
 import { defineConfig } from 'vitest/config';
 
+// `admin.ts` derives APP_SA from `GCLOUD_PROJECT` at module load and
+// throws if it's unset. Firebase CLI sets this at deploy-analysis +
+// runtime; vitest doesn't, so seed it for the test process before any
+// test file's imports fire. The Admin SDK reads the same var when it
+// initialises against the emulators (see tests/lib/emulator.ts), so a
+// shared default is safe.
+process.env['GCLOUD_PROJECT'] ??= 'demo-kindoo-tests';
+
 export default defineConfig({
   test: {
     environment: 'node',
