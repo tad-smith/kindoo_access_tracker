@@ -203,7 +203,7 @@ After the API is enabled, you must also "initialize" Hosting via the Firebase Co
 2. Click "Get Started." Walk the wizard:
    - Step 1 (Install Firebase CLI): already done; click Next.
    - Step 2 (Initialize project): already done via `.firebaserc`; click Next.
-   - Step 3 (Deploy): click Finish/Continue. The wizard's "Deploy" step is satisfied either by an immediate `firebase deploy --only hosting` afterward or by accepting that you'll deploy via CI/script.
+   - Step 3 (Deploy): click Finish/Continue. **Do not** run `firebase deploy --only hosting` at this point — clicking through the wizard alone initializes the site. The first real Hosting deploy comes later from `pnpm deploy:staging` (or `pnpm deploy:prod`).
 3. After the wizard completes, the URL `kindoo-staging.web.app` will resolve (may need 1–2 minutes for CDN propagation).
 
 ### 1.6 Create the Firestore database
@@ -333,13 +333,13 @@ The web app needs Firebase config (API key, auth domain, etc.) to talk to this p
 6. Firebase shows the config object — six values: `apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId`, `appId`. **Copy these now**; you can re-display them later from the same page if needed.
 7. Click "Continue to console."
 
-Now copy the values into your local environment. The expected location and var names (per `apps/web/.env.example` and `apps/web/CLAUDE.md`):
+Now copy the values into your local environment. The staging build (`pnpm deploy:staging`) invokes `vite build --mode staging`, which loads `apps/web/.env.staging`:
 
 ```bash
-cp apps/web/.env.example apps/web/.env.local
+cp apps/web/.env.example apps/web/.env.staging
 ```
 
-Then edit `apps/web/.env.local` and fill in:
+Then edit `apps/web/.env.staging` and fill in:
 
 ```
 VITE_FIREBASE_API_KEY=<apiKey from console>
@@ -351,7 +351,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=<messagingSenderId>
 
 `VITE_USE_FIRESTORE_EMULATOR=` stays empty for staging/prod builds.
 
-`apps/web/.env.local` is gitignored. Don't commit it.
+`apps/web/.env.staging` is gitignored. Don't commit it.
 
 The Firebase **API key is not a secret** — it's a public client identifier; security comes from rules + auth, not key secrecy. But treating it as routine-config-not-source-controlled keeps the operator habits consistent.
 
@@ -361,16 +361,25 @@ The Firebase **API key is not a secret** — it's a public client identifier; se
 
 Repeat **all of Phase 1**, substituting `kindoo-prod` everywhere `kindoo-staging` appears. Re-read each step rather than skimming — there are subtle prod-only additions in the next two phases.
 
+> **CLI safety rule for every Phase 2 command.** Always pass `--project kindoo-prod` explicitly to any `firebase` or `gcloud` invocation, even after running `firebase use prod`. Aliases are easy to forget; `--project` is unambiguous. A bare `firebase deploy --only hosting` will deploy to whichever alias is currently active — typically still `staging` from Phase 1 — and silently overwrite the wrong project.
+>
+> ```bash
+> # Correct — explicit and unambiguous:
+> firebase deploy --only hosting --project kindoo-prod
+> gcloud secrets list --project kindoo-prod
+>
+> # Footgun — relies on whichever alias is active:
+> firebase deploy --only hosting
+> ```
+
 In particular, do not skip step 1.5.1 (Initialize Firebase Hosting via the console) for prod. The instructions are identical:
 
 1. Open <https://console.firebase.google.com/project/kindoo-prod/hosting/sites/kindoo-prod>.
 2. Click "Get Started." Walk the wizard:
    - Step 1 (Install Firebase CLI): already done; click Next.
    - Step 2 (Initialize project): already done via `.firebaserc`; click Next.
-   - Step 3 (Deploy): click Finish/Continue. The wizard's "Deploy" step is satisfied either by an immediate `firebase deploy --only hosting` afterward or by accepting that you'll deploy via CI/script.
+   - Step 3 (Deploy): click Finish/Continue. **Do not** run `firebase deploy --only hosting` at this point — clicking through the wizard alone initializes the site. The first real Hosting deploy comes later from `pnpm deploy:prod`.
 3. After the wizard completes, the URL `kindoo-prod.web.app` will resolve (may need 1–2 minutes for CDN propagation).
-
-Without this step, `firebase deploy --only hosting` succeeds at upload but `kindoo-prod.web.app` returns "Site Not Found."
 
 When done, you should have:
 
@@ -381,7 +390,7 @@ When done, you should have:
 - Authentication with Google sign-in enabled, public name "Stake Building Access," authorized domains: `localhost`, `kindoo-prod.web.app`, `kindoo-prod.firebaseapp.com`.
 - A `kindoo-app` SA with the three F1 roles.
 - The default compute SA with `roles/datastore.user`, `roles/run.invoker`, `roles/secretmanager.secretAccessor`.
-- A registered web app — but **do not write its config to `apps/web/.env.local`** (which holds staging). Save it somewhere safe; it will land in CI secrets or an `.env.production` later. For now, copy it into a personal-notes scratchpad and forget it.
+- A registered web app — write its config to `apps/web/.env.production` (gitignored). The prod build (`pnpm deploy:prod`) invokes `vite build` with default mode=production, which loads this file. Copy `apps/web/.env.example` to `apps/web/.env.production` and fill in the prod values (substitute `kindoo-prod` for `kindoo-staging` in `VITE_FIREBASE_PROJECT_ID` and the auth domain).
 
 Once Phase 2 completes, move on to Phase 3 (PITR + backups), which is **prod-only**.
 
@@ -548,21 +557,18 @@ firebase use prod
 
 Both should print `Now using alias <name> (<project-id>).`
 
-### 4.2 Confirm `apps/web/.env.local` is set for staging
+### 4.2 Confirm `apps/web/.env.staging` and `apps/web/.env.production` are populated
 
-You filled this in during step 1.10. Re-verify:
+You filled `.env.staging` during step 1.10 and `.env.production` during the Phase 2 repeat. Re-verify both:
 
 ```bash
-cat apps/web/.env.local | grep -v '^#' | grep -v '^$'
+cat apps/web/.env.staging | grep -v '^#' | grep -v '^$'
+cat apps/web/.env.production | grep -v '^#' | grep -v '^$'
 ```
 
-Expected: five lines populated; `VITE_USE_FIRESTORE_EMULATOR` empty.
+Expected for each: five `VITE_FIREBASE_*` lines populated; `VITE_USE_FIRESTORE_EMULATOR` empty. `VITE_FIREBASE_PROJECT_ID` reads `kindoo-staging` in the staging file and `kindoo-prod` in the production file.
 
-The prod values you captured in Phase 2 step 1.10 are *not* in this file — they'll go into a CI secret store later. For now keep them in your password manager.
-
-### 4.3 (Future) prod env handling — punted to later
-
-Prod web-app config doesn't need to live anywhere yet. The first Phase 4 staging deploy uses staging only. When prod deploys land at Phase 11 cutover, the build pipeline will need to inject prod values via `.env.production` or CI secrets — that's a Phase 11 sub-task, not B1.
+Both files are gitignored. `deploy-staging.sh` runs `vite build --mode staging` (loads `.env.staging`); `deploy-prod.sh` runs `vite build` with default mode=production (loads `.env.production`).
 
 ### 4.4 Pre-bootstrap stake-doc seed
 
@@ -608,14 +614,27 @@ Without this seed, the bootstrap admin's first wizard write is denied — chicke
 
 **Verify:**
 
+`gcloud firestore` does not expose a document read; the easiest verification is the Firebase console:
+
+<https://console.firebase.google.com/project/kindoo-staging/firestore/data/~2Fstakes~2Fcsnorth>
+<https://console.firebase.google.com/project/kindoo-prod/firestore/data/~2Fstakes~2Fcsnorth>
+
+Confirm visually:
+- `setup_complete` is type **boolean** with value `false` (not the string `"false"`).
+- `bootstrap_admin_email` is type **string** with the typed-form email you intend to sign in with — byte-for-byte. Watch for accidental trailing whitespace from a copy-paste.
+- The document exists at the exact path `stakes/csnorth` (not `stakes/csnorth/...something/...`).
+
+If you'd prefer a CLI verification, the REST API works (requires `gcloud auth application-default login` first):
+
 ```bash
-gcloud firestore documents get \
-  --collection-id=stakes \
-  --document-id=csnorth \
-  --project=<staging-or-prod-project>
+PROJECT=kindoo-prod    # or kindoo-staging
+TOKEN=$(gcloud auth application-default print-access-token)
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  "https://firestore.googleapis.com/v1/projects/$PROJECT/databases/(default)/documents/stakes/csnorth" \
+  | jq '.fields | {setup_complete, bootstrap_admin_email}'
 ```
 
-Expected: a JSON dump showing `setup_complete: false` and the `bootstrap_admin_email` you set.
+Expected: JSON like `{"setup_complete":{"booleanValue":false},"bootstrap_admin_email":{"stringValue":"<email>"}}`. If `setup_complete` shows `"stringValue":"false"`, the type is wrong — re-edit in the console and pick boolean.
 
 **Once the seed is in place:** the bootstrap admin signs in via Google → SPA detects `setup_complete=false` and routes them to the wizard → the wizard works end-to-end → its final action flips `setup_complete=true`. From that point on the bootstrap-admin gate is silent and the bootstrap admin operates as a regular manager.
 
