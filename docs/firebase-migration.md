@@ -192,7 +192,7 @@ kindoo/
 
 Phase 5 → 6 → 7 is web-engineer's serial path. Phase 8 → 9 is backend-engineer's serial path. Once Phase 4 ships, both arcs run in parallel until they converge for Phase 10. Phase 11 is everyone-on-deck for the cutover window. Phase 3.5 is a single-pass infra refresh (replacing reactfire + bumping major deps) that all downstream phases inherit.
 
-Phase 10.1 (navigation redesign — left rail + sectioned nav) and Phase 10.5 (FCM push notifications) are not shown in the tree above; both are deferred and not gated on Phase 11 cutover. Phase 10.1 depends on Phases 4 + 7 (it replaces the Phase-4 nav once the Phase-7 admin pages have established the full nav-item set); Phase 10.5 depends on Phases 9 + 10. See [`navigation-redesign.md`](navigation-redesign.md) for Phase 10.1's design.
+Phase 10.1 (navigation redesign — left rail + sectioned nav), Phase 10.5 (FCM push notifications — new-request → managers), and Phase 10.6 (push expansion — remaining four lifecycle types) are not shown in the tree above; all three are deferred and not gated on Phase 11 cutover. Phase 10.1 depends on Phases 4 + 7 (it replaces the Phase-4 nav once the Phase-7 admin pages have established the full nav-item set); Phase 10.5 depends on Phases 9 + 10; Phase 10.6 depends on Phases 9 + 10.5. See [`navigation-redesign.md`](navigation-redesign.md) for Phase 10.1's design.
 
 ---
 
@@ -1380,13 +1380,60 @@ _Manual_
 
 ---
 
+## Phase 10.6 — Push notifications expansion (completion / rejection / cancel / over-cap)
+
+**Goal:** Extend FCM Web push beyond Phase 10.5's "new request → managers" path. Push parallel of all five Phase 9 email notifications now ships — completion + rejection notify the requester (bishopric/stake users), cancellation + over-cap notify managers. The Notifications page expands access to non-managers so requesters can subscribe to their own request-lifecycle notifications.
+
+**Owner:** web-engineer (panel + schema additions + role expansion); backend-engineer (push triggers fanning the same lifecycle transitions Phase 9's `notifyOnRequestWrite` already handles).
+
+**Dependencies:** Phase 9 (email triggers — push fan parallel to email triggers), Phase 10.5 (PWA shell + FCM SW + token-registration plumbing already in place).
+
+**Status:** Deferred. Operator flags when push is needed beyond new-request.
+
+### Sub-tasks
+
+_Schema_
+
+- [ ] `userIndex.notificationPrefs.push` extended with new keys: `completed`, `rejected`, `cancelled`, `overCap` (in addition to existing `newRequest`). Each defaults to `true` on subscribe (matching Phase 10.5 convention). Per-role visibility on toggles — `cancelled` and `overCap` only render for managers; `completed` and `rejected` only render for requesters.
+- [ ] zod schema in `packages/shared/src/schemas/userIndex.ts` mirrors.
+
+_UI_
+
+- [ ] `/notifications` route's role gate widens to allow any authorized user (not just managers). Bishopric and stake users can subscribe to push for their own request lifecycle notifications.
+- [ ] `<PushNotificationsPanel />` renders per-category toggles based on user's role: managers see `newRequest`, `cancelled`, `overCap`; bishopric/stake users see `completed`, `rejected`. Mixed-role users see both.
+
+_Backend triggers_
+
+- [ ] Either extend `pushOnRequestSubmit` to a full `pushOnRequestWrite` (mirror of Phase 9's `notifyOnRequestWrite`), OR add three sibling triggers (`pushOnRequestComplete`, `pushOnRequestReject`, `pushOnRequestCancel`). Plus a new `pushOnOverCap` trigger paralleling `notifyOnOverCap`. Recommendation: consolidate `pushOnRequestSubmit` → `pushOnRequestWrite` for parity with Phase 9's structure; smaller surface to maintain.
+- [ ] Each trigger reads target recipients (manager-list or requester) and fans push via the same `pushOnRequestSubmit` machinery (FCM token cleanup, `notificationPrefs.push.<category>` filter).
+
+_Tests_
+
+- [ ] Unit tests for each new lifecycle path (4 cases × push fanout).
+- [ ] Integration tests fan-mocked.
+- [ ] Manual real-device verification on iPhone PWA + desktop Chrome.
+
+### Acceptance criteria
+
+- All five Phase 9 email notification types have a parallel push notification.
+- Bishopric and stake users can subscribe via the Notifications page.
+- Per-category toggle works (e.g., a manager can mute `overCap` push without affecting other categories).
+- Push remains additive to email; either channel can be silenced independently.
+
+### Out of scope
+
+- Multi-device notification preferences synchronization across user's devices (Phase 12 candidate).
+- Notification grouping or quiet-hours logic.
+
+---
+
 ## Phase 11 — Data migration + cutover
 
 **Goal:** Live data moves from the Sheet to Firestore; DNS flips `kindoo.csnorth.org` to Firebase Hosting; the Apps Script app is decommissioned. End of Phase A.
 
 **Owner:** All agents on deck. infra-engineer leads the cutover; backend-engineer owns the migration script; web-engineer validates the deployed app; docs-keeper updates spec/architecture in lockstep.
 
-**Dependencies:** Phases 1–10. (Phase 10.5 is deferred; Phase 11 cutover is not gated on it.)
+**Dependencies:** Phases 1–10. (Phase 10.5 and 10.6 are deferred; Phase 11 cutover is not gated on them.)
 
 ### Sub-tasks
 
