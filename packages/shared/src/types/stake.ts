@@ -74,12 +74,27 @@ export type Stake = {
 
   // ----- Notifications -----
   notifications_enabled: boolean;
+  /**
+   * Optional reply-to address used by the email service. When unset,
+   * outbound emails ship without a `Reply-To` header (replies bounce
+   * off `noreply@…`). Operator-configurable so a stake can route
+   * replies to its bishopric / clerk inbox.
+   */
+  notifications_reply_to?: string;
 
   // ----- Operational state (server-written) -----
   /** Pools currently over cap; written by importer at end of run. Empty array == all clear. */
   last_over_caps_json: OverCapEntry[];
   last_import_at?: TimestampLike;
   last_import_summary?: string;
+  /**
+   * How the most recent importer run was triggered. Read by the
+   * over-cap email trigger so the subject line attributes the run
+   * (`manual` vs `weekly`). Optional for back-compat — pre-Phase-9
+   * docs lack the field; the trigger defaults to `'manual'` when
+   * absent.
+   */
+  last_import_triggered_by?: 'manual' | 'weekly';
   last_expiry_at?: TimestampLike;
   last_expiry_summary?: string;
 

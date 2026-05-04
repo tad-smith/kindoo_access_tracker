@@ -65,6 +65,7 @@ export async function runImporterForStake(opts: {
   triggeredBy: string;
 }): Promise<ImportSummary> {
   const { stakeId, triggeredBy } = opts;
+  const runSource: 'manual' | 'weekly' = triggeredBy === 'weekly-trigger' ? 'weekly' : 'manual';
   const db = getDb();
   const startedMs = Date.now();
 
@@ -90,7 +91,7 @@ export async function runImporterForStake(opts: {
       elapsed_ms: elapsed,
       triggered_by: triggeredBy,
     };
-    await writeStakeImportSummary(db, stakeId, summary);
+    await writeStakeImportSummary(db, stakeId, summary, runSource);
     await writeSystemAuditRow(db, stakeId, {
       action: 'import_end',
       after: {
@@ -123,7 +124,7 @@ export async function runImporterForStake(opts: {
       triggered_by: triggeredBy,
       error: message,
     };
-    await writeStakeImportSummary(db, stakeId, summary);
+    await writeStakeImportSummary(db, stakeId, summary, runSource);
     await writeSystemAuditRow(db, stakeId, {
       action: 'import_end',
       after: { triggered_by: triggeredBy, error: message, elapsed_ms: elapsed },
@@ -471,12 +472,14 @@ async function writeStakeImportSummary(
   db: Firestore,
   stakeId: string,
   summary: ImportSummary,
+  runSource: 'manual' | 'weekly',
 ): Promise<void> {
   const summaryStr = formatImportSummary(summary);
   await db.doc(`stakes/${stakeId}`).set(
     {
       last_import_at: FieldValue.serverTimestamp(),
       last_import_summary: summaryStr,
+      last_import_triggered_by: runSource,
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: { ...IMPORTER_ACTOR },
       lastActor: { ...IMPORTER_ACTOR },

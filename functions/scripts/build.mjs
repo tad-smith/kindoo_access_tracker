@@ -10,6 +10,14 @@
 // esbuild inlines @kindoo/shared into lib/index.js; firebase-admin and
 // firebase-functions stay external (Cloud Build installs them via the
 // generated lib/package.json).
+//
+// Env files: firebase.json's `source: functions/lib` also makes lib/ the
+// directory Firebase CLI reads `.env.<projectId>` from when resolving
+// `defineString` params. Every build copies `.env.*` from functions/
+// into lib/ unconditionally — source is the single source of truth.
+// (Earlier no-overwrite behaviour was too defensive: a stale empty
+// lib/.env.<projectId> from a CLI prompt would silently shadow the
+// real source value.)
 
 import { build } from 'esbuild';
 import fs from 'node:fs/promises';
@@ -89,6 +97,29 @@ try {
 }
 await fs.symlink('../node_modules', linkPath, 'dir');
 
+// Copy .env.* files from functions/ → functions/lib/ so Firebase CLI
+// (which reads them from `source` = functions/lib/) picks up values
+// maintained in source. Source is authoritative: every build
+// overwrites lib/.env.<project> from functions/.env.<project> so
+// stale values (including empty placeholders the CLI's interactive
+// prompt may have stashed) can't poison the deploy artifact.
+//
+// Workflow: if Firebase CLI prompts on first deploy and writes the
+// answer into lib/.env.<project>, copy that value into the matching
+// functions/.env.<project> immediately so the next build preserves it.
+const sourceEntries = await fs.readdir(FUNCTIONS_ROOT, { withFileTypes: true });
+const envFiles = sourceEntries
+  .filter((e) => e.isFile() && e.name.startsWith('.env.'))
+  .map((e) => e.name);
+const copiedEnv = [];
+for (const name of envFiles) {
+  await fs.copyFile(path.join(FUNCTIONS_ROOT, name), path.join(LIB_DIR, name));
+  copiedEnv.push(name);
+}
+
 console.log(`Built ${path.relative(FUNCTIONS_ROOT, LIB_DIR)}/index.js + package.json`);
 console.log(`Symlinked ${path.relative(FUNCTIONS_ROOT, LIB_DIR)}/node_modules → ../node_modules`);
 console.log(`External (Cloud Build installs): ${externalNames.join(', ')}`);
+if (copiedEnv.length > 0) {
+  console.log(`Copied env files: ${copiedEnv.join(', ')}`);
+}

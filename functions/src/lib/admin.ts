@@ -21,9 +21,16 @@ import { getAuth as adminGetAuth, type Auth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 
-// Runtime SA for Sheets-needing functions; firebase-functions appends the
-// active project at deploy time so the same value works in staging + prod.
-export const APP_SA = 'kindoo-app@';
+// Runtime SA for Sheets-needing functions. Mechanically derived from
+// GCLOUD_PROJECT — Firebase CLI sets it at deploy-analysis time and at
+// runtime, so the literal full email resolves correctly per project.
+// Full email (not the trailing-@ shorthand) is required for Firebase
+// CLI's secret-IAM-grant step, which uses the string as the IAM member.
+const project = process.env['GCLOUD_PROJECT'];
+if (!project) {
+  throw new Error('GCLOUD_PROJECT env var is not set; cannot derive APP_SA.');
+}
+export const APP_SA = `kindoo-app@${project}.iam.gserviceaccount.com`;
 
 /** firebase-admin's default-app name; the constant isn't exported. */
 const DEFAULT_APP_NAME = '[DEFAULT]';

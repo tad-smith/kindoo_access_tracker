@@ -6,6 +6,8 @@ export { syncManagersClaims } from './triggers/syncManagersClaims.js';
 export { syncSuperadminClaims } from './triggers/syncSuperadminClaims.js';
 export { removeSeatOnRequestComplete } from './triggers/removeSeatOnRequestComplete.js';
 export { pushOnRequestSubmit } from './triggers/pushOnRequestSubmit.js';
+export { notifyOnRequestWrite } from './triggers/notifyOnRequestWrite.js';
+export { notifyOnOverCap } from './triggers/notifyOnOverCap.js';
 
 export {
   auditAccessWrites,
