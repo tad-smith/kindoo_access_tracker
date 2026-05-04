@@ -268,26 +268,30 @@ Expected output: `Created service account [kindoo-app].`
 
 If the SA already exists (you re-ran the runbook), gcloud prints `ERROR: ... ALREADY_EXISTS: Service account kindoo-app@... already exists.` That's fine; skip and move on.
 
-Now grant it the three roles from F1 / Phase 1:
+Now grant it the five roles from F1 / Phase 1:
 
 ```bash
 for ROLE in \
   roles/datastore.user \
   roles/secretmanager.secretAccessor \
-  roles/run.invoker; do
+  roles/run.invoker \
+  roles/eventarc.eventReceiver \
+  roles/firebasecloudmessaging.admin; do
   gcloud projects add-iam-policy-binding kindoo-staging \
     --member="serviceAccount:kindoo-app@kindoo-staging.iam.gserviceaccount.com" \
     --role="$ROLE"
 done
 ```
 
-Expected: three `Updated IAM policy for project [kindoo-staging].` lines.
+Expected: five `Updated IAM policy for project [kindoo-staging].` lines.
 
 What each role does:
 
 - `roles/datastore.user` — Firestore read + write via Admin SDK. (Datastore is the legacy name for the same API.)
 - `roles/secretmanager.secretAccessor` — read API keys (Resend, eventually).
 - `roles/run.invoker` — Cloud Functions 2nd-gen runs on Cloud Run; the invoker role is what lets Cloud Scheduler (or another Function) call it.
+- `roles/eventarc.eventReceiver` — required for any 2nd-gen Cloud Function that pins `kindoo-app` as its service account AND consumes Firestore Eventarc events. Without it, Firebase deploy returns `403 Permission 'eventarc.events.receiveEvent' denied`. Triggers that do not pin an SA fall back to the default compute SA (which gets this role automatically) and are not affected. Surfaced first during the Phase 9/10.5 staging deploy and re-confirmed during prod bring-up — the codebase pins `kindoo-app` for the email and FCM push triggers, both of which consume Firestore document events.
+- `roles/firebasecloudmessaging.admin` — required for the FCM Web push trigger (`pushOnRequestSubmit` and any future push trigger) to call `messaging.send()`. Without it, deploy succeeds but runtime push attempts fail with `mismatched-credential`. Same surfacing path as the Eventarc role above: hit during Phase 9/10.5 staging, re-confirmed during prod bring-up.
 
 ### 1.9 Note: the default compute SA is what Functions actually run as
 
@@ -388,7 +392,7 @@ When done, you should have:
 - The default Hosting site initialized via the console wizard.
 - A Firestore database in `us-central1` Native mode.
 - Authentication with Google sign-in enabled, public name "Stake Building Access," authorized domains: `localhost`, `kindoo-prod.web.app`, `kindoo-prod.firebaseapp.com`.
-- A `kindoo-app` SA with the three F1 roles.
+- A `kindoo-app` SA with the five F1 roles.
 - The default compute SA with `roles/datastore.user`, `roles/run.invoker`, `roles/secretmanager.secretAccessor`.
 - A registered web app — write its config to `apps/web/.env.production` (gitignored). The prod build (`pnpm deploy:prod`) invokes `vite build` with default mode=production, which loads this file. Copy `apps/web/.env.example` to `apps/web/.env.production` and fill in the prod values (substitute `kindoo-prod` for `kindoo-staging` in `VITE_FIREBASE_PROJECT_ID` and the auth domain).
 

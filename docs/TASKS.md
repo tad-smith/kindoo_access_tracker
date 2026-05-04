@@ -382,13 +382,15 @@ The Phase 8 §1094 spec ("Manager clicks 'Import Now' → status updates → ove
 **Scope:** wire the Functions emulator into Playwright's `globalSetup`; write the §1094 e2e plus a sibling for `installScheduledJobs` (the bootstrap wizard's "Complete Setup" path that should idempotently install Cloud Scheduler jobs).
 
 ## [T-26] Phase 11 SA hardening pass
-Status: open
+Status: open (runbook fold-in landed)
 Owner: @infra-engineer (verify SA roles, deploy) + @backend-engineer (function options)
 Phase: 11
 
 Pin the remaining Cloud Functions (audit fan-in × 9, claim sync × 4, `onAuthUserCreate`, `installScheduledJobs`, `removeSeatOnRequestComplete`) to `kindoo-app@` for single-identity audit traces and to allow revoking the project-default `roles/editor` from the default compute SA. Phase 8 pinned only the four Sheets-touching functions (`runImporter`, `runExpiry`, `reconcileAuditGaps`, `runImportNow`) because the LCR sheet is shared with `kindoo-app@` and the importer was 403'ing on the default compute SA; the rest stayed on default to defer the IAM review to cutover.
 
 **Pre-req:** confirm via `gcloud projects get-iam-policy` that `roles/editor` is still bound to `<projectnum>-compute@developer.gserviceaccount.com`, and that `kindoo-app@` has the roles needed for Auth Admin SDK calls (claim-sync triggers + `onAuthUserCreate` write `customClaims` + revoke refresh tokens; `removeSeatOnRequestComplete` writes Firestore; the audit fan-in functions write Firestore; `installScheduledJobs` creates Cloud Scheduler jobs).
+
+**Runbook fold-in landed (2026-05-03):** PR `infra/runbook-kindoo-app-eventarc-fcm-roles` added `roles/eventarc.eventReceiver` and `roles/firebasecloudmessaging.admin` to step 1.8 of `infra/runbooks/provision-firebase-projects.md`. These are the two roles surfaced during the Phase 9/10.5 staging deploy and re-confirmed during prod bring-up (the codebase pins `kindoo-app` for the email + FCM push triggers, both Firestore-Eventarc consumers; FCM admin is needed for `messaging.send()`). The runbook now grants five roles instead of three. The remaining T-26 work — pinning the rest of the functions to `kindoo-app@`, the `gcloud projects get-iam-policy` audit, and revoking project-default `roles/editor` — remains open and tracked here.
 
 ## [T-27] Replace placeholder SBA monogram favicon + brand-bar icon with final designed mark before public launch
 Status: open
