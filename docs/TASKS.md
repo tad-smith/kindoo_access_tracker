@@ -500,9 +500,10 @@ Add a small free-text textarea to the Mark Complete dialog (`apps/web/src/featur
 Effort: small. Surface during a future polish pass.
 
 ## [T-36] Harden the requests-create rule to require role-for-scope (drop the `isManager` blanket allowance)
-Status: open
+Status: done (PR #52)
 Owner: @backend-engineer
 Phase: post Phase 11 (paired with B-3)
+Branch / PR: `fix/b-3-new-request-scope-filter` / [#52](https://github.com/tad-smith/kindoo_access_tracker/pull/52)
 
 The `match /stakes/{stakeId}/requests/{requestId}` create predicate in `firestore/firestore.rules` (lines 470–474) currently allows any of:
 

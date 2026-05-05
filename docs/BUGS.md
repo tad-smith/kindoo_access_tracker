@@ -46,7 +46,7 @@ Somewhere in 1–4 the chain breaks on iOS specifically. Verified: latest stagin
 ---
 
 ## [B-3] New Request scope dropdown is not filtered by the user's role union [FIXED 2026-05-03]
-Status: fixed
+Status: closed (fixed in PR #52)
 Owner: @web-engineer
 Phase: post Phase 11
 

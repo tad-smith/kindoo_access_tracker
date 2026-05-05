@@ -269,13 +269,58 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       );
     });
 
-    // Pure-manager submission paths. A user holding only the manager
-    // claim (no stake / no wards) has stake-wide authority and must be
-    // able to submit any-scope requests — both for direct manager use
-    // and for the self-approval invariant (the same user later
-    // completes their own request).
-    it('stake-scope submit by a pure manager → ok', async () => {
+    // Role-for-scope gate (B-3 / T-36). Manager status alone does NOT
+    // grant creation rights — a pure-manager user with no stake / no
+    // ward claim has no submit surface, server-side. The mirror of the
+    // SPA's `allowedScopesFor` filter on `firestore.rules`. A manager
+    // who also holds `stake: true` or a bishopric ward inherits creation
+    // rights through those branches, like any other user.
+    it('stake-scope submit by a pure manager → denied (no stake claim)', async () => {
       const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          pendingAddManualByStakeMember({
+            requester_email: personas.manager.email,
+            requester_canonical: personas.manager.canonical,
+            lastActor: lastActorOf(personas.manager),
+          }),
+        ),
+      );
+    });
+
+    it('ward-scope submit by a pure manager → denied (no bishopric claim for that ward)', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          pendingAddTempByBishopric('01', {
+            requester_email: personas.manager.email,
+            requester_canonical: personas.manager.canonical,
+            lastActor: lastActorOf(personas.manager),
+          }),
+        ),
+      );
+    });
+
+    it('remove submit by a pure manager → denied (no role for the scope)', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          pendingRemoveByBishopric('01', {
+            requester_email: personas.manager.email,
+            requester_canonical: personas.manager.canonical,
+            lastActor: lastActorOf(personas.manager),
+          }),
+        ),
+      );
+    });
+
+    // Manager + stake claim → stake-scope submit allowed (inherits
+    // through the stake branch).
+    it('stake-scope submit by manager+stake user → ok', async () => {
+      const db = contextFor(env, personas.manager, STAKE_ID, {
+        manager: true,
+        stake: true,
+      }).firestore();
       await assertSucceeds(
         db.doc(PATH).set(
           pendingAddManualByStakeMember({
@@ -287,8 +332,13 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       );
     });
 
-    it('ward-scope submit by a pure manager (no bishopric claim) → ok', async () => {
-      const db = managerContext(env, STAKE_ID).firestore();
+    // Manager + bishopric claim → ward-scope submit for that ward
+    // allowed (inherits through the ward branch).
+    it('ward-scope submit by manager+bishopric user for their own ward → ok', async () => {
+      const db = contextFor(env, personas.manager, STAKE_ID, {
+        manager: true,
+        wards: ['01'],
+      }).firestore();
       await assertSucceeds(
         db.doc(PATH).set(
           pendingAddTempByBishopric('01', {
@@ -300,11 +350,16 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       );
     });
 
-    it('remove submit by a pure manager → ok', async () => {
-      const db = managerContext(env, STAKE_ID).firestore();
-      await assertSucceeds(
+    // Manager + bishopric claim for ward A → ward B submit denied.
+    // Manager status does not extend the ward list.
+    it('ward-scope submit by manager+bishopric user for a ward they do not hold → denied', async () => {
+      const db = contextFor(env, personas.manager, STAKE_ID, {
+        manager: true,
+        wards: ['02'],
+      }).firestore();
+      await assertFails(
         db.doc(PATH).set(
-          pendingRemoveByBishopric('01', {
+          pendingAddTempByBishopric('01', {
             requester_email: personas.manager.email,
             requester_canonical: personas.manager.canonical,
             lastActor: lastActorOf(personas.manager),
@@ -313,13 +368,34 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       );
     });
 
-    // Mirror of the SPA's `useSubmitRequest` payload — a manager
-    // submitting a stake-scope add_manual against the production
+    // Stake+ward user submitting against a different ward → denied.
+    // Holding `stake: true` does not extend the ward list.
+    it('stake-scope user with one bishopric ward submitting against a different ward → denied', async () => {
+      const db = contextFor(env, personas.stakeMember, STAKE_ID, {
+        stake: true,
+        wards: ['01'],
+      }).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          pendingAddTempByBishopric('02', {
+            requester_email: personas.stakeMember.email,
+            requester_canonical: personas.stakeMember.canonical,
+            lastActor: lastActorOf(personas.stakeMember),
+          }),
+        ),
+      );
+    });
+
+    // Mirror of the SPA's `useSubmitRequest` payload — a manager+stake
+    // user submitting a stake-scope add_manual against the production
     // staging shape. Each field is what the form actually sends; the
     // tests above use a slimmer fixture that doesn't catch shape
     // regressions in the form-driven path.
-    it('manager submits the exact stake-scope add_manual payload the form sends → ok', async () => {
-      const db = managerContext(env, STAKE_ID).firestore();
+    it('manager+stake submits the exact stake-scope add_manual payload the form sends → ok', async () => {
+      const db = contextFor(env, personas.manager, STAKE_ID, {
+        manager: true,
+        stake: true,
+      }).firestore();
       const formPayload: Record<string, unknown> = {
         request_id: REQUEST_ID,
         type: 'add_manual',
@@ -594,12 +670,16 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       );
     });
 
-    it('self-approval allowed (pure manager submits + completes their own request)', async () => {
-      // Pure manager — no stake / no wards. Invariant 7 says self-
-      // approval is allowed; this test exercises the path end-to-end
-      // against the fixed create rule (which used to require the
-      // submitter to also hold isStakeMember / bishopric).
-      const mgr = managerContext(env, STAKE_ID);
+    it('self-approval allowed (manager+stake submits + completes their own request)', async () => {
+      // Invariant 7 (self-approval) — a manager who holds the role for
+      // the scope can submit a request and then complete it. Post
+      // T-36 the submitter must hold the role for the scope (manager
+      // status alone does not grant submit), so we test with the
+      // manager+stake combination on a stake-scope request.
+      const mgr = contextFor(env, personas.manager, STAKE_ID, {
+        manager: true,
+        stake: true,
+      });
       await assertSucceeds(
         mgr
           .firestore()

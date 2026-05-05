@@ -107,15 +107,20 @@ test.describe('B-3 — New Request scope filter mirrors the principal role union
     await createSignedInUser(page, 'stake-only@example.com', { stake: true });
     await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
-    // Static label rather than a dropdown.
+    // Static label rather than a dropdown. The "Requesting for:" prefix
+    // is in a <strong> child of the .kd-page-subtitle div; the scope
+    // label sits as a sibling text node, so we assert against the form
+    // root (which contains both).
     await expect(page.getByTestId('new-request-scope')).toHaveCount(0);
-    await expect(page.getByText(/Requesting for:/i)).toContainText(/Stake/i);
+    const form = page.getByTestId('new-request-form');
+    await expect(form).toContainText(/Requesting for:/i);
+    await expect(form).toContainText(/Stake/i);
 
     // The stake user should NOT see any ward option text in the page,
     // even though wards CO + BA exist in the catalogue.
-    const formText = await page.getByTestId('new-request-form').textContent();
-    expect(formText ?? '').not.toMatch(/Ward CO/);
-    expect(formText ?? '').not.toMatch(/Ward BA/);
+    const formText = (await form.textContent()) ?? '';
+    expect(formText).not.toMatch(/Ward CO/);
+    expect(formText).not.toMatch(/Ward BA/);
   });
 
   test('single-ward bishopric user: scope dropdown is suppressed; only the held ward is offered', async ({
@@ -125,13 +130,17 @@ test.describe('B-3 — New Request scope filter mirrors the principal role union
     await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
     await expect(page.getByTestId('new-request-scope')).toHaveCount(0);
-    await expect(page.getByText(/Requesting for:/i)).toContainText(/Ward CO/);
+    const form = page.getByTestId('new-request-form');
+    await expect(form).toContainText(/Requesting for:/i);
+    await expect(form).toContainText(/Ward CO/);
 
     // BA is in the catalogue but NOT in the user role union — must not
     // surface in the form anywhere.
-    const formText = await page.getByTestId('new-request-form').textContent();
-    expect(formText ?? '').not.toMatch(/Ward BA/);
-    // And no stake option either.
-    expect(formText ?? '').not.toMatch(/Requesting for:\s*Stake/i);
+    const formText = (await form.textContent()) ?? '';
+    expect(formText).not.toMatch(/Ward BA/);
+    // And no stake option either — the form's "Requesting for:" prefix
+    // would be followed by "Stake" if it surfaced, so a Stake substring
+    // is the proxy.
+    expect(formText).not.toMatch(/Stake/i);
   });
 });
