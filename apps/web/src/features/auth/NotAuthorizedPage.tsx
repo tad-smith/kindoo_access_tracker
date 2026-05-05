@@ -9,7 +9,10 @@
 //   2. The sign-in email isn't matched to any stake/ward role at all —
 //      typo, wrong account, or the user genuinely shouldn't have access.
 //
-// We give them both reasons + a sign-out button to switch accounts.
+// We give them both reasons + a sign-out button to switch accounts. The
+// signed-in email is rendered prominently so support can triage from a
+// screenshot — the original page omitted it, which made it impossible
+// to tell which account the user actually used.
 //
 // Sign-out button routes through the shadcn `<Button>` primitive — same
 // preflight regression as PR #12 (SignInPage). A bare `<button>` is
@@ -20,9 +23,11 @@
 
 import { useState } from 'react';
 import { Button } from '../../components/ui/Button';
+import { usePrincipal } from '../../lib/principal';
 import { signOut } from './signOut';
 
 export function NotAuthorizedPage() {
+  const principal = usePrincipal();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -53,10 +58,22 @@ export function NotAuthorizedPage() {
       }}
     >
       <h1>Not authorized</h1>
+      {principal.email ? (
+        <p style={{ maxWidth: '50ch' }}>
+          You are signed in as <strong>{principal.email}</strong>.
+        </p>
+      ) : null}
       <p style={{ maxWidth: '50ch' }}>
         Your account isn&rsquo;t yet authorized to use Stake Building Access. Common reasons:
       </p>
-      <ul style={{ maxWidth: '50ch', textAlign: 'left' }}>
+      <ul
+        style={{
+          maxWidth: '50ch',
+          textAlign: 'left',
+          listStyle: 'disc',
+          paddingLeft: '1.5rem',
+        }}
+      >
         <li>
           You&rsquo;re a newly-called bishopric member and the next weekly callings import
           hasn&rsquo;t run yet.
