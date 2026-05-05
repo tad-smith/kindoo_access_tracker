@@ -498,3 +498,29 @@ Spec §9 says the completion email surfaces a `Note:` line for the requester ("s
 Add a small free-text textarea to the Mark Complete dialog (`apps/web/src/features/manager/queue/...`) — optional, only visible on `type='remove'` requests (or on all types — operator decides). Wire the value through to `update.completion_note` in the existing complete mutation. Phase 9's `notifyRequesterCompleted` already surfaces `completion_note` in the email body; no backend change needed.
 
 Effort: small. Surface during a future polish pass.
+
+## [T-36] Harden the requests-create rule to require role-for-scope (drop the `isManager` blanket allowance)
+Status: open
+Owner: @backend-engineer
+Phase: post Phase 11 (paired with B-3)
+
+The `match /stakes/{stakeId}/requests/{requestId}` create predicate in `firestore/firestore.rules` (lines 470–474) currently allows any of:
+
+```
+isManager(stakeId)
+|| (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
+|| (request.resource.data.scope in bishopricWardOf(stakeId))
+```
+
+The `isManager(stakeId)` branch lets a Kindoo Manager who holds NO stake or ward claim create requests in any scope, server-side. The B-3 fix on the SPA side filters the New Request scope dropdown strictly by the user's stake + bishopric role union — manager status alone no longer surfaces scope options. The rule should match: a Kindoo Manager who happens to also hold `stake: true` or a bishopric ward inherits creation rights through those branches; manager-only users have no creation surface at all.
+
+**Proposed change:** drop the `isManager(stakeId) ||` term from the create predicate. The two remaining branches already cover every legitimate creator. The rule's `read` / `update` predicates keep `isManager` (managers must still be able to read every request and complete / reject in their queue) — only the `create` branch loses it.
+
+**Tests to add (in `firestore/tests/requests.test.ts` or wherever the requests rules tests live):**
+- Manager-only user (claims: `manager: true`, `stake: false`, `wards: []`) creating a `scope: 'stake'` request → denied.
+- Manager-only user creating a `scope: 'CO'` request → denied.
+- Manager + stake user (claims: `manager: true`, `stake: true`) creating a `scope: 'stake'` request → allowed (inherits through the stake branch).
+- Manager + bishopric user (claims: `manager: true`, `wards: ['CO']`) creating a `scope: 'CO'` request → allowed (inherits through the ward branch).
+- Bishopric user (claims: `wards: ['CO']`) creating a `scope: 'BA'` request → denied (already covered today; regression-guard).
+
+The web SPA filter (B-3) is the user-visible fix; this rule change is the defense-in-depth layer that prevents a hand-crafted POST from a manager-only user against the REST API. Land on its own PR; do not block the B-3 web fix on it.

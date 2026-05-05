@@ -1,8 +1,7 @@
-// Unit tests for the consolidated NewRequestPage. Verifies the
-// principal-to-scope-list derivation under each role permutation:
-// manager / stake / bishopric / mixed / no-role. The form body itself
-// is mocked to render the scope list as plain text so the assertion
-// is straight equality on the dropdown options.
+// Component tests for the consolidated NewRequestPage. The scope
+// derivation itself is unit-tested in `scopeOptions.test.ts`; this
+// suite verifies the page wires the helper correctly, gates on the
+// buildings catalogue load, and renders the unified shell.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -28,8 +27,6 @@ vi.mock('../../../lib/principal', () => ({
 
 vi.mock('../../../lib/data', () => ({
   useFirestoreCollection: (q: unknown) => {
-    // Discriminate by the docs-helper return shape; both return mocked
-    // objects with `kind` markers below.
     if ((q as { kind?: string }).kind === 'wards') return wardsState.current;
     return buildingsState.current;
   },
@@ -87,32 +84,9 @@ function setPrincipal(overrides: Partial<Principal>): void {
   mockedPrincipal.current = { ...emptyPrincipal(), ...overrides };
 }
 
-function setWards(codes: string[]): void {
-  const stamp = {
-    seconds: 0,
-    nanoseconds: 0,
-    toDate: () => new Date(),
-    toMillis: () => 0,
-  };
-  wardsState.current = {
-    data: codes.map(
-      (ward_code) =>
-        ({
-          ward_code,
-          ward_name: `Ward ${ward_code}`,
-          building_ids: [],
-          created_at: stamp,
-          last_modified_at: stamp,
-          lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
-        }) as unknown as Ward,
-    ),
-    isLoading: false,
-  };
-}
-
 beforeEach(() => {
   setPrincipal({});
-  setWards([]);
+  wardsState.current = { data: [], isLoading: false };
   buildingsState.current = { data: [], isLoading: false };
 });
 
@@ -123,104 +97,64 @@ function readScopes(): string[] {
   );
 }
 
-describe('NewRequestPage — scope derivation by role', () => {
-  it('manager-only: stake + every configured ward', () => {
-    setPrincipal({ managerStakes: ['csnorth'] });
-    setWards(['CO', 'BA', 'GR']);
-    render(<NewRequestPage />);
-    expect(readScopes()).toEqual(['stake::Stake', 'BA::Ward BA', 'CO::Ward CO', 'GR::Ward GR']);
-  });
-
-  it('stake-only: stake scope only (a stake claim grants no ward access)', () => {
+describe('NewRequestPage — wires the role-filtered scope list (B-3)', () => {
+  it('stake-only: renders just the stake option in the dropdown', () => {
     setPrincipal({ stakeMemberStakes: ['csnorth'] });
-    setWards(['CO', 'BA']);
     render(<NewRequestPage />);
-    const scopes = readScopes();
-    expect(scopes).toEqual(['stake::Stake']);
-    // Sharpened assertion (#12): a stake-only user must not see any
-    // ward in the dropdown, even though wards exist in the catalogue.
-    expect(scopes.some((s) => s.startsWith('CO::'))).toBe(false);
-    expect(scopes.some((s) => s.startsWith('BA::'))).toBe(false);
+    expect(readScopes()).toEqual(['stake::Stake']);
   });
 
-  it('bishopric-only: each claimed ward, sorted', () => {
+  it('bishopric-only: renders only the user wards, sorted', () => {
     setPrincipal({ bishopricWards: { csnorth: ['CO', 'BA'] } });
-    setWards(['CO', 'BA', 'GR']);
     render(<NewRequestPage />);
     expect(readScopes()).toEqual(['BA::Ward BA', 'CO::Ward CO']);
   });
 
-  it('manager + bishopric: every ward (manager subsumes bishopric restriction)', () => {
-    setPrincipal({
-      managerStakes: ['csnorth'],
-      bishopricWards: { csnorth: ['CO'] },
-    });
-    setWards(['CO', 'BA']);
-    render(<NewRequestPage />);
-    expect(readScopes()).toEqual(['stake::Stake', 'BA::Ward BA', 'CO::Ward CO']);
-  });
-
-  it('stake + bishopric: stake plus the bishopric wards (deduplicated)', () => {
-    setPrincipal({
-      stakeMemberStakes: ['csnorth'],
-      bishopricWards: { csnorth: ['CO', 'BA'] },
-    });
-    setWards(['CO', 'BA', 'GR']);
-    render(<NewRequestPage />);
-    expect(readScopes()).toEqual(['stake::Stake', 'BA::Ward BA', 'CO::Ward CO']);
-  });
-
-  it('stake + bishopric in one ward: stake plus that ward only', () => {
+  it('stake + bishopric: renders stake plus the user wards (no other wards)', () => {
     setPrincipal({
       stakeMemberStakes: ['csnorth'],
       bishopricWards: { csnorth: ['CO'] },
     });
-    setWards(['CO', 'BA', 'GR']);
     render(<NewRequestPage />);
-    // Stake claim plus bishopric in CO surfaces stake + CO; not BA / GR.
     expect(readScopes()).toEqual(['stake::Stake', 'CO::Ward CO']);
   });
 
-  it('platform superadmin without explicit manager: stake + every ward', () => {
-    setPrincipal({ isPlatformSuperadmin: true });
-    setWards(['BA', 'CO']);
-    render(<NewRequestPage />);
-    expect(readScopes()).toEqual(['stake::Stake', 'BA::Ward BA', 'CO::Ward CO']);
-  });
-
-  it('no role: empty scope list (form renders the not-authorized message)', () => {
-    setPrincipal({});
+  it('manager-only (no stake / no ward): renders the not-authorized message — empty scope list', () => {
+    setPrincipal({ managerStakes: ['csnorth'] });
     render(<NewRequestPage />);
     expect(readScopes()).toEqual([]);
   });
 
-  it('manager: shows the spinner while the wards catalogue is loading', () => {
-    setPrincipal({ managerStakes: ['csnorth'] });
-    wardsState.current = { data: undefined, isLoading: true };
+  it('platform superadmin without explicit stake / ward claim: empty scope list', () => {
+    setPrincipal({ isPlatformSuperadmin: true });
+    render(<NewRequestPage />);
+    expect(readScopes()).toEqual([]);
+  });
+
+  it('shows the spinner while the buildings catalogue is loading', () => {
+    setPrincipal({ stakeMemberStakes: ['csnorth'] });
+    buildingsState.current = { data: undefined, isLoading: true };
     render(<NewRequestPage />);
     expect(screen.getByTestId('spinner')).toBeInTheDocument();
     expect(screen.queryByTestId('form-stub')).toBeNull();
   });
 
-  it('non-manager: skips the wards-loading spinner (claims-derived scope list is enough)', () => {
+  it('mounts the form once buildings have landed even if wards are still loading (form falls back to []).', () => {
     setPrincipal({ bishopricWards: { csnorth: ['CO'] } });
     wardsState.current = { data: undefined, isLoading: true };
+    buildingsState.current = { data: [], isLoading: false };
     render(<NewRequestPage />);
-    // Spinner is for wards-loading on managers; bishopric-only paths
-    // use claims, so the form mounts straight away.
     expect(screen.getByTestId('form-stub')).toBeInTheDocument();
   });
 
   it('renders the unified heading "New Request"', () => {
-    setPrincipal({ managerStakes: ['csnorth'] });
-    setWards([]);
+    setPrincipal({ stakeMemberStakes: ['csnorth'] });
     render(<NewRequestPage />);
     expect(screen.getByRole('heading', { name: 'New Request' })).toBeInTheDocument();
   });
 
   it('wraps the page in the narrow-width container (600px max)', () => {
-    setPrincipal({ managerStakes: ['csnorth'] });
-    setWards([]);
+    setPrincipal({ stakeMemberStakes: ['csnorth'] });
     const { container } = render(<NewRequestPage />);
     expect(container.querySelector('section.kd-page-narrow')).not.toBeNull();
   });
