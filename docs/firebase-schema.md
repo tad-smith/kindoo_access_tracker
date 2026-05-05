@@ -856,7 +856,7 @@ Q2 (duplicate manual/temp blocking), Q3 (multi-calling collapse + utilization re
 
 **Q7. `getAfter()` viability spike.** The `seats.create` rule's cross-doc check against request status leans on `getAfter()`. It's documented for exactly this purpose, but uncommon enough that emulator behaviour should be verified to match live behaviour before committing the architecture to it.
 
-**Q8. Custom claims size budget.** Firebase caps custom claims at 1 KB. With one stake and ~12 ward codes plus the canonical email and superadmin flag, we're nowhere near the limit. Worth bounding for the long-tail multi-stake case (Phase B).
+**Q8. Custom claims size budget.** Firebase caps custom claims at 1 KB. With one stake and ~12 ward codes plus the canonical email and superadmin flag, we're nowhere near the limit. The long-tail multi-stake concern is largely moot under the 2026-05-05 Phase 12 re-scope: every user belongs to exactly one stake at a time, so the claim never carries more entries than a single-stake user does today. Phase B work need not bound this further.
 
 **Q9. Bootstrap admin first sign-in sequencing.** The bootstrap admin signs into a stake with `setup_complete=false`. Their `userIndex` doc gets written; claims sync from existing role data — but the access doc doesn't exist yet for them, and they're added to `kindooManagers/` only by the wizard's first step. Race-prone. Worth tracing through end-to-end.
 
