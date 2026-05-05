@@ -7,7 +7,16 @@
 //   - `add_temp` shows date inputs with both required.
 //   - `add_temp` end < start fails validation.
 //   - Stake-scope add types require ≥1 building checkbox.
-//   - Bishopric scope hides the buildings group.
+//   - The buildings selector is collapsible with role-aware defaults:
+//     - stake users: panel expanded, no defaults.
+//     - single-ward bishopric: panel collapsed, that ward's building
+//       pre-checked.
+//     - multi-ward bishopric: panel collapsed, all default-selected
+//       buildings listed in the header.
+//     - operator can toggle expand / collapse regardless of role and
+//       selection state survives the toggle.
+//   - Ward users can expand and check additional buildings (multi-
+//     select capability the legacy form did not offer).
 //   - Duplicate-warning surfaces when the live seat hook returns a
 //     hit in the same scope.
 
@@ -109,7 +118,7 @@ describe('<NewRequestForm /> — validation', () => {
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={[]}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
@@ -125,7 +134,7 @@ describe('<NewRequestForm /> — validation', () => {
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={[]}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
@@ -141,7 +150,7 @@ describe('<NewRequestForm /> — validation', () => {
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={[]}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
     await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
@@ -161,7 +170,7 @@ describe('<NewRequestForm /> — validation', () => {
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={[]}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
     await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
@@ -177,18 +186,7 @@ describe('<NewRequestForm /> — validation', () => {
     expect(submitMock).not.toHaveBeenCalled();
   });
 
-  it('hides the buildings fieldset for ward (bishopric) scope', () => {
-    render(
-      <NewRequestForm
-        scopes={[{ value: 'CO', label: 'Ward CO' }]}
-        buildings={buildings()}
-        wards={[]}
-      />,
-    );
-    expect(screen.queryByTestId('new-request-buildings')).toBeNull();
-  });
-
-  it('shows the buildings fieldset for stake scope and requires ≥1 ticked', async () => {
+  it('shows the buildings widget for stake scope and requires ≥1 ticked', async () => {
     const user = userEvent.setup();
     render(
       <NewRequestForm
@@ -208,7 +206,7 @@ describe('<NewRequestForm /> — validation', () => {
     expect(submitMock).not.toHaveBeenCalled();
   });
 
-  it('auto-populates building_names from the ward.building_name on ward-scope', async () => {
+  it('default-selects the ward building for a single-ward bishopric submitter', async () => {
     const user = userEvent.setup();
     render(
       <NewRequestForm
@@ -217,15 +215,12 @@ describe('<NewRequestForm /> — validation', () => {
         wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
-    // Ward-scope hides the buildings fieldset.
-    expect(screen.queryByTestId('new-request-buildings')).toBeNull();
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
     await user.type(screen.getByTestId('new-request-name'), 'Bob');
     await user.type(screen.getByTestId('new-request-reason'), 'visit');
     await user.click(screen.getByTestId('new-request-submit'));
     expect(submitMock).toHaveBeenCalledTimes(1);
-    const call = submitMock.mock.calls[0]?.[0];
-    expect(call).toMatchObject({
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({
       scope: 'CO',
       building_names: ['Cordera Building'],
     });
@@ -281,13 +276,170 @@ describe('<NewRequestForm /> — validation', () => {
   });
 });
 
+describe('<NewRequestForm /> — buildings selector defaults', () => {
+  it('renders expanded with no defaults for a stake-only submitter', () => {
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    const trigger = screen.getByTestId('new-request-buildings-trigger');
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    // Header summary reflects the empty-defaults state.
+    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
+      /no buildings selected/i,
+    );
+    // Both checkboxes visible (panel is expanded) and unchecked.
+    expect(screen.getByTestId('new-request-building-cordera')).not.toBeChecked();
+    expect(screen.getByTestId('new-request-building-genoa')).not.toBeChecked();
+  });
+
+  it('renders collapsed with the ward building summary for a single-ward bishopric submitter', () => {
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    const trigger = screen.getByTestId('new-request-buildings-trigger');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
+      'Building: Cordera Building',
+    );
+  });
+
+  it('lists every default-selected building in the header for a multi-ward bishopric submitter', () => {
+    render(
+      <NewRequestForm
+        scopes={[
+          { value: 'CO', label: 'Ward CO' },
+          { value: 'GE', label: 'Ward GE' },
+        ]}
+        buildings={buildings()}
+        wards={wards([
+          { code: 'CO', building_name: 'Cordera Building' },
+          { code: 'GE', building_name: 'Genoa Building' },
+        ])}
+      />,
+    );
+    const trigger = screen.getByTestId('new-request-buildings-trigger');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
+      'Buildings: Cordera Building, Genoa Building',
+    );
+  });
+
+  it('expands when the trigger is clicked and reveals the full checkbox list with the ward building pre-checked', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    const trigger = screen.getByTestId('new-request-buildings-trigger');
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    // Ward building pre-checked; the other building unchecked but available.
+    expect(screen.getByTestId('new-request-building-cordera')).toBeChecked();
+    expect(screen.getByTestId('new-request-building-genoa')).not.toBeChecked();
+  });
+
+  it('preserves selection state across collapse / expand toggles', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    const trigger = screen.getByTestId('new-request-buildings-trigger');
+    // Expand → tick Genoa as an additional building.
+    await user.click(trigger);
+    await user.click(screen.getByTestId('new-request-building-genoa'));
+    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
+      'Buildings: Cordera Building, Genoa Building',
+    );
+    // Collapse → header still lists both.
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
+      'Buildings: Cordera Building, Genoa Building',
+    );
+    // Re-expand → both still ticked.
+    await user.click(trigger);
+    expect(screen.getByTestId('new-request-building-cordera')).toBeChecked();
+    expect(screen.getByTestId('new-request-building-genoa')).toBeChecked();
+  });
+
+  it('lets a ward submitter add a second building beyond their ward (the new multi-select capability)', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    await user.click(screen.getByTestId('new-request-building-genoa'));
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({
+      scope: 'CO',
+      building_names: ['Cordera Building', 'Genoa Building'],
+    });
+  });
+
+  it('lets a ward submitter deselect their default ward building', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    // Untick the pre-selected ward building.
+    await user.click(screen.getByTestId('new-request-building-cordera'));
+    expect(screen.getByTestId('new-request-building-cordera')).not.toBeChecked();
+    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
+      /no buildings selected/i,
+    );
+  });
+
+  it('lets a stake user collapse the panel even though the role default is expanded', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    const trigger = screen.getByTestId('new-request-buildings-trigger');
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  });
+});
+
 describe('<NewRequestForm /> — urgent flag', () => {
   it('renders the Urgent? checkbox above the submit button', () => {
     render(
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={[]}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
     expect(screen.getByTestId('new-request-urgent')).toBeInTheDocument();
@@ -299,7 +451,7 @@ describe('<NewRequestForm /> — urgent flag', () => {
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={[]}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
     expect(screen.queryByTestId('new-request-urgent-hint')).toBeNull();
@@ -313,7 +465,7 @@ describe('<NewRequestForm /> — urgent flag', () => {
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={[]}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
@@ -333,7 +485,7 @@ describe('<NewRequestForm /> — urgent flag', () => {
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={[]}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
@@ -352,7 +504,7 @@ describe('<NewRequestForm /> — urgent flag', () => {
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={[]}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');

@@ -11,7 +11,12 @@
 //   - Member name (required client + server)
 //   - Reason (required)
 //   - Comment (free-form)
-//   - Buildings — checkbox group, stake scope only (≥1 required)
+//   - Buildings — collapsible checkbox group with role-aware defaults:
+//     ward users see a collapsed header pre-populated with their
+//     ward's building (multi-ward: one per ward); stake users see the
+//     panel expanded with no defaults. Either role can expand and
+//     check additional buildings — the legacy "ward users get one
+//     ward's building only" restriction is gone.
 //
 // Cross-cutting behaviour:
 //   - `Requesting for:` label / dropdown above the form.
@@ -19,7 +24,7 @@
 //     entered member in the chosen scope (live via `useSeatForMember`).
 //   - Submit writes a request doc; success → toast + form reset.
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { canonicalEmail } from '@kindoo/shared';
@@ -30,6 +35,11 @@ import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '../../../components/ui/Collapsible';
 import { toast } from '../../../lib/store/toast';
 
 export interface ScopeOption {
@@ -42,12 +52,13 @@ export interface ScopeOption {
 export interface NewRequestFormProps {
   /** Scopes the principal may submit against. ≥1; ordering = display order. */
   scopes: ScopeOption[];
-  /** Buildings available for stake-scope requests; pre-loaded from Firestore. */
+  /** Buildings catalogue — the full checkbox list shown when the
+   *  selector is expanded. Same source for ward and stake users. */
   buildings: readonly Building[];
-  /** Wards catalogue. Used to auto-populate `building_names` for ward-scope
-   *  requests from each ward's `building_name`. Empty when no wards are
-   *  loaded yet — submission falls back to an empty list and the manager
-   *  picks at completion. */
+  /** Wards catalogue. Used to compute the default-selected buildings
+   *  for ward users from each of their wards' `building_name` fields.
+   *  Empty when no wards are loaded yet → defaults fall back to empty
+   *  and the manager picks at completion. */
   wards: readonly Ward[];
 }
 
@@ -55,9 +66,55 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Default-select the buildings tied to the principal's ward scopes.
+ * Stake-only users get an empty default; ward users get one entry per
+ * ward they hold a bishopric role in (deduped). Names that match a
+ * `Ward.building_name` but no `Building` doc still flow through — the
+ * manager will see them at completion time.
+ */
+function defaultBuildingsFor(scopes: readonly ScopeOption[], wards: readonly Ward[]): string[] {
+  const wardCodes = new Set(scopes.filter((s) => s.value !== 'stake').map((s) => s.value));
+  if (wardCodes.size === 0) return [];
+  const out: string[] = [];
+  for (const ward of wards) {
+    if (!wardCodes.has(ward.ward_code)) continue;
+    const name = ward.building_name;
+    if (!name || out.includes(name)) continue;
+    out.push(name);
+  }
+  return out;
+}
+
+function buildingsHeaderLabel(selected: readonly string[]): string {
+  if (selected.length === 0) return 'No buildings selected';
+  const word = selected.length === 1 ? 'Building' : 'Buildings';
+  return `${word}: ${selected.join(', ')}`;
+}
+
 export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps) {
   const submit = useSubmitRequest();
   const initialScope = scopes[0]?.value ?? '';
+  const hasStake = useMemo(() => scopes.some((s) => s.value === 'stake'), [scopes]);
+
+  // Default-collapsed for ward-only users; default-expanded for any
+  // user who can submit at stake scope (today's UX). The operator can
+  // toggle freely once the form mounts.
+  const [buildingsOpen, setBuildingsOpen] = useState<boolean>(hasStake);
+
+  // Initial default selection — captured once on mount so that user
+  // edits (deselects, additions) survive scope-dropdown toggles. Empty
+  // when scopes are empty; recomputed lazily inside the form's
+  // `defaultValues`.
+  const initialBuildings = useMemo(
+    () => defaultBuildingsFor(scopes, wards),
+    // We DO want this to recompute if `wards` arrives after first
+    // render (see the wards-late effect below); the form's
+    // `defaultValues` is captured once so updates flow through that
+    // effect, not through `reset`.
+    [scopes, wards],
+  );
+
   const form = useForm<NewRequestForm>({
     resolver: zodResolver(newRequestSchema),
     defaultValues: {
@@ -69,7 +126,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       comment: '',
       start_date: '',
       end_date: '',
-      building_names: [],
+      building_names: initialBuildings,
       urgent: false,
     },
   });
@@ -77,8 +134,22 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   const watchedType = watch('type');
   const watchedScope = watch('scope');
   const watchedEmail = watch('member_email');
-  const watchedBuildings = watch('building_names');
+  const watchedBuildings = watch('building_names') ?? [];
   const watchedUrgent = watch('urgent');
+
+  // If `wards` arrives after the form mounted (live subscription), and
+  // the user has not yet touched the buildings field, apply the
+  // computed defaults once. `formState.dirtyFields.building_names` is
+  // the react-hook-form signal that the user has edited the list;
+  // respect it and bail.
+  const wardsHydrated = useRef(false);
+  useEffect(() => {
+    if (wardsHydrated.current) return;
+    if (formState.dirtyFields.building_names) return;
+    if (initialBuildings.length === 0) return;
+    setValue('building_names', initialBuildings, { shouldDirty: false, shouldValidate: false });
+    wardsHydrated.current = true;
+  }, [initialBuildings, formState.dirtyFields.building_names, setValue]);
 
   // Live duplicate-warning. The seat doc id is the canonical email, so
   // we can subscribe directly without a query. Strip whitespace + run
@@ -101,19 +172,6 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
     return null;
   }, [dupSeat, watchedScope]);
 
-  // Ward-scope requests skip the buildings UI entirely; the form
-  // auto-populates `building_names` from the ward's `building_name`.
-  // Stake-scope still shows checkboxes. Empty `building_name` (ward
-  // not yet bound to a building) submits `[]` and the manager picks
-  // at completion. Stake-scope clears any inherited ward populating
-  // so the user's checkbox selection is the only source.
-  useEffect(() => {
-    if (watchedScope === 'stake') return;
-    const ward = wards.find((w) => w.ward_code === watchedScope);
-    const next = ward && ward.building_name ? [ward.building_name] : [];
-    setValue('building_names', next, { shouldValidate: false });
-  }, [watchedScope, wards, setValue]);
-
   const onSubmit = handleSubmit(async (input) => {
     try {
       await submit.mutateAsync({
@@ -129,6 +187,9 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         urgent: input.urgent,
       });
       toast('Request submitted.', 'success');
+      // Reset clears user edits, so re-apply the role-aware defaults
+      // for buildings; otherwise a single-ward bishop would lose the
+      // pre-checked ward building between submissions.
       reset({
         type: 'add_manual',
         scope: input.scope,
@@ -138,9 +199,10 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         comment: '',
         start_date: '',
         end_date: '',
-        building_names: [],
+        building_names: defaultBuildingsFor(scopes, wards),
         urgent: false,
       });
+      wardsHydrated.current = true;
     } catch (err) {
       toast(errorMessage(err), 'error');
     }
@@ -254,11 +316,26 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         <Input type="text" {...register('comment')} data-testid="new-request-comment" />
       </label>
 
-      {watchedScope === 'stake' ? (
-        <fieldset className="kd-buildings-fieldset" data-testid="new-request-buildings">
-          <legend>
-            Buildings <small>(at least one required)</small>
-          </legend>
+      <Collapsible
+        open={buildingsOpen}
+        onOpenChange={setBuildingsOpen}
+        className="kd-buildings-collapsible"
+        data-testid="new-request-buildings"
+      >
+        <CollapsibleTrigger
+          className="kd-buildings-trigger"
+          data-testid="new-request-buildings-trigger"
+        >
+          <span data-testid="new-request-buildings-summary">
+            <strong>Buildings</strong>{' '}
+            {watchedScope === 'stake' ? <small>(at least one required)</small> : null}
+            <br />
+            <span className="kd-buildings-summary-text">
+              {buildingsHeaderLabel(watchedBuildings)}
+            </span>
+          </span>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
           {buildings.length === 0 ? (
             <p className="kd-empty-state">
               No buildings configured. Ask a Kindoo Manager to add buildings via Configuration.
@@ -266,7 +343,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
           ) : (
             <ul className="kd-checkbox-list">
               {buildings.map((b) => {
-                const checked = (watchedBuildings ?? []).includes(b.building_name);
+                const checked = watchedBuildings.includes(b.building_name);
                 return (
                   <li key={b.building_id}>
                     <label>
@@ -275,11 +352,14 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
                         value={b.building_name}
                         checked={checked}
                         onChange={(e) => {
-                          const current = watchedBuildings ?? [];
+                          const current = watchedBuildings;
                           const next = e.target.checked
                             ? [...current, b.building_name]
                             : current.filter((n) => n !== b.building_name);
-                          setValue('building_names', next, { shouldValidate: true });
+                          setValue('building_names', next, {
+                            shouldValidate: true,
+                            shouldDirty: true,
+                          });
                         }}
                         data-testid={`new-request-building-${b.building_id}`}
                       />{' '}
@@ -290,13 +370,13 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
               })}
             </ul>
           )}
-          {formState.errors.building_names ? (
-            <p className="kd-form-error" role="alert">
-              {formState.errors.building_names.message}
-            </p>
-          ) : null}
-        </fieldset>
-      ) : null}
+        </CollapsibleContent>
+        {formState.errors.building_names ? (
+          <p className="kd-form-error" role="alert">
+            {formState.errors.building_names.message}
+          </p>
+        ) : null}
+      </Collapsible>
 
       {dupHit ? (
         <div

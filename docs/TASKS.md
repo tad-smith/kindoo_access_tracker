@@ -525,3 +525,18 @@ The `isManager(stakeId)` branch lets a Kindoo Manager who holds NO stake or ward
 - Bishopric user (claims: `wards: ['CO']`) creating a `scope: 'BA'` request → denied (already covered today; regression-guard).
 
 The web SPA filter (B-3) is the user-visible fix; this rule change is the defense-in-depth layer that prevents a hand-crafted POST from a manager-only user against the REST API. Land on its own PR; do not block the B-3 web fix on it.
+
+## [T-37] Verify requests-create rule does not gate `building_names` contents per role
+Status: open (verification only — no fix expected)
+Owner: @backend-engineer
+
+The New Request form now lets ward (bishopric) users select multiple buildings — including buildings outside their own ward — via a collapsible widget that defaults to the ward's building but accepts any combination from the catalogue. Web-side change shipped on `feat/new-request-collapsible-buildings`; submit payload's `building_names` for a ward-scope request can now contain ≥1 entry from anywhere in the stake.
+
+A read of `firestore/firestore.rules` (lines 462–464 of the requests-create predicate) confirms the rule only enforces `scope == 'stake' → building_names.size() > 0`. There is no per-role gate on `building_names` contents for ward scopes. So this change should pass the rule as-is.
+
+**Asks of @backend-engineer:**
+- Confirm the rule-side reading: a bishopric user submitting a ward-scope `add_manual` with `building_names: ['Cordera Building', 'Genoa Building']` is allowed (no gate trips).
+- If you decide the existing rule is fine, close this task with a comment.
+- If you find an unintended gate (e.g., a future hardening that enumerates allowed buildings per ward), either soften it now that ward users can legitimately request access for buildings beyond their own ward, OR push back on the operator-stated capability before the PR ships.
+
+No rule change anticipated. Tracking purely so the role-for-scope tightening (T-36) doesn't get confused with a buildings-contents tightening that was never actually in the rules.
