@@ -1,6 +1,6 @@
 # Firebase data model + security rules
 
-> **Status: ACTIVE (2026-04-27).** Authoritative schema and rules reference for the Firebase migration committed to on 2026-04-27. See [`docs/firebase-migration.md`](firebase-migration.md) for the phase plan. Migration target: as quickly as possible (5–7 weeks full-time / 2–3 months part-time). Apps Script implementation continues to run in production until Phase 11 cutover.
+> **Status: LIVE.** Authoritative schema, rules, and indexes reference. The migration committed on 2026-04-27 closed Phase A on 2026-05-03 (see [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md)); Firebase is now in production at `kindoo-prod`. See [`docs/firebase-migration.md`](firebase-migration.md) for phase history and [`docs/spec.md`](spec.md) for runtime behaviour.
 
 ## 1. Architecture overview
 
