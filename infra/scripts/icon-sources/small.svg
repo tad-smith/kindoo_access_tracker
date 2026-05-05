@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Stake Building Access">
+  <!-- Rounded blue field, rx=6 to match the existing favicon scale. -->
+  <rect width="32" height="32" rx="6" fill="#2b6cb0"/>
+
+  <!--
+    Key only, rotated -45deg about the frame centre (16,16). Same
+    silhouette as the large icon, scaled down and beefed up so it
+    reads at 16x16: thicker shaft, larger bow, two big notches instead
+    of fine serration. No outline strokes — at 16px the contrast
+    already comes from the white-on-blue field.
+  -->
+  <g transform="rotate(-45 16 16)" fill="#ffffff">
+    <!-- Bow on the left. The cutout is rendered via a second blue circle so we don't depend on fill-rule even-odd at small sizes. -->
+    <circle cx="7" cy="16" r="4.5"/>
+    <circle cx="7" cy="16" r="2" fill="#2b6cb0"/>
+    <!-- Shaft to the right. -->
+    <rect x="11" y="14.5" width="13" height="3"/>
+    <!-- Two bit notches stepping down from the shaft. -->
+    <rect x="18" y="17.5" width="2.5" height="2.5"/>
+    <rect x="22" y="17.5" width="2" height="2"/>
+  </g>
+</svg>

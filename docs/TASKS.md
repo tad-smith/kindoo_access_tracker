@@ -393,11 +393,13 @@ Pin the remaining Cloud Functions (audit fan-in × 9, claim sync × 4, `onAuthUs
 **Runbook fold-in landed (2026-05-03):** PR `infra/runbook-kindoo-app-eventarc-fcm-roles` added `roles/eventarc.eventReceiver` and `roles/firebasecloudmessaging.admin` to step 1.8 of `infra/runbooks/provision-firebase-projects.md`. These are the two roles surfaced during the Phase 9/10.5 staging deploy and re-confirmed during prod bring-up (the codebase pins `kindoo-app` for the email + FCM push triggers, both Firestore-Eventarc consumers; FCM admin is needed for `messaging.send()`). The runbook now grants five roles instead of three. The remaining T-26 work — pinning the rest of the functions to `kindoo-app@`, the `gcloud projects get-iam-policy` audit, and revoking project-default `roles/editor` — remains open and tracked here.
 
 ## [T-27] Replace placeholder SBA monogram favicon + brand-bar icon with final designed mark before public launch
-Status: open
-Owner: @web-engineer (wire), blocked on operator-supplied design
+Status: done (2026-05-03)
+Owner: @web-engineer
 Phase: pre-launch (post Phase 10)
 
 Phase 10 shipped a temporary "SBA" monogram (white letters on `#2b6cb0` rounded-square field) for the favicon set + manifest icons + apple-touch-icon + brand-bar icon, generated inline because the existing `website/images/` assets carry the old Kindoo "K" branding. Operator-supplied final design replaces all eight assets in `apps/web/public/` (`favicon.ico`, `favicon.svg`, `favicon-16x16.png`, `favicon-32x32.png`, `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`); the manifest entries in `apps/web/vite.config.ts` and the `<link>` tags in `apps/web/index.html` are already wired to those filenames so the swap is a one-PR replacement. Maskable variant must keep content inside the inner 80% safe-zone circle. SVG favicon should remain a single mark that reads cleanly at 16×16.
+
+**Done:** Final mark is a building outline (flat-roof rectangle, door + two flanking windows, white stroke) overlaid by a key rotated -45° so the bow lands in the lower-left corner area and the bit lands in the upper-right above the roofline. Same `#2b6cb0` blue field + `#ffffff` mark from the placeholder. The 16×16 favicon variant drops the building and renders just the key at the same orientation for visual continuity at small size. SVG sources committed at `infra/scripts/icon-sources/{large,small}.svg` and rasterized via `infra/scripts/generate-icons.mjs` (sharp + png-to-ico) so the icon set can be regenerated reproducibly. Maskable 512 composites the design at 80% size onto a solid blue 512 canvas so the focal mark sits inside the safe zone.
 
 ---
 
