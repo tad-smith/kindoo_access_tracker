@@ -10,13 +10,14 @@
 //     <CollapsibleContent>...body...</CollapsibleContent>
 //   </Collapsible>
 //
-// Trigger renders an `aria-expanded` button with a chevron that
-// rotates 180deg via a `data-state` selector — no JS needed for the
-// rotation, just CSS transition on `transform`.
+// Trigger renders an `aria-expanded` button with a chevron on the
+// LEFT that rotates 90deg on open via the `group-data-[state=open]`
+// Tailwind variant — no JS, no extra state. Layout: chevron, then
+// children laid out inline.
 
 import * as CollapsiblePrimitive from '@radix-ui/react-collapsible';
 import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/cn';
 
 export const Collapsible = CollapsiblePrimitive.Root;
@@ -33,13 +34,15 @@ export const CollapsibleTrigger = forwardRef<
   CollapsibleTriggerProps
 >(function CollapsibleTrigger({ className, children, icon, ...rest }, ref) {
   // Trigger carries `data-state="open" | "closed"`. The chevron uses
-  // a `group-data-[state=open]` Tailwind variant so a single CSS rule
-  // rotates it 180deg when the panel is open — no JS, no extra state.
+  // the `group-data-[state=open]` Tailwind variant so a single CSS
+  // rule rotates the right-pointing chevron 90deg into a down-pointing
+  // one when the panel is open. Keep a small flex gap between chevron
+  // and label so dense one-line headers stay legible.
   const chevron =
     icon === undefined ? (
-      <ChevronDown
+      <ChevronRight
         aria-hidden
-        className="kd-collapsible-chevron h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180"
+        className="kd-collapsible-chevron h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-90"
       />
     ) : (
       icon
@@ -47,14 +50,11 @@ export const CollapsibleTrigger = forwardRef<
   return (
     <CollapsiblePrimitive.Trigger
       ref={ref}
-      className={cn(
-        'group inline-flex w-full items-center justify-between gap-2 text-left',
-        className,
-      )}
+      className={cn('group inline-flex w-full items-center gap-2 text-left', className)}
       {...rest}
     >
-      <span className="flex-1">{children}</span>
       {chevron}
+      <span className="flex-1">{children}</span>
     </CollapsiblePrimitive.Trigger>
   );
 });

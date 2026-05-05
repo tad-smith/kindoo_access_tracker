@@ -746,10 +746,10 @@
 }
 
 /* Collapsible buildings selector on the New Request form. The trigger
-   is a full-width clickable header with a summary line that shows the
-   currently-selected buildings (so ward users can see their default
-   ward building without expanding); the chevron rotates 180° on open
-   via the `group-data-[state=open]` Tailwind variant on the SVG. */
+   is a single-line header — chevron on the left, label + selected
+   buildings inline — that doubles as the field label. The chevron
+   rotates 90° on open via the `group-data-[state=open]` Tailwind
+   variant on the SVG (defined in Collapsible.tsx). */
 .kd-buildings-collapsible {
   display: block;
   border: 1px solid var(--kd-border);
@@ -773,14 +773,15 @@
   outline-offset: 2px;
   border-radius: 4px;
 }
-.kd-buildings-summary-text {
-  display: inline-block;
-  margin-top: 2px;
-  font-weight: 400;
-  font-size: 0.92em;
-  color: var(--kd-fg-2, var(--kd-fg-1));
+.kd-buildings-header-row {
+  display: inline;
+  font-size: 0.95em;
 }
-.kd-buildings-collapsible [data-state='open'] + * .kd-checkbox-list,
+.kd-buildings-required-marker {
+  color: var(--kd-fg-3);
+  font-weight: 400;
+  margin-left: 4px;
+}
 .kd-buildings-collapsible .kd-checkbox-list {
   margin-top: 8px;
 }

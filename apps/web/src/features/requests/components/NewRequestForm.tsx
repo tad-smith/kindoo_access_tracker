@@ -11,12 +11,15 @@
 //   - Member name (required client + server)
 //   - Reason (required)
 //   - Comment (free-form)
-//   - Buildings — collapsible checkbox group with role-aware defaults:
-//     ward users see a collapsed header pre-populated with their
-//     ward's building (multi-ward: one per ward); stake users see the
-//     panel expanded with no defaults. Either role can expand and
-//     check additional buildings — the legacy "ward users get one
-//     ward's building only" restriction is gone.
+//   - Buildings — collapsible checkbox group whose default selection
+//     and collapsed/expanded state are derived from the *current scope*
+//     (not from role-at-mount):
+//       - scope == 'stake'  → expanded, no defaults checked.
+//       - scope == <ward>   → collapsed, that ward's building pre-selected.
+//     A multi-role principal toggling the scope dropdown live-updates
+//     both the selection and the open state. The user's manual expand
+//     / collapse since the last scope change resets on scope change so
+//     a stake-scope expansion does not bleed into the ward-scope view.
 //
 // Cross-cutting behaviour:
 //   - `Requesting for:` label / dropdown above the form.
@@ -55,10 +58,10 @@ export interface NewRequestFormProps {
   /** Buildings catalogue — the full checkbox list shown when the
    *  selector is expanded. Same source for ward and stake users. */
   buildings: readonly Building[];
-  /** Wards catalogue. Used to compute the default-selected buildings
-   *  for ward users from each of their wards' `building_name` fields.
-   *  Empty when no wards are loaded yet → defaults fall back to empty
-   *  and the manager picks at completion. */
+  /** Wards catalogue. Used to compute the default-selected building(s)
+   *  for ward scopes from each ward's `building_name` field. Empty
+   *  while loading → defaults fall back to empty and the manager picks
+   *  at completion. */
   wards: readonly Ward[];
 }
 
@@ -67,27 +70,21 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * Default-select the buildings tied to the principal's ward scopes.
- * Stake-only users get an empty default; ward users get one entry per
- * ward they hold a bishopric role in (deduped). Names that match a
- * `Ward.building_name` but no `Building` doc still flow through — the
- * manager will see them at completion time.
+ * Default-select the building(s) tied to a single scope. `'stake'`
+ * scope is empty by design (the user hand-picks). Ward scope picks
+ * up the ward's `building_name` if any. A scope referencing a ward
+ * the catalogue does not yet know about (live data still loading)
+ * also returns `[]` — the wards-late re-render will refill it.
  */
-function defaultBuildingsFor(scopes: readonly ScopeOption[], wards: readonly Ward[]): string[] {
-  const wardCodes = new Set(scopes.filter((s) => s.value !== 'stake').map((s) => s.value));
-  if (wardCodes.size === 0) return [];
-  const out: string[] = [];
-  for (const ward of wards) {
-    if (!wardCodes.has(ward.ward_code)) continue;
-    const name = ward.building_name;
-    if (!name || out.includes(name)) continue;
-    out.push(name);
-  }
-  return out;
+function defaultBuildingsForScope(scope: string, wards: readonly Ward[]): string[] {
+  if (!scope || scope === 'stake') return [];
+  const ward = wards.find((w) => w.ward_code === scope);
+  if (!ward || !ward.building_name) return [];
+  return [ward.building_name];
 }
 
 function buildingsHeaderLabel(selected: readonly string[]): string {
-  if (selected.length === 0) return 'No buildings selected';
+  if (selected.length === 0) return 'Buildings: none selected';
   const word = selected.length === 1 ? 'Building' : 'Buildings';
   return `${word}: ${selected.join(', ')}`;
 }
@@ -95,24 +92,14 @@ function buildingsHeaderLabel(selected: readonly string[]): string {
 export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps) {
   const submit = useSubmitRequest();
   const initialScope = scopes[0]?.value ?? '';
-  const hasStake = useMemo(() => scopes.some((s) => s.value === 'stake'), [scopes]);
 
-  // Default-collapsed for ward-only users; default-expanded for any
-  // user who can submit at stake scope (today's UX). The operator can
-  // toggle freely once the form mounts.
-  const [buildingsOpen, setBuildingsOpen] = useState<boolean>(hasStake);
-
-  // Initial default selection — captured once on mount so that user
-  // edits (deselects, additions) survive scope-dropdown toggles. Empty
-  // when scopes are empty; recomputed lazily inside the form's
-  // `defaultValues`.
+  // Initial-mount default selection mirrors the scope-change rule
+  // below: if the form opens on a ward, pre-select that ward's
+  // building; if it opens on `stake`, leave empty.
   const initialBuildings = useMemo(
-    () => defaultBuildingsFor(scopes, wards),
-    // We DO want this to recompute if `wards` arrives after first
-    // render (see the wards-late effect below); the form's
-    // `defaultValues` is captured once so updates flow through that
-    // effect, not through `reset`.
-    [scopes, wards],
+    () => defaultBuildingsForScope(initialScope, wards),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [], // captured once for `defaultValues`; live updates flow through the scope-driven effect below.
   );
 
   const form = useForm<NewRequestForm>({
@@ -137,19 +124,28 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   const watchedBuildings = watch('building_names') ?? [];
   const watchedUrgent = watch('urgent');
 
-  // If `wards` arrives after the form mounted (live subscription), and
-  // the user has not yet touched the buildings field, apply the
-  // computed defaults once. `formState.dirtyFields.building_names` is
-  // the react-hook-form signal that the user has edited the list;
-  // respect it and bail.
-  const wardsHydrated = useRef(false);
+  // Open state mirrors the scope-derived rule on every scope change:
+  // stake-scope opens expanded; ward-scope opens collapsed. The user
+  // can override mid-edit; the override resets on the next scope flip.
+  const [buildingsOpen, setBuildingsOpen] = useState<boolean>(initialScope === 'stake');
+
+  // Drive both the selection and the open state from `watchedScope`.
+  // Two separate effects on purpose — the selection effect also
+  // depends on `wards` (live subscription late-hydration), while the
+  // open-state effect must NOT thrash on every wards push.
+  const lastScopeForBuildings = useRef<string>(initialScope);
   useEffect(() => {
-    if (wardsHydrated.current) return;
-    if (formState.dirtyFields.building_names) return;
-    if (initialBuildings.length === 0) return;
-    setValue('building_names', initialBuildings, { shouldDirty: false, shouldValidate: false });
-    wardsHydrated.current = true;
-  }, [initialBuildings, formState.dirtyFields.building_names, setValue]);
+    const next = defaultBuildingsForScope(watchedScope, wards);
+    setValue('building_names', next, { shouldDirty: false, shouldValidate: false });
+    lastScopeForBuildings.current = watchedScope;
+  }, [watchedScope, wards, setValue]);
+
+  const lastScopeForOpen = useRef<string>(initialScope);
+  useEffect(() => {
+    if (lastScopeForOpen.current === watchedScope) return;
+    setBuildingsOpen(watchedScope === 'stake');
+    lastScopeForOpen.current = watchedScope;
+  }, [watchedScope]);
 
   // Live duplicate-warning. The seat doc id is the canonical email, so
   // we can subscribe directly without a query. Strip whitespace + run
@@ -187,7 +183,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         urgent: input.urgent,
       });
       toast('Request submitted.', 'success');
-      // Reset clears user edits, so re-apply the role-aware defaults
+      // Reset clears user edits, so re-apply the scope-driven defaults
       // for buildings; otherwise a single-ward bishop would lose the
       // pre-checked ward building between submissions.
       reset({
@@ -199,10 +195,10 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         comment: '',
         start_date: '',
         end_date: '',
-        building_names: defaultBuildingsFor(scopes, wards),
+        building_names: defaultBuildingsForScope(input.scope, wards),
         urgent: false,
       });
-      wardsHydrated.current = true;
+      setBuildingsOpen(input.scope === 'stake');
     } catch (err) {
       toast(errorMessage(err), 'error');
     }
@@ -326,13 +322,11 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
           className="kd-buildings-trigger"
           data-testid="new-request-buildings-trigger"
         >
-          <span data-testid="new-request-buildings-summary">
-            <strong>Buildings</strong>{' '}
-            {watchedScope === 'stake' ? <small>(at least one required)</small> : null}
-            <br />
-            <span className="kd-buildings-summary-text">
-              {buildingsHeaderLabel(watchedBuildings)}
-            </span>
+          <span className="kd-buildings-header-row" data-testid="new-request-buildings-summary">
+            <strong>{buildingsHeaderLabel(watchedBuildings)}</strong>
+            {watchedScope === 'stake' ? (
+              <small className="kd-buildings-required-marker"> (at least one required)</small>
+            ) : null}
           </span>
         </CollapsibleTrigger>
         <CollapsibleContent>
