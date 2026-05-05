@@ -127,10 +127,14 @@ test.describe('New Request — collapsible buildings selector', () => {
       'Buildings: Cordera Building, Genoa Building',
     );
 
-    // Fill the rest of the form and submit.
+    // Fill the rest of the form. The Genoa pick is cross-ward for a CO
+    // bishop, so the comment is required to clear the cross-ward gate.
     await bishopricPage.getByTestId('new-request-email').fill('multi@example.com');
     await bishopricPage.getByTestId('new-request-name').fill('Multi Member');
     await bishopricPage.getByTestId('new-request-reason').fill('Sub teacher');
+    await bishopricPage
+      .getByTestId('new-request-comment')
+      .fill('Helping a member from the next ward over.');
     await bishopricPage.getByTestId('new-request-submit').click();
 
     // Bishopric MyRequests shows the row pending.

@@ -32,7 +32,12 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { canonicalEmail } from '@kindoo/shared';
 import type { Building, Seat, Ward } from '@kindoo/shared';
-import { newRequestSchema, type NewRequestForm } from '../schemas';
+import {
+  defaultBuildingsForScope,
+  isCrossWardSelection,
+  makeNewRequestSchema,
+  type NewRequestForm,
+} from '../schemas';
 import { useSubmitRequest, useSeatForMember } from '../hooks';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
@@ -70,23 +75,18 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * Default-select the building(s) tied to a single scope. `'stake'`
- * scope is empty by design (the user hand-picks). Ward scope picks
- * up the ward's `building_name` if any. A scope referencing a ward
- * the catalogue does not yet know about (live data still loading)
- * also returns `[]` — the wards-late re-render will refill it.
+ * Header summary parts. The label portion ("Buildings:") is bolded in
+ * the trigger; the value portion (the joined names or "none selected")
+ * is rendered at normal weight so building names do not visually
+ * compete with the field label. Pluralisation tracks the count.
  */
-function defaultBuildingsForScope(scope: string, wards: readonly Ward[]): string[] {
-  if (!scope || scope === 'stake') return [];
-  const ward = wards.find((w) => w.ward_code === scope);
-  if (!ward || !ward.building_name) return [];
-  return [ward.building_name];
-}
-
-function buildingsHeaderLabel(selected: readonly string[]): string {
-  if (selected.length === 0) return 'Buildings: none selected';
-  const word = selected.length === 1 ? 'Building' : 'Buildings';
-  return `${word}: ${selected.join(', ')}`;
+function buildingsHeaderParts(selected: readonly string[]): {
+  label: string;
+  value: string;
+} {
+  if (selected.length === 0) return { label: 'Buildings:', value: 'none selected' };
+  const word = selected.length === 1 ? 'Building:' : 'Buildings:';
+  return { label: word, value: selected.join(', ') };
 }
 
 export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps) {
@@ -102,8 +102,14 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
     [], // captured once for `defaultValues`; live updates flow through the scope-driven effect below.
   );
 
+  // Schema closes over the wards catalogue so the cross-ward-comment-
+  // required gate can map a ward code to its default building. Memo
+  // keys on `wards` so the resolver picks up the rule once the live
+  // subscription hydrates.
+  const schema = useMemo(() => makeNewRequestSchema(wards), [wards]);
+
   const form = useForm<NewRequestForm>({
-    resolver: zodResolver(newRequestSchema),
+    resolver: zodResolver(schema),
     defaultValues: {
       type: 'add_manual',
       scope: initialScope,
@@ -123,6 +129,14 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   const watchedEmail = watch('member_email');
   const watchedBuildings = watch('building_names') ?? [];
   const watchedUrgent = watch('urgent');
+
+  // Two independent triggers force a comment: urgent submissions
+  // (existing rule) and ward-scope submissions touching buildings
+  // outside the ward's default set (cross-ward justification rule).
+  // Either one flips the field label from "(optional)" to "(required)"
+  // so the user sees the constraint before they hit submit.
+  const crossWard = isCrossWardSelection(watchedScope, watchedBuildings, wards);
+  const commentRequired = watchedUrgent || crossWard;
 
   // Open state mirrors the scope-derived rule on every scope change:
   // stake-scope opens expanded; ward-scope opens collapsed. The user
@@ -306,11 +320,19 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
 
       <label>
         Comment
-        {watchedUrgent ? (
-          <span className="kd-required-marker"> (Required for urgent requests)</span>
-        ) : null}
+        <span
+          className={commentRequired ? 'kd-required-marker' : 'kd-optional-marker'}
+          data-testid="new-request-comment-marker"
+        >
+          {commentRequired ? ' (required)' : ' (optional)'}
+        </span>
         <Input type="text" {...register('comment')} data-testid="new-request-comment" />
       </label>
+      {formState.errors.comment ? (
+        <p className="kd-form-error" role="alert" data-testid="new-request-comment-error">
+          {formState.errors.comment.message}
+        </p>
+      ) : null}
 
       <Collapsible
         open={buildingsOpen}
@@ -323,7 +345,10 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
           data-testid="new-request-buildings-trigger"
         >
           <span className="kd-buildings-header-row" data-testid="new-request-buildings-summary">
-            <strong>{buildingsHeaderLabel(watchedBuildings)}</strong>
+            <strong>{buildingsHeaderParts(watchedBuildings).label}</strong>{' '}
+            <span className="kd-buildings-header-values">
+              {buildingsHeaderParts(watchedBuildings).value}
+            </span>
             {watchedScope === 'stake' ? (
               <small className="kd-buildings-required-marker"> (at least one required)</small>
             ) : null}

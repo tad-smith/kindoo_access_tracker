@@ -3,8 +3,10 @@
 // can't silently weaken validation.
 
 import { describe, expect, it } from 'vitest';
+import type { Ward } from '@kindoo/shared';
 import {
   completeAddRequestSchema,
+  makeNewRequestSchema,
   newRequestSchema,
   rejectRequestSchema,
   removeRequestSchema,
@@ -150,6 +152,108 @@ describe('newRequestSchema', () => {
       start_date: '',
       end_date: '',
       building_names: [],
+      urgent: true,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('makeNewRequestSchema(wards) — cross-ward comment-required gate', () => {
+  // The factory layers the "ward + non-default building → comment
+  // required" gate on top of the base schema. Every other rule is
+  // covered by the `newRequestSchema` block above; here we lock the
+  // new gate's truth table.
+
+  const stamp = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+  const wards: Ward[] = [
+    {
+      ward_code: 'CO',
+      ward_name: 'Cordera',
+      building_name: 'Cordera Building',
+      seat_cap: 20,
+      created_at: stamp,
+      last_modified_at: stamp,
+      lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+    } as unknown as Ward,
+    {
+      ward_code: 'GE',
+      ward_name: 'Genoa',
+      building_name: 'Genoa Building',
+      seat_cap: 20,
+      created_at: stamp,
+      last_modified_at: stamp,
+      lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+    } as unknown as Ward,
+  ];
+  const schema = makeNewRequestSchema(wards);
+
+  function base() {
+    return {
+      type: 'add_manual' as const,
+      scope: 'CO',
+      member_email: 'bob@example.com',
+      member_name: 'Bob',
+      reason: 'sub teacher',
+      comment: '',
+      start_date: '',
+      end_date: '',
+      building_names: ['Cordera Building'],
+      urgent: false,
+    };
+  }
+
+  it('admits a ward submission whose buildings are all in the ward default set with empty comment', () => {
+    const result = schema.safeParse(base());
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a ward submission carrying a non-default building with empty comment', () => {
+    const result = schema.safeParse({
+      ...base(),
+      building_names: ['Cordera Building', 'Genoa Building'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a ward submission carrying ONLY a non-default building with empty comment', () => {
+    const result = schema.safeParse({
+      ...base(),
+      building_names: ['Genoa Building'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a ward submission with whitespace-only comment when the selection is cross-ward', () => {
+    const result = schema.safeParse({
+      ...base(),
+      building_names: ['Cordera Building', 'Genoa Building'],
+      comment: '   ',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('admits a ward submission with a non-default building and a non-empty comment', () => {
+    const result = schema.safeParse({
+      ...base(),
+      building_names: ['Cordera Building', 'Genoa Building'],
+      comment: 'Helping a member from the next ward over.',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('does not gate stake-scope submissions on a comment regardless of building selection', () => {
+    const result = schema.safeParse({
+      ...base(),
+      scope: 'stake',
+      building_names: ['Cordera Building', 'Genoa Building'],
+      comment: '',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('keeps urgent=true requiring a comment even for the in-ward selection (precedence with the urgent rule)', () => {
+    const result = schema.safeParse({
+      ...base(),
       urgent: true,
     });
     expect(result.success).toBe(false);

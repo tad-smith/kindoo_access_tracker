@@ -382,7 +382,11 @@ describe('<NewRequestForm /> — buildings selector defaults', () => {
     expect(screen.getByTestId('new-request-building-genoa')).toBeChecked();
   });
 
-  it('lets a ward submitter add a second building beyond their ward (the new multi-select capability)', async () => {
+  it('lets a ward submitter add a second building beyond their ward (the new multi-select capability) when the cross-ward justification comment is filled', async () => {
+    // Adding Genoa to a CO request is a cross-ward selection, which
+    // gates submit on a non-empty comment (the cross-ward justification
+    // rule). With the comment present the submit goes through and
+    // carries both building_names.
     const user = userEvent.setup();
     render(
       <NewRequestForm
@@ -396,6 +400,10 @@ describe('<NewRequestForm /> — buildings selector defaults', () => {
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
     await user.type(screen.getByTestId('new-request-name'), 'Bob');
     await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.type(
+      screen.getByTestId('new-request-comment'),
+      'Helping a member from the next ward over.',
+    );
     await user.click(screen.getByTestId('new-request-submit'));
     expect(submitMock).toHaveBeenCalledTimes(1);
     expect(submitMock.mock.calls[0]?.[0]).toMatchObject({
@@ -673,6 +681,116 @@ describe('<NewRequestForm /> — urgent flag', () => {
     await user.click(screen.getByTestId('new-request-submit'));
     expect(submitMock).toHaveBeenCalledTimes(1);
     expect(submitMock.mock.calls[0]?.[0]).toMatchObject({ urgent: false });
+  });
+});
+
+describe('<NewRequestForm /> — cross-ward comment-required rule', () => {
+  // Ward-scope submissions touching any building outside the ward's
+  // own default building set must carry a non-empty comment. The
+  // form (a) flips the comment label between (optional) and (required)
+  // reactively and (b) blocks submit with an inline error otherwise.
+  // Stake-scope submissions are unaffected (urgent-required is the
+  // only comment gate there).
+
+  it('shows "(optional)" on a ward-scope submission that stays inside the default building set', () => {
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    expect(screen.getByTestId('new-request-comment-marker')).toHaveTextContent(/optional/i);
+  });
+
+  it('flips the comment marker to "(required)" when the user adds a non-default building', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    await user.click(screen.getByTestId('new-request-building-genoa'));
+    expect(screen.getByTestId('new-request-comment-marker')).toHaveTextContent(/required/i);
+  });
+
+  it('flips the marker back to "(optional)" when the user unticks the cross-ward building', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    await user.click(screen.getByTestId('new-request-building-genoa'));
+    expect(screen.getByTestId('new-request-comment-marker')).toHaveTextContent(/required/i);
+    await user.click(screen.getByTestId('new-request-building-genoa'));
+    expect(screen.getByTestId('new-request-comment-marker')).toHaveTextContent(/optional/i);
+  });
+
+  it('blocks submit with an inline error when a cross-ward selection is missing the comment', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    await user.click(screen.getByTestId('new-request-building-genoa'));
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(
+      await screen.findByText(/comment is required when requesting buildings outside the ward/i),
+    ).toBeInTheDocument();
+    expect(submitMock).not.toHaveBeenCalled();
+  });
+
+  it('admits the submit once the comment is filled', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    await user.click(screen.getByTestId('new-request-building-genoa'));
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.type(screen.getByTestId('new-request-comment'), 'cross-ward justification');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not gate stake-scope submissions on a comment regardless of building selection', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    expect(screen.getByTestId('new-request-comment-marker')).toHaveTextContent(/optional/i);
+    await user.click(screen.getByTestId('new-request-building-cordera'));
+    await user.click(screen.getByTestId('new-request-building-genoa'));
+    expect(screen.getByTestId('new-request-comment-marker')).toHaveTextContent(/optional/i);
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
   });
 });
 

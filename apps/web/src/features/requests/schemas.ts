@@ -5,18 +5,60 @@
 //   - `add_temp`: start_date + end_date both ISO YYYY-MM-DD; end ≥ start.
 //   - stake-scope add types: at least one building selected.
 //   - `urgent=true`: comment becomes required.
+//   - ward-scope with at least one building selected outside the ward's
+//     own default-building set: comment becomes required (the
+//     "cross-ward" justification rule). Enforced via the
+//     `makeNewRequestSchema(wards)` factory which closes over the
+//     wards catalogue so the schema can map a ward code to its
+//     default building. The plain `newRequestSchema` skips this gate;
+//     reserve it for backend / shared-package use where the wards
+//     context isn't available.
 //
-// Same schema fuels both the client form and (where `notifyOnRequestWrite`
+// Same shape fuels both the client form and (where `notifyOnRequestWrite`
 // or future callable validation needs it) the server side.
 
 import { z } from 'zod';
+import type { Ward } from '@kindoo/shared';
 
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Field-level schema. The cross-field gates ("end after start", "stake
- * needs ≥1 building", "member_name required for add types") run in
- * `superRefine` so the resolver surfaces them on the right input.
+ * The default-selected building set for a single submission scope.
+ * Stake-scope is empty by design (the requester hand-picks). Ward-scope
+ * resolves to the single `building_name` on the ward doc, or empty
+ * when the ward isn't in the catalogue or has no building bound. The
+ * form uses this to seed the buildings widget; the schema uses it to
+ * decide when a ward submission has wandered outside the ward's own
+ * building and therefore needs a justifying comment.
+ */
+export function defaultBuildingsForScope(scope: string, wards: readonly Ward[]): string[] {
+  if (!scope || scope === 'stake') return [];
+  const ward = wards.find((w) => w.ward_code === scope);
+  if (!ward || !ward.building_name) return [];
+  return [ward.building_name];
+}
+
+/**
+ * Cross-ward predicate. `true` when the submission's scope is a ward
+ * AND at least one selected building is NOT in that ward's default
+ * set. Stake scope (and any combination of `building_names` inside the
+ * default set) returns `false`. The comment-required gate fires on
+ * `true`.
+ */
+export function isCrossWardSelection(
+  scope: string,
+  buildingNames: readonly string[],
+  wards: readonly Ward[],
+): boolean {
+  if (!scope || scope === 'stake') return false;
+  const defaults = defaultBuildingsForScope(scope, wards);
+  return buildingNames.some((name) => !defaults.includes(name));
+}
+
+/**
+ * Base object schema — every cross-field gate that does NOT require
+ * the wards catalogue lives in this `superRefine`. The factory below
+ * layers the cross-ward-comment-required gate on top.
  */
 export const newRequestSchema = z
   .object({
@@ -81,6 +123,27 @@ export const newRequestSchema = z
   });
 
 export type NewRequestForm = z.infer<typeof newRequestSchema>;
+
+/**
+ * Schema factory that closes over the wards catalogue so the
+ * cross-ward-comment-required gate can resolve a ward code to its
+ * default building. The form constructs the schema in a `useMemo`
+ * keyed on the wards subscription. Server-side validation should
+ * keep using `newRequestSchema` directly — the cross-ward rule is a
+ * UX nudge, not a defense-in-depth gate.
+ */
+export function makeNewRequestSchema(wards: readonly Ward[]) {
+  return newRequestSchema.superRefine((val, ctx) => {
+    if (val.urgent) return; // urgent path already requires a comment.
+    if (!isCrossWardSelection(val.scope, val.building_names, wards)) return;
+    if (val.comment.trim().length > 0) return;
+    ctx.addIssue({
+      code: 'custom',
+      path: ['comment'],
+      message: 'Comment is required when requesting buildings outside the ward.',
+    });
+  });
+}
 
 /**
  * Removal-modal schema. The X / trashcan path collects only the
