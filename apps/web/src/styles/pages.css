@@ -744,6 +744,53 @@
   font-weight: 500;
   font-size: 0.92em;
 }
+
+/* Collapsible buildings selector on the New Request form. The trigger
+   is a single-line header — chevron on the left, label + selected
+   buildings inline — that doubles as the field label. The chevron
+   rotates 90° on open via the `group-data-[state=open]` Tailwind
+   variant on the SVG (defined in Collapsible.tsx). */
+.kd-buildings-collapsible {
+  display: block;
+  border: 1px solid var(--kd-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: var(--kd-border-soft, #f8fafc);
+}
+.kd-buildings-trigger {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+.kd-buildings-trigger:focus-visible {
+  outline: 2px solid var(--kd-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.kd-buildings-header-row {
+  display: inline;
+  font-size: 0.95em;
+}
+/* The bolded prefix lives in `<strong>`; building names go in this
+   span so the value list reads at normal weight, distinct from the
+   field-label cue. */
+.kd-buildings-header-values {
+  font-weight: 400;
+}
+.kd-buildings-required-marker {
+  color: var(--kd-fg-3);
+  font-weight: 400;
+  margin-left: 4px;
+}
+.kd-buildings-collapsible .kd-checkbox-list {
+  margin-top: 8px;
+}
 .kd-checkbox-list {
   list-style: none;
   padding: 0;
@@ -834,6 +881,11 @@
 .kd-required-marker {
   color: var(--kd-danger-fg);
   font-weight: 600;
+}
+.kd-optional-marker {
+  color: var(--kd-fg-3);
+  font-weight: 400;
+  font-size: 0.92em;
 }
 
 /* Configuration tabs */
