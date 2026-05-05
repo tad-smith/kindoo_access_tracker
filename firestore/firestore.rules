@@ -415,11 +415,16 @@ service cloud.firestore {
       // claim. Add-types require member_name; stake-scope add-types
       // require at least one building selection. Scope must match
       // the requester's role:
-      //   - manager: any scope (stake-wide authority; spec §6 +
-      //     invariant 7 self-approval depends on this — a manager
-      //     can submit + complete their own request)
       //   - stake-scope: stake membership
       //   - ward-scope: that ward in the bishopric list
+      // Manager status alone does NOT grant creation rights (B-3 /
+      // T-36) — a pure-manager user with no stake / no ward claim
+      // has no submit surface. A manager who also holds `stake: true`
+      // or a bishopric ward inherits creation rights through those
+      // branches, like any other user. The self-approval invariant
+      // (spec §6, F12 invariant 7) still works: a manager who holds
+      // the role for the scope can submit then complete their own
+      // request.
       //
       // Updates: pending → terminal only. Cancellation is requester-
       // only; complete / reject are manager-only. Reject requires a
@@ -467,9 +472,20 @@ service cloud.firestore {
                 && request.resource.data.end_date.matches('^\\d{4}-\\d{2}-\\d{2}$')
                 && request.resource.data.start_date <= request.resource.data.end_date
               ))
+          // Role-for-scope gate (defense-in-depth complement to the
+          // SPA's `allowedScopesFor` filter, B-3 / T-36). The submitter
+          // must hold the role matching the scope they are writing:
+          //   - `scope == 'stake'`  → caller holds `stake: true`
+          //   - `scope == <ward>`   → caller's `wards` includes that code
+          // Manager status alone does NOT grant creation rights — a
+          // pure-manager user with no stake / no ward claim has no
+          // submit surface. A manager who also holds `stake: true` or a
+          // bishopric ward inherits creation rights through those
+          // branches, same as any other user. This matches `scopeOptions.ts`
+          // on the SPA so a hand-crafted POST cannot bypass the dropdown
+          // filter.
           && (
-               isManager(stakeId)
-            || (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
+               (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
             || (request.resource.data.scope in bishopricWardOf(stakeId))
           );
 

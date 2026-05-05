@@ -790,6 +790,7 @@ service cloud.firestore {
 - **No client writes to importer_callings** — same pattern. `access.update` rules verify it's unchanged on every client write.
 - **Cross-stake denial is automatic** — `isAnyMember(stakeId)` returns false when the user has no claims for that stakeId, so reads are denied at the stake-doc level and inherit through.
 - **Admin SDK writes bypass everything** — the Cloud Functions (importer, expiry, audit triggers, claim sync) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
+- **Requests-create role-for-scope gate (B-3 / T-36)** — the submit predicate requires the caller hold the role matching the scope being written: `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. Manager status alone does NOT grant creation rights — a pure-manager user with no stake / no ward claim has no submit surface. A manager who also holds `stake: true` or a bishopric ward inherits creation rights through those branches. The SPA's `allowedScopesFor` filter (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer.
 
 #### Bootstrap-admin gate
 
