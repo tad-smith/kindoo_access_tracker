@@ -726,7 +726,6 @@ _E2E (Playwright)_
 
 - Any real page beyond hello — Phase 5+.
 - PWA shell (manifest, SW) — Phase 10.
-- Stake selector UI — Phase 12.
 
 ---
 
@@ -1581,24 +1580,60 @@ Acceptance against the original criteria, updated post-close:
 
 ## Phase 12 — Multi-stake (Phase B, deferred)
 
-**Goal:** A second stake can be onboarded end-to-end via a platform-superadmin surface. The platform superadmin has a tiny provisioning role (no read access to any stake's operational data, per the locked-in design).
+**Goal:** A second stake can be onboarded end-to-end. Provisioning is a CLI hop performed by the operator, not a web surface. Each user belongs to exactly one stake at a time; cross-stake operator support is also a CLI hop. The web app's URL shape and per-stake email envelope are unchanged from Phase A.
 
 **Owner:** All agents.
 
 **Dependencies:** Phase 11. **Not started until at least one second stake is in scope.**
 
+### Design decisions baked into this phase
+
+These four shape the sub-tasks below; they were settled when Phase 12 was re-scoped 2026-05-05.
+
+1. **Provisioning is CLI-only.** No `features/platform/`, no `createStake` callable, no `platformSuperadmins` collection. An interactive Admin-SDK script is the only way to create a stake. The operator runs it locally with their Google credentials.
+2. **Single-stake-per-user.** No user belongs to more than one stake at a time. There is no multi-stake claim shape in practice (the schema still permits it; we just never set it). Cross-stake support access uses a second hop-script that moves a manager between stakes.
+3. **No URL change.** The previously planned `/{stakeId}/?p=...` path-prefix convention is dropped. The SPA derives `stakeId` from the principal at boot. No stake picker, no stake switcher, no bare-URL redirect step.
+4. **Shared email envelope stays.** All stakes share `noreply@mail.stakebuildingaccess.org` (the constant in `EmailService.ts`). The display name continues to interpolate from `stake.stake_name`. Per-stake verified subdomains remain explicitly out of scope.
+
 ### Sub-tasks
 
-Materially identical to the prior plan's Phases 11 + 12 (combined into one phase here since the data model already carries `{stakeId}` from day one per F15):
+_Provisioning script_
 
-- [ ] URL convention: `kindoo.csnorth.org/{stakeId}/?p=<page>&...`. The stakeId becomes the first path segment in the SPA.
-- [ ] Single-stake users redirect from bare `/?p=...` URLs to `/{theirStake}/?p=...` for backward compat.
-- [ ] Multi-stake users see a stake picker page or a stake switcher in the topbar.
-- [ ] `platformSuperadmins/{canonicalEmail}` populated. Edited via Firestore console (chicken-and-egg).
-- [ ] `features/platform/` — list stakes, create stake form. `POST /api/platform/createStake` callable.
-- [ ] Bootstrap wizard re-verified for fresh stakes.
-- [ ] Operator runbooks: `infra/runbooks/onboard-stake.md`, `infra/runbooks/lost-bootstrap-admin.md`.
-- [ ] Onboarding integration test: full second-stake setup from cold start in <30 minutes.
+- [ ] `infra/scripts/provision-stake.ts` — interactive Admin-SDK script. Prompts for `stake_name` and `bootstrap_admin_email`. Writes `stakes/{stakeId}` parent doc with `setup_complete=false`, `bootstrap_admin_email = canonicalEmail(input)`, default `expiry_hour=3`, default `import_hour`, `timezone='America/Denver'`, `stake_seat_cap=null`. Refuses if the bootstrap email already has a stake (single-stake-per-user enforcement; checked at the script level, not in rules).
+
+_Cross-stake support hop-script_
+
+- [ ] `infra/scripts/transfer-manager.ts` — interactive Admin-SDK script. Prompts for `email` and `target_stakeId`. Removes the email from any existing stake's `kindooManagers` and `access` docs (the `access` removal targets `manual_grants` only — see importer-roles abort below), then writes `stakes/{target_stakeId}/kindooManagers/{canonicalEmail}` with `active=true`. The existing `syncAccessClaims` / `syncManagersClaims` triggers handle custom-claims propagation. This is the operator's only mechanism for cross-stake support: hop in, do the work, hop out.
+  - **Seats are intentionally out of scope.** The script does not touch `stakes/{stakeId}/seats/{canonicalEmail}` in either the source or target stake. Custom claims are minted from `kindooManagers` (manager flag) and `access` (stake/ward flags); seats don't contribute to claims at all. A leftover seat in the source stake means the operator retains physical door access in that stake's buildings but has no app access there (no role claim). Seats are managed independently — the source stake's importer keeps them in sync with its LCR sheet on the normal cadence.
+  - **Importer-driven-role abort.** Before any writes, the script reads `stakes/{source_stakeId}/access/{canonicalEmail}`. If that doc exists and has a non-empty `importer_callings` map, the script aborts with a clear error: the operator has a real LCR calling in the source stake, the next importer run would re-create the `access` doc and re-mint the source-stake claim within ~an hour, and the hop would silently undo itself. Resolution: use a different operator account for support work in the target stake, or remove the calling from the LCR sheet first. The script proceeds normally when `importer_callings` is empty / absent and only `manual_grants` exists.
+
+_Functions changes_
+
+- [ ] `STAKE_IDS` in `functions/src/lib/constants.ts` becomes dynamic — derived at runtime from the `stakes/` collection rather than hardcoded (T-13 captures the existing limitation).
+
+_Wizard re-verification_
+
+- [ ] Bootstrap wizard exercised end-to-end against a freshly-provisioned second stake. No code changes expected; this is a regression check.
+
+_Operator runbooks_
+
+- [ ] `infra/runbooks/onboard-stake.md` — how to run `provision-stake.ts` and walk a bootstrap admin through first sign-in.
+- [ ] `infra/runbooks/lost-bootstrap-admin.md` — recovery when the bootstrap admin email is wrong or the admin can't sign in.
+- [ ] `infra/runbooks/transfer-manager.md` — when and how to use `transfer-manager.ts` for cross-stake support.
+
+_Integration test_
+
+- [ ] Onboarding integration test: full second-stake setup from cold start in <30 minutes (provision script → bootstrap admin sign-in → wizard → first import → first request).
+
+### Sub-decision to settle when phase starts
+
+Both scripts need to answer "does this email already have a stake?" Three options, in increasing cost / complexity:
+
+- **(default for v1)** Walk all `stakes/*/kindooManagers` and `stakes/*/access` collections by email. Correct, scales linearly with stake count, fine at foreseeable scale.
+- Denormalize `currentStakeId` onto `userIndex/{uid}` via the existing claim-sync triggers. One read instead of N. Adds a write to every claim-sync.
+- Read `customClaims.stakes` directly via Auth Admin SDK. Cheapest read, but custom claims are eventually consistent (~1 hour propagation lag). Bad for the hop-script, which needs a fresh answer.
+
+Default flagged but not locked. Revisit at phase-start if stake count is already past a handful.
 
 ### Tests
 
@@ -1606,19 +1641,26 @@ Same shape as the prior plan's Phase 11 + 12 test sections, adapted for direct F
 
 ### Acceptance criteria
 
-- Superadmin can create new stake from `/platform`.
-- Bootstrap admin can sign in and run wizard for the new stake.
-- Two stakes' data fully isolated (verified by emulator rules tests).
-- Stake picker + switcher in topbar work.
-- Superadmin without explicit stake membership cannot read stake data.
+- Operator runs `provision-stake.ts` locally and creates a second stake.
+- `provision-stake.ts` refuses when the bootstrap email already has a stake.
+- Bootstrap admin can sign in and run the wizard for the new stake.
+- Two stakes' data is fully isolated (verified by emulator rules tests).
+- Operator runs `transfer-manager.ts` to move a support manager between stakes; the source-stake claim drops and the target-stake claim appears within the normal claim-sync window.
+- `transfer-manager.ts` aborts before any writes if the source stake's `access/{canonicalEmail}` doc has any `importer_callings` entries.
+- `STAKE_IDS` is no longer hardcoded; new-user claim seeding works for any stake in the `stakes/` collection.
 - Onboarding takes <30 minutes end-to-end.
 
 ### Out of scope
 
-- Self-serve stake creation (superadmin-curated only).
+- Web-surface stake provisioning (CLI-only by design).
+- Standing multi-stake claim for any user, including the operator (cross-stake support is a hop, not a permanent membership).
+- Stake picker or stake switcher in the SPA.
+- URL path-prefixing by stake.
+- `platformSuperadmins` collection or any platform-superadmin role.
+- Self-serve stake creation.
 - Per-stake billing / quotas.
 - Multi-stake reporting dashboards.
-- Per-stake "From" address.
+- Per-stake "From" address or verified email subdomain.
 - Per-stake custom domain.
 
 ---
