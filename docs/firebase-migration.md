@@ -1603,7 +1603,9 @@ _Provisioning script_
 
 _Cross-stake support hop-script_
 
-- [ ] `infra/scripts/transfer-manager.ts` — interactive Admin-SDK script. Prompts for `email` and `target_stakeId`. Removes the email from any existing stake's `kindooManagers` and `access` docs, then writes `stakes/{target_stakeId}/kindooManagers/{canonicalEmail}` with `active=true`. The existing `syncAccessClaims` / `syncManagersClaims` triggers handle custom-claims propagation. This is the operator's only mechanism for cross-stake support: hop in, do the work, hop out.
+- [ ] `infra/scripts/transfer-manager.ts` — interactive Admin-SDK script. Prompts for `email` and `target_stakeId`. Removes the email from any existing stake's `kindooManagers` and `access` docs (the `access` removal targets `manual_grants` only — see importer-roles abort below), then writes `stakes/{target_stakeId}/kindooManagers/{canonicalEmail}` with `active=true`. The existing `syncAccessClaims` / `syncManagersClaims` triggers handle custom-claims propagation. This is the operator's only mechanism for cross-stake support: hop in, do the work, hop out.
+  - **Seats are intentionally out of scope.** The script does not touch `stakes/{stakeId}/seats/{canonicalEmail}` in either the source or target stake. Custom claims are minted from `kindooManagers` (manager flag) and `access` (stake/ward flags); seats don't contribute to claims at all. A leftover seat in the source stake means the operator retains physical door access in that stake's buildings but has no app access there (no role claim). Seats are managed independently — the source stake's importer keeps them in sync with its LCR sheet on the normal cadence.
+  - **Importer-driven-role abort.** Before any writes, the script reads `stakes/{source_stakeId}/access/{canonicalEmail}`. If that doc exists and has a non-empty `importer_callings` map, the script aborts with a clear error: the operator has a real LCR calling in the source stake, the next importer run would re-create the `access` doc and re-mint the source-stake claim within ~an hour, and the hop would silently undo itself. Resolution: use a different operator account for support work in the target stake, or remove the calling from the LCR sheet first. The script proceeds normally when `importer_callings` is empty / absent and only `manual_grants` exists.
 
 _Functions changes_
 
@@ -1644,6 +1646,7 @@ Same shape as the prior plan's Phase 11 + 12 test sections, adapted for direct F
 - Bootstrap admin can sign in and run the wizard for the new stake.
 - Two stakes' data is fully isolated (verified by emulator rules tests).
 - Operator runs `transfer-manager.ts` to move a support manager between stakes; the source-stake claim drops and the target-stake claim appears within the normal claim-sync window.
+- `transfer-manager.ts` aborts before any writes if the source stake's `access/{canonicalEmail}` doc has any `importer_callings` entries.
 - `STAKE_IDS` is no longer hardcoded; new-user claim seeding works for any stake in the `stakes/` collection.
 - Onboarding takes <30 minutes end-to-end.
 
