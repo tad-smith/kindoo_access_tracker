@@ -37,3 +37,21 @@ export function allowedScopesFor(principal: Principal, stakeId: string): ScopeOp
 
   return out;
 }
+
+/**
+ * "Does this principal have authority over the given scope?" Symmetric
+ * with `allowedScopesFor` — if a user can ADD for a scope, they can
+ * also REMOVE for it. Powers the per-row Remove button on every
+ * roster page so the affordance only appears where the request rule
+ * would actually accept the submit.
+ *
+ * Pure; mirrors the same role logic used by the New Request scope
+ * dropdown so the two surfaces stay in sync.
+ */
+export function isScopeAllowed(principal: Principal, stakeId: string, scope: string): boolean {
+  if (scope === 'stake') {
+    return principal.stakeMemberStakes.includes(stakeId);
+  }
+  const wards = principal.bishopricWards[stakeId] ?? [];
+  return wards.includes(scope);
+}

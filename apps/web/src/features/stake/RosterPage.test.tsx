@@ -13,6 +13,7 @@ const useFirestoreDocMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
 const usePendingRemoveRequestsMock = vi.fn();
 const submitMutateAsyncMock = vi.fn();
+const usePrincipalMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   useStakeRoster: () => useStakeRosterMock(),
@@ -21,6 +22,10 @@ vi.mock('./hooks', () => ({
 
 vi.mock('../../lib/data', () => ({
   useFirestoreDoc: (ref: unknown) => useFirestoreDocMock(ref),
+}));
+
+vi.mock('../../lib/principal', () => ({
+  usePrincipal: () => usePrincipalMock(),
 }));
 
 vi.mock('../requests/hooks', () => ({
@@ -59,6 +64,21 @@ function mockPendingRemoveFor(canonical: string) {
 }
 
 import { StakeRosterPage } from './RosterPage';
+
+function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
+  return {
+    isAuthenticated: true,
+    firebaseAuthSignedIn: true,
+    email: 'user@example.com',
+    canonical: 'user@example.com',
+    isPlatformSuperadmin: false,
+    managerStakes: [],
+    stakeMemberStakes: opts.stake ? ['csnorth'] : [],
+    bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
+    hasAnyRole: () => true,
+    wardsInStake: () => opts.wards ?? [],
+  };
+}
 
 function mockSeats(seats: Seat[] | undefined, isLoading = false) {
   useStakeRosterMock.mockReturnValue({
@@ -127,6 +147,11 @@ beforeEach(() => {
   // RemovalAffordance subscription).
   mockNoPendingRemoves();
   submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
+  // Default principal: stake-scope authority. The stake Roster page
+  // is reachable only by users with `stake: true`, so this is the
+  // realistic default. Tests that need a different principal
+  // override via `usePrincipalMock.mockReturnValue(principal({...}))`.
+  usePrincipalMock.mockReturnValue(principal({ stake: true }));
 });
 
 describe('<StakeRosterPage />', () => {
@@ -383,6 +408,27 @@ describe('<StakeRosterPage />', () => {
       ]) {
         expect(btn).toBeVisible();
       }
+    });
+
+    it('hides the Remove button when the principal lacks stake-scope authority (symmetric with allowedScopesFor)', () => {
+      // Bishopric-only principal (no stake claim). They might be able
+      // to land on this page if they navigate via URL, but the symmetric-
+      // authority rule says no Remove button on stake-scope rows for
+      // someone who could not ADD to the stake scope.
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.queryByTestId('remove-btn-manual@x.com')).toBeNull();
     });
   });
 });

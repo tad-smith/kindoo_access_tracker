@@ -10,6 +10,7 @@ const useAllSeatsMock = vi.fn();
 const useWardsMock = vi.fn();
 const useBuildingsMock = vi.fn();
 const useStakeDocMock = vi.fn();
+const usePrincipalMock = vi.fn();
 const inlineEditMutate = vi.fn().mockResolvedValue(undefined);
 const reconcileMutate = vi.fn().mockResolvedValue(undefined);
 const navigateMock = vi.fn().mockResolvedValue(undefined);
@@ -47,6 +48,25 @@ vi.mock('../../requests/hooks', () => ({
   }),
   useSubmitRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
+
+vi.mock('../../../lib/principal', () => ({
+  usePrincipal: () => usePrincipalMock(),
+}));
+
+function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
+  return {
+    isAuthenticated: true,
+    firebaseAuthSignedIn: true,
+    email: 'manager@example.com',
+    canonical: 'manager@example.com',
+    isPlatformSuperadmin: false,
+    managerStakes: ['csnorth'],
+    stakeMemberStakes: opts.stake ? ['csnorth'] : [],
+    bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
+    hasAnyRole: () => true,
+    wardsInStake: () => opts.wards ?? [],
+  };
+}
 
 import { AllSeatsPage } from './AllSeatsPage';
 
@@ -89,6 +109,11 @@ function mockAll(opts: {
 beforeEach(() => {
   vi.clearAllMocks();
   navigateMock.mockResolvedValue(undefined);
+  // Default principal: manager who is also a stake member + bishop of
+  // every ward in the test fixtures (CO, GE, BA). This keeps existing
+  // tests passing under the symmetric-authority gate. Tests that need
+  // a different principal shape override via `usePrincipalMock.mockReturnValue(principal({...}))`.
+  usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO', 'GE', 'BA'] }));
 });
 
 describe('<AllSeatsPage />', () => {
@@ -393,5 +418,101 @@ describe('<AllSeatsPage />', () => {
     expect(screen.getByTestId('reconcile-choice-0')).toBeInTheDocument();
     expect(screen.getByTestId('reconcile-choice-1')).toBeInTheDocument();
     expect(screen.getByTestId('reconcile-confirm')).toBeInTheDocument();
+  });
+
+  describe('per-row Remove affordance — symmetric authority gate', () => {
+    it('renders the Remove button on manual / temp rows whose scope the principal has authority for', () => {
+      // Manager who also holds stake + bishopric of CO.
+      usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO'] }));
+      mockAll({
+        seats: [
+          makeSeat({
+            scope: 'CO',
+            member_canonical: 'co-manual@x.com',
+            member_email: 'co-manual@x.com',
+            type: 'manual',
+            callings: [],
+          }),
+          makeSeat({
+            scope: 'stake',
+            member_canonical: 'stake-temp@x.com',
+            member_email: 'stake-temp@x.com',
+            type: 'temp',
+            callings: [],
+            end_date: '2026-12-31',
+          }),
+        ],
+        wards: [makeWard({ ward_code: 'CO' })],
+        buildings: [],
+        stake: { stake_seat_cap: 200 },
+      });
+      render(<AllSeatsPage />);
+      expect(screen.getByTestId('remove-btn-co-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('remove-btn-stake-temp@x.com')).toBeInTheDocument();
+    });
+
+    it('hides the Remove button on rows whose scope the principal lacks authority for', () => {
+      // Manager who holds bishopric of CO but no stake claim. They
+      // see all seats (manager read), but the symmetric-authority
+      // rule blocks the Remove button on stake-scope and other-ward
+      // rows.
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockAll({
+        seats: [
+          makeSeat({
+            scope: 'CO',
+            member_canonical: 'co-manual@x.com',
+            member_email: 'co-manual@x.com',
+            type: 'manual',
+            callings: [],
+          }),
+          makeSeat({
+            scope: 'GE',
+            member_canonical: 'ge-manual@x.com',
+            member_email: 'ge-manual@x.com',
+            type: 'manual',
+            callings: [],
+          }),
+          makeSeat({
+            scope: 'stake',
+            member_canonical: 'stake-manual@x.com',
+            member_email: 'stake-manual@x.com',
+            type: 'manual',
+            callings: [],
+          }),
+        ],
+        wards: [makeWard({ ward_code: 'CO' }), makeWard({ ward_code: 'GE' })],
+        buildings: [],
+        stake: { stake_seat_cap: 200 },
+      });
+      render(<AllSeatsPage />);
+      expect(screen.getByTestId('remove-btn-co-manual@x.com')).toBeInTheDocument();
+      expect(screen.queryByTestId('remove-btn-ge-manual@x.com')).toBeNull();
+      expect(screen.queryByTestId('remove-btn-stake-manual@x.com')).toBeNull();
+    });
+
+    it('hides the Remove button for a manager-only principal (no stake / no ward claim)', () => {
+      // Pure-manager: read-everywhere, write-nowhere. Per B-3 / T-36
+      // the request-create rule denies a pure-manager submitting any
+      // request, so the SPA must hide the button to keep the affordance
+      // consistent with the rule.
+      usePrincipalMock.mockReturnValue(principal({}));
+      mockAll({
+        seats: [
+          makeSeat({
+            scope: 'CO',
+            member_canonical: 'co-manual@x.com',
+            member_email: 'co-manual@x.com',
+            type: 'manual',
+            callings: [],
+          }),
+        ],
+        wards: [makeWard({ ward_code: 'CO' })],
+        buildings: [],
+        stake: { stake_seat_cap: 200 },
+      });
+      render(<AllSeatsPage />);
+      expect(screen.queryByTestId('remove-btn-co-manual@x.com')).toBeNull();
+    });
   });
 });

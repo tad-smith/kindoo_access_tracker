@@ -39,6 +39,9 @@ import { Badge } from '../../../components/ui/Badge';
 import { Dialog } from '../../../components/ui/Dialog';
 import { toast } from '../../../lib/store/toast';
 import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
+import { isScopeAllowed } from '../../requests/scopeOptions';
+import { usePrincipal } from '../../../lib/principal';
+import { STAKE_ID } from '../../../lib/constants';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -51,6 +54,7 @@ export interface AllSeatsPageProps {
 }
 
 export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllSeatsPageProps) {
+  const principal = usePrincipal();
   const seats = useAllSeats();
   const wards = useWards();
   const buildings = useBuildings();
@@ -205,7 +209,9 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
                   Reconcile
                 </Button>
               ) : null}
-              {seat.type !== 'auto' ? <RemovalAffordance seat={seat} /> : null}
+              {seat.type !== 'auto' && isScopeAllowed(principal, STAKE_ID, seat.scope) ? (
+                <RemovalAffordance seat={seat} />
+              ) : null}
             </span>
           )}
           extraBadges={(seat) =>

@@ -506,5 +506,26 @@ describe('<BishopricRosterPage />', () => {
       expect(screen.queryByTestId('remove-btn-leaving@x.com')).toBeNull();
       expect(screen.getByTestId('removal-pending-leaving@x.com')).toBeInTheDocument();
     });
+
+    it('hides the Remove button on rows whose scope the principal lacks authority for (multi-ward bishopric viewing the wrong ward)', () => {
+      // Bishopric of CO is on the CO roster. We seed a seat with
+      // `scope='GE'` (an unrelated ward — should never show up via
+      // the live query, but the partition test guards the gate even
+      // if a stale doc slips through). The button should be absent.
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          scope: 'GE',
+          member_canonical: 'wrongward@x.com',
+          member_email: 'wrongward@x.com',
+          member_name: 'Wrong Ward Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      expect(screen.queryByTestId('remove-btn-wrongward@x.com')).toBeNull();
+    });
   });
 });

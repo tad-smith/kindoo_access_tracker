@@ -8,6 +8,7 @@ import { useFirestoreDoc } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
 import { STAKE_ID } from '../../lib/constants';
+import { usePrincipal } from '../../lib/principal';
 import { useStakeRoster, useStakeWards } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
@@ -18,9 +19,11 @@ import { RemovalAffordance } from '../requests/components/RemovalAffordance';
 import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
 import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster } from '../requests/rosterPending';
+import { isScopeAllowed } from '../requests/scopeOptions';
 import { Badge } from '../../components/ui/Badge';
 
 export function StakeRosterPage() {
+  const principal = usePrincipal();
   const seats = useStakeRoster();
   const wards = useStakeWards();
   // Live subscription — `useFirestoreOnce` was reliably empty in
@@ -66,7 +69,11 @@ export function StakeRosterPage() {
           <RosterCardList
             seats={sortedSeats}
             emptyMessage="No stake seats yet. The next import seeds auto-seats from the LCR Stake tab; manual additions land via the New Kindoo Request page."
-            actions={(seat) => (seat.type === 'auto' ? null : <RemovalAffordance seat={seat} />)}
+            actions={(seat) =>
+              seat.type === 'auto' || !isScopeAllowed(principal, STAKE_ID, seat.scope) ? null : (
+                <RemovalAffordance seat={seat} />
+              )
+            }
             extraBadges={(seat) =>
               pendingRemovesByCanonical.has(seat.member_canonical) ? (
                 <Badge

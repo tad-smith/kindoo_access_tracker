@@ -34,6 +34,7 @@ import { RemovalAffordance } from '../requests/components/RemovalAffordance';
 import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
 import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster } from '../requests/rosterPending';
+import { isScopeAllowed } from '../requests/scopeOptions';
 import { Badge } from '../../components/ui/Badge';
 
 export interface BishopricRosterPageProps {
@@ -136,7 +137,11 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
           <RosterCardList
             seats={sortedSeats}
             emptyMessage="No seats assigned to this ward yet. A Kindoo Manager imports from LCR weekly; manual additions land via the New Kindoo Request page."
-            actions={(seat) => (seat.type === 'auto' ? null : <RemovalAffordance seat={seat} />)}
+            actions={(seat) =>
+              seat.type === 'auto' || !isScopeAllowed(principal, STAKE_ID, seat.scope) ? null : (
+                <RemovalAffordance seat={seat} />
+              )
+            }
             extraBadges={(seat) =>
               pendingRemovesByCanonical.has(seat.member_canonical) ? (
                 <Badge
