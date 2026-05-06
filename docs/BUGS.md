@@ -46,10 +46,10 @@ Somewhere in 1–4 the chain breaks on iOS specifically. Verified: latest stagin
 ---
 
 ## [B-4] First-login users with pre-existing access docs land on NotAuthorized
-Status: open
+Status: closed (fixed in PR #60)
 Owner: @web-engineer
 Phase: post Phase 11
-Branch / PR: `fix/b-4-first-login-claims-race`
+Branch / PR: `fix/b-4-first-login-claims-race` (PR #60)
 
 A first-time signer-in whose `access/{canonical}` doc predates their sign-in lands on NotAuthorized for up to ~1h, even though their role data is in place and the canonical-email mapping is correct. Reported in production for `zach.q.mortensen@gmail.com` with a pre-existing `access/zachqmortensen@gmail.com` doc (gmail dot-strip rule applied — mapping is correct).
 
