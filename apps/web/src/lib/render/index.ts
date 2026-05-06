@@ -6,5 +6,6 @@
 export { escapeHtml } from './escapeHtml';
 export { formatDate, formatDateTime } from './formatDate';
 export { UtilizationBar, type UtilizationBarProps } from './UtilizationBar';
+export { RosterUtilization, type RosterUtilizationProps } from './RosterUtilization';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
 export { LoadingSpinner, type LoadingSpinnerProps } from './LoadingSpinner';

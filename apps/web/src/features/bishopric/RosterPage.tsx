@@ -27,7 +27,7 @@ import { db } from '../../lib/firebase';
 import { useBishopricRoster } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
-import { UtilizationBar } from '../../lib/render/UtilizationBar';
+import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { Select } from '../../components/ui/Select';
 import { RemovalAffordance } from '../requests/components/RemovalAffordance';
@@ -120,10 +120,12 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
       ) : null}
 
       <div className="kd-utilization-host">
-        <UtilizationBar
-          total={seatCount}
+        <RosterUtilization
+          committedTotal={seatCount}
           cap={wardDoc?.seat_cap ?? null}
-          overCap={wardDoc?.seat_cap !== undefined && seatCount > wardDoc.seat_cap}
+          pendingAdds={pendingAdds.length}
+          pendingRemoves={pendingRemovesByCanonical.size}
+          committedOverCap={wardDoc?.seat_cap !== undefined && seatCount > wardDoc.seat_cap}
         />
       </div>
 

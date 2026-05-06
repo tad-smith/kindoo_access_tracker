@@ -5,9 +5,29 @@
 
 .utilization {
   display: flex;
-  flex-direction: column;
   gap: 4px;
   font-size: 0.9em;
+}
+
+/* Default: label above bar. */
+.utilization.layout-stacked {
+  flex-direction: column;
+}
+
+/* Inline variant: bar fills row, label right-aligned. */
+.utilization.layout-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.utilization.layout-inline .utilization-bar {
+  flex: 1 1 auto;
+}
+
+.utilization.layout-inline .utilization-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .utilization-label {
@@ -37,6 +57,27 @@
 
 .utilization-fill.over {
   background: var(--kd-danger-red);
+}
+
+/* Muted tone — secondary "pending" bar. Desaturated so it reads as
+   ancillary next to the committed bar above it. The near / over
+   modifiers still take precedence so the cap-warning signal carries
+   through. */
+.utilization.tone-muted .utilization-fill {
+  background: var(--kd-primary-muted, color-mix(in srgb, var(--kd-primary) 55%, transparent));
+}
+
+.utilization.tone-muted .utilization-label {
+  color: var(--kd-fg-3, var(--kd-fg-2));
+}
+
+/* Pair wrapper used by the roster pages — two stacked
+   `<UtilizationBar layout='inline'>` so the labels right-align and the
+   bars sit at the same width. */
+.kd-roster-utilization {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .over-cap-flag {

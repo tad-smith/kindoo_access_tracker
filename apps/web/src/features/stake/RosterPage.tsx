@@ -11,7 +11,7 @@ import { STAKE_ID } from '../../lib/constants';
 import { useStakeRoster, useStakeWards } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
-import { UtilizationBar } from '../../lib/render/UtilizationBar';
+import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { stakeAvailablePoolSize } from '../../lib/render/stakePool';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { RemovalAffordance } from '../requests/components/RemovalAffordance';
@@ -50,10 +50,12 @@ export function StakeRosterPage() {
       <p className="kd-page-subtitle">Stake</p>
 
       <div className="kd-utilization-host">
-        <UtilizationBar
-          total={seatCount}
+        <RosterUtilization
+          committedTotal={seatCount}
           cap={cap}
-          overCap={typeof cap === 'number' && cap > 0 && seatCount > cap}
+          pendingAdds={pendingAdds.length}
+          pendingRemoves={pendingRemovesByCanonical.size}
+          committedOverCap={typeof cap === 'number' && cap > 0 && seatCount > cap}
         />
       </div>
 

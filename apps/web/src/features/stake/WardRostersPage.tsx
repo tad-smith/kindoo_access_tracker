@@ -8,7 +8,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useStakeWards, useWardSeats } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
-import { UtilizationBar } from '../../lib/render/UtilizationBar';
+import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { Select } from '../../components/ui/Select';
 import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
@@ -93,10 +93,12 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
       {selected ? (
         <>
           <div className="kd-utilization-host">
-            <UtilizationBar
-              total={seatCount}
+            <RosterUtilization
+              committedTotal={seatCount}
               cap={wardDoc?.seat_cap ?? null}
-              overCap={wardDoc !== undefined && seatCount > wardDoc.seat_cap}
+              pendingAdds={pendingAdds.length}
+              pendingRemoves={pendingRemovesByCanonical.size}
+              committedOverCap={wardDoc !== undefined && seatCount > wardDoc.seat_cap}
             />
           </div>
           {seats.isLoading || seats.data === undefined ? (
