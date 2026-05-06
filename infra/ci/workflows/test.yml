@@ -129,13 +129,15 @@ jobs:
 
       - name: E2E tests
         id: e2e
-        # `--project kindoo-staging` makes Firebase CLI load
-        # `functions/lib/.env.kindoo-staging` so the `defineString`
-        # params (WEB_BASE_URL etc.) resolve from file rather than
-        # prompting interactively. Without it the Functions emulator
-        # blocks the runner waiting on stdin until the job times out.
-        # The project ID matches `VITE_FIREBASE_PROJECT_ID` baked into
-        # the SPA preview build.
+        # `--project kindoo-staging` matches `VITE_FIREBASE_PROJECT_ID`
+        # baked into the SPA preview build. Per-project `.env.<project>`
+        # files (`functions/.env.kindoo-staging`) are gitignored, so we
+        # supply the function-side `defineString` params directly via
+        # the runner env. Without WEB_BASE_URL the Functions emulator
+        # blocks the runner waiting on stdin (the framework's default-
+        # value prompt) until the 20-min job timeout fires.
+        env:
+          WEB_BASE_URL: https://kindoo-staging.web.app
         run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions,hosting --project kindoo-staging "pnpm test:e2e"
         continue-on-error: true
 
