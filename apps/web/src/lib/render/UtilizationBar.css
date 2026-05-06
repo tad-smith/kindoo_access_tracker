@@ -5,9 +5,39 @@
 
 .utilization {
   display: flex;
-  flex-direction: column;
   gap: 4px;
   font-size: 0.9em;
+}
+
+/* Default: label above bar. */
+.utilization.layout-stacked {
+  flex-direction: column;
+}
+
+/* Inline variant: bar fills row, label right-aligned. The wrapper
+   uses `display: contents` so its inner bar + label become direct
+   children of the parent — required for `<RosterUtilization>` to
+   share grid columns across stacked rows so the bars line up at
+   identical widths regardless of per-row label length. The wrapper
+   keeps `position: relative` so child absolute positioning, if added
+   later, still resolves against the bar group. */
+.utilization.layout-inline {
+  display: contents;
+}
+
+.utilization.layout-inline .utilization-bar {
+  align-self: center;
+}
+
+.utilization.layout-inline .utilization-label {
+  align-self: center;
+  white-space: nowrap;
+}
+
+/* Cap-unset variant in the inline layout — the row has no bar, so
+   the label spans both grid columns. */
+.utilization.layout-inline .utilization-label.utilization-label-span {
+  grid-column: 1 / -1;
 }
 
 .utilization-label {
@@ -37,6 +67,36 @@
 
 .utilization-fill.over {
   background: var(--kd-danger-red);
+}
+
+/* Muted tone — secondary "pending" bar. Desaturated so it reads as
+   ancillary next to the committed bar above it. The near / over
+   modifiers still take precedence so the cap-warning signal carries
+   through. */
+.utilization.tone-muted .utilization-fill {
+  background: var(--kd-primary-muted, color-mix(in srgb, var(--kd-primary) 55%, transparent));
+}
+
+.utilization.tone-muted .utilization-label {
+  color: var(--kd-fg-3, var(--kd-fg-2));
+}
+
+/* Pair wrapper used by the roster pages — two stacked
+   `<UtilizationBar layout='inline'>` so the labels right-align and the
+   bars sit at the same width. Grid (rather than flex) so both rows
+   share the SAME column track widths: the bar column is `1fr` and the
+   label column is `auto`, sized to the widest label across both rows.
+   That guarantees both bars render at byte-identical pixel widths
+   regardless of differing label content (e.g. "10 / 25 seats used"
+   vs "12 / 25 seats pending"). The inner `<UtilizationBar>` wrappers
+   use `display: contents` so their bar + label children are promoted
+   into this grid directly. */
+.kd-roster-utilization {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: center;
 }
 
 .over-cap-flag {

@@ -105,4 +105,19 @@ describe('RosterCardList', () => {
     );
     expect(screen.getByTestId('extra-badge')).toBeInTheDocument();
   });
+
+  it('appends the per-row className from rowClass to the card container', () => {
+    const seat = makeSeat({ member_canonical: 'leaving@x.com' });
+    render(
+      <RosterCardList
+        seats={[seat]}
+        rowClass={(s) =>
+          s.member_canonical === 'leaving@x.com' ? 'has-removal-pending' : undefined
+        }
+      />,
+    );
+    const card = document.querySelector('[data-seat-id="leaving@x.com"]');
+    expect(card?.className).toContain('has-removal-pending');
+    expect(card?.className).toContain('roster-card');
+  });
 });

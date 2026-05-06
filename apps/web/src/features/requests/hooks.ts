@@ -11,7 +11,7 @@
 // queue / my-requests features keeps each page's mutation set local
 // while sharing the rendering primitives below.
 
-import { doc, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
+import { doc, orderBy, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail } from '@kindoo/shared';
@@ -65,6 +65,33 @@ export function usePendingRemoveRequests(memberCanonical: string | null, scope: 
       where('member_canonical', '==', memberCanonical),
     );
   }, [memberCanonical, scope]);
+  return useFirestoreCollection<AccessRequest>(q);
+}
+
+/**
+ * Live pending-request stream for a single scope. Powers the roster-
+ * page "Outstanding Requests" section + the inline pending-removal
+ * affordance on existing roster cards.
+ *
+ * Filter shape `(scope, status, requested_at)` matches the existing
+ * composite index in `firestore/firestore.indexes.json`. Ordered FIFO
+ * (oldest first) so the section list visually agrees with the manager
+ * Queue page.
+ *
+ * Rules: the requests-read predicate already permits this query for
+ * stake members reading `scope='stake'` and bishopric users reading
+ * their ward's scope. Pass `null` to disable the subscription.
+ */
+export function usePendingRequestsForScope(scope: string | null) {
+  const q = useMemo(() => {
+    if (!scope) return null;
+    return query(
+      requestsCol(db, STAKE_ID),
+      where('scope', '==', scope),
+      where('status', '==', 'pending'),
+      orderBy('requested_at', 'asc'),
+    );
+  }, [scope]);
   return useFirestoreCollection<AccessRequest>(q);
 }
 

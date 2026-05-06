@@ -61,4 +61,72 @@ describe('UtilizationBar', () => {
     expect(screen.getByText(/0 \/ 10 seats used/)).toBeInTheDocument();
     expect(fillEl().style.width).toBe('0%');
   });
+
+  describe('inline layout', () => {
+    it('puts the bar before the label in DOM order so the label sits to the right', () => {
+      const { container } = render(<UtilizationBar total={10} cap={20} layout="inline" />);
+      const wrapper = container.querySelector('.utilization');
+      expect(wrapper?.className).toContain('layout-inline');
+      const children = Array.from(wrapper?.children ?? []);
+      // First child is the bar, second is the label — that DOM order
+      // is what produces the "[bar] [label]" reading order with the
+      // flex-row layout.
+      expect(children[0]?.className).toContain('utilization-bar');
+      expect(children[1]?.className).toContain('utilization-label');
+    });
+
+    it('keeps stacked layout (label above bar) as the default', () => {
+      const { container } = render(<UtilizationBar total={10} cap={20} />);
+      const wrapper = container.querySelector('.utilization');
+      expect(wrapper?.className).toContain('layout-stacked');
+      const children = Array.from(wrapper?.children ?? []);
+      expect(children[0]?.className).toContain('utilization-label');
+      expect(children[1]?.className).toContain('utilization-bar');
+    });
+  });
+
+  describe('verb prop', () => {
+    it('uses "used" by default', () => {
+      render(<UtilizationBar total={5} cap={10} />);
+      expect(screen.getByText(/5 \/ 10 seats used/)).toBeInTheDocument();
+    });
+
+    it('swaps the trailing word to "pending" when verb=pending', () => {
+      render(<UtilizationBar total={5} cap={10} verb="pending" />);
+      expect(screen.getByText(/5 \/ 10 seats pending/)).toBeInTheDocument();
+      expect(screen.queryByText(/5 \/ 10 seats used/)).toBeNull();
+    });
+  });
+
+  describe('tone prop', () => {
+    it('adds the tone-muted class when tone=muted', () => {
+      const { container } = render(<UtilizationBar total={5} cap={10} tone="muted" />);
+      expect(container.querySelector('.utilization')?.className).toContain('tone-muted');
+    });
+
+    it('omits the tone-muted class by default', () => {
+      const { container } = render(<UtilizationBar total={5} cap={10} />);
+      expect(container.querySelector('.utilization')?.className).not.toContain('tone-muted');
+    });
+  });
+
+  describe('accent prop', () => {
+    it('forces the amber `near` fill when accent=warn even at low utilization', () => {
+      // 2 / 25 = 8% — would normally render the default blue fill.
+      render(<UtilizationBar total={2} cap={25} accent="warn" />);
+      expect(fillEl().className).toContain('near');
+    });
+
+    it('still defers to over-cap red when both accent=warn and overCap', () => {
+      render(<UtilizationBar total={30} cap={25} overCap accent="warn" />);
+      expect(fillEl().className).toContain('over');
+      expect(fillEl().className).not.toContain('near');
+    });
+
+    it('falls back to the auto fill rule when accent=auto (the default)', () => {
+      render(<UtilizationBar total={5} cap={25} />);
+      // 5 / 25 = 20% → default blue.
+      expect(fillEl().className).toBe('utilization-fill');
+    });
+  });
 });

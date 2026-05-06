@@ -10,9 +10,10 @@
 //   Line 3:  Dates: <start> → <end>          (temp seats only)
 //   Lines collapse silently when the underlying data is empty.
 //
-// Per-row `actions` and `extraBadges` slots let callers compose page-
-// specific affordances (e.g. an Edit button on All Seats; a removal-
-// pending badge once the request flow ships in Phase 6).
+// Per-row `actions`, `extraBadges`, and `rowClass` slots let callers
+// compose page-specific affordances (e.g. an Edit button on All Seats;
+// a "Pending Removal" badge + light-pink background on the bishopric
+// roster when a remove request is in flight against the member).
 //
 // Contract:
 //   - `seats`: readonly array of `Seat` from `@kindoo/shared`. Caller
@@ -23,8 +24,11 @@
 //   - `actions(seat)`: optional. Right-aligned action strip. Return
 //     `null` to omit per-row.
 //   - `extraBadges(seat)`: optional. Extra badges injected after the
-//     type badge on line 1 (e.g. a "removal pending" badge once the
-//     request flow ships).
+//     type badge on line 1 (e.g. a "Pending Removal" badge when a
+//     remove request is in flight against this member).
+//   - `rowClass(seat)`: optional. Extra className appended to the
+//     card's outer div (e.g. `has-removal-pending` for the inline
+//     removal-pending styling).
 //
 // The component is presentation-only — no Firestore / network calls.
 // Live updates happen at the page-component layer where
@@ -46,6 +50,8 @@ export interface RosterCardListProps {
   actions?: (seat: Seat) => ReactNode;
   /** Extra badges after the type badge on line 1. */
   extraBadges?: (seat: Seat) => ReactNode;
+  /** Extra className appended to each card's outer div (per row). */
+  rowClass?: (seat: Seat) => string | undefined;
 }
 
 export function RosterCardList({
@@ -54,6 +60,7 @@ export function RosterCardList({
   showScope = false,
   actions,
   extraBadges,
+  rowClass,
 }: RosterCardListProps) {
   if (seats.length === 0) {
     return <EmptyState message={emptyMessage} />;
@@ -67,6 +74,7 @@ export function RosterCardList({
           showScope={showScope}
           {...(actions ? { actions } : {})}
           {...(extraBadges ? { extraBadges } : {})}
+          {...(rowClass ? { rowClass } : {})}
         />
       ))}
     </div>
@@ -78,9 +86,10 @@ interface RosterCardProps {
   showScope: boolean;
   actions?: (seat: Seat) => ReactNode;
   extraBadges?: (seat: Seat) => ReactNode;
+  rowClass?: (seat: Seat) => string | undefined;
 }
 
-function RosterCard({ seat, showScope, actions, extraBadges }: RosterCardProps) {
+function RosterCard({ seat, showScope, actions, extraBadges, rowClass }: RosterCardProps) {
   const typeVariant = seat.type;
   const typeLabel = seat.type;
 
@@ -147,7 +156,8 @@ function RosterCard({ seat, showScope, actions, extraBadges }: RosterCardProps) 
   const actionNode = actions?.(seat) ?? null;
   const extraBadgeNodes = extraBadges?.(seat) ?? null;
 
-  const className = `roster-card type-${seat.type}`;
+  const extraRowClass = rowClass?.(seat);
+  const className = `roster-card type-${seat.type}${extraRowClass ? ` ${extraRowClass}` : ''}`;
 
   return (
     <div className={className} data-seat-id={seat.member_canonical}>

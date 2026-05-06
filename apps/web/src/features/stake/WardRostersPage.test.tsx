@@ -3,11 +3,15 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Seat, Ward } from '@kindoo/shared';
-import { makeSeat, makeWard } from '../../../test/fixtures';
+import type { AccessRequest, Seat, Ward } from '@kindoo/shared';
+import { makeRequest, makeSeat, makeWard } from '../../../test/fixtures';
 
 const useStakeWardsMock = vi.fn();
 const useWardSeatsMock = vi.fn();
+const usePendingRequestsForScopeMock = vi.fn();
+const usePendingRemoveRequestsMock = vi.fn();
+const submitMutateAsyncMock = vi.fn();
+const usePrincipalMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./hooks', () => ({
@@ -15,9 +19,63 @@ vi.mock('./hooks', () => ({
   useWardSeats: (ward: string | null) => useWardSeatsMock(ward),
 }));
 
+vi.mock('../requests/hooks', () => ({
+  usePendingRequestsForScope: (scope: string | null) => usePendingRequestsForScopeMock(scope),
+  usePendingRemoveRequests: (canonical: string | null, scope: string | null) =>
+    usePendingRemoveRequestsMock(canonical, scope),
+  useSubmitRequest: () => ({ mutateAsync: submitMutateAsyncMock, isPending: false }),
+}));
+
+vi.mock('../../lib/principal', () => ({
+  usePrincipal: () => usePrincipalMock(),
+}));
+
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }));
+
+function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
+  return {
+    isAuthenticated: true,
+    firebaseAuthSignedIn: true,
+    email: 'user@example.com',
+    canonical: 'user@example.com',
+    isPlatformSuperadmin: false,
+    managerStakes: [],
+    stakeMemberStakes: opts.stake ? ['csnorth'] : [],
+    bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
+    hasAnyRole: () => true,
+    wardsInStake: () => opts.wards ?? [],
+  };
+}
+
+function mockNoPendingRemoves() {
+  usePendingRemoveRequestsMock.mockReturnValue({
+    data: [],
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  });
+}
+
+function mockPendingRemoveFor(canonical: string) {
+  usePendingRemoveRequestsMock.mockImplementation((c: string | null) => ({
+    data: c === canonical ? [makeRequest({ type: 'remove', member_canonical: canonical })] : [],
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  }));
+}
 
 import { WardRostersPage } from './WardRostersPage';
 
@@ -49,9 +107,32 @@ function mockSeats(seats: Seat[] | undefined, isLoading = false) {
   });
 }
 
+function mockPendingRequests(requests: AccessRequest[]) {
+  usePendingRequestsForScopeMock.mockReturnValue({
+    data: requests,
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   navigateMock.mockResolvedValue(undefined);
+  // Default: no pending requests.
+  mockPendingRequests([]);
+  // Default: no pending remove requests for any seat.
+  mockNoPendingRemoves();
+  submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
+  // Default principal: bishopric of CO (the ward most tests target).
+  // Tests that need a different authority shape override via
+  // `usePrincipalMock.mockReturnValue(principal({...}))`.
+  usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
 });
 
 describe('<WardRostersPage />', () => {
@@ -100,5 +181,259 @@ describe('<WardRostersPage />', () => {
     // The select drops back to "Choose a ward…" once wards load.
     const select = screen.getByLabelText(/^Ward:/) as HTMLSelectElement;
     expect(select.value).toBe('');
+  });
+
+  describe('pending requests surfaced inline', () => {
+    it('shows the Outstanding Requests section when an add is pending for the selected ward', () => {
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'CO' })]);
+      mockPendingRequests([
+        makeRequest({
+          request_id: 'r1',
+          type: 'add_manual',
+          scope: 'CO',
+          member_canonical: 'newhire@x.com',
+          member_email: 'newhire@x.com',
+          member_name: 'New Hire',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.getByTestId('roster-pending-adds-section')).toBeInTheDocument();
+      expect(screen.getByText('New Hire')).toBeInTheDocument();
+    });
+
+    it('marks a roster card with the Pending Removal badge when a remove is pending for the selected ward', () => {
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockPendingRequests([
+        makeRequest({
+          request_id: 'r1',
+          type: 'remove',
+          scope: 'CO',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.getByTestId('pending-removal-badge-leaving@x.com')).toBeInTheDocument();
+      const card = document.querySelector('[data-seat-id="leaving@x.com"]');
+      expect(card?.className).toContain('has-removal-pending');
+    });
+  });
+
+  describe('per-row Remove affordance', () => {
+    it('renders a Remove button next to every manual / temp seat', () => {
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'temp@x.com',
+          member_email: 'temp@x.com',
+          member_name: 'Temp Person',
+          type: 'temp',
+          callings: [],
+          end_date: '2026-12-31',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+    });
+
+    it('does not render a Remove button on auto seats', () => {
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+    });
+
+    it('opens the removal confirmation dialog when Remove is clicked', async () => {
+      const user = userEvent.setup();
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      await user.click(screen.getByTestId('remove-btn-leaving@x.com'));
+      expect(screen.getByTestId('removal-dialog-form')).toBeInTheDocument();
+      expect(screen.getByTestId('removal-confirm')).toBeInTheDocument();
+    });
+
+    it('submits a remove request with the seat ward scope + member identity when confirmed', async () => {
+      const user = userEvent.setup();
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+          reason: 'sub teacher',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      await user.click(screen.getByTestId('remove-btn-leaving@x.com'));
+      await user.type(screen.getByTestId('removal-reason'), 'No longer needed');
+      await user.click(screen.getByTestId('removal-confirm'));
+      expect(submitMutateAsyncMock).toHaveBeenCalledTimes(1);
+      expect(submitMutateAsyncMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'remove',
+          scope: 'CO',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          reason: 'No longer needed',
+        }),
+      );
+    });
+
+    it('replaces the Remove button with a Removal pending badge once a remove is in flight', () => {
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockPendingRemoveFor('leaving@x.com');
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.queryByTestId('remove-btn-leaving@x.com')).toBeNull();
+      expect(screen.getByTestId('removal-pending-leaving@x.com')).toBeInTheDocument();
+    });
+
+    it('mixes auto + manual + temp seats and renders the button only on the non-auto rows (regression for staging report 2026-05-03)', () => {
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+          callings: ['Bishop'],
+        }),
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+          reason: 'sub teacher',
+        }),
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'temp@x.com',
+          member_email: 'temp@x.com',
+          member_name: 'Temp Person',
+          type: 'temp',
+          callings: [],
+          start_date: '2026-05-01',
+          end_date: '2026-12-31',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+      expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+      for (const btn of [
+        screen.getByTestId('remove-btn-manual@x.com'),
+        screen.getByTestId('remove-btn-temp@x.com'),
+      ]) {
+        expect(btn).toBeVisible();
+      }
+    });
+
+    it('hides the Remove button on rows whose scope the principal lacks authority for', () => {
+      // Bishopric of CO viewing GE — out-of-authority. The pending-
+      // removal badge / row class still need to render (read-only
+      // signal), but no Remove button.
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Genoa', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'GE',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      render(<WardRostersPage initialWard="GE" />);
+      expect(screen.queryByTestId('remove-btn-manual@x.com')).toBeNull();
+    });
+
+    it('renders the Remove button when the principal HAS authority for the scope (stake + multi-ward bishopric viewing one of those wards)', () => {
+      usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO', 'GE'] }));
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Genoa', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'GE',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      render(<WardRostersPage initialWard="GE" />);
+      expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+    });
+
+    it('hides the Remove button for a stake-only principal viewing a ward roster (stake authority does not extend to wards)', () => {
+      usePrincipalMock.mockReturnValue(principal({ stake: true }));
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.queryByTestId('remove-btn-manual@x.com')).toBeNull();
+    });
   });
 });

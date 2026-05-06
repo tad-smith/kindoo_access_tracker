@@ -4,13 +4,13 @@
 //   - Single-ward bishopric: roster scoped to that ward, no picker.
 //   - Multi-ward bishopric: a "Ward:" select appears above the
 //     utilization bar; the picker controls which ward's seats render.
-//   - Per-row remove affordance is a Phase 6 deliverable; Phase 5 is
-//     read-only so no X / removal-pending badge ships here yet.
+//   - Manual / temp rows carry a per-row Remove button via
+//     `<RemovalAffordance>`; auto rows are LCR-managed and have none.
 //
 // Live updates via `useFirestoreCollection(scope == ward)` — the
 // roster patches in place when a manager completes a request that
-// adds a seat in this ward (via the Phase 6 write paths or the
-// Importer when it lands in Phase 8/9).
+// adds a seat in this ward, or when the importer lands a new auto
+// seat.
 //
 // Search params (typed via the route's zod schema):
 //   ?ward=<wardCode>   — pre-select a ward when the principal is in
@@ -27,10 +27,15 @@ import { db } from '../../lib/firebase';
 import { useBishopricRoster } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
-import { UtilizationBar } from '../../lib/render/UtilizationBar';
+import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { Select } from '../../components/ui/Select';
 import { RemovalAffordance } from '../requests/components/RemovalAffordance';
+import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
+import { usePendingRequestsForScope } from '../requests/hooks';
+import { partitionPendingForRoster } from '../requests/rosterPending';
+import { isScopeAllowed } from '../requests/scopeOptions';
+import { Badge } from '../../components/ui/Badge';
 
 export interface BishopricRosterPageProps {
   /** Pre-selected ward code from `?ward=...`. */
@@ -55,6 +60,14 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
   const wardDocResult = useFirestoreOnce(activeWard ? wardRef(db, STAKE_ID, activeWard) : null);
   const wardDoc = wardDocResult.data;
   const sortedSeats = useMemo(() => sortSeatsWithinScope(seats.data ?? []), [seats.data]);
+
+  // Pending requests for the active ward — drives the "Outstanding
+  // Requests" section + the per-row "Pending Removal" badge.
+  const pendingRequests = usePendingRequestsForScope(activeWard);
+  const { pendingAdds, pendingRemovesByCanonical } = useMemo(
+    () => partitionPendingForRoster(pendingRequests.data ?? [], activeWard ?? ''),
+    [pendingRequests.data, activeWard],
+  );
 
   const handleWardChange = (next: string) => {
     setActiveWard(next);
@@ -108,21 +121,45 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
       ) : null}
 
       <div className="kd-utilization-host">
-        <UtilizationBar
-          total={seatCount}
+        <RosterUtilization
+          committedTotal={seatCount}
           cap={wardDoc?.seat_cap ?? null}
-          overCap={wardDoc?.seat_cap !== undefined && seatCount > wardDoc.seat_cap}
+          pendingAdds={pendingAdds.length}
+          pendingRemoves={pendingRemovesByCanonical.size}
+          committedOverCap={wardDoc?.seat_cap !== undefined && seatCount > wardDoc.seat_cap}
         />
       </div>
 
       {seats.isLoading || seats.data === undefined ? (
         <LoadingSpinner />
       ) : (
-        <RosterCardList
-          seats={sortedSeats}
-          emptyMessage="No seats assigned to this ward yet. A Kindoo Manager imports from LCR weekly; manual additions land via the New Kindoo Request page."
-          actions={(seat) => (seat.type === 'auto' ? null : <RemovalAffordance seat={seat} />)}
-        />
+        <>
+          <RosterCardList
+            seats={sortedSeats}
+            emptyMessage="No seats assigned to this ward yet. A Kindoo Manager imports from LCR weekly; manual additions land via the New Kindoo Request page."
+            actions={(seat) =>
+              seat.type === 'auto' || !isScopeAllowed(principal, STAKE_ID, seat.scope) ? null : (
+                <RemovalAffordance seat={seat} />
+              )
+            }
+            extraBadges={(seat) =>
+              pendingRemovesByCanonical.has(seat.member_canonical) ? (
+                <Badge
+                  variant="danger"
+                  data-testid={`pending-removal-badge-${seat.member_canonical}`}
+                >
+                  Pending Removal
+                </Badge>
+              ) : null
+            }
+            rowClass={(seat) =>
+              pendingRemovesByCanonical.has(seat.member_canonical)
+                ? 'has-removal-pending'
+                : undefined
+            }
+          />
+          <PendingAddRequestsSection pendingAdds={pendingAdds} />
+        </>
       )}
     </section>
   );
