@@ -477,7 +477,7 @@ Phase 9 (`phase-9-resend-email` branch) adds three append-only-safe fields to `p
 Append-only — no rename, no removal — so web consumers (`apps/web/`) only need to handle the new enum case in any audit-action display surface. Currently no surface renders distinct copy per audit action, so no follow-up edit is required; the new code just falls through to the generic action label.
 
 ## [T-34] Document `WEB_BASE_URL` env var in deploy runbook
-Status: done (PR #TBD, 2026-05-03)
+Status: done (PR #66, 2026-05-03)
 Owner: @docs-keeper
 Phase: 9 follow-up
 
