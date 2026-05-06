@@ -470,7 +470,7 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
 
 **Invariants:**
 - `auditId` is deterministic from `(collection, docId, writeTime)` so trigger retries are idempotent.
-- `member_canonical` is set whenever the underlying doc has a `member_canonical` field; absent for system actions (`import_start`, `over_cap_warning`, `setup_complete`, `email_send_failed`).
+- `member_canonical` is set whenever the underlying doc has a `member_canonical` field; absent for system actions (`import_start`, `import_end`, `over_cap_warning`, `setup_complete`, `email_send_failed`).
 - Firestore TTL policy on the `ttl` field deletes rows ~24h after their `ttl` timestamp passes.
 
 ## 5. Indexes
