@@ -676,7 +676,7 @@ function CompleteSetupButton({ enabled, onCompleted }: CompleteSetupProps) {
         await invokeInstallScheduledJobs();
       } catch (callErr) {
         toast(
-          `Setup complete, but scheduled-jobs install warned: ${errorMessage(callErr)}`,
+          `Setup complete, but scheduled jobs could not be enabled: ${errorMessage(callErr)}`,
           'warn',
         );
       }

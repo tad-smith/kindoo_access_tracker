@@ -78,8 +78,7 @@ export function PushNotificationsPanel() {
     return (
       <PanelShell>
         <p className="kd-form-hint" data-testid="push-vapid-missing">
-          Push notifications are not configured for this deployment. Operator: set
-          <code> VITE_FCM_VAPID_PUBLIC_KEY</code> in the deploy environment.
+          Push notifications are not configured for this site. Contact your administrator.
         </p>
       </PanelShell>
     );

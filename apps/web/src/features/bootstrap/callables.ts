@@ -33,7 +33,7 @@ export async function invokeInstallScheduledJobs(): Promise<InstallScheduledJobs
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (/not[- ]?found/i.test(message)) {
-      throw new Error('Scheduled-jobs installer not yet enabled (deploy Phase 8 backend).');
+      throw new Error('Scheduled jobs are not available in this environment yet.');
     }
     throw err;
   }
@@ -52,7 +52,7 @@ export async function invokeRunImportNow(stakeId: string): Promise<ImportSummary
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (/not[- ]?found/i.test(message)) {
-      throw new Error('Import not yet enabled — Phase 8 ships this.');
+      throw new Error('Import is not available in this environment yet.');
     }
     throw err;
   }
