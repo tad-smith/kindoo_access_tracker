@@ -160,8 +160,10 @@ test.describe('Manager Import Now (live Functions emulator)', () => {
     await expect(page.getByTestId('import-summary-updated')).toHaveText('0');
 
     // Live stake-doc subscription updates `last_import_summary` once
-    // the importer commits its writeStakeImportSummary step.
-    await expect(page.getByTestId('import-last-summary')).toContainText(/1 inserts/);
+    // the importer commits its writeStakeImportSummary step. The
+    // formatter pluralises ("1 insert", "0 deletes", ...); match the
+    // singular form for the one insert this fixture produces.
+    await expect(page.getByTestId('import-last-summary')).toContainText(/1 insert\b/);
     // No over-cap pools at stake_seat_cap=100; banner stays hidden.
     await expect(page.getByTestId('import-over-cap-banner')).toHaveCount(0);
   });

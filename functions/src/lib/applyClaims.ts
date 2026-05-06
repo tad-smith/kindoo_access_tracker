@@ -12,6 +12,23 @@ import type { CustomClaims, StakeClaims } from '@kindoo/shared';
 import { getAdminAuth } from './admin.js';
 
 /**
+ * Test-only short-circuit: when `KINDOO_SKIP_CLAIM_SYNC=true` is set on
+ * the function runtime, the three claim-applier helpers below all
+ * return without touching `setCustomUserClaims` or
+ * `revokeRefreshTokens`. The E2E suite sets the env var so the
+ * Auth-emulator's `setCustomAttributes` (called via `setCustomClaims`
+ * REST in `e2e/fixtures/emulator.ts`) is the sole source of truth for
+ * claims during a spec — without this, the claim-sync triggers race
+ * the synthetic seed and the user's effective claims are nondeterministic.
+ * Production never sets the env var; integration tests run in-process
+ * and bypass triggers entirely; only the live Functions emulator path
+ * exercised by Playwright opts in.
+ */
+function shouldSkip(): boolean {
+  return process.env['KINDOO_SKIP_CLAIM_SYNC'] === 'true';
+}
+
+/**
  * Merge the (possibly empty) `newStakeClaims` for `stakeId` into the
  * user's existing claim block, write the result via
  * `setCustomUserClaims`, and revoke refresh tokens iff the result
@@ -27,6 +44,7 @@ export async function applyStakeClaims(
   stakeId: string,
   newStakeClaims: StakeClaims | null,
 ): Promise<void> {
+  if (shouldSkip()) return;
   const auth = getAdminAuth();
   const user = await auth.getUser(uid);
   const existing = (user.customClaims ?? null) as CustomClaims | null;
@@ -49,6 +67,7 @@ export async function applySuperadminClaim(
   canonical: string,
   flag: boolean,
 ): Promise<void> {
+  if (shouldSkip()) return;
   const auth = getAdminAuth();
   const user = await auth.getUser(uid);
   const existing = (user.customClaims ?? null) as CustomClaims | null;
@@ -69,6 +88,7 @@ export async function applySuperadminClaim(
  * `seedClaimsFromRoleData` has computed the from-scratch payload.
  */
 export async function applyFullClaims(uid: string, claims: CustomClaims): Promise<void> {
+  if (shouldSkip()) return;
   const auth = getAdminAuth();
   const user = await auth.getUser(uid);
   const existing = (user.customClaims ?? null) as CustomClaims | null;

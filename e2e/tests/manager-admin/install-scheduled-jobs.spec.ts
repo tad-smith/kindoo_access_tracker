@@ -20,7 +20,7 @@ import {
   clearAuth,
   clearFirestore,
   createAuthUser,
-  waitForServerStakeClaim,
+  setCustomClaims,
   writeDoc,
 } from '../../fixtures/emulator';
 
@@ -100,18 +100,14 @@ test.describe('Bootstrap wizard install-scheduled-jobs (live Functions emulator)
       notifications_enabled: true,
     });
 
-    // Order is load-bearing: pre-seed the kindooManagers doc BEFORE
-    // creating the auth user so `onAuthUserCreate` reads the active
-    // manager record on first sign-in and stamps the manager claim
-    // itself (rather than racing against synthetic `setCustomClaims`).
-    // `waitForServerStakeClaim` then blocks until the trigger has
-    // committed — sign-in's first force-refresh returns a token whose
-    // claims are in the desired terminal state, and post-Complete-Setup
-    // navigation routes the now-claim-bearing user to the manager
-    // dashboard (Shell + ToastHost) so the "Setup complete!" toast
-    // survives the redirect. The `installScheduledJobs` callable reads
-    // the kindooManagers doc directly so its invocation succeeds
-    // independent of claim plumbing.
+    // Pre-seed the kindooManagers doc + manager custom claims. The
+    // `installScheduledJobs` callable reads the kindooManagers doc
+    // directly so its invocation succeeds independent of claim
+    // plumbing; the synthetic claims let the post-Complete-Setup
+    // redirect route the user to the manager dashboard (Shell + Toast
+    // Host) so the success toast survives navigation. CI runs the
+    // claim-sync triggers with `KINDOO_SKIP_CLAIM_SYNC=true`, so the
+    // synthetic seed is the sole source of truth for claims.
     await writeDoc(`stakes/${STAKE_ID}/kindooManagers/${adminEmail}`, {
       member_canonical: adminEmail,
       member_email: adminEmail,
@@ -119,7 +115,10 @@ test.describe('Bootstrap wizard install-scheduled-jobs (live Functions emulator)
       active: true,
     });
     const { uid } = await createAuthUser({ email: adminEmail });
-    await waitForServerStakeClaim(uid, STAKE_ID);
+    await setCustomClaims(uid, {
+      canonical: adminEmail,
+      stakes: { [STAKE_ID]: { manager: true, stake: false, wards: [] } },
+    });
 
     await page.goto('/');
     await signInViaTestHatch(page, adminEmail, TEST_PASSWORD);

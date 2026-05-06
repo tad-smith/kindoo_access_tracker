@@ -132,9 +132,16 @@ jobs:
         # registration so the Functions emulator does not interactively
         # prompt the no-stdin runner. Stub values are fine — email
         # sends are mocked in tests and never reach the configured URL.
+        # `KINDOO_SKIP_CLAIM_SYNC=true` short-circuits the three claim-
+        # sync helpers in `functions/src/lib/applyClaims.ts` so the
+        # E2E suite's synthetic `setCustomClaims` seeds win over the
+        # `onAuthUserCreate` / `syncManagersClaims` / `syncAccessClaims`
+        # writes that would otherwise race them and leave existing
+        # manager / stake / bishopric specs nondeterministic.
         run: |
           cat > functions/.env.kindoo-staging <<'EOF'
           WEB_BASE_URL=https://kindoo-staging.web.app
+          KINDOO_SKIP_CLAIM_SYNC=true
           EOF
           pnpm --filter @kindoo/functions build
         continue-on-error: true
