@@ -44,6 +44,43 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
 
    - **TODO post-B1:** lock down operator access; the prod alias should require an additional `firebase login:add` step or a separate operator-account.
 
+5. **Verify per-project env files contain `WEB_BASE_URL`.**
+
+   The notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`) build deep-link URLs in email + push payloads (e.g. the link in a "your request was approved" email goes to `${WEB_BASE_URL}/request/{requestId}`). The triggers run server-side and have no access to the SPA's compiled-in env, so the value must be supplied as a Firebase Functions param at deploy time. Declared via `defineString('WEB_BASE_URL')` in `functions/src/lib/params.ts`; consumed at runtime by `EmailService.buildLink()` via `WEB_BASE_URL.value()`.
+
+   The value is per-project — staging links must NOT point at prod, and vice versa. Set it via the per-project env file in `functions/`:
+
+   ```bash
+   cat functions/.env.kindoo-staging | grep WEB_BASE_URL
+   # Expected: WEB_BASE_URL=https://staging.stakebuildingaccess.org
+
+   cat functions/.env.kindoo-prod | grep WEB_BASE_URL
+   # Expected: WEB_BASE_URL=https://stakebuildingaccess.org
+   ```
+
+   If either file is missing or the line is absent, create it before deploying:
+
+   ```bash
+   cat > functions/.env.kindoo-staging <<EOF
+   WEB_BASE_URL=https://staging.stakebuildingaccess.org
+   EOF
+
+   cat > functions/.env.kindoo-prod <<EOF
+   WEB_BASE_URL=https://stakebuildingaccess.org
+   EOF
+   ```
+
+   The Firebase default origins `https://kindoo-staging.web.app` and `https://kindoo-prod.web.app` are also valid — they are the pre-cutover values used while the custom domain is not yet attached. Post-Phase-11 the custom domains are canonical.
+
+   `functions/.env.*` is gitignored. The full setup walkthrough (including Resend's `RESEND_API_KEY` companion secret) lives in `infra/runbooks/resend-api-key-setup.md` §4.
+
+   **How the value reaches Cloud Build.** `firebase.json` sets `functions.source: "functions/lib"`, so Firebase CLI reads `.env.<projectId>` from `functions/lib/`, not `functions/`. `functions/scripts/build.mjs` (lines 110-118) iterates every `functions/.env.*` and `fs.copyFile`s each one to `functions/lib/.env.*` on every build. The copy is unconditional — source overwrites lib/ — so a stale empty `lib/.env.<projectId>` from a prior CLI interactive prompt cannot silently shadow the real source value. Source is the single source of truth; edit `functions/.env.<projectId>` and the next build re-syncs.
+
+   **Failure modes if the variable is unset:**
+
+   - **At deploy time:** `firebase deploy` may interactively prompt with `Enter a string value for WEB_BASE_URL:` and stash whatever you type into `functions/lib/.env.<projectId>`. If you take this path, mirror the value into `functions/.env.<projectId>` immediately — otherwise the next build overwrites lib/ with an empty value.
+   - **At runtime:** `WEB_BASE_URL.value()` returns the empty string. `EmailService.buildLink()` throws `WEB_BASE_URL is not set on the function. Set it at deploy time.`; the trigger surface catches the throw via `safeBuildLink`, logs `email skipped — link build failed`, and writes one `email_send_failed` audit row tagged `type='config'` per affected request. Visible-but-not-silent surfacing of deploy-time misconfiguration, but emails do not ship and notifications stop until the value is restored.
+
 ## Staging deploy
 
 1. **Run the deploy script in dry-run first.**
