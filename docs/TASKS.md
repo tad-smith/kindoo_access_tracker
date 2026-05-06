@@ -114,11 +114,13 @@ Phase: 1 → due before Phase 4 staging deploy
 Closed 2026-04-28 (option b): `infra/scripts/stamp-version.js` now emits per-workspace named exports — `KINDOO_WEB_VERSION` + `KINDOO_WEB_BUILT_AT` for `apps/web/src/version.ts`, `KINDOO_FUNCTIONS_VERSION` + `KINDOO_FUNCTIONS_BUILT_AT` for `functions/src/version.ts`. Consumer-side files unchanged. See PR #fix/t-01-version-stamper-shape.
 
 ## [T-02] Document `firebase-tools` standalone-binary footgun in deploy runbook
-Status: open
-Owner: @infra-engineer
+Status: done (2026-05-03)
+Owner: @docs-keeper
 Phase: 1 → cross-cutting
 
 The standalone pkg-bundled `firebase` binary at `/usr/local/bin/firebase` (282 MB; embedded old Node) cannot `require()` ESM packages, so `firebase emulators:exec` breaks any ESM script (e.g., Vitest 2.x). The npm-installed firebase-tools is a small Node shim and works. Add a warning section to `infra/runbooks/deploy.md` (and any local-dev runbook the operator follows) telling operators to install firebase-tools via npm and to never `pnpm install -g firebase-tools` with sudo (corrupts `~/.npm`).
+
+Closed 2026-05-03: canonical writeup landed at `infra/runbooks/provision-firebase-projects.md` §0.4 ("firebase CLI installed the right way") covering all three failure modes — standalone-binary ESM breakage, the npm-shim-uses-system-Node contrast, and the `sudo pnpm install -g` cache-corruption trap with detect/fix commands. `infra/runbooks/deploy.md` pre-flight step 2 is a brief pointer back to that section.
 
 ## [T-03] Operator setup B1 — Firebase projects, billing, service accounts, IAM
 Status: done (2026-04-28)

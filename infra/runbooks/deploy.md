@@ -17,7 +17,16 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
 
    Expected output: `working tree clean` and `main`. Any uncommitted changes or other branch → stop. The deploy bakes the current commit's git short SHA into the build via `infra/scripts/stamp-version.js`; if your tree is dirty, the version stamp won't match what's in git.
 
-2. **Verify Firebase CLI auth.**
+2. **Verify the firebase CLI is the npm-installed shim, not the standalone binary.**
+
+   ```bash
+   which firebase
+   ls -la "$(which firebase)"
+   ```
+
+   The path must resolve to either `node_modules/.bin/firebase` (this repo) or the small Node shim from `npm install -g firebase-tools`. If it is the ~282 MB standalone binary at `/usr/local/bin/firebase`, the emulator-driven tests this deploy depends on fail with cryptic ESM errors. See `infra/runbooks/provision-firebase-projects.md` §0.4 ("firebase CLI installed the right way") for the full footgun writeup and the fix. Do not run `pnpm install -g firebase-tools` with sudo — same section explains why.
+
+3. **Verify Firebase CLI auth.**
 
    ```bash
    firebase login:list
@@ -25,7 +34,7 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
 
    Expected: at least one account listed. If empty, run `firebase login`.
 
-3. **Verify the project alias resolves.**
+4. **Verify the project alias resolves.**
 
    ```bash
    firebase use staging   # or: firebase use prod
