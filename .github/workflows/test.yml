@@ -124,20 +124,28 @@ jobs:
         # not-found path. Predeploy hooks in firebase.json only fire on
         # `firebase deploy`, not on `emulators:exec`, so we run the
         # build explicitly here.
-        run: pnpm --filter @kindoo/functions build
+        #
+        # Synthesize functions/.env.kindoo-staging FIRST so the build
+        # script copies it into functions/lib/. The real env file is
+        # gitignored (it's per-project deploy config); CI just needs
+        # placeholder values that satisfy the `defineString` param
+        # registration so the Functions emulator does not interactively
+        # prompt the no-stdin runner. Stub values are fine — email
+        # sends are mocked in tests and never reach the configured URL.
+        run: |
+          cat > functions/.env.kindoo-staging <<'EOF'
+          WEB_BASE_URL=https://kindoo-staging.web.app
+          EOF
+          pnpm --filter @kindoo/functions build
         continue-on-error: true
 
       - name: E2E tests
         id: e2e
         # `--project kindoo-staging` matches `VITE_FIREBASE_PROJECT_ID`
-        # baked into the SPA preview build. Per-project `.env.<project>`
-        # files (`functions/.env.kindoo-staging`) are gitignored, so we
-        # supply the function-side `defineString` params directly via
-        # the runner env. Without WEB_BASE_URL the Functions emulator
-        # blocks the runner waiting on stdin (the framework's default-
-        # value prompt) until the 20-min job timeout fires.
-        env:
-          WEB_BASE_URL: https://kindoo-staging.web.app
+        # baked into the SPA preview build and tells Firebase CLI which
+        # `.env.<project>` file to load (synthesized by the build step
+        # above so the Functions emulator's `defineString` params do
+        # not prompt the no-stdin runner).
         run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions,hosting --project kindoo-staging "pnpm test:e2e"
         continue-on-error: true
 
