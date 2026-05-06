@@ -477,11 +477,13 @@ Phase 9 (`phase-9-resend-email` branch) adds three append-only-safe fields to `p
 Append-only — no rename, no removal — so web consumers (`apps/web/`) only need to handle the new enum case in any audit-action display surface. Currently no surface renders distinct copy per audit action, so no follow-up edit is required; the new code just falls through to the generic action label.
 
 ## [T-34] Document `WEB_BASE_URL` env var in deploy runbook
-Status: open
-Owner: @infra-engineer
+Status: done (PR #TBD, 2026-05-03)
+Owner: @docs-keeper
 Phase: 9 follow-up
 
 Phase 9's email triggers (`notifyOnRequestWrite`, `notifyOnOverCap`) read `process.env.WEB_BASE_URL` to compose deep-link URLs in email bodies. The variable is declared via `defineString('WEB_BASE_URL')` in both triggers and is set per-project via `functions/.env.<project>` at deploy time. `infra/runbooks/resend-api-key-setup.md` Step 4 documents the mechanism for the Phase 9 deploy, but `infra/runbooks/deploy.md` doesn't currently list `WEB_BASE_URL` among the per-project env vars / secrets the operator must set before a clean deploy. Cross-link from `deploy.md` so the per-project deploy checklist surfaces it without requiring the operator to follow the Resend runbook.
+
+Closed 2026-05-03: `infra/runbooks/deploy.md` Pre-flight step 5 ("Verify per-project env files contain `WEB_BASE_URL`") now documents the variable, its per-project values, the `build.mjs` copy mechanism, and both deploy-time + runtime failure modes. Cross-links to `resend-api-key-setup.md` §4 for the full setup walkthrough.
 
 ## [T-33] Phase 11 cutover — silence Apps Script Main email path
 Status: done (closed by Phase 11 cutover, 2026-05-03)
