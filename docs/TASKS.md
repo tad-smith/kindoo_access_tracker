@@ -365,9 +365,11 @@ Operator surfaced 7 issues during manual staging of the bootstrap wizard. Shippe
 - **"Complete Setup" disabled with no indication.** Helper text below the button lists which prerequisites are missing (e.g., "Add at least one building").
 
 ## [T-24] Audit-and-fix unscoped `qc.invalidateQueries()` calls (DIY-hook placeholder-queryFn footgun)
-Status: open
+Status: done (PR #TBD, 2026-05-03)
 Owner: @web-engineer
 Phase: cross-cutting
+
+Audit completed; 5 unsafe-looking callsites voided defensively (all keyed away from the DIY-hook `__kindoo_firestore__` prefix, so technically safe, but voided for uniformity); 32 callsites already used `void qc.invalidateQueries()`; lint rule skipped because `apps/web/` has no ESLint infrastructure (lint script is `prettier --check`) and standing up `@typescript-eslint` for one rule is disproportionate. Future regressions are guarded by the now-uniform `void` convention plus the comment trail at each callsite citing the DIY-hook key prefix. Path-2 (replace the placeholder queryFn) explicitly out of scope — see comments in `useFirestoreDoc.ts`.
 
 The DIY Firestore hooks (`useFirestoreDoc`, `useFirestoreCollection`) at `apps/web/src/lib/data/` use a never-resolving placeholder `queryFn` so `onSnapshot` is the source of truth for cache writes (per architecture D11). Side-effect: `qc.invalidateQueries()` (no args, or any keyset that matches a live-listener entry) returns a Promise that never resolves, because TanStack awaits the matched queries' refetches and the placeholder `queryFn` never settles. Mutations that `await` the invalidate via `onSuccess` chain hang forever — `mutateAsync` never resolves → `mutation.isPending` stays `true` → the submit button reads "Adding…" until the page is refreshed.
 
