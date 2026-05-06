@@ -84,11 +84,11 @@ describe('useRunImportNowMutation', () => {
     expect(out).toEqual(expected);
   });
 
-  it('rewrites a "not-found" error to a friendly Phase-8-not-deployed message', async () => {
+  it('rewrites a "not-found" error to a friendly not-available message', async () => {
     callableInvoke.mockRejectedValueOnce(new Error('functions/not-found: callable missing'));
     const { result } = renderHook(() => useRunImportNowMutation(), { wrapper });
 
-    await expect(result.current.mutateAsync()).rejects.toThrow(/not yet enabled/i);
+    await expect(result.current.mutateAsync()).rejects.toThrow(/not available/i);
   });
 
   it('surfaces the original error for non-not-found failures', async () => {

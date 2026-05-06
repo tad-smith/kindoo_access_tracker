@@ -109,7 +109,7 @@ export function useEnablePushMutation() {
       const vapidKey = getVapidPublicKey();
       if (!vapidKey) {
         throw new Error(
-          'VAPID key not configured. Set VITE_FCM_VAPID_PUBLIC_KEY in the deploy environment.',
+          'Push notifications are not configured for this site. Contact your administrator.',
         );
       }
       if (typeof Notification === 'undefined') {
@@ -129,7 +129,7 @@ export function useEnablePushMutation() {
       const messaging = getMessaging(firebaseApp);
       const token = await getToken(messaging, { vapidKey });
       if (!token) {
-        throw new Error('Failed to obtain FCM registration token.');
+        throw new Error('Could not register this device for push notifications.');
       }
 
       const deviceId = getDeviceId();

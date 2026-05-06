@@ -472,7 +472,7 @@ function CompleteRemoveDialog({ request, open, onOpenChange }: CompleteRemoveDia
       open={open}
       onOpenChange={onOpenChange}
       title="Mark removal complete?"
-      description={`Confirms removal of ${request.member_email}'s seat in ${request.scope}. Phase 8's Cloud Function deletes the seat doc; if the seat is already gone, the request still flips with a no-op note.`}
+      description={`Removes ${request.member_email}'s seat in ${request.scope}. If the seat has already been removed, the request will still be marked complete.`}
     >
       <Dialog.Footer>
         <Dialog.CancelButton>Cancel</Dialog.CancelButton>

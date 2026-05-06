@@ -195,7 +195,7 @@ describe('useEnablePushMutation', () => {
       act(async () => {
         await result.current.mutateAsync();
       }),
-    ).rejects.toThrow(/VAPID key not configured/);
+    ).rejects.toThrow(/Push notifications are not configured/);
     expect(setDocMock).not.toHaveBeenCalled();
   });
 });
