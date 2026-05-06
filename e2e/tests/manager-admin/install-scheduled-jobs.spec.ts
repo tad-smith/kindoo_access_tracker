@@ -100,29 +100,18 @@ test.describe('Bootstrap wizard install-scheduled-jobs (live Functions emulator)
       notifications_enabled: true,
     });
 
-    // Pre-seed the kindooManagers doc BEFORE creating the auth user
-    // so `onAuthUserCreate` reads the active manager record and stamps
-    // the correct claims at first sign-in (canonical + manager:true on
-    // STAKE_ID). This avoids a triple-trigger race against
-    // `setCustomClaims` (which would otherwise be the obvious shortcut
-    // but loses to whichever trigger writes claims last). After Complete
-    // Setup flips setup_complete=true, the post-setup redirect routes
-    // the claim-bearing user to the manager dashboard (Shell mounts
-    // ToastHost so the "Setup complete!" toast survives navigation).
-    // Pre-seed manager custom claims AND the kindooManagers doc so the
-    // post-Complete-Setup redirect routes the now-claim-bearing user
-    // to the manager dashboard (Shell + ToastHost) — the success toast
-    // survives the navigation. The `installScheduledJobs` callable
-    // reads the kindooManagers doc directly so its post-setup
-    // invocation succeeds independent of claim plumbing.
-    //
-    // Order is load-bearing: pre-seeding the kindooManagers doc BEFORE
-    // creating the auth user ensures `onAuthUserCreate` reads it on
-    // first sign-in and stamps the manager claim itself (rather than
-    // racing against our synthetic `setCustomClaims`). The `await
-    // waitForServerStakeClaim` then blocks until the trigger has
-    // committed — sign-in's first force-refresh now returns a token
-    // whose claims are in the desired terminal state.
+    // Order is load-bearing: pre-seed the kindooManagers doc BEFORE
+    // creating the auth user so `onAuthUserCreate` reads the active
+    // manager record on first sign-in and stamps the manager claim
+    // itself (rather than racing against synthetic `setCustomClaims`).
+    // `waitForServerStakeClaim` then blocks until the trigger has
+    // committed — sign-in's first force-refresh returns a token whose
+    // claims are in the desired terminal state, and post-Complete-Setup
+    // navigation routes the now-claim-bearing user to the manager
+    // dashboard (Shell + ToastHost) so the "Setup complete!" toast
+    // survives the redirect. The `installScheduledJobs` callable reads
+    // the kindooManagers doc directly so its invocation succeeds
+    // independent of claim plumbing.
     await writeDoc(`stakes/${STAKE_ID}/kindooManagers/${adminEmail}`, {
       member_canonical: adminEmail,
       member_email: adminEmail,
