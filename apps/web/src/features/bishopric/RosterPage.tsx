@@ -31,6 +31,10 @@ import { UtilizationBar } from '../../lib/render/UtilizationBar';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { Select } from '../../components/ui/Select';
 import { RemovalAffordance } from '../requests/components/RemovalAffordance';
+import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
+import { usePendingRequestsForScope } from '../requests/hooks';
+import { partitionPendingForRoster } from '../requests/rosterPending';
+import { Badge } from '../../components/ui/Badge';
 
 export interface BishopricRosterPageProps {
   /** Pre-selected ward code from `?ward=...`. */
@@ -55,6 +59,14 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
   const wardDocResult = useFirestoreOnce(activeWard ? wardRef(db, STAKE_ID, activeWard) : null);
   const wardDoc = wardDocResult.data;
   const sortedSeats = useMemo(() => sortSeatsWithinScope(seats.data ?? []), [seats.data]);
+
+  // Pending requests for the active ward — drives the "Outstanding
+  // Requests" section + the per-row "Pending Removal" badge.
+  const pendingRequests = usePendingRequestsForScope(activeWard);
+  const { pendingAdds, pendingRemovesByCanonical } = useMemo(
+    () => partitionPendingForRoster(pendingRequests.data ?? [], activeWard ?? ''),
+    [pendingRequests.data, activeWard],
+  );
 
   const handleWardChange = (next: string) => {
     setActiveWard(next);
@@ -118,11 +130,29 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
       {seats.isLoading || seats.data === undefined ? (
         <LoadingSpinner />
       ) : (
-        <RosterCardList
-          seats={sortedSeats}
-          emptyMessage="No seats assigned to this ward yet. A Kindoo Manager imports from LCR weekly; manual additions land via the New Kindoo Request page."
-          actions={(seat) => (seat.type === 'auto' ? null : <RemovalAffordance seat={seat} />)}
-        />
+        <>
+          <RosterCardList
+            seats={sortedSeats}
+            emptyMessage="No seats assigned to this ward yet. A Kindoo Manager imports from LCR weekly; manual additions land via the New Kindoo Request page."
+            actions={(seat) => (seat.type === 'auto' ? null : <RemovalAffordance seat={seat} />)}
+            extraBadges={(seat) =>
+              pendingRemovesByCanonical.has(seat.member_canonical) ? (
+                <Badge
+                  variant="danger"
+                  data-testid={`pending-removal-badge-${seat.member_canonical}`}
+                >
+                  Pending Removal
+                </Badge>
+              ) : null
+            }
+            rowClass={(seat) =>
+              pendingRemovesByCanonical.has(seat.member_canonical)
+                ? 'has-removal-pending'
+                : undefined
+            }
+          />
+          <PendingAddRequestsSection pendingAdds={pendingAdds} />
+        </>
       )}
     </section>
   );

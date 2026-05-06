@@ -12,12 +12,13 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Seat, Ward } from '@kindoo/shared';
-import { makeSeat, makeWard } from '../../../test/fixtures';
+import type { AccessRequest, Seat, Ward } from '@kindoo/shared';
+import { makeRequest, makeSeat, makeWard } from '../../../test/fixtures';
 
 const usePrincipalMock = vi.fn();
 const useBishopricRosterMock = vi.fn();
 const useFirestoreOnceMock = vi.fn();
+const usePendingRequestsForScopeMock = vi.fn();
 // Real navigate returns a Promise; the page calls `.catch(...)` on it.
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
@@ -51,6 +52,7 @@ vi.mock('../requests/hooks', () => ({
     isFetching: false,
     fetchStatus: 'idle',
   }),
+  usePendingRequestsForScope: (scope: string | null) => usePendingRequestsForScopeMock(scope),
   useSubmitRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
@@ -99,9 +101,26 @@ function mockWardDoc(ward: Ward | undefined) {
   });
 }
 
+function mockPendingRequests(requests: AccessRequest[]) {
+  usePendingRequestsForScopeMock.mockReturnValue({
+    data: requests,
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   navigateMock.mockResolvedValue(undefined);
+  // Default: no pending requests. Tests that exercise the new
+  // pending-roster surfaces override via mockPendingRequests.
+  mockPendingRequests([]);
 });
 
 describe('<BishopricRosterPage />', () => {
@@ -202,5 +221,104 @@ describe('<BishopricRosterPage />', () => {
     mockWardDoc(undefined);
     render(<BishopricRosterPage />);
     expect(screen.getByText(/no bishopric wards/i)).toBeInTheDocument();
+  });
+
+  describe('pending requests surfaced inline', () => {
+    it('hides the Outstanding Requests section when there are no pending adds', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({ member_canonical: 'a@x.com', member_email: 'a@x.com', member_name: 'Alice' }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      mockPendingRequests([]);
+      render(<BishopricRosterPage />);
+      expect(screen.queryByTestId('roster-pending-adds-section')).toBeNull();
+      // No card carries the pending-removal class.
+      expect(document.querySelector('.has-removal-pending')).toBeNull();
+    });
+
+    it('shows an Outstanding Requests card with a Pending badge when an add is pending for the scope', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      mockPendingRequests([
+        makeRequest({
+          request_id: 'r1',
+          type: 'add_manual',
+          scope: 'CO',
+          member_canonical: 'newhire@x.com',
+          member_email: 'newhire@x.com',
+          member_name: 'New Hire',
+        }),
+      ]);
+      render(<BishopricRosterPage />);
+      expect(screen.getByTestId('roster-pending-adds-section')).toBeInTheDocument();
+      expect(screen.getByText('New Hire')).toBeInTheDocument();
+      expect(screen.getAllByTestId('pending-add-badge')).toHaveLength(1);
+    });
+
+    it('marks the matching roster card with a Pending Removal badge + has-removal-pending class', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      mockPendingRequests([
+        makeRequest({
+          request_id: 'r1',
+          type: 'remove',
+          scope: 'CO',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+        }),
+      ]);
+      render(<BishopricRosterPage />);
+      expect(screen.getByTestId('pending-removal-badge-leaving@x.com')).toBeInTheDocument();
+      const card = document.querySelector('[data-seat-id="leaving@x.com"]');
+      expect(card?.className).toContain('has-removal-pending');
+      // No new section because there are no pending adds, only a remove.
+      expect(screen.queryByTestId('roster-pending-adds-section')).toBeNull();
+    });
+
+    it('applies both effects when a roster has a pending add AND a pending remove', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      mockPendingRequests([
+        makeRequest({
+          request_id: 'r-add',
+          type: 'add_manual',
+          scope: 'CO',
+          member_canonical: 'arriving@x.com',
+          member_email: 'arriving@x.com',
+          member_name: 'Arriving Soon',
+        }),
+        makeRequest({
+          request_id: 'r-remove',
+          type: 'remove',
+          scope: 'CO',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+        }),
+      ]);
+      render(<BishopricRosterPage />);
+      expect(screen.getByTestId('roster-pending-adds-section')).toBeInTheDocument();
+      expect(screen.getByText('Arriving Soon')).toBeInTheDocument();
+      expect(screen.getByTestId('pending-removal-badge-leaving@x.com')).toBeInTheDocument();
+    });
   });
 });

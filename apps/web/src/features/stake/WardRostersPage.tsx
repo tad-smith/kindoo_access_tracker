@@ -11,6 +11,10 @@ import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { UtilizationBar } from '../../lib/render/UtilizationBar';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { Select } from '../../components/ui/Select';
+import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
+import { usePendingRequestsForScope } from '../requests/hooks';
+import { partitionPendingForRoster } from '../requests/rosterPending';
+import { Badge } from '../../components/ui/Badge';
 
 export interface WardRostersPageProps {
   /** Pre-selected ward code from `?ward=...`. */
@@ -44,6 +48,14 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
   );
   const sortedSeats = useMemo(() => sortSeatsWithinScope(seats.data ?? []), [seats.data]);
   const seatCount = seats.data?.length ?? 0;
+
+  // Pending requests for the selected ward — drives the "Outstanding
+  // Requests" section + the per-row "Pending Removal" badge.
+  const pendingRequests = usePendingRequestsForScope(selected);
+  const { pendingAdds, pendingRemovesByCanonical } = useMemo(
+    () => partitionPendingForRoster(pendingRequests.data ?? [], selected ?? ''),
+    [pendingRequests.data, selected],
+  );
 
   const handleChange = (next: string) => {
     const value = next || null;
@@ -90,10 +102,28 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
           {seats.isLoading || seats.data === undefined ? (
             <LoadingSpinner />
           ) : (
-            <RosterCardList
-              seats={sortedSeats}
-              emptyMessage={`No seats in ${wardDoc?.ward_name ?? selected} yet.`}
-            />
+            <>
+              <RosterCardList
+                seats={sortedSeats}
+                emptyMessage={`No seats in ${wardDoc?.ward_name ?? selected} yet.`}
+                extraBadges={(seat) =>
+                  pendingRemovesByCanonical.has(seat.member_canonical) ? (
+                    <Badge
+                      variant="danger"
+                      data-testid={`pending-removal-badge-${seat.member_canonical}`}
+                    >
+                      Pending Removal
+                    </Badge>
+                  ) : null
+                }
+                rowClass={(seat) =>
+                  pendingRemovesByCanonical.has(seat.member_canonical)
+                    ? 'has-removal-pending'
+                    : undefined
+                }
+              />
+              <PendingAddRequestsSection pendingAdds={pendingAdds} />
+            </>
           )}
         </>
       ) : (

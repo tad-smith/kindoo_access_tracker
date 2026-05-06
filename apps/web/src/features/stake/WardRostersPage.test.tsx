@@ -3,16 +3,21 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Seat, Ward } from '@kindoo/shared';
-import { makeSeat, makeWard } from '../../../test/fixtures';
+import type { AccessRequest, Seat, Ward } from '@kindoo/shared';
+import { makeRequest, makeSeat, makeWard } from '../../../test/fixtures';
 
 const useStakeWardsMock = vi.fn();
 const useWardSeatsMock = vi.fn();
+const usePendingRequestsForScopeMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./hooks', () => ({
   useStakeWards: () => useStakeWardsMock(),
   useWardSeats: (ward: string | null) => useWardSeatsMock(ward),
+}));
+
+vi.mock('../requests/hooks', () => ({
+  usePendingRequestsForScope: (scope: string | null) => usePendingRequestsForScopeMock(scope),
 }));
 
 vi.mock('@tanstack/react-router', () => ({
@@ -49,9 +54,25 @@ function mockSeats(seats: Seat[] | undefined, isLoading = false) {
   });
 }
 
+function mockPendingRequests(requests: AccessRequest[]) {
+  usePendingRequestsForScopeMock.mockReturnValue({
+    data: requests,
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   navigateMock.mockResolvedValue(undefined);
+  // Default: no pending requests.
+  mockPendingRequests([]);
 });
 
 describe('<WardRostersPage />', () => {
@@ -100,5 +121,52 @@ describe('<WardRostersPage />', () => {
     // The select drops back to "Choose a ward…" once wards load.
     const select = screen.getByLabelText(/^Ward:/) as HTMLSelectElement;
     expect(select.value).toBe('');
+  });
+
+  describe('pending requests surfaced inline', () => {
+    it('shows the Outstanding Requests section when an add is pending for the selected ward', () => {
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'CO' })]);
+      mockPendingRequests([
+        makeRequest({
+          request_id: 'r1',
+          type: 'add_manual',
+          scope: 'CO',
+          member_canonical: 'newhire@x.com',
+          member_email: 'newhire@x.com',
+          member_name: 'New Hire',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.getByTestId('roster-pending-adds-section')).toBeInTheDocument();
+      expect(screen.getByText('New Hire')).toBeInTheDocument();
+    });
+
+    it('marks a roster card with the Pending Removal badge when a remove is pending for the selected ward', () => {
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockPendingRequests([
+        makeRequest({
+          request_id: 'r1',
+          type: 'remove',
+          scope: 'CO',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.getByTestId('pending-removal-badge-leaving@x.com')).toBeInTheDocument();
+      const card = document.querySelector('[data-seat-id="leaving@x.com"]');
+      expect(card?.className).toContain('has-removal-pending');
+    });
   });
 });
