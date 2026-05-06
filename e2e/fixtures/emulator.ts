@@ -141,6 +141,72 @@ export async function writeDoc(path: string, data: Record<string, unknown>): Pro
   }
 }
 
+/**
+ * Read the customAttributes (custom claims) currently stamped on an
+ * Auth-emulator user. Used by tests to poll for trigger-driven claim
+ * propagation before driving the SPA — the Functions emulator runs
+ * `onAuthUserCreate` / `syncManagersClaims` asynchronously after
+ * sign-up returns; without polling, sign-in returns a token whose
+ * claims haven't been stamped yet.
+ */
+export async function getCustomClaims(uid: string): Promise<Record<string, unknown>> {
+  const url = `http://${AUTH_HOST}/identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts:lookup`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer owner',
+    },
+    body: JSON.stringify({ localId: [uid] }),
+  });
+  if (!res.ok) {
+    throw new Error(`getCustomClaims failed: ${res.status} ${await res.text()}`);
+  }
+  const body = (await res.json()) as { users?: Array<{ customAttributes?: string }> };
+  const raw = body.users?.[0]?.customAttributes;
+  if (!raw) return {};
+  return JSON.parse(raw) as Record<string, unknown>;
+}
+
+/**
+ * Poll `getCustomClaims` until the user's custom claims include a
+ * `stakes` map containing `stakeId`. Drives the test past the
+ * sign-up → onAuthUserCreate → setCustomUserClaims race.
+ */
+export async function waitForServerStakeClaim(
+  uid: string,
+  stakeId: string,
+  timeoutMs = 15_000,
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    const claims = await getCustomClaims(uid);
+    const stakes = claims['stakes'] as Record<string, unknown> | undefined;
+    if (stakes && stakeId in stakes) return;
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(
+        `waitForServerStakeClaim(${uid}, ${stakeId}) timed out after ${timeoutMs}ms; last claims: ${JSON.stringify(claims)}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/**
+ * Seed a sheet fixture for the importer's emulator-only sheet fetcher.
+ * Mirrors the in-process `_setSheetFetcher` hook used by the
+ * `functions/tests/Importer.test.ts` integration suite, but writes the
+ * fixture to Firestore so the live `runImportNow` callable running in
+ * the Functions emulator can read it. The fetcher reads
+ * `_e2eFixtures/sheets__{encodedSheetId}` — keep the encoding in sync
+ * with `functions/src/lib/sheets.ts:emulatorFixturePath`.
+ */
+export type SheetFixtureTab = { name: string; values: string[][] };
+export async function seedSheetFixture(sheetId: string, tabs: SheetFixtureTab[]): Promise<void> {
+  const docId = `sheets__${encodeURIComponent(sheetId)}`;
+  await writeDoc(`_e2eFixtures/${docId}`, { tabs });
+}
+
 function toFirestoreValue(v: unknown): object {
   if (v === null) return { nullValue: null };
   if (typeof v === 'string') return { stringValue: v };

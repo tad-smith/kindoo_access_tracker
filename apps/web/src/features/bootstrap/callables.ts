@@ -9,26 +9,31 @@
 // Both wrappers `httpsCallable` the function and surface a friendly
 // error message when the function isn't deployed yet ("not-found").
 
-import { getFunctions, httpsCallable, type HttpsCallableResult } from 'firebase/functions';
+import { httpsCallable, type HttpsCallableResult } from 'firebase/functions';
 import type { ImportSummary } from '@kindoo/shared';
-import { firebaseApp } from '../../lib/firebase';
-
-const functions = getFunctions(firebaseApp);
+import { functions } from '../../lib/firebase';
 
 export interface InstallScheduledJobsResult {
   ok: boolean;
 }
 
 /**
- * Invoke `installScheduledJobs`. Phase 8 ships the function; Phase 7
- * users hit a "not-found" path that bubbles a friendly error to the
- * caller (which surfaces a warn toast — setup completion is not rolled
- * back on this failure since the function is best-effort).
+ * Invoke `installScheduledJobs` for the named stake. The callable
+ * verifies the caller is an active manager of the stake and that the
+ * stake's schedule fields are populated. Phase 7 users hit a "not-found"
+ * path that bubbles a friendly error (which surfaces a warn toast —
+ * setup completion is not rolled back since the function is
+ * best-effort).
  */
-export async function invokeInstallScheduledJobs(): Promise<InstallScheduledJobsResult> {
-  const fn = httpsCallable<unknown, InstallScheduledJobsResult>(functions, 'installScheduledJobs');
+export async function invokeInstallScheduledJobs(
+  stakeId: string,
+): Promise<InstallScheduledJobsResult> {
+  const fn = httpsCallable<{ stakeId: string }, InstallScheduledJobsResult>(
+    functions,
+    'installScheduledJobs',
+  );
   try {
-    const res: HttpsCallableResult<InstallScheduledJobsResult> = await fn();
+    const res: HttpsCallableResult<InstallScheduledJobsResult> = await fn({ stakeId });
     return res.data;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
