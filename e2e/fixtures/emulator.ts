@@ -200,11 +200,17 @@ export async function waitForServerStakeClaim(
  * the Functions emulator can read it. The fetcher reads
  * `_e2eFixtures/sheets__{encodedSheetId}` — keep the encoding in sync
  * with `functions/src/lib/sheets.ts:emulatorFixturePath`.
+ *
+ * Encoding note: Firestore arrays cannot directly contain other arrays
+ * (the REST API rejects with `INVALID_ARGUMENT: Property array
+ * contains an invalid nested entity`). We stringify the tab payload
+ * into a single string field; the importer-side fetcher parses it
+ * back.
  */
 export type SheetFixtureTab = { name: string; values: string[][] };
 export async function seedSheetFixture(sheetId: string, tabs: SheetFixtureTab[]): Promise<void> {
   const docId = `sheets__${encodeURIComponent(sheetId)}`;
-  await writeDoc(`_e2eFixtures/${docId}`, { tabs });
+  await writeDoc(`_e2eFixtures/${docId}`, { tabsJson: JSON.stringify(tabs) });
 }
 
 function toFirestoreValue(v: unknown): object {

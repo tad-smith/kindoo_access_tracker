@@ -114,6 +114,19 @@ jobs:
         run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions "pnpm test:integration"
         continue-on-error: true
 
+      - name: Build functions for emulator
+        id: build-functions
+        # The Functions emulator loads compiled artefacts from
+        # `functions/lib/`. Without this step the emulator logs
+        # "Could not detect runtime for functions at .../functions/lib"
+        # and registers zero callables / triggers — every E2E spec that
+        # invokes `runImportNow` or `installScheduledJobs` then hits a
+        # not-found path. Predeploy hooks in firebase.json only fire on
+        # `firebase deploy`, not on `emulators:exec`, so we run the
+        # build explicitly here.
+        run: pnpm --filter @kindoo/functions build
+        continue-on-error: true
+
       - name: E2E tests
         id: e2e
         run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions,hosting "pnpm test:e2e"
@@ -136,6 +149,7 @@ jobs:
             "${{ steps.unit.outcome }}" \
             "${{ steps.rules.outcome }}" \
             "${{ steps.integration.outcome }}" \
+            "${{ steps.build-functions.outcome }}" \
             "${{ steps.e2e.outcome }}" \
             "${{ steps.build.outcome }}"; do
             if [[ "$outcome" == "failure" ]]; then

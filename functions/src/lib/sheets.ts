@@ -25,7 +25,7 @@ export type SheetFetcher = (sheetId: string) => Promise<SheetTab[]>;
 
 /**
  * Doc path the emulator-only fetcher reads its fixture from. Tests seed
- * `{ tabs: SheetTab[] }` at this path before invoking the importer.
+ * `{ tabsJson: string }` at this path before invoking the importer.
  * Firestore doc IDs cannot contain '/' so we use the encoded sheet id.
  */
 function emulatorFixturePath(sheetId: string): string {
@@ -37,6 +37,10 @@ function emulatorFixturePath(sheetId: string): string {
  * `_e2eFixtures/sheets__{sheetId}`. Throws if the fixture is missing so
  * the test fails loud rather than silently exercising the real Sheets
  * API path (which would 401 against the emulator).
+ *
+ * Encoding: Firestore arrays cannot directly contain other arrays, so
+ * the test seeds `tabsJson` as a single stringified payload. We parse
+ * it back into the native `SheetTab[]` shape the importer expects.
  */
 const emulatorSheetFetcher: SheetFetcher = async (sheetId) => {
   const db = getDb();
@@ -44,11 +48,12 @@ const emulatorSheetFetcher: SheetFetcher = async (sheetId) => {
   if (!snap.exists) {
     throw new Error(
       `Sheets emulator fixture missing for sheetId="${sheetId}". ` +
-        `Seed _e2eFixtures/sheets__${encodeURIComponent(sheetId)} { tabs: SheetTab[] } before invoking the importer.`,
+        `Seed _e2eFixtures/sheets__${encodeURIComponent(sheetId)} { tabsJson: string } before invoking the importer.`,
     );
   }
-  const data = snap.data() as { tabs?: SheetTab[] } | undefined;
-  return data?.tabs ?? [];
+  const data = snap.data() as { tabsJson?: string } | undefined;
+  if (!data?.tabsJson) return [];
+  return JSON.parse(data.tabsJson) as SheetTab[];
 };
 
 /**
