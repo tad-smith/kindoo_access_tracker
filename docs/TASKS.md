@@ -197,11 +197,13 @@ Phase: cross-cutting
 Closed 2026-04-28: `infra/runbooks/provision-firebase-projects.md` contains the Hosting "Get Started" wizard step in both the staging and production walkthroughs.
 
 ## [T-11] Document the esbuild-bundling deploy approach for Cloud Functions
-Status: open
+Status: done (2026-05-03)
 Owner: @docs-keeper
 Phase: cross-cutting
 
 Cloud Build's `npm install` cannot resolve pnpm's `workspace:*` protocol, so `@kindoo/shared` as a workspace dep blocks Cloud Functions deploy. Phase 2 worked around this with esbuild bundling: `functions/scripts/build.mjs` bundles `@kindoo/shared`'s source into `functions/lib/index.js` and writes a clean `functions/lib/package.json` containing only real npm deps; `firebase.json`'s `functions.source` points at `functions/lib`. This is architecturally significant — the workaround shape (clean `lib/package.json` + symlinked `node_modules` for the local emulator) is non-obvious and easy to break. Document it in `infra/CLAUDE.md` and consider promoting to a numbered architecture decision (next D-number) so future agents don't re-derive the trap. See the Phase 2 changelog "Deviations" section for the full rationale.
+
+Closed 2026-05-03: promoted to architecture decision **D12** (`docs/architecture.md`) and documented in `infra/CLAUDE.md` "Cloud Functions deploy artifact" section.
 
 ## [T-12] Document failed-deploy half-state recovery in B1 runbook
 Status: done (2026-04-28, Phase 2 close)
