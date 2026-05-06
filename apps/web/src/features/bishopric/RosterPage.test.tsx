@@ -19,6 +19,8 @@ const usePrincipalMock = vi.fn();
 const useBishopricRosterMock = vi.fn();
 const useFirestoreOnceMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
+const usePendingRemoveRequestsMock = vi.fn();
+const submitMutateAsyncMock = vi.fn();
 // Real navigate returns a Promise; the page calls `.catch(...)` on it.
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
@@ -41,7 +43,14 @@ vi.mock('@tanstack/react-router', () => ({
 // RemovalAffordance subscribes via the requests hooks; mock so we
 // don't need a real QueryClient / Firestore listener.
 vi.mock('../requests/hooks', () => ({
-  usePendingRemoveRequests: () => ({
+  usePendingRemoveRequests: (canonical: string | null, scope: string | null) =>
+    usePendingRemoveRequestsMock(canonical, scope),
+  usePendingRequestsForScope: (scope: string | null) => usePendingRequestsForScopeMock(scope),
+  useSubmitRequest: () => ({ mutateAsync: submitMutateAsyncMock, isPending: false }),
+}));
+
+function mockNoPendingRemoves() {
+  usePendingRemoveRequestsMock.mockReturnValue({
     data: [],
     error: null,
     status: 'success',
@@ -51,10 +60,22 @@ vi.mock('../requests/hooks', () => ({
     isError: false,
     isFetching: false,
     fetchStatus: 'idle',
-  }),
-  usePendingRequestsForScope: (scope: string | null) => usePendingRequestsForScopeMock(scope),
-  useSubmitRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
-}));
+  });
+}
+
+function mockPendingRemoveFor(canonical: string) {
+  usePendingRemoveRequestsMock.mockImplementation((c: string | null) => ({
+    data: c === canonical ? [makeRequest({ type: 'remove', member_canonical: canonical })] : [],
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  }));
+}
 
 import { BishopricRosterPage } from './RosterPage';
 
@@ -121,6 +142,10 @@ beforeEach(() => {
   // Default: no pending requests. Tests that exercise the new
   // pending-roster surfaces override via mockPendingRequests.
   mockPendingRequests([]);
+  // Default: no pending remove requests for any seat (the per-row
+  // RemovalAffordance subscription).
+  mockNoPendingRemoves();
+  submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
 });
 
 describe('<BishopricRosterPage />', () => {
@@ -319,6 +344,116 @@ describe('<BishopricRosterPage />', () => {
       expect(screen.getByTestId('roster-pending-adds-section')).toBeInTheDocument();
       expect(screen.getByText('Arriving Soon')).toBeInTheDocument();
       expect(screen.getByTestId('pending-removal-badge-leaving@x.com')).toBeInTheDocument();
+    });
+  });
+
+  describe('per-row Remove affordance', () => {
+    it('renders a Remove button next to every manual / temp seat', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+        makeSeat({
+          member_canonical: 'temp@x.com',
+          member_email: 'temp@x.com',
+          member_name: 'Temp Person',
+          type: 'temp',
+          callings: [],
+          end_date: '2026-12-31',
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+    });
+
+    it('does not render a Remove button on auto seats', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+    });
+
+    it('opens the removal confirmation dialog when Remove is clicked', async () => {
+      const user = userEvent.setup();
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      await user.click(screen.getByTestId('remove-btn-leaving@x.com'));
+      expect(screen.getByTestId('removal-dialog-form')).toBeInTheDocument();
+      expect(screen.getByTestId('removal-confirm')).toBeInTheDocument();
+    });
+
+    it('submits a remove request with the seat scope + member identity when confirmed', async () => {
+      const user = userEvent.setup();
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          reason: 'sub teacher',
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      await user.click(screen.getByTestId('remove-btn-leaving@x.com'));
+      await user.type(screen.getByTestId('removal-reason'), 'No longer needed');
+      await user.click(screen.getByTestId('removal-confirm'));
+      expect(submitMutateAsyncMock).toHaveBeenCalledTimes(1);
+      expect(submitMutateAsyncMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'remove',
+          scope: 'CO',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          reason: 'No longer needed',
+        }),
+      );
+    });
+
+    it('replaces the Remove button with a Removal pending badge once a remove is in flight', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      mockPendingRemoveFor('leaving@x.com');
+      render(<BishopricRosterPage />);
+      expect(screen.queryByTestId('remove-btn-leaving@x.com')).toBeNull();
+      expect(screen.getByTestId('removal-pending-leaving@x.com')).toBeInTheDocument();
     });
   });
 });

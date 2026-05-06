@@ -4,13 +4,13 @@
 //   - Single-ward bishopric: roster scoped to that ward, no picker.
 //   - Multi-ward bishopric: a "Ward:" select appears above the
 //     utilization bar; the picker controls which ward's seats render.
-//   - Per-row remove affordance is a Phase 6 deliverable; Phase 5 is
-//     read-only so no X / removal-pending badge ships here yet.
+//   - Manual / temp rows carry a per-row Remove button via
+//     `<RemovalAffordance>`; auto rows are LCR-managed and have none.
 //
 // Live updates via `useFirestoreCollection(scope == ward)` — the
 // roster patches in place when a manager completes a request that
-// adds a seat in this ward (via the Phase 6 write paths or the
-// Importer when it lands in Phase 8/9).
+// adds a seat in this ward, or when the importer lands a new auto
+// seat.
 //
 // Search params (typed via the route's zod schema):
 //   ?ward=<wardCode>   — pre-select a ward when the principal is in

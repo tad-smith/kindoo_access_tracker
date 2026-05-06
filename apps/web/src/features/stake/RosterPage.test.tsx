@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { AccessRequest, Seat, Stake, Ward } from '@kindoo/shared';
 import { makeRequest, makeSeat, makeWard } from '../../../test/fixtures';
 
@@ -10,6 +11,8 @@ const useStakeRosterMock = vi.fn();
 const useStakeWardsMock = vi.fn();
 const useFirestoreDocMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
+const usePendingRemoveRequestsMock = vi.fn();
+const submitMutateAsyncMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   useStakeRoster: () => useStakeRosterMock(),
@@ -21,7 +24,14 @@ vi.mock('../../lib/data', () => ({
 }));
 
 vi.mock('../requests/hooks', () => ({
-  usePendingRemoveRequests: () => ({
+  usePendingRemoveRequests: (canonical: string | null, scope: string | null) =>
+    usePendingRemoveRequestsMock(canonical, scope),
+  usePendingRequestsForScope: (scope: string | null) => usePendingRequestsForScopeMock(scope),
+  useSubmitRequest: () => ({ mutateAsync: submitMutateAsyncMock, isPending: false }),
+}));
+
+function mockNoPendingRemoves() {
+  usePendingRemoveRequestsMock.mockReturnValue({
     data: [],
     error: null,
     status: 'success',
@@ -31,10 +41,22 @@ vi.mock('../requests/hooks', () => ({
     isError: false,
     isFetching: false,
     fetchStatus: 'idle',
-  }),
-  usePendingRequestsForScope: (scope: string | null) => usePendingRequestsForScopeMock(scope),
-  useSubmitRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
-}));
+  });
+}
+
+function mockPendingRemoveFor(canonical: string) {
+  usePendingRemoveRequestsMock.mockImplementation((c: string | null) => ({
+    data: c === canonical ? [makeRequest({ type: 'remove', member_canonical: canonical })] : [],
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  }));
+}
 
 import { StakeRosterPage } from './RosterPage';
 
@@ -101,6 +123,10 @@ beforeEach(() => {
   mockWards([]);
   // Default: no pending requests.
   mockPendingRequests([]);
+  // Default: no pending remove requests for any seat (the per-row
+  // RemovalAffordance subscription).
+  mockNoPendingRemoves();
+  submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
 });
 
 describe('<StakeRosterPage />', () => {
@@ -201,6 +227,116 @@ describe('<StakeRosterPage />', () => {
       expect(screen.getByTestId('pending-removal-badge-leaving@x.com')).toBeInTheDocument();
       const card = document.querySelector('[data-seat-id="leaving@x.com"]');
       expect(card?.className).toContain('has-removal-pending');
+    });
+  });
+
+  describe('per-row Remove affordance', () => {
+    it('renders a Remove button next to every manual / temp stake seat', () => {
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'temp@x.com',
+          member_email: 'temp@x.com',
+          member_name: 'Temp Person',
+          type: 'temp',
+          callings: [],
+          end_date: '2026-12-31',
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+    });
+
+    it('does not render a Remove button on auto seats', () => {
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+    });
+
+    it('opens the removal confirmation dialog when Remove is clicked', async () => {
+      const user = userEvent.setup();
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      await user.click(screen.getByTestId('remove-btn-leaving@x.com'));
+      expect(screen.getByTestId('removal-dialog-form')).toBeInTheDocument();
+      expect(screen.getByTestId('removal-confirm')).toBeInTheDocument();
+    });
+
+    it('submits a remove request with scope=stake + member identity when confirmed', async () => {
+      const user = userEvent.setup();
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+          reason: 'sub teacher',
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      await user.click(screen.getByTestId('remove-btn-leaving@x.com'));
+      await user.type(screen.getByTestId('removal-reason'), 'No longer needed');
+      await user.click(screen.getByTestId('removal-confirm'));
+      expect(submitMutateAsyncMock).toHaveBeenCalledTimes(1);
+      expect(submitMutateAsyncMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'remove',
+          scope: 'stake',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          reason: 'No longer needed',
+        }),
+      );
+    });
+
+    it('replaces the Remove button with a Removal pending badge once a remove is in flight', () => {
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'leaving@x.com',
+          member_email: 'leaving@x.com',
+          member_name: 'Leaving Soon',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      mockPendingRemoveFor('leaving@x.com');
+      render(<StakeRosterPage />);
+      expect(screen.queryByTestId('remove-btn-leaving@x.com')).toBeNull();
+      expect(screen.getByTestId('removal-pending-leaving@x.com')).toBeInTheDocument();
     });
   });
 });
