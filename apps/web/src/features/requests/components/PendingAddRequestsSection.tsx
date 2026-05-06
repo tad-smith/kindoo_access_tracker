@@ -35,8 +35,12 @@ export function PendingAddRequestsSection({
 
   const seats = pendingAdds.map(requestToSeatProjection);
 
+  // Constrain to the same 820px the `<RosterCardList>` itself uses
+  // (`.roster-cards { max-width: 820px }` in `RosterCardList.css`) so
+  // the divider-flanked section header lines up with the cards below
+  // it instead of bleeding to the page width.
   return (
-    <div className="kd-queue-section" data-testid="roster-pending-adds-section">
+    <div className="kd-queue-section max-w-[820px]" data-testid="roster-pending-adds-section">
       <h2 className="kd-queue-section-header">Outstanding Requests</h2>
       <RosterCardList
         seats={seats}
