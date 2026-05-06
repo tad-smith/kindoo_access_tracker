@@ -1,16 +1,20 @@
 // Per-row "remove" affordance + "removal pending" badge for roster
 // pages. Three independent pieces of state collapse into one render:
 //
-//   1. Auto seats get NO X (auto seats are LCR-managed; removed via
-//      the importer flow). The roster page already filters this on the
-//      `seat.type !== 'auto'` predicate, but we double-check here so
-//      the affordance can't accidentally render for auto rows.
+//   1. Auto seats get NO button. Auto seats are LCR-managed; the
+//      next importer run would just re-add the row, so submitting a
+//      remove request against an auto seat would create drift between
+//      the SPA and the LCR sheet. The roster page already filters
+//      this on the `seat.type !== 'auto'` predicate, but we
+//      double-check here so the affordance cannot accidentally render
+//      for auto rows even if a caller forgets the outer gate.
 //
 //   2. If a pending remove request exists for this seat (any pending
 //      request with `type='remove' AND member_canonical == seat.id`),
-//      render a "Removal pending" badge in place of the X.
+//      render a "Removal pending" badge in place of the button.
 //
-//   3. Otherwise render an X button that opens the shared RemovalDialog.
+//   3. Otherwise render a Remove button that opens the shared
+//      RemovalDialog.
 //
 // Live by design: the pending-remove query is a Firestore subscription,
 // so the badge appears immediately after a successful remove submit

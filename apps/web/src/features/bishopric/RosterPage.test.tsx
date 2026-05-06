@@ -438,6 +438,57 @@ describe('<BishopricRosterPage />', () => {
       );
     });
 
+    it('mixes auto + manual + temp seats and renders the button only on the non-auto rows (regression for staging report 2026-05-03)', () => {
+      // Operator-reported "Remove button missing on manual + temp"
+      // bug. Single render mixing all three seat types so a regression
+      // that flips the gate (e.g. accidentally negating the
+      // `seat.type === 'auto'` predicate, or gating on the wrong
+      // field) trips this test the moment it lands.
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+          callings: ['Bishop'],
+        }),
+        makeSeat({
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+          reason: 'sub teacher',
+        }),
+        makeSeat({
+          member_canonical: 'temp@x.com',
+          member_email: 'temp@x.com',
+          member_name: 'Temp Person',
+          type: 'temp',
+          callings: [],
+          start_date: '2026-05-01',
+          end_date: '2026-12-31',
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      // Auto row: no button.
+      expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+      // Manual + temp rows: button present.
+      expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+      // And every rendered Remove button is visible (not display:none /
+      // hidden via aria-hidden) — catches a regression where the
+      // button renders but is suppressed.
+      for (const btn of [
+        screen.getByTestId('remove-btn-manual@x.com'),
+        screen.getByTestId('remove-btn-temp@x.com'),
+      ]) {
+        expect(btn).toBeVisible();
+      }
+    });
+
     it('replaces the Remove button with a Removal pending badge once a remove is in flight', () => {
       usePrincipalMock.mockReturnValue(principal(['CO']));
       mockSeats([

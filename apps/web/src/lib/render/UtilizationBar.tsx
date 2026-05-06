@@ -24,15 +24,22 @@
 // the same component renders both bars on the roster pages without
 // the caller piecing together a custom label.
 //
-// `tone='muted'` selects the desaturated fill used by the secondary
-// "pending" bar so it reads as ancillary next to the primary committed
-// bar.
+// `tone='muted'` selects the desaturated fill used when a secondary
+// bar should read as ancillary next to a primary one.
+//
+// `accent='warn'` overrides the ratio-driven fill choice and forces
+// the amber `near` palette regardless of how full the bar is. Used by
+// `<RosterUtilization>` to signal a net-pending difference on the
+// projected bar even when the projection is well under cap (e.g.
+// committed=2, pending=4 — the bar at 16% needs to read as "this
+// will change" without waiting until it's near cap to amber).
 
 import './UtilizationBar.css';
 
 export type UtilizationBarLayout = 'stacked' | 'inline';
 export type UtilizationBarVerb = 'used' | 'pending';
 export type UtilizationBarTone = 'primary' | 'muted';
+export type UtilizationBarAccent = 'auto' | 'warn';
 
 export interface UtilizationBarProps {
   /** Total seats currently occupying the pool. */
@@ -50,6 +57,13 @@ export interface UtilizationBarProps {
   verb?: UtilizationBarVerb;
   /** Visual tone; defaults to 'primary'. */
   tone?: UtilizationBarTone;
+  /**
+   * Color override. `'auto'` (default) lets the ratio decide (blue /
+   * amber / red). `'warn'` forces amber regardless of ratio, used to
+   * signal a pending difference. `overCap === true` still wins —
+   * red over-cap stays the priority signal.
+   */
+  accent?: UtilizationBarAccent;
 }
 
 export function UtilizationBar({
@@ -59,6 +73,7 @@ export function UtilizationBar({
   layout = 'stacked',
   verb = 'used',
   tone = 'primary',
+  accent = 'auto',
 }: UtilizationBarProps) {
   const safeTotal = Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0;
   const hasCap = typeof cap === 'number' && Number.isFinite(cap) && cap > 0;
@@ -67,8 +82,20 @@ export function UtilizationBar({
 
   if (!hasCap) {
     const seatsLabel = `${safeTotal} seat${safeTotal === 1 ? '' : 's'}`;
-    // Cap-unset has no bar to put the label beside, so the inline
-    // variant degrades back to the stacked label-only render.
+    // Cap-unset has no bar to put the label beside. In the inline
+    // variant the wrapper uses `display: contents`, so emit a
+    // single label that spans both grid columns; otherwise stack as
+    // normal.
+    if (layout === 'inline') {
+      return (
+        <div className={wrapperClass}>
+          <div className="utilization-label utilization-label-span">
+            <span>{seatsLabel}</span>
+            <span>(cap unset)</span>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className={wrapperClass}>
         <div className="utilization-label">
@@ -84,7 +111,7 @@ export function UtilizationBar({
   const pct = Math.min(100, Math.round(ratio * 100));
   const fillClass = overCap
     ? 'utilization-fill over'
-    : ratio >= 0.9
+    : accent === 'warn' || ratio >= 0.9
       ? 'utilization-fill near'
       : 'utilization-fill';
 

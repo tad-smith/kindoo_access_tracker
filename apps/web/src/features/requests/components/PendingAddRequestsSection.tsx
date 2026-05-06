@@ -39,8 +39,13 @@ export function PendingAddRequestsSection({
   // (`.roster-cards { max-width: 820px }` in `RosterCardList.css`) so
   // the divider-flanked section header lines up with the cards below
   // it instead of bleeding to the page width.
+  //
+  // `mt-12` (48px) puts roughly one section-header-height of breathing
+  // room between the committed roster and this section so the
+  // divider-flanked header reads as a clean break rather than a
+  // continuation of the list above.
   return (
-    <div className="kd-queue-section max-w-[820px]" data-testid="roster-pending-adds-section">
+    <div className="kd-queue-section max-w-[820px] mt-12" data-testid="roster-pending-adds-section">
       <h2 className="kd-queue-section-header">Outstanding Requests</h2>
       <RosterCardList
         seats={seats}

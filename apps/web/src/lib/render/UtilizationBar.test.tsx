@@ -109,4 +109,24 @@ describe('UtilizationBar', () => {
       expect(container.querySelector('.utilization')?.className).not.toContain('tone-muted');
     });
   });
+
+  describe('accent prop', () => {
+    it('forces the amber `near` fill when accent=warn even at low utilization', () => {
+      // 2 / 25 = 8% — would normally render the default blue fill.
+      render(<UtilizationBar total={2} cap={25} accent="warn" />);
+      expect(fillEl().className).toContain('near');
+    });
+
+    it('still defers to over-cap red when both accent=warn and overCap', () => {
+      render(<UtilizationBar total={30} cap={25} overCap accent="warn" />);
+      expect(fillEl().className).toContain('over');
+      expect(fillEl().className).not.toContain('near');
+    });
+
+    it('falls back to the auto fill rule when accent=auto (the default)', () => {
+      render(<UtilizationBar total={5} cap={25} />);
+      // 5 / 25 = 20% → default blue.
+      expect(fillEl().className).toBe('utilization-fill');
+    });
+  });
 });

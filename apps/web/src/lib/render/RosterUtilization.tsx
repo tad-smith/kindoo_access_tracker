@@ -7,20 +7,26 @@
 //      / cap seats pending`. Projects what utilization will look like
 //      after every in-flight request resolves.
 //
-// Both bars share the same `cap` denominator and the same row layout
-// (`<UtilizationBar layout='inline'>`) so the labels right-align under
-// each other and the bar widths line up vertically.
+// Both bars sit inside a CSS grid (`grid-template-columns: 1fr auto`)
+// declared on the wrapper so the bar column resolves to the SAME width
+// across both rows regardless of label-text length. Without the shared
+// grid the bars would size independently (different label widths →
+// different remaining flex space), which the operator caught as a
+// visual misalignment in PR review.
 //
-// The pending bar uses `tone='muted'` so it reads as ancillary
-// information next to the primary committed bar. `verb='pending'`
-// swaps the trailing word in the label.
+// Color signal on the pending bar:
+//   - projected === committedTotal → no net change; pending bar uses
+//     the same color as the committed bar (the auto ratio rule).
+//   - projected !== committedTotal → there is a net pending difference
+//     in either direction; pending bar forces amber (`accent='warn'`)
+//     to flag "this WILL change."
+//   - projected > cap                → red OVER CAP still wins, since
+//     the over-cap signal is the strongest one and the user needs to
+//     see it independently of the difference signal.
 //
 // Pending count is clamped to >= 0 (a roster with more pending removes
 // than committed seats — the importer-resync edge — would otherwise
-// project a nonsense negative). The cap-overage signal (`overCap`) is
-// passed through whenever the projected total exceeds the cap so the
-// red fill + OVER CAP badge fires on the pending row independently of
-// the committed row.
+// project a nonsense negative).
 
 import { UtilizationBar } from './UtilizationBar';
 
@@ -46,6 +52,7 @@ export function RosterUtilization({
 }: RosterUtilizationProps) {
   const projected = Math.max(0, committedTotal + pendingAdds - pendingRemoves);
   const projectedOverCap = typeof cap === 'number' && cap > 0 && projected > cap;
+  const hasNetChange = projected !== committedTotal;
   return (
     <div className="kd-roster-utilization">
       <UtilizationBar
@@ -61,7 +68,7 @@ export function RosterUtilization({
         overCap={projectedOverCap}
         layout="inline"
         verb="pending"
-        tone="muted"
+        accent={hasNetChange ? 'warn' : 'auto'}
       />
     </div>
   );

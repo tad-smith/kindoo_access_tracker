@@ -14,20 +14,30 @@
   flex-direction: column;
 }
 
-/* Inline variant: bar fills row, label right-aligned. */
+/* Inline variant: bar fills row, label right-aligned. The wrapper
+   uses `display: contents` so its inner bar + label become direct
+   children of the parent — required for `<RosterUtilization>` to
+   share grid columns across stacked rows so the bars line up at
+   identical widths regardless of per-row label length. The wrapper
+   keeps `position: relative` so child absolute positioning, if added
+   later, still resolves against the bar group. */
 .utilization.layout-inline {
-  flex-direction: row;
-  align-items: center;
-  gap: 12px;
+  display: contents;
 }
 
 .utilization.layout-inline .utilization-bar {
-  flex: 1 1 auto;
+  align-self: center;
 }
 
 .utilization.layout-inline .utilization-label {
-  flex: 0 0 auto;
+  align-self: center;
   white-space: nowrap;
+}
+
+/* Cap-unset variant in the inline layout — the row has no bar, so
+   the label spans both grid columns. */
+.utilization.layout-inline .utilization-label.utilization-label-span {
+  grid-column: 1 / -1;
 }
 
 .utilization-label {
@@ -73,11 +83,20 @@
 
 /* Pair wrapper used by the roster pages — two stacked
    `<UtilizationBar layout='inline'>` so the labels right-align and the
-   bars sit at the same width. */
+   bars sit at the same width. Grid (rather than flex) so both rows
+   share the SAME column track widths: the bar column is `1fr` and the
+   label column is `auto`, sized to the widest label across both rows.
+   That guarantees both bars render at byte-identical pixel widths
+   regardless of differing label content (e.g. "10 / 25 seats used"
+   vs "12 / 25 seats pending"). The inner `<UtilizationBar>` wrappers
+   use `display: contents` so their bar + label children are promoted
+   into this grid directly. */
 .kd-roster-utilization {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: center;
 }
 
 .over-cap-flag {

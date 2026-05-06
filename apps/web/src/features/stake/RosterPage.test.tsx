@@ -338,5 +338,51 @@ describe('<StakeRosterPage />', () => {
       expect(screen.queryByTestId('remove-btn-leaving@x.com')).toBeNull();
       expect(screen.getByTestId('removal-pending-leaving@x.com')).toBeInTheDocument();
     });
+
+    it('mixes auto + manual + temp seats and renders the button only on the non-auto rows (regression for staging report 2026-05-03)', () => {
+      // Same regression net as the bishopric test — single render
+      // covering all three seat types so a future change that flips
+      // the auto-gate trips this test immediately.
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+          callings: ['Stake President'],
+        }),
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+          reason: 'youth conference admin',
+        }),
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'temp@x.com',
+          member_email: 'temp@x.com',
+          member_name: 'Temp Person',
+          type: 'temp',
+          callings: [],
+          start_date: '2026-05-01',
+          end_date: '2026-12-31',
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+      expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+      for (const btn of [
+        screen.getByTestId('remove-btn-manual@x.com'),
+        screen.getByTestId('remove-btn-temp@x.com'),
+      ]) {
+        expect(btn).toBeVisible();
+      }
+    });
   });
 });
