@@ -55,9 +55,23 @@ Expected:
 
 If gcloud isn't installed, follow <https://cloud.google.com/sdk/docs/install>. After install, run `gcloud auth login` and follow the browser flow.
 
-### 0.4 firebase CLI installed and authenticated
+### 0.4 firebase CLI installed the right way
 
-Run:
+There are three ways the `firebase` command can land on your machine, and only two of them work for this repo. Read this section before installing — the wrong install method breaks the emulator-driven tests in ways the error messages do not make obvious, and the worst variant corrupts `~/.npm` so that subsequent non-sudo pnpm/npm operations fail with EACCES.
+
+**The canonical way: `firebase-tools` as an npm package, no sudo.**
+
+The repo already declares `firebase-tools` as a dev dependency, so once you have run `pnpm install` at the repo root you have a working `firebase` via `pnpm exec firebase ...` or via the path-resolved shim at `node_modules/.bin/firebase`. For most operator workflows that is enough — you do not need a global install at all.
+
+If you want a global `firebase` on your `$PATH` for use outside the repo, install via npm as your user:
+
+```bash
+npm install -g firebase-tools
+```
+
+Or, if you prefer pnpm, do **not** use `pnpm install -g` (see footgun #3 below); use the workspace-resolved shim via `pnpm exec firebase ...` from inside the repo, or fall back to `npm install -g firebase-tools`.
+
+**Verify your install.**
 
 ```bash
 which firebase
@@ -67,16 +81,59 @@ firebase login:list
 
 Expected:
 
-- `which firebase` returns a path like `/Users/<you>/projects/Kindoo/node_modules/.bin/firebase` (when run in this repo) or a similar small Node shim from `~/.nvm/...` or `~/.config/...` if installed via npm globally. The path should NOT be `/usr/local/bin/firebase` or anywhere it's a 250+ MB standalone binary — the standalone pkg-bundled `firebase` cannot `require()` ESM packages and breaks `firebase emulators:exec` against modern Vitest. See `docs/TASKS.md` `[T-02]` for the full footgun writeup.
+- `which firebase` returns a path like `/Users/<you>/projects/Kindoo/node_modules/.bin/firebase` (when run in this repo) or a small Node shim from `~/.nvm/...`, `/opt/homebrew/lib/node_modules/...`, or `/usr/local/lib/node_modules/...` if installed via `npm install -g`. The path should **not** be `/usr/local/bin/firebase` if that file is a hundreds-of-MB standalone binary — see footgun #1 below.
 - `firebase --version` prints a version like `13.27.0` (any 13.x is fine).
-- `firebase login:list` shows the Google account you're using. If empty, run `firebase login`.
+- `firebase login:list` shows the Google account you are using. If empty, run `firebase login`.
 
-If `which firebase` returns the standalone binary, **uninstall it before continuing**. Either:
+#### Footgun #1: the standalone pkg-bundled binary at `/usr/local/bin/firebase`
 
-- Drag `/Applications/firebase` to the Trash (if you installed via the macOS pkg), or
-- `sudo rm /usr/local/bin/firebase` (if you installed via shell script — verify the file is large first; the npm shim is small).
+The Firebase docs offer a one-liner curl install (`curl -sL firebase.tools | bash`) that drops a single ~282 MB self-contained binary at `/usr/local/bin/firebase`. The binary is produced via `pkg` and embeds its own Node runtime. That embedded Node predates Node 22 and lacks the ESM loader paths the modern toolchain assumes.
 
-The repo includes `firebase-tools` as a dev dependency, so once you've run `pnpm install` at the repo root you have a working `firebase` via `pnpm exec firebase ...` or via the path-resolved shim from `node_modules/.bin/`.
+**Symptom.** `firebase emulators:exec ... <ESM-using-script>` fails with cryptic ESM errors — `ERR_REQUIRE_ESM`, `Cannot use import statement outside a module`, or similar — even though the script runs fine outside the emulator. This is what breaks the rules-tests suite and any Vitest 2.x integration test invoked through `firebase emulators:exec`. Nothing in the error message points at the firebase CLI install method; you will spend an hour blaming Vitest config before you check `which firebase`.
+
+**Detect.**
+
+```bash
+ls -la "$(which firebase)"
+```
+
+If the file is hundreds of MB, you have the standalone binary. The npm shim is a few hundred bytes — a Node script that defers to a sibling `firebase-tools` install.
+
+**Fix.** Uninstall the standalone binary, then install via npm.
+
+- If you installed via the macOS pkg: drag `/Applications/firebase` to the Trash, then re-check `which firebase`.
+- If you installed via the curl-bash one-liner: `sudo rm /usr/local/bin/firebase` (verify the file is multi-hundred-MB first, so you do not delete a legitimate npm shim that happens to live there).
+- After removal, install via `npm install -g firebase-tools` as your user.
+
+#### Footgun #2: the npm-installed firebase-tools is a Node shim, and that is the point
+
+By contrast, `npm install -g firebase-tools` lays down a small Node script that uses your **system** Node — typically Node 22 LTS once nvm is configured per the repo's `.nvmrc`. ESM loading works correctly because the system Node is current. This is the install path the repo's emulator-driven tests assume.
+
+If you are not sure which Node the firebase CLI is using, the small-shim version will show its host Node when you run `firebase --version` against a debug `NODE_DEBUG`; usually it is enough to confirm `which firebase` resolves into a path under your nvm or homebrew Node install rather than `/usr/local/bin/firebase`.
+
+#### Footgun #3: `sudo pnpm install -g firebase-tools` corrupts `~/.npm`
+
+Running `pnpm install -g` with sudo creates root-owned files in `~/.npm/` (and sometimes in `~/.local/share/pnpm/`). After that, any subsequent non-sudo `pnpm install` or `npm install` against the same cache fails with `EACCES: permission denied` on the cache files — a problem that surfaces hours or days later, far from the original sudo command, in a workspace that has nothing to do with firebase-tools.
+
+**Symptom.** Routine `pnpm install` at the repo root fails with `EACCES` against paths under `~/.npm/_cacache/...` or `~/.local/share/pnpm/store/...`.
+
+**Detect.**
+
+```bash
+ls -ld ~/.npm ~/.npm/_cacache 2>/dev/null
+ls -ld ~/.local/share/pnpm ~/.local/share/pnpm/store 2>/dev/null
+```
+
+If any of these are owned by `root` instead of your user, you have the corruption.
+
+**Fix.** Reclaim the cache:
+
+```bash
+sudo chown -R "$(id -un):$(id -gn)" ~/.npm
+sudo chown -R "$(id -un):$(id -gn)" ~/.local/share/pnpm
+```
+
+Then never use sudo with pnpm or npm again. If you need a global firebase-tools install, `npm install -g firebase-tools` as your user is the right path; pnpm's `-g` mode is not necessary for any workflow this repo uses.
 
 ### 0.5 You're at the repo root
 
