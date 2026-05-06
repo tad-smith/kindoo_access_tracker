@@ -460,7 +460,7 @@ Doing this correctly requires:
 Skipped in Phase 10.4 because the operator named only the card-view sort as the immediate priority, and this work has reasonable complexity (two new subscriptions + a parser port). Revisit after staging if the table view's `scope → calling` sort proves insufficient on real data.
 
 ## [T-32] Phase 9 schema additions — audit enum + stake fields
-Status: open
+Status: done (PR TBD, 2026-05-03) — `firebase-schema.md` §4.1 and §4.10 now reflect `notifications_reply_to`, `last_import_triggered_by`, and `email_send_failed` per `packages/shared/src/types/{stake,audit}.ts`.
 Owner: @backend-engineer
 Phase: 9
 

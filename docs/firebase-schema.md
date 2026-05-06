@@ -150,6 +150,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 
   // Notifications
   notifications_enabled: boolean;
+  notifications_reply_to?: string;     // optional reply-to address; when unset, EmailService omits the Reply-To header
 
   // Operational state (written by importer/expiry, read by manager UI)
   last_over_caps_json: Array<{
@@ -160,6 +161,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   }>;
   last_import_at?: Timestamp;
   last_import_summary?: string;
+  last_import_triggered_by?: 'manual' | 'weekly';   // stamped by importer per run; read by notifyOnOverCap for subject attribution; absent on pre-Phase-9 docs (treated as 'manual')
   last_expiry_at?: Timestamp;
   last_expiry_summary?: string;
 
@@ -450,7 +452,7 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
     | 'create_request' | 'submit_request' | 'complete_request' | 'reject_request' | 'cancel_request'
     | 'create_manager' | 'update_manager' | 'delete_manager'
     | 'update_stake' | 'setup_complete'
-    | 'import_start' | 'import_end' | 'over_cap_warning';
+    | 'import_start' | 'import_end' | 'over_cap_warning' | 'email_send_failed';
 
   entity_type: 'seat' | 'request' | 'access' | 'kindooManager' | 'stake' | 'system';
   entity_id: string;           // canonical email for seat/access/manager; UUID for request; stake_id for stake
@@ -468,7 +470,7 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
 
 **Invariants:**
 - `auditId` is deterministic from `(collection, docId, writeTime)` so trigger retries are idempotent.
-- `member_canonical` is set whenever the underlying doc has a `member_canonical` field; absent for system actions (`import_start`, `over_cap_warning`, `setup_complete`).
+- `member_canonical` is set whenever the underlying doc has a `member_canonical` field; absent for system actions (`import_start`, `over_cap_warning`, `setup_complete`, `email_send_failed`).
 - Firestore TTL policy on the `ttl` field deletes rows ~24h after their `ttl` timestamp passes.
 
 ## 5. Indexes
