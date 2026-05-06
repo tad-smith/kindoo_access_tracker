@@ -365,7 +365,7 @@ Operator surfaced 7 issues during manual staging of the bootstrap wizard. Shippe
 - **"Complete Setup" disabled with no indication.** Helper text below the button lists which prerequisites are missing (e.g., "Add at least one building").
 
 ## [T-24] Audit-and-fix unscoped `qc.invalidateQueries()` calls (DIY-hook placeholder-queryFn footgun)
-Status: done (PR #TBD, 2026-05-03)
+Status: done (PR #68, 2026-05-03)
 Owner: @web-engineer
 Phase: cross-cutting
 
