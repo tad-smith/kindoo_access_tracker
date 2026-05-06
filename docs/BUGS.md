@@ -45,6 +45,28 @@ Somewhere in 1–4 the chain breaks on iOS specifically. Verified: latest stagin
 
 ---
 
+## [B-4] First-login users with pre-existing access docs land on NotAuthorized
+Status: open
+Owner: @web-engineer
+Phase: post Phase 11
+Branch / PR: `fix/b-4-first-login-claims-race`
+
+A first-time signer-in whose `access/{canonical}` doc predates their sign-in lands on NotAuthorized for up to ~1h, even though their role data is in place and the canonical-email mapping is correct. Reported in production for `zach.q.mortensen@gmail.com` with a pre-existing `access/zachqmortensen@gmail.com` doc (gmail dot-strip rule applied — mapping is correct).
+
+**Symptom:** first sign-in by a user who has a pre-existing access / kindooManagers doc lands on NotAuthorized. Reloading the page once fixes it; the user then sees the correct role-gated UI.
+
+**Repro:** any user whose `access/{canonical}` (or `kindooManagers/{canonical}`) row predates their first sign-in. Hits more often when the `onAuthUserCreate` trigger's read+seed work takes more than a few hundred ms (cold start, slow network, contention).
+
+**Mechanism:** after `signInWithPopup` resolves, the client immediately calls `getIdToken(true)` (`apps/web/src/features/auth/signIn.ts`). Server-side, the v1 `auth.user().onCreate` trigger (`functions/src/triggers/onAuthUserCreate.ts`) runs in parallel with the client refresh — it writes `userIndex/{canonical}`, computes claims via `seedClaimsFromRoleData`, then calls `setCustomUserClaims` + `revokeRefreshTokens`. If the client refresh lands at the Auth backend before the trigger finishes `setCustomUserClaims`, the refreshed token has no role claims. `revokeRefreshTokens` invalidates future refreshes, but the just-minted token is cached on the client and used until the SDK's natural ~1h rotation OR a hard page reload (which re-fetches via `onAuthStateChanged`).
+
+**Workaround for affected users:** reload the page once after sign-in.
+
+**Fix shipped in this PR:** bounded poll-and-refresh after the initial `getIdToken(true)`. Probe `getIdTokenResult` for `claims.canonical` (the field the trigger always sets on success); if missing, sleep 500ms, force-refresh, retry. 10 iterations cap the wait at 5s. If claims never arrive, `signIn` still resolves and the gate handles "no claims → NotAuthorized" the same as today. Trigger model is unchanged (v1 async stays — the migration plan picked async over blocking deliberately).
+
+**Status:** open — flip to `closed (fixed in PR #X)` once landed.
+
+---
+
 ## [B-3] New Request scope dropdown is not filtered by the user's role union [FIXED 2026-05-03]
 Status: closed (fixed in PR #52)
 Owner: @web-engineer
