@@ -278,11 +278,13 @@ Shipped:
 Bundle delta: production CSS grew from ~2 kB to ~17 kB (the Tailwind utility output for the classes used by the Phase 5 pages); JS is unchanged because `cn` and Radix Slot are tree-shaken into the existing chunks.
 
 ## [T-19] Refresh stale caret-floor pins across workspaces
-Status: open
+Status: done (PR #5, 2026-04-28)
 Owner: @infra-engineer
 Phase: cross-cutting
 
 A 2026-04-28 dependency audit found several caret floors lagging current by many minors: `firebase-admin ^13.0.2` (latest 13.8.0), `@playwright/test ^1.49.1` (latest 1.59.1), `@tanstack/react-router ^1.95.5` and `@tanstack/router-plugin ^1.95.5` (latest 1.168.x / 1.167.x), `@tanstack/react-query ^5.62.10` (latest 5.100.x), plus smaller drift on `prettier`, `vite`, `jsdom`, `concurrently`, `@vitejs/plugin-react`, `@testing-library/*`, `firebase-functions-test`, `zod`. Carets would catch these on a fresh install but the lockfile holds. Bump the floors and refresh `pnpm-lock.yaml` in one pass; one PR, all workspaces. Separate concern: **`@google/clasp ^2.4.2` is in the affected range for CVE-2026-4092** (path traversal → arbitrary file write); bump to `^3.3.0` and verify push/deploy scripts still work — clasp 3.x is a major. Track that bump under this task or split it out, operator's choice. Hold `@types/node` at `^22` deliberately to track the Node 22 runtime; if upgraded, leave a comment noting the deliberate pin. Out of scope: TypeScript / Vite / Vitest / Firebase / esbuild, all already at-latest.
+
+Closed 2026-04-28 (commit `f26bbf6`, PR #5): caret floors bumped across workspaces — `firebase-admin ^13.8.0`, `@playwright/test ^1.59.1`, `@tanstack/react-router ^1.168.25`, `@tanstack/router-plugin ^1.167.28`, `@tanstack/react-query ^5.100.5`, `@google/clasp ^3.3.0` (covers CVE-2026-4092), plus the smaller-drift entries. `@types/node ^22` held deliberately. Verifiable in current `package.json` files at `package.json:35-37` (root), `apps/web/package.json:27-49`, `functions/package.json:22-31`, `e2e/package.json:15`, `packages/shared/package.json:22`.
 
 ## [T-20] Bundle THIRD_PARTY_LICENSES artifact in production build
 Status: open
@@ -308,9 +310,11 @@ Phase 5 went with JSON-pretty because (a) the new `member_canonical` filter intr
 **Files touched:** `apps/web/src/features/manager/auditLog/summarise.ts`, `apps/web/src/features/manager/auditLog/AuditDiffTable.tsx` (new), `apps/web/src/features/manager/auditLog/AuditLogPage.tsx`, `apps/web/src/features/manager/auditLog/summarise.test.ts` (new), `apps/web/src/features/manager/auditLog/AuditDiffTable.test.tsx` (new), `apps/web/src/features/manager/auditLog/AuditLogPage.test.tsx`, `apps/web/src/styles/pages.css`.
 
 ## [T-22] Bootstrap-wizard rules: allow bootstrap-admin writes when `setup_complete=false`
-Status: open
+Status: done (closed by Phase 7 close)
 Owner: @backend-engineer
 Phase: 7 (current — was discovered during Phase 7 wizard wiring)
+
+Closed: option (1) shipped — `firestore/firestore.rules` defines `isBootstrapAdmin(stakeId)` (lines 132-138) keyed on `setup_complete == false` AND `bootstrap_admin_email == request.auth.token.email`. Predicate is OR'd into the wards / buildings / kindooManagers / parent stake match blocks (lines 234-283). Once the wizard flips `setup_complete=true`, the predicate goes silent and the manager claim takes over. Rules tests covering allowed/denied transitions live in `firestore/tests/bootstrap.test.ts` (added under T-23 / PR `fix/bootstrap-wizard-issues`).
 
 The Phase 7 bootstrap wizard (in `apps/web/src/features/bootstrap/`) writes to:
 
@@ -411,9 +415,11 @@ Phase: post Phase 10.3
 Phase 10.3 added `urgent: boolean` to Request and `sort_order: number | null` to Seat and Access without updating the schema reference. Add `urgent` to `firebase-schema.md` §4.7 (Request) and `data-model.md`'s Request shape; add `sort_order` to `firebase-schema.md` §4.5 (Access) and §4.6 (Seat) with the operator-decided semantics — doc-level for Access (MIN of `sheet_order` across `importer_callings`), seat-level for Seat (MIN of `sheet_order` across `callings[]`), `null` for orphaned-calling seats and manual-only access docs. Cross-reference the importer-denormalization commit (`be93970`) and note the "wait for next importer run" migration posture (no backfill). Land in a docs-only commit; keep separate from the Phase 10.3 PR so that PR stays bounded.
 
 ## [T-30] Phase 10.5 backend lane — userIndex self-update rule + `pushOnRequestSubmit` trigger
-Status: open
+Status: done (PR #40, 2026-04-29)
 Owner: @backend-engineer
 Phase: 10.5
+
+Closed by Phase 10.5 close (PR #40, commit `456551f`). The userIndex self-update rule is at `firestore/firestore.rules:182-190` with the prescribed `affectedKeys().hasOnly(['fcmTokens', 'notificationPrefs', 'lastActor'])` allowlist plus the `lastActorMatchesAuth` integrity check; `lastTouched` was dropped from the allowlist mid-phase (cross-workspace constraint propagation, captured in the Phase 10.5 changelog). The trigger lives at `functions/src/triggers/pushOnRequestSubmit.ts` (re-exported in `functions/src/index.ts:8`), pinned to `APP_SA`, filters active managers with `notificationPrefs.push.newRequest === true` and non-empty `fcmTokens`, calls `sendEachForMulticast`, and prunes invalid tokens via `FieldValue.delete()`. 8 integration tests cover the trigger; 6 rules tests cover the self-update.
 
 Web-engineer shipped sub-changes A (schema) + B+C+D (SW + panel + token registration) on branch `phase-10.5-fcm-push` (PR #40, draft). Backend lane outstanding:
 
@@ -437,9 +443,11 @@ Web-engineer shipped sub-changes A (schema) + B+C+D (SW + panel + token registra
 Schema (sub-change A) is already committed; types + zod schemas live in `packages/shared/src/{types,schemas}/userIndex.ts`. Dependencies satisfied; ship on the same `phase-10.5-fcm-push` branch (rebase before pushing).
 
 ## [T-29] Per-row `sheet_order` sort on the Access page table view
-Status: open
+Status: done (closed by Phase 10.4 follow-up)
 Owner: @web-engineer
 Phase: post Phase 10.4
+
+Closed: `apps/web/src/features/manager/access/AccessPage.tsx:59-67` builds a `(scope, calling) → sheet_order` lookup via `buildSheetOrderLookup({ stakeTemplates, wardTemplates, wardCodes })` from `./sort.ts`; `flattenAccess` (line 241) sorts rows by scope band → per-row `sheet_order` from the lookup → email. The Access page subscribes to `useStakeCallingTemplates` + `useWardCallingTemplates` (lines 52-53). Manual-grant rows fall through to `+Infinity` (bottom of band) as the original task spec called for. Wildcard match (`Counselor *` family) is handled inside `./sort.ts`.
 
 Phase 10.4 fixed the Access page **card view** to sort by the doc-level `sort_order` (Phase 10.3 importer denormalization). The **table view** (`flattenAccess` at `apps/web/src/features/manager/access/AccessPage.tsx`, the rows it produces are `(scope, calling, email)` triples) still sorts by `scope → calling → email`. Per-row `sheet_order` would be the right denominator there, but each row's calling needs to be matched against the corresponding template (`wardCallingTemplates` for ward scopes, `stakeCallingTemplates` for stake) to look up its `sheet_order`, including wildcard matching (the `Counselor *` family).
 
@@ -472,11 +480,13 @@ Phase: 9 follow-up
 Phase 9's email triggers (`notifyOnRequestWrite`, `notifyOnOverCap`) read `process.env.WEB_BASE_URL` to compose deep-link URLs in email bodies. The variable is declared via `defineString('WEB_BASE_URL')` in both triggers and is set per-project via `functions/.env.<project>` at deploy time. `infra/runbooks/resend-api-key-setup.md` Step 4 documents the mechanism for the Phase 9 deploy, but `infra/runbooks/deploy.md` doesn't currently list `WEB_BASE_URL` among the per-project env vars / secrets the operator must set before a clean deploy. Cross-link from `deploy.md` so the per-project deploy checklist surfaces it without requiring the operator to follow the Resend runbook.
 
 ## [T-33] Phase 11 cutover — silence Apps Script Main email path
-Status: open
+Status: done (closed by Phase 11 cutover, 2026-05-03)
 Owner: @tad
 Phase: 11 (cutover-day prerequisite)
 
 When Phase 9 ships in staging/prod, Apps Script Main and Firebase will both send notifications for the same lifecycle events during the migration window — managers and requesters get duplicate emails per request. Accepted as transient. At Phase 11 cutover, before flipping DNS / traffic, the operator must flip the Apps Script `Config.notifications_enabled = FALSE` in the live Sheet so the legacy path silences. Bake this into the Phase 11 cutover runbook as a pre-flip step. Order is "flip Config off → confirm Firebase still sends → flip DNS / traffic". Reverting (rollback) re-enables it: flip Apps Script `notifications_enabled` back to TRUE.
+
+Closed 2026-05-03: Phase 11 cutover decommissioned Apps Script entirely (per `docs/changelog/phase-11-cutover.md` — DNS flipped from the GitHub Pages iframe wrapper to `kindoo-prod` Hosting). Apps Script is no longer in the request path so its email triggers cannot fire on real users; the kill-switch concern is moot.
 
 ## [T-31] Role-aware redirect gates on routes a user can't access
 Status: open
@@ -529,16 +539,11 @@ The `isManager(stakeId)` branch lets a Kindoo Manager who holds NO stake or ward
 The web SPA filter (B-3) is the user-visible fix; this rule change is the defense-in-depth layer that prevents a hand-crafted POST from a manager-only user against the REST API. Land on its own PR; do not block the B-3 web fix on it.
 
 ## [T-37] Verify requests-create rule does not gate `building_names` contents per role
-Status: open (verification only — no fix expected)
+Status: done (verification confirmed)
 Owner: @backend-engineer
 
 The New Request form now lets ward (bishopric) users select multiple buildings — including buildings outside their own ward — via a collapsible widget that defaults to the ward's building but accepts any combination from the catalogue. Web-side change shipped on `feat/new-request-collapsible-buildings`; submit payload's `building_names` for a ward-scope request can now contain ≥1 entry from anywhere in the stake.
 
 A read of `firestore/firestore.rules` (lines 462–464 of the requests-create predicate) confirms the rule only enforces `scope == 'stake' → building_names.size() > 0`. There is no per-role gate on `building_names` contents for ward scopes. So this change should pass the rule as-is.
 
-**Asks of @backend-engineer:**
-- Confirm the rule-side reading: a bishopric user submitting a ward-scope `add_manual` with `building_names: ['Cordera Building', 'Genoa Building']` is allowed (no gate trips).
-- If you decide the existing rule is fine, close this task with a comment.
-- If you find an unintended gate (e.g., a future hardening that enumerates allowed buildings per ward), either soften it now that ward users can legitimately request access for buildings beyond their own ward, OR push back on the operator-stated capability before the PR ships.
-
-No rule change anticipated. Tracking purely so the role-for-scope tightening (T-36) doesn't get confused with a buildings-contents tightening that was never actually in the rules.
+Closed: re-verified 2026-05-03 — `firestore/firestore.rules:462-464` reads `(request.resource.data.type == 'remove' || request.resource.data.scope != 'stake' || request.resource.data.building_names.size() > 0)`. No per-role gate on `building_names` contents for ward scopes. A bishopric user submitting `building_names: ['Cordera Building', 'Genoa Building']` for a ward-scope `add_manual` passes the rule. T-36's role-for-scope tightening (already merged via PR #52) does not re-introduce a buildings-contents gate.
