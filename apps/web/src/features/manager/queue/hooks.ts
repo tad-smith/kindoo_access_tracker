@@ -148,7 +148,11 @@ export function useCompleteAddRequest() {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['kindoo', 'requests'] });
+      // Fire-and-forget — the DIY live hooks key under
+      // `__kindoo_firestore__` so this is keyed away from any
+      // never-resolving placeholder queryFn, but `void` keeps the
+      // pattern uniform across the codebase.
+      void qc.invalidateQueries({ queryKey: ['kindoo', 'requests'] });
     },
   });
 }
@@ -209,7 +213,11 @@ export function useCompleteRemoveRequest() {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['kindoo', 'requests'] });
+      // Fire-and-forget — the DIY live hooks key under
+      // `__kindoo_firestore__` so this is keyed away from any
+      // never-resolving placeholder queryFn, but `void` keeps the
+      // pattern uniform across the codebase.
+      void qc.invalidateQueries({ queryKey: ['kindoo', 'requests'] });
     },
   });
 }
@@ -250,7 +258,11 @@ export function useRejectRequest() {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['kindoo', 'requests'] });
+      // Fire-and-forget — the DIY live hooks key under
+      // `__kindoo_firestore__` so this is keyed away from any
+      // never-resolving placeholder queryFn, but `void` keeps the
+      // pattern uniform across the codebase.
+      void qc.invalidateQueries({ queryKey: ['kindoo', 'requests'] });
     },
   });
 }

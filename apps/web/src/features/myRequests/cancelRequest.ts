@@ -44,11 +44,13 @@ export function useCancelRequest() {
       });
     },
     onSuccess: () => {
-      // The live listener already patches state; invalidating triggers
-      // a refresh for the request-detail-style queries that aren't
-      // subscribed to live snapshots (e.g. an Audit Log query that
-      // happens to include this request).
-      queryClient.invalidateQueries({ queryKey: ['kindoo', 'requests'] });
+      // Fire-and-forget. The DIY live hooks at `apps/web/src/lib/data/`
+      // key under `__kindoo_firestore__` so this `['kindoo', 'requests']`
+      // invalidate cannot match a never-resolving placeholder queryFn,
+      // but `void` keeps the pattern uniform with the rest of the
+      // codebase and forecloses the hang if a future engineer registers
+      // a non-DIY query under this prefix.
+      void queryClient.invalidateQueries({ queryKey: ['kindoo', 'requests'] });
     },
   });
 }
