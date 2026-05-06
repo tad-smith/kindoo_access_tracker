@@ -45,6 +45,25 @@ Somewhere in 1–4 the chain breaks on iOS specifically. Verified: latest stagin
 
 ---
 
+## [B-2] setupGate bootstrap-admin fallback uses `??` where `||` is needed
+Status: open
+Owner: @web-engineer
+Phase: post Phase 11 (deferred — non-blocking until next fresh-project bootstrap)
+
+On a fresh Firebase project, the bootstrap admin signs in matching the seed doc's `bootstrap_admin_email` and lands on `SetupInProgress` instead of the bootstrap wizard. The gate's `adminCanonical === meCanonical` equality check fails because `meCanonical` is the empty string at that moment, so the wizard route is never selected even though the seed doc and the typed email agree.
+
+`apps/web/src/lib/setupGate.ts:181` reads `const meCanonical = principal.canonical ?? canonicalEmailFn(principal.email ?? '');`. The principal shape (`apps/web/src/lib/principal.ts` / `principal-derive.ts`) sets `principal.canonical` from the `canonical` custom claim; for a user whose claims have not been minted yet (the bootstrap admin before `onAuthUserCreate` runs to completion), the field is the empty string `''`, not `null` / `undefined`. JavaScript's `??` only falls back on `null` / `undefined` and treats `''` as a present value, so the typed-email canonicalization branch never executes and `meCanonical` stays empty. The subsequent `adminCanonical && meCanonical && adminCanonical === meCanonical` short-circuits on the empty `meCanonical`, the gate returns `setup-in-progress`, and the wizard is never rendered.
+
+**Repro:** fresh Firebase project; seed doc populated with `bootstrap_admin_email` matching a real account; sign in as that account before claims have been minted (i.e., the very first sign-in, before `onAuthUserCreate` finishes its `setCustomUserClaims` write); observe the gate routes to `SetupInProgress` instead of the bootstrap wizard.
+
+**Workaround applied during prod bring-up (2026-05-03):** wait for `onAuthUserCreate` to deploy, delete the existing Auth user record, then sign back in so the trigger fires fresh and mints the canonical claim. After the canonical claim landed, the gate's equality check passed and the wizard rendered correctly.
+
+**Fix shape:** swap `??` for `||` on line 181 so the empty string falls through to the `canonicalEmailFn(principal.email ?? '')` branch. Add a unit test covering the `principal.canonical === ''` case (no claims yet, empty-string canonical) — assert the gate evaluates to `wizard` when `bootstrap_admin_email` matches the typed email.
+
+**Branch / PR:** none — fix not yet scheduled.
+
+---
+
 ## [B-4] First-login users with pre-existing access docs land on NotAuthorized
 Status: closed (fixed in PR #60)
 Owner: @web-engineer
