@@ -45,6 +45,28 @@ infra/
 - **Secrets via Secret Manager + env-var injection.** Never in scripts, never in code.
 - **CI deploys are not yet wired** — operator-triggered deploys via `pnpm deploy:staging` / `:prod`. CI gates tests + builds; prod deploys remain manual.
 
+## Cloud Functions deploy artifact
+
+Cloud Build's `npm install` does not understand pnpm's `workspace:*` protocol, so the deploy artifact must not contain any workspace-protocol references. The repo handles this by bundling `@kindoo/shared` into the functions output and shipping a synthetic `package.json` that lists only real-npm runtime deps. See architecture decision **D12** for the rationale.
+
+**Shape on disk.** `functions/scripts/build.mjs` is the single producer of the deploy tree:
+
+- esbuild bundles `functions/src/index.ts` to `functions/lib/index.js` (ESM, `node22`), inlining `@kindoo/shared`. Runtime deps (`firebase-admin`, `firebase-functions`, `googleapis`, `resend`) stay external — Cloud Build installs them via the generated manifest.
+- The script writes `functions/lib/package.json` containing only `name`, `version`, `private`, `type: "module"`, `main: "index.js"`, `engines`, and the runtime deps copied verbatim from `functions/package.json`. No `@kindoo/shared` entry. No devDeps.
+- The script symlinks `functions/lib/node_modules` to `../node_modules` so the local Functions emulator can resolve `firebase-admin` / `firebase-functions` against the workspace install. `firebase.json`'s `ignore: ["node_modules", ...]` excludes the symlink from the upload tarball, so Cloud Build sees an empty tree and runs `npm install` cleanly against `lib/package.json`.
+- The script also copies any `functions/.env.*` files to `functions/lib/.env.*` unconditionally. Firebase CLI's `defineString` parameter resolution reads from the `source` directory (which is `functions/lib`), so source-of-truth env values must be propagated each build — overwrite is intentional, to avoid stale empty placeholders the CLI's interactive prompt may have written into `lib/`.
+
+**Wiring.** `firebase.json` sets `"source": "functions/lib"` for the default codebase and `"predeploy": ["pnpm --filter @kindoo/functions build"]`. `functions/package.json` declares `@kindoo/shared` as a **devDependency** so esbuild can resolve it at build time without it leaking into the deploy manifest.
+
+**What not to do.**
+
+- Do **not** add `@kindoo/shared` as a regular `dependencies` entry in `functions/package.json`. Cloud Build will fail with `EUNSUPPORTEDPROTOCOL: workspace:`.
+- Do **not** change `firebase.json`'s `functions.source` to `"functions"` (the workspace root) — same failure.
+- Do **not** skip the predeploy hook on a manual `firebase deploy --only functions`. The upload is whatever currently lives in `functions/lib/`; a stale checkout deploys stale bytes.
+- Do **not** drop the `lib/node_modules` symlink. The local emulator needs it to resolve runtime deps.
+
+**Pointers.** `functions/scripts/build.mjs` for the implementation. `docs/architecture.md` D12 for the decision record. `docs/changelog/phase-2-auth-and-claims.md` "Deviations" section for the discovery trail (this approach was discovered when the first staging deploy in Phase 2 failed against `workspace:*`).
+
 ## Don't
 
 - **Don't deploy to prod from a developer machine in the long run** — once stable, move to CI-driven deploys.
