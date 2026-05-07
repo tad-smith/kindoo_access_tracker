@@ -4,6 +4,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 import { WardRostersPage } from '../../../features/stake/WardRostersPage';
+import { useRequireRole } from '../../../lib/useRequireRole';
+import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 
 const searchSchema = z.object({
   ward: z.string().optional(),
@@ -15,6 +17,13 @@ export const Route = createFileRoute('/_authed/stake/wards')({
 });
 
 function WardRostersRoute() {
+  const { ready, allowed } = useRequireRole('stake');
+  if (!ready) return <LoadingSpinner />;
+  if (!allowed) return null;
+  return <WardRostersContent />;
+}
+
+function WardRostersContent() {
   const { ward } = Route.useSearch();
   return <WardRostersPage {...(ward !== undefined ? { initialWard: ward } : {})} />;
 }
