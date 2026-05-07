@@ -14,12 +14,14 @@ const httpsCallableMock = vi.fn((_app: unknown, _name: string) => callableInvoke
 
 vi.mock('firebase/functions', () => ({
   getFunctions: () => ({ __sentinel: 'functions' }),
+  connectFunctionsEmulator: () => undefined,
   httpsCallable: (app: unknown, name: string) => httpsCallableMock(app, name),
 }));
 
 vi.mock('../../../lib/firebase', () => ({
   firebaseApp: { __sentinel: 'app' },
   db: { __sentinel: 'db' },
+  functions: { __sentinel: 'functions' },
 }));
 
 vi.mock('../../../lib/data', () => ({

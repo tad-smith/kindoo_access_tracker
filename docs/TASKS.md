@@ -383,13 +383,15 @@ PR #29 applied (1) selectively to mutations in `features/manager/configuration/`
 Surfaces this footgun: the screenshot trail in PR #29 ("Add manual access" stuck on Adding…) is the canonical reproduction.
 
 ## [T-25] E2E coverage for `runImportNow` and `installScheduledJobs` callables
-Status: open
-Owner: @infra-engineer (e2e setup) + @web-engineer (specs)
+Status: done (PR #70, 2026-05-06)
+Owner: @web-engineer
 Phase: 8 → cross-cutting
 
 The Phase 8 §1094 spec ("Manager clicks 'Import Now' → status updates → over-cap banner appears + clears on next clean run") is partially covered: the integration tests in `functions/tests/` exercise the callable's logic, and unit tests in `apps/web/src/features/manager/import/` cover the SPA mutation hook + the page's loading / success / error / banner states. The live-callable e2e is unwritten because Playwright's setup currently boots only the Auth + Firestore emulators, not the Functions emulator.
 
 **Scope:** wire the Functions emulator into Playwright's `globalSetup`; write the §1094 e2e plus a sibling for `installScheduledJobs` (the bootstrap wizard's "Complete Setup" path that should idempotently install Cloud Scheduler jobs).
+
+**Closed (PR #70):** Functions emulator wiring landed in `apps/web/src/lib/firebase.ts` (`connectFunctionsEmulator` behind `VITE_USE_FUNCTIONS_EMULATOR`) plus `e2e/playwright.config.ts` (build-time env flag). New specs at `e2e/tests/manager-admin/import-now.spec.ts` (happy path + over-cap-banner + clears-on-clean-rerun) and `e2e/tests/manager-admin/install-scheduled-jobs.spec.ts` (Complete-Setup invocation + SDK-driven idempotent second invocation via the test hatch's `invokeCallable`). Sheet-fixture seeding for the importer uses a Firestore-doc-backed fetcher gated by `FUNCTIONS_EMULATOR=true` (`functions/src/lib/sheets.ts` + `e2e/fixtures/emulator.ts:seedSheetFixture`). Drive-by web fix: `invokeInstallScheduledJobs` now passes `stakeId` (was a missing-argument bug — the wizard's warn-toast path was hiding it). CI side: build-functions step before E2E so the emulator can register callables, synthesize `functions/.env.kindoo-staging` to satisfy `defineString` params + the new `KINDOO_SKIP_CLAIM_SYNC=true` flag (`functions/src/lib/applyClaims.ts` short-circuit) so existing specs' synthetic `setCustomClaims` seeds are not raced by the now-loaded `onAuthUserCreate` / `syncManagersClaims` triggers.
 
 ## [T-26] Phase 11 SA hardening pass
 Status: open (runbook fold-in landed)

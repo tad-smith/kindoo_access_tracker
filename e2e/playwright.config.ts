@@ -54,14 +54,17 @@ export default defineConfig({
     // `VITE_USE_FIRESTORE_EMULATOR=true` flips the SPA's Firestore SDK
     // to talk to the local emulator. `VITE_USE_AUTH_EMULATOR=true`
     // flips Firebase Auth to the local emulator the same way (Phase 2).
-    // Without these, the production bundle would try to reach real
-    // Firebase and the page would throw before the heading rendered.
-    // The smoke test does NOT require an emulator be running — the
-    // SDK reaches out lazily on the first read; the page heading is
-    // rendered synchronously on mount. The auth-flow specs DO require
-    // both emulators to be running at test time.
+    // `VITE_USE_FUNCTIONS_EMULATOR=true` does the same for callables
+    // (T-25 / Phase 8 §1094). Without these, the production bundle
+    // would try to reach real Firebase and the page would throw before
+    // the heading rendered. The smoke test does NOT require an emulator
+    // be running — the SDK reaches out lazily on the first read; the
+    // page heading is rendered synchronously on mount. The auth-flow,
+    // import-now, and install-scheduled-jobs specs DO require all three
+    // emulators to be running at test time (CI launches them via
+    // `firebase emulators:exec --only firestore,auth,functions,hosting`).
     command:
-      'VITE_USE_FIRESTORE_EMULATOR=true VITE_USE_AUTH_EMULATOR=true pnpm --filter @kindoo/web build && pnpm --filter @kindoo/web preview',
+      'VITE_USE_FIRESTORE_EMULATOR=true VITE_USE_AUTH_EMULATOR=true VITE_USE_FUNCTIONS_EMULATOR=true pnpm --filter @kindoo/web build && pnpm --filter @kindoo/web preview',
     url: baseURL,
     reuseExistingServer: !isCI,
     timeout: 120_000,

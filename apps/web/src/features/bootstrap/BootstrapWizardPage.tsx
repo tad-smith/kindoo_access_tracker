@@ -69,6 +69,7 @@ import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
 import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
+import { STAKE_ID } from '../../lib/constants';
 import { invokeInstallScheduledJobs } from './callables';
 
 type StepNumber = 1 | 2 | 3 | 4;
@@ -673,7 +674,7 @@ function CompleteSetupButton({ enabled, onCompleted }: CompleteSetupProps) {
       // deployed yet we surface a warn-toast but the setup completion
       // is not rolled back.
       try {
-        await invokeInstallScheduledJobs();
+        await invokeInstallScheduledJobs(STAKE_ID);
       } catch (callErr) {
         toast(
           `Setup complete, but scheduled jobs could not be enabled: ${errorMessage(callErr)}`,
