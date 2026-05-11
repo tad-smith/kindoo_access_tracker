@@ -62,6 +62,13 @@ async function readActor(): Promise<{ email: string; canonical: string }> {
 export interface CompleteAddInput {
   request: AccessRequest;
   building_names: string[];
+  /**
+   * Optional free-text note from the manager. Trimmed; an empty result
+   * is dropped from the write so the request doc stays clean. The
+   * Phase 9 `notifyRequesterCompleted` trigger surfaces this value on
+   * the email body when present.
+   */
+  completion_note?: string;
 }
 
 /**
@@ -77,13 +84,14 @@ export interface CompleteAddInput {
 export function useCompleteAddRequest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ request, building_names }: CompleteAddInput) => {
+    mutationFn: async ({ request, building_names, completion_note }: CompleteAddInput) => {
       if (request.type !== 'add_manual' && request.type !== 'add_temp') {
         throw new Error(`Cannot use add-completion for type "${request.type}".`);
       }
       if (building_names.length === 0) {
         throw new Error('Pick at least one building.');
       }
+      const trimmedNote = (completion_note ?? '').trim();
       const actor = await readActor();
       const seatType = request.type === 'add_manual' ? 'manual' : 'temp';
 
@@ -138,13 +146,15 @@ export function useCompleteAddRequest() {
         // body with `serverTimestamp()` sentinels that the SDK
         // resolves on commit.
         tx.set(newSeatRef, seatBody as never);
-        tx.update(reqRef, {
+        const reqUpdate: Record<string, unknown> = {
           status: 'complete',
           completer_email: actor.email,
           completer_canonical: actor.canonical,
           completed_at: serverTimestamp(),
           lastActor: actor,
-        });
+        };
+        if (trimmedNote.length > 0) reqUpdate.completion_note = trimmedNote;
+        tx.update(reqRef, reqUpdate);
       });
     },
     onSuccess: () => {
@@ -161,6 +171,33 @@ export function useCompleteAddRequest() {
 
 export interface CompleteRemoveInput {
   request: AccessRequest;
+  /**
+   * Optional free-text note from the manager. Trimmed; empty drops
+   * the field. When the R-1 race fires (seat already gone) AND the
+   * manager supplied a note, we preserve BOTH signals by appending a
+   * short system tag to the manager's prose so the email reader sees
+   * the manager's context first and the system context after.
+   */
+  completion_note?: string;
+}
+
+/** R-1 race tag appended after the manager's note when the seat is gone. */
+export const R1_AUTO_NOTE = 'Seat already removed at completion time (no-op).';
+
+/**
+ * Resolve the `completion_note` field for a remove-complete write. Manager's
+ * prose wins; on the R-1 race we append a `[System: ...]` tag so the email
+ * surfaces both signals. Returns `undefined` when nothing should be written.
+ */
+export function resolveRemoveCompletionNote(
+  seatExists: boolean,
+  rawNote: string | undefined,
+): string | undefined {
+  const trimmed = (rawNote ?? '').trim();
+  if (!seatExists) {
+    return trimmed.length > 0 ? `${trimmed}\n\n[System: ${R1_AUTO_NOTE}]` : R1_AUTO_NOTE;
+  }
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 /**
@@ -180,7 +217,7 @@ export interface CompleteRemoveInput {
 export function useCompleteRemoveRequest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ request }: CompleteRemoveInput) => {
+    mutationFn: async ({ request, completion_note }: CompleteRemoveInput) => {
       if (request.type !== 'remove') {
         throw new Error('useCompleteRemoveRequest requires type=remove.');
       }
@@ -206,9 +243,10 @@ export function useCompleteRemoveRequest() {
           completed_at: serverTimestamp(),
           lastActor: actor,
         };
-        if (!seatSnap.exists()) {
-          update.completion_note = 'Seat already removed at completion time (no-op).';
-        }
+        // Manager's note wins; on the R-1 race we also append the
+        // system tag so the email reader gets both pieces of context.
+        const resolved = resolveRemoveCompletionNote(seatSnap.exists(), completion_note);
+        if (resolved !== undefined) update.completion_note = resolved;
         tx.update(reqRef, update);
       });
     },
