@@ -1,5 +1,7 @@
-// Route gate tests for /_authed/bishopric/roster. Bishopric-only;
-// stake / manager-only / no-role principals redirect to /.
+// Route gate tests for /_authed/bishopric/roster. Bishopric-gated, but
+// managers (and platform superadmins) implicitly pass because they
+// administer the entire app; stake-only / no-role principals redirect
+// to /.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -95,7 +97,9 @@ describe('/_authed/bishopric/roster route gate', () => {
     expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true });
   });
 
-  it('redirects a manager-only principal to /', () => {
+  it('renders the page for a Kindoo Manager principal', () => {
+    // Managers administer the entire app, so they pass the bishopric
+    // gate without literally holding the bishopric role.
     mockedPrincipal.current = {
       ...mockedPrincipal.current,
       isAuthenticated: true,
@@ -103,8 +107,8 @@ describe('/_authed/bishopric/roster route gate', () => {
       bishopricWards: {},
     };
     render(<BishopricRosterRoute />);
-    expect(screen.queryByTestId('bishopric-roster-page')).toBeNull();
-    expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true });
+    expect(screen.getByTestId('bishopric-roster-page')).toBeInTheDocument();
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 
   it('does not redirect during the principal-loading window', () => {

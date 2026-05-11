@@ -118,10 +118,17 @@ export function useRequireRole(
  * roles in `STAKE_ID`? `platformSuperadmin` is the only stake-agnostic
  * axis.
  *
+ * Two roles are implicit supersets that pass any gate:
+ *   - `platformSuperadmin` administers every stake.
+ *   - `manager` (Kindoo Manager) administers the entire app, so a
+ *     manager in `STAKE_ID` passes a `stake` or `bishopric` gate
+ *     without literally holding those roles.
+ *
  * Exported for unit testing — components use {@link useRequireRole}.
  */
 export function holdsAnyRole(principal: Principal, roles: RequiredRole[]): boolean {
   if (principal.isPlatformSuperadmin) return true;
+  if (principal.managerStakes.includes(STAKE_ID)) return true;
   for (const r of roles) {
     if (r === 'platformSuperadmin') {
       // Already handled above; falsy unless `isPlatformSuperadmin`.
