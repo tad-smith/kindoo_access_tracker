@@ -215,11 +215,13 @@ A failed first-deploy attempt can leave Cloud Functions in a half-registered sta
 Closed 2026-04-28: `infra/runbooks/provision-firebase-projects.md` covers the half-state recovery via `firebase functions:delete <function-names...>` followed by redeploy.
 
 ## [T-13] `STAKE_IDS` hardcoded to `['csnorth']` in functions
-Status: open
+Status: done (PR #75, 2026-05-03)
 Owner: @backend-engineer
 Phase: 12
 
 `functions/src/lib/constants.ts` exports `STAKE_IDS = ['csnorth']` and `seedClaimsFromRoleData` walks this list when seeding claims for brand-new users on first sign-in. The `syncAccessClaims` / `syncManagersClaims` triggers extract `stakeId` from the doc path directly, so they are stake-ID-agnostic; only the seed path is hardcoded. Implication: if the v1 stake's actual document ID isn't `csnorth`, new users will sign in cleanly but won't get claims seeded automatically — operators can work around by manually editing a `kindooManagers` doc to fire the sync trigger. Phase 12 (multi-stake) makes this dynamic by deriving the list at runtime.
+
+Closed 2026-05-03 (PR #75, commit `cf643eb`): seed path now calls `getStakeIds(db)` from new helper `functions/src/lib/stakeIds.ts`, which reads `stakes/` via `listDocuments()` and caches in module scope. `functions/src/lib/constants.ts` deleted (only export was the obsolete `STAKE_IDS`). Phase 12 work no longer needed for the SEED side — new stakes are picked up automatically on next cold start. SPA-side `STAKE_ID` remains hardcoded as planned; multi-stake routing lands in Phase 12 separately.
 
 ## [T-14] Local Node 20 vs production Node 22 mismatch produces emulator warning
 Status: done (2026-04-28, Phase 3.5 close)
