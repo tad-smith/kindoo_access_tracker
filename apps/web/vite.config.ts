@@ -140,12 +140,24 @@ export default defineConfig(({ mode }) => {
         },
         workbox: {
           navigateFallback: '/index.html',
-          // Exclude the firebase-messaging-sw.js path so Workbox doesn't
-          // serve `index.html` when the browser fetches the FCM SW. The
-          // FCM SW lives at scope `/firebase-cloud-messaging-push-scope`
-          // and must always come from disk (network-fresh). Workbox
-          // owns the rest of `/`.
-          navigateFallbackDenylist: [/^\/__\//, /^\/firebase-messaging-sw\.js$/],
+          // Paths that must NOT be rewritten to `index.html`. The
+          // default navigation fallback turns every same-origin
+          // navigation into the SPA shell, which silently masks any
+          // raw static asset Hosting serves alongside `index.html`
+          // (curl bypasses the SW and shows the real bytes — the
+          // browser does not). Add an entry here for every static
+          // artifact that lives at `/<path>` and is not a SPA route:
+          //   - /__/ — Firebase Hosting's reserved internal endpoints.
+          //   - /firebase-messaging-sw.js — FCM background SW, must
+          //     come from disk on every fetch (lives at scope
+          //     /firebase-cloud-messaging-push-scope).
+          //   - /THIRD_PARTY_LICENSES.txt — T-20 compliance artifact,
+          //     served as text/plain from apps/web/dist/.
+          navigateFallbackDenylist: [
+            /^\/__\//,
+            /^\/firebase-messaging-sw\.js$/,
+            /^\/THIRD_PARTY_LICENSES\.txt$/,
+          ],
           // Network-first for the SPA shell; cache-first for fingerprinted
           // bundle chunks (handled by precache); explicitly never cache
           // Firebase backend traffic.

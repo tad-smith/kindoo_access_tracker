@@ -180,7 +180,13 @@ jobs:
         # T-20: confirm the file exists and is non-trivial in size so
         # a silent regression in the emit step (broken pnpm
         # subcommand, missing license-text walk, etc.) is caught in CI
-        # instead of shipping an empty notices artifact.
+        # instead of shipping an empty notices artifact. Also confirm
+        # the Workbox service worker carries the navigateFallback
+        # denylist entry for the .txt path — without it the SW
+        # rewrites the link click to the SPA shell and the user sees
+        # "Not Found" instead of the licenses page (the regression
+        # this gate is named to prevent, caught by operator smoke
+        # test on first deploy).
         run: |
           file="apps/web/dist/THIRD_PARTY_LICENSES.txt"
           if [[ ! -f "$file" ]]; then
@@ -191,6 +197,15 @@ jobs:
           echo "$file size: $size bytes"
           if [[ "$size" -lt 16384 ]]; then
             echo "error: $file is suspiciously small ($size bytes < 16384 minimum)" >&2
+            exit 1
+          fi
+          sw="apps/web/dist/sw.js"
+          if [[ ! -f "$sw" ]]; then
+            echo "missing: $sw (PWA build did not emit a SW)" >&2
+            exit 1
+          fi
+          if ! grep -q "THIRD_PARTY_LICENSES" "$sw"; then
+            echo "error: $sw lacks the THIRD_PARTY_LICENSES navigateFallbackDenylist entry" >&2
             exit 1
           fi
 

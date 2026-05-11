@@ -113,6 +113,7 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
    - **TODO post-B1:** record the staging URL here. Expected to be something like `https://kindoo-staging.web.app`.
    - Open the URL in a browser. Expected: the SPA loads. (Phase 1: a hello page reading the smoketest doc; Phase 4+: the real app.)
    - Open the browser console. Expected: no red errors.
+   - **Verify the third-party Licenses link (T-20).** In an INCOGNITO window (so no prior service worker is cached), sign in and click the `Licenses` link in the nav footer. Expected: a plain-text page with the THIRD_PARTY_LICENSES.txt content (Apache-2.0 / MIT notices for the runtime deps). Curl alone is NOT enough — `curl https://<host>/THIRD_PARTY_LICENSES.txt` bypasses the service worker and will return the real bytes even if the SW is shadowing the link click. The browser click test is what catches a `navigateFallbackDenylist` regression that rewrites the link to the SPA shell.
 
 ## Prod deploy
 
