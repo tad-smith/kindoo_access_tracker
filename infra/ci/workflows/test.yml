@@ -160,6 +160,55 @@ jobs:
         id: build
         run: pnpm build
 
+      - name: Emit THIRD_PARTY_LICENSES.txt
+        id: emit-licenses
+        # T-20: walks the SPA workspace runtime graph via `pnpm
+        # licenses list` and concatenates LICENSE + NOTICE text into
+        # apps/web/dist/THIRD_PARTY_LICENSES.txt. Runs `node` directly
+        # rather than `pnpm --filter @kindoo/web emit-third-party-licenses`
+        # so the child shell carries no `npm_lifecycle_*` /
+        # `PNPM_SCRIPT_*` env vars — pnpm 10 detects nested-script env
+        # and refuses the inner `pnpm licenses list` call with exit 1
+        # / empty stderr on some hosts. The deploy scripts
+        # (infra/scripts/deploy-*.sh) invoke this same script the same
+        # way; matching the call shape here keeps CI honest about what
+        # ships.
+        run: node apps/web/scripts/emit-third-party-licenses.mjs
+
+      - name: Verify THIRD_PARTY_LICENSES.txt artifact
+        id: verify-licenses
+        # T-20: confirm the file exists and is non-trivial in size so
+        # a silent regression in the emit step (broken pnpm
+        # subcommand, missing license-text walk, etc.) is caught in CI
+        # instead of shipping an empty notices artifact. Also confirm
+        # the Workbox service worker carries the navigateFallback
+        # denylist entry for the .txt path — without it the SW
+        # rewrites the link click to the SPA shell and the user sees
+        # "Not Found" instead of the licenses page (the regression
+        # this gate is named to prevent, caught by operator smoke
+        # test on first deploy).
+        run: |
+          file="apps/web/dist/THIRD_PARTY_LICENSES.txt"
+          if [[ ! -f "$file" ]]; then
+            echo "missing: $file" >&2
+            exit 1
+          fi
+          size=$(wc -c < "$file")
+          echo "$file size: $size bytes"
+          if [[ "$size" -lt 16384 ]]; then
+            echo "error: $file is suspiciously small ($size bytes < 16384 minimum)" >&2
+            exit 1
+          fi
+          sw="apps/web/dist/sw.js"
+          if [[ ! -f "$sw" ]]; then
+            echo "missing: $sw (PWA build did not emit a SW)" >&2
+            exit 1
+          fi
+          if ! grep -q "THIRD_PARTY_LICENSES" "$sw"; then
+            echo "error: $sw lacks the THIRD_PARTY_LICENSES navigateFallbackDenylist entry" >&2
+            exit 1
+          fi
+
       - name: Verify all checks passed
         # Fail the workflow if any earlier continue-on-error step failed.
         # `build` doesn't have continue-on-error, so its failure already

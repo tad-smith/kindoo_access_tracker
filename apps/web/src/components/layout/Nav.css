@@ -126,6 +126,18 @@ button.kd-nav-link:disabled {
   user-select: all;
 }
 
+/* Third-party licenses link rendered next to the version stamp in
+   .kd-nav-overlay-foot. Inherits the muted-monospace context; only
+   override what's needed to look like a link. */
+.kd-nav-licenses-link {
+  color: inherit;
+  text-decoration: underline;
+}
+.kd-nav-licenses-link:hover,
+.kd-nav-licenses-link:focus-visible {
+  color: var(--kd-chrome-fg);
+}
+
 /* Informational text inside a section's list — currently used to
    surface the signed-in user's email below the Logout item in the
    phone drawer. Not interactive; aligns with the icon-column geometry

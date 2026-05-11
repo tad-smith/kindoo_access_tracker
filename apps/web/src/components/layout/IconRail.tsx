@@ -98,6 +98,20 @@ export function IconRail({ principal, onActivate, onSignOut, signingOut, version
         <span className="kd-icon-rail-version" aria-label="Build version">
           v{version}
         </span>
+        {/* Stacked under the version stamp at this 64px rail width.
+            stopPropagation keeps a tap on the link from bubbling to
+            the rail-level onClick that opens the floating panel. */}
+        <a
+          href="/THIRD_PARTY_LICENSES.txt"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="kd-icon-rail-licenses-link kd-nav-licenses-link"
+          onClick={(e) => {
+            e.stopPropagation();
+          }}
+        >
+          Licenses
+        </a>
       </div>
     </aside>
   );

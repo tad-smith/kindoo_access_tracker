@@ -291,11 +291,13 @@ A 2026-04-28 dependency audit found several caret floors lagging current by many
 Closed 2026-04-28 (commit `f26bbf6`, PR #5): caret floors bumped across workspaces — `firebase-admin ^13.8.0`, `@playwright/test ^1.59.1`, `@tanstack/react-router ^1.168.25`, `@tanstack/router-plugin ^1.167.28`, `@tanstack/react-query ^5.100.5`, `@google/clasp ^3.3.0` (covers CVE-2026-4092), plus the smaller-drift entries. `@types/node ^22` held deliberately. Verifiable in current `package.json` files at `package.json:35-37` (root), `apps/web/package.json:27-49`, `functions/package.json:22-31`, `e2e/package.json:15`, `packages/shared/package.json:22`.
 
 ## [T-20] Bundle THIRD_PARTY_LICENSES artifact in production build
-Status: open
+Status: done (PR #77, 2026-05-03)
 Owner: @infra-engineer
 Phase: 11 (cutover) → due before public DNS flip
 
 Apache-2.0 dependencies in the production bundle (TypeScript, firebase, firebase-admin, @google/clasp, @playwright/test, @firebase/rules-unit-testing) require preserving the LICENSE + NOTICE text in the distributed artifact. MIT deps require preserving the copyright + license notice. Today nothing in the Hosting build assembles this. Add a build step (e.g., `pnpm-licenses` / `license-checker-rseidelsohn` / similar) that emits `apps/web/dist/THIRD_PARTY_LICENSES.txt` covering every runtime dep in the SPA bundle, and surface a link from a footer or About page so users can find it. Functions side does not ship to end-users so no equivalent artifact is needed. Verify the build runs in CI and the file is non-empty before Phase 11 close.
+
+Closed 2026-05-03 (PR #77): postbuild step at `apps/web/scripts/emit-third-party-licenses.mjs` shells `pnpm --filter @kindoo/web licenses list --prod --long --json` to enumerate the SPA's transitive runtime tree (146 packages at this commit), reads LICENSE / NOTICE text from each package directory, and concatenates into `apps/web/dist/THIRD_PARTY_LICENSES.txt` (~208 KB). Wired into both `build` and `build:staging` in `apps/web/package.json`. The script fails the build if the artifact is under 16 KB so a silent regression cannot ship. CI gate added to `infra/ci/workflows/test.yml` (mirrored to `.github/workflows/test.yml`) verifies file presence + size after `pnpm build`. Footer link surfaced from `apps/web/src/components/layout/NavOverlay.tsx` as `v<version> · Licenses` (target=_blank, rel=noopener, href=/THIRD_PARTY_LICENSES.txt); component test in `NavOverlay.test.tsx`. `pnpm licenses` chosen over `license-checker-rseidelsohn` because the latter walks `node_modules/<dep>/node_modules/` and misses pnpm's flat `.pnpm/` layout (it found only the 20 direct deps).
 
 ## [T-21] Decide Audit Log diff rendering: JSON-pretty `<details>` vs field-by-field diff table
 Status: done (2026-04-29)

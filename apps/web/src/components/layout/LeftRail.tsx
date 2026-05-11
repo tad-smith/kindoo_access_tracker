@@ -27,6 +27,15 @@ export function LeftRail({ principal, signingOut, version, onSignOut }: LeftRail
       <div className="kd-left-rail-foot">
         <span className="kd-nav-version" aria-label="Build version">
           v{version}
+          {' · '}
+          <a
+            href="/THIRD_PARTY_LICENSES.txt"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="kd-nav-licenses-link"
+          >
+            Licenses
+          </a>
         </span>
       </div>
     </aside>
