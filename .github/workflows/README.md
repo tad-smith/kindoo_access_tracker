@@ -4,8 +4,9 @@ GitHub Actions workflows for the Stake Building Access repository.
 
 | Workflow | Source-of-truth | Triggers |
 |---|---|---|
-| `pages.yml` | this file (only one) | Push to `main` touching `website/**`; deploys the GitHub-Pages wrapper site for `kindoo.csnorth.org`. Retired at Phase 11 cutover per docs/firebase-migration.md F17. |
 | `test.yml` | **`infra/ci/workflows/test.yml`** is the source-of-truth | Push to `main`; all PRs. Lints, typechecks, runs the test suite, builds. The file in this directory is a verbatim copy. |
+
+Removed 2026-05-11: `pages.yml` (legacy GitHub-Pages wrapper deploy for `kindoo.csnorth.org`). Apps Script is decommissioned (Phase 11 cutover, see `docs/changelog/phase-11-cutover.md`); DNS now points at Firebase Hosting. GitHub Pages was unpublished from repo settings; this workflow file is retired.
 
 ## Why two copies of test.yml?
 
