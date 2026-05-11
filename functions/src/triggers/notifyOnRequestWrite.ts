@@ -1,7 +1,7 @@
 // Fires on `stakes/{stakeId}/requests/{requestId}` writes and emits
 // the matching email per `docs/spec.md` §9. Coexists with
-// `pushOnRequestSubmit` (Phase 10.5) — that trigger handles push for
-// the new-request transition only; this trigger handles email for all
+// `pushOnRequestSubmit` — that trigger handles push for the
+// new-request transition only; this trigger handles email for all
 // four lifecycle transitions (submit, complete, reject, cancel).
 //
 // Lifecycle detection:

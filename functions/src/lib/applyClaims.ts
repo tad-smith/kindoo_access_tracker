@@ -1,6 +1,6 @@
 // Helpers for "stamp these new per-stake claims onto a uid, preserving
 // the rest." Used by the three sync triggers — each fires on a single
-// stake's role data, but multi-stake (Phase 12) means we must not
+// stake's role data, but the multi-stake claim shape means we must not
 // clobber the user's claim block in *other* stakes.
 //
 // Also encapsulates the "did the claims actually change?" comparison

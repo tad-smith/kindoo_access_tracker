@@ -123,10 +123,9 @@ describe('firestore.rules — stakes/{stakeId} parent doc', () => {
     });
 
     // Setup-in-progress read gate: per the SPA's setup-complete gate
-    // (`docs/firebase-migration.md` §Phase 7 + `docs/spec.md` §10), any
-    // signed-in user must be able to read the parent stake doc while
-    // `setup_complete == false` so the gate can route them to
-    // SetupInProgress.
+    // (`docs/spec.md` §10), any signed-in user must be able to read
+    // the parent stake doc while `setup_complete == false` so the
+    // gate can route them to SetupInProgress.
     it('outsider can read the parent stake doc when setup_complete=false', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx

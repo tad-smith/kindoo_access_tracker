@@ -1,5 +1,5 @@
 // Integration tests for daily expiry. Runs against the Firestore
-// emulator. Per `docs/spec.md` §7 + the Phase 8 acceptance criteria:
+// emulator. Per `docs/spec.md` §7:
 //   - Temp seat with end_date < today → deleted, ExpiryTrigger stamped.
 //   - Temp seat with end_date == today → NOT deleted (still alive on
 //     the last day; expires the next morning).

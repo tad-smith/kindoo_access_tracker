@@ -1,6 +1,6 @@
-// Phase 1 trivial test: prove the type-check + module-import path works.
-// Real callable-invocation tests (firebase-functions-test against the
-// emulator) land in Phase 4 once there are real callables to exercise.
+// Trivial test: prove the type-check + module-import path works.
+// Real callable-invocation tests against the Firebase emulators live
+// in the sibling `tests/` directory.
 import { describe, expect, it } from 'vitest';
 import { KINDOO_FUNCTIONS_VERSION } from './version.js';
 

@@ -2,7 +2,7 @@
 // current Firestore state, produces a list of writes. No Firestore I/O,
 // no clock — `Importer.ts` consumes the plan and applies it.
 //
-// Schema-driven differences from the Apps Script importer:
+// Shape:
 //
 //   - One Seat doc per (canonical_email) per stake. Multi-calling people
 //     collapse to one doc with `callings[]`.

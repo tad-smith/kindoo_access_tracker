@@ -6,11 +6,11 @@ Firestore Security Rules and composite-index declarations.
 
 ## Files
 
-| File                     | Status (Phase 3) |
+| File                     | Notes |
 |---|---|
 | `firestore.rules`        | Full per-collection rules per `docs/firebase-schema.md` §6. Helpers, the `tiedToRequestCompletion` cross-doc invariant, and split-ownership on `access` are all in place. |
 | `firestore.indexes.json` | Composite indexes per `docs/firebase-schema.md` §5.1 (five on `auditLog`, four on `requests`). See "Index justifications" below for which query each one supports. |
-| `tests/`                 | One rules-unit-testing suite per match block. Every collection has anon-deny / non-member-deny / member-allow / cross-stake-deny / write-path coverage. The Phase 1 `setup.test.ts` smoke and the Phase 2 `userIndex.test.ts` survive into Phase 3. |
+| `tests/`                 | One rules-unit-testing suite per match block. Every collection has anon-deny / non-member-deny / member-allow / cross-stake-deny / write-path coverage. |
 
 ## Index justifications
 
@@ -50,6 +50,3 @@ gcloud firestore fields ttls update ttl \
 
 Repeat for the production project. Optionally also for `platformAuditLog` if retention there matters. See `docs/TASKS.md` entry T-15 for the operator follow-up.
 
-## Why locked-down rules in earlier phases
-
-Phase 1 shipped a lock-everything stub; Phase 2 added a single allow-list for `userIndex/{canonical}` self-reads. Phase 3 (this commit) replaces the stub with the full rule matrix; the Phase 2 `userIndex` block is preserved verbatim.

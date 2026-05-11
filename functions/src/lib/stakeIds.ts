@@ -1,8 +1,7 @@
 // Runtime-derived list of every stake the platform serves.
 //
-// Replaces the old `STAKE_IDS = ['csnorth']` constant. Reads
-// `stakes/` doc IDs via `listDocuments()` and caches the result in
-// module scope for the lifetime of the Cloud Function instance. The
+// Reads `stakes/` doc IDs via `listDocuments()` and caches the result
+// in module scope for the lifetime of the Cloud Function instance. The
 // only consumer is `seedClaimsFromRoleData`, fired by
 // `onAuthUserCreate` on first sign-in (rare: ≤ ~250 events/lifetime
 // for v1 stake size), so the cache trades freshness for one
@@ -15,7 +14,7 @@
 // claims seeded; the operator can recover by touching the user's
 // `kindooManagers` / `access` doc to fire the per-stake sync triggers
 // (which extract `stakeId` from the doc path and are unaffected by
-// this cache). Acceptable for Phase 12's expected growth pattern of
+// this cache). Acceptable given the expected growth pattern of
 // rare additions.
 //
 // `listDocuments()` returns refs (not full snapshots) and includes

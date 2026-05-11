@@ -1,9 +1,8 @@
 // Helpers for spinning up `@firebase/rules-unit-testing` against the
-// committed firestore.rules. Phase 1 shipped scaffolding; Phase 2 added
-// `seedAsAdmin`. Phase 3 adds the stake-aware auth helpers
-// (`managerContext`, `stakeMemberContext`, `bishopricContext`,
-// `superadminContext`) that build the same custom-claims shape Phase 2's
-// sync triggers stamp on real users.
+// committed firestore.rules. Provides `seedAsAdmin` plus the
+// stake-aware auth helpers (`managerContext`, `stakeMemberContext`,
+// `bishopricContext`, `superadminContext`) that build the same
+// custom-claims shape the sync triggers stamp on real users.
 //
 // The helper reads firestore.rules from a path relative to THIS file,
 // not from the test's CWD — vitest runs tests from the workspace root
@@ -55,8 +54,8 @@ export async function clearAll(env: RulesTestEnvironment): Promise<void> {
 
 /**
  * Build a Firestore handle authenticated as the given uid (with optional
- * custom claims). Phase 3 rules read the same shape of token claims that
- * the Phase 2 claim-sync triggers stamp on real users.
+ * custom claims). Rules read the same shape of token claims that the
+ * claim-sync triggers stamp on real users.
  */
 export function authedContext(
   env: RulesTestEnvironment,

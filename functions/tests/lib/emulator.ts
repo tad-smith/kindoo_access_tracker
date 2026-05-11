@@ -9,9 +9,7 @@
 // The `describe.skipIf(!hasEmulators())` guard at file scope means
 // these tests pass cleanly on a developer machine without the
 // emulators running (`pnpm test` from a fresh checkout); the
-// emulator-driven CI run picks them up. The Phase 2 acceptance
-// criteria require the suite to be exercised against the emulator
-// before the seven proofs land.
+// emulator-driven CI run picks them up.
 
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getAuth, type Auth } from 'firebase-admin/auth';

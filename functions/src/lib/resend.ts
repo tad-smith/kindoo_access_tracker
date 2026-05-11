@@ -13,7 +13,7 @@ import { Resend } from 'resend';
 /**
  * Outbound email payload accepted by the wrapper. Mirrors the subset
  * of Resend's `emails.send` we use — plain text only for v1, no HTML,
- * no attachments. `replyTo` optional per Phase 9 plan.
+ * no attachments. `replyTo` optional.
  */
 export type EmailPayload = {
   from: string;
