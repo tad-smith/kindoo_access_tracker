@@ -335,9 +335,11 @@ service cloud.firestore {
       }
 
       // ----- Seats -----
-      // Reads: managers see all; stake members see stake-scope seats
-      // (ward members see their assigned wards' seats). Cross-ward
-      // bishopric visibility falls out of the wards-array claim.
+      // Reads: managers see all; stake members see every roster in
+      // the stake (stake-level access grants cross-ward oversight —
+      // the Ward Rosters page lists every ward, and a stake user
+      // clicking any of them must succeed); bishopric members see
+      // seats whose scope is one of their assigned wards.
       //
       // Creates: only via request completion (the
       // `tiedToRequestCompletion` cross-doc invariant below verifies
@@ -355,7 +357,7 @@ service cloud.firestore {
       // delete rules can't read request.resource.data.
       match /seats/{memberCanonical} {
         allow read: if isManager(stakeId)
-          || (resource.data.scope == 'stake' && isStakeMember(stakeId))
+          || isStakeMember(stakeId)
           || (resource.data.scope in bishopricWardOf(stakeId));
 
         allow create: if isManager(stakeId)
@@ -407,8 +409,11 @@ service cloud.firestore {
 
       // ----- Requests -----
       // Reads: managers see all; the original requester sees their
-      // own; stake-scope members see all stake-scope requests; ward-
-      // scope is visible to bishopric members of that ward.
+      // own; stake-scope members see every request in the stake
+      // (stake-level access grants cross-ward oversight — the Ward
+      // Rosters page also surfaces pending requests per ward, and a
+      // stake user clicking any ward must succeed); ward-scope is
+      // visible to bishopric members of that ward.
       //
       // Creates (Submit): only `pending` is a legal starting status.
       // The requester_canonical must match the auth token's canonical
@@ -435,7 +440,7 @@ service cloud.firestore {
         allow read: if isAuthed() && (
           isManager(stakeId)
           || resource.data.requester_canonical == authedCanonical()
-          || (resource.data.scope == 'stake' && isStakeMember(stakeId))
+          || isStakeMember(stakeId)
           || (resource.data.scope in bishopricWardOf(stakeId))
         );
 
