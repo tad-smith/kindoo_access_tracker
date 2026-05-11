@@ -116,6 +116,37 @@ describe('useRequireRole', () => {
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
+  it('returns ready=true / allowed=true for a Kindoo Manager against a stake role gate', () => {
+    // Managers administer the entire app; the stake gate must accept
+    // a manager who is not literally a stake member.
+    setPrincipal({
+      isAuthenticated: true,
+      managerStakes: [STAKE_ID],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isPlatformSuperadmin: false,
+    });
+    let captured: { ready: boolean; allowed: boolean } | null = null;
+    render(<Probe role="stake" onResult={(r) => (captured = r)} />);
+    expect(captured).toEqual({ ready: true, allowed: true });
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('returns ready=true / allowed=true for a Kindoo Manager against a bishopric role gate', () => {
+    // Same superset rule for the bishopric gate.
+    setPrincipal({
+      isAuthenticated: true,
+      managerStakes: [STAKE_ID],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isPlatformSuperadmin: false,
+    });
+    let captured: { ready: boolean; allowed: boolean } | null = null;
+    render(<Probe role="bishopric" onResult={(r) => (captured = r)} />);
+    expect(captured).toEqual({ ready: true, allowed: true });
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
   it('redirects to / by default when the principal lacks the required role', () => {
     setPrincipal({
       isAuthenticated: true,
@@ -194,6 +225,22 @@ describe('holdsAnyRole', () => {
     expect(holdsAnyRole(principal({ isPlatformSuperadmin: true }), ['manager'])).toBe(true);
     expect(holdsAnyRole(principal({ isPlatformSuperadmin: true }), ['bishopric'])).toBe(true);
     expect(holdsAnyRole(principal({ isPlatformSuperadmin: true }), ['stake'])).toBe(true);
+  });
+
+  it('returns true for a Kindoo Manager against any role gate', () => {
+    // Managers are an implicit superset: a manager in STAKE_ID passes
+    // a stake or bishopric gate without literally holding those roles.
+    const manager = principal({ managerStakes: [STAKE_ID] });
+    expect(holdsAnyRole(manager, ['manager'])).toBe(true);
+    expect(holdsAnyRole(manager, ['stake'])).toBe(true);
+    expect(holdsAnyRole(manager, ['bishopric'])).toBe(true);
+  });
+
+  it('does not let a manager in a different stake bypass STAKE_ID gates', () => {
+    // The manager-superset short-circuit must scope to STAKE_ID.
+    const otherStakeManager = principal({ managerStakes: ['other-stake'] });
+    expect(holdsAnyRole(otherStakeManager, ['stake'])).toBe(false);
+    expect(holdsAnyRole(otherStakeManager, ['bishopric'])).toBe(false);
   });
 
   it('returns false for an empty bishopricWards array on the stake', () => {
