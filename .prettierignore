@@ -1,11 +1,3 @@
-# Apps Script source — managed by clasp, formatting conventions differ
-# from the Firebase port's prettier config. These will be deleted at
-# Phase 11 cutover; until then they should be left alone.
-src/
-identity-project/
-scripts/
-website/
-
 # Build artifacts
 apps/*/dist/
 functions/lib/
@@ -13,6 +5,10 @@ functions/dist/
 coverage/
 playwright-report/
 test-results/
+
+# Build / one-off scripts have their own conventions and aren't part of
+# the prettier-checked surface (functions/scripts/, infra/scripts/, etc.).
+scripts/
 
 # Firebase local state
 .firebase/

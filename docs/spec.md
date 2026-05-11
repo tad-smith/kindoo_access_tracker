@@ -2,7 +2,7 @@
 
 > **Live source of truth.** This doc always describes the system as it is right now. Code and spec change together, in the same commit — if you want to know what the deployed app does, this is the file. Per-phase history and deviation rationale live in [`docs/changelog/`](changelog/); read the latest phase file plus this doc to be caught up. The Firebase data model and security rules are referenced in [`firebase-schema.md`](firebase-schema.md). Numbered architecture decisions live in [`architecture.md`](architecture.md). Ambiguities and watch-outs are tracked in [`open-questions.md`](open-questions.md).
 >
-> **Phase 11 cutover (2026-05-03):** this spec was rewritten in lockstep with the cutover from describing the legacy Apps Script implementation to describing the Firebase implementation. The Apps Script source is preserved in `src/` and `identity-project/` for reference but is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md).
+> **Phase 11 cutover (2026-05-03):** this spec was rewritten in lockstep with the cutover from describing the legacy Apps Script implementation to describing the Firebase implementation. The Apps Script source and its per-chunk changelog history were removed from the repo on 2026-05-11; the content is preserved in git history. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md).
 
 ## 1. Context
 
@@ -259,7 +259,7 @@ Audit log writes are server-only and fan in via the `auditTrigger` Cloud Functio
 
 `kindoo.csnorth.org` resolves to Firebase Hosting on `kindoo-prod` (DNS flipped 2026-05-03 at Phase 11 cutover). Auto-provisioned Let's Encrypt cert via the Firebase Hosting console. Procedure documented in `infra/runbooks/custom-domain.md`.
 
-The previous setup (a static `website/index.html` GitHub Pages page wrapping the Apps Script `/exec` URL in a full-viewport iframe) is bypassed — the GitHub Pages site still exists at the underlying GitHub URL but no DNS hop reaches it.
+The previous setup (a static GitHub Pages page wrapping the Apps Script `/exec` URL in a full-viewport iframe) was bypassed at cutover and the GitHub Pages workflow + `website/` directory were retired in the post-cutover cleanup (PRs #78 and the 2026-05-11 cleanup PR).
 
 The brand domain `stakebuildingaccess.org` (per F17) is reserved but not yet pointed at Hosting; that flip is Phase B branding work and explicitly out of Phase 11 scope. The Resend `mail.stakebuildingaccess.org` subdomain is verified and in active use for the email envelope.
 

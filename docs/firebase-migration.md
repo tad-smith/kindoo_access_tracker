@@ -1478,34 +1478,33 @@ _DNS for the new domain_
 
 _Legacy `kindoo.csnorth.org` decommission_
 
-The legacy hostname was repointed at Firebase Hosting rather than decommissioned in the strict sense; the GitHub Pages iframe wrapper at `website/` is bypassed because DNS no longer resolves there. The redirect-vs-takedown decision is moot.
+The legacy hostname was repointed at Firebase Hosting rather than decommissioned in the strict sense.
 
 - [x] Decision: hostname is now served by Firebase Hosting on `kindoo-prod`; the GitHub Pages wrapper is no longer in the request path.
-- [ ] Update `website/index.html` to a meta-refresh / takedown (deferred — wrapper is bypassed by DNS, no user URL points at it).
+- [x] GitHub Pages workflow retired (PR #78, 2026-05-09); `website/` directory removed in the post-cutover cleanup PR (2026-05-11).
 - [ ] Communicate the URL change (deferred — same hostname, different backend; in-band channel sufficient).
 
 _Post-cutover monitoring_
 
 - [ ] 24–48h active monitoring (deferred — see Phase 11 close note in changelog).
-- [ ] Apps Script app stays deployed but disabled for one week as rollback (deferred — Apps Script never had a `kindoo-prod` Firebase counterpart, so the dual-deployment rollback model does not apply; the legacy Apps Script source is in `src/` for reference but is not user-reachable).
+- [x] Apps Script app stays deployed but disabled for one week as rollback (one-week rollback window elapsed; Apps Script source removed from the repo 2026-05-11).
 - [ ] After one week with no critical issues: delete Apps Script triggers, fully archive deployment, revoke migration service account's Sheet access (deferred — see Phase 11 close note in changelog).
 
 _Repo cleanup_
 
-- [ ] Delete `src/` (Apps Script Main) (deferred — staying as historical reference; see Phase 11 close note in changelog).
-- [ ] Delete `identity-project/` (deferred — same reason).
-- [ ] Delete `.clasp.json`, clasp scripts, package.json clasp deps (deferred — same reason).
+- [x] Delete `src/` (Apps Script Main) — removed 2026-05-11 in the post-cutover cleanup PR. Git history preserves the source.
+- [x] Delete `identity-project/` — removed 2026-05-11 in the post-cutover cleanup PR.
+- [x] Delete `.clasp.json`, clasp scripts, package.json clasp deps — removed 2026-05-11 in the post-cutover cleanup PR.
 - [x] Update root `CLAUDE.md`: remove "Two worlds during migration" framing; mark Apps Script as decommissioned.
-- [ ] Update `pnpm-workspace.yaml` if needed (no change required since Apps Script source is not a workspace).
+- [x] Update `pnpm-workspace.yaml` — comment about Apps Script removed 2026-05-11.
 
 _Doc updates_
 
 - [x] `docs/spec.md` — auth section rewritten (Firebase Auth + custom claims); stack section rewritten; concurrency section rewritten (Firestore transactions); full rewrite to describe Firebase reality.
 - [ ] `docs/architecture.md` — D2, D6, D7, D10 superseded; new Firebase decisions documented (deferred — D11 already captures the Firebase wiring decision; broader D-number cleanup is a follow-up doc-cleanup pass; see Phase 11 close note in changelog).
-- [ ] `docs/data-model.md` — rewritten for Firestore schema; redirects to `firebase-schema.md` as the primary reference (deferred — `firebase-schema.md` is already the live reference; the rewrite is a follow-up doc-cleanup pass; see Phase 11 close note in changelog).
-- [ ] `docs/build-plan.md` Chunk 11 marked superseded (deferred — historical-reference doc; see Phase 11 close note in changelog).
-- [ ] `docs/changelog/firebase-cutover.md` summarizes Phases 1–11 (deferred — `phase-11-cutover.md` is the cutover changelog entry; per-phase changelogs cover Phases 1-10).
-- [ ] Identity project README archived under `docs/archive/identity-project-readme.md` (deferred — same reason as the `src/` retention).
+- [x] `docs/data-model.md`, `docs/build-plan.md`, `docs/sheet-setup.md` — removed 2026-05-11 in the post-cutover cleanup PR. `firebase-schema.md` is the live data-model reference.
+- [x] `docs/changelog/chunk-N-*.md` — removed 2026-05-11. Per-chunk history preserved in git history; per-phase changelogs (`phase-N-*.md`) cover Phases 1-11.
+- [x] Identity project README — removed 2026-05-11. Content preserved in git history.
 
 ### Tests
 
@@ -1561,8 +1560,8 @@ Acceptance against the original criteria, updated post-close:
 - DNS flip succeeds; users land on Firebase Hosting via `kindoo.csnorth.org` — **yes**.
 - PWA installs on real devices — **yes** (verified in earlier phases).
 - One week of post-cutover monitoring with no rollback — **opportunistic monitoring rather than a formal 48-hour review; no rollback signal observed.**
-- Apps Script and Identity projects decommissioned — **yes** (no DNS routes there; source retained in `src/` and `identity-project/` for reference).
-- `src/` and `identity-project/` removed from repo — **deferred** (kept as historical reference; deletion can land later as a focused cleanup PR).
+- Apps Script and Identity projects decommissioned — **yes** (no DNS routes there; source removed from the repo on 2026-05-11).
+- `src/` and `identity-project/` removed from repo — **yes** (post-cutover cleanup PR, 2026-05-11). Git history preserves the source.
 
 ### Rollback plan (documented before go-time)
 

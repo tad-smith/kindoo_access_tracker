@@ -1,6 +1,6 @@
 # Stake Building Access — Claude Code guidance
 
-A door-access tracker that manages Kindoo seat assignments across the wards of a single LDS stake. (Previously named "Kindoo Access Tracker"; renamed to match the `stakebuildingaccess.org` domain locked in 2026-04-27 per F17 — apex flip itself is still Phase B work.) **Running on Firebase in production as of 2026-05-03 (Phase 11 cutover).** The legacy Apps Script source is preserved in `src/` and `identity-project/` for reference but is no longer in the request path.
+A door-access tracker that manages Kindoo seat assignments across the wards of a single LDS stake. (Previously named "Kindoo Access Tracker"; renamed to match the `stakebuildingaccess.org` domain locked in 2026-04-27 per F17 — apex flip itself is still Phase B work.) **Running on Firebase in production as of 2026-05-03 (Phase 11 cutover).** Apps Script was decommissioned at Phase 11 cutover; source removed from the repo in 2026-05-11. See [`docs/changelog/phase-11-cutover.md`](docs/changelog/phase-11-cutover.md) for history.
 
 `docs/spec.md` is the authoritative description of runtime behaviour.
 
@@ -15,16 +15,6 @@ A door-access tracker that manages Kindoo seat assignments across the wards of a
 | **Infra + scripts + runbooks** | `infra/` | `infra-engineer` |
 | **End-to-end tests** | `e2e/` | `web-engineer` |
 | **Documentation** | `docs/` | `docs-keeper` |
-
-Legacy code retained as historical reference (no longer touched):
-
-| Path | Purpose | Status |
-|---|---|---|
-| `src/` | Apps Script Main | Decommissioned; no DNS routes here |
-| `identity-project/` | Apps Script Identity | Decommissioned |
-| `website/` | GitHub Pages iframe wrapper | Bypassed (DNS no longer resolves to GitHub Pages) |
-
-Repo cleanup (deleting `src/`, `identity-project/`, clasp tooling) is deferred — see Phase 11 close note.
 
 **Per-workspace `CLAUDE.md` files** describe local conventions for each. Read the one for the workspace you're working in. Cross-workspace coordination via root `TASKS.md`.
 
@@ -76,8 +66,6 @@ Repo cleanup (deleting `src/`, `identity-project/`, clasp tooling) is deferred �
 ## Current status
 
 **Live in production at `kindoo-prod`** as of 2026-05-03. `kindoo.csnorth.org` resolves to Firebase Hosting; bootstrap admin `admin@csnorth.org`; data live in Firestore (originally seeded from the LCR Sheet via the `runImportNow` callable). 1–2 requests/week. See [`docs/changelog/phase-11-cutover.md`](docs/changelog/phase-11-cutover.md).
-
-**Apps Script:** decommissioned at Phase 11 cutover. Source retained in `src/` and `identity-project/` for reference; the GitHub Pages iframe wrapper at `website/` is bypassed (no DNS hop reaches it). Repo cleanup deferred.
 
 **Open follow-ups:**
 

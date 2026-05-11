@@ -2,7 +2,7 @@
 
 ## 1. Status and scope
 
-Design doc for the Firebase port. Implementation lands in Firebase migration **Phase 10.1**. The current Apps Script production app — top-tab nav rendered by `src/ui/Nav.html` — stays as-is; nothing here ships in `src/`.
+Design doc for the Firebase nav redesign. Implementation lands in Firebase migration **Phase 10.1** (operator-deferred at Phase 11 cutover).
 
 Phase entry in [`firebase-migration.md`](firebase-migration.md#phase-101--navigation-redesign-left-rail--sectioned-nav). The Phase 4 layout shell + role-aware `Nav.tsx` that this redesign replaces lands first; the full nav-item set isn't complete until Phase 7.
 
