@@ -17,7 +17,7 @@
 
 import type { CustomClaims, StakeClaims } from '@kindoo/shared';
 import { getDb } from './admin.js';
-import { STAKE_IDS } from './constants.js';
+import { getStakeIds } from './stakeIds.js';
 
 /**
  * Build the {@link CustomClaims} object for `canonical` by reading
@@ -36,8 +36,10 @@ export async function seedClaimsFromRoleData(
 ): Promise<CustomClaims> {
   const claims: CustomClaims = { canonical };
 
+  const db = getDb();
+  const stakeIds = await getStakeIds(db);
   const stakeClaims: Record<string, StakeClaims> = {};
-  for (const stakeId of STAKE_IDS) {
+  for (const stakeId of stakeIds) {
     const block = await computeStakeClaims(stakeId, canonical);
     if (isNonEmptyStakeClaims(block)) {
       stakeClaims[stakeId] = block;

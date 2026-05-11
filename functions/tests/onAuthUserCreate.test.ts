@@ -3,9 +3,10 @@
 // Admin SDK pointed at the emulators. Skipped when the emulators
 // aren't advertised — see `tests/lib/emulator.ts`.
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { UserRecord } from 'firebase-admin/auth';
 import { onAuthUserCreate } from '../src/triggers/onAuthUserCreate.js';
+import { resetStakeIdsCache } from '../src/lib/stakeIds.js';
 import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.js';
 
 // `.run` is documented for v2 CloudFunctions and exists at runtime for
@@ -20,13 +21,22 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     await clearEmulators();
   });
 
+  beforeEach(() => {
+    // `getStakeIds` caches the `stakes/` listDocuments result in module
+    // scope; tests seed different stake docs per case so the cache must
+    // be cleared between them or later tests see the earlier list.
+    resetStakeIdsCache();
+  });
+
   afterEach(async () => {
     await clearEmulators();
+    resetStakeIdsCache();
   });
 
   afterAll(async () => {
     // Final sweep so a follow-on test file starts clean.
     await clearEmulators();
+    resetStakeIdsCache();
   });
 
   it('writes userIndex and stamps an empty-roles claim block', async () => {
@@ -137,6 +147,39 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     const idx = await db.doc('userIndex/firstlast@gmail.com').get();
     expect(idx.exists).toBe(true);
     expect((idx.data() as { typedEmail: string }).typedEmail).toBe('first.last@gmail.com');
+  });
+
+  it('seeds claims across multiple stakes discovered at runtime', async () => {
+    // Exercises the runtime stake-ID discovery path (T-13): the seed
+    // helper walks every stake doc under `stakes/`, not a hardcoded
+    // list. Three stakes are created (one via a doc set on the stake
+    // itself, two via subcollection writes that implicitly register
+    // the parent); the user has role data in two of them and should
+    // get a claim block per matching stake.
+    const { auth, db } = requireEmulators();
+    await db.doc('stakes/csnorth').set({ name: 'CS North' });
+    await db.doc('stakes/csnorth/kindooManagers/multi@gmail.com').set({ active: true });
+    await db
+      .doc('stakes/south/access/multi@gmail.com')
+      .set({ importer_callings: { GE: ['Bishop'] } });
+    // Third stake exists but the user has no role data in it — its
+    // empty block must be omitted from the claims payload.
+    await db.doc('stakes/west/access/someone-else@gmail.com').set({
+      importer_callings: { stake: ['Stake President'] },
+    });
+
+    const user = await auth.createUser({ email: 'multi@gmail.com' });
+    await runOnAuthUserCreate(user);
+
+    const refreshed = await auth.getUser(user.uid);
+    const claims = refreshed.customClaims as {
+      canonical: string;
+      stakes: Record<string, { manager: boolean; stake: boolean; wards: string[] }>;
+    };
+    expect(claims.canonical).toBe('multi@gmail.com');
+    expect(Object.keys(claims.stakes).sort()).toEqual(['csnorth', 'south']);
+    expect(claims.stakes['csnorth']).toEqual({ manager: true, stake: false, wards: [] });
+    expect(claims.stakes['south']).toEqual({ manager: false, stake: false, wards: ['GE'] });
   });
 
   it('revokes refresh tokens after stamping non-empty claims', async () => {
