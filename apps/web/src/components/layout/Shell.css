@@ -284,6 +284,15 @@
   user-select: all;
 }
 
+/* Third-party licenses link stacked under the icon-rail version stamp.
+   Matches the version-stamp visual scale (muted, slightly smaller than
+   body text) so the 64 px rail does not visually overflow. */
+.kd-icon-rail-licenses-link {
+  font-size: 0.65em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1;
+}
+
 /* ---------- Floating overlay (tablet panel + phone drawer) ---------- */
 
 .kd-nav-overlay {

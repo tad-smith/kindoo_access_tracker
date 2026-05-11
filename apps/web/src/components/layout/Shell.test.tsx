@@ -239,6 +239,16 @@ describe('Shell — desktop rail', () => {
     const foot = rail.querySelector('.kd-left-rail-foot') as HTMLElement;
     expect(within(foot).queryByRole('button')).toBeNull();
   });
+
+  it('renders the third-party Licenses link in the rail footer', async () => {
+    await renderShell(<p>Hello</p>);
+    const rail = document.querySelector('.kd-left-rail') as HTMLElement;
+    const foot = rail.querySelector('.kd-left-rail-foot') as HTMLElement;
+    const link = within(foot).getByRole('link', { name: 'Licenses' });
+    expect(link).toHaveAttribute('href', '/THIRD_PARTY_LICENSES.txt');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toMatch(/noopener/);
+  });
 });
 
 describe('Shell — tablet icon rail', () => {
@@ -315,6 +325,29 @@ describe('Shell — tablet icon rail', () => {
     await user.click(divider);
     const panel = document.querySelector('.kd-nav-overlay-panel') as HTMLElement;
     expect(within(panel).queryByTestId('nav-user-email')).toBeNull();
+  });
+
+  it('renders the third-party Licenses link in the icon-rail foot', async () => {
+    await renderShell(<p>Hello</p>);
+    const rail = document.querySelector('.kd-icon-rail') as HTMLElement;
+    const foot = rail.querySelector('.kd-icon-rail-foot') as HTMLElement;
+    const link = within(foot).getByRole('link', { name: 'Licenses' });
+    expect(link).toHaveAttribute('href', '/THIRD_PARTY_LICENSES.txt');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toMatch(/noopener/);
+  });
+
+  it('clicking the Licenses link does NOT open the floating panel', async () => {
+    const user = userEvent.setup();
+    await renderShell(<p>Hello</p>);
+    expect(document.querySelector('.kd-nav-overlay-panel')).toBeNull();
+    const rail = document.querySelector('.kd-icon-rail') as HTMLElement;
+    const link = within(rail).getByRole('link', { name: 'Licenses' });
+    await user.click(link);
+    // jsdom does not navigate, so we cannot assert target=_blank
+    // actually opened a tab. We can assert the click did not bubble
+    // to the rail-level onClick that opens the panel.
+    expect(document.querySelector('.kd-nav-overlay-panel')).toBeNull();
   });
 });
 
