@@ -46,6 +46,13 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const webRoot = resolve(__dirname, '..');
+// Repo root holds pnpm-workspace.yaml. The pnpm CLI is invoked from
+// here (not from apps/web) so it does not see itself running inside a
+// nested workspace context — recursive-script env (npm_lifecycle_*,
+// PNPM_SCRIPT_SRC_DIR, etc.) injected by the enclosing `pnpm build:
+// staging` invocation can otherwise make `pnpm licenses list` exit 1
+// with empty stderr on some hosts.
+const repoRoot = resolve(__dirname, '..', '..', '..');
 const distDir = resolve(webRoot, 'dist');
 const outFile = resolve(distDir, 'THIRD_PARTY_LICENSES.txt');
 
@@ -138,15 +145,31 @@ function runPnpmLicenses() {
   // `--filter @kindoo/web` scopes the walk to this workspace's runtime
   // graph only. Without it, pnpm operates recursively across the whole
   // monorepo and pulls in server-side deps (firebase-admin, etc.) that
-  // do not ship to the SPA. Run from the repo root via that filter so
-  // pnpm reads the correct workspace boundaries.
+  // do not ship to the SPA.
+  //
+  // Invoked with cwd at the repo root (the workspace root holding
+  // pnpm-workspace.yaml) and with the npm_lifecycle / PNPM_SCRIPT_*
+  // env vars stripped from the child env. Reason: this script runs
+  // inside `pnpm --filter ./apps/web build:staging`; pnpm 10 detects
+  // those injected env vars and refuses the nested `pnpm licenses
+  // list` call with exit 1 / empty stderr on some hosts (the failure
+  // mode reported during the T-20 staging deploy). Running from the
+  // repo root with a clean child env sidesteps the nested-script
+  // detection.
+  const childEnv = { ...process.env };
+  for (const key of Object.keys(childEnv)) {
+    if (key.startsWith('npm_') || key.startsWith('PNPM_') || key === 'INIT_CWD') {
+      delete childEnv[key];
+    }
+  }
   const result = spawnSync(
     'pnpm',
     ['--filter', '@kindoo/web', 'licenses', 'list', '--prod', '--long', '--json'],
     {
-      cwd: webRoot,
+      cwd: repoRoot,
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
+      env: childEnv,
     },
   );
   if (result.error) {
