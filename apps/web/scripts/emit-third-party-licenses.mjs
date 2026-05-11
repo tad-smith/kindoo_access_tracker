@@ -1,77 +1,75 @@
 // Emit `apps/web/dist/THIRD_PARTY_LICENSES.txt`.
 //
 // What it does:
-//   - Spawns `pnpm --filter @kindoo/web licenses list --prod --long --json`
-//     to walk the SPA workspace RUNTIME dependency graph (transitives
-//     included; devDependencies and workspace-internal packages
-//     excluded). Each entry comes back with the package path on disk,
-//     declared license, author/homepage, etc.
-//   - For each entry the script reads the LICENSE file (any of LICENSE,
-//     LICENSE.md, LICENSE.txt, LICENCE, COPYING, etc.) and the NOTICE
-//     file (Apache-2.0 requirement) from the package directory and
-//     embeds the verbatim text.
+//   - Parses the workspace pnpm-lock.yaml directly (no pnpm CLI shell-
+//     out). Starting from the apps/web importer's `dependencies`
+//     section, walks the runtime graph via the `snapshots:` block to
+//     collect every transitive runtime package the SPA bundle depends
+//     on.
+//   - For each resolved (name, version) pair, locates the package on
+//     disk in pnpm's flat store layout (node_modules/.pnpm/<sanitized-
+//     snapshot-key>/node_modules/<scope>/<name>/), reads the package's
+//     own package.json for license / repository / author metadata, and
+//     reads LICENSE / LICENCE / COPYING and NOTICE files for verbatim
+//     embedding.
 //   - Concatenates per-package blocks into a single text file at
 //     apps/web/dist/THIRD_PARTY_LICENSES.txt so Firebase Hosting serves
 //     it at /THIRD_PARTY_LICENSES.txt.
 //
 // Compliance driver: Apache-2.0 deps in the runtime bundle (firebase,
-// @firebase/*, typescript-derived runtimes, etc.) require LICENSE +
-// NOTICE preservation in the distributed artifact; MIT deps require
-// copyright + license-notice preservation. The link to this file is
-// surfaced from the SPA's nav-overlay footer
-// (apps/web/src/components/layout/NavOverlay.tsx).
+// @firebase/*, etc.) require LICENSE + NOTICE preservation in the
+// distributed artifact; MIT deps require copyright + license-notice
+// preservation. A link to this file is surfaced from the SPA's nav-
+// overlay footer (apps/web/src/components/layout/NavOverlay.tsx).
 //
-// Why `pnpm licenses` over `license-checker-rseidelsohn`:
-// license-checker uses `read-installed-packages` which walks
-// `node_modules/<dep>/node_modules/<sub>`; that pattern misses pnpm's
-// flat `.pnpm/` store layout and captures only the top-level direct
-// deps (~20 packages), leaving 120+ transitives uncovered. pnpm's
-// built-in licenses subcommand uses its own graph and resolves the
-// full runtime tree (146 packages on a fresh install at this commit).
-//
-// Invocation: this script is intentionally NOT chained into the
-// `build` / `build:staging` scripts in `apps/web/package.json`. When
-// invoked through `pnpm run …` pnpm injects `npm_lifecycle_*` /
-// `PNPM_SCRIPT_*` env vars; the inner `pnpm licenses list` then
-// detects the nested-script context and exits 1 with empty stderr on
-// some deploy hosts (the failure mode T-20 hit on first push). Each
-// caller (CI `Emit THIRD_PARTY_LICENSES.txt` step, `infra/scripts/
-// deploy-staging.sh` step 3a, `infra/scripts/deploy-prod.sh` step 3a)
-// runs it as a plain `node` invocation from a clean shell. The env
-// scrub below is defense in depth in case a future caller forgets.
+// Why a hand-rolled walk over pnpm-lock.yaml:
+// Earlier revisions tried `license-checker-rseidelsohn` (misses pnpm's
+// flat .pnpm store entirely; saw only 20 direct deps) and `pnpm
+// licenses list` (works in isolation but pnpm 10 refuses the inner
+// invocation when this script runs anywhere downstream of a `pnpm run`
+// lifecycle — even invoked as a separate top-level node step inside
+// the deploy script, the parent pnpm environment leaks down through
+// the bash process chain and triggers ERR_PNPM_RECURSIVE_RUN_FIRST_
+// FAIL with empty stderr). Parsing the lockfile and walking the .pnpm
+// store directly removes the pnpm CLI from the path entirely; the
+// emit step now needs only `node` and the on-disk install.
 //
 // Failure modes:
-//   - pnpm subcommand errors → exit 1 (caller fails).
+//   - Cannot find / parse pnpm-lock.yaml → exit 1.
+//   - apps/web importer block missing → exit 1 (someone renamed or
+//     removed the workspace).
 //   - Output smaller than MIN_SIZE_BYTES → exit 1 (treats it as a
 //     broken-artifact signal; better to fail the deploy than ship an
 //     empty notices file).
 //
-// Standalone usage:
+// Invocation: plain `node`, never via `pnpm run …`. Each caller (CI
+// `Emit THIRD_PARTY_LICENSES.txt` step, infra/scripts/deploy-
+// staging.sh step 3a, infra/scripts/deploy-prod.sh step 3a) runs it as
+//
 //   node apps/web/scripts/emit-third-party-licenses.mjs
+//
+// from the repo root or any other cwd.
 
-import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import yaml from 'js-yaml';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const webRoot = resolve(__dirname, '..');
-// Repo root holds pnpm-workspace.yaml. The pnpm CLI is invoked from
-// here (not from apps/web) so it does not see itself running inside a
-// nested workspace context — recursive-script env (npm_lifecycle_*,
-// PNPM_SCRIPT_SRC_DIR, etc.) injected by the enclosing `pnpm build:
-// staging` invocation can otherwise make `pnpm licenses list` exit 1
-// with empty stderr on some hosts.
 const repoRoot = resolve(__dirname, '..', '..', '..');
+const lockPath = resolve(repoRoot, 'pnpm-lock.yaml');
+const pnpmStoreDir = resolve(repoRoot, 'node_modules', '.pnpm');
 const distDir = resolve(webRoot, 'dist');
 const outFile = resolve(distDir, 'THIRD_PARTY_LICENSES.txt');
 
+const WORKSPACE_IMPORTER_KEY = 'apps/web';
+
 // Minimum reasonable size for the artifact. The SPA has ~25 direct
-// runtime deps and ~340 transitives at this commit; a healthy run
-// produces well over 100 KB. Anything under 16 KB means the walker
-// found almost no license text — fail rather than ship a broken
-// artifact.
+// runtime deps and ~120+ transitives; a healthy run produces well
+// over 100 KB. Anything under 16 KB means the walk found almost no
+// license text — fail rather than ship a broken artifact.
 const MIN_SIZE_BYTES = 16 * 1024;
 
 // Filenames the script will treat as a package's primary license text.
@@ -120,6 +118,68 @@ function header() {
   ].join('\n');
 }
 
+// Build an index from "name@version" → { pkgDir, packageJson } by
+// scanning every entry under node_modules/.pnpm/. Each store entry
+// contains exactly one canonical package at:
+//   <dirKey>/node_modules/<name>          (unscoped)
+//   <dirKey>/node_modules/<scope>/<name>  (scoped)
+//
+// Scanning the disk directly sidesteps pnpm's depPathToFilename
+// algorithm — that algorithm replaces `(` with `_` and `)` with `_`,
+// but also content-hashes the suffix when the resulting name exceeds
+// ~120 chars (e.g.,
+// `@radix-ui+react-dismissable-layer@…___1028c2c…`). Reimplementing
+// the hashing rule from scratch is brittle; reading the on-disk
+// package.json is authoritative.
+function buildStoreIndex() {
+  const index = new Map();
+  if (!existsSync(pnpmStoreDir)) return index;
+  for (const dirKey of readdirSync(pnpmStoreDir)) {
+    const nmDir = join(pnpmStoreDir, dirKey, 'node_modules');
+    if (!existsSync(nmDir)) continue;
+    let entries;
+    try {
+      entries = readdirSync(nmDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      // Scoped: descend one level.
+      if (ent.name.startsWith('@')) {
+        const scopeDir = join(nmDir, ent.name);
+        let subEntries;
+        try {
+          subEntries = readdirSync(scopeDir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const sub of subEntries) {
+          if (!sub.isDirectory()) continue;
+          const pkgDir = join(scopeDir, sub.name);
+          recordPackage(index, pkgDir);
+        }
+      } else {
+        const pkgDir = join(nmDir, ent.name);
+        recordPackage(index, pkgDir);
+      }
+    }
+  }
+  return index;
+}
+
+function recordPackage(index, pkgDir) {
+  const pkgJson = readPackageJson(pkgDir);
+  if (!pkgJson?.name || !pkgJson?.version) return;
+  const key = `${pkgJson.name}@${pkgJson.version}`;
+  // First write wins. Multiple store entries can carry the same
+  // (name, version) under different peer-suffix dirs; pick any one
+  // since the published files are identical.
+  if (!index.has(key)) {
+    index.set(key, { pkgDir, packageJson: pkgJson });
+  }
+}
+
 function findFileMatching(dir, candidates) {
   if (!existsSync(dir)) return null;
   let entries;
@@ -128,8 +188,6 @@ function findFileMatching(dir, candidates) {
   } catch {
     return null;
   }
-  // Case-insensitive lookup. Prefer the order in `candidates` so
-  // LICENSE wins over LICENSE.md when both exist (rare).
   const lowerSet = new Map();
   for (const name of entries) {
     lowerSet.set(name.toLowerCase(), name);
@@ -152,113 +210,143 @@ function readTextOrEmpty(path) {
   }
 }
 
-function runPnpmLicenses() {
-  // `--filter @kindoo/web` scopes the walk to this workspace's runtime
-  // graph only. Without it, pnpm operates recursively across the whole
-  // monorepo and pulls in server-side deps (firebase-admin, etc.) that
-  // do not ship to the SPA.
-  //
-  // Invoked with cwd at the repo root (the workspace root holding
-  // pnpm-workspace.yaml) and with the npm_lifecycle / PNPM_SCRIPT_*
-  // env vars stripped from the child env. Reason: this script runs
-  // inside `pnpm --filter ./apps/web build:staging`; pnpm 10 detects
-  // those injected env vars and refuses the nested `pnpm licenses
-  // list` call with exit 1 / empty stderr on some hosts (the failure
-  // mode reported during the T-20 staging deploy). Running from the
-  // repo root with a clean child env sidesteps the nested-script
-  // detection.
-  const childEnv = { ...process.env };
-  for (const key of Object.keys(childEnv)) {
-    if (key.startsWith('npm_') || key.startsWith('PNPM_') || key === 'INIT_CWD') {
-      delete childEnv[key];
-    }
+function readPackageJson(pkgDir) {
+  const p = join(pkgDir, 'package.json');
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch {
+    return null;
   }
-  const result = spawnSync(
-    'pnpm',
-    ['--filter', '@kindoo/web', 'licenses', 'list', '--prod', '--long', '--json'],
-    {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-      env: childEnv,
-    },
-  );
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    throw new Error(
-      `pnpm licenses list exited with status ${result.status}. stderr:\n${result.stderr}`,
-    );
-  }
-  return JSON.parse(result.stdout);
 }
 
-function flatten(licensesByType) {
-  // pnpm groups by license string. Flatten to a single list of entries.
-  // Each entry has: name, versions[], paths[], license, author, homepage, description.
-  // A package with multiple installed versions has one entry covering all of them.
-  const entries = [];
-  for (const [licenseKey, group] of Object.entries(licensesByType)) {
-    for (const item of group) {
-      entries.push({
-        name: item.name,
-        versions: item.versions ?? [],
-        paths: item.paths ?? [],
-        license: item.license ?? licenseKey,
-        author: item.author ?? '',
-        homepage: item.homepage ?? '',
-        description: item.description ?? '',
-      });
-    }
-  }
-  // Sort case-insensitively by name then by first version, so the
-  // output is deterministic across runs.
-  entries.sort((a, b) => {
-    const nameCmp = a.name.localeCompare(b.name, 'en', { sensitivity: 'base' });
-    if (nameCmp !== 0) return nameCmp;
-    const av = a.versions[0] ?? '';
-    const bv = b.versions[0] ?? '';
-    return av.localeCompare(bv);
-  });
-  return entries;
+// Compose a single snapshot key from a dep name and the lockfile's
+// versioned-ref string. The ref is either a plain version ("0.14.11")
+// or a version with peer suffix ("2.11.1(@firebase/app@0.14.11)").
+// In both cases the snapshot key is `<name>@<ref>`.
+function makeSnapshotKey(name, ref) {
+  return `${name}@${ref}`;
 }
 
-function formatEntry(entry) {
+// Parse a snapshot key back into its base name + version. The base
+// version strips the peer-suffix parenthetical, since the published
+// version on disk does not carry peer info in its package.json.
+function parseSnapshotKey(key) {
+  // Find the '@' that separates name from version, then truncate at
+  // the first '(' to drop the peer suffix. Scoped names start with '@'
+  // so we cannot just search for the first '@'.
+  const parenIdx = key.indexOf('(');
+  const head = parenIdx === -1 ? key : key.slice(0, parenIdx);
+  const atIdx = head.lastIndexOf('@');
+  if (atIdx <= 0) return { name: head, version: '' };
+  return { name: head.slice(0, atIdx), version: head.slice(atIdx + 1) };
+}
+
+// Walk the runtime graph rooted at apps/web's `dependencies` section.
+// Returns a Map<"name@version", { name, version }> where the keys are
+// the BASE package coordinates (peer-suffix stripped). The snapshot
+// graph is fully traversed (so transitives are captured), but two
+// keys differing only by peer suffix collapse to one (same package
+// on disk, same license file).
+function collectRuntimeGraph(lock) {
+  const importers = lock.importers ?? {};
+  const apps = importers[WORKSPACE_IMPORTER_KEY];
+  if (!apps) {
+    throw new Error(`pnpm-lock.yaml has no importer entry for '${WORKSPACE_IMPORTER_KEY}'`);
+  }
+  const directDeps = apps.dependencies ?? {};
+  const snapshots = lock.snapshots ?? {};
+
+  const visitedKeys = new Set();
+  const result = new Map();
+  const queue = [];
+
+  for (const [name, info] of Object.entries(directDeps)) {
+    const ref = info.version;
+    if (!ref) continue;
+    // Workspace links resolve as "link:../../packages/shared" — skip
+    // those (own code, not third-party).
+    if (typeof ref === 'string' && ref.startsWith('link:')) continue;
+    queue.push(makeSnapshotKey(name, ref));
+  }
+
+  while (queue.length > 0) {
+    const key = queue.shift();
+    if (visitedKeys.has(key)) continue;
+    visitedKeys.add(key);
+
+    const { name, version } = parseSnapshotKey(key);
+    if (name && version) {
+      const baseKey = `${name}@${version}`;
+      if (!result.has(baseKey)) result.set(baseKey, { name, version });
+    }
+
+    const snapshot = snapshots[key];
+    if (!snapshot) continue;
+
+    // dependencies + optionalDependencies both materialize on disk
+    // (pnpm installs optionals by default for the current platform).
+    // peerDependencies are typically already represented in the
+    // snapshot key suffix; we do not enqueue them separately.
+    const transitives = {
+      ...(snapshot.dependencies ?? {}),
+      ...(snapshot.optionalDependencies ?? {}),
+    };
+    for (const [depName, depRef] of Object.entries(transitives)) {
+      if (typeof depRef !== 'string') continue;
+      if (depRef.startsWith('link:')) continue;
+      const childKey = makeSnapshotKey(depName, depRef);
+      if (!visitedKeys.has(childKey)) {
+        queue.push(childKey);
+      }
+    }
+  }
+
+  return result;
+}
+
+function formatEntry(entry, packageJson, licenseText, noticeText) {
   const lines = [];
   lines.push('--------------------------------------------------------------------------------');
-  const versionLabel = entry.versions.length > 0 ? entry.versions.join(', ') : '(unknown)';
-  lines.push(`Package: ${entry.name}@${versionLabel}`);
-  lines.push(`License: ${entry.license}`);
-  if (entry.author) {
-    lines.push(`Author: ${entry.author}`);
+  lines.push(`Package: ${entry.name}@${entry.version}`);
+
+  // Resolve license. Prefer package.json `license` (modern); fall back
+  // to `licenses[]` (old). Render "(unknown)" if neither is present.
+  let license = '(unknown)';
+  if (packageJson) {
+    if (typeof packageJson.license === 'string') {
+      license = packageJson.license;
+    } else if (packageJson.license && typeof packageJson.license === 'object') {
+      license = packageJson.license.type ?? packageJson.license.name ?? '(unknown)';
+    } else if (Array.isArray(packageJson.licenses) && packageJson.licenses.length > 0) {
+      license = packageJson.licenses.map((l) => l.type ?? l.name ?? l).join(', ');
+    }
   }
-  if (entry.homepage) {
-    lines.push(`Homepage: ${entry.homepage}`);
+  lines.push(`License: ${license}`);
+
+  // Author can be a string or an {name, email, url} object.
+  if (packageJson?.author) {
+    const a = packageJson.author;
+    if (typeof a === 'string') {
+      lines.push(`Author: ${a}`);
+    } else if (a.name) {
+      lines.push(`Author: ${a.name}${a.email ? ` <${a.email}>` : ''}`);
+    }
   }
-  if (entry.description) {
-    lines.push(`Description: ${entry.description}`);
+
+  if (packageJson?.homepage) {
+    lines.push(`Homepage: ${packageJson.homepage}`);
+  } else if (packageJson?.repository) {
+    const r = packageJson.repository;
+    const url = typeof r === 'string' ? r : r.url;
+    if (url) lines.push(`Repository: ${url}`);
   }
+
+  if (packageJson?.description) {
+    lines.push(`Description: ${packageJson.description}`);
+  }
+
   lines.push('--------------------------------------------------------------------------------');
   lines.push('');
-
-  // Pull LICENSE text from the first path that has one. Most packages
-  // ship one install per (name, version) so this is usually a single
-  // lookup; we union the path list defensively in case pnpm reports
-  // multiple peer-resolved copies and only some of them carry the file.
-  let licenseText = '';
-  let noticeText = '';
-  for (const pkgPath of entry.paths) {
-    if (!licenseText) {
-      const licenseFile = findFileMatching(pkgPath, LICENSE_FILE_CANDIDATES);
-      licenseText = readTextOrEmpty(licenseFile);
-    }
-    if (!noticeText) {
-      const noticeFile = findFileMatching(pkgPath, NOTICE_FILE_CANDIDATES);
-      noticeText = readTextOrEmpty(noticeFile);
-    }
-    if (licenseText && noticeText) break;
-  }
 
   if (licenseText) {
     lines.push(licenseText);
@@ -280,31 +368,73 @@ function formatEntry(entry) {
 }
 
 function main() {
-  console.log('[third-party-licenses] walking runtime dependency tree via pnpm licenses...');
-  let grouped;
+  console.log('[third-party-licenses] parsing pnpm-lock.yaml...');
+  if (!existsSync(lockPath)) {
+    console.error(`[third-party-licenses] cannot find lockfile at ${lockPath}`);
+    process.exit(1);
+  }
+  let lock;
   try {
-    grouped = runPnpmLicenses();
+    lock = yaml.load(readFileSync(lockPath, 'utf8'));
   } catch (err) {
-    console.error('[third-party-licenses] pnpm licenses list failed:', err.message);
+    console.error('[third-party-licenses] failed to parse pnpm-lock.yaml:', err.message);
     process.exit(1);
   }
 
-  const entries = flatten(grouped);
-  console.log(`[third-party-licenses] found ${entries.length} runtime packages.`);
+  let graph;
+  try {
+    graph = collectRuntimeGraph(lock);
+  } catch (err) {
+    console.error('[third-party-licenses]', err.message);
+    process.exit(1);
+  }
+  console.log(`[third-party-licenses] walked ${graph.size} runtime packages from lockfile.`);
+
+  console.log('[third-party-licenses] indexing .pnpm store...');
+  const storeIndex = buildStoreIndex();
+  console.log(`[third-party-licenses] indexed ${storeIndex.size} installed packages on disk.`);
+
+  // Stable sort for deterministic output: by name (case-insensitive),
+  // then by version.
+  const entries = [...graph.values()].sort((a, b) => {
+    const nameCmp = a.name.localeCompare(b.name, 'en', { sensitivity: 'base' });
+    if (nameCmp !== 0) return nameCmp;
+    return a.version.localeCompare(b.version);
+  });
 
   if (!existsSync(distDir)) {
     mkdirSync(distDir, { recursive: true });
   }
 
   let body = header();
+  let onDisk = 0;
+  let missing = 0;
   for (const entry of entries) {
-    body += formatEntry(entry);
+    const baseKey = `${entry.name}@${entry.version}`;
+    const hit = storeIndex.get(baseKey);
+    if (!hit) {
+      // Most common reason: platform-specific optional dep (e.g.,
+      // @rollup/rollup-darwin-arm64 on a linux runner). Emit the
+      // metadata we have so the artifact still acknowledges the
+      // package, but skip the disk reads.
+      missing++;
+      body += formatEntry(entry, null, '', '');
+      continue;
+    }
+    onDisk++;
+    const licenseFile = findFileMatching(hit.pkgDir, LICENSE_FILE_CANDIDATES);
+    const noticeFile = findFileMatching(hit.pkgDir, NOTICE_FILE_CANDIDATES);
+    const licenseText = readTextOrEmpty(licenseFile);
+    const noticeText = readTextOrEmpty(noticeFile);
+    body += formatEntry(entry, hit.packageJson, licenseText, noticeText);
   }
 
   writeFileSync(outFile, body, 'utf8');
 
   const sizeBytes = Buffer.byteLength(body, 'utf8');
-  console.log(`[third-party-licenses] wrote ${outFile} (${sizeBytes} bytes).`);
+  console.log(
+    `[third-party-licenses] wrote ${outFile} (${sizeBytes} bytes; ${onDisk} on disk, ${missing} missing).`,
+  );
 
   if (sizeBytes < MIN_SIZE_BYTES) {
     console.error(
