@@ -160,6 +160,27 @@ jobs:
         id: build
         run: pnpm build
 
+      - name: Verify THIRD_PARTY_LICENSES.txt artifact
+        id: verify-licenses
+        # T-20: the SPA build emits apps/web/dist/THIRD_PARTY_LICENSES.txt
+        # via apps/web/scripts/emit-third-party-licenses.mjs. Confirm the
+        # file exists and is non-trivial in size so a silent regression
+        # in the postbuild step (broken pnpm subcommand, missing
+        # license-text walk, etc.) is caught in CI instead of shipping
+        # an empty notices artifact.
+        run: |
+          file="apps/web/dist/THIRD_PARTY_LICENSES.txt"
+          if [[ ! -f "$file" ]]; then
+            echo "missing: $file" >&2
+            exit 1
+          fi
+          size=$(wc -c < "$file")
+          echo "$file size: $size bytes"
+          if [[ "$size" -lt 16384 ]]; then
+            echo "error: $file is suspiciously small ($size bytes < 16384 minimum)" >&2
+            exit 1
+          fi
+
       - name: Verify all checks passed
         # Fail the workflow if any earlier continue-on-error step failed.
         # `build` doesn't have continue-on-error, so its failure already
