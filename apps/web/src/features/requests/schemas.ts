@@ -171,9 +171,23 @@ export type RejectRequestForm = z.infer<typeof rejectRequestSchema>;
 /**
  * Mark-Complete dialog schema for `add_manual` / `add_temp`. At least
  * one building must be ticked; remove-completion has no buildings.
+ * `completion_note` is always optional free text — the hook trims and
+ * drops it when empty before writing.
  */
 export const completeAddRequestSchema = z.object({
   building_names: z.array(z.string()).min(1, 'Pick at least one building.'),
+  completion_note: z.string(),
 });
 
 export type CompleteAddRequestForm = z.infer<typeof completeAddRequestSchema>;
+
+/**
+ * Mark-Complete dialog schema for `remove`. Only the optional
+ * `completion_note` is collected from the manager. The R-1 race case
+ * (seat already gone) is handled in the hook, not the schema.
+ */
+export const completeRemoveRequestSchema = z.object({
+  completion_note: z.string(),
+});
+
+export type CompleteRemoveRequestForm = z.infer<typeof completeRemoveRequestSchema>;

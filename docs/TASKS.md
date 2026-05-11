@@ -512,7 +512,7 @@ Likely shape: a small reusable hook or HOC (e.g., `useRequireRole(role)`) that h
 Closed: shared `useRequireRole` hook lives at `apps/web/src/lib/useRequireRole.ts`. Manager-gated: `/manager/queue`, `/manager/dashboard`, `/manager/access`, `/manager/configuration`, `/manager/audit`, `/manager/seats`, `/manager/import`. Bishopric-gated: `/bishopric/roster`. Stake-gated: `/stake/roster`, `/stake/wards`. `/notifications` refactored onto the same hook (manager-only, behaviour preserved). Loading-window race + redirect targeting handled in the hook; per-route component test for each gated route.
 
 ## [T-35] Manual completion-note UI on Mark Complete dialog
-Status: open
+Status: done (2026-05-03)
 Owner: @web-engineer
 
 Today `request.completion_note` is only auto-populated by the system in the R-1 race case (`apps/web/src/features/manager/queue/hooks.ts:206`): when a manager marks a remove-type request complete and the seat is already gone, the code auto-writes `"Seat already removed at completion time (no-op)."`. There's no UI for managers to add a custom note.
@@ -522,6 +522,8 @@ Spec §9 says the completion email surfaces a `Note:` line for the requester ("s
 Add a small free-text textarea to the Mark Complete dialog (`apps/web/src/features/manager/queue/...`) — optional, only visible on `type='remove'` requests (or on all types — operator decides). Wire the value through to `update.completion_note` in the existing complete mutation. Phase 9's `notifyRequesterCompleted` already surfaces `completion_note` in the email body; no backend change needed.
 
 Effort: small. Surface during a future polish pass.
+
+Closed: optional `Completion note` textarea added to BOTH `CompleteAddDialog` and `CompleteRemoveDialog` in `apps/web/src/features/manager/queue/QueuePage.tsx` (3 rows, vertical resize, placeholder "What did you do? (Optional context for the requester.)"). Wired through `useCompleteAddRequest` / `useCompleteRemoveRequest` in `hooks.ts`; empty/whitespace-only is dropped from the write. R-1 race interaction: manager note wins and the system tag is appended as `"<manager-note>\n\n[System: Seat already removed at completion time (no-op).]"`, preserving both signals on the completion email; helper `resolveRemoveCompletionNote` is exported for unit testing.
 
 ## [T-36] Harden the requests-create rule to require role-for-scope (drop the `isManager` blanket allowance)
 Status: done (PR #52)

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { Ward } from '@kindoo/shared';
 import {
   completeAddRequestSchema,
+  completeRemoveRequestSchema,
   makeNewRequestSchema,
   newRequestSchema,
   rejectRequestSchema,
@@ -281,11 +282,35 @@ describe('rejectRequestSchema', () => {
 
 describe('completeAddRequestSchema', () => {
   it('rejects an empty buildings list', () => {
-    expect(completeAddRequestSchema.safeParse({ building_names: [] }).success).toBe(false);
-  });
-  it('accepts ≥1 building', () => {
     expect(
-      completeAddRequestSchema.safeParse({ building_names: ['Cordera Building'] }).success,
+      completeAddRequestSchema.safeParse({ building_names: [], completion_note: '' }).success,
+    ).toBe(false);
+  });
+  it('accepts ≥1 building with an empty completion_note', () => {
+    expect(
+      completeAddRequestSchema.safeParse({
+        building_names: ['Cordera Building'],
+        completion_note: '',
+      }).success,
+    ).toBe(true);
+  });
+  it('accepts a free-text completion_note alongside the buildings list', () => {
+    expect(
+      completeAddRequestSchema.safeParse({
+        building_names: ['Cordera Building'],
+        completion_note: 'Granted; door system syncs overnight.',
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe('completeRemoveRequestSchema', () => {
+  it('accepts an empty completion_note', () => {
+    expect(completeRemoveRequestSchema.safeParse({ completion_note: '' }).success).toBe(true);
+  });
+  it('accepts a free-text completion_note', () => {
+    expect(
+      completeRemoveRequestSchema.safeParse({ completion_note: 'Removed manually.' }).success,
     ).toBe(true);
   });
 });

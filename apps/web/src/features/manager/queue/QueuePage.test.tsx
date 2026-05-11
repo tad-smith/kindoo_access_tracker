@@ -235,6 +235,152 @@ describe('<ManagerQueuePage />', () => {
     expect(confirmBtn).toBeEnabled();
   });
 
+  it('renders an optional completion-note textarea on the add-complete dialog', async () => {
+    const user = userEvent.setup();
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        building_names: ['Cordera Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    await user.click(screen.getByTestId('queue-complete-r1'));
+    const note = await screen.findByTestId('complete-add-note');
+    expect(note.tagName).toBe('TEXTAREA');
+    expect(note).toHaveAttribute(
+      'placeholder',
+      'What did you do? (Optional context for the requester.)',
+    );
+    // Labeled "Completion note" — the surrounding <label> wraps the textarea
+    // so RTL's getByLabelText sees the same element by accessible name.
+    expect(screen.getByLabelText(/completion note/i)).toBe(note);
+  });
+
+  it('passes the trimmed completion_note through to the add-complete mutation', async () => {
+    const user = userEvent.setup();
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        building_names: ['Cordera Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    await user.click(screen.getByTestId('queue-complete-r1'));
+    const note = await screen.findByTestId('complete-add-note');
+    await user.type(note, '  Granted; door system syncs overnight.  ');
+    await user.click(screen.getByTestId('complete-add-confirm'));
+    await waitFor(() => {
+      expect(completeAddMutate).toHaveBeenCalled();
+    });
+    const arg = completeAddMutate.mock.calls[0]?.[0] as {
+      completion_note: string;
+      building_names: string[];
+    };
+    // react-hook-form ships the raw value; the hook trims server-side
+    // before deciding whether to write the field.
+    expect(arg.completion_note).toBe('  Granted; door system syncs overnight.  ');
+    expect(arg.building_names).toEqual(['Cordera Building']);
+  });
+
+  it('passes empty completion_note on the add-complete mutation when the textarea is blank', async () => {
+    const user = userEvent.setup();
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        building_names: ['Cordera Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    await user.click(screen.getByTestId('queue-complete-r1'));
+    await user.click(screen.getByTestId('complete-add-confirm'));
+    await waitFor(() => {
+      expect(completeAddMutate).toHaveBeenCalled();
+    });
+    const arg = completeAddMutate.mock.calls[0]?.[0] as { completion_note: string };
+    expect(arg.completion_note).toBe('');
+  });
+
+  it('renders an optional completion-note textarea on the remove-complete dialog', async () => {
+    const user = userEvent.setup();
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'remove',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    await user.click(screen.getByTestId('queue-complete-r1'));
+    const note = await screen.findByTestId('complete-remove-note');
+    expect(note.tagName).toBe('TEXTAREA');
+    expect(note).toHaveAttribute(
+      'placeholder',
+      'What did you do? (Optional context for the requester.)',
+    );
+    expect(screen.getByLabelText(/completion note/i)).toBe(note);
+  });
+
+  it('passes the textarea value through to the remove-complete mutation', async () => {
+    const user = userEvent.setup();
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'remove',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    await user.click(screen.getByTestId('queue-complete-r1'));
+    const note = await screen.findByTestId('complete-remove-note');
+    await user.type(note, 'Removed; awaiting overnight sync.');
+    await user.click(screen.getByTestId('complete-remove-confirm'));
+    await waitFor(() => {
+      expect(completeRemoveMutate).toHaveBeenCalled();
+    });
+    const arg = completeRemoveMutate.mock.calls[0]?.[0] as { completion_note: string };
+    expect(arg.completion_note).toBe('Removed; awaiting overnight sync.');
+  });
+
+  it('passes empty completion_note on the remove-complete mutation when the textarea is blank', async () => {
+    const user = userEvent.setup();
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'remove',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    await user.click(screen.getByTestId('queue-complete-r1'));
+    await user.click(screen.getByTestId('complete-remove-confirm'));
+    await waitFor(() => {
+      expect(completeRemoveMutate).toHaveBeenCalled();
+    });
+    const arg = completeRemoveMutate.mock.calls[0]?.[0] as { completion_note: string };
+    expect(arg.completion_note).toBe('');
+  });
+
   it('blocks reject submit when the reason is empty', async () => {
     const user = userEvent.setup();
     const requests = [

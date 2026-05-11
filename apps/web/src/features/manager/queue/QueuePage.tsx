@@ -27,8 +27,10 @@ import { useBuildings } from '../allSeats/hooks';
 import { useSeatForMember } from '../../requests/hooks';
 import {
   completeAddRequestSchema,
+  completeRemoveRequestSchema,
   rejectRequestSchema,
   type CompleteAddRequestForm,
+  type CompleteRemoveRequestForm,
   type RejectRequestForm,
 } from '../../requests/schemas';
 import { Badge } from '../../../components/ui/Badge';
@@ -370,14 +372,18 @@ function CompleteAddDialog({ request, buildings, open, onOpenChange }: CompleteA
   const initial = request.building_names ?? [];
   const form = useForm<CompleteAddRequestForm>({
     resolver: zodResolver(completeAddRequestSchema),
-    defaultValues: { building_names: initial },
+    defaultValues: { building_names: initial, completion_note: '' },
   });
-  const { handleSubmit, watch, setValue, formState } = form;
+  const { register, handleSubmit, watch, setValue, formState } = form;
   const selected = watch('building_names');
 
   const onSubmit = handleSubmit(async (input) => {
     try {
-      await mutation.mutateAsync({ request, building_names: input.building_names });
+      await mutation.mutateAsync({
+        request,
+        building_names: input.building_names,
+        completion_note: input.completion_note,
+      });
       toast('Request completed.', 'success');
       onOpenChange(false);
     } catch (err) {
@@ -432,6 +438,17 @@ function CompleteAddDialog({ request, buildings, open, onOpenChange }: CompleteA
           ) : null}
         </fieldset>
 
+        <label>
+          Completion note <small>(optional)</small>
+          <textarea
+            {...register('completion_note')}
+            rows={3}
+            placeholder="What did you do? (Optional context for the requester.)"
+            className="block w-full resize-y rounded border border-kd-border bg-white px-3 py-1.5 text-sm text-kd-fg-1 placeholder:text-kd-fg-3 focus:outline-none focus:ring-2 focus:ring-kd-primary/40 focus:border-kd-primary"
+            data-testid="complete-add-note"
+          />
+        </label>
+
         <Dialog.Footer>
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>
           <Dialog.ConfirmButton
@@ -458,15 +475,21 @@ interface CompleteRemoveDialogProps {
 
 function CompleteRemoveDialog({ request, open, onOpenChange }: CompleteRemoveDialogProps) {
   const mutation = useCompleteRemoveRequest();
-  const onConfirm = async () => {
+  const form = useForm<CompleteRemoveRequestForm>({
+    resolver: zodResolver(completeRemoveRequestSchema),
+    defaultValues: { completion_note: '' },
+  });
+  const { register, handleSubmit } = form;
+
+  const onSubmit = handleSubmit(async (input) => {
     try {
-      await mutation.mutateAsync({ request });
+      await mutation.mutateAsync({ request, completion_note: input.completion_note });
       toast('Request completed.', 'success');
       onOpenChange(false);
     } catch (err) {
       toast(errorMessage(err), 'error');
     }
-  };
+  });
   return (
     <Dialog
       open={open}
@@ -474,17 +497,34 @@ function CompleteRemoveDialog({ request, open, onOpenChange }: CompleteRemoveDia
       title="Mark removal complete?"
       description={`Removes ${request.member_email}'s seat in ${request.scope}. If the seat has already been removed, the request will still be marked complete.`}
     >
-      <Dialog.Footer>
-        <Dialog.CancelButton>Cancel</Dialog.CancelButton>
-        <Dialog.ConfirmButton
-          className="btn-success"
-          onClick={onConfirm}
-          disabled={mutation.isPending}
-          data-testid="complete-remove-confirm"
-        >
-          {mutation.isPending ? 'Completing…' : 'Confirm'}
-        </Dialog.ConfirmButton>
-      </Dialog.Footer>
+      <form
+        onSubmit={onSubmit}
+        className="kd-wizard-form"
+        data-testid="complete-remove-dialog-form"
+      >
+        <label>
+          Completion note <small>(optional)</small>
+          <textarea
+            {...register('completion_note')}
+            rows={3}
+            placeholder="What did you do? (Optional context for the requester.)"
+            className="block w-full resize-y rounded border border-kd-border bg-white px-3 py-1.5 text-sm text-kd-fg-1 placeholder:text-kd-fg-3 focus:outline-none focus:ring-2 focus:ring-kd-primary/40 focus:border-kd-primary"
+            data-testid="complete-remove-note"
+          />
+        </label>
+
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Dialog.ConfirmButton
+            type="submit"
+            className="btn-success"
+            disabled={mutation.isPending}
+            data-testid="complete-remove-confirm"
+          >
+            {mutation.isPending ? 'Completing…' : 'Confirm'}
+          </Dialog.ConfirmButton>
+        </Dialog.Footer>
+      </form>
     </Dialog>
   );
 }
