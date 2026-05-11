@@ -126,14 +126,17 @@ describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
       await assertSucceeds(stakeMemberContext(env, STAKE_ID).firestore().doc(SEAT_PATH).get());
     });
 
-    it('stake-scope member is denied a ward-scope seat', async () => {
+    // Stake-level access grants oversight of every ward roster — a stake
+    // user clicking any ward on the Ward Rosters page must succeed even
+    // for wards outside any bishopric claim they may also hold.
+    it('stake-scope member can read a ward-scope seat (any ward)', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx
           .firestore()
           .doc(SEAT_PATH)
           .set(manualSeatDoc({ scope: '01' }));
       });
-      await assertFails(stakeMemberContext(env, STAKE_ID).firestore().doc(SEAT_PATH).get());
+      await assertSucceeds(stakeMemberContext(env, STAKE_ID).firestore().doc(SEAT_PATH).get());
     });
 
     it("bishopric reads own ward's seats", async () => {

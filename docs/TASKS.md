@@ -497,7 +497,7 @@ When Phase 9 ships in staging/prod, Apps Script Main and Firebase will both send
 Closed 2026-05-03: Phase 11 cutover decommissioned Apps Script entirely (per `docs/changelog/phase-11-cutover.md` — DNS flipped from the GitHub Pages iframe wrapper to `kindoo-prod` Hosting). Apps Script is no longer in the request path so its email triggers cannot fire on real users; the kill-switch concern is moot.
 
 ## [T-31] Role-aware redirect gates on routes a user can't access
-Status: open
+Status: done (PR #71, 2026-05-03)
 Owner: @web-engineer
 Phase: post Phase 10.5
 
@@ -506,6 +506,8 @@ Today most manager-only routes (`/manager/queue`, `/manager/dashboard`, `/manage
 Add consistent role-aware redirect gates to every route that's role-gated, mirroring the principal-loading-aware pattern from `routes/_authed/notifications.tsx` (which derives `claimsLoading` from `firebaseAuthSignedIn && !isAuthenticated` to avoid race-redirecting during principal load). Same treatment for bishopric-only and stake-only routes if any exist.
 
 Likely shape: a small reusable hook or HOC (e.g., `useRequireRole(role)`) that handles loading + redirect together, applied via `Route.beforeLoad` or a top-level `useEffect`. Mirror whatever pattern the codebase settles on for `/notifications` so all role-gated routes use the same idiom.
+
+Closed: shared `useRequireRole` hook lives at `apps/web/src/lib/useRequireRole.ts`. Manager-gated: `/manager/queue`, `/manager/dashboard`, `/manager/access`, `/manager/configuration`, `/manager/audit`, `/manager/seats`, `/manager/import`. Bishopric-gated: `/bishopric/roster`. Stake-gated: `/stake/roster`, `/stake/wards`. `/notifications` refactored onto the same hook (manager-only, behaviour preserved). Loading-window race + redirect targeting handled in the hook; per-route component test for each gated route.
 
 ## [T-35] Manual completion-note UI on Mark Complete dialog
 Status: open

@@ -9,6 +9,8 @@ import {
   ConfigurationPage,
   type ConfigTabKey,
 } from '../../../features/manager/configuration/ConfigurationPage';
+import { useRequireRole } from '../../../lib/useRequireRole';
+import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 
 const tabSchema = z.enum([
   'config',
@@ -29,6 +31,13 @@ export const Route = createFileRoute('/_authed/manager/configuration')({
 });
 
 function ConfigurationRoute() {
+  const { ready, allowed } = useRequireRole('manager');
+  if (!ready) return <LoadingSpinner />;
+  if (!allowed) return null;
+  return <ConfigurationContent />;
+}
+
+function ConfigurationContent() {
   const { tab } = Route.useSearch();
   return <ConfigurationPage {...(tab !== undefined ? { initialTab: tab as ConfigTabKey } : {})} />;
 }

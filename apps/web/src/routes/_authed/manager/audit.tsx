@@ -5,6 +5,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 import { AuditLogPage } from '../../../features/manager/auditLog/AuditLogPage';
+import { useRequireRole } from '../../../lib/useRequireRole';
+import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 
 const searchSchema = z.object({
   action: z.string().optional(),
@@ -22,6 +24,13 @@ export const Route = createFileRoute('/_authed/manager/audit')({
 });
 
 function AuditLogRoute() {
+  const { ready, allowed } = useRequireRole('manager');
+  if (!ready) return <LoadingSpinner />;
+  if (!allowed) return null;
+  return <AuditLogContent />;
+}
+
+function AuditLogContent() {
   const search = Route.useSearch();
   const initialFilters = Object.fromEntries(
     Object.entries(search).filter(([, v]) => v !== undefined),

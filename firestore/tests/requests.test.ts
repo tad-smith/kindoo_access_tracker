@@ -177,11 +177,15 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       await assertFails(bishopricContext(env, STAKE_ID, ['01']).firestore().doc(PATH).get());
     });
 
-    it("stake-scope member is denied a ward-scope request they didn't submit", async () => {
+    // Stake-level access grants oversight of every ward roster / request
+    // — a stake user clicking any ward on the Ward Rosters page must
+    // succeed (the page surfaces per-ward pending requests too) even for
+    // wards outside any bishopric claim they may also hold.
+    it("stake-scope member can read a ward-scope request they didn't submit", async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx.firestore().doc(PATH).set(pendingAddTempByBishopric('01'));
       });
-      await assertFails(stakeMemberContext(env, STAKE_ID).firestore().doc(PATH).get());
+      await assertSucceeds(stakeMemberContext(env, STAKE_ID).firestore().doc(PATH).get());
     });
 
     it('outsider denied', async () => {

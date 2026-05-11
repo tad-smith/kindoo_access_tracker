@@ -212,6 +212,32 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       sourcemap: true,
+      // Split shared vendor code into stable named chunks. Without an
+      // explicit policy the bundler's anchor-module heuristic picks an
+      // arbitrary entry module for the shared lump (`cn`,
+      // `LoadingSpinner`, etc.), which both flakes from one PR to the
+      // next and lets the lump grow unbounded as new modules co-locate
+      // into it — PR #71's role-gate refactor pulled zod into the
+      // shared lump and pushed it past Vite's 500 kB warning threshold
+      // even though no new code was added.
+      //
+      // Firebase (~380 kB) and TanStack Router/Query (~130 kB) are
+      // needed on every authenticated page, so isolating them into
+      // dedicated chunks gives a deterministic cache shape and keeps
+      // the app entry chunk well below the warning limit. Other vendor
+      // deps (Radix, dnd-kit, lucide-react, zod, etc.) stay co-split
+      // by Rolldown's default heuristic so per-route chunks pay only
+      // for what they use.
+      rollupOptions: {
+        output: {
+          manualChunks: (id) => {
+            if (!id.includes('node_modules')) return undefined;
+            if (id.includes('firebase')) return 'vendor-firebase';
+            if (id.includes('@tanstack')) return 'vendor-tanstack';
+            return undefined;
+          },
+        },
+      },
     },
   };
 });

@@ -6,6 +6,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 import { ManagerQueuePage } from '../../../features/manager/queue/QueuePage';
+import { useRequireRole } from '../../../lib/useRequireRole';
+import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 
 const searchSchema = z.object({
   focus: z.string().optional(),
@@ -17,6 +19,13 @@ export const Route = createFileRoute('/_authed/manager/queue')({
 });
 
 function QueueRoute() {
+  const { ready, allowed } = useRequireRole('manager');
+  if (!ready) return <LoadingSpinner />;
+  if (!allowed) return null;
+  return <QueueContent />;
+}
+
+function QueueContent() {
   const { focus } = Route.useSearch();
   return <ManagerQueuePage {...(focus !== undefined ? { focus } : {})} />;
 }
