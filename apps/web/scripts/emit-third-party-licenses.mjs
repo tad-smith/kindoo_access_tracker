@@ -1,11 +1,11 @@
-// Postbuild step: emit `apps/web/dist/THIRD_PARTY_LICENSES.txt`.
+// Emit `apps/web/dist/THIRD_PARTY_LICENSES.txt`.
 //
 // What it does:
-//   - Runs `pnpm licenses list --prod --long --json` from the SPA
-//     workspace, which walks the RUNTIME dependency graph (transitives
+//   - Spawns `pnpm --filter @kindoo/web licenses list --prod --long --json`
+//     to walk the SPA workspace RUNTIME dependency graph (transitives
 //     included; devDependencies and workspace-internal packages
-//     excluded) via pnpm's own resolver. Each entry comes back with the
-//     package path on disk, declared license, author/homepage, etc.
+//     excluded). Each entry comes back with the package path on disk,
+//     declared license, author/homepage, etc.
 //   - For each entry the script reads the LICENSE file (any of LICENSE,
 //     LICENSE.md, LICENSE.txt, LICENCE, COPYING, etc.) and the NOTICE
 //     file (Apache-2.0 requirement) from the package directory and
@@ -14,28 +14,39 @@
 //     apps/web/dist/THIRD_PARTY_LICENSES.txt so Firebase Hosting serves
 //     it at /THIRD_PARTY_LICENSES.txt.
 //
-// Compliance driver: Apache-2.0 deps in the runtime bundle (TypeScript,
-// firebase, googleapis, etc.) require LICENSE + NOTICE preservation in
-// the distributed artifact; MIT deps require copyright + license-notice
-// preservation. The link to this file is surfaced from the SPA's
-// nav-overlay footer (apps/web/src/components/layout/NavOverlay.tsx).
+// Compliance driver: Apache-2.0 deps in the runtime bundle (firebase,
+// @firebase/*, typescript-derived runtimes, etc.) require LICENSE +
+// NOTICE preservation in the distributed artifact; MIT deps require
+// copyright + license-notice preservation. The link to this file is
+// surfaced from the SPA's nav-overlay footer
+// (apps/web/src/components/layout/NavOverlay.tsx).
 //
 // Why `pnpm licenses` over `license-checker-rseidelsohn`:
 // license-checker uses `read-installed-packages` which walks
 // `node_modules/<dep>/node_modules/<sub>`; that pattern misses pnpm's
 // flat `.pnpm/` store layout and captures only the top-level direct
-// deps (~20 packages), leaving 300+ transitives uncovered. pnpm's
-// built-in licenses subcommand uses its own graph and resolves the full
-// runtime tree (343 packages on a fresh install at this commit).
+// deps (~20 packages), leaving 120+ transitives uncovered. pnpm's
+// built-in licenses subcommand uses its own graph and resolves the
+// full runtime tree (146 packages on a fresh install at this commit).
+//
+// Invocation: this script is intentionally NOT chained into the
+// `build` / `build:staging` scripts in `apps/web/package.json`. When
+// invoked through `pnpm run …` pnpm injects `npm_lifecycle_*` /
+// `PNPM_SCRIPT_*` env vars; the inner `pnpm licenses list` then
+// detects the nested-script context and exits 1 with empty stderr on
+// some deploy hosts (the failure mode T-20 hit on first push). Each
+// caller (CI `Emit THIRD_PARTY_LICENSES.txt` step, `infra/scripts/
+// deploy-staging.sh` step 3a, `infra/scripts/deploy-prod.sh` step 3a)
+// runs it as a plain `node` invocation from a clean shell. The env
+// scrub below is defense in depth in case a future caller forgets.
 //
 // Failure modes:
-//   - pnpm subcommand errors → exit 1 (build fails).
+//   - pnpm subcommand errors → exit 1 (caller fails).
 //   - Output smaller than MIN_SIZE_BYTES → exit 1 (treats it as a
 //     broken-artifact signal; better to fail the deploy than ship an
 //     empty notices file).
 //
-// Invocation: chained after `vite build` via the `build` script in
-// apps/web/package.json. Also invokable standalone:
+// Standalone usage:
 //   node apps/web/scripts/emit-third-party-licenses.mjs
 
 import { spawnSync } from 'node:child_process';

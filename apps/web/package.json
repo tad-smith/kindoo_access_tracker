@@ -6,8 +6,9 @@
   "description": "Stake Building Access SPA. React 19 + TypeScript + Vite + Firebase SDK direct-to-Firestore. Phase 1 ships a placeholder smoketest route; full app lands across Phases 4-10 of the Firebase migration.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/emit-third-party-licenses.mjs",
-    "build:staging": "tsc -b && vite build --mode staging && node scripts/emit-third-party-licenses.mjs",
+    "build": "tsc -b && vite build",
+    "build:staging": "tsc -b && vite build --mode staging",
+    "emit-third-party-licenses": "node scripts/emit-third-party-licenses.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:unit": "vitest run",

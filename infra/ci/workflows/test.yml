@@ -160,14 +160,27 @@ jobs:
         id: build
         run: pnpm build
 
+      - name: Emit THIRD_PARTY_LICENSES.txt
+        id: emit-licenses
+        # T-20: walks the SPA workspace runtime graph via `pnpm
+        # licenses list` and concatenates LICENSE + NOTICE text into
+        # apps/web/dist/THIRD_PARTY_LICENSES.txt. Runs `node` directly
+        # rather than `pnpm --filter @kindoo/web emit-third-party-licenses`
+        # so the child shell carries no `npm_lifecycle_*` /
+        # `PNPM_SCRIPT_*` env vars — pnpm 10 detects nested-script env
+        # and refuses the inner `pnpm licenses list` call with exit 1
+        # / empty stderr on some hosts. The deploy scripts
+        # (infra/scripts/deploy-*.sh) invoke this same script the same
+        # way; matching the call shape here keeps CI honest about what
+        # ships.
+        run: node apps/web/scripts/emit-third-party-licenses.mjs
+
       - name: Verify THIRD_PARTY_LICENSES.txt artifact
         id: verify-licenses
-        # T-20: the SPA build emits apps/web/dist/THIRD_PARTY_LICENSES.txt
-        # via apps/web/scripts/emit-third-party-licenses.mjs. Confirm the
-        # file exists and is non-trivial in size so a silent regression
-        # in the postbuild step (broken pnpm subcommand, missing
-        # license-text walk, etc.) is caught in CI instead of shipping
-        # an empty notices artifact.
+        # T-20: confirm the file exists and is non-trivial in size so
+        # a silent regression in the emit step (broken pnpm
+        # subcommand, missing license-text walk, etc.) is caught in CI
+        # instead of shipping an empty notices artifact.
         run: |
           file="apps/web/dist/THIRD_PARTY_LICENSES.txt"
           if [[ ! -f "$file" ]]; then

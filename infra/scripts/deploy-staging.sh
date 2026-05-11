@@ -317,6 +317,16 @@ run "pnpm typecheck"
 # bundle.
 run "pnpm --filter ./apps/web build:staging"
 
+# Step 3a: emit THIRD_PARTY_LICENSES.txt into the freshly-built dist/
+# (T-20). Runs `node` directly — NOT via `pnpm run …` — so the child
+# shell has no `npm_lifecycle_*` / `PNPM_SCRIPT_*` env vars in scope.
+# The emit script itself spawns `pnpm licenses list` to walk the
+# workspace runtime graph; pnpm 10 detects nested-script env and
+# refuses the inner invocation with exit 1 / empty stderr on some
+# deploy hosts, so we cannot chain this inside the `build:staging`
+# pnpm script. Invoking from a clean shell here sidesteps that.
+run "node apps/web/scripts/emit-third-party-licenses.mjs"
+
 # Step 4: build functions. Skipped under --web-only since we won't
 # deploy them.
 if [[ "$WEB_ONLY" -eq 1 ]]; then
