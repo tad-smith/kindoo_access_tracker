@@ -178,7 +178,14 @@ export function gateDecision(principal: GatePrincipal, stake: GateStakeRead): Ga
     // claim-bearing users alike — SetupInProgress takes precedence
     // over both Dashboard and NotAuthorized during setup).
     const adminCanonical = canonicalEmailFn(data.bootstrap_admin_email ?? '');
-    const meCanonical = principal.canonical ?? canonicalEmailFn(principal.email ?? '');
+    // `||` not `??`: the principal's `canonical` claim is the empty
+    // string (not null/undefined) for a user whose `onAuthUserCreate`
+    // trigger has not yet minted claims — the bootstrap admin's very
+    // first sign-in. `??` only falls back on null/undefined and treats
+    // `''` as present, so the typed-email canonicalization branch never
+    // ran and the wizard route was unreachable on a fresh project.
+    // See B-2 in `docs/BUGS.md`.
+    const meCanonical = principal.canonical || canonicalEmailFn(principal.email ?? '');
     if (adminCanonical && meCanonical && adminCanonical === meCanonical) {
       return 'wizard';
     }

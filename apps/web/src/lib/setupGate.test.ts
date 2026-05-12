@@ -74,6 +74,41 @@ describe('gateDecision', () => {
     expect(decision).toBe('wizard');
   });
 
+  it('regression (B-2): returns wizard for bootstrap admin with empty-string canonical (no claims yet)', () => {
+    // On a fresh Firebase project the bootstrap admin signs in BEFORE
+    // `onAuthUserCreate` has minted claims. `principal-derive.ts`
+    // surfaces `principal.canonical` as the empty string `''` in that
+    // window (not null/undefined). The gate must fall through to the
+    // typed-email canonicalization branch so the wizard route resolves;
+    // a `??` operator here was the B-2 bug because `??` treats `''` as
+    // present and the equality check failed against the seed doc.
+    const p = principal({
+      isAuthenticated: false,
+      email: 'admin@example.com',
+      canonical: '',
+    });
+    const decision = gateDecision(
+      p,
+      stakeLoaded({ setup_complete: false, bootstrap_admin_email: 'admin@example.com' }),
+    );
+    expect(decision).toBe('wizard');
+  });
+
+  it('regression (B-2): empty-canonical AND empty-email does not route to wizard', () => {
+    // The "no auth shape at all" degenerate case. The typed-email
+    // fallback canonicalises `''` to `''`, the `adminCanonical &&
+    // meCanonical` guard short-circuits on the empty `meCanonical`,
+    // and the gate routes to setup-in-progress (the documented
+    // not-the-bootstrap-admin path). Pinning the existing semantic so
+    // the B-2 fix does not unintentionally widen the wizard branch.
+    const p = principal({
+      isAuthenticated: false,
+      email: '',
+      canonical: '',
+    });
+    expect(gateDecision(p, stakeLoaded({ setup_complete: false }))).toBe('setup-in-progress');
+  });
+
   it('returns setup-in-progress for non-admin no-claims user during setup_complete=false', () => {
     const p = principal({
       email: 'random@example.com',
