@@ -1,6 +1,6 @@
-// Manager Audit Log page. Mirrors `src/ui/manager/AuditLog.html`.
-// Infinite scroll (50 rows per page); fetches the next batch when the
-// user scrolls within ~300px of the bottom. Filterable by action /
+// Manager Audit Log page. Infinite scroll (50 rows per page); fetches
+// the next batch when the user scrolls within ~300px of the bottom.
+// Filterable by action /
 // entity_type / entity_id / actor_canonical / member_canonical / date
 // range. Per-row collapsed summary + `<details>` field-by-field diff
 // table (see `AuditDiffTable.tsx`).
@@ -269,8 +269,8 @@ function AuditCard({ row, timezone }: AuditCardProps) {
 }
 
 /** Map an audit-action category onto the Badge variant that renders
- *  the matching Apps Script color: blue for CRUD, green for request
- *  lifecycle, red for system, amber for importer. */
+ *  the right palette: blue for CRUD, green for request lifecycle, red
+ *  for system, amber for importer. */
 function badgeVariantForAction(action: AuditLog['action']): BadgeVariant {
   switch (auditActionCategory(action)) {
     case 'crud':

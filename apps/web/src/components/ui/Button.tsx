@@ -2,12 +2,11 @@
 // `.btn-secondary` / `.btn-success` / `.btn-danger` CSS in `base.css`.
 //
 // We deliberately did NOT lift the canonical shadcn Tailwind classes
-// here because Phase 4 already shipped a working button family in
-// `base.css` matched to the design tokens; reusing them keeps the
-// visual language identical to the live Apps Script app. The
-// shadcn-ish API (variant + asChild + forwardRef) is preserved so
-// future migration to fully utility-driven shadcn classes is a
-// localised edit.
+// here because the existing `.btn` family in `base.css` is matched to
+// the design tokens; reusing them keeps the visual language
+// consistent. The shadcn-ish API (variant + asChild + forwardRef) is
+// preserved so future migration to fully utility-driven shadcn
+// classes is a localised edit.
 //
 // Variants:
 //   default  → `btn` (filled blue)

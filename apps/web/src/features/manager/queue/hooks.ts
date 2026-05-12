@@ -16,7 +16,7 @@
 //     transaction reads the seat doc INSIDE the transaction so the R-1
 //     race surfaces correctly: if the seat is gone, flip the request
 //     with `completion_note` and emit only the request-side audit row
-//     (Phase 8's `removeSeatOnRequestComplete` Cloud Function does the
+//     (the `removeSeatOnRequestComplete` Cloud Function does the
 //     Admin-SDK seat delete on the non-R-1 path).
 //   - `useRejectRequest()` — flip pending → rejected with required
 //     reason.
@@ -65,8 +65,8 @@ export interface CompleteAddInput {
   /**
    * Optional free-text note from the manager. Trimmed; an empty result
    * is dropped from the write so the request doc stays clean. The
-   * Phase 9 `notifyRequesterCompleted` trigger surfaces this value on
-   * the email body when present.
+   * `notifyRequesterCompleted` trigger surfaces this value on the
+   * email body when present.
    */
   completion_note?: string;
 }
@@ -201,15 +201,15 @@ export function resolveRemoveCompletionNote(
 }
 
 /**
- * Mark Complete for a `remove` request. The actual seat delete happens
- * in Phase 8's `removeSeatOnRequestComplete` Cloud Function (Admin SDK
- * bypass; rules' seats.delete predicate has no access to
- * `request.resource.data` so we can't link the delete to a request via
- * client-side rules). On the client we:
+ * Mark Complete for a `remove` request. The actual seat delete
+ * happens in the `removeSeatOnRequestComplete` Cloud Function (Admin
+ * SDK bypass; rules' seats.delete predicate has no access to
+ * `request.resource.data` so we can't link the delete to a request
+ * via client-side rules). On the client we:
  *
  *   1. Read the seat doc inside the transaction.
  *   2. If the seat exists → flip the request to complete (no
- *      completion_note); the Phase 8 trigger handles the delete.
+ *      completion_note); the trigger handles the delete.
  *   3. If the seat is absent → flip with `completion_note` recording
  *      the R-1 no-op so the audit trail explains why nothing was
  *      deleted.

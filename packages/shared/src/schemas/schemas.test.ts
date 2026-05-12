@@ -1,7 +1,5 @@
-// Round-trip schema tests — one representative seed doc per collection
-// (per `firebase-migration.md` Phase 3 Tests, "zod schema parses for
-// representative documents in each collection. Round-trip via
-// `schema.parse(seedDoc)`.").
+// Round-trip schema tests — one representative seed doc per
+// collection, parsed via `schema.parse(seedDoc)`.
 //
 // We construct each fixture with the structural `TimestampLike` shape
 // the runtime never actually produces directly — Firestore's

@@ -1,9 +1,7 @@
 // MyRequests page (live). Shared across every role with at least one
-// requestable scope, per `docs/spec.md` §5.1's "shared template
-// `ui/MyRequests`" rule. Renders the signed-in user's submitted
-// requests with a status-driven card background, a Cancel button on
-// pending rows (the one Phase 5 write path), and a rejection-reason
-// affordance on rejected rows.
+// requestable scope. Renders the signed-in user's submitted requests
+// with a status-driven card background, a Cancel button on pending
+// rows, and a rejection-reason affordance on rejected rows.
 //
 // Scope filter: a multi-role principal who can submit against multiple
 // scopes (bishopric + stake, or 2+ bishoprics) sees a "Scope:" dropdown

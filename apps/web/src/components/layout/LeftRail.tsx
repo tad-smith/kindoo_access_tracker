@@ -1,7 +1,6 @@
 // Persistent desktop rail (>=1024px). Hosts the full sectioned nav
 // with text labels (including the Account section's Logout item).
-// The foot carries only the version stamp now — Logout moved into
-// the Account section per Phase 10.1 follow-up #4.
+// The foot carries only the version stamp.
 
 import { Nav } from './Nav';
 import type { Principal } from '../../lib/principal';

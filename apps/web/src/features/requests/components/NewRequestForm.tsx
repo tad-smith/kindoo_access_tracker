@@ -1,8 +1,7 @@
 // `NewRequestForm` — the shared add_manual / add_temp form rendered on
-// `/bishopric/new` and `/stake/new`. Mirrors `src/ui/NewRequest.html`
-// from the Apps Script app. Forks per role solely on which scopes are
-// available (single role → implicit scope; multi-role → dropdown);
-// every other behaviour is identical between roles.
+// `/bishopric/new` and `/stake/new`. Forks per role solely on which
+// scopes are available (single role → implicit scope; multi-role →
+// dropdown); every other behaviour is identical between roles.
 //
 // Field set:
 //   - Request type (add_manual / add_temp)

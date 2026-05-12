@@ -7,7 +7,7 @@
 //
 // Auto seats render NO trashcan (they're LCR-managed); the rule that
 // blocks remove submits against an auto-only seat is a UX guard, not
-// a server-side gate (the Phase 8 cloud function plus the
+// a server-side gate (the request-completion Cloud Function plus the
 // importer's "next run replaces it" semantics make the guard
 // belt-and-braces).
 

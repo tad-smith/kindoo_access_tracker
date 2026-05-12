@@ -1,6 +1,5 @@
-/* Toast notifications. Ported from `.toast-*` rules in
-   `src/ui/Styles.html` (around line 171). Identical positioning so a
-   user familiar with the Apps Script app sees the same UX. */
+/* Toast notifications. Fixed bottom-left stack; safe-area aware so
+   iOS PWAs keep toasts above the home indicator. */
 
 .toast-host {
   position: fixed;

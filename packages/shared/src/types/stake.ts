@@ -1,23 +1,12 @@
-// `Stake` — the parent doc for every stake (Config-tab equivalent in
-// Apps Script) per `docs/firebase-schema.md` §4.1. Lives at
-// `stakes/{stakeId}` with the human-readable slug as the doc ID.
-//
-// The doc holds three classes of fields:
-//
-//   1. Identity + setup (`stake_id`, `stake_name`, `created_*`,
-//      `bootstrap_admin_email`, `setup_complete`).
-//   2. Operator config (`callings_sheet_id`, `stake_seat_cap`,
-//      schedule fields, `notifications_enabled`, `timezone`).
-//   3. Operational state written by the importer + expiry trigger
-//      (`last_*` + `last_over_caps_json`).
-//
-// Plus the universal `lastActor` integrity-check field every domain
-// doc carries.
+// `Stake` — the parent doc for every stake per
+// `docs/firebase-schema.md` §4.1. Lives at `stakes/{stakeId}` with the
+// human-readable slug as the doc ID. Holds identity, operator config,
+// importer source, and operational state written by server triggers.
 
 import type { ActorRef } from './actor.js';
 import type { TimestampLike } from './userIndex.js';
 
-/** Full ISO-8601 day-of-week names — match Apps Script `Config` tab values. */
+/** Full ISO-8601 day-of-week names — the schedule field accepts these literally. */
 export type ImportDay =
   | 'MONDAY'
   | 'TUESDAY'
@@ -90,9 +79,8 @@ export type Stake = {
   /**
    * How the most recent importer run was triggered. Read by the
    * over-cap email trigger so the subject line attributes the run
-   * (`manual` vs `weekly`). Optional for back-compat — pre-Phase-9
-   * docs lack the field; the trigger defaults to `'manual'` when
-   * absent.
+   * (`manual` vs `weekly`). Optional — when absent the trigger
+   * defaults to `'manual'`.
    */
   last_import_triggered_by?: 'manual' | 'weekly';
   last_expiry_at?: TimestampLike;

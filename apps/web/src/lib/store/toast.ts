@@ -2,12 +2,8 @@
 // (mounted once in `Shell.tsx`) and by any feature mutation that wants
 // to surface a non-blocking notification.
 //
-// API mirrors the Apps Script `toast(msg, kind)` helper from
-// `ClientUtils.html` so the porting layer can be a one-line swap. Same
-// kind vocabulary: 'info' | 'success' | 'warn' | 'error'.
-//
-// Auto-dismiss timeouts match the Apps Script defaults: 3.5s for
-// info/success, 6.5s for warn/error.
+// Kind vocabulary: 'info' | 'success' | 'warn' | 'error'.
+// Auto-dismiss timeouts: 3.5s for info/success, 6.5s for warn/error.
 
 import { create } from 'zustand';
 
@@ -69,8 +65,7 @@ export const useToastStore = create<ToastState>((set, get) => ({
 
 /**
  * Imperative `toast(msg, kind)` for non-React call sites (e.g. inside a
- * mutation hook before the component mounts). Mirrors the Apps Script
- * `toast()` API — preserves the call-site shape Phase 5+ ports use.
+ * mutation hook before the component mounts).
  */
 export function toast(message: string, kind: ToastKind = 'info'): number {
   return useToastStore.getState().push(message, kind);

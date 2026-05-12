@@ -1,7 +1,6 @@
 // Toast container. Mounted once at the Shell root; subscribes to the
 // Zustand toast store and renders each open toast in a fixed-position
-// stack. Mirrors the Apps Script `toast-host` block (see
-// `src/ui/Styles.html`) so the visual is pixel-equivalent.
+// stack.
 //
 // Accessibility: each toast has `role="status"` and `aria-live="polite"`
 // — screen readers announce the message as it arrives without

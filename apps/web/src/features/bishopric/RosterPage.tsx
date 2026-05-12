@@ -1,5 +1,4 @@
-// Bishopric Roster page (live). Mirrors the Apps Script
-// `src/ui/bishopric/Roster.html` behaviour:
+// Bishopric Roster page (live).
 //
 //   - Single-ward bishopric: roster scoped to that ward, no picker.
 //   - Multi-ward bishopric: a "Ward:" select appears above the

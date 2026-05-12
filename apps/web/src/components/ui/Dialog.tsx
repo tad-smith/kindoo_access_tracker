@@ -1,13 +1,11 @@
-// Accessible modal primitive. Built on Radix UI's Dialog so we get the
-// hard parts for free: focus-trap, ESC-to-close, scroll-lock on body,
-// inert background, ARIA labelling. shadcn-ui's Dialog is the same
-// Radix base layered with Tailwind classes; we use the Radix primitive
-// directly + plain CSS to keep dependency surface minimal in Phase 4
-// (Tailwind setup deferred to Phase 5/6 as feature pages need it).
+// Accessible modal primitive. Built on Radix UI's Dialog so we get
+// the hard parts for free: focus-trap, ESC-to-close, scroll-lock on
+// body, inert background, ARIA labelling. shadcn-ui's Dialog is the
+// same Radix base layered with Tailwind classes; we use the Radix
+// primitive directly + plain CSS for a minimal dependency surface.
 //
-// API surface mirrors the Apps Script `kdConfirm` / `kdAlert` /
-// `kdPrompt` helpers from `ClientUtils.html` so the porting layer can
-// be a one-line swap. Phase 5+ pages compose around this:
+// API surface: `Dialog` + `Dialog.ConfirmButton` / `Dialog.CancelButton`
+// / `Dialog.Footer`. Page code composes:
 //
 //   <Dialog open={open} onOpenChange={setOpen} title="Mark complete?">
 //     <p>Approve and write seat for {request.member_email}?</p>

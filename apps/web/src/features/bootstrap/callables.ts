@@ -20,9 +20,9 @@ export interface InstallScheduledJobsResult {
 /**
  * Invoke `installScheduledJobs` for the named stake. The callable
  * verifies the caller is an active manager of the stake and that the
- * stake's schedule fields are populated. Phase 7 users hit a "not-found"
- * path that bubbles a friendly error (which surfaces a warn toast —
- * setup completion is not rolled back since the function is
+ * stake's schedule fields are populated. If the callable is
+ * unavailable we bubble a friendly error (which surfaces a warn
+ * toast — setup completion is not rolled back since the function is
  * best-effort).
  */
 export async function invokeInstallScheduledJobs(

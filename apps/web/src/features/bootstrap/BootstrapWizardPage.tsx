@@ -1,14 +1,13 @@
-// Multi-step bootstrap wizard. Mirrors `src/ui/BootstrapWizard.html`
-// from the Apps Script app; runs against the bootstrap admin's Firebase
-// Auth account before they're a manager. The wizard's existence is
-// gated by the `BootstrapGate` route component (a parent guard) so this
-// page is only rendered when:
+// Multi-step bootstrap wizard. Runs against the bootstrap admin's
+// Firebase Auth account before they're a manager. The wizard's
+// existence is gated by the `BootstrapGate` route component (a parent
+// guard) so this page is only rendered when:
 //
 //   1. The user is signed in.
 //   2. The stake doc has `setup_complete=false`.
 //   3. The user's email matches `stake.bootstrap_admin_email`.
 //
-// Architecture mirrors the legacy four-step layout:
+// Four-step layout:
 //
 //   Step 1 — Stake fields (name + stake_seat_cap required;
 //            callings_sheet_id optional).
@@ -24,11 +23,10 @@
 //   - ≥1 building
 //   - ≥1 ward
 //
-// Complete Setup flips `setup_complete=true`, optionally invokes the
-// `installScheduledJobs` callable (Phase 8 stub — handled gracefully if
-// the function isn't deployed), and lets the routing gate redirect the
-// admin to `/manager/dashboard`. The `setup_complete=true` flip means a
-// post-setup wizard reload is invisible (the gate skips it).
+// Complete Setup flips `setup_complete=true`, invokes the
+// `installScheduledJobs` callable, and lets the routing gate redirect
+// the admin to `/manager/dashboard`. The `setup_complete=true` flip
+// means a post-setup wizard reload is invisible (the gate skips it).
 
 import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -670,9 +668,9 @@ function CompleteSetupButton({ enabled, onCompleted }: CompleteSetupProps) {
   async function complete() {
     try {
       await mutation.mutateAsync();
-      // Best-effort callable — Phase 8 ships the function. If it isn't
-      // deployed yet we surface a warn-toast but the setup completion
-      // is not rolled back.
+      // Best-effort callable. If the function is unavailable we
+      // surface a warn-toast but the setup completion is not rolled
+      // back.
       try {
         await invokeInstallScheduledJobs(STAKE_ID);
       } catch (callErr) {

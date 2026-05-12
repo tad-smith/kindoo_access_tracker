@@ -1,14 +1,12 @@
 // Typed Firestore doc + collection references for every collection in
-// `docs/firebase-schema.md` §§3–4. The web-side companion to T-16 in
-// `docs/TASKS.md` and the Phase 4 deliverable that unblocks Phase 5
-// pages from issuing typed reads.
+// `docs/firebase-schema.md` §§3–4. Lets feature hooks issue typed
+// reads without re-typing the payload by hand.
 //
 // Why this layer exists.
 //   - Firestore's `doc()` / `collection()` return `DocumentReference<DocumentData>`
 //     and `CollectionReference<DocumentData>` by default. Without a
-//     converter, every `useFirestoreDocData` / `useFirestoreCollectionData`
-//     loses type information at the read boundary, and call sites have
-//     to re-type the payload by hand.
+//     converter, every snapshot loses type information at the read
+//     boundary.
 //   - `withConverter` lets us register one converter per collection that
 //     produces the correct shared type. We don't validate fields here
 //     (`firestoreDataConverter.fromFirestore` runs after rules-permitted
@@ -20,8 +18,8 @@
 //   - One `<Entity>Ref(stakeId, id)` for `DocumentReference`.
 //   - One `<entities>Col(stakeId)` for `CollectionReference`.
 //   - For top-level (cross-stake) collections, no `stakeId` arg.
-//   - All callers pass `STAKE_ID` from `./constants` — it's a stable
-//     constant in v1; Phase 12 makes it dynamic per principal.
+//   - All callers pass `STAKE_ID` from `./constants` — it is a stable
+//     constant in v1; multi-stake makes it dynamic per principal.
 
 import {
   collection,

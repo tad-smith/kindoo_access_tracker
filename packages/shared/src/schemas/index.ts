@@ -1,8 +1,8 @@
 // Schemas barrel. Each schema mirrors the like-named type in
 // `../types/`. Schemas are used for:
-//   - Round-trip validation in unit tests (Phase 3 onward).
-//   - Form input validation in `apps/web/` (Phase 4+).
-//   - Cloud Function callable input validation (Phase 8+).
+//   - Round-trip validation in unit tests.
+//   - Form input validation in `apps/web/`.
+//   - Cloud Function callable input validation.
 export { actorRefSchema } from './actor.js';
 export { accessSchema, manualGrantSchema } from './access.js';
 export {

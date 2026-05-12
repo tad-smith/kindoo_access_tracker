@@ -1,7 +1,7 @@
-// Barrel for the DIY Firestore hooks layer (D11). Replaces reactfire's
-// `useFirestoreDocData` / `useFirestoreCollectionData` for live reads;
-// adds a `useFirestoreOnce` helper for cursor-paginated reads (Phase 5
-// Audit Log).
+// Barrel for the DIY Firestore hooks layer (architecture D11). Live
+// reads via `useFirestoreDoc` / `useFirestoreCollection`; one-shot
+// reads (e.g. cursor pagination on the Audit Log) via
+// `useFirestoreOnce`.
 //
 // Consumers in `features/*/hooks.ts` should import from here, not from
 // the per-file modules. Keeps a single module boundary stable as we

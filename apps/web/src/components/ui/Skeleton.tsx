@@ -1,7 +1,6 @@
 // Loading-placeholder block. Same shape as shadcn-ui's Skeleton:
-// animated grey rounded box. Phase 5 dashboard cards and roster lists
-// render skeletons during the initial Firestore subscription's "no
-// snapshot yet" frame.
+// animated grey rounded box. Used by dashboard cards and roster lists
+// during the initial Firestore subscription's "no snapshot yet" frame.
 
 import type { HTMLAttributes } from 'react';
 import { cn } from '../../lib/cn';

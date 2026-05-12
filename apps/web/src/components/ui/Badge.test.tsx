@@ -1,5 +1,4 @@
-// Per-variant class assertions. The roster type pills (auto / manual /
-// temp) must match Apps Script `Styles.html` lines 814-816 exactly:
+// Per-variant class assertions. The roster type pills:
 //   - auto:   primary-tint bg, primary fg (blue-on-blue)
 //   - manual: warn-tint bg, warn-dark fg (amber-on-amber)
 //   - temp:   warn-tint-2 bg, warn-mid fg (light amber)
@@ -9,7 +8,7 @@ import { render } from '@testing-library/react';
 import { Badge } from './Badge';
 
 describe('<Badge />', () => {
-  it('renders the auto variant with primary-tint bg + primary fg (Apps Script .badge-type-auto)', () => {
+  it('renders the auto variant with primary-tint bg + primary fg', () => {
     const { container } = render(<Badge variant="auto">auto</Badge>);
     const span = container.querySelector('span');
     expect(span).not.toBeNull();
@@ -17,14 +16,14 @@ describe('<Badge />', () => {
     expect(span?.className).toContain('text-kd-primary');
   });
 
-  it('renders the manual variant with warn-tint bg + warn-dark fg (Apps Script .badge-type-manual)', () => {
+  it('renders the manual variant with warn-tint bg + warn-dark fg', () => {
     const { container } = render(<Badge variant="manual">manual</Badge>);
     const span = container.querySelector('span');
     expect(span?.className).toContain('bg-kd-warn-tint');
     expect(span?.className).toContain('text-kd-warn-dark');
   });
 
-  it('renders the temp variant with warn-tint-2 bg + warn-mid fg (Apps Script .badge-type-temp)', () => {
+  it('renders the temp variant with warn-tint-2 bg + warn-mid fg', () => {
     const { container } = render(<Badge variant="temp">temp</Badge>);
     const span = container.querySelector('span');
     expect(span?.className).toContain('bg-kd-warn-tint-2');

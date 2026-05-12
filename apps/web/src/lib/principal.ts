@@ -29,9 +29,9 @@
 // `principal-derive.ts` so unit tests can exercise it without pulling
 // the Firebase SDK init module into the import graph.
 //
-// Phase 3.5 (D11): replaced reactfire's `useUser()` with a direct
-// `onAuthStateChanged` subscription against the `auth` SDK singleton.
-// Same data, no provider stack required.
+// Per architecture D11: direct `onAuthStateChanged` subscription
+// against the `auth` SDK singleton. No reactfire provider stack
+// required.
 
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useEffect, useState } from 'react';

@@ -1,6 +1,4 @@
-/* Empty-state placeholder. Ported from `roster-empty` in
-   `src/ui/Styles.html` so list-empty rendering matches the Apps Script
-   app. */
+/* Empty-state placeholder. Shared by every list-empty render. */
 
 .roster-empty {
   border: 1px dashed var(--kd-border);

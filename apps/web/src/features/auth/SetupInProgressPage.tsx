@@ -1,8 +1,7 @@
 // Shown to any signed-in user who is NOT the bootstrap admin while
 // `stakes/{stakeId}.setup_complete` is still `false`. Deliberately
 // distinct from `NotAuthorized`: the user isn't unauthorised, the app
-// isn't ready yet. Mirrors `src/ui/SetupInProgress.html` from the Apps
-// Script app.
+// isn't ready yet.
 //
 // No sign-out button. Refreshing won't help, and telling the user to
 // sign out is misleading — their sign-in is fine, they just can't do

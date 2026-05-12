@@ -1,7 +1,7 @@
-// Cross-role MyRequests data hooks. The Apps Script app shipped one
-// MyRequests template for every role (bishopric + stake + manager); we
-// keep that single shared page at `/my-requests` in the SPA. Live
-// subscription scoped to the signed-in user's `requester_canonical`.
+// Cross-role MyRequests data hooks. Single shared page at
+// `/my-requests` serves every role (bishopric + stake + manager).
+// Live subscription scoped to the signed-in user's
+// `requester_canonical`.
 
 import { query, where, orderBy } from 'firebase/firestore';
 import { useMemo } from 'react';

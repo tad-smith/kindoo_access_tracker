@@ -3,10 +3,10 @@
 // per-scope summaries patch automatically when the importer or a
 // completion writes a row.
 //
-// Phase 7 adds the inline-edit + reconcile mutations: inline edit
-// touches only the rules' update-allowlist (member_name, reason,
-// building_names, start_date, end_date); reconcile rewrites the seat's
-// primary grant from one of the duplicate_grants entries.
+// Mutations: inline edit touches only the rules' update-allowlist
+// (member_name, reason, building_names, start_date, end_date);
+// reconcile rewrites the seat's primary grant from one of the
+// duplicate_grants entries.
 
 import { useMemo } from 'react';
 import { serverTimestamp, updateDoc } from 'firebase/firestore';

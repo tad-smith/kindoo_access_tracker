@@ -1,7 +1,6 @@
-// Tests for canonicalEmail / emailsEqual. Cases mirror the Apps Script
-// `Utils_test_normaliseEmail` and `Utils_test_emailsEqual` in
-// `src/core/Utils.gs` so any divergence between runtimes is caught here
-// instead of in production.
+// Tests for canonicalEmail / emailsEqual. Cover lowercase + trim, the
+// Gmail dot/+suffix collapse, the googlemail.com fold, and the
+// preserve-as-typed behaviour for non-Gmail providers.
 import { describe, expect, it } from 'vitest';
 import { canonicalEmail, emailsEqual } from './canonicalEmail.js';
 
@@ -19,8 +18,8 @@ describe('canonicalEmail', () => {
   });
 
   it('preserves dots and +suffix on Workspace / non-Gmail addresses', () => {
-    // The Workspace half of architecture.md D4 — non-Gmail providers
-    // treat dots and +suffix as significant, so we leave them alone.
+    // architecture.md D4: non-Gmail providers treat dots and +suffix as
+    // significant, so we leave them alone.
     expect(canonicalEmail('first.last@example.org')).toBe('first.last@example.org');
     expect(canonicalEmail('alice+church@example.org')).toBe('alice+church@example.org');
   });

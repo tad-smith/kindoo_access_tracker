@@ -1,8 +1,8 @@
 // Notifications page. Wraps the device-level Push Notifications panel
 // in the standard page chrome. Role-agnostic at the component level —
 // the route file owns the gate so this page can be expanded later
-// (Phase 9 will add per-event push categories visible to bishopric +
-// stake users when completed/rejected/cancelled push lands).
+// (per-event push categories for bishopric + stake users will land
+// here when completed/rejected/cancelled push ships).
 
 import { PushNotificationsPanel } from '../components/PushNotificationsPanel';
 

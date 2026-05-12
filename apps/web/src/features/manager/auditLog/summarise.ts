@@ -1,7 +1,5 @@
-// One-line summary of an audit row, ported from
-// `src/ui/manager/AuditLog.html`'s `shortSummary()`. Used both on the
-// Audit Log page (collapsed row) and on the Dashboard's Recent Activity
-// card.
+// One-line summary of an audit row. Used on both the Audit Log page
+// (collapsed row) and the Dashboard's Recent Activity card.
 //
 // Special cases for the rows whose surface form is more readable as
 // custom prose than as a key/value dump:
@@ -426,8 +424,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 /** Audit-action category. Drives the row-card action-badge color so
  *  CRUD, request-lifecycle, system-events, and importer rows are
- *  visually distinguishable at a glance. Mirrors Apps Script's
- *  `ACTION_CATEGORY` map in `src/ui/manager/AuditLog.html`.
+ *  visually distinguishable at a glance.
  *
  *  - `crud`    — create_*, update_*, delete_* on entity docs
  *  - `request` — submit / complete / reject / cancel request

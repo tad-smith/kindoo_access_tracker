@@ -223,8 +223,8 @@ export interface ManagerInput {
 }
 
 // New managers default to active. The merge: true preserves any
-// existing `active=false` set by a prior deactivate. Activate/deactivate
-// is a separate Configuration-level mutation (Phase 8 candidate).
+// existing `active=false` set by a prior deactivate. Activate/
+// deactivate is a separate Configuration-level mutation.
 //
 // Pre-check: refuse the add when a doc with the same canonical email
 // already exists. The doc-id keyed by canonical guarantees Firestore-

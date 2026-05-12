@@ -3,15 +3,11 @@
    reachable as Tailwind utility classes (`bg-kd-primary`,
    `text-kd-fg-1`, etc.).
 
-   Tailwind v4 has no `tailwind.config.js`; the theme lives here as CSS.
-   We deliberately keep `tokens.css` separate as the canonical token
-   source — that file is consumed both by hand-rolled component CSS
-   (Shell.css, Nav.css, etc.) AND by these `@theme` aliases. One source
-   of truth, two consumption surfaces.
-
-   Phase 5 (T-18): added alongside the shadcn-ui components in
-   `components/ui/` so Phase 5 page work has Tailwind utilities + Radix-
-   based primitives without rewriting the existing layout CSS. */
+   Tailwind v4 has no `tailwind.config.js`; the theme lives here as
+   CSS. We deliberately keep `tokens.css` separate as the canonical
+   token source — that file is consumed both by hand-rolled component
+   CSS (Shell.css, Nav.css, etc.) AND by these `@theme` aliases. One
+   source of truth, two consumption surfaces. */
 
 @import 'tailwindcss';
 

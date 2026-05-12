@@ -1,8 +1,7 @@
 // Public surface of @kindoo/shared. Both apps/web/ and functions/ import
-// from here. Phase 1 shipped canonical-email helpers; Phase 2 added the
-// auth surface (claims, principal, userIndex bridge); Phase 3 adds the
-// per-stake domain types + zod schemas, plus the `auditId` and
-// `buildingSlug` helpers.
+// from here. Exports: canonical-email helpers, the auth surface
+// (claims, principal, userIndex bridge), per-stake domain types + zod
+// schemas, and the `auditId` / `buildingSlug` helpers.
 
 // ---- Pure helpers -----------------------------------------------------
 export { auditId } from './auditId.js';

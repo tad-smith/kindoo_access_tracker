@@ -1,13 +1,13 @@
-// Manager Access page (Phase 7 wires writes). Per `firebase-schema.md`
-// §4.5, the Access collection is jointly owned: importer-managed
-// `importer_callings` are read-only here; manager-managed
-// `manual_grants` get add/delete affordances.
+// Manager Access page. Per `firebase-schema.md` §4.5, the Access
+// collection is jointly owned: importer-managed `importer_callings`
+// are read-only here; manager-managed `manual_grants` get add /
+// delete affordances.
 //
 // One card per user with the two ownership stripes visually split:
 // importer block on top (light auto-row tint), manual block below
 // (warm tint). Empty maps collapse silently.
 //
-// Phase 7 additions:
+// Writes:
 //   - "Add manual access" form at the page foot.
 //   - Per-grant Delete button on manual rows (with confirm dialog).
 
@@ -224,9 +224,8 @@ export function AccessPage() {
 }
 
 // Desktop table view — one row per (scope, calling/reason, email,
-// source) tuple, mirroring the Apps Script Access.html column shape.
-// The card list above renders the same data grouped per-user; CSS
-// picks which view is visible at 899px.
+// source) tuple. The card list above renders the same data grouped
+// per-user; CSS picks which view is visible at 899px.
 
 interface AccessTableRow {
   canonical: string;

@@ -1,7 +1,6 @@
-/* Roster-card stack styles. Mechanical port of the `.roster-cards` /
-   `.roster-card*` family from Apps Script `Styles.html` (lines ~838–926).
-   Stacked cards with no gap between them (shared bottom border) — the
-   "row-feel visual density" the user has explicit feedback on. */
+/* Roster-card stack styles. Stacked cards with no gap between them
+   (shared bottom border) — the "row-feel visual density" the user has
+   explicit feedback on. */
 
 .roster-cards {
   background: #fff;

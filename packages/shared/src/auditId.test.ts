@@ -1,6 +1,6 @@
-// Tests for `auditId`. The agent definition for Phase 3 names three
-// properties to lock in: deterministic, sortable by reverse-lex, no
-// collisions on distinct inputs. Each gets its own block.
+// Tests for `auditId`. Three properties to lock in: deterministic,
+// sortable by reverse-lex, no collisions on distinct inputs. Each gets
+// its own block.
 import { afterEach, describe, expect, it } from 'vitest';
 import { _setSuffixSource, auditId } from './auditId.js';
 

@@ -3,7 +3,7 @@
 // can never drift. The single source of truth for "given the current
 // principal + stake-doc subscription state, where do we send the user?"
 //
-// Per `docs/firebase-migration.md` §Phase 7 + `docs/spec.md` §10:
+// Per `docs/spec.md` §10:
 //
 //   1. No Firebase Auth user                      → 'sign-in'
 //   2. Stake-doc subscription still pending       → 'pending'

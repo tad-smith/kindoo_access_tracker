@@ -1,6 +1,5 @@
-// Stake Presidency Roster page (live). Mirrors
-// `src/ui/stake/Roster.html`. Scope is hard-locked to `'stake'`; rules
-// keep bishoprics out via the per-doc rule:
+// Stake Presidency Roster page (live). Scope is hard-locked to
+// `'stake'`; rules keep bishoprics out via the per-doc rule:
 //   `(resource.data.scope == 'stake' && isStakeMember(stakeId))`.
 
 import { useMemo } from 'react';

@@ -1,7 +1,7 @@
 // Notifications route. Manager-only for-now; the page component is
-// role-agnostic so future expansion (Phase 9 push for completed /
-// rejected / cancelled requests visible to bishopric + stake users)
-// only needs the gate below relaxed.
+// role-agnostic so future expansion (push for completed / rejected /
+// cancelled requests visible to bishopric + stake users) only needs
+// the gate below relaxed.
 //
 // The `useRequireRole` hook handles the loading-window race + redirect
 // for every role-gated route in the app — see its module header for

@@ -1,5 +1,4 @@
-// Root route handler. Gate ordering per `docs/firebase-migration.md`
-// §Phase 7 "Setup-complete gate" + `docs/spec.md` §10.
+// Root route handler. Gate ordering per `docs/spec.md` §10.
 //
 // The branch picker is `gateDecision()` in `lib/setupGate.ts` — same
 // module powers `routes/_authed.tsx` so the two gates can never drift.

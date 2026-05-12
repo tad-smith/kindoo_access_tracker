@@ -14,11 +14,11 @@
 //                          `_authed` route group so the topbar stays
 //                          mounted across navigations.
 //
-// Phase 3.5 (D11): reactfire's FirebaseAppProvider / AuthProvider /
-// FirestoreProvider are gone. Firebase SDK instances are module-scoped
-// singletons exported from `lib/firebase.ts`; `usePrincipal()` reads
-// from them directly via `onAuthStateChanged`; the DIY hooks at
-// `lib/data/` consume them directly via `onSnapshot` / `getDoc`.
+// Per architecture D11: no reactfire providers. Firebase SDK instances
+// are module-scoped singletons exported from `lib/firebase.ts`;
+// `usePrincipal()` reads from them directly via `onAuthStateChanged`;
+// the DIY hooks at `lib/data/` consume them directly via `onSnapshot`
+// / `getDoc`.
 //
 // Imported once and only once. Side-effectful: `lib/firebase` runs
 // `initializeApp` + emulator wiring at import time.

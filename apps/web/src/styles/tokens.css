@@ -1,8 +1,5 @@
-/* Design tokens. Mechanical port of `:root` from Apps Script
-   `src/ui/Styles.html` (DESIGN_REFACTOR.md §1) so the new SPA matches
-   the live app's palette pixel-for-pixel. New tokens added in
-   subsequent phases live below the imported block with a comment
-   pointing back to their introducing PR / phase. */
+/* Design tokens — the canonical palette for the SPA. New tokens
+   appended below the base block. */
 
 :root {
   /* Brand */

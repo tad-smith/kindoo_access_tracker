@@ -1,6 +1,5 @@
-// Unit tests for the toast queue store. Covers the enqueue / dismiss /
-// auto-dismiss contract that the Apps Script `toast(msg, kind)` helper
-// established (`ClientUtils.html#toast`).
+// Unit tests for the toast queue store. Covers the enqueue / dismiss
+// / auto-dismiss contract surfaced by the `toast(msg, kind)` API.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useToastStore, toast } from './toast';

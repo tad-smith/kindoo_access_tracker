@@ -1,6 +1,5 @@
-// Component tests for `<UtilizationBar />`. Mirrors the contract from
-// Apps Script's `renderUtilizationBar` so the visual / DOM shape is
-// identical — same class names, same OVER CAP label.
+// Component tests for `<UtilizationBar />`. Locks in the DOM shape
+// (class names, OVER CAP label) downstream pages match against.
 
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';

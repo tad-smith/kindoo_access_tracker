@@ -1,7 +1,6 @@
-// Stake-timezone date/time formatters. Mirrors Apps Script's
-// `Utils_formatDateTime`: `yyyy-MM-dd h:mma` with lowercase am/pm.
-// We add a space between time and meridiem for readability
-// (`9:30 am` rather than `9:30am`).
+// Stake-timezone date/time formatters. Render format
+// `yyyy-MM-dd h:mm am/pm` with lowercase am/pm and a space between
+// time and meridiem (`9:30 am` rather than `9:30am`).
 //
 // All app-surfaced timestamps render in the stake's timezone (read
 // from `stake.timezone`, e.g. `America/Denver`) so the audit log,
@@ -9,10 +8,10 @@
 //
 // Fallback when no timezone is supplied (the stake doc snapshot is
 // still loading, or the field is missing): `America/Denver`. This
-// matches the v1 deploy's stake; multi-stake (Phase B) needs a
-// per-stake default seeded by `createStake`. UTC is wrong for our
-// only deployed stake — the operator hits a 6-hour negative offset on
-// every audit timestamp before this fallback applies.
+// matches the v1 deploy's stake; multi-stake needs a per-stake
+// default seeded by `createStake`. UTC is wrong for our only deployed
+// stake — the operator would hit a 6-hour negative offset on every
+// audit timestamp before this fallback applies.
 const DEFAULT_STAKE_TZ = 'America/Denver';
 
 /**
@@ -26,7 +25,7 @@ export function formatDateTimeInStakeTz(value: unknown, timezone: string | undef
   const tz = timezone || DEFAULT_STAKE_TZ;
   // `en-CA` for the date side because it formats `YYYY-MM-DD` natively.
   // `en-US` for the time side because `hour: 'numeric'` gives `9` (not
-  // `09`) — the Apps Script equivalent of `h:mma`.
+  // `09`) — the `h:mma` shape we want.
   const datePart = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
     year: 'numeric',

@@ -1,7 +1,7 @@
-// Manager Requests Queue page (live). Mirrors `src/ui/manager/RequestsQueue.html`.
-// Pending-only; rendered as three ordered sections (Urgent / Outstanding
-// / Future) using the `comparison_date` rule in `./sections.ts`. Per-row
-// Mark Complete + Reject actions.
+// Manager Requests Queue page (live). Pending-only; rendered as
+// three ordered sections (Urgent / Outstanding / Future) using the
+// `comparison_date` rule in `./sections.ts`. Per-row Mark Complete +
+// Reject actions.
 //
 // `focus` prop carries a request_id from a tapped push notification's
 // deep-link (typed search param at the route level). On first render
@@ -366,9 +366,9 @@ interface CompleteAddDialogProps {
 function CompleteAddDialog({ request, buildings, open, onOpenChange }: CompleteAddDialogProps) {
   const mutation = useCompleteAddRequest();
   // Pre-tick: the requester's selection wins when present; otherwise
-  // empty (manager picks). Phase 7's roster-driven ward-default
-  // pre-tick is out of scope here — Phase 6's confirmation dialog
-  // simply respects what the requester sent.
+  // empty (manager picks). Roster-driven ward-default pre-tick is
+  // out of scope here — the confirmation dialog simply respects what
+  // the requester sent.
   const initial = request.building_names ?? [];
   const form = useForm<CompleteAddRequestForm>({
     resolver: zodResolver(completeAddRequestSchema),

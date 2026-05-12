@@ -1,6 +1,5 @@
 // Tablet icons-only rail. 64px wide, fixed-position column to the
-// left of `<main>`. Three interaction patterns (per Phase 10.1
-// follow-up #3):
+// left of `<main>`. Three interaction patterns:
 //
 //   1. Tap an icon (link or action) → directly navigates / runs the
 //      action (sign out). No expansion step. Link items are
@@ -18,7 +17,7 @@
 // + tint treatment as desktop. Action items don't carry active state.
 //
 // The foot below the rail body holds only the version stamp now;
-// Logout moved into the Account section per Phase 10.1 follow-up #4.
+// Logout lives in the Account section.
 
 import { useRef } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';

@@ -164,8 +164,8 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
     // is the first per-user setting most operators reach for after
     // landing; Audit Log stays at the bottom as a less-frequent path.
     // Manager-only for-now on Notifications; future expansion to
-    // bishopric/stake users is planned when Phase 9 ships push for
-    // completed/rejected/cancelled requests.
+    // bishopric/stake users is planned when push for
+    // completed/rejected/cancelled requests ships.
     settings.push({
       kind: 'link',
       key: 'notifications',

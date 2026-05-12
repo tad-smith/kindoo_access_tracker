@@ -2,8 +2,8 @@
 // collection; rendering is split into per-user cards (each card has an
 // importer block + a manual block — see firebase-schema.md §4.5).
 //
-// Phase 7 adds the manual-grant write paths: add (arrayUnion-style) and
-// delete (arrayRemove-style). The split-ownership rule means
+// Manual-grant write paths: add (arrayUnion-style) and delete
+// (arrayRemove-style). The split-ownership rule means
 // `importer_callings` is never touched by the client; manager-only
 // writes mutate `manual_grants` exclusively (rules enforce).
 

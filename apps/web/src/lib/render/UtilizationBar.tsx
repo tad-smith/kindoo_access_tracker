@@ -1,8 +1,7 @@
-// Utilization bar — React port of `renderUtilizationBar` from the Apps
-// Script `ClientUtils.html`. Used by the manager dashboard cards, the
-// roster summary cards, and the All Seats total bar.
+// Utilization bar. Used by the manager dashboard cards, the roster
+// summary cards, and the All Seats total bar.
 //
-// Behavioural contract (mirrors the Apps Script helper):
+// Behavioural contract:
 //   - cap absent / non-positive → render the count alone with a
 //     "(cap unset)" qualifier; no progress bar.
 //   - cap present, total / cap < 0.9 → "blue" fill (the brand primary).

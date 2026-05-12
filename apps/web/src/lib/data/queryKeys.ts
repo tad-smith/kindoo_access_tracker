@@ -51,9 +51,9 @@ export function docKey(ref: DocumentReference<unknown>): readonly unknown[] {
  * if a caller passes the same reference to two hooks — which is
  * exactly when sharing the cache is correct).
  *
- * Phase 5+ pages that build queries inside `useMemo` get stable keys
- * for free. Pages that rebuild a query every render get a fresh key
- * every render — that's a caller bug, not a hook bug.
+ * Pages that build queries inside `useMemo` get stable keys for free.
+ * Pages that rebuild a query every render get a fresh key every
+ * render — that's a caller bug, not a hook bug.
  */
 export function queryKey(query: Query<unknown>): readonly unknown[] {
   // CollectionReference exposes `.path`; Query doesn't.

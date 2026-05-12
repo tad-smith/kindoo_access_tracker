@@ -1,9 +1,8 @@
-// Domain types barrel. Phase 2 shipped only the auth-related shapes
-// (claims, principal, userIndex bridge); Phase 3 adds the per-stake
-// domain entities (Stake / Ward / Building / KindooManager / Access /
-// Seat / Request / CallingTemplate / AuditLog / PlatformSuperadmin /
-// PlatformAuditLog) plus the shared `ActorRef` carried on every doc's
-// `lastActor` field.
+// Domain types barrel. Auth shapes (claims, principal, userIndex
+// bridge), per-stake domain entities (Stake / Ward / Building /
+// KindooManager / Access / Seat / Request / CallingTemplate /
+// AuditLog / PlatformSuperadmin / PlatformAuditLog), plus the shared
+// `ActorRef` carried on every doc's `lastActor` field.
 export type { ActorRef } from './actor.js';
 export type { Access, ManualGrant } from './access.js';
 export type {

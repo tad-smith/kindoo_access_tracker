@@ -1,7 +1,5 @@
-/* Page-level layout helpers shared across the Phase 5 read-only pages.
-   Things like the page-subtitle below the H1, the ward-selector row,
-   and the utilization-bar host. Mechanical port of the matching
-   selectors from Apps Script `Styles.html`. */
+/* Page-level layout helpers shared across pages: the page-subtitle
+   below the H1, the ward-selector row, the utilization-bar host. */
 
 /* Native `<select>` chrome. Owned here rather than as Tailwind
    utilities because `tailwind-merge` collapses `bg-white` (color) and
@@ -112,9 +110,8 @@
   margin-left: 0;
 }
 
-/* Queue page card list. Mirrors Apps Script `Styles.html` `.queue-card`
-   family — white card, soft border, rounded corners, vertical stack
-   with consistent gap. */
+/* Queue page card list. White card, soft border, rounded corners,
+   vertical stack with consistent gap. */
 .kd-queue-cards {
   display: flex;
   flex-direction: column;
@@ -245,8 +242,7 @@
 }
 
 /* Manager Dashboard grid. Five cards in a responsive grid that
-   collapses to a single column at narrow widths. Mirrors the
-   Apps Script `Dashboard.html` layout. */
+   collapses to a single column at narrow widths. */
 .kd-dashboard-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -409,10 +405,9 @@
   word-break: break-word;
 }
 
-/* Diff cell coloring. Mirrors Apps Script's audit-diff-old / -new
-   exactly (Styles.html lines 1907-1908): red text for the deleted
-   side, green for the inserted side, monospace, word-break so long
-   values wrap inside the cell. */
+/* Diff cell coloring: red text for the deleted side, green for the
+   inserted side, monospace, word-break so long values wrap inside
+   the cell. */
 .kd-audit-diff-before {
   color: var(--kd-danger-fg); /* #923834 */
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -455,9 +450,8 @@
   margin: 0;
 }
 
-/* Access page card list. Mirrors the Apps Script split-ownership
-   render: one card per user with importer + manual sub-blocks visually
-   distinguished. */
+/* Access page card list. One card per user with importer + manual
+   sub-blocks visually distinguished (split-ownership rendering). */
 .kd-access-cards {
   display: flex;
   flex-direction: column;
@@ -465,8 +459,7 @@
   max-width: 820px;
 }
 
-/* Responsive table-vs-card switch at 899px (Apps Script's breakpoint
-   from `Styles.html` lines 833-836). Render both, CSS picks. */
+/* Responsive table-vs-card switch at 899px. Render both, CSS picks. */
 .kd-responsive-cards-phone {
   display: none;
 }
@@ -482,9 +475,8 @@
   }
 }
 
-/* Access page desktop table. Column order mirrors Apps Script
-   `manager/Access.html` lines 92-95: Scope, Calling/reason, Email,
-   Source, Actions. */
+/* Access page desktop table. Column order: Scope, Calling/reason,
+   Email, Source, Actions. */
 .kd-access-table {
   width: 100%;
   border-collapse: collapse;
@@ -629,7 +621,7 @@
   gap: 12px;
 }
 
-/* ========== Phase 7 (config + bootstrap + import) ========== */
+/* ========== Configuration + bootstrap + import ========== */
 
 .kd-bootstrap-wizard {
   max-width: 720px;

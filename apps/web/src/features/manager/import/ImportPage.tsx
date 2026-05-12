@@ -1,4 +1,4 @@
-// Manager Import page. Mirrors `src/ui/manager/Import.html`:
+// Manager Import page.
 //   - "Import Now" button → calls the `runImportNow` callable via
 //     `useRunImportNowMutation`. Shows an inline busy state, the
 //     returned `ImportSummary` after success, and the error message on

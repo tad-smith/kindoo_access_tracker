@@ -1,7 +1,5 @@
 // Cross-page "no rows" placeholder. Used by every roster / queue / log
-// page that renders a list. Ports the `roster-empty` block from
-// `ClientUtils.html`'s `renderRosterTable` so visually identical to
-// the Apps Script app.
+// page that renders a list.
 
 import type { ReactNode } from 'react';
 import './EmptyState.css';
