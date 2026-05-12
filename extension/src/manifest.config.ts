@@ -12,7 +12,8 @@ export default defineManifest({
   manifest_version: 3,
   name: 'Stake Building Access — Kindoo Helper',
   short_name: 'SBA Helper',
-  description: 'Surfaces pending Stake Building Access requests in a Chrome side panel on Kindoo so a Kindoo Manager can work the queue alongside the Kindoo admin UI.',
+  description:
+    'Surfaces pending Stake Building Access requests in a Chrome side panel on Kindoo so a Kindoo Manager can work the queue alongside the Kindoo admin UI.',
   version: '0.1.0',
   icons: {
     '16': 'icons/icon-16.png',

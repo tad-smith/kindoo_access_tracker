@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:unit": "vitest run",
-    "lint": "prettier --check src",
+    "lint": "prettier --check src test",
     "typecheck": "tsc -b"
   },
   "dependencies": {
@@ -21,6 +21,9 @@
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/chrome": "^0.0.300",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

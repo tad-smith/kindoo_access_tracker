@@ -7,11 +7,9 @@
 // state here — persist via chrome.storage.
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel
-    .setPanelBehavior({ openPanelOnActionClick: true })
-    .catch((err) => {
-      console.error('[sba-ext] setPanelBehavior failed', err);
-    });
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((err) => {
+    console.error('[sba-ext] setPanelBehavior failed', err);
+  });
 });
 
 export {};

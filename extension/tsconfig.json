@@ -2,14 +2,14 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "jsx": "react-jsx",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["chrome", "vite/client"],
+    "types": ["chrome", "vite/client", "vitest/globals"],
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src", "src/manifest.config.ts", "vite.config.ts"]
+  "include": ["src", "test", "src/manifest.config.ts", "vite.config.ts", "vitest.config.ts"]
 }
