@@ -1,0 +1,11 @@
+# RSA private keys for pinning per-env extension IDs. The matching
+# base64 public key in .env.{mode} is public-by-design (it's literally
+# the `key` field that ships in the published manifest) but the .pem
+# must never be checked in.
+keys/
+
+# Per-mode env (root .gitignore also covers these — duplicated here
+# for clarity since they pair with keys/ above).
+.env.staging
+.env.production
+.env.local

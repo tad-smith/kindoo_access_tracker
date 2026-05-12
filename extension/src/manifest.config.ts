@@ -18,47 +18,79 @@
 //
 // content_scripts.matches lists only the UI origin — the API host
 // has no DOM to inject into.
+//
+// Per-env: the function form of defineManifest receives the active
+// Vite mode. We swap the manifest `name`, `key` (which pins the
+// extension ID), `icons`, and `oauth2.client_id` per env so the
+// operator can load BOTH staging and production builds side-by-side
+// in the same Chrome profile with stable IDs. See extension/CLAUDE.md
+// "Per-env setup" for the keypair / GCP OAuth client flow.
 
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { defineManifest } from '@crxjs/vite-plugin';
+import { loadEnv } from 'vite';
 
 const KINDOO_UI_ORIGIN = 'https://web.kindoo.tech/*';
 const KINDOO_API_ORIGIN = 'https://service89.kindoo.tech/*';
 
-export default defineManifest({
-  manifest_version: 3,
-  name: 'Stake Building Access — Kindoo Helper',
-  short_name: 'SBA Helper',
-  description:
-    'Surfaces pending Stake Building Access requests in a slide-over panel on Kindoo so a Kindoo Manager can work the queue alongside the Kindoo admin UI.',
-  version: '0.1.0',
-  icons: {
-    '16': 'icons/icon-16.png',
-    '48': 'icons/icon-48.png',
-    '128': 'icons/icon-128.png',
-  },
-  action: {
-    // Action click is wired in the SW to post a toggle message to
-    // the active tab; the CS opens / closes the slide-over.
-    default_title: 'Toggle SBA helper panel',
-  },
-  permissions: ['identity', 'identity.email', 'storage'],
-  host_permissions: [KINDOO_UI_ORIGIN, KINDOO_API_ORIGIN],
-  background: {
-    service_worker: 'src/background/index.ts',
-    type: 'module',
-  },
-  content_scripts: [
-    {
-      matches: [KINDOO_UI_ORIGIN],
-      js: ['src/content/index.ts'],
-      run_at: 'document_idle',
+const DEFAULT_NAME = 'Stake Building Access — Kindoo Helper';
+
+// Extension root = parent of src/ where this file lives. loadEnv
+// resolves .env.{mode} against this directory.
+const EXTENSION_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+export default defineManifest(({ mode }) => {
+  const env = loadEnv(mode, EXTENSION_ROOT, 'VITE_');
+  const isStaging = mode === 'staging';
+  const name = env.VITE_EXTENSION_NAME || DEFAULT_NAME;
+  const oauthClientId = env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? '';
+  const extensionKey = env.VITE_EXTENSION_KEY ?? '';
+
+  const iconSuffix = isStaging ? '-staging' : '';
+  const icons = {
+    '16': `icons/icon-16${iconSuffix}.png`,
+    '48': `icons/icon-48${iconSuffix}.png`,
+    '128': `icons/icon-128${iconSuffix}.png`,
+  };
+
+  return {
+    manifest_version: 3,
+    name,
+    short_name: 'SBA Helper',
+    description:
+      'Surfaces pending Stake Building Access requests in a slide-over panel on Kindoo so a Kindoo Manager can work the queue alongside the Kindoo admin UI.',
+    version: '0.1.0',
+    // `key` pins the extension ID across rebuilds when set. Omit
+    // when unset so Chrome auto-assigns a random ID for first-time
+    // dev before the operator generates a keypair.
+    ...(extensionKey ? { key: extensionKey } : {}),
+    icons,
+    action: {
+      // Action click is wired in the SW to post a toggle message to
+      // the active tab; the CS opens / closes the slide-over.
+      default_title: 'Toggle SBA helper panel',
     },
-  ],
-  // OAuth client ID gets configured per-build via .env.local; the
-  // chrome.identity flow exchanges this for a Google access token
-  // and then for a Firebase ID token used to call SBA's callables.
-  oauth2: {
-    client_id: '__VITE_GOOGLE_OAUTH_CLIENT_ID__',
-    scopes: ['openid', 'email', 'profile'],
-  },
+    permissions: ['identity', 'identity.email', 'storage'],
+    host_permissions: [KINDOO_UI_ORIGIN, KINDOO_API_ORIGIN],
+    background: {
+      service_worker: 'src/background/index.ts',
+      type: 'module',
+    },
+    content_scripts: [
+      {
+        matches: [KINDOO_UI_ORIGIN],
+        js: ['src/content/index.ts'],
+        run_at: 'document_idle',
+      },
+    ],
+    // chrome.identity exchanges this OAuth client ID for a Google
+    // access token; we then mint a Firebase credential from it. The
+    // ID is env-specific because the GCP "Chrome app" client type
+    // is bound to a single extension ID.
+    oauth2: {
+      client_id: oauthClientId,
+      scopes: ['openid', 'email', 'profile'],
+    },
+  };
 });

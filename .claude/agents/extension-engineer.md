@@ -67,7 +67,10 @@ For every PR you ship:
 1. `pnpm --filter @kindoo/extension typecheck` clean.
 2. `pnpm --filter @kindoo/extension lint` clean.
 3. `pnpm --filter @kindoo/extension test` all green.
-4. `pnpm --filter @kindoo/extension build` produces a `dist/` with a valid `manifest.json` (load it as unpacked extension manually if you've changed the manifest surface).
+4. Both build modes succeed and emit per-env output dirs:
+   - `pnpm --filter @kindoo/extension build` → `dist/production/manifest.json` (prod icons + `VITE_EXTENSION_NAME` / `VITE_EXTENSION_KEY` from `.env.production`).
+   - `pnpm --filter @kindoo/extension build --mode staging` → `dist/staging/manifest.json` (staging icons + values from `.env.staging`).
+   Load whichever dir as an unpacked extension manually if you've changed the manifest surface.
 5. Operator-instrumented smoke test where the extension's surface changed: load the unpacked extension on `web.kindoo.tech`, click the toolbar action to open the slide-over, sign in via chrome.identity, list pending requests, mark one complete, confirm SBA reflects the state change.
 
 Report shipping state as "all gates green," **never** as "lint failures pending — operator can fix."

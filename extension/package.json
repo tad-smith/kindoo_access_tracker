@@ -10,8 +10,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:unit": "vitest run",
-    "lint": "prettier --check src test",
-    "typecheck": "tsc -b"
+    "lint": "prettier --check src test scripts",
+    "typecheck": "tsc -b",
+    "icons:tint": "node scripts/tint-icons.mjs",
+    "ext-id": "node scripts/compute-extension-id.mjs"
   },
   "dependencies": {
     "@kindoo/shared": "workspace:*",
@@ -29,6 +31,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.1",
     "jsdom": "^29.1.0",
+    "pngjs": "^7.0.0",
     "typescript": "^5.9.0",
     "vite": "^8.0.10",
     "vitest": "^4.1.5"
