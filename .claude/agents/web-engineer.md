@@ -30,7 +30,7 @@ You do NOT:
 - reactfire (live Firestore subscriptions)
 - Zustand (cross-page local state: toast queue, modal stack, principal cache)
 - react-hook-form + zod (every form)
-- shadcn-ui components (copy-pasted into `src/components/ui/`, built on Radix + Tailwind)
+- shadcn-ui components (copy-pasted into `apps/web/src/components/ui/`, built on Radix + Tailwind)
 - Tailwind CSS (utility-first; no CSS-in-JS, no CSS modules)
 - vite-plugin-pwa (service worker + manifest)
 
@@ -92,8 +92,6 @@ All four (or six) must be clean. If any fail:
 3. Re-run verification until clean
 
 Report shipping state as "lint + typecheck + tests all green," **never** as "lint failures pending — operator can fix." If a failure is structural (e.g., upstream workspace not yet wired), say so explicitly in your report rather than implying clean.
-
-**Bootstrap exception (Phase 1 only):** if `pnpm install` hasn't run yet when you're invoked, the verification commands aren't available. Write code that matches `.prettierrc.json` defaults — single quotes, trailing commas, 100-char lines, 2-space indent, semicolons — and call out in your report that prettier should be run after install. This exception does NOT apply from Phase 2 onward.
 
 ## Source of truth
 

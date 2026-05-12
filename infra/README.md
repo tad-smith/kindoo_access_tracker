@@ -1,21 +1,30 @@
 # infra/
 
-Operational tooling for the Firebase port: deploy scripts, monitoring config, runbooks, CI workflows.
+Operational tooling for the Firebase deployment: deploy scripts, monitoring config, runbooks, CI workflow source-of-truth.
 
-See `infra/CLAUDE.md` for the agent-facing conventions; this README is for human operators.
+See `infra/CLAUDE.md` for agent-facing conventions; this README is for human operators.
 
-## Project IDs are placeholders until B1
+## Firebase projects
 
-The repo currently references two Firebase projects:
+Two projects, same code, different `--project` flag:
 
-- `kindoo-staging` (rehearsal)
-- `kindoo-prod` (live)
+- `kindoo-staging` — rehearsal environment.
+- `kindoo-prod` — live environment; PITR enabled, weekly Firestore export to `gs://kindoo-prod-backups/` with a 90-day lifecycle.
 
-These IDs are written into `.firebaserc` at the repo root and into the `infra/scripts/deploy-*.sh` scripts. **As of 2026-04-27 these are placeholder IDs.** No real GCP project has been created under either name. The actual creation of the projects, billing linkage, service-account provisioning, Cloud Scheduler jobs, and PITR enablement is gated behind operator task **B1** in `docs/firebase-migration.md`.
+Project IDs live in `.firebaserc` at the repo root. The deploy scripts resolve them via the `staging` / `prod` aliases.
 
-When B1 lands, no scripts in `infra/` should need to change — `firebase deploy --project staging` (or `prod`) reads the alias from `.firebaserc` and resolves it to whatever real project ID was created. Just verify the IDs match. If different IDs are chosen, edit `.firebaserc` once and everything else picks them up.
+## How to deploy
 
-The end-to-end click-by-click runbook for B1 is at `infra/runbooks/provision-firebase-projects.md`. Walk it once for staging, then again for prod; estimated ~90 minutes total for a first-time operator.
+Operator-triggered from a developer machine:
+
+```bash
+pnpm deploy:staging      # invokes infra/scripts/deploy-staging.sh
+pnpm deploy:prod         # invokes infra/scripts/deploy-prod.sh
+```
+
+Each script stamps version, typechecks, runs tests, builds web + functions, then runs `firebase deploy` for Hosting + Functions + Firestore (rules + indexes). Both support `--dry-run`.
+
+Full pre-flight, verification, and rollback steps: `infra/runbooks/deploy.md`.
 
 ## Layout
 
@@ -23,9 +32,11 @@ The end-to-end click-by-click runbook for B1 is at `infra/runbooks/provision-fir
 infra/
 ├── scripts/
 │   ├── deploy-staging.sh             # operator-triggered deploy to staging
-│   ├── deploy-prod.sh                # operator-triggered deploy to prod (requires B1)
+│   ├── deploy-prod.sh                # operator-triggered deploy to prod
 │   ├── ensure-version-gen.js         # seeds gitignored version.gen.ts placeholders on `pnpm install`
-│   └── stamp-version.js              # writes apps/web/src/version.gen.ts + functions/src/version.gen.ts
+│   ├── stamp-version.js              # writes apps/web/src/version.gen.ts + functions/src/version.gen.ts
+│   ├── generate-icons.mjs            # PWA icon generation from icon-sources/
+│   └── icon-sources/                 # source SVGs for PWA icons
 ├── ci/
 │   └── workflows/
 │       └── test.yml                  # source-of-truth for .github/workflows/test.yml
@@ -33,31 +44,26 @@ infra/
 │   ├── alerts/                       # Cloud Monitoring alert policy YAML (gcloud-applied)
 │   └── metrics/                      # log-based metric definitions (gcloud-applied)
 ├── runbooks/
-│   ├── provision-firebase-projects.md  # B1: create both Firebase projects end-to-end
-│   ├── deploy.md                       # operator playbook for staging + prod deploy
-│   ├── observability.md                # what alerts fire, how to find logs
-│   └── restore.md                      # PITR restore, GCS-export restore, partial restore
+│   ├── provision-firebase-projects.md   # initial project + billing + services setup (B1)
+│   ├── deploy.md                        # operator playbook for staging + prod deploy
+│   ├── observability.md                 # what alerts fire, how to find logs
+│   ├── restore.md                       # PITR restore, GCS-export restore, partial restore
+│   ├── resend-api-key-setup.md          # Resend secret provisioning for the notification triggers
+│   ├── custom-domain.md                 # pointing stakebuildingaccess.org at Firebase Hosting
+│   └── granting-importer-sheet-access.md  # giving the runtime SA read access to the roster Sheet
 └── CLAUDE.md                         # agent-facing conventions
 ```
 
-## What's wired now (Phase 1) and what's not
+## CI workflow source-of-truth
 
-Wired:
+`infra/ci/workflows/test.yml` is the canonical workflow. It is mirrored to `.github/workflows/test.yml` (which is what GitHub Actions actually executes). Edits go to the `infra/ci/` copy first; the `.github/workflows/` copy is kept in sync as part of the same commit.
 
-- pnpm workspace (`pnpm-workspace.yaml`, root `package.json`).
-- Firebase CLI config (`firebase.json`, `.firebaserc`).
-- Deploy script skeletons under `infra/scripts/deploy-*.sh` — fully structured but `--dry-run` is the only mode that runs cleanly until B1.
-- CI workflow (`infra/ci/workflows/test.yml` mirrored to `.github/workflows/test.yml`).
-- Monitoring + alerts directories with placeholder YAML files (commented-out commands; reference only until B1).
-- Runbook skeletons.
+## Runbook index
 
-Not yet wired (waits on engineering agents):
-
-- `apps/web/` package.json + workspace `dev`/`build`/`test` scripts → web-engineer.
-- `functions/` package.json + workspace scripts → backend-engineer.
-- `packages/shared/` package.json + workspace scripts → web/backend co-owners.
-- `firestore/` rules implementation beyond the lock-everything stub → backend-engineer (Phase 3).
-- Real composite indexes → backend-engineer (Phase 3).
-- Real test scripts → all engineering agents in their own workspaces.
-
-Until those land, `pnpm test` etc. pass vacuously (recursive over zero workspaces with that script).
+- `runbooks/deploy.md` — every deploy. Pre-flight, staging + prod commands, post-deploy verification, rollback.
+- `runbooks/observability.md` — what's monitored, where to find logs and metrics, how to add new metrics or alerts.
+- `runbooks/restore.md` — PITR restore (last 7 days), full GCS-export restore (last 90 days), partial collection restore.
+- `runbooks/provision-firebase-projects.md` — initial project creation, billing, services, Firestore, Auth, runtime SA.
+- `runbooks/resend-api-key-setup.md` — generating and storing the Resend API key for the notification triggers.
+- `runbooks/custom-domain.md` — staging subdomain and apex DNS setup against Firebase Hosting.
+- `runbooks/granting-importer-sheet-access.md` — sharing the roster Google Sheet with the runtime SA so the importer can read it.

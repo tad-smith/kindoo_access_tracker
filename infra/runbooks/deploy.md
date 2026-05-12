@@ -2,20 +2,18 @@
 
 Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `kindoo-prod`. Two commands, but with pre-flight, post-deploy verification, and rollback steps documented here so an operator under pressure has them in one place.
 
-> **Before running this runbook**, complete `infra/runbooks/provision-firebase-projects.md` (B1 in pre-Phase-1 setup). That runbook creates the Firebase projects, billing, services, Firestore databases, Auth, and service accounts that this deploy runbook assumes already exist.
-
-> **STATUS (as of 2026-04-27):** This runbook is **Phase 1 skeleton**. Several sections are TODO until operator task **B1** in `docs/firebase-migration.md` lands (real Firebase projects + service accounts + billing). The structure is in place so that as B1 + later phases ship, this fills in incrementally.
+> **Before running this runbook the first time on a new machine**, complete `infra/runbooks/provision-firebase-projects.md`. That runbook creates the Firebase projects, billing, services, Firestore databases, Auth, and service accounts that this deploy runbook assumes already exist. Both `kindoo-staging` and `kindoo-prod` are provisioned and live as of 2026-05-03.
 
 ## Pre-flight (every deploy)
 
-1. **Verify you're on a clean working tree on `main`.**
+1. **Verify you are on a clean working tree on `main`.**
 
    ```bash
    git status
    git rev-parse --abbrev-ref HEAD
    ```
 
-   Expected output: `working tree clean` and `main`. Any uncommitted changes or other branch → stop. The deploy bakes the current commit's git short SHA into the build via `infra/scripts/stamp-version.js`; if your tree is dirty, the version stamp won't match what's in git.
+   Expected output: `working tree clean` and `main`. Any uncommitted changes or other branch → stop. The deploy bakes the current commit's git short SHA into the build via `infra/scripts/stamp-version.js`; if your tree is dirty, the version stamp will not match what is in git. The deploy scripts also enforce this guard themselves (`guard_main_clean`) and refuse to run otherwise.
 
 2. **Verify the firebase CLI is the npm-installed shim, not the standalone binary.**
 
@@ -40,9 +38,7 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
    firebase use staging   # or: firebase use prod
    ```
 
-   Expected output: `Now using alias staging (kindoo-staging)`. Errors here usually mean B1 hasn't been done — the alias points at a project ID that doesn't exist.
-
-   - **TODO post-B1:** lock down operator access; the prod alias should require an additional `firebase login:add` step or a separate operator-account.
+   Expected output: `Now using alias staging (kindoo-staging)`.
 
 5. **Verify per-project env files contain `WEB_BASE_URL`.**
 
@@ -70,7 +66,7 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
    EOF
    ```
 
-   The Firebase default origins `https://kindoo-staging.web.app` and `https://kindoo-prod.web.app` are also valid — they are the pre-cutover values used while the custom domain is not yet attached. Post-Phase-11 the custom domains are canonical.
+   The Firebase default origins `https://kindoo-staging.web.app` and `https://kindoo-prod.web.app` are also valid values — they remain reachable alongside the custom domains and can be used if the custom-domain DNS is being reconfigured. The custom domains are canonical for normal operation.
 
    `functions/.env.*` is gitignored. The full setup walkthrough (including Resend's `RESEND_API_KEY` companion secret) lives in `infra/runbooks/resend-api-key-setup.md` §4.
 
@@ -100,29 +96,23 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
    This runs `infra/scripts/deploy-staging.sh` end-to-end:
    - Stamps version
    - Typechecks
-   - Tests
    - Builds web + functions
    - Deploys Hosting + Functions + Firestore (rules + indexes)
 
    Expected end state: the script exits 0 and prints `=== deploy-staging.sh complete ===`.
 
-   - **TODO Phase 1 hand-off:** until web-engineer + backend-engineer wire the workspace `build` and `test` scripts, the inner `pnpm test` and `pnpm --filter ./apps/web build` calls may fail. Phase 1's exit criterion is that `pnpm deploy:staging --dry-run` runs cleanly to the end.
-
 3. **Verify the staging URL.**
 
-   - **TODO post-B1:** record the staging URL here. Expected to be something like `https://kindoo-staging.web.app`.
-   - Open the URL in a browser. Expected: the SPA loads. (Phase 1: a hello page reading the smoketest doc; Phase 4+: the real app.)
+   - Open `https://staging.stakebuildingaccess.org` (or `https://kindoo-staging.web.app`) in a browser. Expected: the SPA loads.
    - Open the browser console. Expected: no red errors.
    - **Verify the third-party Licenses link (T-20).** In an INCOGNITO window (so no prior service worker is cached), sign in and click the `Licenses` link in the nav footer. Expected: a plain-text page with the THIRD_PARTY_LICENSES.txt content (Apache-2.0 / MIT notices for the runtime deps). Curl alone is NOT enough — `curl https://<host>/THIRD_PARTY_LICENSES.txt` bypasses the service worker and will return the real bytes even if the SW is shadowing the link click. The browser click test is what catches a `navigateFallbackDenylist` regression that rewrites the link to the SPA shell.
 
 ## Prod deploy
 
-> **DO NOT RUN THIS UNTIL PHASE 11 cutover has been scheduled.** Per migration plan F12, prod is empty until the migration window. Before then, every prod deploy attempt should be a dry-run only.
-
 1. **Pre-flight, additional for prod:**
-   - Confirm staging deploy passed for the same commit you're about to push to prod.
-   - Confirm `git rev-parse HEAD` matches what's deployed to staging.
-   - **TODO post-B1:** add an explicit `firebase use prod` and a typed `yes` confirmation prompt in the script.
+   - Confirm staging deploy passed for the same commit you are about to push to prod.
+   - Confirm `git rev-parse HEAD` matches what is deployed to staging.
+   - **Open TODO:** the deploy-prod.sh script does not yet prompt for an explicit typed `yes` confirmation before proceeding when not in dry-run. The `guard_main_clean` check stops accidental deploys from a topic branch, but a typed-confirmation gate would be a useful additional speed bump for prod. Sketch is in the script header comment.
 
 2. **Run the deploy script in dry-run first.**
 
@@ -138,38 +128,47 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
 
 4. **Verify the prod URL.**
 
-   - **TODO post-B1:** record prod URL.
-   - Open in browser; sign in; smoke-test the Phase-N pages relevant to this deploy.
+   - Open `https://stakebuildingaccess.org` (or `https://kindoo-prod.web.app`) in a browser; sign in; smoke-test the pages relevant to this deploy.
 
 ## Rollback
 
-> **TODO post-B1:** define rollback procedure. Likely:
->
-> 1. `firebase hosting:rollback --project prod` (Hosting has automatic rollback support).
-> 2. For Functions, `firebase functions:delete <name>` followed by `firebase deploy --only functions:<name>` from the previous commit.
-> 3. For Firestore rules/indexes, deploy from the previous commit explicitly: `git checkout <prev-sha> -- firestore && firebase deploy --only firestore`.
->
-> See `infra/runbooks/restore.md` for data restore procedures (separate concern from code rollback).
+Open TODO: walk and validate the rollback procedure end-to-end against staging, then promote the steps below from sketch to verified. Until that drill happens, treat these as a starting point, not a finished playbook.
+
+1. **Hosting.** `firebase hosting:rollback --project prod` — Firebase Hosting retains the previous release and rolls back instantly.
+2. **Functions.** Roll back to the previous git SHA, rebuild, and redeploy only the affected function(s):
+   ```bash
+   git checkout <prev-sha>
+   pnpm --filter ./functions build
+   firebase deploy --only functions:<name> --project prod
+   ```
+   For a full functions rollback, drop the `:<name>` suffix.
+3. **Firestore rules + indexes.** Deploy from the previous commit explicitly:
+   ```bash
+   git checkout <prev-sha> -- firestore
+   firebase deploy --only firestore --project prod
+   ```
+
+See `infra/runbooks/restore.md` for data restore procedures (separate concern from code rollback).
 
 ## Troubleshooting
 
 ### `firebase use staging` errors with "Project not found"
 
-B1 hasn't been done — the project ID `kindoo-staging` in `.firebaserc` doesn't resolve to a real Firebase project. Either:
-- Run B1 (create the project), or
+`.firebaserc` points at a project ID that does not resolve under the currently-logged-in Firebase account. Either:
+- Run `firebase login` and confirm the listed account has access to the project, or
 - Edit `.firebaserc` to point at a different (existing) project ID.
 
 ### Deploy script fails at `pnpm typecheck`
 
-Workspaces' `tsconfig.json` files are missing or have errors. Phase 1 workspace agents need to wire these. Until they do, `tsc -b` resolves the empty root `tsconfig.json` and exits 0 — if it doesn't, something else is wrong (check that `tsconfig.json` in the repo root has empty `files` and `references`).
+A workspace's `tsconfig.json` is broken. Run `pnpm typecheck` directly to see which workspace is failing; fix locally before retrying the deploy.
 
 ### Deploy succeeds but the staging site shows the old version
 
-Browser cache. Hard-refresh (Cmd-Shift-R on macOS). The `version.gen.ts` payload (rendered in the topbar) should match the commit you just deployed; if it doesn't, the deploy actually didn't go through — check `firebase hosting:channel:list --project staging` and re-run the deploy.
+Browser cache. Hard-refresh (Cmd-Shift-R on macOS). The `version.gen.ts` payload (rendered in the topbar) should match the commit you just deployed; if it does not, the deploy actually did not go through — check `firebase hosting:channel:list --project staging` and re-run the deploy.
 
 ## What this runbook does NOT cover
 
-- **Cloud Scheduler job updates** — Phase 8.
-- **Secret Manager updates** — `secrets.md` runbook (TODO).
-- **Real auth provider config** — Firebase console; lives in `auth-config.md` (TODO).
-- **DNS / custom domain setup** — Phase 11 cutover; lives in `cutover.md` (TODO).
+- **Cloud Scheduler job management** — managed by the `installScheduledJobs` callable; see `functions/src/callable/installScheduledJobs.ts` and `docs/firebase-migration.md` Phase 8.
+- **Secret Manager updates** — see `infra/runbooks/resend-api-key-setup.md` for the Resend key; add a similar runbook when a new secret is introduced.
+- **Custom-domain / DNS setup** — `infra/runbooks/custom-domain.md`.
+- **Runtime SA grants on the roster Sheet** — `infra/runbooks/granting-importer-sheet-access.md`.
