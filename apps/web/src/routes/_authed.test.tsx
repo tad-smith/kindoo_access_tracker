@@ -1,6 +1,6 @@
 // Component tests for the `_authed` route's setup-complete gate. The
-// gate routes per `docs/firebase-migration.md` §Phase 7 +
-// `docs/spec.md` §10 — see the file header in `_authed.tsx`.
+// gate routes per `docs/spec.md` §10 — see the file header in
+// `_authed.tsx`.
 //
 // Each test mocks `usePrincipal` and `useFirestoreDoc` to drive the
 // gate inputs deterministically; we render `<AuthedLayout />` directly

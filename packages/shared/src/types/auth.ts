@@ -9,7 +9,7 @@
 // tab visibility checks don't have to walk the map themselves; the
 // per-stake `wards` array stays addressable by stakeId for the bishopric
 // case (one user can be a bishopric member in different wards across
-// different stakes once Phase 12 multi-stake lands).
+// different stakes once multi-stake lands).
 
 /** Per-stake claim block. Set by `syncAccessClaims` + `syncManagersClaims`. */
 export type StakeClaims = {
@@ -47,8 +47,8 @@ export type CustomClaims = {
  *
  * The `Stakes` arrays preserve the parsed-claims order; downstream UIs
  * may sort by stake name independently. `bishopricWards` is keyed by
- * stakeId so multi-stake bishopric membership (Phase 12) round-trips
- * without losing the per-stake distinction.
+ * stakeId so multi-stake bishopric membership round-trips without
+ * losing the per-stake distinction.
  */
 export type Principal = {
   /** Typed email (display form). Comes from the Firebase Auth user object, not from claims. */

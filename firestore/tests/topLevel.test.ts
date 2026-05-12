@@ -7,7 +7,7 @@
 //     server-only (the `createStake` callable + superadmin sync
 //     triggers fan rows here via Admin SDK).
 //
-// `userIndex` is covered separately in `userIndex.test.ts` (Phase 2).
+// `userIndex` is covered separately in `userIndex.test.ts`.
 import { afterAll, afterEach, beforeAll, describe, it } from 'vitest';
 import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import type { RulesTestEnvironment } from '@firebase/rules-unit-testing';

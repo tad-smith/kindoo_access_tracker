@@ -1,7 +1,7 @@
 // Hourly Cloud Scheduler fire — loops over stakes, runs each whose
 // `import_day` + `import_hour` match the current time in the stake's
-// tz. Single-job-loops-over-stakes pattern (per F15 and the Phase 8
-// "Out of scope: Per-stake Scheduler jobs").
+// tz. Single-job-loops-over-stakes pattern (per F15) so we do not need
+// per-stake Scheduler jobs.
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions';

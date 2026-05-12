@@ -1,7 +1,6 @@
 // Shown to users who are signed in (Firebase Auth recognises them) but
 // hold no role claims (`stakes[*]` empty AND `isPlatformSuperadmin` is
-// false). This is the "valid token but no claims" arm of Phase 2's
-// failure-mode matrix.
+// false). The "valid token but no claims" failure arm.
 //
 // Two common causes from spec.md:
 //   1. New bishopric member, weekly LCR import hasn't run yet (the lag

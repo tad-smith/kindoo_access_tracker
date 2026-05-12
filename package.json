@@ -2,21 +2,9 @@
   "name": "kindoo-access-tracker",
   "version": "0.1.0",
   "private": true,
-  "description": "Stake Building Access (door-access tracker for Kindoo seats). Apps Script app under src/ and identity-project/ runs in production until Phase 11 cutover; Firebase monorepo under apps/, functions/, firestore/, packages/, e2e/, infra/ is built in parallel.",
+  "description": "Stake Building Access — Firebase-hosted SPA + Cloud Functions for managing Kindoo door-access seat assignments across one LDS stake. Monorepo: apps/web, functions, firestore, packages/shared, e2e, infra.",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
-    "login": "clasp login",
-    "logout": "clasp logout",
-    "version:stamp": "node scripts/stamp-version.js",
-    "push": "npm run version:stamp && clasp push",
-    "push:watch": "npm run version:stamp && clasp push --watch",
-    "pull": "clasp pull",
-    "open": "clasp open-script",
-    "open:web": "clasp open-web-app",
-    "deploy:apps-script": "clasp deploy",
-    "deployments": "clasp deployments",
-    "logs": "clasp logs",
-    "status": "clasp status",
     "dev": "firebase emulators:start --import=.firebase/emulator-data --export-on-exit=.firebase/emulator-data",
     "test": "pnpm -r --if-present test",
     "test:unit": "pnpm -r --if-present test:unit",
@@ -32,7 +20,6 @@
     "prepare": "node infra/scripts/ensure-version-gen.js"
   },
   "devDependencies": {
-    "@google/clasp": "^3.3.0",
     "concurrently": "^9.2.1",
     "prettier": "^3.8.3",
     "typescript": "^6.0.3"

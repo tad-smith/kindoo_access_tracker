@@ -2,8 +2,7 @@
 // service account, parses tabs into rows, diffs against existing
 // access + seat docs, and applies the writes via Admin SDK.
 //
-// Per `docs/firebase-migration.md` §Phase 8 + `docs/spec.md` §8 + the
-// schema-driven differences in `firebase-schema.md` §4.5/§4.6:
+// Per `docs/spec.md` §8 + `docs/firebase-schema.md` §4.5/§4.6:
 //
 //   - `importer_callings[scope]` is replaced wholesale per scope per
 //     run; manual_grants is left alone (split-ownership).
@@ -134,7 +133,7 @@ export async function runImporterForStake(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Core: parse the sheet, plan the diff, apply the writes.
+// Core: parse the LCR sheet, plan the diff, apply the writes.
 // ---------------------------------------------------------------------------
 
 type CoreResult = {

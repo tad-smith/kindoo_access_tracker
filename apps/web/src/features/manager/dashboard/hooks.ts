@@ -1,9 +1,6 @@
-// Manager Dashboard data hooks. The Apps Script app collapsed the
-// dashboard render into a single ApiManager_dashboard rpc; the SPA
-// fans out to five live Firestore subscriptions instead, each rendered
-// in its own card. Latency is comparable since Firestore subscriptions
-// share the same WebSocket channel; the live behaviour is a strict
-// upgrade.
+// Manager Dashboard data hooks. The dashboard fans out to five live
+// Firestore subscriptions, each rendered in its own card. They share
+// the same WebSocket channel so latency stays predictable.
 //
 // One hook per card:
 //   - usePendingRequests(): all `status == 'pending'` requests, used

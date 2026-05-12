@@ -3,10 +3,10 @@
 // `ParsedRow[]` out, then resolves desired Firestore state from the
 // rows in a separate step. Unit tests cover this surface in detail.
 //
-// Ported from `src/services/Importer.gs` per `docs/spec.md` §8 with
-// the schema-driven differences noted in §Phase 8 (no source_row_hash;
-// callings collapse to one seat per email; split-ownership of
-// importer_callings vs manual_grants).
+// See `docs/spec.md` §8 + `docs/firebase-schema.md` §4.5/§4.6 for the
+// importer's runtime contract (no source_row_hash; callings collapse
+// to one seat per email; split-ownership of importer_callings vs
+// manual_grants).
 
 /** One parsed row — either a calling assignment or a skip warning. */
 export type ParsedRow = {

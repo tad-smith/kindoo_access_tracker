@@ -2,15 +2,10 @@
 // out. Renders a single "Sign in with Google" button that drives the
 // Firebase Auth popup flow (`signIn()` from `./signIn.ts`).
 //
-// Phase 2 originally shipped a bare `<button>` with no styling. Phase 5
-// (T-18) added Tailwind v4 + its preflight reset, which silently
-// stripped the browser-default button chrome (background, border,
-// padding) — leaving "Sign in with Google" rendered as plain text. The
-// rest of Phase 5 routed past the SignInPage on auth'd users so the
-// regression slipped past manual review. Fixed here by consuming the
-// shadcn `<Button>` primitive (variant="default" → `.btn` class from
-// `base.css`), matching the rest of the app's design system. See the
-// Playwright regression spec at
+// Consumes the shadcn `<Button>` primitive (variant="default" →
+// `.btn` class from `base.css`) so the button picks up its chrome
+// from the design system rather than relying on browser defaults
+// (Tailwind's preflight strips those). Regression spec at
 // `e2e/tests/auth/sign-in-button-renders.spec.ts`.
 
 import { useState } from 'react';

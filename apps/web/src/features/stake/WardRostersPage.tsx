@@ -1,7 +1,6 @@
-// Stake Presidency Ward Rosters page (live). Mirrors
-// `src/ui/stake/WardRosters.html`. Cross-ward browse over any ward in
-// the stake. Picking a ward switches the live subscription to that
-// ward's seats; URL `?ward=` deep-links pre-select.
+// Stake Presidency Ward Rosters page (live). Cross-ward browse over
+// any ward in the stake. Picking a ward switches the live subscription
+// to that ward's seats; URL `?ward=` deep-links pre-select.
 //
 // Manual + temp rows carry a per-row Remove button via
 // `<RemovalAffordance>`, gated by `isScopeAllowed(principal, ...)` so

@@ -17,7 +17,7 @@ import type { TimestampLike } from './userIndex.js';
 export type ManualGrant = {
   /** UUID; unique inside this `(canonical, scope)` array. */
   grant_id: string;
-  /** Free-text — the equivalent of the `calling` column on Apps Script's manual rows. */
+  /** Free-text justification (e.g., "Bishop", "ward clerk training"). */
   reason: string;
   granted_by: ActorRef;
   granted_at: TimestampLike;

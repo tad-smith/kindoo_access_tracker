@@ -1,7 +1,5 @@
-/* Base resets and document-level styles. Mechanical port of the
-   non-component-specific rules from `src/ui/Styles.html`. Everything
-   that's tied to a specific page family ports lazily as Phase 5+ pages
-   need it. */
+/* Base resets and document-level styles. Component-specific styling
+   lives in colocated component CSS files. */
 
 * {
   box-sizing: border-box;
@@ -65,7 +63,7 @@ code {
   }
 }
 
-/* Standard button family. Copied from `src/ui/Styles.html` §base. */
+/* Standard button family. */
 .btn {
   background: var(--kd-primary);
   color: #fff;

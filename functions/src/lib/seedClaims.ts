@@ -9,11 +9,9 @@
 // it can rebuild the per-stake block from scratch and drop it into
 // place.
 //
-// Phase 2 reads a deliberately minimal access-doc shape: presence of
+// Reads a deliberately minimal access-doc shape: presence of
 // `importer_callings` OR `manual_grants` with at least one non-empty
-// scope. Phase 3 fills in those collections via the importer +
-// manager UIs; the trigger code already supports the Phase-3 shape so
-// no rewrite happens at the schema cut-over.
+// scope.
 
 import type { CustomClaims, StakeClaims } from '@kindoo/shared';
 import { getDb } from './admin.js';
@@ -86,8 +84,7 @@ export async function computeStakeClaims(stakeId: string, canonical: string): Pr
  * the user has any non-empty grant in any other scope.
  *
  * Tolerant of missing fields, partial shapes, and arrays of mixed
- * truthiness — Phase 2 lands before the Phase 3 schema is fully
- * populated, so the trigger should never reject inputs that are merely
+ * truthiness — the trigger should never reject inputs that are merely
  * "not yet filled in."
  */
 export function scopesFromAccessDoc(data: Record<string, unknown> | undefined): {

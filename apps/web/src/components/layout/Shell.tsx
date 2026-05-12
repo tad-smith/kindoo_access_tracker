@@ -128,7 +128,7 @@ export function Shell({ children }: ShellProps) {
               </span>
             ) : null}
             <div className="kd-brandbar-stake-slot" data-testid="stake-selector-slot">
-              {/* Phase 12 stake selector lands here. Empty in v1. */}
+              {/* Multi-stake selector lands here. Empty in v1. */}
             </div>
             {showEmailInBar ? (
               <span className="kd-brandbar-email" title={principal.email}>

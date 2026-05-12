@@ -1,7 +1,7 @@
 // Integration tests for the remove-seat-on-request-complete trigger.
-// This is the Admin SDK seat-delete that the Phase 6 client tx
-// couldn't do cleanly because Firestore rules' `delete` operations
-// don't have access to incoming data.
+// This is the Admin SDK seat-delete that the client tx cannot do
+// cleanly because Firestore rules' `delete` operations do not have
+// access to incoming data.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';

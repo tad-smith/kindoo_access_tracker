@@ -1,8 +1,8 @@
-// Manager All Seats page (live). Mirrors `src/ui/manager/AllSeats.html`.
-// Full roster across every scope; ward / building / type filters via
-// URL search params; contextual utilization bar above the table that
-// tracks the Scope filter (entire stake / stake-scope / a specific
-// ward). Per-scope dashboards live on the Manager Dashboard.
+// Manager All Seats page (live). Full roster across every scope;
+// ward / building / type filters via URL search params; contextual
+// utilization bar above the table that tracks the Scope filter
+// (entire stake / stake-scope / a specific ward). Per-scope
+// dashboards live on the Manager Dashboard.
 //
 // Mutations:
 //   - Inline-edit dialog on manual / temp rows (auto rows are

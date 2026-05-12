@@ -2,7 +2,7 @@
 // Firestore + Auth emulators. The Sheets API client is replaced with
 // a fixture fetcher so tests don't make real HTTP calls.
 //
-// Coverage targets the Phase 8 acceptance criteria:
+// Coverage:
 //   - Full cycle against fixture LCR sheet → expected access + seats.
 //   - Idempotency: second run with no source changes → no diffs.
 //   - Source change → exactly one delete + one insert.

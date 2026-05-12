@@ -1,7 +1,7 @@
 // `accessRequestSchema` mirrors `types/request.ts`. This is the
-// schema TanStack Router's `validateSearch` (Phase 4+) and the
-// Cloud Function callable (Phase 8+) both validate against, so the
-// shape stays defensible at every input boundary.
+// schema TanStack Router's `validateSearch` and the Cloud Function
+// callable both validate against, so the shape stays defensible at
+// every input boundary.
 
 import { z } from 'zod';
 import { actorRefSchema } from './actor.js';

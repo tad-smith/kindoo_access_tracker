@@ -1,17 +1,15 @@
-// Five typed wrappers for the notification emails Phase 9 ships per
-// `docs/spec.md` §9 + `docs/firebase-migration.md` Phase 9. Each
-// wrapper:
+// Five typed wrappers for the notification emails the system ships
+// per `docs/spec.md` §9. Each wrapper:
 //
 //   1. Short-circuits if `stake.notifications_enabled === false` (the
-//      operator kill-switch). Per the Phase 9 plan this is email-only;
-//      push has its own per-user prefs.
+//      operator kill-switch). This kill-switch is email-only; push has
+//      its own per-user prefs.
 //   2. Builds a typed payload (subject + plain-text body + from-address
 //      + optional reply-to).
 //   3. Hands it to the Resend wrapper (`lib/resend.ts`).
 //   4. On Resend error or thrown exception, writes one
 //      `email_send_failed` audit row directly via Admin SDK and logs;
-//      never re-throws (best-effort discipline matches the Apps Script
-//      behaviour).
+//      never re-throws (best-effort delivery).
 //
 // Body templates are pure functions exported for unit-testing without
 // any Firestore dependency. Trigger code feeds them stake + request +

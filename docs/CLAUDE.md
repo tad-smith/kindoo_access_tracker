@@ -11,17 +11,15 @@ docs/
 ├── spec.md                        # live source of truth for runtime behaviour
 ├── architecture.md                # numbered design decisions (D1, D2, ...)
 ├── firebase-schema.md             # authoritative data model + rules + indexes
-├── data-model.md                  # legacy Apps Script Sheet schema (historical)
 ├── firebase-migration.md          # phase plan (Phase A complete; Phase 12 deferred)
 ├── open-questions.md              # active ambiguities + [RESOLVED] trail
-├── build-plan.md                  # legacy Apps Script chunk plan (historical)
-├── sheet-setup.md                 # legacy Apps Script Sheet schema (historical)
+├── navigation-redesign.md         # Phase 10.1 nav redesign design doc
 ├── TASKS.md                       # cross-cutting work-in-flight
 ├── BUGS.md                        # cross-cutting defects
-├── changelog/                     # per-chunk and per-phase entries
+├── changelog/                     # per-phase entries
 │   ├── README.md
 │   ├── template.md
-│   └── chunk-N-*.md / phase-N-*.md
+│   └── phase-N-*.md
 └── runbooks/                      # per-procedure operator playbooks (summaries; full ones in infra/runbooks/)
 ```
 
@@ -49,4 +47,4 @@ docs/
 
 ## Migration history
 
-Phase 11 cutover landed 2026-05-03. From that point forward `spec.md` describes Firebase reality; the Apps Script-era D-numbers (D1-D10) in `architecture.md` are retained as historical record alongside the Firebase decisions (D11+). The legacy `build-plan.md`, `sheet-setup.md`, and `data-model.md` describe the Apps Script implementation and are kept as historical reference; they are not updated. See [`changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md).
+Phase 11 cutover landed 2026-05-03. From that point forward `spec.md` describes Firebase reality; the Apps Script-era D-numbers (D1-D10) in `architecture.md` are retained as historical record alongside the Firebase decisions (D11+). Apps Script source and its per-chunk changelogs (`chunk-N-*.md`) were removed from the repo in 2026-05-11 as a post-cutover cleanup; the per-chunk history is preserved in git history. See [`changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md).

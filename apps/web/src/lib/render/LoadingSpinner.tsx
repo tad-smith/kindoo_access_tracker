@@ -1,11 +1,7 @@
 // Cross-page loading affordance. Used by Suspense fallbacks (the root
 // `<Suspense>` and per-page `<Suspense>` boundaries) and by manual
-// "loading…" cells inside list rows.
-//
-// The Apps Script app didn't have a unified spinner — pages set
-// `<div class="hidden">Loading…</div>` and toggled the class. The new
-// SPA centralises on this component for parity with the spec's
-// "every page surfaces a loading state" intent (`docs/spec.md` §5).
+// "loading…" cells inside list rows. Centralises the "every page
+// surfaces a loading state" intent from `docs/spec.md` §5.
 
 import './LoadingSpinner.css';
 

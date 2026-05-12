@@ -3,8 +3,8 @@
 // query a single Zustand store instead of poking the DOM.
 //
 // The Dialog primitive in `components/ui/Dialog.tsx` calls `push()` on
-// open and `pop()` on close. Phase 5+ deep-link handlers can query the
-// top of the stack to suppress hotkeys when a modal owns the focus.
+// open and `pop()` on close. Deep-link handlers can query the top of
+// the stack to suppress hotkeys when a modal owns the focus.
 
 import { create } from 'zustand';
 

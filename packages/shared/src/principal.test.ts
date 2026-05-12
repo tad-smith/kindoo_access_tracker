@@ -113,7 +113,7 @@ describe('principalFromClaims', () => {
     expect(p.bishopricWards).toEqual({});
   });
 
-  it('preserves multi-stake structure (Phase 12 readiness)', () => {
+  it('preserves multi-stake structure', () => {
     const claims: CustomClaims = {
       canonical: 'multi@gmail.com',
       stakes: {

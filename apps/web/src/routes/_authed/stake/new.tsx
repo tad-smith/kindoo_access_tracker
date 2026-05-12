@@ -1,7 +1,6 @@
-// Legacy redirect. The "New Request" form moved to `/new` in
-// Phase 10.1; this route stays alive so external bookmarks /
-// audit-log links / future email templates that reference
-// `/stake/new` keep working.
+// Legacy redirect. The "New Request" form lives at `/new`; this
+// route stays alive so external bookmarks / audit-log links / email
+// templates that reference `/stake/new` keep working.
 
 import { createFileRoute, redirect } from '@tanstack/react-router';
 

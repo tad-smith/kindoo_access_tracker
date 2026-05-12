@@ -1,6 +1,6 @@
-// shadcn-style UI primitives. Phase 4 shipped Dialog + Toast as
-// hand-rolled Radix wrappers; Phase 5 (T-18) added Tailwind v4 + the
-// Button / Badge / Card / Input / Select / Skeleton primitives below.
+// shadcn-style UI primitives. Dialog + Toast are hand-rolled Radix
+// wrappers; Button / Badge / Card / Input / Select / Skeleton are
+// Tailwind-styled shadcn-pattern components.
 //
 // Per shadcn convention these are *our code* — copy-pasted shapes we
 // can customise freely. The dependency floor is `@radix-ui/react-slot`

@@ -1,6 +1,6 @@
-// Rules tests for `userIndex/{canonicalEmail}` — the Phase 2
-// match block, extended in Phase 10.5 with self-update for
-// `fcmTokens` + `notificationPrefs` + `lastActor`.
+// Rules tests for `userIndex/{canonicalEmail}` — the match block
+// covering self-reads plus self-update for `fcmTokens` +
+// `notificationPrefs` + `lastActor`.
 //
 // Layout matches the read/write matrix in
 // `docs/firebase-schema.md` §3.1: the user themselves can read their

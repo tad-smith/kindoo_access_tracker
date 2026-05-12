@@ -1,5 +1,4 @@
-// Date formatting helpers — TS port of the same-named utilities in the
-// Apps Script `ClientUtils.html`/`Format.gs` axis. The contract:
+// Date formatting helpers. Contract:
 //
 //   formatDate(d, tz)      → 'YYYY-MM-DD' (ISO, locale-stable)
 //   formatDateTime(d, tz)  → 'YYYY-MM-DD HH:mm' (24-hour, locale-stable)

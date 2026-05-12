@@ -1,7 +1,4 @@
-// Unit tests for the HTML-escape helper. Mirrors the escape contract
-// from Apps Script's `ClientUtils.html#escapeHtml` so byte-level
-// output stays compatible with audit-log diffs written by the legacy
-// app.
+// Unit tests for the HTML-escape helper.
 
 import { describe, expect, it } from 'vitest';
 import { escapeHtml } from './escapeHtml';
@@ -33,7 +30,7 @@ describe('escapeHtml', () => {
 
   it('escapes ampersands first so subsequent entities are preserved', () => {
     // If `&` were escaped after `<`, the pre-escaped `&lt;` would
-    // become `&amp;lt;`. Order matters; Apps Script Tests this too.
+    // become `&amp;lt;`. Order matters.
     expect(escapeHtml('<&>')).toBe('&lt;&amp;&gt;');
   });
 

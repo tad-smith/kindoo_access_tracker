@@ -12,9 +12,9 @@
 //     the Logout item; the drawer footer holds only the version
 //     stamp.
 //
-// Logout lives inside the nav body now (Account section, per
-// Phase 10.1 follow-up #4). The Nav renders the action item as a
-// `<button>` and runs `onSignOut` on click.
+// Logout lives inside the nav body (Account section). The Nav
+// renders the action item as a `<button>` and runs `onSignOut` on
+// click.
 //
 // Dismissal handlers (per `docs/navigation-redesign.md` §6 + §7):
 //   - Tap a nav item / action → `onNavigate` (parent closes).

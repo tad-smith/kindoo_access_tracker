@@ -1,10 +1,8 @@
-// Shared roster-card list primitive — the React port of
-// `renderRosterCards` / `rosterCardHtml` from Apps Script's
-// `ClientUtils.html`. Every read-only roster page in Phase 5
+// Shared roster-card list primitive. Every read-only roster page
 // (bishopric, stake, ward-rosters, manager all-seats) consumes this so
-// the row-feel visual density stays consistent across pages.
+// row-feel visual density stays consistent across pages.
 //
-// Card shape (matches the legacy renderer):
+// Card shape:
 //   Line 1:  badges · scope-chip (optional) · member · actions
 //   Line 2:  Calling / Reason · Buildings  (when populated)
 //   Line 3:  Dates: <start> → <end>          (temp seats only)
@@ -93,8 +91,8 @@ function RosterCard({ seat, showScope, actions, extraBadges, rowClass }: RosterC
   const typeVariant = seat.type;
   const typeLabel = seat.type;
 
-  // Line 1 member block — name + (email) when name present, bare email
-  // otherwise. Mirrors the legacy renderer.
+  // Line 1 member block — name + (email) when name present, bare
+  // email otherwise.
   const memberInner = seat.member_name ? (
     <>
       <span className="roster-card-name">{seat.member_name}</span>{' '}

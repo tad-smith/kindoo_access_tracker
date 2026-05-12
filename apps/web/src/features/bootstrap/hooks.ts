@@ -323,9 +323,9 @@ export function useEnsureBootstrapAdmin() {
 
 /**
  * Final step — flips `setup_complete=true`. The same updateDoc carries
- * the `lastActor` integrity field. Phase 8's `installScheduledJobs`
- * callable will be invoked in addition by the page wrapper; this
- * mutation only owns the Firestore flip.
+ * the `lastActor` integrity field. The page wrapper additionally
+ * invokes the `installScheduledJobs` callable; this mutation only
+ * owns the Firestore flip.
  */
 export function useCompleteSetupMutation() {
   const principal = usePrincipal();

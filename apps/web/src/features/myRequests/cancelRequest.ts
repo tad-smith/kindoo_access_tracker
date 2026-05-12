@@ -1,8 +1,5 @@
-// Cancel-pending-request mutation. The single write path Phase 5 ships
-// (per `firebase-migration.md` §Phase 5 plan).
-//
-// The Firestore rules at `firestore/firestore.rules` allow this update
-// when:
+// Cancel-pending-request mutation. The Firestore rules at
+// `firestore/firestore.rules` allow this update when:
 //   - `resource.data.status == 'pending'`
 //   - the new status is `'cancelled'`
 //   - `lastActor` matches the auth token's email + canonical

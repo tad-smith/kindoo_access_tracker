@@ -1,5 +1,5 @@
 // Manager Configuration page — multi-tab CRUD over every editable
-// table. Mirrors `src/ui/manager/Config.html` from the Apps Script app.
+// table.
 //
 // Tabs (left → right): Config, Managers, Wards, Buildings,
 // Auto Ward Callings, Auto Stake Callings.

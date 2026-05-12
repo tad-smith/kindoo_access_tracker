@@ -1,18 +1,12 @@
-// Pure HTML-escape helper. Ports the `escapeHtml` from Apps Script's
-// `src/ui/ClientUtils.html` so we keep behaviour parity for any caller
-// that builds raw HTML strings (Phase 5 audit-log diff renderer is the
-// most likely consumer; React's JSX auto-escapes by default and almost
-// never needs this).
+// Pure HTML-escape helper. Used by callers that build raw HTML strings
+// (the manager audit-log diff renderer is the main consumer; React's
+// JSX auto-escapes by default and almost never needs this).
 //
 // Tagged-template form is offered as `escapeHtml.tagged` so call sites
 // can write `escapeHtml.tagged\`<p>${name}</p>\`` and get the
-// interpolations escaped without touching the static portions. The
-// plain `escapeHtml(value)` form mirrors the Apps Script signature.
+// interpolations escaped without touching the static portions.
 //
-// Replaces five characters: `& < > " '`. Same set as the Apps Script
-// helper — preserving the byte-level output keeps audit log diffs that
-// were written by Apps Script readable in the new UI without
-// transformation.
+// Replaces five characters: `& < > " '`.
 
 const ESCAPE_MAP: Record<string, string> = {
   '&': '&amp;',
@@ -26,8 +20,8 @@ const ESCAPE_RE = /[&<>"']/g;
 
 /**
  * HTML-escape a value for safe interpolation into raw HTML strings.
- * `null` and `undefined` collapse to the empty string (matches the
- * Apps Script helper). Non-string values are stringified first.
+ * `null` and `undefined` collapse to the empty string. Non-string
+ * values are stringified first.
  */
 export function escapeHtml(value: unknown): string {
   if (value === null || value === undefined) return '';

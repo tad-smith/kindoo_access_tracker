@@ -1,6 +1,6 @@
 // One-shot Firestore read, surfaced as a TanStack Query result. No
-// live subscription; used by Phase 5's Audit Log cursor pagination
-// path where pagination doesn't compose with `onSnapshot`.
+// live subscription; used by the Audit Log cursor pagination path
+// where pagination does not compose with `onSnapshot`.
 //
 // Returns either a single doc (when given a `DocumentReference`) or a
 // `T[]` (when given a `Query`). The discriminator is the runtime

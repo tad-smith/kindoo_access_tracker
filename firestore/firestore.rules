@@ -1,10 +1,7 @@
 rules_version = '2';
 
 // Firestore Security Rules — full per-collection allow/deny matrix per
-// `docs/firebase-schema.md` §6. Phase 3 replaces the lock-everything
-// stub from Phases 1–2 with the real rules; Phase 2's userIndex
-// match block is preserved verbatim (now sitting next to the other
-// top-level rules).
+// `docs/firebase-schema.md` §6.
 //
 // Conventions:
 //
@@ -57,8 +54,7 @@ rules_version = '2';
 //   - Setup-in-progress read gate: `isSetupInProgressReadable(stakeId)`
 //     lets ANY authed user read the parent stake doc while
 //     `setup_complete == false`. Required by the SPA's setup-complete
-//     gate (per `docs/firebase-migration.md` §Phase 7 +
-//     `docs/spec.md` §10): a non-admin signing in during bootstrap
+//     gate (per `docs/spec.md` §10): a non-admin signing in during bootstrap
 //     must land on SetupInProgress (not NotAuthorized), and the gate
 //     can only know "we're in setup" by reading the parent doc.
 //     Once the wizard completes, this gate goes silent and standard
@@ -138,8 +134,7 @@ service cloud.firestore {
     }
 
     // Setup-in-progress escape hatch — required by the SPA's
-    // setup-complete gate (per `docs/firebase-migration.md` §Phase 7
-    // and `docs/spec.md` §10): when `setup_complete == false`, any
+    // setup-complete gate (per `docs/spec.md` §10): when `setup_complete == false`, any
     // authed user must be able to read the parent stake doc so the
     // gate can route them to SetupInProgress (instead of NotAuthorized
     // or a blank screen). Once the wizard flips `setup_complete` to
@@ -452,7 +447,7 @@ service cloud.firestore {
         // any of those sets, so it cannot be modified.
         //
         // `add_temp` carries ISO `YYYY-MM-DD` start_date + end_date
-        // with `start_date <= end_date`. Phase 10.3's queue
+        // with `start_date <= end_date`. The manager queue's
         // sectioning (Outstanding vs Future) depends on start_date
         // being present and well-formed for every add_temp.
         allow create: if isAuthed()

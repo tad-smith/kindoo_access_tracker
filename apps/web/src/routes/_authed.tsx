@@ -3,8 +3,7 @@
 // segment. URLs don't carry `_authed/` — `_authed/manager/dashboard`
 // is reachable at `/manager/dashboard`.
 //
-// Gate ordering per `docs/firebase-migration.md` §Phase 7
-// "Setup-complete gate" + `docs/spec.md` §10. The branch picker is
+// Gate ordering per `docs/spec.md` §10. The branch picker is
 // `gateDecision()` in `lib/setupGate.ts` — same module powers
 // `routes/index.tsx` so the two gates can never drift. See that
 // module's header for the full rule table; the short version:

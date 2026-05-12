@@ -1,9 +1,6 @@
-/* Modal styles. Mechanical port of `.kd-modal*` rules from
-   `src/ui/Styles.html` so the visual matches the Apps Script app.
-   Radix renders the overlay and the content as siblings inside the
-   portal, so we add a `.kd-modal-positioner` wrapper around the
-   content node to handle the centering that the Apps Script flex
-   block did directly on the overlay. */
+/* Modal styles. Radix renders the overlay and the content as siblings
+   inside the portal, so we add a `.kd-modal-positioner` wrapper
+   around the content node to handle centering. */
 
 .kd-modal {
   position: fixed;

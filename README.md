@@ -1,6 +1,6 @@
 # Stake Building Access
 
-A web app used by a stake of The Church of Jesus Christ of Latter-day Saints to manage Kindoo door-access seat assignments across its wards. Currently running on Google Apps Script in production; **migrating to Firebase as of 2026-04-27** — see [`docs/firebase-migration.md`](docs/firebase-migration.md). The product name was previously "Kindoo Access Tracker"; renamed to match the new domain `stakebuildingaccess.org` (per F17 in the migration plan).
+A web app used by a stake of The Church of Jesus Christ of Latter-day Saints to manage Kindoo door-access seat assignments across its wards. Running on Firebase in production as of 2026-05-03 (Phase 11 cutover); served from `kindoo.csnorth.org`. Project name `stakebuildingaccess.org` is locked for the eventual apex flip (Phase B).
 
 ## What it does
 
@@ -8,30 +8,29 @@ A web app used by a stake of The Church of Jesus Christ of Latter-day Saints to 
 - Lets bishoprics request manual/temp adds and removals for their own ward.
 - Lets the stake presidency do the same against the stake pool.
 - Gives Kindoo Managers a queue to work through, mirror into Kindoo by hand, and mark complete.
-- Weekly imports automatic seats from the existing stake callings spreadsheet.
-- Daily job expires temp seats whose end date has passed.
-- Emails requesters and managers at the relevant lifecycle points.
+- Hourly importer reconciles automatic seats from the LCR stake callings spreadsheet.
+- Hourly expiry job removes temp seats whose end date has passed.
+- Resend transactional emails at the relevant lifecycle points; FCM Web push on supported clients.
 
-Specification: [`docs/spec.md`](docs/spec.md) (live — always describes the current system). Architecture: [`docs/architecture.md`](docs/architecture.md). Data model: [`docs/data-model.md`](docs/data-model.md). Build order: [`docs/build-plan.md`](docs/build-plan.md). Per-chunk history: [`docs/changelog/`](docs/changelog/).
+Specification: [`docs/spec.md`](docs/spec.md) — live source of truth, always describes the current system. Architecture: [`docs/architecture.md`](docs/architecture.md). Migration plan: [`docs/firebase-migration.md`](docs/firebase-migration.md). Data + rules reference: [`docs/firebase-schema.md`](docs/firebase-schema.md). Per-phase history: [`docs/changelog/`](docs/changelog/).
 
 ## Project layout
 
 ```
 .
-├── src/                     # Apps Script source (what clasp pushes)
-│   ├── appsscript.json      # manifest
-│   ├── core/                # entry point, router, auth, lock, utils
-│   ├── repos/               # one module per Sheet tab (data access)
-│   ├── services/            # importer, expiry, requests, email, setup
-│   ├── api/                 # server endpoints called from client via google.script.run
-│   └── ui/                  # HTML templates (shared + per-role pages)
-├── docs/
-│   ├── spec.md              # live source of truth — updated with every behaviour change
-│   ├── architecture.md, data-model.md, build-plan.md, open-questions.md, sheet-setup.md
-│   └── changelog/           # per-chunk journal of deviations & rationale
-├── .clasp.json.example      # committed template — copy to .clasp.json and add your scriptId
-├── .clasp.json              # (gitignored) your local clasp binding
-├── package.json             # clasp dev dependency, npm scripts
+├── apps/web/                  # React 19 SPA — Vite + TanStack Router + reactfire
+├── functions/                 # Cloud Functions 2nd gen — triggers, schedulers, callables
+├── firestore/                 # Security rules + composite indexes (+ rules tests)
+├── packages/shared/           # Shared TypeScript types and zod schemas
+├── e2e/                       # Playwright end-to-end tests
+├── infra/                     # Deploy scripts, runbooks, CI workflows, monitoring config
+├── docs/                      # Spec, architecture, changelog, BUGS, TASKS, open questions
+├── firebase.json              # Firebase project config (hosting, functions, firestore, emulators)
+├── .firebaserc                # Default Firebase project aliases
+├── pnpm-workspace.yaml        # pnpm workspace members
+├── tsconfig.base.json         # Shared TypeScript compiler options
+├── tsconfig.json              # Workspace project references
+├── package.json               # Root scripts + dev tooling
 └── README.md
 ```
 
@@ -39,61 +38,44 @@ Specification: [`docs/spec.md`](docs/spec.md) (live — always describes the cur
 
 ### First-time setup
 
-1. Install dependencies:
+1. Use Node 22 (`nvm use` reads `.nvmrc`).
+2. Install dependencies:
    ```
-   npm install
+   pnpm install
    ```
-2. Create the backing Google Sheet and its bound Apps Script project. Full instructions: [`docs/sheet-setup.md`](docs/sheet-setup.md). Summary:
-   1. In Google Drive, **New → Google Sheets**. Name it (e.g. `Stake Building Access — CS North`).
-   2. In the sheet, **Extensions → Apps Script**. This creates a bound script project.
-   3. Copy the script ID from the Apps Script editor URL (`…/projects/<SCRIPT_ID>/edit`).
-3. Wire clasp to that script:
-   1. Log in: `npm run login` (runs `clasp login` in a browser).
-   2. Copy the template: `cp .clasp.json.example .clasp.json`. `.clasp.json` is gitignored so your scriptId stays local.
-   3. Put the script ID into `.clasp.json` (`scriptId` field).
-4. Push the code:
-   ```
-   npm run push
-   ```
-5. In the Apps Script editor, open `services/Setup` and run `setupSheet()` once. This creates every tab with the correct headers and auto-generates `Config.session_secret`. (If preferred, this step can be triggered from the `Kindoo Admin → Setup sheet…` custom menu added by `onOpen()` — see [`docs/sheet-setup.md`](docs/sheet-setup.md).)
-6. Open the Sheet's `Config` tab and set `bootstrap_admin_email` to your address.
-7. Deploy **two** web apps from the same script project (full walkthrough in [`docs/sheet-setup.md`](docs/sheet-setup.md#path-1--setupsheet-preferred), steps 11–14):
-   - **Main** — `executeAs: Me`, access: `Anyone with Google account`. Paste its `/exec` URL into `Config.main_url`.
-   - **Identity** — `executeAs: User accessing the web app`, access: `Anyone with Google account`. Paste its `/exec` URL into `Config.identity_url`.
-   No OAuth Client ID in Google Cloud Console is needed; identity comes from `Session.getActiveUser()` on the Identity deployment, signed with `Config.session_secret` (HMAC) so Main can trust the result. See [`docs/architecture.md`](docs/architecture.md) D10 + [`docs/open-questions.md`](docs/open-questions.md) A-8 for why this two-deployment shape is necessary.
-8. Visit the Identity URL once directly in a browser, signed in as the bootstrap admin, to grant the one-time per-user OAuth consent for the email scope. Then visit the Main URL — Google Sign-In completes via the Identity round-trip, and the first-run wizard (Chunk 4) walks you through the rest of the configuration.
+   The `prepare` hook seeds `apps/web/src/version.gen.ts` and `functions/src/version.gen.ts` with `0.0.0-dev` placeholders so `pnpm dev` and `pnpm test` work without running the deploy stamper.
+3. Install the Firebase CLI globally (`npm install -g firebase-tools`) and log in (`firebase login`).
 
 ### Day-to-day
 
-- Edit files under `src/`.
-- `npm run push` to sync to Apps Script. Stamps `src/core/Version.gs` with the current UTC timestamp before pushing — the value renders as a tiny footer on every page.
-- `npm run push:watch` to sync on save (timestamp stamped once at the start).
-- `npm run open` opens the script in the Apps Script editor.
-- `npm run logs` tails execution logs.
-- `npm run deploy` creates a *new* deployment (new ID, new URL — usually not what you want). For ongoing dev, **update the existing deployment** via the Apps Script editor: **Deploy → Manage deployments → ✎ Edit → Version: New version → Deploy**. Without that step, `/exec` keeps serving the previously-deployed code even after `clasp push`.
+- `pnpm dev` — start Firebase emulators (Auth, Firestore, Functions, Hosting) with state imported from `.firebase/emulator-data/` and re-exported on exit.
+- `pnpm test` — run the full test suite across every workspace (unit + integration + rules + E2E). Individual surfaces: `pnpm test:unit`, `pnpm test:rules`, `pnpm test:e2e`.
+- `pnpm typecheck` — `tsc -b` across the workspace.
+- `pnpm lint` — per-workspace lint plus root `prettier --check`.
+- `pnpm build` — fan-out build across every workspace.
 
-### Detecting a stale deployment
+### Deploy
 
-Apps Script's `/exec` URL serves the most recently *deployed* code, not the head. If you push but forget to update the deployment, you're testing yesterday's code. To detect this:
+Two Firebase projects: `kindoo-staging` (rehearsal) and `kindoo-prod` (live). Same code, different `--project` flag.
 
-1. After `npm run push`, note the timestamp printed by `stamp-version`.
-2. Open `/exec` in the browser — the footer shows `v: <timestamp>`.
-3. If the footer's timestamp is older than what was just printed, the deployment hasn't been updated. Update it via the editor as described above.
+- `pnpm deploy:staging` — runs `infra/scripts/deploy-staging.sh`.
+- `pnpm deploy:prod` — runs `infra/scripts/deploy-prod.sh`.
 
-### Production domain
+Both scripts stamp the build version into `apps/web/src/version.gen.ts` and `functions/src/version.gen.ts` (git short SHA + UTC ISO timestamp) before invoking `firebase deploy`. The Cloud Functions deploy uses an esbuild-bundled artifact under `functions/lib/` so the workspace-protocol `@kindoo/shared` import resolves cleanly under Cloud Build's `npm install`. See [`infra/CLAUDE.md`](infra/CLAUDE.md) and architecture decision D12 for the rationale.
 
-The app is also served at `kindoo.csnorth.org` via a Cloudflare Worker that proxies to the Apps Script `/exec` URL. Worker setup is Chunk 11 of the build plan — the `/exec` URL works fine during development.
+### Custom domain
+
+Production resolves at `https://kindoo.csnorth.org` (Firebase Hosting with auto-provisioned Let's Encrypt cert). Domain registration for `stakebuildingaccess.org` is held for the Phase B apex flip; until that lands, both names point at the same Firebase Hosting site.
 
 ## Conventions
 
-- **`docs/spec.md` is the live source of truth.** Code and spec change together, in the same commit. Per-chunk changelogs in [`docs/changelog/`](docs/changelog/) record the "why" behind each change — reading the latest chunk file plus `spec.md` is the catch-up recipe.
-- **Never commit `.clasprc.json` or `.clasp.json`.** The first holds your personal clasp OAuth credentials; the second holds your local scriptId. Both are gitignored. The committed `.clasp.json.example` is the template.
-- **No secrets in source.** `Config.session_secret` (the HMAC signing secret for session tokens — auto-generated by `setupSheet`), the callings-sheet ID, and the backing-sheet ID are all runtime config in the Sheet. Member data never enters the repo — it's all in the Sheet.
-- **Apps Script has a flat namespace.** Subdirectories under `src/` become folder prefixes in the Apps Script editor (e.g. `repos/SeatsRepo`), but all functions still share one global scope. Name exported functions defensively (`Seats_getAll`, not `getAll`).
-- **Every write goes through `LockService`.** See [`docs/architecture.md`](docs/architecture.md#lockservice-strategy).
-- **Every write emits an `AuditLog` row.** No exceptions, including automated jobs (use actor `"Importer"` or `"ExpiryTrigger"`). Callers pass the actor explicitly — `AuditRepo.write` never falls back to `Session.getActiveUser`, because that's the deployer, not the authenticated user (see [`docs/architecture.md` §5](docs/architecture.md)).
+- **`docs/spec.md` is the live source of truth.** Code and spec change together, in the same commit. Per-phase changelogs in [`docs/changelog/`](docs/changelog/) record the "why" behind each change.
+- **Custom claims are the role-resolution source.** `usePrincipal()` (web) and `request.auth.token.stakes[stakeId]` (rules) are the only paths. Don't query `kindooManagers` or `access` directly to check roles.
+- **Audit rows are server-written** by the parameterized `auditTrigger` Cloud Function. Clients write entity docs; the trigger fans audit rows from those writes.
+- **Canonicalise every email** via `packages/shared/canonicalEmail.ts` at every input boundary: lowercase, strip `+suffix`, and for `@gmail.com` / `@googlemail.com` only strip local-part dots (collapse `googlemail.com` → `gmail.com`).
+- **No secrets in source.** Secret Manager + env-var injection. The repo is public.
+- **TypeScript strict everywhere.** Every workspace has a test suite that gates merges.
 
-## Help and feedback
+## Historical note
 
-- `/help` — help with using Claude Code.
-- Report issues: <https://github.com/anthropics/claude-code/issues>.
+The app originally ran on Google Apps Script (December 2026 – May 2026), backed by a Google Sheet with an HMAC-signed two-project auth model and a GitHub Pages iframe wrapper for the custom domain. Apps Script was decommissioned at the Phase 11 cutover on 2026-05-03; the source was removed from the repo in 2026-05-11. The Apps Script-era design decisions D1–D10 in [`docs/architecture.md`](docs/architecture.md) and the corresponding `[RESOLVED]` trail in [`docs/open-questions.md`](docs/open-questions.md) are retained as historical record. See [`docs/changelog/phase-11-cutover.md`](docs/changelog/phase-11-cutover.md) for the cutover narrative.

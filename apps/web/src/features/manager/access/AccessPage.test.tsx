@@ -382,7 +382,7 @@ describe('<AccessPage />', () => {
     );
   });
 
-  it('renders a desktop table with the Apps Script column order', () => {
+  it('renders a desktop table with the expected column order', () => {
     useAccessListMock.mockReturnValue(
       liveResult([
         makeAccess({

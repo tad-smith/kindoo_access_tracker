@@ -10,11 +10,6 @@
 # Continue-on-error: each step except the final `build` runs even if a
 # previous test layer fails, so the developer sees every red flag at
 # once instead of fixing one and re-pushing to find the next.
-#
-# Note: as of Phase 1 most of these test scripts are no-ops (the
-# workspaces don't define them yet — `pnpm -r test` is vacuously green
-# when no workspace has a test script). That's fine; the workflow is
-# laying tracks for Phases 2+ to hang real tests on.
 
 name: Test
 

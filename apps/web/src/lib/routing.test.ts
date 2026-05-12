@@ -1,7 +1,6 @@
 // Unit tests for the routing helpers. Exercises the per-role
-// default-landing rule (priority manager > stake > bishopric, mirrors
-// `Router_defaultPageFor_` in the Apps Script Router) and the legacy
-// `?p=` deep-link table.
+// default-landing rule (priority manager > stake > bishopric) and the
+// legacy `?p=` deep-link table.
 
 import { describe, expect, it } from 'vitest';
 import { defaultLandingFor, deepLinkPath } from './routing';
@@ -93,8 +92,8 @@ describe('deepLinkPath', () => {
   });
 
   it('resolves all new-request keys to the unified /new route', () => {
-    // Phase 10.1 collapsed `/bishopric/new` and `/stake/new` into
-    // `/new`; the legacy `?p=` keys resolve straight there.
+    // `/bishopric/new` and `/stake/new` collapse to `/new`; the legacy
+    // `?p=` keys resolve straight there.
     expect(deepLinkPath('stake/new')).toBe('/new');
     expect(deepLinkPath('bish/new')).toBe('/new');
     expect(deepLinkPath('new')).toBe('/new');
@@ -110,8 +109,8 @@ describe('deepLinkPath', () => {
   });
 
   it('returns null for the deprecated hello key', () => {
-    // Phase 4's placeholder route is gone; the deep link resolves to null
-    // and falls through to the per-role default.
+    // The legacy placeholder route is gone; the deep link resolves to
+    // null and falls through to the per-role default.
     expect(deepLinkPath('hello')).toBeNull();
   });
 });

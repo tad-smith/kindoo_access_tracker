@@ -15,7 +15,7 @@
 //       same scope; the next scope flip resets both the selection and
 //       the open state to the new scope's derivation.
 //   - Ward users can expand and check additional buildings (multi-
-//     select capability the legacy form did not offer).
+//     select).
 //   - Duplicate-warning surfaces when the live seat hook returns a
 //     hit in the same scope.
 

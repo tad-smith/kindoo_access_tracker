@@ -22,7 +22,7 @@ import { requestsCol, seatRef } from '../../lib/docs';
 import { STAKE_ID } from '../../lib/constants';
 
 /**
- * Live duplicate-warning hook. Phase 6 spec §5.1 calls for an inline
+ * Live duplicate-warning hook. Per `docs/spec.md` §5.1: inline
  * warning when the member already has a seat in the requested scope.
  * Subscribes to `seats/{member_canonical}` because the seat doc id IS
  * the canonical email — no query needed; if the doc exists and its

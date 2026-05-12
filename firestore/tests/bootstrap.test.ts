@@ -1,6 +1,6 @@
 // Rules tests for the bootstrap-admin escape hatch in
 // `firestore.rules` — the `isBootstrapAdmin(stakeId)` predicate that
-// unblocks the Phase 7 wizard's chicken-and-egg first writes. See
+// unblocks the setup wizard's chicken-and-egg first writes. See
 // `firebase-schema.md` §6 and the file-header comment in
 // `firestore.rules`.
 //
@@ -410,9 +410,9 @@ describe('firestore.rules — bootstrap-admin gate', () => {
     });
 
     it('signed-in user whose email does NOT match bootstrap_admin_email is still allowed to READ during setup_complete=false (via isSetupInProgressReadable)', async () => {
-      // The SPA's setup-complete gate (per docs/firebase-migration.md
-      // §Phase 7 + docs/spec.md §10) needs ANY authed user to be able
-      // to read the parent stake doc while setup is in progress, so
+      // The SPA's setup-complete gate (per docs/spec.md §10) needs
+      // ANY authed user to be able to read the parent stake doc while
+      // setup is in progress, so
       // the gate can route non-admins to SetupInProgress instead of
       // NotAuthorized. The `isSetupInProgressReadable` helper widens
       // reads under that condition. Identity-match remains required

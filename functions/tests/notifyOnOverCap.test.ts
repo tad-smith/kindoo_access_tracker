@@ -1,7 +1,7 @@
 // Integration tests for `notifyOnOverCap`. The trigger fires on every
 // write to a stake doc and dispatches the over-cap email when the
 // `last_over_caps_json` field transitions from empty to non-empty per
-// `docs/spec.md` §9 + Phase 9 plan.
+// `docs/spec.md` §9.
 //
 // Continuing-overcap (`[A] -> [A, B]`) and resolving-overcap
 // (`[A] -> []`) deliberately do NOT fire — operators are notified

@@ -175,9 +175,9 @@ dig TXT  _dmarc.mail.stakebuildingaccess.org +short
 
 Expected: both still resolve to the Resend-issued values from T-04. If either is empty, your apex edits accidentally clobbered a `mail.` record at the registrar — restore from the registrar's audit log or re-add per the Resend dashboard.
 
-### 2.7 Decommission `kindoo.csnorth.org`
+### 2.7 Legacy wrapper decommission
 
-Per F17, the legacy GitHub-Pages-iframe-wrapper URL is decommissioned at this point. Whether to (a) redirect to the new domain, (b) leave dormant pointing to a "moved" page, or (c) take down entirely is a separate decision tied to the cutover communication plan — flag it with the operator before the window opens. The Phase 11 cutover checklist in `docs/firebase-migration.md` calls this out as a deferred decision; record the chosen path in `infra/runbooks/cutover.md` (or this runbook's notes section) once made.
+The legacy wrapper that previously fronted the Apps Script app was removed at Phase 11 cutover. See `docs/changelog/phase-11-cutover.md` for the cutover record. Nothing further to do in this runbook.
 
 ---
 
@@ -208,6 +208,6 @@ The redirect checkbox wasn't set when you added `www.` in step 2.1. Edit the `ww
 ## Cross-references
 
 - F17 in `docs/firebase-migration.md` — chosen-domain rationale; apex/subdomain split that keeps Resend's DNS independent of Hosting.
-- Phase 11 cutover checklist in `docs/firebase-migration.md` (around the "DNS for the new domain" + "Legacy `kindoo.csnorth.org` decommission" subsections) — this runbook is the procedure that fulfills those sub-tasks.
+- Phase 11 cutover checklist in `docs/firebase-migration.md` — this runbook is the procedure that fulfilled the "DNS for the new domain" sub-task.
 - `infra/runbooks/resend-api-key-setup.md` — the Resend side of the F17 mail-subdomain story (API key into Secret Manager). DKIM CNAME + DMARC TXT records were set up in T-04; this runbook does NOT modify them.
 - `infra/runbooks/provision-firebase-projects.md` — the prereq B1 runbook that creates the two Firebase projects this one targets.

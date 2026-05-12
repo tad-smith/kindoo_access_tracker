@@ -8,9 +8,9 @@
 // send failures — invalid tokens are routine (browser uninstall,
 // extension reset) and not an error condition.
 //
-// Phase 9 (deferred, gated on T-04) will extend this trigger or sibling
-// `notifyOnRequestWrite.ts` to send email as the source-of-truth
-// fallback. For now: silent skip when no managers are subscribed.
+// Email is the source-of-truth fallback, sent by sibling
+// `notifyOnRequestWrite.ts`. For now: silent skip when no managers
+// are subscribed to push.
 
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions';

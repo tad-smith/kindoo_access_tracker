@@ -1,10 +1,8 @@
 // Email canonicalization shared by every workspace that needs to compare
 // email addresses across boundaries (typed UI input, Firebase Auth claim,
-// importer-read sheet cell, audit-log actor field).
+// importer-read LCR-export cell, audit-log actor field).
 //
-// Ported verbatim from Apps Script `Utils_normaliseEmail` in
-// `src/core/Utils.gs`. The Apps Script doc-comment there explains the
-// design (architecture.md D4, open-questions.md I-8); the short version:
+// Rules (architecture.md D4, open-questions.md I-8):
 //
 //   - Lowercase + trim is universal.
 //   - For @gmail.com / @googlemail.com only: strip dots from the
@@ -23,11 +21,8 @@
  * canonical form comes out. NEVER store the result; only use it for
  * equality checks (via `emailsEqual`) or stable hashing.
  *
- * Mirrors the Apps Script `Utils_normaliseEmail` exactly so that values
- * canonicalised in either runtime compare equal.
- *
  * @param typed - Email as the user typed it (or as Firebase Auth handed
- *   us, or as Sheets / Firestore returned). `null`/`undefined`/non-string
+ *   us, or as Firestore returned). `null`/`undefined`/non-string
  *   inputs are coerced to ''.
  */
 export function canonicalEmail(typed: string | null | undefined): string {
@@ -49,7 +44,7 @@ export function canonicalEmail(typed: string | null | undefined): string {
 
 /**
  * Two display-form emails are equivalent if their canonical forms match.
- * Use everywhere we used to compare canonical-to-canonical in Apps Script.
+ * Use whenever the comparison crosses a typed-input boundary.
  */
 export function emailsEqual(a: string | null | undefined, b: string | null | undefined): boolean {
   return canonicalEmail(a) === canonicalEmail(b);

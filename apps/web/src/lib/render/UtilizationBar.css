@@ -1,7 +1,6 @@
-/* Utilization bar styles. Ported from `src/ui/Styles.html` so the
-   visual matches the Apps Script app pixel-for-pixel. The `near` /
-   `over` modifiers and the OVER CAP flag use the design tokens defined
-   in `../../styles/tokens.css`. */
+/* Utilization bar styles. The `near` / `over` modifiers and the
+   OVER CAP flag use the design tokens defined in
+   `../../styles/tokens.css`. */
 
 .utilization {
   display: flex;

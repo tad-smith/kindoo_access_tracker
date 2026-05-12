@@ -1,5 +1,4 @@
-// Manager Dashboard page (live). Mirrors `src/ui/manager/Dashboard.html`.
-// Five live cards:
+// Manager Dashboard page (live). Five live cards:
 //   - Pending Requests (per-type counts; deep-links to /manager/queue)
 //   - Utilization (per-ward + stake bars)
 //   - Warnings (over-cap pools from stake.last_over_caps_json)
@@ -9,8 +8,8 @@
 //
 // Each card subscribes via its own `useFirestoreCollection` so the
 // dashboard is fully reactive — pending counts tick up live as a
-// bishopric submits, utilization bars patch as the importer runs
-// (Phase 8/9), audit rows stream in real time.
+// bishopric submits, utilization bars patch as the importer runs,
+// audit rows stream in real time.
 
 import { Link } from '@tanstack/react-router';
 import type { AccessRequest, AuditLog, OverCapEntry, Seat, Stake, Ward } from '@kindoo/shared';

@@ -5,8 +5,8 @@
 // other grants that didn't win the priority race.
 //
 // Per Q3 (resolved 2026-04-27) multi-calling people collapse to a
-// single doc with `callings[]` — fixes the Apps Script over-count
-// where one row per calling could yield two seats for one license.
+// single doc with `callings[]` so a member with two qualifying
+// callings counts as one license, not two.
 
 import type { ActorRef } from './actor.js';
 import type { TimestampLike } from './userIndex.js';
