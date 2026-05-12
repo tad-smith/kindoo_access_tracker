@@ -14,6 +14,10 @@ import { vi } from 'vitest';
 // access to e.g. `chrome.runtime.lastError` does not throw. Tests
 // that exercise the Chrome boundary override these via vi.spyOn /
 // vi.fn().
+//
+// The `chrome.storage.local.*` and `chrome.tabs.*` mocks resolve
+// rather than return undefined so the auth flow's await of
+// `chrome.storage.local.set / remove` resolves cleanly under jsdom.
 (globalThis as unknown as { chrome: unknown }).chrome = {
   identity: {
     getAuthToken: vi.fn(),
@@ -21,16 +25,23 @@ import { vi } from 'vitest';
   },
   runtime: {
     lastError: undefined,
+    id: 'sba-ext-test',
     onInstalled: { addListener: vi.fn() },
+    onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
+    sendMessage: vi.fn(),
   },
-  sidePanel: {
-    setPanelBehavior: vi.fn(),
+  action: {
+    onClicked: { addListener: vi.fn() },
   },
   storage: {
     local: {
-      get: vi.fn(),
-      set: vi.fn(),
-      remove: vi.fn(),
+      get: vi.fn(() => Promise.resolve({})),
+      set: vi.fn(() => Promise.resolve()),
+      remove: vi.fn(() => Promise.resolve()),
     },
+  },
+  tabs: {
+    query: vi.fn((_query: unknown, cb: (tabs: unknown[]) => void) => cb([])),
+    sendMessage: vi.fn(() => Promise.resolve()),
   },
 };

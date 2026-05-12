@@ -1,8 +1,14 @@
-/* Side-panel styles. Vanilla CSS — no Tailwind / shadcn in v1. The
- * panel is narrow (Chrome defaults to ~400px wide) so layouts stay
- * single-column and copy stays terse. */
+/* Panel styles. Vanilla CSS — no Tailwind / shadcn in v1. The
+ * panel is narrow (slide-over is ~400px wide) so layouts stay
+ * single-column and copy stays terse.
+ *
+ * These styles live inside the content-script Shadow DOM (see
+ * `content/mount.tsx`). `:host` and `html, body` selectors do not
+ * apply; the slide-over container in `container.css` sets the
+ * outer frame. Custom properties below are declared on a
+ * descendant root so they are available everywhere inside. */
 
-:root {
+.sba-slideover-root {
   --sba-fg: #1a1a1a;
   --sba-fg-muted: #5a5a5a;
   --sba-bg: #ffffff;
@@ -13,16 +19,6 @@
   --sba-success: #15803d;
   --sba-danger: #b91c1c;
   --sba-warning: #b45309;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  margin: 0;
-  padding: 0;
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   font-size: 13px;
@@ -31,10 +27,17 @@ body {
   background: var(--sba-bg);
 }
 
+.sba-slideover-root *,
+.sba-slideover-root *::before,
+.sba-slideover-root *::after {
+  box-sizing: border-box;
+}
+
 main.sba-panel {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  flex: 1;
+  min-height: 0;
 }
 
 .sba-header {

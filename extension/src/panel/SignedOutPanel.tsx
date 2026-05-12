@@ -3,7 +3,7 @@
 // (the `consent_dismissed` AuthError code).
 
 import { useState } from 'react';
-import { AuthError, signIn } from '../lib/auth';
+import { ExtensionApiError, signIn } from '../lib/extensionApi';
 
 interface SignedOutPanelProps {
   onSignedIn?: () => void;
@@ -20,9 +20,9 @@ export function SignedOutPanel({ onSignedIn }: SignedOutPanelProps) {
       await signIn();
       onSignedIn?.();
     } catch (err) {
-      if (err instanceof AuthError && err.code === 'consent_dismissed') {
+      if (err instanceof ExtensionApiError && err.code === 'consent_dismissed') {
         setError('Sign-in cancelled. Click again to retry.');
-      } else if (err instanceof AuthError) {
+      } else if (err instanceof ExtensionApiError) {
         setError(`Sign-in failed: ${err.message}`);
       } else {
         const message = err instanceof Error ? err.message : String(err);

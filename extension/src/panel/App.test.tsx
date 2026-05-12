@@ -1,8 +1,7 @@
-// Sidepanel state-machine tests. Exercises the four UI states by
-// driving the mocked auth hook and the callable wrappers. Renders
-// the `App` root rather than the inner panels so the wiring (which
-// panel for which state, including the permission-denied → flip)
-// is what's under test.
+// Panel state-machine tests. Exercises the four UI states by driving
+// the mocked extensionApi hooks. Renders the `App` root rather than
+// the inner panels so the wiring (which panel for which state,
+// including the permission-denied → flip) is what is under test.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -14,24 +13,21 @@ const signOutMock = vi.fn();
 const getMyPendingRequestsMock = vi.fn();
 const markRequestCompleteMock = vi.fn();
 
-vi.mock('../lib/auth', async () => {
-  const actual = await vi.importActual<typeof import('../lib/auth')>('../lib/auth');
+vi.mock('../lib/extensionApi', async () => {
+  const actual = await vi.importActual<typeof import('../lib/extensionApi')>('../lib/extensionApi');
   return {
     ...actual,
     useAuthState: () => useAuthStateMock(),
     signIn: (...args: unknown[]) => signInMock(...args),
     signOut: (...args: unknown[]) => signOutMock(...args),
+    getMyPendingRequests: (...args: unknown[]) => getMyPendingRequestsMock(...args),
+    markRequestComplete: (...args: unknown[]) => markRequestCompleteMock(...args),
   };
 });
 
-vi.mock('../lib/api', () => ({
-  getMyPendingRequests: (...args: unknown[]) => getMyPendingRequestsMock(...args),
-  markRequestComplete: (...args: unknown[]) => markRequestCompleteMock(...args),
-}));
-
 // Re-import after mocks so the module graph picks them up.
 async function renderApp() {
-  const { App } = await import('./main');
+  const { App } = await import('./App');
   return render(<App />);
 }
 
@@ -68,13 +64,13 @@ describe('App', () => {
   });
 
   it('renders the loading panel until the first auth-state fires', async () => {
-    useAuthStateMock.mockReturnValue({ status: 'loading', user: null });
+    useAuthStateMock.mockReturnValue({ status: 'loading' });
     await renderApp();
     expect(screen.getByTestId('sba-loading')).toBeInTheDocument();
   });
 
   it('renders SignedOutPanel when no user is signed in', async () => {
-    useAuthStateMock.mockReturnValue({ status: 'signed-out', user: null });
+    useAuthStateMock.mockReturnValue({ status: 'signed-out' });
     await renderApp();
     expect(screen.getByTestId('sba-signed-out')).toBeInTheDocument();
     expect(screen.getByTestId('sba-sign-in')).toBeInTheDocument();
@@ -83,7 +79,8 @@ describe('App', () => {
   it('renders NotAuthorizedPanel when the callable returns permission-denied', async () => {
     useAuthStateMock.mockReturnValue({
       status: 'signed-in',
-      user: { uid: 'u1', email: 'mgr@example.com' },
+      email: 'mgr@example.com',
+      displayName: null,
     });
     const denied = Object.assign(new Error('not a manager'), { code: 'permission-denied' });
     getMyPendingRequestsMock.mockRejectedValue(denied);
@@ -97,7 +94,8 @@ describe('App', () => {
   it('renders the empty state when the manager has no pending requests', async () => {
     useAuthStateMock.mockReturnValue({
       status: 'signed-in',
-      user: { uid: 'u1', email: 'mgr@example.com' },
+      email: 'mgr@example.com',
+      displayName: null,
     });
     getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
 
@@ -109,7 +107,8 @@ describe('App', () => {
   it('renders the pending-request list with member details', async () => {
     useAuthStateMock.mockReturnValue({
       status: 'signed-in',
-      user: { uid: 'u1', email: 'mgr@example.com' },
+      email: 'mgr@example.com',
+      displayName: null,
     });
     getMyPendingRequestsMock.mockResolvedValue({ requests: [fakeRequest()] });
 
@@ -124,7 +123,8 @@ describe('App', () => {
   it('opens the completion dialog and calls markRequestComplete on confirm', async () => {
     useAuthStateMock.mockReturnValue({
       status: 'signed-in',
-      user: { uid: 'u1', email: 'mgr@example.com' },
+      email: 'mgr@example.com',
+      displayName: null,
     });
     getMyPendingRequestsMock.mockResolvedValue({ requests: [fakeRequest()] });
     markRequestCompleteMock.mockResolvedValue({ ok: true });
@@ -151,7 +151,8 @@ describe('App', () => {
   it('omits the completionNote field when the textarea is empty', async () => {
     useAuthStateMock.mockReturnValue({
       status: 'signed-in',
-      user: { uid: 'u1', email: 'mgr@example.com' },
+      email: 'mgr@example.com',
+      displayName: null,
     });
     getMyPendingRequestsMock.mockResolvedValue({ requests: [fakeRequest()] });
     markRequestCompleteMock.mockResolvedValue({ ok: true });

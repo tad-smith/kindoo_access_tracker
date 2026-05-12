@@ -4,7 +4,7 @@
 // can tell which Google account they used and switch if needed.
 
 import { useState } from 'react';
-import { signOut } from '../lib/auth';
+import { signOut } from '../lib/extensionApi';
 
 interface NotAuthorizedPanelProps {
   email: string | null | undefined;

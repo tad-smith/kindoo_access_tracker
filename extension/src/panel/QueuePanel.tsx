@@ -14,8 +14,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { AccessRequest } from '@kindoo/shared';
-import { getMyPendingRequests, markRequestComplete } from '../lib/api';
-import { signOut } from '../lib/auth';
+import { getMyPendingRequests, markRequestComplete, signOut } from '../lib/extensionApi';
 import { STAKE_ID } from '../lib/constants';
 import { RequestCard } from './RequestCard';
 

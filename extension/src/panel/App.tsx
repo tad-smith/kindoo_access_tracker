@@ -1,5 +1,6 @@
-// Side-panel React root. Routes between four states:
-//   1. Auth loading (initial onAuthStateChanged hasn't fired)
+// React root for the content-script slide-over panel. Routes between
+// four states:
+//   1. Auth loading (initial auth.getState round-trip in flight)
 //   2. Signed-out — render the sign-in CTA
 //   3. Signed-in manager — render the pending-request queue
 //   4. Signed-in non-manager — render NotAuthorized
@@ -7,14 +8,17 @@
 // The "is this user a manager?" determination comes from the
 // callable: if `getMyPendingRequests` returns `permission-denied`,
 // the queue panel calls back into us to flip to NotAuthorized.
+//
+// Auth state is round-tripped through the service worker via
+// `chrome.runtime.sendMessage` (see `lib/extensionApi.ts`); the
+// content script cannot touch chrome.identity or the Firebase SDK
+// from the page context.
 
-import { StrictMode, useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import { useAuthState } from '../lib/auth';
+import { useState } from 'react';
+import { useAuthState } from '../lib/extensionApi';
 import { NotAuthorizedPanel } from './NotAuthorizedPanel';
 import { QueuePanel } from './QueuePanel';
 import { SignedOutPanel } from './SignedOutPanel';
-import './sidepanel.css';
 
 export function App() {
   const authState = useAuthState();
@@ -41,21 +45,8 @@ export function App() {
   }
 
   if (notAuthorized) {
-    return <NotAuthorizedPanel email={authState.user.email} />;
+    return <NotAuthorizedPanel email={authState.email} />;
   }
 
-  return (
-    <QueuePanel email={authState.user.email} onPermissionDenied={() => setNotAuthorized(true)} />
-  );
-}
-
-// Side-effect bootstrap. Guarded so module imports (e.g. from vitest)
-// do not crash when there is no `#root` element to mount into.
-const root = document.getElementById('root');
-if (root) {
-  createRoot(root).render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  );
+  return <QueuePanel email={authState.email} onPermissionDenied={() => setNotAuthorized(true)} />;
 }
