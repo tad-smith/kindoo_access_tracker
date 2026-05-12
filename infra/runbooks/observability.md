@@ -1,30 +1,25 @@
 # Runbook: Observability — metrics, alerts, logs
 
-What's monitored, where the data lives, what fires when, and how to add to it. Operator-readable; this runbook is the entry point when you see an alert or want to debug something.
+What is monitored, where the data lives, what fires when, and how to add to it. Operator-readable; this runbook is the entry point when you see an alert or want to debug something.
 
-> **STATUS (as of 2026-04-27):** Phase 1 skeleton. Most concrete content (metric names, alert numbers, console URLs) is **TODO until operator task B1** lands and creates the real Firebase projects in GCP.
+## What is monitored
 
-## What's monitored
+### Currently wired
 
-### Phase 1 (this phase)
+- **Cloud Functions 5xx rate** — alert on > 1/min sustained for 5min; routes to Tad's email. Defined in `infra/monitoring/alerts/5xx-rate.yaml`.
+- **Firestore rules-denied count** — log-based metric; baseline visibility, no alert. Defined in `infra/monitoring/metrics/firestore-rules-denied-count.yaml`.
+- **Audit trigger failures** — log-based metric on `auditTrigger` Cloud Function exceptions. Defined in `infra/monitoring/metrics/audit-trigger-failures.yaml`.
+- **Claim sync failures** — log-based metric on `syncAccessClaims`, `syncManagersClaims`, `syncSuperadminClaims` exceptions. Defined in `infra/monitoring/metrics/claim-sync-failures.yaml`.
 
-- **Cloud Functions 5xx rate** — alert on > 1/min for 5min; routes to Tad's email.
-- **Firestore rules-denied count** — log-based metric; useful baseline. No alert in Phase 1; review weekly during Phases 2–4.
-- **Audit trigger failures** — log-based metric; activates when Phase 8 lands the trigger.
-- **Claim sync failures** — log-based metric; activates when Phase 2 lands the triggers.
+### Not yet wired
 
-### Phase 4
+These were sketched in the migration plan but the alert/metric YAML files do not exist yet. Add them when the operational need is concrete.
 
-- Auth verification failures > 5/hour. (Catches misconfigured client builds or attempted forgery.)
-
-### Phase 8
-
-- Importer didn't complete within 10min of scheduler fire.
-- Expiry didn't complete within 5min of fire.
+- Auth verification failures > 5/hour. Catches misconfigured client builds or attempted forgery.
+- Importer did not complete within 10 minutes of scheduler fire.
+- Expiry did not complete within 5 minutes of scheduler fire.
 
 ## Where to find data
-
-> **TODO post-B1:** Drop the actual console URLs in here. Until then, generic templates.
 
 | Concern | Where |
 |---|---|
@@ -33,7 +28,7 @@ What's monitored, where the data lives, what fires when, and how to add to it. O
 | Firestore rules-denied requests | Cloud Logging with filter `resource.type="firestore.googleapis.com/Database" AND protoPayload.status.code=7` |
 | Active alerts | `https://console.cloud.google.com/monitoring/alerting?project=kindoo-prod` |
 | Notification channels | `https://console.cloud.google.com/monitoring/alerting/notifications?project=kindoo-prod` |
-| GCS backup contents | `gsutil ls gs://kindoo-prod-backups/` |
+| GCS backup contents | `gcloud storage ls gs://kindoo-prod-backups/` |
 
 For staging, replace `kindoo-prod` with `kindoo-staging` everywhere.
 
@@ -50,8 +45,6 @@ For staging, replace `kindoo-prod` with `kindoo-staging` everywhere.
   - Quota or rate-limit hit. Check the function's metrics.
 - **If urgent:** Roll back the function deploy via `infra/runbooks/deploy.md` rollback section.
 - **Auto-close:** 24h.
-
-> **TODO Phase 4+:** Add response runbooks for each subsequent alert as it lands.
 
 ## How to add a new metric
 
@@ -86,6 +79,13 @@ For staging, replace `kindoo-prod` with `kindoo-staging` everywhere.
 4. Test by deliberately triggering the condition in staging (where appropriate).
 5. Document the response in this runbook's "What fires, what to do" section.
 
-## Manual verification (post-B1)
+## Manual verification
 
-> **TODO:** Once B1 lands and metrics + alerts are applied, walk this runbook. Verify each link resolves and each described path works. Per `infra/CLAUDE.md` invariant 5, runbooks must be testable.
+Once a quarter (or after any change to the alert/metric YAML in this directory), walk this runbook against `kindoo-prod`:
+
+1. Open each link in the "Where to find data" table and confirm it loads.
+2. Confirm each currently-wired metric appears under Cloud Logging → Logs-based Metrics.
+3. Confirm each currently-wired alert appears under Cloud Monitoring → Alerting with `kindoo-prod` selected.
+4. Confirm the notification channel for the 5xx alert still points at Tad's email.
+
+Per `infra/CLAUDE.md` invariant 5, runbooks must be testable; this is the check.
