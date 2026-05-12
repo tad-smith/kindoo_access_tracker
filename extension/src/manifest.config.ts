@@ -6,18 +6,23 @@
 // chrome.identity + Firebase Auth + the callable invocations; the
 // content script posts messages via chrome.runtime.sendMessage.
 //
-// The Kindoo origin pattern is a placeholder until the operator
-// confirms the production domain. Both `host_permissions` and
-// `content_scripts[].matches` must agree once the real origin lands.
+// Kindoo runs across two origins confirmed by a live network capture:
+//   - https://web.kindoo.tech/*         — the admin UI (where the
+//     content script injects)
+//   - https://service89.kindoo.tech/*   — the ASMX API endpoints
+//
+// host_permissions includes BOTH origins so v2 can `fetch()` the
+// Kindoo API from the content script without triggering a Chrome Web
+// Store re-review for a manifest change. v1 does not call the API;
+// the listing in host_permissions is forward compatibility only.
+//
+// content_scripts.matches lists only the UI origin — the API host
+// has no DOM to inject into.
 
 import { defineManifest } from '@crxjs/vite-plugin';
 
-// TODO confirm Kindoo origin with operator. Provisional pattern below
-// targets *.kindoo.io. Update both `host_permissions` and the
-// content_scripts `matches` entry together — they MUST agree, or the
-// CS will inject without permission to call back into the SW from
-// the page context.
-const KINDOO_MATCH_PATTERN = 'https://*.kindoo.io/*';
+const KINDOO_UI_ORIGIN = 'https://web.kindoo.tech/*';
+const KINDOO_API_ORIGIN = 'https://service89.kindoo.tech/*';
 
 export default defineManifest({
   manifest_version: 3,
@@ -37,14 +42,14 @@ export default defineManifest({
     default_title: 'Toggle SBA helper panel',
   },
   permissions: ['identity', 'identity.email', 'storage'],
-  host_permissions: [KINDOO_MATCH_PATTERN],
+  host_permissions: [KINDOO_UI_ORIGIN, KINDOO_API_ORIGIN],
   background: {
     service_worker: 'src/background/index.ts',
     type: 'module',
   },
   content_scripts: [
     {
-      matches: [KINDOO_MATCH_PATTERN],
+      matches: [KINDOO_UI_ORIGIN],
       js: ['src/content/index.ts'],
       run_at: 'document_idle',
     },
