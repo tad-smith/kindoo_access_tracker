@@ -6,8 +6,6 @@ GitHub Actions workflows for the Stake Building Access repository.
 |---|---|---|
 | `test.yml` | **`infra/ci/workflows/test.yml`** is the source-of-truth | Push to `main`; all PRs. Lints, typechecks, runs the test suite, builds. The file in this directory is a verbatim copy. |
 
-Removed 2026-05-11: `pages.yml` (legacy GitHub-Pages wrapper deploy for `kindoo.csnorth.org`). Apps Script is decommissioned (Phase 11 cutover, see `docs/changelog/phase-11-cutover.md`); DNS now points at Firebase Hosting. GitHub Pages was unpublished from repo settings; this workflow file is retired.
-
 ## Why two copies of test.yml?
 
 GitHub Actions only reads workflow files from `.github/workflows/` — it ignores files anywhere else in the repo. But `infra/ci/workflows/` is the conventional home for CI config in this monorepo so it's discoverable next to the rest of the operational tooling.
@@ -20,4 +18,4 @@ When updating `test.yml`, edit `infra/ci/workflows/test.yml` and copy it to here
 cp infra/ci/workflows/test.yml .github/workflows/test.yml
 ```
 
-A pre-commit lint check could enforce parity. Out of scope for Phase 1.
+A pre-commit lint check could enforce parity.
