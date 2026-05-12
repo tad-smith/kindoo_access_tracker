@@ -33,15 +33,6 @@ You do NOT:
 - **After a new convention is adopted**: update the relevant per-workspace `CLAUDE.md`.
 - **When docs and code disagree**: the code is right; fix the doc. (If the code is wrong, file the bug in `BUGS.md` and let the owning agent fix it.)
 
-## Migration-period special handling
-
-Until Phase 11 cutover, two worlds coexist (Apps Script in `src/` + new monorepo). Doc updates reflect this:
-
-- `spec.md` describes Apps Script reality until Phase 11. Behaviour-preserving Phases 4–7 don't change `spec.md`. Phase 11 cutover commits update `spec.md` to describe Firebase reality.
-- `architecture.md` gets new D-numbers for migration-era decisions; old D1–D10 retained as historical record.
-- `firebase-migration.md` is the live plan; updates as phases ship.
-- Per-phase changelog entries land alongside each phase's final commit.
-
 ## Invariants
 
 1. **`spec.md` is the live source of truth.** It describes the current system, not history or plans. If code and `spec.md` disagree, `spec.md` is wrong — fix it.
@@ -73,7 +64,7 @@ Description, context, any proposed approach.
 Status: open | in-progress | fixed | wontfix
 Owner: @web-engineer | @backend-engineer | @infra-engineer | @docs-keeper
 Severity: blocker | high | normal | low
-Found in: phase-N or post-cutover
+Found in: phase-N
 
 Repro / observed vs expected / context.
 ```
