@@ -46,9 +46,10 @@ Somewhere in 1–4 the chain breaks on iOS specifically. Verified: latest stagin
 ---
 
 ## [B-2] setupGate bootstrap-admin fallback uses `??` where `||` is needed
-Status: open
+Status: closed (fixed in PR #81)
 Owner: @web-engineer
 Phase: post Phase 11 (deferred — non-blocking until next fresh-project bootstrap)
+Branch / PR: `fix/b-2-setupgate-empty-canonical-fallback` (PR #81)
 
 On a fresh Firebase project, the bootstrap admin signs in matching the seed doc's `bootstrap_admin_email` and lands on `SetupInProgress` instead of the bootstrap wizard. The gate's `adminCanonical === meCanonical` equality check fails because `meCanonical` is the empty string at that moment, so the wizard route is never selected even though the seed doc and the typed email agree.
 
@@ -60,7 +61,7 @@ On a fresh Firebase project, the bootstrap admin signs in matching the seed doc'
 
 **Fix shape:** swap `??` for `||` on line 181 so the empty string falls through to the `canonicalEmailFn(principal.email ?? '')` branch. Add a unit test covering the `principal.canonical === ''` case (no claims yet, empty-string canonical) — assert the gate evaluates to `wizard` when `bootstrap_admin_email` matches the typed email.
 
-**Branch / PR:** none — fix not yet scheduled.
+**Fix shipped in PR #81 (2026-05-03):** `apps/web/src/lib/setupGate.ts` swaps `??` for `||` on the `meCanonical` fallback. The two other `??` operators in the same file (`data.bootstrap_admin_email ?? ''` and `principal.email ?? ''`) were reviewed and left as-is — both pass through `canonicalEmailFn`, which collapses empty input to `''`, and the downstream `adminCanonical && meCanonical && ...` guard already short-circuits on the resulting empty string. `apps/web/src/lib/setupGate.test.ts` adds two regression cases: empty-canonical with matching typed email routes to `wizard`; empty-canonical AND empty-email still routes to `setup-in-progress`.
 
 ---
 
