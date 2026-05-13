@@ -565,20 +565,27 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
   // stamp it) used to inherit the doc's prior `lastActor`, producing an
   // audit row that misattributed the change to whoever wrote the doc
   // last. The trigger now records the `OutOfBand` sentinel actor when
-  // `before.lastActor === after.lastActor` on an update.
+  // BOTH `lastActor` AND `last_modified_at` are unchanged across the
+  // update. The double check defends against the same-operator-twice
+  // false positive: every in-band write stamps a fresh
+  // serverTimestamp on `last_modified_at`, so two consecutive in-band
+  // writes always produce distinct values — only out-of-band writes
+  // leave both fields untouched.
 
-  it('update that leaves lastActor unchanged records the OutOfBand sentinel actor', async () => {
+  it('update that leaves lastActor + last_modified_at unchanged records the OutOfBand sentinel actor', async () => {
     const before = {
       stake_id: STAKE_ID,
       setup_complete: true,
       stake_name: 'CS North Stake',
       kindoo_expected_site_name: 'STAGING - Colorado Springs North Stake',
       lastActor: { email: 'ExpiryTrigger', canonical: 'ExpiryTrigger' },
+      last_modified_at: 't1',
     };
     const after = {
       ...before,
       kindoo_expected_site_name: 'Colorado Springs North Stake',
-      // lastActor intentionally NOT updated — this is the out-of-band signature.
+      // lastActor + last_modified_at intentionally NOT updated — this
+      // is the out-of-band signature.
     };
     await auditStakeWrites.run(makeEvent({ params: { stakeId: STAKE_ID }, before, after }));
     const rows = await readAuditRows();
@@ -601,8 +608,10 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
       ward_name: 'Greenwood Ward',
       seat_cap: 20,
       lastActor: lastActor('alice@gmail.com'),
+      last_modified_at: 't1',
     };
-    const after = { ...before, seat_cap: 25 }; // lastActor unchanged
+    // Both lastActor and last_modified_at unchanged — out-of-band edit.
+    const after = { ...before, seat_cap: 25 };
     await auditWardWrites.run(
       makeEvent({ params: { stakeId: STAKE_ID, wardId: 'GE' }, before, after }),
     );
@@ -614,7 +623,8 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
   it('out-of-band detection fires when lastActor is absent on both sides', async () => {
     // Doc never had a lastActor (legacy state) and the out-of-band
     // write didn't add one. Both-absent counts as "writer didn't touch
-    // it" — same sentinel.
+    // it" — same sentinel. last_modified_at also absent on both sides,
+    // which is the carve-out for collections without that field.
     const before = {
       ward_code: 'GE',
       ward_name: 'Greenwood Ward',
@@ -629,7 +639,7 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     expect(rows[0]!.actor_canonical).toBe('OutOfBand');
   });
 
-  it('normal write that updates lastActor keeps the new actor (no sentinel)', async () => {
+  it('normal write that updates lastActor + last_modified_at keeps the new actor (no sentinel)', async () => {
     // Regression guard for the happy path: every in-app write stamps
     // a fresh lastActor along with the field change, and that real
     // actor must be recorded — NOT the sentinel.
@@ -638,14 +648,103 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
       ward_name: 'Greenwood Ward',
       seat_cap: 20,
       lastActor: lastActor('alice@gmail.com'),
+      last_modified_at: 't1',
     };
-    const after = { ...before, seat_cap: 25, lastActor: lastActor('bob@gmail.com') };
+    const after = {
+      ...before,
+      seat_cap: 25,
+      lastActor: lastActor('bob@gmail.com'),
+      last_modified_at: 't2',
+    };
     await auditWardWrites.run(
       makeEvent({ params: { stakeId: STAKE_ID, wardId: 'GE' }, before, after }),
     );
     const rows = await readAuditRows();
     expect(rows).toHaveLength(1);
     expect(rows[0]!.actor_canonical).toBe('bob@gmail.com');
+  });
+
+  it('same-actor in-band write (B-5 follow-up regression) keeps the actor, NOT the sentinel', async () => {
+    // The same operator touches the same doc twice in a row. Both
+    // writes stamp identical `lastActor` values but DIFFERENT
+    // `last_modified_at` server timestamps. Under the original B-5
+    // heuristic ("lastActor unchanged → OutOfBand") this falsely
+    // tagged the second write as out-of-band — fired in staging when
+    // v2.2's markRequestComplete merged a 2nd add-request into a seat
+    // the same operator had just created.
+    const before = {
+      ward_code: 'GE',
+      ward_name: 'Greenwood Ward',
+      seat_cap: 20,
+      lastActor: lastActor('tad@gmail.com'),
+      last_modified_at: 't1',
+    };
+    const after = {
+      ...before,
+      seat_cap: 25,
+      // Same actor stamps lastActor; serverTimestamp bumps last_modified_at.
+      last_modified_at: 't2',
+    };
+    await auditWardWrites.run(
+      makeEvent({ params: { stakeId: STAKE_ID, wardId: 'GE' }, before, after }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actor_canonical).toBe('tad@gmail.com');
+    expect(rows[0]!.actor_email).toBe('tad@gmail.com');
+  });
+
+  it('same-actor write that bumps lastActor but not last_modified_at still records the new actor', async () => {
+    // Extremely unusual shape — would require the writer to stamp
+    // lastActor and explicitly omit the timestamp bump. lastActor is
+    // the signal of intent; treat it as authoritative. The sentinel
+    // only fires when BOTH bookkeeping fields stay still.
+    const before = {
+      ward_code: 'GE',
+      ward_name: 'Greenwood Ward',
+      seat_cap: 20,
+      lastActor: lastActor('alice@gmail.com'),
+      last_modified_at: 't1',
+    };
+    const after = {
+      ...before,
+      seat_cap: 25,
+      lastActor: lastActor('carol@gmail.com'),
+      // last_modified_at intentionally unchanged.
+    };
+    await auditWardWrites.run(
+      makeEvent({ params: { stakeId: STAKE_ID, wardId: 'GE' }, before, after }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actor_canonical).toBe('carol@gmail.com');
+  });
+
+  it('same-actor write to a collection without last_modified_at (requests) still flags out-of-band when lastActor unchanged', async () => {
+    // Carve-out check: `requests` doesn't carry `last_modified_at`, so
+    // the heuristic falls back to "lastActor unchanged → OutOfBand".
+    // An out-of-band edit there still trips the sentinel.
+    const before = {
+      request_id: 'r1',
+      type: 'add_manual',
+      scope: 'GE',
+      status: 'pending',
+      member_canonical: 'sub@gmail.com',
+      requester_canonical: 'mgr@gmail.com',
+      lastActor: lastActor('mgr@gmail.com'),
+      // No last_modified_at by schema.
+    };
+    const after = {
+      ...before,
+      comment: 'edited out of band',
+      // lastActor unchanged — out-of-band signature for this collection.
+    };
+    await auditRequestWrites.run(
+      makeEvent({ params: { stakeId: STAKE_ID, requestId: 'r1' }, before, after }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actor_canonical).toBe('OutOfBand');
   });
 
   it('creates and deletes are not classified as out-of-band even with no lastActor change', async () => {
