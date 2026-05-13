@@ -2,9 +2,9 @@
 
 ## 1. Status and scope
 
-Design doc for the Firebase nav redesign. Implementation lands in Firebase migration **Phase 10.1** (operator-deferred at Phase 11 cutover).
+Design doc for the Firebase nav redesign. **Shipped 2026-05-01 in PR #35** as Firebase migration Phase 10.1. Components live under `apps/web/src/components/layout/` (`Shell`, `LeftRail`, `IconRail`, `NavOverlay`, `navModel`).
 
-Phase entry in [`firebase-migration.md`](firebase-migration.md#phase-101--navigation-redesign-left-rail--sectioned-nav). The Phase 4 layout shell + role-aware `Nav.tsx` that this redesign replaces lands first; the full nav-item set isn't complete until Phase 7.
+Phase entry in [`firebase-migration.md`](firebase-migration.md#phase-101--navigation-redesign-left-rail--sectioned-nav). This design doc remains the canonical spec for any future re-implementation or refactor.
 
 ## 2. Goals
 
@@ -176,6 +176,6 @@ With hamburger + brand icon + stake name + (truncated or hidden) user email, the
 
 ## 16. Implementation timing and dependencies
 
-Not implemented in the Apps Script production app. Lands during Firebase migration Phase 10.1 — see [`firebase-migration.md`](firebase-migration.md#phase-101--navigation-redesign-left-rail--sectioned-nav). Phase 10.1 depends on Phase 4 (web SPA shell with topbar + Nav scaffolding) and Phase 7 (manager admin pages, which establish the full nav-item set). Implementation begins when the operator schedules the phase.
+Not implemented in the Apps Script production app. Shipped in Firebase migration Phase 10.1 — see [`firebase-migration.md`](firebase-migration.md#phase-101--navigation-redesign-left-rail--sectioned-nav). Phase 10.1 depended on Phase 4 (web SPA shell with topbar + Nav scaffolding) and Phase 7 (manager admin pages, which established the full nav-item set).
 
-The first implementation of this design landed in PR #35 / branch `phase-10.1-navigation-redesign`. This design doc remains the canonical spec for any future re-implementation or refactor.
+The first implementation of this design landed in PR #35 / branch `phase-10.1-navigation-redesign` on 2026-05-01. This design doc remains the canonical spec for any future re-implementation or refactor.

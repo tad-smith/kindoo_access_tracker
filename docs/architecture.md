@@ -415,7 +415,7 @@ Distinct from `CacheService`. `Sheet_getTab(name)` memoizes `SpreadsheetApp.getA
 
 ## 8. HTML & page routing
 
-> **Firebase port note.** The top-tab `Nav.html` described below is replaced in the Firebase port by a left-rail + sectioned-nav design (Quick Links / Rosters / Settings) that adapts across phone / tablet / desktop breakpoints. See [`navigation-redesign.md`](navigation-redesign.md) for the full spec; implementation lands in `firebase-migration.md` Phase 10.1. The `?p=` query-param routing convention (D9) and the role-gated bundle approach (§8.5) carry forward unchanged.
+> **Firebase port note.** The top-tab `Nav.html` described below was replaced in the Firebase port by a left-rail + sectioned-nav design (Quick Links / Rosters / Settings / Account) that adapts across phone / tablet / desktop breakpoints. See [`navigation-redesign.md`](navigation-redesign.md) for the full spec; shipped in `firebase-migration.md` Phase 10.1 on 2026-05-01. The `?p=` query-param routing convention (D9) was superseded by TanStack Router's file-based routes in the Firebase port; the role-gated bundle approach (§8.5) carries forward unchanged.
 
 - **Entry point**: `doGet(e)` returns an `HtmlOutput` built from `Layout.html` via `HtmlService.createTemplateFromFile('ui/Layout')`.
 - **Includes**: a global `include(path)` helper returns `HtmlService.createHtmlOutputFromFile(path).getContent()` so templates can compose each other via `<?!= include('ui/Styles') ?>`.

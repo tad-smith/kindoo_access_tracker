@@ -102,7 +102,7 @@ The web app reads the principal via `usePrincipal()` from `apps/web/src/lib/prin
 
 ## 5. Page map
 
-The SPA is built on TanStack Router with file-based routes under `apps/web/src/routes/`. Page components live under `apps/web/src/features/{feature}/pages/`. The current navigation is the Phase-4-vintage top-tab nav; the Phase 10.1 left-rail redesign is specced in [`navigation-redesign.md`](navigation-redesign.md) but its implementation is operator-deferred.
+The SPA is built on TanStack Router with file-based routes under `apps/web/src/routes/`. Page components live under `apps/web/src/features/{feature}/pages/`. Navigation is the Phase-10.1 left-rail + sectioned-nav design (hamburger drawer on phone, icon-only rail on tablet, full rail on desktop); components live under `apps/web/src/components/layout/`. Spec in [`navigation-redesign.md`](navigation-redesign.md).
 
 **Route gating.** Each route declares its role requirement; non-managers deep-linking to a manager page is currently inconsistently gated (T-31 — most manager routes rely on the nav not exposing them; only `/notifications` has an explicit redirect). Server-side enforcement is via Firestore rules regardless of client-side gating.
 
