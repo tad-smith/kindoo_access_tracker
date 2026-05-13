@@ -26,7 +26,7 @@ import {
   signInWithCredential,
   signOut as firebaseSignOut,
   type User,
-} from 'firebase/auth';
+} from 'firebase/auth/web-extension';
 import { auth } from './firebase';
 import { STORAGE_KEYS } from './messaging';
 // Note: in production this module runs in the service worker context.

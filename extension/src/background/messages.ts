@@ -16,7 +16,7 @@ import type {
   PrincipalSnapshot,
   WireError,
 } from '../lib/messaging';
-import type { User } from 'firebase/auth';
+import type { User } from 'firebase/auth/web-extension';
 
 /** Reduce a Firebase User to the slim cross-boundary shape. */
 function toPrincipalSnapshot(user: User): PrincipalSnapshot {

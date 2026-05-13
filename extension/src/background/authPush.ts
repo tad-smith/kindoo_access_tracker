@@ -8,7 +8,7 @@
 // establish connection. Receiving end does not exist."; we swallow
 // that — it just means the user is not on a Kindoo page right now.
 
-import type { User } from 'firebase/auth';
+import type { User } from 'firebase/auth/web-extension';
 import { subscribeAuthState } from '../lib/auth';
 import type { AuthStateChangedPush, PrincipalSnapshot } from '../lib/messaging';
 

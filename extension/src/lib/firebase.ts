@@ -11,7 +11,10 @@
 // which env file vite loads.
 
 import { initializeApp, type FirebaseApp } from 'firebase/app';
-import { getAuth, type Auth } from 'firebase/auth';
+// `firebase/auth/web-extension` is the SW-safe entry point. The default
+// `firebase/auth` import touches `document` during module init, which
+// fatally errors a MV3 service worker ("document is not defined").
+import { getAuth, type Auth } from 'firebase/auth/web-extension';
 import { getFunctions, type Functions } from 'firebase/functions';
 
 const firebaseConfig = {

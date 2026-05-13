@@ -1,7 +1,8 @@
 // Unit tests for the chrome.identity → Firebase Auth bridge. Mocks
-// `firebase/auth` and the `chrome.identity` surface; verifies the
-// happy path (token exchange → signInWithCredential) and the
-// consent-dismissed error arm.
+// `firebase/auth/web-extension` (the SW-safe entry) and the
+// `chrome.identity` surface; verifies the happy path
+// (token exchange → signInWithCredential) and the consent-dismissed
+// error arm.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,7 +13,7 @@ const credentialMock = vi.fn((_idToken: unknown, accessToken: string) => ({
   __credential: accessToken,
 }));
 
-vi.mock('firebase/auth', () => ({
+vi.mock('firebase/auth/web-extension', () => ({
   GoogleAuthProvider: { credential: credentialMock },
   onAuthStateChanged: onAuthStateChangedMock,
   signInWithCredential: signInWithCredentialMock,
