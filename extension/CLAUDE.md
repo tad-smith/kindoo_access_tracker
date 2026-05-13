@@ -49,9 +49,14 @@ extension/
 │   │       ├── client.ts          # multipart-form POST helper
 │   │       ├── endpoints.ts       # typed wrappers: getEnvironments, getEnvironmentRules,
 │   │       │                      # checkUserType, inviteUser, editUser,
-│   │       │                      # saveAccessRule, lookupUserByEmail, revokeUser
-│   │       └── provision.ts       # v2.2 — orchestrates add/change/remove flows
-│   │                              # (read-first / merged-state pattern)
+│   │       │                      # saveAccessRule, lookupUserByEmail, revokeUser,
+│   │       │                      # listAllEnvironmentUsers (Sync, paginated)
+│   │       ├── provision.ts       # v2.2 — orchestrates add/change/remove flows
+│   │       │                      # (read-first / merged-state pattern)
+│   │       └── sync/              # Sync Phase 1 — read-only drift detection
+│   │           ├── parser.ts      # Kindoo Description → resolved scope+calling segments
+│   │           ├── classifier.ts  # segment → intended seat shape (auto/manual/temp)
+│   │           └── detector.ts    # union(seats, kindoo users) → Discrepancy[]
 │   ├── panel/
 │   │   ├── App.tsx                # React root — five-state router
 │   │   ├── SignedOutPanel.tsx
@@ -60,6 +65,7 @@ extension/
 │   │   ├── QueuePanel.tsx
 │   │   ├── RequestCard.tsx        # v2.2 Provision & Complete button
 │   │   ├── ResultDialog.tsx       # v2.2 post-provision result + retry
+│   │   ├── SyncPanel.tsx          # Sync Phase 1 — read-only drift report
 │   │   └── panel.css              # panel styles (Shadow DOM scoped)
 │   └── lib/
 │       ├── firebase.ts            # Firebase app + auth + functions singletons (SW)

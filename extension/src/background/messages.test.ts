@@ -31,10 +31,12 @@ vi.mock('../lib/api', () => ({
 const loadStakeConfigMock = vi.fn();
 const writeKindooConfigMock = vi.fn();
 const loadSeatByEmailMock = vi.fn();
+const loadSyncDataMock = vi.fn();
 vi.mock('./data', () => ({
   loadStakeConfig: (...args: unknown[]) => loadStakeConfigMock(...args),
   writeKindooConfig: (...args: unknown[]) => writeKindooConfigMock(...args),
   loadSeatByEmail: (...args: unknown[]) => loadSeatByEmailMock(...args),
+  loadSyncData: (...args: unknown[]) => loadSyncDataMock(...args),
 }));
 
 describe('handleRequest', () => {
@@ -49,6 +51,7 @@ describe('handleRequest', () => {
     loadStakeConfigMock.mockReset();
     writeKindooConfigMock.mockReset();
     loadSeatByEmailMock.mockReset();
+    loadSyncDataMock.mockReset();
   });
   afterEach(() => {
     vi.resetModules();
@@ -262,6 +265,34 @@ describe('handleRequest', () => {
       type: 'data.getSeatByEmail',
       canonical: 'x@example.com',
     });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'permission-denied', message: 'rules blocked the read' },
+    });
+  });
+
+  it('data.getSyncData returns the loaded sync bundle', async () => {
+    const bundle = {
+      stake: { stake_id: 'csnorth', stake_name: 'CSN' },
+      wards: [{ ward_code: 'CO' }],
+      buildings: [{ building_id: 'b1' }],
+      seats: [{ member_canonical: 'a@x.com' }],
+      wardCallingTemplates: [{ calling_name: 'X' }],
+      stakeCallingTemplates: [],
+    };
+    loadSyncDataMock.mockResolvedValue(bundle);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.getSyncData' });
+    expect(loadSyncDataMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: true, data: bundle });
+  });
+
+  it('data.getSyncData surfaces loader rejections as wire errors', async () => {
+    loadSyncDataMock.mockRejectedValue(
+      Object.assign(new Error('rules blocked the read'), { code: 'permission-denied' }),
+    );
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.getSyncData' });
     expect(result).toEqual({
       ok: false,
       error: { code: 'permission-denied', message: 'rules blocked the read' },

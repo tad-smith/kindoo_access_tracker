@@ -11,6 +11,7 @@ import {
   getEnvironments,
   getEnvironmentRules,
   inviteUser,
+  listAllEnvironmentUsers,
   lookupUserByEmail,
   revokeUser,
   revokeUserFromAccessSchedule,
@@ -387,6 +388,119 @@ describe('lookupUserByEmail', () => {
       expiryTimeZone: '',
       accessSchedules: [],
     });
+  });
+});
+
+describe('listAllEnvironmentUsers', () => {
+  function page(users: ReturnType<typeof richUser>[], total: number) {
+    return ok({
+      CurrentNumberOfRows: users.length,
+      TotalRecordNumber: total,
+      EUList: users,
+    });
+  }
+
+  it('loops until a short page (length < 50) terminates the read', async () => {
+    // 2 pages: first 50 users, second 10 (< 50 → terminate).
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        const users = Array.from({ length: 50 }, (_, i) =>
+          richUser({ EUID: `e${i}`, Username: `u${i}@example.com` }),
+        );
+        return page(users, 60);
+      }
+      const users = Array.from({ length: 10 }, (_, i) =>
+        richUser({ EUID: `e${50 + i}`, Username: `u${50 + i}@example.com` }),
+      );
+      return page(users, 60);
+    });
+    const result = await listAllEnvironmentUsers(SESSION, fetchImpl);
+    expect(result).toHaveLength(60);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('advances `start` by 50 each iteration', async () => {
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      call += 1;
+      if (call < 3) {
+        const users = Array.from({ length: 50 }, (_, i) =>
+          richUser({ EUID: `e${call}-${i}`, Username: `u${call}-${i}@example.com` }),
+        );
+        return page(users, 110);
+      }
+      return page([richUser({ EUID: 'last', Username: 'last@example.com' })], 110);
+    });
+    await listAllEnvironmentUsers(SESSION, fetchImpl);
+    const starts = fetchImpl.mock.calls.map(async (call) => {
+      const [, init] = call as unknown as [unknown, RequestInit];
+      const form = await new Request('https://test.invalid/', init).formData();
+      return form.get('start');
+    });
+    const resolved = await Promise.all(starts);
+    expect(resolved).toEqual(['0', '50', '100']);
+  });
+
+  it('stops when start reaches TotalRecordNumber even on a full-size page', async () => {
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        // Page-size=50, total=50 — only one full page is needed.
+        const users = Array.from({ length: 50 }, (_, i) =>
+          richUser({ EUID: `e${i}`, Username: `u${i}@example.com` }),
+        );
+        return page(users, 50);
+      }
+      // Defensive — shouldn't be reached.
+      return page([], 50);
+    });
+    const result = await listAllEnvironmentUsers(SESSION, fetchImpl);
+    expect(result).toHaveLength(50);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles 3 pages with truncation when TotalRecordNumber < pages × 50', async () => {
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        const users = Array.from({ length: 50 }, (_, i) =>
+          richUser({ EUID: `a${i}`, Username: `a${i}@x.com` }),
+        );
+        return page(users, 110);
+      }
+      if (call === 2) {
+        const users = Array.from({ length: 50 }, (_, i) =>
+          richUser({ EUID: `b${i}`, Username: `b${i}@x.com` }),
+        );
+        return page(users, 110);
+      }
+      // 10 leftover users.
+      const users = Array.from({ length: 10 }, (_, i) =>
+        richUser({ EUID: `c${i}`, Username: `c${i}@x.com` }),
+      );
+      return page(users, 110);
+    });
+    const result = await listAllEnvironmentUsers(SESSION, fetchImpl);
+    expect(result).toHaveLength(110);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns an empty list when the first page is empty', async () => {
+    const fetchImpl = vi.fn(async () => page([], 0));
+    const result = await listAllEnvironmentUsers(SESSION, fetchImpl);
+    expect(result).toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to a bare-array response shape', async () => {
+    const fetchImpl = vi.fn(async () => ok([richUser({ EUID: 'bare1', Username: 'bare1@x.com' })]));
+    const result = await listAllEnvironmentUsers(SESSION, fetchImpl);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.euid).toBe('bare1');
   });
 });
 

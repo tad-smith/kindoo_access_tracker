@@ -10,7 +10,7 @@
 
 import { signIn, signOut, currentUser, waitForAuthHydrated, AuthError } from '../lib/auth';
 import { getMyPendingRequests, markRequestComplete } from '../lib/api';
-import { loadSeatByEmail, loadStakeConfig, writeKindooConfig } from './data';
+import { loadSeatByEmail, loadStakeConfig, loadSyncData, writeKindooConfig } from './data';
 import type {
   AuthSnapshot,
   ExtensionRequest,
@@ -130,6 +130,14 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
       try {
         const seat = await loadSeatByEmail(req.canonical);
         return { ok: true, data: seat };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.getSyncData': {
+      try {
+        const data = await loadSyncData();
+        return { ok: true, data };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }
