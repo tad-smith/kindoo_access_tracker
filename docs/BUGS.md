@@ -6,6 +6,34 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-11] New Request screen — when `scope === 'stake'`, all buildings should be checked by default
+Status: open
+Owner: @web-engineer
+Phase: post Phase 11
+Severity: low-medium
+
+On the New Request page, picking `scope === 'stake'` leaves every building checkbox unchecked. The manager has to manually tick every building to grant the requested user stake-wide access — for a stake with N buildings, N manual clicks per request, with the failure mode being a quietly-forgotten building rather than a visible error. The expected default is "all buildings checked" because stake-scope means "everywhere"; unchecking specific buildings to exclude is the rare case. Ward-scope requests are unaffected — the building is inherited from the ward and no checkbox UI renders on that path, so this is strictly a stake-scope UX defect.
+
+**Symptom:** on `/new`, choose any member, set scope to `stake`, observe every building checkbox starts unchecked. Submitting without re-checking grants access to zero buildings (or however many the manager manually clicked).
+
+**Repro:**
+1. Open the SBA web app, navigate to `/new` ("New Request").
+2. Pick any member; set scope to `stake`.
+3. Observe: building checkboxes all start unchecked.
+4. Expected: every building checked; manager unchecks specific ones to exclude.
+
+**Severity:** low-medium. No data corruption, no security impact. Pure UX papercut that scales with stake size — every stake-scope request costs N clicks where N is the building count, and a forgotten building silently narrows the grant the manager intended to make stake-wide.
+
+**Suspected layer:** the request form's default-state setter (likely `apps/web/src/features/requests/` form component). The `building_names` field initialises to `[]` regardless of scope; the scope-change handler doesn't repopulate the field when scope flips to `stake`.
+
+**Proposed fix:** in the form's scope-change handler (or the `useFormDefaults` / `react-hook-form` `reset` path), when `scope === 'stake'`, set `building_names` to the stake's full building list (e.g. `stake.buildings.map(b => b.building_name)`). When scope changes to a ward, fall back to whatever the ward path uses today (the ward-scope branch doesn't render the checkbox UI, so the field value there is consumed elsewhere or ignored — confirm during implementation). Coordinate with `react-hook-form` reset semantics so the change re-renders the checkbox row.
+
+**Won't fix in:** any in-flight PR — this is a standalone SPA UX bug, unrelated to the Chrome extension v2.2 work on PR #88. File and fix in its own PR.
+
+**Branch / PR:** none — fix not yet started.
+
+---
+
 ## [B-1] iPhone PWA notification tap doesn't navigate to the deep-link target
 Status: open
 Owner: @web-engineer
