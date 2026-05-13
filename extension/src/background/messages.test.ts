@@ -28,6 +28,13 @@ vi.mock('../lib/api', () => ({
   markRequestComplete: (...args: unknown[]) => markRequestCompleteMock(...args),
 }));
 
+const loadStakeConfigMock = vi.fn();
+const writeKindooConfigMock = vi.fn();
+vi.mock('./data', () => ({
+  loadStakeConfig: (...args: unknown[]) => loadStakeConfigMock(...args),
+  writeKindooConfig: (...args: unknown[]) => writeKindooConfigMock(...args),
+}));
+
 describe('handleRequest', () => {
   beforeEach(() => {
     signInMock.mockReset();
@@ -37,6 +44,8 @@ describe('handleRequest', () => {
     waitForAuthHydratedMock.mockResolvedValue(null);
     getMyPendingRequestsMock.mockReset();
     markRequestCompleteMock.mockReset();
+    loadStakeConfigMock.mockReset();
+    writeKindooConfigMock.mockReset();
   });
   afterEach(() => {
     vi.resetModules();
@@ -135,6 +144,79 @@ describe('handleRequest', () => {
       completionNote: 'note',
     });
     expect(result).toEqual({ ok: true, data: { ok: true } });
+  });
+
+  it('data.getStakeConfig returns the loaded bundle', async () => {
+    const fakeBundle = {
+      stake: { stake_id: 'csnorth', stake_name: 'CSN' },
+      buildings: [{ building_id: 'b1', building_name: 'B1' }],
+    };
+    loadStakeConfigMock.mockResolvedValue(fakeBundle);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.getStakeConfig' });
+    expect(loadStakeConfigMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: true, data: fakeBundle });
+  });
+
+  it('data.getStakeConfig surfaces loader errors as a wire error', async () => {
+    loadStakeConfigMock.mockRejectedValue(
+      Object.assign(new Error('rules blocked the read'), { code: 'permission-denied' }),
+    );
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.getStakeConfig' });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'permission-denied', message: 'rules blocked the read' },
+    });
+  });
+
+  it('data.writeKindooConfig rejects with unauthenticated when no user is signed in', async () => {
+    currentUserMock.mockReturnValue(null);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.writeKindooConfig',
+      payload: { siteId: 27994, siteName: 'CSN', buildingRules: [] },
+    });
+    expect(writeKindooConfigMock).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'unauthenticated', message: 'sign in before saving config' },
+    });
+  });
+
+  it('data.writeKindooConfig forwards the payload + current user to the writer', async () => {
+    const user = { uid: 'u1', email: 'mgr@example.com', displayName: 'Manager' };
+    currentUserMock.mockReturnValue(user);
+    writeKindooConfigMock.mockResolvedValue(undefined);
+    const payload = {
+      siteId: 27994,
+      siteName: 'Colorado Springs North Stake',
+      buildingRules: [{ buildingId: 'cordera', ruleId: 6248, ruleName: 'Cordera Doors' }],
+    };
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.writeKindooConfig', payload });
+    expect(writeKindooConfigMock).toHaveBeenCalledWith(payload, user);
+    expect(result).toEqual({ ok: true, data: { ok: true } });
+  });
+
+  it('data.writeKindooConfig surfaces writer rejections as wire errors', async () => {
+    currentUserMock.mockReturnValue({
+      uid: 'u1',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    writeKindooConfigMock.mockRejectedValue(
+      Object.assign(new Error('rules denied write'), { code: 'permission-denied' }),
+    );
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.writeKindooConfig',
+      payload: { siteId: 27994, siteName: 'CSN', buildingRules: [] },
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'permission-denied', message: 'rules denied write' },
+    });
   });
 });
 

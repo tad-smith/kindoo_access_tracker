@@ -10,6 +10,7 @@
 
 import { signIn, signOut, currentUser, waitForAuthHydrated, AuthError } from '../lib/auth';
 import { getMyPendingRequests, markRequestComplete } from '../lib/api';
+import { loadStakeConfig, writeKindooConfig } from './data';
 import type {
   AuthSnapshot,
   ExtensionRequest,
@@ -101,6 +102,29 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
       // through the SW; this branch exists so the discriminated
       // union compiles to a real handler.
       return { ok: true, data: { done: true } };
+    }
+    case 'data.getStakeConfig': {
+      try {
+        const data = await loadStakeConfig();
+        return { ok: true, data };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.writeKindooConfig': {
+      try {
+        const user = currentUser();
+        if (!user) {
+          return {
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before saving config' },
+          };
+        }
+        await writeKindooConfig(req.payload, user);
+        return { ok: true, data: { ok: true } };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
     }
   }
 }

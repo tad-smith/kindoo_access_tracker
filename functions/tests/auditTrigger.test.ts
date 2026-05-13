@@ -422,6 +422,37 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     expect(rows[0]!.action).toBe('setup_complete');
   });
 
+  // -------- Extension v2.1 — kindoo_config diff --------
+
+  it('stake.kindoo_config write produces an audit row with the new field in the diff', async () => {
+    const before = {
+      stake_id: STAKE_ID,
+      setup_complete: true,
+      stake_name: 'CS North Stake',
+      lastActor: lastActor('mgr@gmail.com'),
+    };
+    const kindooConfig = {
+      site_id: 27994,
+      site_name: 'CS North Stake',
+      configured_at: '2026-05-12T12:00:00.000Z',
+      configured_by: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
+    };
+    const after = { ...before, kindoo_config: kindooConfig };
+    await auditStakeWrites.run(makeEvent({ params: { stakeId: STAKE_ID }, before, after }));
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('update_stake');
+    expect(rows[0]!.entity_type).toBe('stake');
+    expect(rows[0]!.entity_id).toBe(STAKE_ID);
+    expect(rows[0]!.actor_canonical).toBe('mgr@gmail.com');
+    // Before snapshot does not carry the new field; after snapshot does.
+    expect((rows[0]!.before as Record<string, unknown>)['kindoo_config']).toBeUndefined();
+    expect((rows[0]!.after as Record<string, unknown>)['kindoo_config']).toMatchObject({
+      site_id: 27994,
+      site_name: 'CS North Stake',
+    });
+  });
+
   // -------- No-op skip --------
 
   it('no-op updates (only bookkeeping changes) do NOT emit a row', async () => {

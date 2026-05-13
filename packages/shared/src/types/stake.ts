@@ -16,6 +16,20 @@ export type ImportDay =
   | 'SATURDAY'
   | 'SUNDAY';
 
+// Extension v2.1 — Kindoo site identity captured at first-run config.
+// Persisted on the stake doc so every manager shares the same mapping;
+// new managers don't reconfigure. `site_id` matches Kindoo's `EID`
+// (the localStorage.state.sites.ids[0] value); `site_name` is captured
+// at config time for drift detection.
+export type KindooConfig = {
+  /** Kindoo site / environment ID. Matches `EID` in Kindoo's API payloads. */
+  site_id: number;
+  /** Kindoo's display name for the site, captured at config time for diagnostics and drift detection. */
+  site_name: string;
+  configured_at: TimestampLike;
+  configured_by: ActorRef;
+};
+
 /** One entry in `last_over_caps_json` — the importer's flag of a pool over its cap. */
 export type OverCapEntry = {
   /** Pool identifier — `'stake'` for the stake-wide pool, otherwise a ward_code. */
@@ -35,6 +49,14 @@ export type Stake = {
   stake_id: string;
   /** Human-readable display name. */
   stake_name: string;
+  /**
+   * Overrides the value the extension's v2 Kindoo configuration wizard
+   * compares against the Kindoo site name. Absent → comparison uses
+   * `stake_name`. Set this when `stake_name` carries a label that
+   * isn't part of the Kindoo site name (e.g. a `"STAGING - "` prefix
+   * on the staging Firestore stake doc).
+   */
+  kindoo_expected_site_name?: string;
   created_at: TimestampLike;
   /** Canonical email of the platform superadmin who provisioned the stake. */
   created_by: string;
@@ -60,6 +82,10 @@ export type Stake = {
   import_hour: number;
   /** IANA tz identifier (e.g. `'America/Denver'`). All schedule fields evaluate in this tz. */
   timezone: string;
+
+  // ----- Extension v2.1 — Kindoo site config -----
+  /** Optional; absent until v2.1 first-run config completes. */
+  kindoo_config?: KindooConfig;
 
   // ----- Notifications -----
   notifications_enabled: boolean;

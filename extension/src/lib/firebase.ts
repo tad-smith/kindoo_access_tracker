@@ -15,6 +15,7 @@ import { initializeApp, type FirebaseApp } from 'firebase/app';
 // `firebase/auth` import touches `document` during module init, which
 // fatally errors a MV3 service worker ("document is not defined").
 import { getAuth, type Auth } from 'firebase/auth/web-extension';
+import { getFirestore, type Firestore } from 'firebase/firestore';
 import { getFunctions, type Functions } from 'firebase/functions';
 
 const firebaseConfig = {
@@ -27,6 +28,7 @@ const firebaseConfig = {
 
 let _app: FirebaseApp | undefined;
 let _auth: Auth | undefined;
+let _firestore: Firestore | undefined;
 let _functions: Functions | undefined;
 
 function app(): FirebaseApp {
@@ -45,4 +47,10 @@ export function functions(): Functions {
   if (_functions) return _functions;
   _functions = getFunctions(app());
   return _functions;
+}
+
+export function firestore(): Firestore {
+  if (_firestore) return _firestore;
+  _firestore = getFirestore(app());
+  return _firestore;
 }

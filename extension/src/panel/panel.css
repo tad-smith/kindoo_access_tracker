@@ -276,3 +276,59 @@ main.sba-panel {
   color: var(--sba-fg-muted);
   text-align: center;
 }
+
+.sba-configure-step-title {
+  margin: 0 0 0.5rem 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sba-configure-pair {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0 0 0.5rem 0;
+}
+
+.sba-configure-pair dt {
+  color: var(--sba-fg-muted);
+  font-weight: 600;
+}
+
+.sba-configure-pair dd {
+  margin: 0;
+}
+
+.sba-success-msg {
+  color: var(--sba-success);
+  font-size: 12px;
+}
+
+.sba-configure-rule-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sba-configure-rule-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sba-configure-rule-building {
+  flex: 1;
+  font-weight: 500;
+}
+
+.sba-configure-rule-select {
+  flex: 0 1 auto;
+  font: inherit;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--sba-border);
+  border-radius: 4px;
+  background: var(--sba-bg);
+}

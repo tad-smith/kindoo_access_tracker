@@ -43,6 +43,8 @@ functions/dist/
 packages/*/dist/
 # Chrome extension build output (Vite + @crxjs emits to dist/)
 extension/dist/
+# Local API captures with live session tokens (v2 reference only — never commit)
+extension/docs/v2-kindoo-api-capture.md
 # firestore/ tsconfig outDir (typecheck-only; tests run via vitest)
 firestore/.tsbuild/
 # functions/ tests tsconfig outDir (typecheck-only; tests run via vitest)

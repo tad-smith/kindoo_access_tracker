@@ -24,9 +24,15 @@ import type {
   AuthSignOutResponse,
   AuthSnapshot,
   AuthStateChangedPush,
+  DataGetStakeConfigPayload,
+  DataGetStakeConfigRequest,
+  DataGetStakeConfigResponse,
+  DataWriteKindooConfigRequest,
+  DataWriteKindooConfigResponse,
   ExtensionRequest,
   ResponseFor,
   WireError,
+  WriteKindooConfigPayload,
 } from './messaging';
 import type {
   GetMyPendingRequestsInput,
@@ -167,4 +173,18 @@ export async function markRequestComplete(
   const req: ApiMarkRequestCompleteRequest = { type: 'api.markRequestComplete', payload: input };
   const res: ApiMarkRequestCompleteResponse = await sendMessage(req);
   return unwrap(res);
+}
+
+// ---- v2.1 config ------------------------------------------------------
+
+export async function getStakeConfig(): Promise<DataGetStakeConfigPayload> {
+  const req: DataGetStakeConfigRequest = { type: 'data.getStakeConfig' };
+  const res: DataGetStakeConfigResponse = await sendMessage(req);
+  return unwrap(res);
+}
+
+export async function writeKindooConfig(payload: WriteKindooConfigPayload): Promise<void> {
+  const req: DataWriteKindooConfigRequest = { type: 'data.writeKindooConfig', payload };
+  const res: DataWriteKindooConfigResponse = await sendMessage(req);
+  unwrap(res);
 }

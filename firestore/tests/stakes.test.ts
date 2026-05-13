@@ -259,4 +259,113 @@ describe('firestore.rules — stakes/{stakeId} parent doc', () => {
       await assertFails(db.doc(PATH).delete());
     });
   });
+
+  // Extension v2.1 — `kindoo_config` is manager-only and shape-checked.
+  // Managers must be able to add / modify the field via the standard
+  // stake update path; non-managers can't reach the update at all; a
+  // badly-shaped config from a manager is rejected by the validator.
+  describe('kindoo_config (extension v2.1)', () => {
+    const validKindooConfig = {
+      site_id: 27994,
+      site_name: 'CS North Stake',
+      configured_at: new Date(),
+      configured_by: lastActorOf(personas.manager),
+    };
+
+    it('manager can add kindoo_config', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(db.doc(PATH).set(freshStakeDoc({ kindoo_config: validKindooConfig })));
+    });
+
+    it('manager can modify an existing kindoo_config', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(freshStakeDoc({ kindoo_config: validKindooConfig }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            kindoo_config: { ...validKindooConfig, site_name: 'CS North (renamed in Kindoo)' },
+          }),
+        ),
+      );
+    });
+
+    it('stake-scope member cannot add kindoo_config', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            kindoo_config: validKindooConfig,
+            lastActor: lastActorOf(personas.stakeMember),
+          }),
+        ),
+      );
+    });
+
+    it('outsider cannot add kindoo_config', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = outsiderContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            kindoo_config: validKindooConfig,
+            lastActor: lastActorOf(personas.outsider),
+          }),
+        ),
+      );
+    });
+
+    it('anonymous cannot add kindoo_config', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = unauthedContext(env).firestore();
+      await assertFails(db.doc(PATH).set(freshStakeDoc({ kindoo_config: validKindooConfig })));
+    });
+
+    it('manager write with badly-shaped kindoo_config (site_id as string) → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            kindoo_config: { ...validKindooConfig, site_id: 'twenty-seven thousand' },
+          }),
+        ),
+      );
+    });
+
+    it('manager write with missing kindoo_config.configured_by → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            kindoo_config: {
+              site_id: validKindooConfig.site_id,
+              site_name: validKindooConfig.site_name,
+              configured_at: validKindooConfig.configured_at,
+              // configured_by intentionally absent
+            },
+          }),
+        ),
+      );
+    });
+  });
 });

@@ -12,6 +12,8 @@ const signInMock = vi.fn();
 const signOutMock = vi.fn();
 const getMyPendingRequestsMock = vi.fn();
 const markRequestCompleteMock = vi.fn();
+const getStakeConfigMock = vi.fn();
+const writeKindooConfigMock = vi.fn();
 
 vi.mock('../lib/extensionApi', async () => {
   const actual = await vi.importActual<typeof import('../lib/extensionApi')>('../lib/extensionApi');
@@ -22,8 +24,33 @@ vi.mock('../lib/extensionApi', async () => {
     signOut: (...args: unknown[]) => signOutMock(...args),
     getMyPendingRequests: (...args: unknown[]) => getMyPendingRequestsMock(...args),
     markRequestComplete: (...args: unknown[]) => markRequestCompleteMock(...args),
+    getStakeConfig: (...args: unknown[]) => getStakeConfigMock(...args),
+    writeKindooConfig: (...args: unknown[]) => writeKindooConfigMock(...args),
   };
 });
+
+/** Bundle that satisfies App's "fully configured" check. */
+function configuredBundle() {
+  return {
+    stake: {
+      stake_id: 'csnorth',
+      stake_name: 'Colorado Springs North Stake',
+      kindoo_config: {
+        site_id: 27994,
+        site_name: 'Colorado Springs North Stake',
+        configured_at: { seconds: 1, nanoseconds: 0 },
+        configured_by: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
+      },
+    },
+    buildings: [
+      {
+        building_id: 'cordera',
+        building_name: 'Cordera Building',
+        kindoo_rule: { rule_id: 6248, rule_name: 'Cordera Doors' },
+      },
+    ],
+  };
+}
 
 // Re-import after mocks so the module graph picks them up.
 async function renderApp() {
@@ -58,6 +85,11 @@ describe('App', () => {
     signOutMock.mockReset();
     getMyPendingRequestsMock.mockReset();
     markRequestCompleteMock.mockReset();
+    getStakeConfigMock.mockReset();
+    writeKindooConfigMock.mockReset();
+    // Most existing tests assume the stake is already configured; the
+    // needs-config flow has its own dedicated tests.
+    getStakeConfigMock.mockResolvedValue(configuredBundle());
   });
   afterEach(() => {
     vi.resetModules();
