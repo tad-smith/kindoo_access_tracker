@@ -74,6 +74,7 @@ async function seedSeat(opts: {
   type?: Seat['type'];
   building_names?: string[];
   reason?: string;
+  duplicate_grants?: Seat['duplicate_grants'];
 }): Promise<void> {
   const { db } = requireEmulators();
   const canonical = opts.canonical ?? 'alice@gmail.com';
@@ -86,13 +87,28 @@ async function seedSeat(opts: {
     callings: [],
     reason: opts.reason ?? 'existing-grant',
     building_names: opts.building_names ?? ['Cordera Building'],
-    duplicate_grants: [],
+    duplicate_grants: opts.duplicate_grants ?? [],
     granted_by_request: 'seed',
     created_at: Timestamp.now(),
     last_modified_at: Timestamp.now(),
     last_modified_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
     lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
   });
+}
+
+/**
+ * Seed the parent stake doc with optional `last_over_caps_json`. The
+ * merge path reads this for its cap check; tests for the cap reject
+ * scenario need a populated entry, others can leave it empty.
+ */
+async function seedStake(opts: { overCaps?: Array<Record<string, unknown>> } = {}): Promise<void> {
+  const { db } = requireEmulators();
+  await db.doc(`stakes/${STAKE_ID}`).set(
+    {
+      last_over_caps_json: opts.overCaps ?? [],
+    },
+    { merge: true },
+  );
 }
 
 function callableReq(opts: { auth?: { email: string } | null; data: unknown }): never {
@@ -433,62 +449,374 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       expect(seat.granted_by_request).toBe('r1');
     });
 
-    // Mirrors the SPA's "already has a seat" guard. The SPA does not
-    // do duplicate-grant merge on completion — that flow is handled
-    // by the All Seats Reconcile dialog. Surface a friendly message
-    // instead of the raw permission-denied a no-op create would yield.
-    it('add_manual: errors with failed-precondition when the seat already exists', async () => {
-      await seedManager();
-      await seedSeat({ canonical: 'alice@gmail.com', scope: 'stake' });
-      await seedRequest({
-        requestId: 'r1',
-        status: 'pending',
-        type: 'add_manual',
-        scope: 'CO',
-        building_names: ['Cordera Building'],
-      });
+    // Extension v2.2 — the callable diverges from the SPA hook when a
+    // seat already exists. The SPA throws "reconcile via All Seats
+    // first" because it has the reconcile UI; the extension does not,
+    // so the callable auto-merges the new grant into the existing seat
+    // (primary scope+type match → extend primary's building_names;
+    // duplicate scope+type match → extend that duplicate's
+    // building_names; no match → append a new duplicate_grants entry).
+    // The "create-new-seat" path is unaffected — those tests live in
+    // the create-* group above; below covers the merge variants.
 
-      await expect(
-        markRequestComplete.run(
+    describe('add-type auto-merge into existing seat', () => {
+      it('primary match (scope+type): extends primary building_names', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+        });
+
+        await markRequestComplete.run(
           callableReq({
             auth: { email: MANAGER_EMAIL },
             data: { stakeId: STAKE_ID, requestId: 'r1' },
           }),
-        ),
-      ).rejects.toMatchObject({ code: 'failed-precondition' });
+        );
 
-      // The seat write and the request flip share a transaction —
-      // the request must stay pending when the seat-exists check
-      // fails.
-      const { db } = requireEmulators();
-      const after = (await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()).data() as AccessRequest;
-      expect(after.status).toBe('pending');
-      // Existing seat untouched.
-      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
-      expect(seat.scope).toBe('stake');
-    });
-
-    it('add_temp: errors with failed-precondition when an existing permanent seat is present', async () => {
-      await seedManager();
-      await seedSeat({ canonical: 'alice@gmail.com', scope: 'stake', type: 'manual' });
-      await seedRequest({
-        requestId: 'r1',
-        status: 'pending',
-        type: 'add_temp',
-        scope: 'CO',
-        building_names: ['Cordera Building'],
-        start_date: '2026-06-01',
-        end_date: '2026-06-30',
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('stake');
+        expect(seat.type).toBe('manual');
+        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        // No duplicate appended on a primary match.
+        expect(seat.duplicate_grants).toEqual([]);
+        const after = (
+          await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()
+        ).data() as AccessRequest;
+        expect(after.status).toBe('complete');
       });
 
-      await expect(
-        markRequestComplete.run(
+      it('primary scope-mismatch: appends a new duplicate_grants entry; primary unchanged', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+          reason: 'sub teacher',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'CO',
+          building_names: ['Cordera Building'],
+          reason: 'second-ward helper',
+        });
+
+        await markRequestComplete.run(
           callableReq({
             auth: { email: MANAGER_EMAIL },
             data: { stakeId: STAKE_ID, requestId: 'r1' },
           }),
-        ),
-      ).rejects.toMatchObject({ code: 'failed-precondition' });
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        // Primary stays as it was.
+        expect(seat.scope).toBe('stake');
+        expect(seat.type).toBe('manual');
+        expect(seat.building_names).toEqual(['Cordera Building']);
+        expect(seat.reason).toBe('sub teacher');
+        // New entry appended.
+        expect(seat.duplicate_grants.length).toBe(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('CO');
+        expect(dup.type).toBe('manual');
+        expect(dup.building_names).toEqual(['Cordera Building']);
+        expect(dup.reason).toBe('second-ward helper');
+        expect(dup.detected_at).toBeDefined();
+      });
+
+      it('add_temp primary match: extends primary building_names', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'temp',
+          building_names: ['Cordera Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_temp',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          start_date: '2026-06-01',
+          end_date: '2026-06-30',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.type).toBe('temp');
+        expect(seat.scope).toBe('stake');
+        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.duplicate_grants).toEqual([]);
+      });
+
+      it('type-mismatch (manual primary, temp request): appends a temp duplicate_grants entry; primary stays manual', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+          reason: 'sub teacher',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_temp',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          start_date: '2026-06-01',
+          end_date: '2026-06-30',
+          reason: 'cleaning crew',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        // Primary unchanged — same scope, type, building_names.
+        expect(seat.type).toBe('manual');
+        expect(seat.scope).toBe('stake');
+        expect(seat.building_names).toEqual(['Cordera Building']);
+        expect(seat.reason).toBe('sub teacher');
+        // New temp duplicate appended.
+        expect(seat.duplicate_grants.length).toBe(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('stake');
+        expect(dup.type).toBe('temp');
+        expect(dup.building_names).toEqual(['Briargate Building']);
+        expect(dup.start_date).toBe('2026-06-01');
+        expect(dup.end_date).toBe('2026-06-30');
+        expect(dup.reason).toBe('cleaning crew');
+      });
+
+      it('building merge de-duplicates and preserves order', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['A', 'B'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['B', 'C'],
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['A', 'B', 'C']);
+      });
+
+      it('existing duplicate_grants entry match: extends that duplicate; primary untouched', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+          duplicate_grants: [
+            {
+              scope: 'CO',
+              type: 'manual',
+              building_names: ['Cordera Building'],
+              detected_at: Timestamp.fromMillis(2_000),
+              reason: 'prior-helper',
+            },
+          ],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'CO',
+          building_names: ['Briargate Building'],
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        // Primary unchanged.
+        expect(seat.scope).toBe('stake');
+        expect(seat.building_names).toEqual(['Cordera Building']);
+        // Existing duplicate extended; reason preserved.
+        expect(seat.duplicate_grants.length).toBe(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('CO');
+        expect(dup.type).toBe('manual');
+        expect(dup.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(dup.reason).toBe('prior-helper');
+      });
+
+      it('cap reject: pool in last_over_caps_json that the merge touches yields failed-precondition', async () => {
+        await seedManager();
+        await seedStake({
+          overCaps: [{ pool: 'stake', count: 12, cap: 10, over_by: 2 }],
+        });
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+        });
+
+        await expect(
+          markRequestComplete.run(
+            callableReq({
+              auth: { email: MANAGER_EMAIL },
+              data: { stakeId: STAKE_ID, requestId: 'r1' },
+            }),
+          ),
+        ).rejects.toMatchObject({ code: 'failed-precondition' });
+
+        // Transaction rolled back — request still pending, seat unchanged.
+        const { db } = requireEmulators();
+        const after = (
+          await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()
+        ).data() as AccessRequest;
+        expect(after.status).toBe('pending');
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Cordera Building']);
+      });
+
+      it('cap rejection only fires when the touched pool is in over-caps (untouched pools are ignored)', async () => {
+        await seedManager();
+        await seedStake({
+          // 'XX' is over cap but the merge is for scope=stake. Touching
+          // 'stake' doesn't touch 'XX', so the merge proceeds.
+          overCaps: [{ pool: 'XX', count: 5, cap: 4, over_by: 1 }],
+        });
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+      });
+
+      it('no-op merge (request building_names already present): flips request without writing seat', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building', 'Briargate Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Cordera Building'],
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        const after = (
+          await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()
+        ).data() as AccessRequest;
+        expect(after.status).toBe('complete');
+      });
     });
 
     it('remove: flips the request without writing a seat doc; trigger handles delete', async () => {
