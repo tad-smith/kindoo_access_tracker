@@ -45,7 +45,7 @@ function asEnvironment(value: unknown): KindooEnvironment | null {
 function asAccessRule(value: unknown): KindooAccessRule | null {
   if (typeof value !== 'object' || value === null) return null;
   const v = value as Record<string, unknown>;
-  const rid = v.RID;
+  const rid = v.ID;
   const name = v.Name;
   if (typeof rid !== 'number' || typeof name !== 'string') return null;
   return { ...v, RID: rid, Name: name };
@@ -97,7 +97,7 @@ export async function getEnvironmentRules(
     if (!rule) {
       throw new KindooApiError(
         'unexpected-shape',
-        'KindooGetEnvironmentRules entry missing RID/Name',
+        'KindooGetEnvironmentRules entry missing ID/Name',
       );
     }
     parsed.push(rule);

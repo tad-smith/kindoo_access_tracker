@@ -50,11 +50,11 @@ describe('getEnvironments', () => {
 });
 
 describe('getEnvironmentRules', () => {
-  it('parses a list of rules and narrows RID + Name', async () => {
+  it('parses a list of rules and narrows ID + Name from the wire shape', async () => {
     const fetchImpl = vi.fn(async () =>
       ok([
-        { RID: 6248, Name: 'Cordera Doors', SomeOtherField: 1 },
-        { RID: 6249, Name: 'Pine Creek Doors' },
+        { ID: 6248, Name: 'Cordera Doors', SomeOtherField: 1 },
+        { ID: 6249, Name: 'Pine Creek Doors' },
       ]),
     );
     const result = await getEnvironmentRules(SESSION, 27994, fetchImpl);
@@ -73,8 +73,8 @@ describe('getEnvironmentRules', () => {
     expect(form.get('EID')).toBe('99999');
   });
 
-  it('throws unexpected-shape when an entry is missing RID/Name', async () => {
-    const fetchImpl = vi.fn(async () => ok([{ Name: 'No RID' }]));
+  it('throws unexpected-shape when an entry is missing ID/Name', async () => {
+    const fetchImpl = vi.fn(async () => ok([{ Name: 'No ID' }]));
     await expect(getEnvironmentRules(SESSION, 27994, fetchImpl)).rejects.toMatchObject({
       code: 'unexpected-shape',
     });
