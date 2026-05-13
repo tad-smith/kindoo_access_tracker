@@ -28,6 +28,7 @@ import { auditId } from '@kindoo/shared';
 import type { AuditAction, AuditEntityType, AuditLog } from '@kindoo/shared';
 import { getDb } from '../lib/admin.js';
 import { isNoOpUpdate } from '../lib/auditDiff.js';
+import { OUT_OF_BAND_ACTOR } from '../lib/systemActors.js';
 
 // ===== Per-collection registrations =====
 //
@@ -397,16 +398,43 @@ const DELETE_ACTION: Record<AuditEntityType, AuditAction> = {
  * + update we read AFTER. Falls back to `'unknown'` if the field is
  * missing — a defensive default that surfaces in the audit log so an
  * operator can see something went sideways.
+ *
+ * Out-of-band writes (Firestore Console edits, ad-hoc `gcloud firestore`
+ * tweaks, Admin-SDK scripts that forgot to stamp `lastActor`) leave the
+ * `lastActor` field untouched. For updates, detect that by comparing
+ * before/after `lastActor`: when they're deep-equal, the writer didn't
+ * touch the field. Since the no-op-update check earlier has already
+ * rejected writes whose only changes are bookkeeping, an equal
+ * `lastActor` on an update implies a non-bookkeeping field changed
+ * without the canonical write path's actor stamp. Record the sentinel
+ * so the audit row doesn't misattribute the change to whichever actor
+ * happened to write the doc last. See B-5 in docs/BUGS.md.
  */
 function resolveActor(
   before: Record<string, unknown> | null,
   after: Record<string, unknown> | null,
 ): { email: string; canonical: string } {
+  if (before && after && lastActorUnchanged(before, after)) {
+    return { email: OUT_OF_BAND_ACTOR.email, canonical: OUT_OF_BAND_ACTOR.canonical };
+  }
   const source = after ?? before;
   const lastActor = (source?.['lastActor'] as { email?: unknown; canonical?: unknown }) ?? {};
   const email = typeof lastActor.email === 'string' ? lastActor.email : 'unknown';
   const canonical = typeof lastActor.canonical === 'string' ? lastActor.canonical : 'unknown';
   return { email, canonical };
+}
+
+/**
+ * True iff `before.lastActor` and `after.lastActor` are structurally
+ * equal — including both-absent. `ActorRef` is a flat `{email, canonical}`
+ * pair, so a JSON-string compare is sufficient. Matches the structural
+ * compare used elsewhere in the audit diff helpers.
+ */
+function lastActorUnchanged(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): boolean {
+  return JSON.stringify(before['lastActor']) === JSON.stringify(after['lastActor']);
 }
 
 /**
