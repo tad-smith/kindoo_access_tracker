@@ -198,4 +198,119 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       ),
     ).rejects.toMatchObject({ code: 'not-found' });
   });
+
+  // Extension v2.2 — Provision & Complete passes Kindoo metadata
+  // alongside the standard completion. Both fields optional; when
+  // present, persisted on the request doc in the same transaction.
+  describe('extension v2.2 provisioning metadata', () => {
+    it('persists kindoo_uid and provisioning_note when supplied', async () => {
+      await seedManager();
+      await seedRequest({ requestId: 'r1', status: 'pending' });
+
+      await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            requestId: 'r1',
+            kindooUid: 'kindoo-user-12345',
+            provisioningNote: 'Added Alice to Kindoo with access to Cordera Building.',
+          },
+        }),
+      );
+
+      const { db } = requireEmulators();
+      const after = (await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()).data() as AccessRequest;
+      expect(after.status).toBe('complete');
+      expect(after.kindoo_uid).toBe('kindoo-user-12345');
+      expect(after.provisioning_note).toBe(
+        'Added Alice to Kindoo with access to Cordera Building.',
+      );
+    });
+
+    it('regression: existing SPA path (no v2.2 fields) still works', async () => {
+      await seedManager();
+      await seedRequest({ requestId: 'r1', status: 'pending' });
+
+      const result = await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+      expect(result).toEqual({ ok: true });
+
+      const { db } = requireEmulators();
+      const after = (await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()).data() as AccessRequest;
+      expect(after.status).toBe('complete');
+      // Both v2.2 fields stay absent on a SPA-path completion.
+      expect(after.kindoo_uid ?? null).toBeNull();
+      expect(after.provisioning_note ?? null).toBeNull();
+    });
+
+    it('trims provisioning_note and drops it when whitespace-only', async () => {
+      await seedManager();
+      await seedRequest({ requestId: 'r1', status: 'pending' });
+
+      await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            requestId: 'r1',
+            kindooUid: '  kindoo-user-99  ',
+            provisioningNote: '   ',
+          },
+        }),
+      );
+
+      const { db } = requireEmulators();
+      const after = (await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()).data() as AccessRequest;
+      expect(after.kindoo_uid).toBe('kindoo-user-99');
+      expect(after.provisioning_note ?? null).toBeNull();
+    });
+
+    it('rejects non-string kindooUid with invalid-argument', async () => {
+      await seedManager();
+      await seedRequest({ requestId: 'r1', status: 'pending' });
+      await expect(
+        markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1', kindooUid: 42 },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+    });
+
+    it('rejects non-string provisioningNote with invalid-argument', async () => {
+      await seedManager();
+      await seedRequest({ requestId: 'r1', status: 'pending' });
+      await expect(
+        markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1', provisioningNote: { x: 1 } },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+    });
+
+    it('rejects oversized provisioningNote (>500 chars) with invalid-argument', async () => {
+      await seedManager();
+      await seedRequest({ requestId: 'r1', status: 'pending' });
+      await expect(
+        markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              requestId: 'r1',
+              provisioningNote: 'x'.repeat(501),
+            },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+    });
+  });
 });

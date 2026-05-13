@@ -57,6 +57,36 @@ export const markRequestComplete = onCall(
     }
 
     const trimmedNote = (data.completionNote ?? '').trim();
+
+    // Extension v2.2 — optional Kindoo provisioning metadata. Both
+    // fields are validated structurally (string type) and the
+    // provisioning note is bounded so a runaway client cannot bloat
+    // the request doc. Trimming mirrors `completionNote`; an empty
+    // result drops the field from the write so the doc stays clean.
+    const PROVISIONING_NOTE_MAX_LEN = 500;
+    let kindooUid: string | undefined;
+    if (data.kindooUid !== undefined) {
+      if (typeof data.kindooUid !== 'string') {
+        throw new HttpsError('invalid-argument', 'kindooUid must be a string');
+      }
+      const trimmed = data.kindooUid.trim();
+      if (trimmed.length > 0) kindooUid = trimmed;
+    }
+    let provisioningNote: string | undefined;
+    if (data.provisioningNote !== undefined) {
+      if (typeof data.provisioningNote !== 'string') {
+        throw new HttpsError('invalid-argument', 'provisioningNote must be a string');
+      }
+      if (data.provisioningNote.length > PROVISIONING_NOTE_MAX_LEN) {
+        throw new HttpsError(
+          'invalid-argument',
+          `provisioningNote exceeds ${PROVISIONING_NOTE_MAX_LEN} chars`,
+        );
+      }
+      const trimmed = data.provisioningNote.trim();
+      if (trimmed.length > 0) provisioningNote = trimmed;
+    }
+
     const actor = { email: typedEmail, canonical };
     const reqRef = db.doc(`stakes/${stakeId}/requests/${requestId}`);
 
@@ -81,6 +111,8 @@ export const markRequestComplete = onCall(
         lastActor: actor,
       };
       if (trimmedNote.length > 0) update.completion_note = trimmedNote;
+      if (kindooUid !== undefined) update.kindoo_uid = kindooUid;
+      if (provisioningNote !== undefined) update.provisioning_note = provisioningNote;
 
       tx.update(reqRef, update);
     });

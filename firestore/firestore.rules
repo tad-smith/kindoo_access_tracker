@@ -194,6 +194,17 @@ service cloud.firestore {
         );
     }
 
+    // Extension v2.2 — shape check for `kindoo_uid` + `provisioning_note`
+    // on a request doc. Both fields optional; when present each must
+    // be a string. `provisioning_note` is bounded (≤500 chars) so a
+    // runaway extension client cannot bloat the request doc.
+    function validKindooProvisioning(data) {
+      return (!('kindoo_uid' in data) || data.kindoo_uid is string)
+        && (!('provisioning_note' in data)
+            || (data.provisioning_note is string
+                && data.provisioning_note.size() <= 500));
+    }
+
     // ===== Top-level collections =====
 
     // userIndex/{canonical} — written by `onAuthUserCreate` (Admin
@@ -547,13 +558,20 @@ service cloud.firestore {
                 .hasOnly(['status', 'lastActor']))
             ||
             // Complete — only managers (self-approval is allowed; rules
-            // do not require requester != completer per F12 invariant 7)
+            // do not require requester != completer per F12 invariant 7).
+            // Extension v2.2 — `kindoo_uid` + `provisioning_note` are
+            // optional manager-writable fields on the complete transition
+            // (the extension's Provision & Complete flow sets them; the
+            // SPA mark-complete path leaves them absent). Shape-checked
+            // by `validKindooProvisioning` to bound the disclosure surface.
             (request.resource.data.status == 'complete'
              && isManager(stakeId)
              && request.resource.data.completer_canonical == authedCanonical()
+             && validKindooProvisioning(request.resource.data)
              && request.resource.data.diff(resource.data).affectedKeys()
                 .hasOnly(['status', 'completer_email', 'completer_canonical',
-                          'completed_at', 'completion_note', 'lastActor']))
+                          'completed_at', 'completion_note',
+                          'kindoo_uid', 'provisioning_note', 'lastActor']))
             ||
             // Reject — only managers, with non-empty reason
             (request.resource.data.status == 'rejected'
