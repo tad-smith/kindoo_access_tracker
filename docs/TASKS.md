@@ -607,3 +607,34 @@ The accepted consequence: once a Kindoo user is permanent, v2.2 never demotes th
 - **D. Accept the gap permanently.** Permanent-in-Kindoo is a one-way door by design; revocation always requires an explicit SBA remove request.
 
 **Not blocking anything.** v2.2 ships with the gap by design. Future work only — pick up when someone wants to close the loop.
+
+## [T-39] Production: Chrome Web Store distribution for the SBA extension
+Status: open
+Owner: Operator (per `extension/CLAUDE.md` and `infra/runbooks/extension-deploy.md` — operator owns the Chrome Web Store listing and the OAuth consent screen)
+Phase: post v2.2 rollout
+
+The staging extension is in active use. The production extension is fully built and configured locally; the only remaining step is the Chrome Web Store upload + listing + OAuth consent screen publish. This is operator-execution work only — no engineering prerequisites left.
+
+**State of play (everything technical is already done).**
+
+- Production RSA keypair generated; the deterministic extension ID `cpkoobhcoddjkoflpijeoocniepgnnle` is pinned via the manifest `key` field.
+- GCP "Chrome extension" OAuth client registered in the `kindoo-prod` project (client ID prefix `125946184519-...`).
+- `extension/.env.production` filled in with the production OAuth client + Kindoo web base URL.
+- `pnpm --filter @kindoo/extension build` emits `extension/dist/production/` with the right manifest: name `Stake Building Access — Kindoo Helper`, brand icons, version per current manifest.
+
+**What's still needed (per `infra/runbooks/extension-deploy.md` § "Production: Chrome Web Store distribution").**
+
+1. Zip the **contents** of `extension/dist/production/` (not the folder itself):
+   ```
+   cd extension/dist/production && zip -r ../../sba-extension-vX.Y.Z.zip ./* && cd ../../..
+   ```
+2. Upload to the Chrome Web Store Developer Dashboard.
+3. Fill in listing fields: icon (use `apps/web/public/icon-512.png` or equivalent), short description, detailed description, screenshots, privacy policy URL.
+4. Set visibility to **Unlisted** for the v1 distribution model — the manager distributes the install link to operator-trusted users directly.
+5. Submit for review. Web Store review typically takes days to weeks.
+
+**OAuth consent screen.** For the `kindoo-prod` GCP project, the OAuth consent screen must be configured + published before any non-test user can sign in. The extension uses `openid email profile` (non-sensitive scopes), so Google verification is **not** required, but the consent screen must be filled in (app name, support email, etc.) and pushed to production.
+
+**Decision deferred.** Whether the listing eventually goes Public (vs staying Unlisted) is operator's call once the user base extends beyond a single stake. Tracked under Phase 12 (multi-stake) as a follow-up.
+
+**No dependencies.** Every prerequisite is already shipped. Pick up when operator is ready to put the listing live.
