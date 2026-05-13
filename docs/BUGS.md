@@ -46,10 +46,10 @@ Somewhere in 1–4 the chain breaks on iOS specifically. Verified: latest stagin
 ---
 
 ## [B-5] auditTrigger misattributes out-of-band writes to the doc's prior `lastActor`
-Status: closed (fixed in PR — branch `fix/b-5-audit-out-of-band-attribution`)
+Status: closed (fixed in PR #85)
 Owner: @backend-engineer
 Phase: post Phase 11
-Branch / PR: `fix/b-5-audit-out-of-band-attribution`
+Branch / PR: `fix/b-5-audit-out-of-band-attribution` (PR #85)
 
 `auditTrigger` resolves the actor of an entity write by reading the `lastActor` ActorRef on the after-snapshot of the modified doc. Client paths and Cloud Functions that mutate entities always stamp a fresh `lastActor` alongside the rest of the write, so the field on the after-snapshot reflects who actually made the change and the audit attribution is correct. Out-of-band writes that don't go through those paths — Firestore Console edits, ad-hoc `gcloud firestore` CLI tweaks, scripted Admin-SDK writes that forget to set `lastActor` — leave the field untouched. The audit trigger then reads whatever `lastActor` was already on the doc (typically the most recent scheduled function or trigger that wrote it) and records that prior actor as the author of the new change.
 
