@@ -1,6 +1,6 @@
 # Stake Building Access — Claude Code guidance
 
-A door-access tracker that manages Kindoo seat assignments across the wards of a single LDS stake. (Previously named "Kindoo Access Tracker"; renamed to match the `stakebuildingaccess.org` domain locked in 2026-04-27 per F17 — apex flip itself is still Phase B work.) **Running on Firebase in production as of 2026-05-03 (Phase 11 cutover).** Apps Script was decommissioned at Phase 11 cutover; source removed from the repo in 2026-05-11. See [`docs/changelog/phase-11-cutover.md`](docs/changelog/phase-11-cutover.md) for history.
+A door-access tracker that manages Kindoo seat assignments across the wards of a single LDS stake. (Previously named "Kindoo Access Tracker"; renamed to match the `stakebuildingaccess.org` domain locked in 2026-04-27 per F17 — apex flip completed 2026-05-13.) **Running on Firebase in production as of 2026-05-03 (Phase 11 cutover).** Apps Script was decommissioned at Phase 11 cutover; source removed from the repo in 2026-05-11. See [`docs/changelog/phase-11-cutover.md`](docs/changelog/phase-11-cutover.md) for history.
 
 `docs/spec.md` is the authoritative description of runtime behaviour.
 
@@ -65,12 +65,11 @@ A door-access tracker that manages Kindoo seat assignments across the wards of a
 
 ## Current status
 
-**Live in production at `kindoo-prod`** as of 2026-05-03. `kindoo.csnorth.org` resolves to Firebase Hosting; bootstrap admin `admin@csnorth.org`; data live in Firestore (originally seeded from the LCR Sheet via the `runImportNow` callable). 1–2 requests/week. See [`docs/changelog/phase-11-cutover.md`](docs/changelog/phase-11-cutover.md).
+**Live in production at `kindoo-prod`** as of 2026-05-03. Both `stakebuildingaccess.org` (F17 brand apex, live 2026-05-13) and the legacy `kindoo.csnorth.org` resolve to Firebase Hosting; dual-hosting is the final state (no redirect, no takedown). Bootstrap admin `admin@csnorth.org`; data live in Firestore (originally seeded from the LCR Sheet via the `runImportNow` callable). 1–2 requests/week. See [`docs/changelog/phase-11-cutover.md`](docs/changelog/phase-11-cutover.md).
 
 **Open follow-ups:**
 
 - B-1 — iPhone PWA notification deep-link.
 - B-2 (not yet filed) — bootstrap setupGate `??` → `||` fallback.
-- F17 / Phase B — apex flip to `stakebuildingaccess.org`.
 - T-26 — finish Phase 11 SA hardening (pin remaining functions to `kindoo-app@`, audit IAM, revoke project-default `roles/editor`).
 - Phase 10.1 (left-rail nav redesign), Phase 10.6 (push expansion), Phase 12 (multi-stake) — operator-deferred.

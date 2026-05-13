@@ -30,7 +30,7 @@ Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for
 - **Email:** [Resend](https://resend.com) on the free tier (100/day, 3000/month). Domain verification on `mail.stakebuildingaccess.org` per F17. Wrapper at `functions/src/lib/resend.ts`; typed sender per notification type at `functions/src/services/EmailService.ts`. See §9.
 - **Push notifications:** FCM Web Push, additive-opt-in on a per-device basis. Per-user `notificationPrefs` and per-device `fcmTokens` live on `userIndex/{canonical}`. Service worker at `apps/web/public/firebase-messaging-sw.js` handles background pushes. Phase 10.5 ships only "new request → managers"; the four-other-types expansion is Phase 10.6, deferred.
 - **Scheduling:** Cloud Scheduler invokes the importer and expiry callable wrappers on schedule. Per-stake scheduling is single-loop (one Scheduler job calls one Function which iterates over stakes whose schedule matches).
-- **Hosting / domain:** Firebase Hosting on `kindoo-prod` serves the SPA build at `kindoo.csnorth.org` with auto-provisioned Let's Encrypt certs. The brand domain `stakebuildingaccess.org` (per F17) is reserved but not yet pointed at Hosting; that flip is Phase B work.
+- **Hosting / domain:** Firebase Hosting on `kindoo-prod` serves the SPA build at both `stakebuildingaccess.org` (the F17 brand apex, live 2026-05-13) and the legacy `kindoo.csnorth.org` (live since Phase 11 cutover 2026-05-03). Both hostnames have auto-provisioned Let's Encrypt certs. Dual-hosting is the chosen final state — no redirect, no takedown of the legacy hostname.
 - **PWA:** `vite-plugin-pwa` configures the service worker (cache-first for static assets, network-first for `index.html`, never cache Firestore traffic) and manifest. App is installable on iOS, Android, and desktop.
 - **Local dev:** Firebase emulator suite (Firestore, Auth, Functions, Hosting). `pnpm dev` runs emulators + Vite + Functions in parallel.
 
@@ -257,11 +257,16 @@ Audit log writes are server-only and fan in via the `auditTrigger` Cloud Functio
 
 ## 12. Custom domain
 
-`kindoo.csnorth.org` resolves to Firebase Hosting on `kindoo-prod` (DNS flipped 2026-05-03 at Phase 11 cutover). Auto-provisioned Let's Encrypt cert via the Firebase Hosting console. Procedure documented in `infra/runbooks/custom-domain.md`.
+Firebase Hosting on `kindoo-prod` serves the SPA at two hostnames:
 
-The previous setup (a static GitHub Pages page wrapping the Apps Script `/exec` URL in a full-viewport iframe) was bypassed at cutover and the GitHub Pages workflow + `website/` directory were retired in the post-cutover cleanup (PRs #78 and the 2026-05-11 cleanup PR).
+- **`stakebuildingaccess.org`** — the F17 brand apex. DNS pointed at Firebase Hosting 2026-05-13.
+- **`kindoo.csnorth.org`** — the legacy hostname, retained for backwards compatibility. DNS flipped 2026-05-03 at Phase 11 cutover.
 
-The brand domain `stakebuildingaccess.org` (per F17) is reserved but not yet pointed at Hosting; that flip is Phase B branding work and explicitly out of Phase 11 scope. The Resend `mail.stakebuildingaccess.org` subdomain is verified and in active use for the email envelope.
+Both have auto-provisioned Let's Encrypt certs via the Firebase Hosting console. Procedure documented in `infra/runbooks/custom-domain.md`. Dual-hosting is the chosen final state — no redirect from the legacy hostname to the brand apex, no takedown. Both URLs remain addressable indefinitely.
+
+The pre-cutover setup on `kindoo.csnorth.org` (a static GitHub Pages page wrapping the Apps Script `/exec` URL in a full-viewport iframe) was bypassed at the Phase 11 cutover and the GitHub Pages workflow + `website/` directory were retired in the post-cutover cleanup (PRs #78 and the 2026-05-11 cleanup PR).
+
+The Resend `mail.stakebuildingaccess.org` subdomain is verified and in active use for the email envelope.
 
 ## 13. Out of scope for v1
 
