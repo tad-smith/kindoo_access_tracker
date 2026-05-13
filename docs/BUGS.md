@@ -6,6 +6,70 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-7] v2.2 doesn't update Kindoo Description for existing users (description drift across multiple grants)
+Status: open
+Owner: @web-engineer
+Phase: post extension v2.2
+Severity: low
+
+The v2.2 provisioning flow's existing-user branch (`CheckUserType` returns found → skip invite → `SaveAccessRule`) never writes the Kindoo Description field. Description is only set by the Kindoo invite endpoint, so once a user is in Kindoo their description stays at whatever was synthesized at first invite. A user originally added as `Cordera Ward (Bishop)` who later receives a stake-Clerk grant through v2.2 retains `Cordera Ward (Bishop)` in Kindoo even though SBA now reflects the additional Clerk role. SBA's own audit + Seat data is correct; only the Kindoo-side description is stale.
+
+**Symptom:** Kindoo Description for an existing Kindoo user is unchanged after v2.2 adds a new access grant for that user. The user's actual access rules update correctly; only the human-readable description drifts.
+
+**Repro:**
+1. Pre-condition: user exists in Kindoo with a description matching one of the established conventions (`Ward Name (Calling)`, etc.) set at manual invite time.
+2. Submit an SBA `add_manual` request for a different role/scope for the same user.
+3. Complete the request via the v2.2 "Add Kindoo Access" button.
+4. Observe: Kindoo Description for the user is unchanged. SBA's audit log reflects the new grant correctly; Kindoo's surface does not.
+
+**Severity:** low. Cosmetic. Doesn't affect access rights. Kindoo operators reviewing the user list see stale role context but the underlying access is correct.
+
+**Root cause:** v2.2 design (`extension/docs/v2-design.md` § "v2.2 — Provision & Complete", "existing-user-on-add: silent update path"). Captured Kindoo write endpoints support invite (which sets description) but not "update existing user's description." No captured endpoint exists for description-only edits.
+
+**Proposed fix paths (not committing to one in this entry):**
+- Option A: operator captures an "edit existing user" endpoint from Kindoo's admin UI; the orchestrator gains an `updateUser(uid, description)` call that merges the new description with the existing one per the `|`-separated cross-scope convention.
+- Option B: always overwrite description with the newest request's synthesized text. Simpler; loses prior context.
+- Option C: leave as-is permanently; document that Kindoo descriptions are first-invite-only.
+
+Choice depends on whether an edit-user endpoint exists in Kindoo's admin UI and on how the operator wants cross-role users represented.
+
+**Won't fix in:** extension v2.2 (deferred — operator chose to ship v2.2 as designed). File as standalone; fix in its own PR after v2.2 lands.
+
+**Branch / PR:** none — fix not yet scoped.
+
+---
+
+## [B-8] v2.2 SaveAccessRule semantics unverified — may replace user's full rule set instead of merging
+Status: open
+Owner: @web-engineer
+Phase: post extension v2.2
+Severity: medium-high
+
+v2.2 calls `KindooSaveAccessRuleFromListOfAccessSchedules` to assign access rules to a user. The endpoint name strongly suggests "save = overwrite the user's rule set with the list I'm sending," but we have no captures of two sequential `SaveAccessRule` calls against the same user, so the merge-vs-replace semantics are unverified. If it REPLACES, a user with prior access (e.g. `Cordera Ward` via being Bishop) who receives a new SBA grant (e.g. stake-Clerk → rule `[6248]`) loses their Cordera access when v2.2 calls `SaveAccessRule` with just `[6248]`.
+
+**Symptom (conditional on REPLACE semantics):** an existing Kindoo user receives a new SBA grant through v2.2; instead of gaining the new access on top of their existing access, their rule set is overwritten with only the newly-granted rule. Prior access silently disappears.
+
+**Repro (designed to determine semantics):**
+1. Pick a test user in staging Kindoo with a known rule (say `[6249]`).
+2. Call `KindooSaveAccessRuleFromListOfAccessSchedules` with the user's UID and a DIFFERENT single rule (say `[6250]`).
+3. Refresh Kindoo's UI and inspect the user's access rules.
+4. If only `[6250]` is present → REPLACE semantics confirmed; bug is real; v2.2 must compute the user's full intended rule set before each call.
+5. If both `[6249]` and `[6250]` are present → MERGE semantics; bug downgrades to "watch out for partial-revoke."
+
+**Severity:** medium-high. Potential data-integrity / access-revocation risk if REPLACE. If MERGE, no impact for v2.2's add flow but creates a problem for partial-revoke (which v2.2 doesn't currently support anyway).
+
+**Root cause:** insufficient capture coverage during v2.2 scoping; the design assumed merge semantics without verifying against the live endpoint.
+
+**Proposed fix (conditional on staging test outcome):**
+- If REPLACE: v2.2 orchestrator reads the user's SBA `Seat` doc before each `SaveAccessRule` call. Seat tracks the merged `building_names[]` across all grants — map each to its `kindoo_rule.rule_id` from v2.1 config — send the COMPLETE set as RIDs. Effectively, always send "the full set of rules this user should have."
+- If MERGE: v2.2 add path is correct as designed. Partial-revoke remains out of scope; documented in `extension/docs/v2-design.md`.
+
+**Won't fix in:** extension v2.2 (deferred — operator wants v2.2 to ship as designed and verify semantics on staging post-deploy).
+
+**Branch / PR:** none — fix not yet scoped; staging verification step gates the decision.
+
+---
+
 ## [B-1] iPhone PWA notification tap doesn't navigate to the deep-link target
 Status: open
 Owner: @web-engineer
