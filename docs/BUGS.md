@@ -42,53 +42,6 @@ Identical data, different key order. The Manager Audit Log page displays nested-
 
 ---
 
-## [B-9] SBA temp grant expiry doesn't downgrade Kindoo permanent users (one-way temp→permanent sync)
-Status: open
-Owner: TBD (depends on chosen fix path — `@web-engineer` for A/B, `@backend-engineer` for C)
-Phase: post v2.2 design scoping
-Severity: low-medium
-
-The v2.2 extension design adopts a one-way temp→permanent promotion rule: if v2.2 is processing a manual (permanent) request and finds the Kindoo user is temporary, it promotes them to permanent; if v2.2 is processing a temp request and finds the user already permanent, it leaves them permanent (does not demote). Operator wording:
-
-> If we're adding a manual role to a user and we find they are temporary in Kindoo, then we need to make them a permanent user in Kindoo. If they are a permanent user and we are processing a temporary request, then we have to leave the user as a permanent user.
-
-The rule is deliberate and was accepted with the known consequence: once a Kindoo user is permanent, v2.2 never demotes them — even when the SBA grant that triggered the original temp processing later expires. SBA's view of who has temp vs. permanent access drifts from Kindoo's view over time.
-
-**Symptom:** an SBA `add_temp` grant expires server-side (SBA's existing expiry trigger removes it from the seat's `duplicate_grants[]`), but the corresponding Kindoo user retains the rules + permanent status that v2.2 set when the request was originally processed. Nothing pushes an update to Kindoo at the expiry boundary, so the Kindoo record drifts out of sync with SBA's current state.
-
-**Concrete example:**
-1. User A has a permanent SBA seat (e.g. auto-derived from a calling).
-2. An `add_temp` request is submitted and approved for User A on the same building.
-3. v2.2 sees Kindoo already permanent — per the rule, leaves Kindoo's permanent flag alone, updates rules + description.
-4. The temp grant's `end_date` passes.
-5. SBA's expiry trigger fires and removes the temp grant from the seat in SBA.
-6. Kindoo still shows User A as permanent with the temp grant's rules assigned; nothing pushed the update.
-
-**Severity:** low-medium. No day-to-day operational impact (the user retains access, the conservative failure mode). Hurts data hygiene + audit traceability over time, and is worse if the original temp grant was a time-limited high-trust access (e.g. a contractor visiting the building) — they keep that access indefinitely until manually revoked.
-
-**Root cause:** v2.2 is request-driven. There is no scheduled job or expiry-time trigger that reconciles Kindoo against SBA when an SBA temp grant expires server-side.
-
-**Repro:**
-1. Find / create a Kindoo user who is permanent.
-2. Submit and complete an SBA `add_temp` request for the same user (any building).
-3. After v2.2 provisions, confirm Kindoo user is still permanent (correct per the rule).
-4. Wait past `end_date` (or simulate by editing the request's `end_date` to the past).
-5. SBA expires the temp grant server-side via the existing expiry trigger.
-6. Inspect Kindoo: the access rules from the temp grant remain in place; nothing changed.
-
-**Proposed fix paths (not committing to one — surface them for prioritization):**
-
-- **A. Expiry-time push to the extension.** When the SBA expiry trigger removes a temp grant, fire an event the extension reacts to. Hard to wire — the extension is browser-side; the function would need to push to a service the manager has open. Probably not practical.
-- **B. Manual reconciliation panel in the extension.** New view that surfaces "Kindoo users with access SBA no longer grants" — manager clicks to revoke. Operator-driven, no server complexity.
-- **C. Nightly reconciliation job.** Server-side, lists out-of-sync users for the manager to review (email digest, dashboard widget, audit collection).
-- **D. Accept the gap permanently.** Permanent-in-Kindoo is a one-way door by design; revocation always requires an explicit SBA remove request.
-
-**Won't fix in:** v2.2 — deferred by explicit operator decision when the temp→permanent rule was accepted. File as standalone bug, fix in its own design pass.
-
-**Branch / PR:** `docs/b-9-kindoo-temp-expiry-sync-gap` — docs entry only.
-
----
-
 ## [B-11] New Request screen — when `scope === 'stake'`, all buildings should be checked by default
 Status: open
 Owner: @web-engineer
