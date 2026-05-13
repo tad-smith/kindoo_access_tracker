@@ -57,6 +57,7 @@ async function renderConfigure(
 function bundle(
   overrides: {
     stake_name?: string;
+    kindoo_expected_site_name?: string;
     buildings?: Array<{
       building_id: string;
       building_name: string;
@@ -64,11 +65,15 @@ function bundle(
     }>;
   } = {},
 ) {
+  const stake: Record<string, unknown> = {
+    stake_id: 'csnorth',
+    stake_name: overrides.stake_name ?? 'Colorado Springs North Stake',
+  };
+  if (overrides.kindoo_expected_site_name !== undefined) {
+    stake.kindoo_expected_site_name = overrides.kindoo_expected_site_name;
+  }
   return {
-    stake: {
-      stake_id: 'csnorth',
-      stake_name: overrides.stake_name ?? 'Colorado Springs North Stake',
-    },
+    stake,
     buildings: overrides.buildings ?? [
       { building_id: 'cordera', building_name: 'Cordera Building' },
       { building_id: 'pine-creek', building_name: 'Pine Creek Building' },
@@ -106,6 +111,27 @@ describe('ConfigurePanel', () => {
     await renderConfigure();
     await waitFor(() => expect(screen.getByTestId('sba-configure-mismatch')).toBeInTheDocument());
     expect(screen.getByTestId('sba-configure-continue')).toBeDisabled();
+  });
+
+  it('matches via kindoo_expected_site_name override when stake_name has a label prefix', async () => {
+    readKindooSessionMock.mockReturnValue({
+      ok: true,
+      session: { token: 'tok', eid: 27994 },
+    });
+    getStakeConfigMock.mockResolvedValue(
+      bundle({
+        stake_name: 'STAGING - Colorado Springs North Stake',
+        kindoo_expected_site_name: 'Colorado Springs North Stake',
+      }),
+    );
+    getEnvironmentsMock.mockResolvedValue([{ EID: 27994, Name: 'Colorado Springs North Stake' }]);
+
+    await renderConfigure();
+    await waitFor(() => expect(screen.getByTestId('sba-configure-match')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-configure-continue')).not.toBeDisabled();
+    // The displayed "SBA expects" value is the override, not stake_name.
+    expect(screen.queryByText('STAGING - Colorado Springs North Stake')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Colorado Springs North Stake').length).toBeGreaterThan(0);
   });
 
   it('happy path: matches, advances to rules step, all rules assigned, save calls writeKindooConfig', async () => {

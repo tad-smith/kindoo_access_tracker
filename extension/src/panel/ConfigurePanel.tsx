@@ -40,6 +40,8 @@ type VerifyState = {
   stake: Stake;
   buildings: Building[];
   kindooSiteName: string;
+  /** Resolved comparison input: `stake.kindoo_expected_site_name || stake.stake_name`. */
+  sbaExpectedName: string;
   match: boolean;
   eid: number;
 };
@@ -120,15 +122,21 @@ export function ConfigurePanel({ email, onComplete, onCancel }: ConfigurePanelPr
     }
     const env = envs.find((e) => e.EID === session.eid);
     const kindooSiteName = env ? env.Name : '';
+    // `kindoo_expected_site_name` is an optional override on the stake
+    // doc — set when `stake_name` carries a label (e.g. STAGING prefix)
+    // that isn't part of the real Kindoo site name. Falls back to
+    // `stake_name` when absent.
+    const sbaExpectedName =
+      bundle.stake.kindoo_expected_site_name?.trim() || bundle.stake.stake_name;
     const match =
-      kindooSiteName.length > 0 &&
-      normaliseName(kindooSiteName) === normaliseName(bundle.stake.stake_name);
+      kindooSiteName.length > 0 && normaliseName(kindooSiteName) === normaliseName(sbaExpectedName);
 
     setStep({
       kind: 'verify',
       stake: bundle.stake,
       buildings: bundle.buildings,
       kindooSiteName,
+      sbaExpectedName,
       match,
       eid: session.eid,
     });
@@ -308,8 +316,8 @@ function VerifyStep({
     <div data-testid="sba-configure-verify">
       <h2 className="sba-configure-step-title">Step 1 of 2 — verify site</h2>
       <dl className="sba-configure-pair">
-        <dt>SBA stake</dt>
-        <dd>{state.stake.stake_name}</dd>
+        <dt>SBA expects</dt>
+        <dd>{state.sbaExpectedName}</dd>
         <dt>Kindoo site</dt>
         <dd>{state.kindooSiteName || <em className="sba-muted">no site found for EID</em>}</dd>
       </dl>
@@ -319,7 +327,8 @@ function VerifyStep({
         </p>
       ) : (
         <p className="sba-error" data-testid="sba-configure-mismatch">
-          The Kindoo site does not match the SBA stake. Sign into the correct Kindoo site and retry.
+          The Kindoo site does not match. Sign into the correct Kindoo site, or set{' '}
+          <code>stake.kindoo_expected_site_name</code> if the names differ intentionally.
         </p>
       )}
       <div className="sba-request-actions">

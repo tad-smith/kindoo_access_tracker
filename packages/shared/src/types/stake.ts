@@ -49,6 +49,14 @@ export type Stake = {
   stake_id: string;
   /** Human-readable display name. */
   stake_name: string;
+  /**
+   * Overrides the value the extension's v2 Kindoo configuration wizard
+   * compares against the Kindoo site name. Absent → comparison uses
+   * `stake_name`. Set this when `stake_name` carries a label that
+   * isn't part of the Kindoo site name (e.g. a `"STAGING - "` prefix
+   * on the staging Firestore stake doc).
+   */
+  kindoo_expected_site_name?: string;
   created_at: TimestampLike;
   /** Canonical email of the platform superadmin who provisioned the stake. */
   created_by: string;
