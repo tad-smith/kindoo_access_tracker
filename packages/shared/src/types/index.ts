@@ -13,7 +13,7 @@ export type {
   PlatformAuditLog,
 } from './audit.js';
 export type { CustomClaims, Principal, StakeClaims } from './auth.js';
-export type { Building } from './building.js';
+export type { Building, KindooBuildingRule } from './building.js';
 export type {
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
@@ -30,6 +30,6 @@ export type { KindooManager } from './kindooManager.js';
 export type { PlatformSuperadmin } from './platformSuperadmin.js';
 export type { AccessRequest, RequestStatus, RequestType } from './request.js';
 export type { DuplicateGrant, Seat, SeatType } from './seat.js';
-export type { ImportDay, OverCapEntry, Stake } from './stake.js';
+export type { ImportDay, KindooConfig, OverCapEntry, Stake } from './stake.js';
 export type { TimestampLike, UserIndexEntry } from './userIndex.js';
 export type { Ward } from './ward.js';
