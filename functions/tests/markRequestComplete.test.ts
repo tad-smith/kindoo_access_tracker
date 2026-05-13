@@ -6,8 +6,9 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
-import type { AccessRequest, Seat } from '@kindoo/shared';
+import type { AccessRequest, AuditLog, OverCapEntry, Seat, Stake } from '@kindoo/shared';
 import { markRequestComplete } from '../src/callable/markRequestComplete.js';
+import { auditRequestWrites } from '../src/triggers/auditTrigger.js';
 import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.js';
 
 const STAKE_ID = 'csnorth';
@@ -97,18 +98,47 @@ async function seedSeat(opts: {
 }
 
 /**
- * Seed the parent stake doc with optional `last_over_caps_json`. The
- * merge path reads this for its cap check; tests for the cap reject
- * scenario need a populated entry, others can leave it empty.
+ * Seed the parent stake doc with optional `last_over_caps_json` +
+ * `stake_seat_cap`. The post-pivot callable recomputes over-caps from
+ * the post-write seat set against the stake cap + per-ward caps, so
+ * tests that exercise the cap-pivot path supply both.
  */
-async function seedStake(opts: { overCaps?: Array<Record<string, unknown>> } = {}): Promise<void> {
+async function seedStake(
+  opts: {
+    overCaps?: OverCapEntry[];
+    stake_seat_cap?: number;
+  } = {},
+): Promise<void> {
   const { db } = requireEmulators();
-  await db.doc(`stakes/${STAKE_ID}`).set(
-    {
-      last_over_caps_json: opts.overCaps ?? [],
-    },
-    { merge: true },
-  );
+  const body: Record<string, unknown> = {
+    last_over_caps_json: opts.overCaps ?? [],
+  };
+  if (opts.stake_seat_cap !== undefined) body.stake_seat_cap = opts.stake_seat_cap;
+  await db.doc(`stakes/${STAKE_ID}`).set(body, { merge: true });
+}
+
+/**
+ * Seed a ward doc. `seat_cap` is the per-ward Kindoo cap; the callable
+ * reads the wards collection inside its transaction to recompute
+ * over-caps against the post-write seat set. `building_name` is also
+ * used by the legacy ward-scope fallback when a request has empty
+ * `building_names`.
+ */
+async function seedWard(opts: {
+  ward_code: string;
+  building_name?: string;
+  seat_cap?: number;
+}): Promise<void> {
+  const { db } = requireEmulators();
+  await db.doc(`stakes/${STAKE_ID}/wards/${opts.ward_code}`).set({
+    ward_code: opts.ward_code,
+    ward_name: `${opts.ward_code} Ward`,
+    building_name: opts.building_name ?? `${opts.ward_code} Building`,
+    seat_cap: opts.seat_cap ?? 0,
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+  });
 }
 
 function callableReq(opts: { auth?: { email: string } | null; data: unknown }): never {
@@ -141,7 +171,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         data: { stakeId: STAKE_ID, requestId: 'r1' },
       }),
     );
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, over_caps: [] });
 
     const { db } = requireEmulators();
     const after = (await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()).data() as AccessRequest;
@@ -299,7 +329,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           data: { stakeId: STAKE_ID, requestId: 'r1' },
         }),
       );
-      expect(result).toEqual({ ok: true });
+      expect(result).toEqual({ ok: true, over_caps: [] });
 
       const { db } = requireEmulators();
       const after = (await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()).data() as AccessRequest;
@@ -708,16 +738,29 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         expect(dup.reason).toBe('prior-helper');
       });
 
-      it('cap reject: pool in last_over_caps_json that the merge touches yields failed-precondition', async () => {
+      it('merge into over-cap pool succeeds (cap no longer a guard); pool remains over-cap in last_over_caps_json', async () => {
+        // Post-2026-05-12 pivot: cap is not enforced; completion always
+        // succeeds. The pool stays over-cap because the merge doesn't
+        // change pool counts (extending primary's building_names leaves
+        // `s.scope === 'stake'` set count unchanged), so the importer's
+        // earlier over-cap finding remains valid post-write.
         await seedManager();
         await seedStake({
-          overCaps: [{ pool: 'stake', count: 12, cap: 10, over_by: 2 }],
+          stake_seat_cap: 1,
+          overCaps: [{ pool: 'stake', count: 2, cap: 1, over_by: 1 }],
         });
+        // Seed two stake-scope seats so post-write count = 2 > cap 1.
         await seedSeat({
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
           building_names: ['Cordera Building'],
+        });
+        await seedSeat({
+          canonical: 'bob@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Briargate Building'],
         });
         await seedRequest({
           requestId: 'r1',
@@ -727,60 +770,33 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           building_names: ['Briargate Building'],
         });
 
-        await expect(
-          markRequestComplete.run(
-            callableReq({
-              auth: { email: MANAGER_EMAIL },
-              data: { stakeId: STAKE_ID, requestId: 'r1' },
-            }),
-          ),
-        ).rejects.toMatchObject({ code: 'failed-precondition' });
-
-        // Transaction rolled back — request still pending, seat unchanged.
-        const { db } = requireEmulators();
-        const after = (
-          await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()
-        ).data() as AccessRequest;
-        expect(after.status).toBe('pending');
-        const seat = (
-          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
-        ).data() as Seat;
-        expect(seat.building_names).toEqual(['Cordera Building']);
-      });
-
-      it('cap rejection only fires when the touched pool is in over-caps (untouched pools are ignored)', async () => {
-        await seedManager();
-        await seedStake({
-          // 'XX' is over cap but the merge is for scope=stake. Touching
-          // 'stake' doesn't touch 'XX', so the merge proceeds.
-          overCaps: [{ pool: 'XX', count: 5, cap: 4, over_by: 1 }],
-        });
-        await seedSeat({
-          canonical: 'alice@gmail.com',
-          scope: 'stake',
-          type: 'manual',
-          building_names: ['Cordera Building'],
-        });
-        await seedRequest({
-          requestId: 'r1',
-          status: 'pending',
-          type: 'add_manual',
-          scope: 'stake',
-          building_names: ['Briargate Building'],
-        });
-
-        await markRequestComplete.run(
+        const result = await markRequestComplete.run(
           callableReq({
             auth: { email: MANAGER_EMAIL },
             data: { stakeId: STAKE_ID, requestId: 'r1' },
           }),
         );
 
+        // Completion succeeds; output echoes the over-cap state.
+        expect(result.ok).toBe(true);
+        expect(result.over_caps).toEqual([{ pool: 'stake', count: 2, cap: 1, over_by: 1 }]);
+
+        // Seat write applied; request flipped.
         const { db } = requireEmulators();
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
         ).data() as Seat;
         expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        const after = (
+          await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()
+        ).data() as AccessRequest;
+        expect(after.status).toBe('complete');
+
+        // Stake doc reflects the recomputed snapshot.
+        const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+        expect(stake.last_over_caps_json).toEqual([
+          { pool: 'stake', count: 2, cap: 1, over_by: 1 },
+        ]);
       });
 
       it('no-op merge (request building_names already present): flips request without writing seat', async () => {
@@ -897,6 +913,396 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       expect(after.completion_note).toBe(
         'manager handled in person\n\n[System: Seat already removed at completion time (no-op).]',
       );
+    });
+
+    // Create-path coverage that didn't fit cleanly into the happy-path
+    // tests above.
+    it('add_manual with multiple building_names: all land on the new primary', async () => {
+      await seedManager();
+      await seedRequest({
+        requestId: 'r1',
+        status: 'pending',
+        type: 'add_manual',
+        scope: 'stake',
+        building_names: ['Cordera Building', 'Briargate Building', 'Lexington Building'],
+      });
+
+      await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      expect(seat.building_names).toEqual([
+        'Cordera Building',
+        'Briargate Building',
+        'Lexington Building',
+      ]);
+    });
+
+    it('add_manual ward-scope with empty building_names: falls back to ward.building_name', async () => {
+      await seedManager();
+      await seedWard({ ward_code: 'CO', building_name: 'Cordera Building', seat_cap: 10 });
+      await seedRequest({
+        requestId: 'r1',
+        status: 'pending',
+        type: 'add_manual',
+        scope: 'CO',
+        building_names: [],
+      });
+
+      await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      expect(seat.scope).toBe('CO');
+      expect(seat.building_names).toEqual(['Cordera Building']);
+    });
+  });
+
+  // ----------------------------------------------------------------------
+  // Cap-pivot policy (2026-05-12+).
+  //
+  // markRequestComplete no longer rejects for over-cap. Kindoo is the
+  // source of truth — if Kindoo accepted the user, SBA reflects that.
+  // The callable recomputes over-caps from the post-write seat set
+  // inside the same transaction, writes the snapshot to
+  // `stake.last_over_caps_json`, and echoes it on the response. The
+  // existing `notifyOnOverCap` trigger fires on the empty-to-non-empty
+  // transition.
+  // ----------------------------------------------------------------------
+  describe('over-cap recompute (post-2026-05-12 pivot)', () => {
+    it('create that pushes the stake-wide pool from at-cap to over-cap: succeeds + over_caps populated', async () => {
+      // stake_seat_cap = 2, no ward seats, 2 existing stake seats →
+      // already at cap. Adding a 3rd stake-scope seat → over by 1.
+      await seedManager();
+      await seedStake({ stake_seat_cap: 2 });
+      await seedSeat({
+        canonical: 'bob@gmail.com',
+        scope: 'stake',
+        type: 'manual',
+        building_names: ['Cordera Building'],
+      });
+      await seedSeat({
+        canonical: 'carol@gmail.com',
+        scope: 'stake',
+        type: 'manual',
+        building_names: ['Cordera Building'],
+      });
+      await seedRequest({
+        requestId: 'r1',
+        status: 'pending',
+        type: 'add_manual',
+        scope: 'stake',
+        building_names: ['Cordera Building'],
+      });
+
+      const result = await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.over_caps).toEqual([{ pool: 'stake', count: 3, cap: 2, over_by: 1 }]);
+
+      const { db } = requireEmulators();
+      const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+      expect(stake.last_over_caps_json).toEqual([{ pool: 'stake', count: 3, cap: 2, over_by: 1 }]);
+    });
+
+    it('create that pushes a ward pool over cap: succeeds + ward entry in last_over_caps_json', async () => {
+      await seedManager();
+      await seedStake({ stake_seat_cap: 100 });
+      await seedWard({ ward_code: 'CO', building_name: 'Cordera Building', seat_cap: 1 });
+      await seedSeat({
+        canonical: 'bob@gmail.com',
+        scope: 'CO',
+        type: 'manual',
+        building_names: ['Cordera Building'],
+      });
+      await seedRequest({
+        requestId: 'r1',
+        status: 'pending',
+        type: 'add_manual',
+        scope: 'CO',
+        building_names: ['Cordera Building'],
+      });
+
+      const result = await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      expect(result.over_caps).toEqual([{ pool: 'CO', count: 2, cap: 1, over_by: 1 }]);
+
+      const { db } = requireEmulators();
+      const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+      expect(stake.last_over_caps_json).toEqual([{ pool: 'CO', count: 2, cap: 1, over_by: 1 }]);
+    });
+
+    it('completion that does not push any pool over cap: writes [] (clears any stale state)', async () => {
+      await seedManager();
+      await seedStake({ stake_seat_cap: 100 });
+      await seedWard({ ward_code: 'CO', building_name: 'Cordera Building', seat_cap: 10 });
+      await seedRequest({
+        requestId: 'r1',
+        status: 'pending',
+        type: 'add_manual',
+        scope: 'CO',
+        building_names: ['Cordera Building'],
+      });
+
+      const result = await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      expect(result.over_caps).toEqual([]);
+
+      const { db } = requireEmulators();
+      const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+      expect(stake.last_over_caps_json).toEqual([]);
+    });
+
+    it('two-pool over-cap: both ward and stake portion appear in last_over_caps_json', async () => {
+      // stake_seat_cap=2, ward CO seat_cap=1. Existing: 1 stake-scope +
+      // 2 CO-scope (CO already over by 1 — captured by the importer).
+      // Now adding a new stake-scope seat: post-write stake-portion =
+      // 2 - 2(ward CO seats) = 0; stake count = 2 > 0 → stake over by
+      // 2; CO unchanged at over_by 1. Two entries.
+      await seedManager();
+      await seedStake({ stake_seat_cap: 2 });
+      await seedWard({ ward_code: 'CO', building_name: 'Cordera Building', seat_cap: 1 });
+      await seedSeat({
+        canonical: 'bob@gmail.com',
+        scope: 'stake',
+        type: 'manual',
+        building_names: ['Cordera Building'],
+      });
+      await seedSeat({
+        canonical: 'carol@gmail.com',
+        scope: 'CO',
+        type: 'manual',
+        building_names: ['Cordera Building'],
+      });
+      await seedSeat({
+        canonical: 'dave@gmail.com',
+        scope: 'CO',
+        type: 'manual',
+        building_names: ['Cordera Building'],
+      });
+      await seedRequest({
+        requestId: 'r1',
+        status: 'pending',
+        type: 'add_manual',
+        scope: 'stake',
+        building_names: ['Cordera Building'],
+      });
+
+      const result = await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      // CO over by 1 (2 vs 1) AND stake-portion over by 2 (2 vs 0).
+      expect(result.over_caps).toEqual([
+        { pool: 'CO', count: 2, cap: 1, over_by: 1 },
+        { pool: 'stake', count: 2, cap: 0, over_by: 2 },
+      ]);
+    });
+
+    it('pool was over before AND stays over after a count-changing completion: over_by reflects new count', async () => {
+      // 2 stake-scope seats with stake_seat_cap=1 → over_by 1. Adding a
+      // 3rd stake-scope seat → over_by 2 in the post-write snapshot.
+      await seedManager();
+      await seedStake({
+        stake_seat_cap: 1,
+        overCaps: [{ pool: 'stake', count: 2, cap: 1, over_by: 1 }],
+      });
+      await seedSeat({
+        canonical: 'bob@gmail.com',
+        scope: 'stake',
+        type: 'manual',
+        building_names: ['Cordera Building'],
+      });
+      await seedSeat({
+        canonical: 'carol@gmail.com',
+        scope: 'stake',
+        type: 'manual',
+        building_names: ['Cordera Building'],
+      });
+      await seedRequest({
+        requestId: 'r1',
+        status: 'pending',
+        type: 'add_manual',
+        scope: 'stake',
+        building_names: ['Cordera Building'],
+      });
+
+      const result = await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      expect(result.over_caps).toEqual([{ pool: 'stake', count: 3, cap: 1, over_by: 2 }]);
+      const { db } = requireEmulators();
+      const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+      expect(stake.last_over_caps_json).toEqual([{ pool: 'stake', count: 3, cap: 1, over_by: 2 }]);
+    });
+
+    it('merge against an existing seat in an already-over-cap pool: succeeds; entry preserved unchanged', async () => {
+      // Two stake-scope seats with cap=1 → over by 1. Merge into
+      // alice's primary doesn't change pool counts, so the snapshot is
+      // identical post-write.
+      await seedManager();
+      await seedStake({
+        stake_seat_cap: 1,
+        overCaps: [{ pool: 'stake', count: 2, cap: 1, over_by: 1 }],
+      });
+      await seedSeat({
+        canonical: 'alice@gmail.com',
+        scope: 'stake',
+        type: 'manual',
+        building_names: ['Cordera Building'],
+      });
+      await seedSeat({
+        canonical: 'bob@gmail.com',
+        scope: 'stake',
+        type: 'manual',
+        building_names: ['Cordera Building'],
+      });
+      await seedRequest({
+        requestId: 'r1',
+        status: 'pending',
+        type: 'add_manual',
+        scope: 'stake',
+        building_names: ['Briargate Building'],
+      });
+
+      const result = await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      expect(result.over_caps).toEqual([{ pool: 'stake', count: 2, cap: 1, over_by: 1 }]);
+      const { db } = requireEmulators();
+      const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+      expect(stake.last_over_caps_json).toEqual([{ pool: 'stake', count: 2, cap: 1, over_by: 1 }]);
+      // Seat write applied.
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+    });
+
+    it('remove path does NOT touch last_over_caps_json (responsibility split with seat-delete trigger)', async () => {
+      // Pre-existing over-cap state captured by the importer must
+      // survive a remove completion — the seat-delete trigger owns the
+      // post-remove recompute, not the callable.
+      const pre: OverCapEntry[] = [{ pool: 'stake', count: 2, cap: 1, over_by: 1 }];
+      await seedManager();
+      await seedStake({ stake_seat_cap: 1, overCaps: pre });
+      await seedSeat({ canonical: 'alice@gmail.com', scope: 'stake' });
+      await seedRequest({
+        requestId: 'r1',
+        status: 'pending',
+        type: 'remove',
+        scope: 'stake',
+      });
+
+      const result = await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      // Remove path returns empty over_caps (no recompute performed).
+      expect(result.over_caps).toEqual([]);
+      const { db } = requireEmulators();
+      const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+      expect(stake.last_over_caps_json).toEqual(pre);
+    });
+  });
+
+  // ----------------------------------------------------------------------
+  // Audit smoke check. The audit trigger is wired to onDocumentWritten,
+  // so it does not fire under callable .run(). We invoke the trigger
+  // directly with a before/after constructed from observed Firestore
+  // state to confirm the request-flip write produces a valid audit row.
+  // ----------------------------------------------------------------------
+  describe('audit smoke check', () => {
+    it('happy-path completion produces a valid audit row via auditRequestWrites', async () => {
+      // Seed a request from a different requester than the completer so
+      // the `lastActor` field genuinely changes across before/after —
+      // otherwise the audit trigger's out-of-band carve-out kicks in
+      // and resolves the actor to `OutOfBand` (per B-5).
+      await seedManager();
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/requests/r1`).set({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'alice@gmail.com',
+        member_canonical: 'alice@gmail.com',
+        member_name: 'Alice',
+        reason: 'helper',
+        comment: '',
+        building_names: [],
+        status: 'pending',
+        requester_email: 'requester@gmail.com',
+        requester_canonical: 'requester@gmail.com',
+        requested_at: Timestamp.fromMillis(1_000),
+        lastActor: { email: 'requester@gmail.com', canonical: 'requester@gmail.com' },
+      });
+      const beforeSnap = await db.doc(`stakes/${STAKE_ID}/requests/r1`).get();
+      const before = beforeSnap.data() as AccessRequest;
+
+      await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      const afterSnap = await db.doc(`stakes/${STAKE_ID}/requests/r1`).get();
+      const after = afterSnap.data() as AccessRequest;
+
+      const time = '2026-05-12T18:00:00.000Z';
+      const event = {
+        params: { stakeId: STAKE_ID, requestId: 'r1' },
+        time,
+        data: {
+          before: { exists: true, data: () => before },
+          after: { exists: true, data: () => after },
+        },
+      } as unknown as never;
+      await auditRequestWrites.run(event);
+
+      const audit = await db.collection(`stakes/${STAKE_ID}/auditLog`).get();
+      expect(audit.empty).toBe(false);
+      const row = audit.docs[0]!.data() as AuditLog;
+      expect(row.entity_type).toBe('request');
+      expect(row.entity_id).toBe('r1');
+      expect(row.actor_canonical).toBe(MANAGER_EMAIL);
     });
   });
 });
