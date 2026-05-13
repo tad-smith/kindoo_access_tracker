@@ -4,17 +4,24 @@
 //
 // Two render modes:
 //   - { kind: 'ok' }     — both Kindoo + SBA succeeded; one dismiss button.
+//                           When `over_caps` is non-empty, also renders a
+//                           warning row listing each pool that went over
+//                           cap as a result of this completion.
 //   - { kind: 'partial' } — Kindoo succeeded but the SBA mark-complete
 //                           call failed; second button retries ONLY the
 //                           SBA side using the captured kindoo_uid +
 //                           provisioning_note (no Kindoo retry needed).
+//                           The partial branch never carries over_caps
+//                           — the SBA write never landed, so the server
+//                           has nothing to report.
 //
 // Vanilla DOM modal in the same backdrop style as CompleteDialog.
 
 import { useState } from 'react';
+import type { OverCapEntry } from '@kindoo/shared';
 
 export type ResultDialogState =
-  | { kind: 'ok'; note: string }
+  | { kind: 'ok'; note: string; over_caps?: OverCapEntry[] }
   | {
       kind: 'partial';
       note: string;
@@ -59,6 +66,19 @@ export function ResultDialog({ state, onDismiss }: ResultDialogProps) {
           {isPartial ? 'Kindoo done — SBA still pending' : 'Done'}
         </h2>
         <p data-testid="sba-result-note">{state.note}</p>
+        {state.kind === 'ok' && state.over_caps && state.over_caps.length > 0 ? (
+          <div className="sba-result-overcap" data-testid="sba-result-overcap">
+            <strong>Now over cap:</strong>
+            <ul>
+              {state.over_caps.map((entry) => (
+                <li key={entry.pool}>
+                  {entry.pool === 'stake' ? 'Stake-wide' : `Ward ${entry.pool}`}: {entry.count} /{' '}
+                  {entry.cap} (+{entry.over_by})
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {state.kind === 'partial' ? (
           <p className="sba-error" data-testid="sba-result-partial-error">
             Could not mark complete in SBA: {state.errorMessage}

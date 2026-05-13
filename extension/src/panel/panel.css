@@ -287,6 +287,36 @@ main.sba-panel {
   text-align: center;
 }
 
+/* Warning panel inside ResultDialog when the completion pushed a pool
+ * over cap. Amber-on-cream — the operation succeeded, this is a
+ * heads-up not an error (which would use --sba-danger). */
+.sba-result-overcap {
+  font-size: 12px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-left: 3px solid var(--sba-warning);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  color: var(--sba-warning);
+}
+
+.sba-result-overcap strong {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: var(--sba-warning);
+}
+
+.sba-result-overcap ul {
+  list-style: disc;
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--sba-fg);
+}
+
+.sba-result-overcap li {
+  margin: 0;
+}
+
 .sba-configure-step-title {
   margin: 0 0 0.5rem 0;
   font-size: 13px;

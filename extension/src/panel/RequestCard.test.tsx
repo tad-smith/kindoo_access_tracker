@@ -297,6 +297,26 @@ describe('RequestCard', () => {
     expect(screen.queryByTestId('sba-result-partial-error')).not.toBeInTheDocument();
   });
 
+  it('threads over_caps from the markRequestComplete response into the result dialog', async () => {
+    provisionAddOrChangeMock.mockResolvedValue({
+      kindoo_uid: 'new-uid',
+      action: 'invited',
+      note: 'Added Tad Smith to Kindoo with access to Cordera Building.',
+    });
+    markRequestCompleteMock.mockResolvedValue({
+      ok: true,
+      over_caps: [{ pool: 'stake', count: 351, cap: 350, over_by: 1 }],
+    });
+
+    const user = userEvent.setup();
+    await renderCard();
+    await user.click(screen.getByTestId('sba-add-r1'));
+
+    await waitFor(() => expect(screen.getByTestId('sba-result-dialog')).toBeInTheDocument());
+    const warning = screen.getByTestId('sba-result-overcap');
+    expect(warning).toHaveTextContent(/Stake-wide: 351 \/ 350 \(\+1\)/);
+  });
+
   it('dismiss calls onDismissed with the request id', async () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',

@@ -243,8 +243,8 @@ async function sendMarkComplete(
   }
 
   try {
-    await markRequestComplete(payload);
-    setDialog({ kind: 'ok', note });
+    const result = await markRequestComplete(payload);
+    setDialog({ kind: 'ok', note, over_caps: result.over_caps });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     setDialog({
@@ -252,8 +252,8 @@ async function sendMarkComplete(
       note,
       errorMessage: message,
       onRetrySba: async () => {
-        await markRequestComplete(payload);
-        setDialog({ kind: 'ok', note });
+        const result = await markRequestComplete(payload);
+        setDialog({ kind: 'ok', note, over_caps: result.over_caps });
       },
     });
   }
