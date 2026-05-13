@@ -6,6 +6,44 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-10] Multi-grant partial-remove not supported — every SBA `remove` request triggers a whole-user revoke in Kindoo
+Status: open
+Owner: @web-engineer (extension portion + SPA roster UI), @backend-engineer (SBA schema + trigger)
+Phase: post extension v2.2
+Severity: medium
+
+When an SBA user holds multiple grants on a single seat (e.g., a primary grant for the PC ward plus a `duplicate_grant` for the MO ward), there is no way to surgically remove just one of those grants. Operator intent — "remove this user from PC's roster; keep their MO access" — cannot be expressed in the current request schema, and neither the SBA seat trigger nor the v2.2 extension orchestrator honours it. The Remove button on a ward roster page produces a generic `remove` request that both sides interpret as "drop everything."
+
+**Symptom:** clicking Remove on user X from the PC ward's roster page (where X also has an MO `duplicate_grant`) collapses to a whole-user revoke on completion. SBA deletes the entire seat — the MO grant is lost. The Chrome extension v2.2 orchestrator's `provisionRemove` whole-user-revokes from Kindoo (per the option-A simplification adopted on PR #88) — X loses all Kindoo environment access, not just access to the PC ward's buildings. SBA and Kindoo end up consistent (both fully revoked, so the cross-system safety property holds), but operator intent is silently violated.
+
+**Repro:**
+1. Submit and complete an SBA `add_manual` request for user X with `scope = PC`, one or more buildings selected. Seat created with primary grant on PC; Kindoo provisioned.
+2. Submit and complete a second `add_manual` request for the same user with `scope = MO`. Seat updated — MO joins as a `duplicate_grant`; Kindoo now grants X access to both ward sets.
+3. From the PC ward's roster page in SBA, click Remove on user X. A `remove` request is created.
+4. Process that request through the Chrome extension v2.2.
+5. **Expected (operator intent):** SBA drops the PC primary grant; MO becomes the new primary; Kindoo loses the PC ward's building rules but retains MO's.
+6. **Actual:** SBA deletes the seat in full (MO grant gone); Kindoo fully revokes the user from the environment.
+
+**Root cause — two layers:**
+
+- **SBA `removeSeatOnRequestComplete` trigger** treats every `remove` request as a whole-seat delete. The request schema carries no field representing partial-remove intent — the trigger has nothing to branch on.
+- **Extension `provisionRemove`** (post-PR-#88) always whole-user revokes. Earlier partial-revoke logic was abandoned because Kindoo's `SaveAccessRule` is a MERGE (additive) endpoint — it cannot remove rules. The correct primitive is `KindooRevokeUserFromAccesSchedule`, which removes a single rule per call (newly captured during v2.2 work). Neither the SBA request model nor the extension currently wires this up.
+
+**Severity rationale:** medium. No silent SBA↔Kindoo drift — both systems end up fully revoked, so the cross-system invariant holds. The damage is to operator-facing semantics: a manager on a 200-user stake who wants to surgically remove just one of a user's grants will hit this every time. The mismatch between button label ("Remove" on PC's roster) and effect (whole-stake revoke) is the bug.
+
+**Fix path (high-level — pick at design time):**
+
+1. **Add explicit partial-remove signal to the `remove` request schema.** Either `grants_to_remove: { scope, type }[]` (enumerate exactly which grants to drop) or `whole_seat: boolean` with default `true` to preserve current behaviour. Schema change lands in `packages/shared`.
+2. **Update `removeSeatOnRequestComplete`** to honour the signal. Whole-seat path: existing delete. Scope-specific path: update the seat — drop the matching grant from primary or `duplicate_grants[]`; if the removed scope was primary, promote a remaining duplicate to primary.
+3. **Update extension `provisionRemove`** to compute target Kindoo state from the post-remove SBA seat shape. For each removed building, call `KindooRevokeUserFromAccesSchedule(EUID, ruleId)`. If post-remove rules is empty, call `RevokeUserFromEnvironment` to delete the env-user record. The `KindooRevokeUserFromAccesSchedule` endpoint wrapper is already shipped on PR #88 in preparation for this.
+4. **SPA roster Remove buttons** must signal scope-specific intent. A ward-roster Remove means "drop this ward's grant"; a separate "Remove entirely from stake" affordance (new) signals whole-seat. UX copy and confirm-dialog text follow.
+
+**Won't fix in v2.2 (PR #88):** operator explicitly chose option A (whole-user revoke) for v2.2 stability — partial-remove is deferred to a coordinated design pass spanning SBA schema, SBA trigger, extension orchestrator, and SPA roster UI.
+
+**Branch / PR:** none — design pass not yet started.
+
+---
+
 ## [B-1] iPhone PWA notification tap doesn't navigate to the deep-link target
 Status: open
 Owner: @web-engineer
