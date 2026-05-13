@@ -14,17 +14,17 @@ function ok(body: unknown): Response {
 }
 
 describe('getEnvironments', () => {
-  it('parses a list of environments and narrows EID + Name', async () => {
+  it('parses a list of environments and narrows EID + Name from the wire shape', async () => {
     const fetchImpl = vi.fn(async () =>
       ok([
         {
-          EID: 27994,
-          Name: 'Colorado Springs North Stake',
+          EnvironmentID: 27994,
+          EnvironmentName: 'Colorado Springs North Stake',
           Description: 'whatever',
         },
         {
-          EID: 28000,
-          Name: 'Some Other Site',
+          EnvironmentID: 28000,
+          EnvironmentName: 'Some Other Site',
         },
       ]),
     );
@@ -34,8 +34,8 @@ describe('getEnvironments', () => {
     expect(result[1]).toMatchObject({ EID: 28000, Name: 'Some Other Site' });
   });
 
-  it('throws unexpected-shape when an entry is missing EID/Name', async () => {
-    const fetchImpl = vi.fn(async () => ok([{ Name: 'No EID' }]));
+  it('throws unexpected-shape when an entry is missing EnvironmentID/EnvironmentName', async () => {
+    const fetchImpl = vi.fn(async () => ok([{ EnvironmentName: 'No ID' }]));
     await expect(getEnvironments(SESSION, fetchImpl)).rejects.toBeInstanceOf(KindooApiError);
     await expect(getEnvironments(SESSION, fetchImpl)).rejects.toMatchObject({
       code: 'unexpected-shape',

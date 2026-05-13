@@ -1,9 +1,9 @@
 // Typed wrappers over the two read-only Kindoo endpoints v2.1 needs.
 //
-// Both return plain JSON arrays. Response field shapes are observed
-// from a live capture; we narrow only the fields the configuration
-// flow consumes (EID + Name for environments, RID + Name for rules)
-// and pass the rest through as unknown for forward compat.
+// Both return plain JSON arrays. Wire-format field names are verbose
+// (`EnvironmentID`, `EnvironmentName`, …); we normalize to short
+// internal names (`EID`, `Name`, …) at the parser so consumers stay
+// stable if Kindoo ever changes its shape again.
 //
 // On a malformed response shape we throw `KindooApiError('unexpected-shape', …)`
 // so the caller's catch can render a "Kindoo API changed" recovery.
@@ -36,8 +36,8 @@ function asArray(value: unknown): unknown[] {
 function asEnvironment(value: unknown): KindooEnvironment | null {
   if (typeof value !== 'object' || value === null) return null;
   const v = value as Record<string, unknown>;
-  const eid = v.EID;
-  const name = v.Name;
+  const eid = v.EnvironmentID;
+  const name = v.EnvironmentName;
   if (typeof eid !== 'number' || typeof name !== 'string') return null;
   return { ...v, EID: eid, Name: name };
 }
@@ -65,7 +65,10 @@ export async function getEnvironments(
   for (const entry of list) {
     const env = asEnvironment(entry);
     if (!env) {
-      throw new KindooApiError('unexpected-shape', 'KindooGetEnvironments entry missing EID/Name');
+      throw new KindooApiError(
+        'unexpected-shape',
+        'KindooGetEnvironments entry missing EnvironmentID/EnvironmentName',
+      );
     }
     parsed.push(env);
   }
