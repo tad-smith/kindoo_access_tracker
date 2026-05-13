@@ -73,7 +73,7 @@ export function isNoOpUpdate(
   return changedKeys(before, after).length === 0;
 }
 
-function deepEqual(x: unknown, y: unknown): boolean {
+export function deepEqual(x: unknown, y: unknown): boolean {
   if (x === y) return true;
   // Treat `undefined` and a missing key as equal — matches how
   // `changedKeys` unions Object.keys(before) ∪ Object.keys(after).

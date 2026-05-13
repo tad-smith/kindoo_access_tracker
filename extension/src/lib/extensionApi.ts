@@ -1,9 +1,9 @@
 // Content-script-side wrapper over chrome.runtime.sendMessage.
 //
 // The panel components (SignedOutPanel, QueuePanel, NotAuthorizedPanel,
-// RequestCard, CompleteDialog) live in the content-script bundle and
-// cannot touch chrome.identity or the Firebase SDK directly. They
-// import from here instead; this module round-trips through the
+// RequestCard, ResultDialog, ConfigurePanel) live in the content-script
+// bundle and cannot touch chrome.identity or the Firebase SDK directly.
+// They import from here instead; this module round-trips through the
 // service worker which owns those surfaces.
 //
 // Hook shapes mirror the previous direct-Firebase versions
@@ -24,6 +24,8 @@ import type {
   AuthSignOutResponse,
   AuthSnapshot,
   AuthStateChangedPush,
+  DataGetSeatByEmailRequest,
+  DataGetSeatByEmailResponse,
   DataGetStakeConfigPayload,
   DataGetStakeConfigRequest,
   DataGetStakeConfigResponse,
@@ -34,11 +36,16 @@ import type {
   WireError,
   WriteKindooConfigPayload,
 } from './messaging';
+
+/** Public alias for the stake-config bundle the panel passes between
+ * components. */
+export type StakeConfigBundle = DataGetStakeConfigPayload;
 import type {
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
+  Seat,
 } from '@kindoo/shared';
 
 /**
@@ -187,4 +194,15 @@ export async function writeKindooConfig(payload: WriteKindooConfigPayload): Prom
   const req: DataWriteKindooConfigRequest = { type: 'data.writeKindooConfig', payload };
   const res: DataWriteKindooConfigResponse = await sendMessage(req);
   unwrap(res);
+}
+
+/**
+ * Fetch the SBA `Seat` doc for a member by canonical email. Returns
+ * `null` when the member has no seat yet — that's the v2.2 first-add
+ * signal (orchestrator treats `seat=null` as "no prior grants").
+ */
+export async function getSeatByEmail(canonical: string): Promise<Seat | null> {
+  const req: DataGetSeatByEmailRequest = { type: 'data.getSeatByEmail', canonical };
+  const res: DataGetSeatByEmailResponse = await sendMessage(req);
+  return unwrap(res);
 }

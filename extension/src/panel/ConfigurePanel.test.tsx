@@ -78,6 +78,7 @@ function bundle(
       { building_id: 'cordera', building_name: 'Cordera Building' },
       { building_id: 'pine-creek', building_name: 'Pine Creek Building' },
     ],
+    wards: [],
   };
 }
 

@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { canonicalEmail } from '@kindoo/shared';
+import { canonicalEmail, isAutomatedActor } from '@kindoo/shared';
 import type { AuditLog } from '@kindoo/shared';
 import { useAuditLogInfinite, type AuditLogFilters } from './hooks';
 import { useStakeDoc } from '../dashboard/hooks';
@@ -243,7 +243,7 @@ function AuditCard({ row, timezone }: AuditCardProps) {
   const summary = summariseAuditRow(row);
   // Stake-timezone formatting per spec.md §13: `YYYY-MM-DD h:mm am/pm`.
   const tsString = formatDateTimeInStakeTz(row.timestamp, timezone);
-  const automated = row.actor_email === 'Importer' || row.actor_email === 'ExpiryTrigger';
+  const automated = isAutomatedActor(row.actor_email);
   const entityIdDisplay = displayEntityId(row);
 
   return (
@@ -311,8 +311,8 @@ function pickMemberEmail(payload: unknown): string | null {
 
 /** Convert user-typed actor / member emails to canonical form for the
  *  Firestore query. Literal automated actors (`Importer`,
- *  `ExpiryTrigger`) pass through unchanged because they're not real
- *  emails. */
+ *  `ExpiryTrigger`, `OutOfBand`) pass through unchanged because they're
+ *  not real emails. */
 function canonicalizeFilters(filters: AuditLogFilters): AuditLogFilters {
   const out: AuditLogFilters = { ...filters };
   if (out.actor_canonical) {
@@ -327,10 +327,6 @@ function canonicalizeFilters(filters: AuditLogFilters): AuditLogFilters {
     out.entity_id = trimmed.includes('@') ? canonicalEmail(trimmed) : trimmed;
   }
   return out;
-}
-
-function isAutomatedActor(s: string): boolean {
-  return s === 'Importer' || s === 'ExpiryTrigger';
 }
 
 function stripEmpty(filters: AuditLogFilters): Record<string, string> {

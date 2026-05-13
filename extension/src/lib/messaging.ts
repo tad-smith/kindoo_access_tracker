@@ -21,7 +21,9 @@ import type {
   GetMyPendingRequestsOutput,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
+  Seat,
   Stake,
+  Ward,
 } from '@kindoo/shared';
 
 /** Reduced user shape — the only auth fields the panel renders. */
@@ -86,6 +88,13 @@ export interface DataGetStakeConfigRequest {
 export interface DataGetStakeConfigPayload {
   stake: Stake;
   buildings: Building[];
+  /**
+   * Every ward under the stake — needed by v2.2's provision flow to
+   * resolve a ward-scoped request's display name (`request.scope` is
+   * a ward_code; the orchestrator maps it to `ward.ward_name` for the
+   * Kindoo Description field). Empty for stakes with no wards yet.
+   */
+  wards: Ward[];
 }
 
 /**
@@ -108,6 +117,19 @@ export interface WriteKindooConfigPayload {
   }>;
 }
 
+/**
+ * One-shot read of the SBA `Seat` doc for a request's subject. v2.2's
+ * read-first orchestrator uses this to compute the post-completion
+ * seat state (which buildings to grant, which to drop, what to
+ * synthesize as the Kindoo Description). `null` is a valid return
+ * — first-time-add cases have no seat yet.
+ */
+export interface DataGetSeatByEmailRequest {
+  type: 'data.getSeatByEmail';
+  /** Canonical email — caller has already run `canonicalEmail()`. */
+  canonical: string;
+}
+
 /** Discriminated union of every request the panel may send. */
 export type ExtensionRequest =
   | AuthGetStateRequest
@@ -117,7 +139,8 @@ export type ExtensionRequest =
   | ApiMarkRequestCompleteRequest
   | PanelTogglePushRequest
   | DataGetStakeConfigRequest
-  | DataWriteKindooConfigRequest;
+  | DataWriteKindooConfigRequest
+  | DataGetSeatByEmailRequest;
 
 // ---- Response envelopes ------------------------------------------------
 
@@ -130,6 +153,7 @@ export type ApiGetMyPendingRequestsResponse = Result<GetMyPendingRequestsOutput>
 export type ApiMarkRequestCompleteResponse = Result<MarkRequestCompleteOutput>;
 export type DataGetStakeConfigResponse = Result<DataGetStakeConfigPayload>;
 export type DataWriteKindooConfigResponse = Result<{ ok: true }>;
+export type DataGetSeatByEmailResponse = Result<Seat | null>;
 
 /** Lookup from a request `type` to its response shape. */
 export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequest
@@ -146,7 +170,9 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
             ? DataGetStakeConfigResponse
             : R extends DataWriteKindooConfigRequest
               ? DataWriteKindooConfigResponse
-              : never;
+              : R extends DataGetSeatByEmailRequest
+                ? DataGetSeatByEmailResponse
+                : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 

@@ -42,6 +42,81 @@ Identical data, different key order. The Manager Audit Log page displays nested-
 
 ---
 
+## [B-9] SBA temp grant expiry doesn't downgrade Kindoo permanent users (one-way temp→permanent sync)
+Status: open
+Owner: TBD (depends on chosen fix path — `@web-engineer` for A/B, `@backend-engineer` for C)
+Phase: post v2.2 design scoping
+Severity: low-medium
+
+The v2.2 extension design adopts a one-way temp→permanent promotion rule: if v2.2 is processing a manual (permanent) request and finds the Kindoo user is temporary, it promotes them to permanent; if v2.2 is processing a temp request and finds the user already permanent, it leaves them permanent (does not demote). Operator wording:
+
+> If we're adding a manual role to a user and we find they are temporary in Kindoo, then we need to make them a permanent user in Kindoo. If they are a permanent user and we are processing a temporary request, then we have to leave the user as a permanent user.
+
+The rule is deliberate and was accepted with the known consequence: once a Kindoo user is permanent, v2.2 never demotes them — even when the SBA grant that triggered the original temp processing later expires. SBA's view of who has temp vs. permanent access drifts from Kindoo's view over time.
+
+**Symptom:** an SBA `add_temp` grant expires server-side (SBA's existing expiry trigger removes it from the seat's `duplicate_grants[]`), but the corresponding Kindoo user retains the rules + permanent status that v2.2 set when the request was originally processed. Nothing pushes an update to Kindoo at the expiry boundary, so the Kindoo record drifts out of sync with SBA's current state.
+
+**Concrete example:**
+1. User A has a permanent SBA seat (e.g. auto-derived from a calling).
+2. An `add_temp` request is submitted and approved for User A on the same building.
+3. v2.2 sees Kindoo already permanent — per the rule, leaves Kindoo's permanent flag alone, updates rules + description.
+4. The temp grant's `end_date` passes.
+5. SBA's expiry trigger fires and removes the temp grant from the seat in SBA.
+6. Kindoo still shows User A as permanent with the temp grant's rules assigned; nothing pushed the update.
+
+**Severity:** low-medium. No day-to-day operational impact (the user retains access, the conservative failure mode). Hurts data hygiene + audit traceability over time, and is worse if the original temp grant was a time-limited high-trust access (e.g. a contractor visiting the building) — they keep that access indefinitely until manually revoked.
+
+**Root cause:** v2.2 is request-driven. There is no scheduled job or expiry-time trigger that reconciles Kindoo against SBA when an SBA temp grant expires server-side.
+
+**Repro:**
+1. Find / create a Kindoo user who is permanent.
+2. Submit and complete an SBA `add_temp` request for the same user (any building).
+3. After v2.2 provisions, confirm Kindoo user is still permanent (correct per the rule).
+4. Wait past `end_date` (or simulate by editing the request's `end_date` to the past).
+5. SBA expires the temp grant server-side via the existing expiry trigger.
+6. Inspect Kindoo: the access rules from the temp grant remain in place; nothing changed.
+
+**Proposed fix paths (not committing to one — surface them for prioritization):**
+
+- **A. Expiry-time push to the extension.** When the SBA expiry trigger removes a temp grant, fire an event the extension reacts to. Hard to wire — the extension is browser-side; the function would need to push to a service the manager has open. Probably not practical.
+- **B. Manual reconciliation panel in the extension.** New view that surfaces "Kindoo users with access SBA no longer grants" — manager clicks to revoke. Operator-driven, no server complexity.
+- **C. Nightly reconciliation job.** Server-side, lists out-of-sync users for the manager to review (email digest, dashboard widget, audit collection).
+- **D. Accept the gap permanently.** Permanent-in-Kindoo is a one-way door by design; revocation always requires an explicit SBA remove request.
+
+**Won't fix in:** v2.2 — deferred by explicit operator decision when the temp→permanent rule was accepted. File as standalone bug, fix in its own design pass.
+
+**Branch / PR:** `docs/b-9-kindoo-temp-expiry-sync-gap` — docs entry only.
+
+---
+
+## [B-11] New Request screen — when `scope === 'stake'`, all buildings should be checked by default
+Status: open
+Owner: @web-engineer
+Phase: post Phase 11
+Severity: low-medium
+
+On the New Request page, picking `scope === 'stake'` leaves every building checkbox unchecked. The manager has to manually tick every building to grant the requested user stake-wide access — for a stake with N buildings, N manual clicks per request, with the failure mode being a quietly-forgotten building rather than a visible error. The expected default is "all buildings checked" because stake-scope means "everywhere"; unchecking specific buildings to exclude is the rare case. Ward-scope requests are unaffected — the building is inherited from the ward and no checkbox UI renders on that path, so this is strictly a stake-scope UX defect.
+
+**Symptom:** on `/new`, choose any member, set scope to `stake`, observe every building checkbox starts unchecked. Submitting without re-checking grants access to zero buildings (or however many the manager manually clicked).
+
+**Repro:**
+1. Open the SBA web app, navigate to `/new` ("New Request").
+2. Pick any member; set scope to `stake`.
+3. Observe: building checkboxes all start unchecked.
+4. Expected: every building checked; manager unchecks specific ones to exclude.
+
+**Severity:** low-medium. No data corruption, no security impact. Pure UX papercut that scales with stake size — every stake-scope request costs N clicks where N is the building count, and a forgotten building silently narrows the grant the manager intended to make stake-wide.
+
+**Suspected layer:** the request form's default-state setter (likely `apps/web/src/features/requests/` form component). The `building_names` field initialises to `[]` regardless of scope; the scope-change handler doesn't repopulate the field when scope flips to `stake`.
+
+**Proposed fix:** in the form's scope-change handler (or the `useFormDefaults` / `react-hook-form` `reset` path), when `scope === 'stake'`, set `building_names` to the stake's full building list (e.g. `stake.buildings.map(b => b.building_name)`). When scope changes to a ward, fall back to whatever the ward path uses today (the ward-scope branch doesn't render the checkbox UI, so the field value there is consumed elsewhere or ignored — confirm during implementation). Coordinate with `react-hook-form` reset semantics so the change re-renders the checkbox row.
+
+**Won't fix in:** any in-flight PR — this is a standalone SPA UX bug, unrelated to the Chrome extension v2.2 work on PR #88. File and fix in its own PR.
+
+**Branch / PR:** none — fix not yet started.
+
+---
+
 ## [B-1] iPhone PWA notification tap doesn't navigate to the deep-link target
 Status: open
 Owner: @web-engineer
@@ -82,9 +157,10 @@ Somewhere in 1–4 the chain breaks on iOS specifically. Verified: latest stagin
 ---
 
 ## [B-5] auditTrigger misattributes out-of-band writes to the doc's prior `lastActor`
-Status: open
+Status: closed (fixed in PR #85)
 Owner: @backend-engineer
 Phase: post Phase 11
+Branch / PR: `fix/b-5-audit-out-of-band-attribution` (PR #85)
 
 `auditTrigger` resolves the actor of an entity write by reading the `lastActor` ActorRef on the after-snapshot of the modified doc. Client paths and Cloud Functions that mutate entities always stamp a fresh `lastActor` alongside the rest of the write, so the field on the after-snapshot reflects who actually made the change and the audit attribution is correct. Out-of-band writes that don't go through those paths — Firestore Console edits, ad-hoc `gcloud firestore` CLI tweaks, scripted Admin-SDK writes that forget to set `lastActor` — leave the field untouched. The audit trigger then reads whatever `lastActor` was already on the doc (typically the most recent scheduled function or trigger that wrote it) and records that prior actor as the author of the new change.
 
@@ -108,7 +184,7 @@ Phase: post Phase 11
 
 **Won't fix in v2.1 (PR #83).** The extension v2.1 PR is scoped narrowly; this gap predates it and isn't on its critical path. File and defer to a separate backend-engineer task after v2.1 lands.
 
-**Branch / PR:** none — fix not yet scheduled.
+**Fix shipped on `fix/b-5-audit-out-of-band-attribution`:** `auditTrigger.resolveActor` now compares `before.lastActor` and `after.lastActor` on updates. When they're structurally equal (both present and identical, or both absent), the writer didn't touch the field — the `isNoOpUpdate` gate already rejected pure-bookkeeping writes, so an equal `lastActor` on an update implies a tracked field changed without the canonical write path's actor stamp. The trigger records the sentinel `ActorRef { email: 'OutOfBand', canonical: 'OutOfBand' }` (see `functions/src/lib/systemActors.ts:OUT_OF_BAND_ACTOR`) instead of the stale prior actor. The before/after diff and the action enum are unchanged — only attribution. The Manager Audit Log page recognises `OutOfBand` as a synthetic actor via the shared `isAutomatedActor` helper (`packages/shared/src/systemActors.ts`) and renders it with the same `actor-automated` chip styling as `Importer` / `ExpiryTrigger`, so a Console / CLI edit reads as visually distinct from a real-user action. Creates and deletes are excluded from the detection (no meaningful before/after pair to compare) and fall through to the existing actor resolution. Past audit rows are not backfilled — only future writes get the sentinel treatment.
 
 ---
 

@@ -12,6 +12,7 @@
 // audit rows stream in real time.
 
 import { Link } from '@tanstack/react-router';
+import { isAutomatedActor } from '@kindoo/shared';
 import type { AccessRequest, AuditLog, OverCapEntry, Seat, Stake, Ward } from '@kindoo/shared';
 import {
   usePendingRequests,
@@ -290,7 +291,7 @@ function RecentActivityCard({ loading, rows }: RecentActivityCardProps) {
       <CardContent>
         <ul className="kd-dashboard-list">
           {rows.map((r) => {
-            const isAutomated = r.actor_email === 'Importer' || r.actor_email === 'ExpiryTrigger';
+            const isAutomated = isAutomatedActor(r.actor_email);
             return (
               <li key={r.audit_id} style={{ flexWrap: 'wrap' }}>
                 <Link to="/manager/audit" search={{ entity_id: r.entity_id }} style={{ flex: 1 }}>

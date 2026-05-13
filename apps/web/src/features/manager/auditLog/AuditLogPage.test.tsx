@@ -292,6 +292,18 @@ describe('<AuditLogPage />', () => {
       expect(actor?.className).toContain('actor-automated');
     });
 
+    it('paints OutOfBand the same way (B-5 sentinel for Console / CLI edits)', () => {
+      useAuditLogInfiniteMock.mockReturnValue(
+        infiniteResult({
+          pages: [[makeAuditLog({ audit_id: 'a1', actor_email: 'OutOfBand' })]],
+        }),
+      );
+      render(<AuditLogPage />);
+      const card = screen.getByTestId('audit-row-a1');
+      const actor = card.querySelector('.kd-audit-card-actor');
+      expect(actor?.className).toContain('actor-automated');
+    });
+
     it('does not paint a real-user email as automated', () => {
       useAuditLogInfiniteMock.mockReturnValue(
         infiniteResult({

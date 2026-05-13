@@ -1,25 +1,21 @@
-// Signed-in manager view. Renders the pending-request queue and the
-// "Mark Complete" affordance per row.
+// Signed-in manager view. Renders the pending-request queue.
 //
-// State shape:
-//   - 'loading'  — initial fetch in flight
-//   - 'ready'    — fetched, render the list (possibly empty)
-//   - 'error'    — last fetch failed with a non-permission error;
-//                  show the message + a manual refresh button
-//
-// The `permission-denied` case is handled one level up in `App`: we
-// surface the typed error to the root which then renders
-// `NotAuthorizedPanel`. Keeping that branch out of this component
-// keeps the queue UI focused on the happy path.
+// v2.2: each card runs its own Provision & Complete flow (RequestCard
+// owns the Kindoo orchestration + the result dialog). When the
+// operator dismisses a result dialog we drop the card from the local
+// list and refetch the queue to pick up any sibling changes.
 
 import { useCallback, useEffect, useState } from 'react';
 import type { AccessRequest } from '@kindoo/shared';
-import { getMyPendingRequests, markRequestComplete, signOut } from '../lib/extensionApi';
+import { getMyPendingRequests, signOut, type StakeConfigBundle } from '../lib/extensionApi';
 import { STAKE_ID } from '../lib/constants';
 import { RequestCard } from './RequestCard';
 
 interface QueuePanelProps {
   email: string | null | undefined;
+  /** Stake / building / ward config loaded by App; threaded down so
+   * each RequestCard can run the v2.2 provision flow. */
+  bundle: StakeConfigBundle;
   /**
    * Called when the queue fetch fails with `permission-denied`; the
    * root switches to `NotAuthorizedPanel`.
@@ -38,10 +34,9 @@ type FetchState =
   | { status: 'ready'; requests: AccessRequest[] }
   | { status: 'error'; message: string };
 
-export function QueuePanel({ email, onPermissionDenied, onReconfigure }: QueuePanelProps) {
+export function QueuePanel({ email, bundle, onPermissionDenied, onReconfigure }: QueuePanelProps) {
   const [state, setState] = useState<FetchState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchQueue = useCallback(
     async (mode: 'initial' | 'refresh' = 'initial') => {
@@ -50,7 +45,6 @@ export function QueuePanel({ email, onPermissionDenied, onReconfigure }: QueuePa
       try {
         const result = await getMyPendingRequests({ stakeId: STAKE_ID });
         setState({ status: 'ready', requests: result.requests });
-        setActionError(null);
       } catch (err) {
         const code = readFunctionsErrorCode(err);
         if (code === 'permission-denied') {
@@ -70,32 +64,14 @@ export function QueuePanel({ email, onPermissionDenied, onReconfigure }: QueuePa
     void fetchQueue('initial');
   }, [fetchQueue]);
 
-  const handleComplete = useCallback(
-    async (requestId: string, completionNote: string | undefined) => {
-      setActionError(null);
-      // Optimistic removal: drop the row immediately, then refetch to
-      // pick up server-side changes (e.g. another manager completing a
-      // sibling request).
+  const handleDismissed = useCallback(
+    (requestId: string) => {
       setState((prev) =>
         prev.status === 'ready'
           ? { status: 'ready', requests: prev.requests.filter((r) => r.request_id !== requestId) }
           : prev,
       );
-      try {
-        const payload: { stakeId: string; requestId: string; completionNote?: string } = {
-          stakeId: STAKE_ID,
-          requestId,
-        };
-        if (completionNote && completionNote.length > 0) {
-          payload.completionNote = completionNote;
-        }
-        await markRequestComplete(payload);
-        await fetchQueue('refresh');
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        setActionError(`Mark complete failed: ${message}. Refreshing…`);
-        await fetchQueue('refresh');
-      }
+      void fetchQueue('refresh');
     },
     [fetchQueue],
   );
@@ -144,11 +120,6 @@ export function QueuePanel({ email, onPermissionDenied, onReconfigure }: QueuePa
             {state.message}
           </p>
         ) : null}
-        {actionError ? (
-          <p role="alert" className="sba-error">
-            {actionError}
-          </p>
-        ) : null}
         {state.status === 'ready' && state.requests.length === 0 ? (
           <p className="sba-empty" data-testid="sba-queue-empty">
             No pending requests.
@@ -158,7 +129,7 @@ export function QueuePanel({ email, onPermissionDenied, onReconfigure }: QueuePa
           <ul className="sba-request-list" data-testid="sba-queue-list">
             {state.requests.map((req) => (
               <li key={req.request_id}>
-                <RequestCard request={req} onComplete={handleComplete} />
+                <RequestCard request={req} bundle={bundle} onDismissed={handleDismissed} />
               </li>
             ))}
           </ul>

@@ -1,22 +1,138 @@
-// One pending-request card. Compact layout: header line with type
-// badge + scope + member, then meta rows (requester / reason / dates /
-// buildings / comment), then the Mark Complete affordance. Opens the
-// completion-note dialog on click.
+// One pending-request card.
+//
+// v1 surfaced a "Mark Complete" button that just round-tripped the SBA
+// callable — the manager did all the Kindoo work manually. v2.2 closes
+// the loop: the same button runs the full Kindoo provision flow first
+// (add / change / remove) and only then marks the SBA request complete.
+//
+// State transitions:
+//   - idle           → button rendered; click → provisioning
+//   - provisioning   → button disabled, inline spinner; orchestrator runs
+//   - error          → spinner clears, message shown below button,
+//                      button re-enabled (orchestrator is idempotent —
+//                      check/lookup-first; re-click resumes safely)
+//   - done(ok)       → ResultDialog kind='ok' visible; dismiss removes card
+//   - done(partial)  → ResultDialog kind='partial' visible; retry button
+//                      calls markRequestComplete only
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { AccessRequest } from '@kindoo/shared';
-import { CompleteDialog } from './CompleteDialog';
+import { getSeatByEmail, markRequestComplete, type StakeConfigBundle } from '../lib/extensionApi';
+import { STAKE_ID } from '../lib/constants';
+import { readKindooSession, type KindooSession } from '../content/kindoo/auth';
+import { KindooApiError } from '../content/kindoo/client';
+import { getEnvironments, type KindooEnvironment } from '../content/kindoo/endpoints';
+import {
+  provisionAddOrChange,
+  provisionRemove,
+  ProvisionBuildingsMissingRuleError,
+  ProvisionEnvironmentNotFoundError,
+  type ProvisionResult,
+} from '../content/kindoo/provision';
+import { ResultDialog, type ResultDialogState } from './ResultDialog';
 
 interface RequestCardProps {
   request: AccessRequest;
-  onComplete: (requestId: string, completionNote: string | undefined) => Promise<void> | void;
+  bundle: StakeConfigBundle;
+  /** Called after the operator dismisses the result dialog; parent
+   * drops the card from the queue list. */
+  onDismissed: (requestId: string) => void;
 }
 
-export function RequestCard({ request, onComplete }: RequestCardProps) {
-  const [dialogOpen, setDialogOpen] = useState(false);
+type CardState =
+  | { kind: 'idle' }
+  | { kind: 'provisioning' }
+  | { kind: 'error'; message: string }
+  | { kind: 'result'; dialog: ResultDialogState };
 
-  const submittedAt = formatTimestamp(request.requested_at);
+export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) {
+  const [state, setState] = useState<CardState>({ kind: 'idle' });
+
   const isUrgent = request.urgent === true;
+  const submittedAt = formatTimestamp(request.requested_at);
+
+  const provision = useCallback(async () => {
+    setState({ kind: 'provisioning' });
+
+    // 1. Resolve Kindoo session from localStorage (panel is mounted on
+    //    web.kindoo.tech — same-origin).
+    const sessionResult = readKindooSession();
+    if (!sessionResult.ok) {
+      setState({
+        kind: 'error',
+        message:
+          sessionResult.error === 'no-token'
+            ? 'Sign into Kindoo first, then retry.'
+            : 'Kindoo session not ready. Refresh web.kindoo.tech and retry.',
+      });
+      return;
+    }
+    const session: KindooSession = sessionResult.session;
+
+    // 2. Run the orchestrator. Both add and remove paths need the SBA
+    //    seat (read-first merged-state — remove computes the
+    //    post-removal seat shape to drive scope-specific Kindoo
+    //    reconciliation) + envs (for TimeZone on editUser).
+    let seat: Awaited<ReturnType<typeof getSeatByEmail>>;
+    try {
+      seat = await getSeatByEmail(request.member_canonical);
+    } catch (err) {
+      setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    let envs: KindooEnvironment[];
+    try {
+      envs = await getEnvironments(session);
+    } catch (err) {
+      setState({ kind: 'error', message: describeKindooError(err) });
+      return;
+    }
+
+    let result: ProvisionResult;
+    try {
+      if (request.type === 'remove') {
+        result = await provisionRemove({
+          request,
+          seat,
+          stake: bundle.stake,
+          buildings: bundle.buildings,
+          wards: bundle.wards,
+          envs,
+          session,
+        });
+      } else {
+        result = await provisionAddOrChange({
+          request,
+          seat,
+          stake: bundle.stake,
+          buildings: bundle.buildings,
+          wards: bundle.wards,
+          envs,
+          session,
+        });
+      }
+    } catch (err) {
+      setState({ kind: 'error', message: describeProvisionError(err) });
+      return;
+    }
+
+    // 3. Kindoo done — now mark the SBA request complete. If this
+    //    fails, surface a partial-success dialog with a retry button.
+    await sendMarkComplete(request.request_id, result, (dialog) =>
+      setState({ kind: 'result', dialog }),
+    );
+  }, [request, bundle]);
+
+  const dismiss = useCallback(() => {
+    onDismissed(request.request_id);
+  }, [onDismissed, request.request_id]);
+
+  const buttonLabel = labelForType(request.type);
+  const isBusy = state.kind === 'provisioning';
+  const buttonTestId =
+    request.type === 'remove'
+      ? `sba-remove-${request.request_id}`
+      : `sba-add-${request.request_id}`;
 
   return (
     <div
@@ -25,7 +141,7 @@ export function RequestCard({ request, onComplete }: RequestCardProps) {
       data-testid={`sba-request-${request.request_id}`}
     >
       <div className="sba-request-card-head">
-        <span className={badgeClass(request.type)}>{labelForType(request.type)}</span>
+        <span className={badgeClass(request.type)}>{typeBadgeLabel(request.type)}</span>
         <span className="sba-badge">{request.scope}</span>
         {isUrgent ? <span className="sba-badge sba-badge-urgent">Urgent</span> : null}
         <span>
@@ -80,29 +196,92 @@ export function RequestCard({ request, onComplete }: RequestCardProps) {
       <div className="sba-request-actions">
         <button
           type="button"
-          className="sba-btn sba-btn-success"
-          onClick={() => setDialogOpen(true)}
-          data-testid={`sba-complete-${request.request_id}`}
+          className={
+            request.type === 'remove' ? 'sba-btn sba-btn-danger' : 'sba-btn sba-btn-success'
+          }
+          onClick={() => void provision()}
+          disabled={isBusy}
+          data-testid={buttonTestId}
         >
-          Mark Complete
+          {isBusy ? `${buttonLabel}…` : buttonLabel}
         </button>
       </div>
-
-      {dialogOpen ? (
-        <CompleteDialog
-          request={request}
-          onClose={() => setDialogOpen(false)}
-          onConfirm={async (note) => {
-            await onComplete(request.request_id, note);
-            setDialogOpen(false);
-          }}
-        />
+      {state.kind === 'error' ? (
+        <p
+          role="alert"
+          className="sba-error"
+          data-testid={`sba-provision-error-${request.request_id}`}
+        >
+          {state.message}
+        </p>
       ) : null}
+
+      {state.kind === 'result' ? <ResultDialog state={state.dialog} onDismiss={dismiss} /> : null}
     </div>
   );
 }
 
+/**
+ * Run markRequestComplete with the captured Kindoo metadata. On
+ * success, surface an `ok` dialog. On failure, surface a `partial`
+ * dialog that re-tries only the SBA side on user request.
+ */
+async function sendMarkComplete(
+  requestId: string,
+  provision: ProvisionResult,
+  setDialog: (dialog: ResultDialogState) => void,
+): Promise<void> {
+  const note = provision.note;
+  const payload: Parameters<typeof markRequestComplete>[0] = {
+    stakeId: STAKE_ID,
+    requestId,
+    completionNote: note,
+    provisioningNote: note,
+  };
+  if (provision.kindoo_uid) {
+    payload.kindooUid = provision.kindoo_uid;
+  }
+
+  try {
+    const result = await markRequestComplete(payload);
+    setDialog({ kind: 'ok', note, over_caps: result.over_caps });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    setDialog({
+      kind: 'partial',
+      note,
+      errorMessage: message,
+      onRetrySba: async () => {
+        const result = await markRequestComplete(payload);
+        setDialog({ kind: 'ok', note, over_caps: result.over_caps });
+      },
+    });
+  }
+}
+
+function describeKindooError(err: unknown): string {
+  if (err instanceof KindooApiError) {
+    return `Kindoo API error (${err.code}): ${err.message}`;
+  }
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+function describeProvisionError(err: unknown): string {
+  if (err instanceof ProvisionBuildingsMissingRuleError) {
+    return err.message;
+  }
+  if (err instanceof ProvisionEnvironmentNotFoundError) {
+    return err.message;
+  }
+  return describeKindooError(err);
+}
+
 function labelForType(t: AccessRequest['type']): string {
+  return t === 'remove' ? 'Remove Kindoo Access' : 'Add Kindoo Access';
+}
+
+function typeBadgeLabel(t: AccessRequest['type']): string {
   switch (t) {
     case 'add_manual':
       return 'Add (manual)';

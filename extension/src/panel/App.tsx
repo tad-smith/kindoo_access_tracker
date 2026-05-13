@@ -23,7 +23,12 @@
 // from the page context.
 
 import { useCallback, useEffect, useState } from 'react';
-import { ExtensionApiError, getStakeConfig, useAuthState } from '../lib/extensionApi';
+import {
+  ExtensionApiError,
+  getStakeConfig,
+  useAuthState,
+  type StakeConfigBundle,
+} from '../lib/extensionApi';
 import { ConfigurePanel } from './ConfigurePanel';
 import { NotAuthorizedPanel } from './NotAuthorizedPanel';
 import { QueuePanel } from './QueuePanel';
@@ -32,15 +37,15 @@ import { SignedOutPanel } from './SignedOutPanel';
 type ConfigStatus =
   | { kind: 'loading' }
   | { kind: 'needs-config' }
-  | { kind: 'configured' }
+  | { kind: 'configured'; bundle: StakeConfigBundle }
   | { kind: 'denied' }
   | { kind: 'error'; message: string };
 
-function decideConfigStatus(bundle: Awaited<ReturnType<typeof getStakeConfig>>): ConfigStatus {
+function decideConfigStatus(bundle: StakeConfigBundle): ConfigStatus {
   if (!bundle.stake.kindoo_config) return { kind: 'needs-config' };
   const someBuildingMissingRule = bundle.buildings.some((b) => !b.kindoo_rule);
   if (someBuildingMissingRule) return { kind: 'needs-config' };
-  return { kind: 'configured' };
+  return { kind: 'configured', bundle };
 }
 
 export function App() {
@@ -149,6 +154,7 @@ export function App() {
   return (
     <QueuePanel
       email={authState.email}
+      bundle={configStatus.bundle}
       onPermissionDenied={() => setNotAuthorized(true)}
       onReconfigure={() => setReconfiguring(true)}
     />
