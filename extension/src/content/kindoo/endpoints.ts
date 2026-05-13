@@ -20,10 +20,10 @@
 // `editUser` and `revokeUserFromAccessSchedule` take EUID;
 // `saveAccessRule` / `revokeUser` take UserID.
 //
-// `revokeUserFromAccessSchedule` is shipped but unused by v2.2 — v2.2
-// always whole-revokes via `revokeUser` because `saveAccessRule` is
-// MERGE-only and can't narrow a rule set. Reserved for the future
-// scope-specific remove flow (see `docs/BUGS.md` B-10).
+// `revokeUserFromAccessSchedule` narrows the rule set one rule at a
+// time (since `saveAccessRule` is MERGE-only and can't shrink); used
+// by the v2.2 scope-aware remove flow alongside `revokeUser` (full
+// wipe when the seat has no buildings left).
 
 import { postKindoo, KindooApiError } from './client';
 import type { KindooSession } from './auth';
@@ -383,8 +383,9 @@ export async function editUser(
  * 2026-05-12): sending a subset of the user's current RIDs does NOT
  * remove the omitted rules — only additions land. To remove a rule
  * use `revokeUserFromAccessSchedule` (scope-specific) or `revokeUser`
- * (whole-user). v2.2 only uses this on the add path, where MERGE is
- * exactly what we want.
+ * (whole-user). v2.2's add path relies on MERGE directly; the remove
+ * path also calls this when a promoted-duplicate brings in a building
+ * not previously in Kindoo for the user.
  *
  * `uid` is **UserID** (NOT EUID — different from `editUser`'s param).
  *
@@ -551,9 +552,10 @@ export async function revokeUser(
  * `euId` is **EUID** (env-scoped); `ruleId` is the rule's RID
  * (e.g. 6250).
  *
- * v2.2 doesn't use this — its orchestrator always whole-revokes via
- * `revokeUser`. Reserved for the future scope-specific remove flow
- * (see `docs/BUGS.md` B-10).
+ * Used by the v2.2 scope-aware remove flow to drop the rules the
+ * post-removal seat no longer needs while keeping the survivors. The
+ * orchestrator falls through to `revokeUser` only when nothing
+ * remains in the post-removal set.
  */
 export async function revokeUserFromAccessSchedule(
   session: KindooSession,

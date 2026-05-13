@@ -146,9 +146,9 @@ Closes the loop: from the same panel, the manager provisions (add / remove / cha
    - `remove` → `Remove Kindoo Access`
 3. **Result confirmation dialog after every action.** Synthesized message describes what was done. Persisted on the request doc as `provisioning_note` for audit.
 4. **Single spinner during the call** — no per-step progress.
-5. **Read-first + merged-state pattern (add path).** The orchestrator reads the SBA `Seat` doc + (for existing users) calls `lookupUserByEmail` for the Kindoo user's current state, computes the intended *post-completion* state, then drives Kindoo to that state with `saveAccessRule` (rule set) and (when needed) `editEnvironmentUserAdvancedSettings` (description / temp / dates).
-   - **`saveAccessRule` is MERGE, not REPLACE** (confirmed in staging 2026-05-12). Sending a subset of the user's existing rules does NOT remove the omitted ones — only additions land. That's exactly what we want on the add path (never want to drop existing grants), but it makes `saveAccessRule` unusable for narrowing on the remove path.
-   - **Remove is whole-user revoke.** v2.2 always calls `revokeUser`; partial / scope-specific remove (where a user has grants from multiple SBA scopes and the operator wants to drop just one) is deferred — see `docs/BUGS.md` B-10. Matches SBA's `removeSeatOnRequestComplete` trigger which always deletes the whole seat, so SBA's post-state and Kindoo's stay in lockstep.
+5. **Read-first + merged-state pattern (add AND remove).** Both paths read the SBA `Seat` doc + call `lookupUserByEmail` for the Kindoo user's current state, compute the intended *post-completion* state, then drive Kindoo to that state with `saveAccessRule` (rule additions), `revokeUserFromAccessSchedule` (per-rule narrowing), `revokeUser` (full-wipe when nothing survives), and `editEnvironmentUserAdvancedSettings` (description / temp / dates).
+   - **`saveAccessRule` is MERGE, not REPLACE** (confirmed in staging 2026-05-12). Sending a subset of the user's existing rules does NOT remove the omitted ones — only additions land. That's exactly what we want on the add path; on the remove path we use `revokeUserFromAccessSchedule` to narrow.
+   - **Remove is scope-specific.** Computes the post-removal seat shape (mirroring SBA's `removeSeatOnRequestComplete` trigger's "promote first duplicate / drop matching duplicate" logic), derives the surviving rule set, and reconciles Kindoo: per-rule revoke for rules the seat no longer needs, full `revokeUser` when the seat is being deleted (no duplicates promoted), `editUser` for description-only diffs. SBA's post-state and Kindoo's stay in lockstep by construction.
    - Resolves B-7 and B-8 by construction.
 6. **Description merge format** — synthesized from the SBA seat's primary grant + each `duplicate_grants[]` entry:
    - Primary: `${scopeName} (${callings.join(', ') || reason})`
@@ -209,10 +209,10 @@ Two top-level functions:
 
 ```ts
 provisionAddOrChange(req, seat, stake, buildings, wards, envs, session): Promise<ProvisionResult>
-provisionRemove(req, session): Promise<ProvisionResult>
+provisionRemove(req, seat, stake, buildings, wards, envs, session): Promise<ProvisionResult>
 ```
 
-`seat` (add path) is the SBA `Seat` doc for the request's subject (or `null` if it doesn't exist yet — only possible on a first-ever add for that member). The remove path takes only `req` + `session`: it's a whole-user revoke and doesn't need to compute a target state.
+`seat` is the SBA `Seat` doc for the request's subject pre-completion (or `null` if it doesn't exist yet — only possible on a first-ever add for that member, or on a remove that lost an R-1 race). Both paths compute the post-completion seat shape and reconcile Kindoo to it.
 
 Result:
 
@@ -230,13 +230,16 @@ For ADD requests: compute the **post-completion** seat state by merging the requ
 - `targetBuildings = unique(seat?.building_names ?? [] + request.building_names)`
 - Resulting `callings` / `duplicate_grants` per SBA's existing merge logic (extension mirrors what `markRequestComplete` will do server-side).
 
-From `targetBuildings` + `buildings[].kindoo_rule`:
+For REMOVE requests: compute the **post-removal** seat state by mirroring the `removeSeatOnRequestComplete` trigger:
+- If `seat.scope === request.scope` and `seat.duplicate_grants` is empty → seat is deleted; `targetBuildings = []`.
+- If `seat.scope === request.scope` with duplicates → first duplicate promotes to primary; `targetBuildings = unique(promoted.building_names, …rest duplicate building_names)`.
+- If a duplicate matches → drop that duplicate; `targetBuildings = unique(seat.building_names, …surviving duplicate building_names)`.
+
+Then for both paths, from `targetBuildings` + `buildings[].kindoo_rule`:
 - `targetRIDs = targetBuildings.map(b => buildings[b].kindoo_rule.rule_id)`. Block if any building lacks `kindoo_rule`.
 
 From the merged seat:
-- `targetDescription = synthesizeDescription(seat, request, stake, wards)` per the format in decision 6.
-
-REMOVE skips the compute step — it's a whole-user revoke regardless of `request.building_names`.
+- `targetDescription = synthesizeDescription(seat, request, stake, wards, mergeAddIntoSeat, removeScope?)` per the format in decision 6. ADD passes `mergeAddIntoSeat=true`; REMOVE passes `mergeAddIntoSeat=false` and `removeScope=request.scope` so the removed grant drops from the synthesized text.
 
 #### add_manual / add_temp flow
 
@@ -256,13 +259,16 @@ REMOVE skips the compute step — it's a whole-user revoke regardless of `reques
 
 #### remove flow
 
-Always a whole-user revoke in v2.2 (partial / scope-specific remove deferred — see `docs/BUGS.md` B-10).
+Scope-specific, mirroring SBA's `removeSeatOnRequestComplete` trigger:
 
-1. `lookupUserByEmail(session, request.member_email)`.
-2. **Not found**: `{ kindoo_uid: null, action: 'noop-remove', note: "User was not in Kindoo (no-op)." }`.
-3. **Found**: `revokeUser(session, UserID)`.
-   - Action: `'removed'`. Note: `"Removed X from Kindoo."`.
-   - `request.building_names` is intentionally ignored — the wire contract is whole-user revoke regardless of what buildings the request lists. Matches SBA's `removeSeatOnRequestComplete` trigger which always deletes the whole seat.
+1. Compute `targetBuildings` (post-removal seat shape; see "Compute step" above), `targetRIDs`.
+2. `lookupUserByEmail(session, request.member_email)`.
+3. **Not found**: `{ kindoo_uid: null, action: 'noop-remove', note: "User was not in Kindoo (no-op)." }`.
+4. **Found**:
+   - `toRevoke = currentRIDs \ targetRIDs` → per-rule revoke via `revokeUserFromAccessSchedule(session, EUID, ruleId)` (uses EUID, not UserID — see "Two-IDs gotcha").
+   - `toAdd = targetRIDs \ currentRIDs` → rare for a remove flow (only when a promoted duplicate's building wasn't in Kindoo). `saveAccessRule(session, UserID, toAdd)` to merge in.
+   - **If `targetRIDs` is empty**: `revokeUser(session, UserID)` to wipe the env-user record entirely. Action: `'removed'`. Note: `"Removed X from Kindoo."`.
+   - **Else**: if `targetDescription !== current.Description`, `editUser(session, EUID, …)` to sync. Action: `'updated'`. Note: `"Updated X's Kindoo access to A, B."` (post-removal building set).
 
 #### After Kindoo (all paths except noop-remove)
 

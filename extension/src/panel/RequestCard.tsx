@@ -69,33 +69,38 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
     }
     const session: KindooSession = sessionResult.session;
 
-    // 2. Run the orchestrator. Remove is a whole-user revoke and only
-    //    needs `request` + `session` (B-10: partial remove deferred).
-    //    Add types also need the SBA seat (read-first merged-state)
-    //    + envs (for TimeZone).
+    // 2. Run the orchestrator. Both add and remove paths need the SBA
+    //    seat (read-first merged-state — remove computes the
+    //    post-removal seat shape to drive scope-specific Kindoo
+    //    reconciliation) + envs (for TimeZone on editUser).
+    let seat: Awaited<ReturnType<typeof getSeatByEmail>>;
+    try {
+      seat = await getSeatByEmail(request.member_canonical);
+    } catch (err) {
+      setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    let envs: KindooEnvironment[];
+    try {
+      envs = await getEnvironments(session);
+    } catch (err) {
+      setState({ kind: 'error', message: describeKindooError(err) });
+      return;
+    }
+
     let result: ProvisionResult;
     try {
       if (request.type === 'remove') {
         result = await provisionRemove({
           request,
+          seat,
+          stake: bundle.stake,
+          buildings: bundle.buildings,
+          wards: bundle.wards,
+          envs,
           session,
         });
       } else {
-        // `seat` may be null — first-time-add has no prior seat.
-        let seat: Awaited<ReturnType<typeof getSeatByEmail>>;
-        try {
-          seat = await getSeatByEmail(request.member_canonical);
-        } catch (err) {
-          setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
-          return;
-        }
-        let envs: KindooEnvironment[];
-        try {
-          envs = await getEnvironments(session);
-        } catch (err) {
-          setState({ kind: 'error', message: describeKindooError(err) });
-          return;
-        }
         result = await provisionAddOrChange({
           request,
           seat,

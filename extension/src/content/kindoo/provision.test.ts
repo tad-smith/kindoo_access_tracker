@@ -1,5 +1,5 @@
 // Orchestration tests for the v2.2 Provision & Complete flow
-// (read-first / merged-state pattern). Mocks the four mutation
+// (read-first / merged-state pattern). Mocks the five mutation
 // endpoints + the lookup at the module boundary; wire-format details
 // belong to endpoints.test.ts. Covers the truth tables in
 // `extension/docs/v2-design.md` § "v2.2 — Provision & Complete":
@@ -12,11 +12,18 @@
 //   - existing perm  + add_temp     → no demote; saveAccessRule (rule-only diff)
 //   - existing user, full no-diff   → skip both edit + saveAccessRule
 //
-// REMOVE branches (v2.2 always whole-user-revokes — partial remove
-// deferred per `docs/BUGS.md` B-10):
-//   - lookup miss → noop-remove (no revokeUser)
-//   - lookup hit  → revokeUser (no saveAccessRule, no editUser),
-//                   regardless of `request.building_names`
+// REMOVE branches (scope-specific, mirroring SBA's
+// `removeSeatOnRequestComplete` trigger):
+//   - lookup miss → noop-remove
+//   - R-1 race (seat null, lookup miss) → noop-remove
+//   - primary scope, no duplicates    → per-rule revoke + revokeUser
+//   - primary scope, one duplicate    → revoke only the primary's
+//                                       rules; description sync
+//   - duplicate scope                 → revoke only the duplicate's
+//                                       rules; description sync
+//   - duplicate scope, description unchanged → no editUser
+//   - subset already in Kindoo, no add needed → no saveAccessRule
+//   - stale request (scope doesn't match) → no Kindoo writes
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -25,6 +32,7 @@ const editUserMock = vi.fn();
 const saveAccessRuleMock = vi.fn();
 const lookupUserByEmailMock = vi.fn();
 const revokeUserMock = vi.fn();
+const revokeUserFromAccessScheduleMock = vi.fn();
 
 vi.mock('./endpoints', async () => {
   const actual = await vi.importActual<typeof import('./endpoints')>('./endpoints');
@@ -35,10 +43,11 @@ vi.mock('./endpoints', async () => {
     saveAccessRule: (...args: unknown[]) => saveAccessRuleMock(...args),
     lookupUserByEmail: (...args: unknown[]) => lookupUserByEmailMock(...args),
     revokeUser: (...args: unknown[]) => revokeUserMock(...args),
+    revokeUserFromAccessSchedule: (...args: unknown[]) => revokeUserFromAccessScheduleMock(...args),
   };
 });
 
-import type { AccessRequest, Building, Seat, Stake, Ward } from '@kindoo/shared';
+import type { AccessRequest, Building, DuplicateGrant, Seat, Stake, Ward } from '@kindoo/shared';
 import {
   provisionAddOrChange,
   provisionRemove,
@@ -153,6 +162,7 @@ beforeEach(() => {
   saveAccessRuleMock.mockReset();
   lookupUserByEmailMock.mockReset();
   revokeUserMock.mockReset();
+  revokeUserFromAccessScheduleMock.mockReset();
 });
 afterEach(() => {
   vi.resetModules();
@@ -578,16 +588,38 @@ describe('provisionAddOrChange — guards', () => {
   });
 });
 
+// Seat factory — primary stake grant on both buildings.
+function stakeSeat(overrides: Partial<Seat> = {}): Seat {
+  return {
+    member_canonical: 'tad.e.smith@gmail.com',
+    member_email: 'tad.e.smith@gmail.com',
+    member_name: 'Tad Smith',
+    scope: 'stake',
+    type: 'manual',
+    callings: [],
+    reason: 'Sunday School Teacher',
+    building_names: ['Cordera Building', 'Pine Creek Building'],
+    duplicate_grants: [],
+    ...overrides,
+  } as unknown as Seat;
+}
+
 describe('provisionRemove', () => {
-  it('returns noop-remove without calling revokeUser when the user is not in Kindoo', async () => {
+  it('R-1 race (seat null) + user not in Kindoo: noop-remove, no writes', async () => {
     lookupUserByEmailMock.mockResolvedValue(null);
 
     const result = await provisionRemove({
       request: removeRequest(),
+      seat: null,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
       session: SESSION,
     });
 
     expect(revokeUserMock).not.toHaveBeenCalled();
+    expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
     expect(editUserMock).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -597,16 +629,41 @@ describe('provisionRemove', () => {
     });
   });
 
-  it('existing user: whole-user revokeUser; no saveAccessRule, no editUser', async () => {
-    const existing = existingUser();
+  it('user exists but seat is null (R-1 race): per-rule revoke + revokeUser to wipe env-user', async () => {
+    // No seat → target buildings = []. Every current rule should be
+    // revoked, then revokeUser to delete the env-user record.
+    const existing = existingUser({
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
     lookupUserByEmailMock.mockResolvedValue(existing);
+    revokeUserFromAccessScheduleMock.mockResolvedValue({ ok: true });
     revokeUserMock.mockResolvedValue({ ok: true });
 
     const result = await provisionRemove({
-      request: removeRequest({ building_names: [] }),
+      request: removeRequest(),
+      seat: null,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
       session: SESSION,
     });
 
+    expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledTimes(2);
+    expect(revokeUserFromAccessScheduleMock).toHaveBeenNthCalledWith(
+      1,
+      SESSION,
+      existing.euid,
+      6248,
+      undefined,
+    );
+    expect(revokeUserFromAccessScheduleMock).toHaveBeenNthCalledWith(
+      2,
+      SESSION,
+      existing.euid,
+      6249,
+      undefined,
+    );
     expect(revokeUserMock).toHaveBeenCalledWith(SESSION, existing.userId, undefined);
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
     expect(editUserMock).not.toHaveBeenCalled();
@@ -617,36 +674,336 @@ describe('provisionRemove', () => {
     });
   });
 
-  it('whole-user revoke regardless of request.building_names (B-10: partial remove deferred)', async () => {
-    // Even when the request lists a subset of buildings — the v2.2
-    // contract is whole-user revoke. saveAccessRule is MERGE not
-    // REPLACE so we can't narrow the rule set from here; partial
-    // remove is deferred per docs/BUGS.md B-10.
+  it('primary scope removal, no duplicates: revokes all current rules + revokeUser', async () => {
+    // Seat is stake-scope primary, no duplicates → seat is deleted by
+    // the trigger → target buildings = [] → revoke every current rule
+    // by EUID, then revokeUser to wipe the env-user record.
+    const seat = stakeSeat();
     const existing = existingUser({
       accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
     });
     lookupUserByEmailMock.mockResolvedValue(existing);
+    revokeUserFromAccessScheduleMock.mockResolvedValue({ ok: true });
     revokeUserMock.mockResolvedValue({ ok: true });
 
     const result = await provisionRemove({
-      request: removeRequest({ building_names: ['Pine Creek Building'] }),
+      request: removeRequest({ scope: 'stake' }),
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
       session: SESSION,
     });
 
+    // Both rules revoked by EUID (NOT UserID).
+    expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledTimes(2);
+    for (const call of revokeUserFromAccessScheduleMock.mock.calls) {
+      expect(call[1]).toBe(existing.euid);
+    }
     expect(revokeUserMock).toHaveBeenCalledWith(SESSION, existing.userId, undefined);
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
     expect(editUserMock).not.toHaveBeenCalled();
     expect(result.action).toBe('removed');
     expect(result.kindoo_uid).toBe(existing.userId);
-    // Note still describes a whole-user removal regardless of the
-    // building_names value.
     expect(result.note).toBe('Removed Tad Smith from Kindoo.');
+  });
+
+  it('primary scope removal with one duplicate: revokes only the primary rules; description updated via editUser', async () => {
+    // Seat primary = stake (Cordera + Pine Creek); duplicate = CO ward
+    // (Cordera only). Removing the primary promotes the CO duplicate
+    // → post-removal buildings = [Cordera] → revoke Pine Creek rule
+    // only, editUser to resync description, action='updated'.
+    const seat = stakeSeat({
+      duplicate_grants: [
+        {
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          reason: 'Bishop',
+          building_names: ['Cordera Building'],
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ] as unknown as Seat['duplicate_grants'],
+    });
+    const existing = existingUser({
+      description: 'Colorado Springs North Stake (Sunday School Teacher) | Cordera Ward (Bishop)',
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    revokeUserFromAccessScheduleMock.mockResolvedValue({ ok: true });
+    editUserMock.mockResolvedValue({ ok: true });
+
+    const result = await provisionRemove({
+      request: removeRequest({ scope: 'stake' }),
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Pine Creek rule revoked; Cordera survives.
+    expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledTimes(1);
+    expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledWith(
+      SESSION,
+      existing.euid,
+      6249,
+      undefined,
+    );
+    expect(revokeUserMock).not.toHaveBeenCalled();
+    expect(saveAccessRuleMock).not.toHaveBeenCalled();
+    // Description drops the stake segment; only "Cordera Ward (Bishop)" remains.
+    expect(editUserMock).toHaveBeenCalledTimes(1);
+    expect(editUserMock.mock.calls[0]![1]).toBe(existing.euid);
+    expect(editUserMock.mock.calls[0]![2]).toMatchObject({
+      description: 'Cordera Ward (Bishop)',
+      isTemp: false,
+      timeZone: 'Mountain Standard Time',
+    });
+    expect(result.action).toBe('updated');
+    expect(result.kindoo_uid).toBe(existing.userId);
+    expect(result.note).toBe("Updated Tad Smith's Kindoo access to Cordera Building.");
+  });
+
+  it('duplicate scope removal: revokes only the duplicate rules; primary untouched; description updated', async () => {
+    // Seat primary = stake (Cordera + Pine Creek). Duplicate = CO
+    // (Cordera Building). Removing the CO duplicate → target
+    // buildings stay at [Cordera, Pine Creek] (primary unchanged) →
+    // no rule writes; description drops the duplicate segment.
+    //
+    // Note: target buildings == current building set, so toRevoke /
+    // toAdd are both empty. But description still differs.
+    const seat = stakeSeat({
+      duplicate_grants: [
+        {
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          reason: 'Bishop',
+          building_names: ['Cordera Building'],
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ] as unknown as Seat['duplicate_grants'],
+    });
+    const existing = existingUser({
+      description: 'Colorado Springs North Stake (Sunday School Teacher) | Cordera Ward (Bishop)',
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    editUserMock.mockResolvedValue({ ok: true });
+
+    const result = await provisionRemove({
+      request: removeRequest({ scope: 'CO' }),
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // No rule changes — primary keeps both buildings.
+    expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
+    expect(revokeUserMock).not.toHaveBeenCalled();
+    expect(saveAccessRuleMock).not.toHaveBeenCalled();
+    // Description drops Cordera Ward segment.
+    expect(editUserMock).toHaveBeenCalledTimes(1);
+    expect(editUserMock.mock.calls[0]![2]).toMatchObject({
+      description: 'Colorado Springs North Stake (Sunday School Teacher)',
+    });
+    expect(result.action).toBe('updated');
+    expect(result.note).toBe(
+      "Updated Tad Smith's Kindoo access to Cordera Building, Pine Creek Building.",
+    );
+  });
+
+  it('duplicate scope removal where the duplicate brought a building the primary lacks: revokes only the duplicate-only rule', async () => {
+    // Seat primary = stake-scope on Cordera only. Duplicate = PC ward
+    // on Pine Creek. Remove PC → primary keeps Cordera; Pine Creek
+    // rule must be revoked.
+    const seat = stakeSeat({
+      building_names: ['Cordera Building'],
+      duplicate_grants: [
+        {
+          scope: 'PC',
+          type: 'manual',
+          callings: [],
+          reason: 'Bishop',
+          building_names: ['Pine Creek Building'],
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ] as unknown as Seat['duplicate_grants'],
+    });
+    const existing = existingUser({
+      description:
+        'Colorado Springs North Stake (Sunday School Teacher) | Pine Creek Ward (Bishop)',
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    revokeUserFromAccessScheduleMock.mockResolvedValue({ ok: true });
+    editUserMock.mockResolvedValue({ ok: true });
+
+    await provisionRemove({
+      request: removeRequest({ scope: 'PC' }),
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledTimes(1);
+    expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledWith(
+      SESSION,
+      existing.euid,
+      6249,
+      undefined,
+    );
+    expect(revokeUserMock).not.toHaveBeenCalled();
+    expect(saveAccessRuleMock).not.toHaveBeenCalled();
+    expect(editUserMock).toHaveBeenCalledTimes(1);
+    expect(editUserMock.mock.calls[0]![2]).toMatchObject({
+      description: 'Colorado Springs North Stake (Sunday School Teacher)',
+    });
+  });
+
+  it('duplicate scope removal with description unchanged: no editUser call', async () => {
+    // Seat primary = stake; duplicate = CO. The CURRENT Kindoo
+    // description happens to already match the post-removal text
+    // (e.g. operator manually cleaned it up in Kindoo earlier).
+    // Description sync should detect no diff and skip editUser.
+    const seat = stakeSeat({
+      duplicate_grants: [
+        {
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          reason: 'Bishop',
+          building_names: ['Cordera Building'],
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ] as unknown as Seat['duplicate_grants'],
+    });
+    const existing = existingUser({
+      description: 'Colorado Springs North Stake (Sunday School Teacher)',
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+
+    const result = await provisionRemove({
+      request: removeRequest({ scope: 'CO' }),
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
+    expect(revokeUserMock).not.toHaveBeenCalled();
+    expect(saveAccessRuleMock).not.toHaveBeenCalled();
+    expect(editUserMock).not.toHaveBeenCalled();
+    expect(result.action).toBe('updated');
+  });
+
+  it('stale request (scope present in neither primary nor duplicates): no writes', async () => {
+    // Seat primary = stake; no matching duplicate for the request's
+    // scope. Post-removal building set is the same as the current
+    // set (nothing dropped). Description also unchanged (no segment
+    // matches removeScope). No Kindoo writes at all.
+    const seat = stakeSeat();
+    const existing = existingUser({
+      description: 'Colorado Springs North Stake (Sunday School Teacher)',
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+
+    const result = await provisionRemove({
+      request: removeRequest({ scope: 'PC' }), // scope not on seat
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
+    expect(revokeUserMock).not.toHaveBeenCalled();
+    expect(saveAccessRuleMock).not.toHaveBeenCalled();
+    expect(editUserMock).not.toHaveBeenCalled();
+    expect(result.action).toBe('updated');
+    expect(result.kindoo_uid).toBe(existing.userId);
+  });
+
+  it('adds a newly-required rule when a promoted duplicate brings in a building not yet in Kindoo', async () => {
+    // Seat primary = stake (Cordera only); duplicate = PC ward on
+    // Pine Creek. Remove the stake primary → PC promotes → target
+    // buildings = [Pine Creek]. Kindoo currently only has the Cordera
+    // rule → revoke Cordera + saveAccessRule([Pine Creek]).
+    const seat = stakeSeat({
+      building_names: ['Cordera Building'],
+      duplicate_grants: [
+        {
+          scope: 'PC',
+          type: 'manual',
+          callings: [],
+          reason: 'Bishop',
+          building_names: ['Pine Creek Building'],
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ] as unknown as Seat['duplicate_grants'],
+    });
+    const existing = existingUser({
+      description:
+        'Colorado Springs North Stake (Sunday School Teacher) | Pine Creek Ward (Bishop)',
+      accessSchedules: [{ ruleId: 6248 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    revokeUserFromAccessScheduleMock.mockResolvedValue({ ok: true });
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+    editUserMock.mockResolvedValue({ ok: true });
+
+    await provisionRemove({
+      request: removeRequest({ scope: 'stake' }),
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Cordera revoked (no longer needed).
+    expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledWith(
+      SESSION,
+      existing.euid,
+      6248,
+      undefined,
+    );
+    // Pine Creek added via saveAccessRule (MERGE).
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6249], undefined);
+    // Not a wipe — description should sync, not revokeUser.
+    expect(revokeUserMock).not.toHaveBeenCalled();
+    expect(editUserMock).toHaveBeenCalledTimes(1);
+    expect(editUserMock.mock.calls[0]![2]).toMatchObject({
+      description: 'Pine Creek Ward (Bishop)',
+    });
   });
 
   it('rejects with a clear error when called with the wrong request type', async () => {
     await expect(
       provisionRemove({
         request: addManualRequest(),
+        seat: null,
+        stake: STAKE,
+        buildings: BUILDINGS,
+        wards: WARDS,
+        envs: ENVS,
         session: SESSION,
       }),
     ).rejects.toThrow(/non-remove type/);
@@ -657,6 +1014,11 @@ describe('provisionRemove', () => {
 
     const result = await provisionRemove({
       request: removeRequest({ member_name: '' }),
+      seat: null,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
       session: SESSION,
     });
     expect(result.note).toBe('tad.e.smith@gmail.com was not in Kindoo (no-op).');

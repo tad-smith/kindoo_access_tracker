@@ -172,7 +172,7 @@ describe('RequestCard', () => {
     });
   });
 
-  it('runs provisionRemove (no envs fetch) for remove-type requests', async () => {
+  it('runs provisionRemove (with envs fetch — needed for editUser timezone) for remove-type requests', async () => {
     provisionRemoveMock.mockResolvedValue({
       kindoo_uid: 'removed-uid',
       action: 'removed',
@@ -185,7 +185,8 @@ describe('RequestCard', () => {
     await user.click(screen.getByTestId('sba-remove-r2'));
 
     await waitFor(() => expect(screen.getByTestId('sba-result-dialog')).toBeInTheDocument());
-    expect(getEnvironmentsMock).not.toHaveBeenCalled();
+    // v2.2 scope-aware remove needs envs for editUser's timezone passthrough.
+    expect(getEnvironmentsMock).toHaveBeenCalledTimes(1);
     expect(provisionRemoveMock).toHaveBeenCalledTimes(1);
   });
 

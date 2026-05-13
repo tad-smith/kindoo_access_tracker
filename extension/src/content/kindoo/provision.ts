@@ -2,24 +2,25 @@
 // Two top-level functions:
 //
 //   provisionAddOrChange(req, seat, ...)  // add_manual / add_temp
-//   provisionRemove(req, ...)             // remove (whole-user revoke)
+//   provisionRemove(req, seat, ...)       // remove (scope-specific)
 //
-// **Add / change** uses a read-first / merged-state pattern: compute
-// the post-completion target state (buildings, description, temp +
-// date bounds), then drive Kindoo to it via:
-//   - `editUser` for env-user advanced settings — only when the target
-//     differs from lookup.
+// Both flows use a read-first / merged-state pattern: compute the
+// post-completion target state (buildings, description, temp + date
+// bounds), then drive Kindoo to it via:
 //   - `saveAccessRule` to ADD missing rules. `saveAccessRule` is
 //     MERGE-only (confirmed in staging 2026-05-12): it can grow the
-//     rule set but cannot shrink it. That's fine on the add path —
-//     we never want to drop existing grants here.
+//     rule set but cannot shrink it.
+//   - `revokeUserFromAccessSchedule` per dropped rule when narrowing
+//     a rule set (since `saveAccessRule` can't shrink).
+//   - `revokeUser` when the post-removal state has no rules at all —
+//     wipe the env-user record entirely.
+//   - `editUser` for env-user advanced settings (description / temp
+//     flag / dates) when the target differs from lookup.
 //
-// **Remove** always whole-user-revokes via `revokeUser`. The
-// scope-specific partial-remove case (`saveAccessRule` MERGE can't
-// narrow, so we'd have to call `revokeUserFromAccessSchedule` per
-// dropped rule) is deferred (see `docs/BUGS.md` B-10). This matches
-// SBA's `removeSeatOnRequestComplete` trigger which always deletes
-// the whole seat.
+// The remove flow mirrors SBA's `removeSeatOnRequestComplete`
+// trigger: compute the post-removal seat shape (which scope wins
+// primary, what duplicates survive, what building set remains),
+// derive the post-removal rule set, and reconcile Kindoo to it.
 //
 // "Read first" means: every flow starts with `lookupUserByEmail`
 // (whose `null` return IS the "not in Kindoo" signal — `checkUserType`
@@ -38,7 +39,14 @@ import type {
   KindooEnvironmentUser,
   KindooInviteUserPayload,
 } from './endpoints';
-import { editUser, inviteUser, lookupUserByEmail, revokeUser, saveAccessRule } from './endpoints';
+import {
+  editUser,
+  inviteUser,
+  lookupUserByEmail,
+  revokeUser,
+  revokeUserFromAccessSchedule,
+  saveAccessRule,
+} from './endpoints';
 import { KindooApiError } from './client';
 
 /** Returned by both orchestrators. */
@@ -196,8 +204,12 @@ function formatDescriptionSegment(
  * scope+type as if `markRequestComplete` had already merged. For
  * ADDs that's `true` (we're computing what the seat will look like
  * once the request commits); for REMOVEs it's `false` (the
- * orchestrator only narrows the building set, doesn't change the
- * description shape).
+ * orchestrator narrows existing segments — see `removeScope`).
+ *
+ * `removeScope` (REMOVE only) drops the first segment whose `scope`
+ * matches. Used so the post-removal description reflects what survives
+ * after the trigger updates the seat shape. Skips at most one segment
+ * per call (matches the seat-shape rule: at most one grant per scope).
  */
 function synthesizeDescription(
   seat: Seat | null,
@@ -205,6 +217,7 @@ function synthesizeDescription(
   stake: Stake,
   wards: Ward[],
   mergeAddIntoSeat: boolean,
+  removeScope?: string,
 ): string {
   // Build the post-completion (scope, type, callings, reason) list.
   // First entry is the primary; rest are duplicates.
@@ -215,7 +228,7 @@ function synthesizeDescription(
     reason: string;
   };
 
-  const segments: Segment[] = [];
+  let segments: Segment[] = [];
 
   if (seat) {
     segments.push({
@@ -247,6 +260,21 @@ function synthesizeDescription(
       const collides = segments.some((s) => s.scope === incoming.scope && s.type === incoming.type);
       if (!collides) segments.push(incoming);
     }
+  }
+
+  if (removeScope !== undefined) {
+    // Drop the first segment whose scope matches the request's. Seats
+    // carry at most one grant per scope (primary + duplicates), so a
+    // single-pass filter cleanly mirrors the trigger's "promote first
+    // duplicate / drop matching duplicate" behavior in the description.
+    let dropped = false;
+    segments = segments.filter((s) => {
+      if (!dropped && s.scope === removeScope) {
+        dropped = true;
+        return false;
+      }
+      return true;
+    });
   }
 
   if (segments.length === 0) {
@@ -518,30 +546,95 @@ function noteForAction(
 
 export interface ProvisionRemoveArgs {
   request: AccessRequest;
+  /** SBA seat for the request's subject pre-removal; `null` if no
+   * seat exists (R-1 race). */
+  seat: Seat | null;
+  stake: Stake;
+  buildings: Building[];
+  wards: Ward[];
+  envs: KindooEnvironment[];
   session: KindooSession;
   deps?: ProvisionDeps;
 }
 
 /**
- * Whole-user revoke from Kindoo. v2.2 always treats a remove request
- * as a whole-user revoke (matching SBA's `removeSeatOnRequestComplete`
- * trigger which always deletes the whole seat).
+ * Compute the post-removal seat's building set, mirroring the
+ * `removeSeatOnRequestComplete` trigger's "promote first duplicate /
+ * drop matching duplicate" logic:
  *
- * `saveAccessRule` is MERGE not REPLACE, so we can't use it to narrow
- * a rule set; the only way to remove a rule is `revokeUser`
- * (whole-user) or `revokeUserFromAccessSchedule` (per-rule). The
- * multi-grant partial-remove case — where a user has grants from
- * multiple SBA scopes and the operator wants to remove just one — is
- * deferred (see `docs/BUGS.md` B-10).
+ *   - `seat` null → empty (no seat = no buildings).
+ *   - request.scope matches the primary:
+ *     - no duplicates → seat is deleted by trigger → empty.
+ *     - has duplicates → first duplicate promotes to primary; its
+ *       building_names become the seat's primary building_names; the
+ *       remaining duplicates keep their building_names recorded as
+ *       informational entries (their buildings persist in the seat's
+ *       overall building set).
+ *   - request.scope matches a duplicate → drop that duplicate; primary
+ *     building_names persist; remaining duplicates keep theirs.
+ *   - stale request where no scope matches → seat is unchanged.
+ *
+ * Result is de-duplicated in stable order so downstream consumers
+ * (RID mapping, note text) get a predictable list.
+ */
+function computePostRemovalBuildings(seat: Seat | null, request: AccessRequest): string[] {
+  if (!seat) return [];
+  const primaryBuildings = seat.building_names ?? [];
+
+  if (seat.scope === request.scope) {
+    const duplicates = seat.duplicate_grants ?? [];
+    if (duplicates.length === 0) return [];
+    const [promoted, ...rest] = duplicates;
+    return uniqueOrdered(
+      promoted!.building_names ?? [],
+      rest.flatMap((d) => d.building_names ?? []),
+    );
+  }
+
+  const duplicates = seat.duplicate_grants ?? [];
+  const matched = duplicates.some((d) => d.scope === request.scope);
+  if (!matched) {
+    // Stale request — scope no longer present in the seat. Building
+    // set unchanged.
+    return uniqueOrdered(
+      primaryBuildings,
+      duplicates.flatMap((d) => d.building_names ?? []),
+    );
+  }
+  let dropped = false;
+  const surviving = duplicates.filter((d) => {
+    if (!dropped && d.scope === request.scope) {
+      dropped = true;
+      return false;
+    }
+    return true;
+  });
+  return uniqueOrdered(
+    primaryBuildings,
+    surviving.flatMap((d) => d.building_names ?? []),
+  );
+}
+
+/**
+ * Reconcile Kindoo to the post-removal seat shape. Computes the
+ * post-removal building set (mirroring SBA's
+ * `removeSeatOnRequestComplete` trigger), derives the surviving rule
+ * set, and drives Kindoo to it via per-rule revoke (narrowing), full
+ * `revokeUser` (when nothing remains), and `editUser` (description
+ * sync only).
  *
  * Flow:
- *   1. lookupUserByEmail(email).
- *   2. Not found → noop-remove (SBA still flips complete).
- *   3. Found → revokeUser.
- *
- * `request.building_names` is intentionally ignored — the v2.2 contract
- * is whole-user-revoke-on-remove regardless of what buildings the
- * request lists.
+ *   1. Compute targetBuildings via `computePostRemovalBuildings`.
+ *   2. targetRIDs = buildings → kindoo_rule.rule_id (throws on missing
+ *      mapping just like the add path).
+ *   3. lookupUserByEmail(email). Not found → noop-remove.
+ *   4. toRevoke = currentRIDs \ targetRIDs — revoke each individually.
+ *   5. toAdd = targetRIDs \ currentRIDs — rare on a remove flow
+ *      (only happens when a promoted duplicate's building wasn't yet
+ *      in Kindoo). saveAccessRule merges.
+ *   6. If targetRIDs is empty after revocations → `revokeUser` to
+ *      delete the env-user record entirely; action='removed'.
+ *   7. Else → editUser only when description differs; action='updated'.
  */
 export async function provisionRemove(args: ProvisionRemoveArgs): Promise<ProvisionResult> {
   if (args.request.type !== 'remove') {
@@ -549,6 +642,16 @@ export async function provisionRemove(args: ProvisionRemoveArgs): Promise<Provis
   }
   const fetchImpl = args.deps?.fetchImpl;
 
+  // ---- Compute target state ----
+  const targetBuildings = computePostRemovalBuildings(args.seat, args.request);
+  const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
+
+  const env = findEnvironment(args.envs, args.session);
+  const envTzRaw = env.TimeZone;
+  const envTz =
+    typeof envTzRaw === 'string' && envTzRaw.length > 0 ? envTzRaw : 'Mountain Standard Time';
+
+  // ---- Read Kindoo state ----
   const existing = await lookupUserByEmail(args.session, args.request.member_email, fetchImpl);
   if (!existing) {
     return {
@@ -558,11 +661,61 @@ export async function provisionRemove(args: ProvisionRemoveArgs): Promise<Provis
     };
   }
 
-  await revokeUser(args.session, existing.userId, fetchImpl);
+  // ---- Reconcile rule set ----
+  const currentRIDs = existing.accessSchedules.map((s) => s.ruleId);
+  const targetSet = new Set(targetRIDs);
+  const currentSet = new Set(currentRIDs);
+  const toRevoke = currentRIDs.filter((id) => !targetSet.has(id));
+  const toAdd = targetRIDs.filter((id) => !currentSet.has(id));
+
+  // Drop removed rules first (per-rule revoke — `saveAccessRule` can't
+  // narrow). `revokeUserFromAccessSchedule` takes EUID.
+  for (const ruleId of toRevoke) {
+    await revokeUserFromAccessSchedule(args.session, existing.euid, ruleId, fetchImpl);
+  }
+
+  // Then add any newly-needed rules (e.g. promoted duplicate brought a
+  // building not previously in Kindoo for this user).
+  if (toAdd.length > 0) {
+    await saveAccessRule(args.session, existing.userId, toAdd, fetchImpl);
+  }
+
+  // If nothing survives, wipe the env-user record entirely. Matches the
+  // semantics SBA conveys for a request that empties the seat.
+  if (targetRIDs.length === 0) {
+    await revokeUser(args.session, existing.userId, fetchImpl);
+    return {
+      kindoo_uid: existing.userId,
+      action: 'removed',
+      note: noteForAction('removed', args.request, []),
+    };
+  }
+
+  // ---- Description sync ----
+  const targetDescription = synthesizeDescription(
+    args.seat,
+    args.request,
+    args.stake,
+    args.wards,
+    false,
+    args.request.scope,
+  );
+  if (targetDescription !== existing.description) {
+    const editPayload: KindooEditUserPayload = {
+      description: targetDescription,
+      isTemp: existing.isTempUser,
+      // Echo current dates; remove flow doesn't change temp state.
+      startAccessDoorsDateTime: existing.startAccessDoorsDateAtTimeZone ?? '',
+      expiryDate: existing.expiryDateAtTimeZone ?? '',
+      timeZone: existing.expiryTimeZone || envTz,
+    };
+    await editUser(args.session, existing.euid, editPayload, fetchImpl);
+  }
+
   return {
     kindoo_uid: existing.userId,
-    action: 'removed',
-    note: noteForAction('removed', args.request, []),
+    action: 'updated',
+    note: noteForAction('updated', args.request, targetBuildings),
   };
 }
 

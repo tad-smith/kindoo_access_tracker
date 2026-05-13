@@ -87,7 +87,6 @@ extension/
 
 - **Don't talk directly to Firestore from the extension.** Go through the callables.
 - **Don't reach into Kindoo's DOM.** The slide-over is a self-contained panel; it does not read or modify Kindoo page state. Kindoo writes (v2.2 Provision & Complete) go through the typed wrappers in `content/kindoo/endpoints.ts`, never via DOM scraping. See `extension/docs/v2-design.md`.
-- **v2.2 remove always whole-user-revokes.** Multi-grant partial remove (where a user has grants from multiple SBA scopes and the operator wants to remove just one) is NOT supported — every SBA remove request triggers a whole-user revoke from Kindoo. Matches SBA's `removeSeatOnRequestComplete` trigger, which always deletes the whole seat. The scope-specific case is tracked in `docs/BUGS.md` as B-10.
 - **Don't read Kindoo's `localStorage` outside the documented `kindoo/auth.ts` helper.** The keys are documented in the Kindoo runtime state section; readers route through that helper so we have one place to handle missing/expired state.
 - **Don't bundle production credentials.** Firebase web SDK config is public; the Google OAuth client ID is public-by-design; nothing else ships in the bundle.
 - **Don't depend on `apps/web/` code.** Share types via `@kindoo/shared`. The extension is its own consumer.
