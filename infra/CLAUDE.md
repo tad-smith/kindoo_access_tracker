@@ -27,6 +27,7 @@ infra/
 │   ├── provision-firebase-projects.md
 │   ├── resend-api-key-setup.md
 │   ├── custom-domain.md
+│   ├── extension-deploy.md
 │   └── granting-importer-sheet-access.md
 ├── ci/
 │   └── workflows/
