@@ -429,7 +429,7 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
       stake_id: STAKE_ID,
       setup_complete: true,
       stake_name: 'CS North Stake',
-      lastActor: lastActor('mgr@gmail.com'),
+      lastActor: lastActor('admin@gmail.com'),
     };
     const kindooConfig = {
       site_id: 27994,
@@ -437,7 +437,9 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
       configured_at: '2026-05-12T12:00:00.000Z',
       configured_by: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
     };
-    const after = { ...before, kindoo_config: kindooConfig };
+    // In-app writes always stamp a fresh `lastActor` alongside the
+    // field change; only out-of-band writes (B-5) leave it untouched.
+    const after = { ...before, kindoo_config: kindooConfig, lastActor: lastActor('mgr@gmail.com') };
     await auditStakeWrites.run(makeEvent({ params: { stakeId: STAKE_ID }, before, after }));
     const rows = await readAuditRows();
     expect(rows).toHaveLength(1);
@@ -554,6 +556,127 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     const rows = await readAuditRows();
     expect(rows[0]!.actor_canonical).toBe('Importer');
     expect(rows[0]!.action).toBe('create_access');
+  });
+
+  // -------- Out-of-band write detection (B-5) --------
+  //
+  // Writes that don't touch `lastActor` (Firestore Console edits,
+  // ad-hoc `gcloud firestore` tweaks, Admin-SDK scripts that forgot to
+  // stamp it) used to inherit the doc's prior `lastActor`, producing an
+  // audit row that misattributed the change to whoever wrote the doc
+  // last. The trigger now records the `OutOfBand` sentinel actor when
+  // `before.lastActor === after.lastActor` on an update.
+
+  it('update that leaves lastActor unchanged records the OutOfBand sentinel actor', async () => {
+    const before = {
+      stake_id: STAKE_ID,
+      setup_complete: true,
+      stake_name: 'CS North Stake',
+      kindoo_expected_site_name: 'STAGING - Colorado Springs North Stake',
+      lastActor: { email: 'ExpiryTrigger', canonical: 'ExpiryTrigger' },
+    };
+    const after = {
+      ...before,
+      kindoo_expected_site_name: 'Colorado Springs North Stake',
+      // lastActor intentionally NOT updated — this is the out-of-band signature.
+    };
+    await auditStakeWrites.run(makeEvent({ params: { stakeId: STAKE_ID }, before, after }));
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('update_stake');
+    expect(rows[0]!.actor_email).toBe('OutOfBand');
+    expect(rows[0]!.actor_canonical).toBe('OutOfBand');
+    // The before/after diff itself stays correct — only attribution changes.
+    expect((rows[0]!.before as Record<string, unknown>)['kindoo_expected_site_name']).toBe(
+      'STAGING - Colorado Springs North Stake',
+    );
+    expect((rows[0]!.after as Record<string, unknown>)['kindoo_expected_site_name']).toBe(
+      'Colorado Springs North Stake',
+    );
+  });
+
+  it('out-of-band detection fires on any audited path, not just stake', async () => {
+    const before = {
+      ward_code: 'GE',
+      ward_name: 'Greenwood Ward',
+      seat_cap: 20,
+      lastActor: lastActor('alice@gmail.com'),
+    };
+    const after = { ...before, seat_cap: 25 }; // lastActor unchanged
+    await auditWardWrites.run(
+      makeEvent({ params: { stakeId: STAKE_ID, wardId: 'GE' }, before, after }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actor_canonical).toBe('OutOfBand');
+  });
+
+  it('out-of-band detection fires when lastActor is absent on both sides', async () => {
+    // Doc never had a lastActor (legacy state) and the out-of-band
+    // write didn't add one. Both-absent counts as "writer didn't touch
+    // it" — same sentinel.
+    const before = {
+      ward_code: 'GE',
+      ward_name: 'Greenwood Ward',
+      seat_cap: 20,
+    };
+    const after = { ...before, seat_cap: 30 };
+    await auditWardWrites.run(
+      makeEvent({ params: { stakeId: STAKE_ID, wardId: 'GE' }, before, after }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actor_canonical).toBe('OutOfBand');
+  });
+
+  it('normal write that updates lastActor keeps the new actor (no sentinel)', async () => {
+    // Regression guard for the happy path: every in-app write stamps
+    // a fresh lastActor along with the field change, and that real
+    // actor must be recorded — NOT the sentinel.
+    const before = {
+      ward_code: 'GE',
+      ward_name: 'Greenwood Ward',
+      seat_cap: 20,
+      lastActor: lastActor('alice@gmail.com'),
+    };
+    const after = { ...before, seat_cap: 25, lastActor: lastActor('bob@gmail.com') };
+    await auditWardWrites.run(
+      makeEvent({ params: { stakeId: STAKE_ID, wardId: 'GE' }, before, after }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actor_canonical).toBe('bob@gmail.com');
+  });
+
+  it('creates and deletes are not classified as out-of-band even with no lastActor change', async () => {
+    // Creates/deletes can't have a meaningful before/after lastActor
+    // comparison — only one side exists. The actor falls through to
+    // the normal resolution (after for create, before for delete).
+    const createdAfter = {
+      ward_code: 'GE',
+      ward_name: 'Greenwood Ward',
+      lastActor: lastActor('alice@gmail.com'),
+    };
+    await auditWardWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, wardId: 'GE' },
+        before: null,
+        after: createdAfter,
+      }),
+    );
+    let rows = await readAuditRows();
+    expect(rows[0]!.actor_canonical).toBe('alice@gmail.com');
+    await clearAuditRows();
+
+    await auditWardWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, wardId: 'GE' },
+        before: createdAfter,
+        after: null,
+      }),
+    );
+    rows = await readAuditRows();
+    expect(rows[0]!.actor_canonical).toBe('alice@gmail.com');
   });
 
   it('emitAuditRow stamps a ttl ~365 days after the event time', async () => {

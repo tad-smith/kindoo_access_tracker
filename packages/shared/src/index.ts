@@ -9,6 +9,11 @@ export { BOOKKEEPING_FIELDS } from './auditBookkeepingFields.js';
 export { buildingSlug } from './buildingSlug.js';
 export { canonicalEmail, emailsEqual } from './canonicalEmail.js';
 export { principalFromClaims } from './principal.js';
+export {
+  AUTOMATED_ACTOR_NAMES,
+  isAutomatedActor,
+  type AutomatedActorName,
+} from './systemActors.js';
 
 // ---- Domain types -----------------------------------------------------
 export type {
