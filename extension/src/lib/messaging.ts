@@ -22,6 +22,7 @@ import type {
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
   Stake,
+  Ward,
 } from '@kindoo/shared';
 
 /** Reduced user shape — the only auth fields the panel renders. */
@@ -86,6 +87,13 @@ export interface DataGetStakeConfigRequest {
 export interface DataGetStakeConfigPayload {
   stake: Stake;
   buildings: Building[];
+  /**
+   * Every ward under the stake — needed by v2.2's provision flow to
+   * resolve a ward-scoped request's display name (`request.scope` is
+   * a ward_code; the orchestrator maps it to `ward.ward_name` for the
+   * Kindoo Description field). Empty for stakes with no wards yet.
+   */
+  wards: Ward[];
 }
 
 /**

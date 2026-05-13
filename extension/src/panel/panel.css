@@ -118,6 +118,16 @@ main.sba-panel {
   background: #166534;
 }
 
+.sba-btn-danger {
+  background: var(--sba-danger);
+  border-color: var(--sba-danger);
+  color: #ffffff;
+}
+
+.sba-btn-danger:hover:not(:disabled) {
+  background: #991b1b;
+}
+
 .sba-btn-link {
   background: transparent;
   border: none;

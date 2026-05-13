@@ -13,7 +13,7 @@
 // authorisation.
 
 import { collection, doc, getDoc, getDocs, serverTimestamp, writeBatch } from 'firebase/firestore';
-import type { Building, Stake } from '@kindoo/shared';
+import type { Building, Stake, Ward } from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
@@ -23,12 +23,14 @@ import type { WriteKindooConfigPayload } from '../lib/messaging';
 interface StakeConfigBundle {
   stake: Stake;
   buildings: Building[];
+  wards: Ward[];
 }
 
 /**
  * One-shot read of `stakes/{STAKE_ID}` plus every doc under
- * `stakes/{STAKE_ID}/buildings/*`. Sorted by `building_name` so the
- * panel rows come back in a stable, operator-friendly order.
+ * `stakes/{STAKE_ID}/buildings/*` and `stakes/{STAKE_ID}/wards/*`.
+ * Buildings sorted by name (stable order in the v2.1 wizard);
+ * wards sorted by code (stable order for v2.2 ward-scope resolution).
  */
 export async function loadStakeConfig(): Promise<StakeConfigBundle> {
   const db = firestore();
@@ -44,7 +46,12 @@ export async function loadStakeConfig(): Promise<StakeConfigBundle> {
   const buildings = buildingsSnap.docs.map((d) => d.data() as Building);
   buildings.sort((a, b) => a.building_name.localeCompare(b.building_name));
 
-  return { stake, buildings };
+  const wardsCol = collection(db, 'stakes', STAKE_ID, 'wards');
+  const wardsSnap = await getDocs(wardsCol);
+  const wards = wardsSnap.docs.map((d) => d.data() as Ward);
+  wards.sort((a, b) => a.ward_code.localeCompare(b.ward_code));
+
+  return { stake, buildings, wards };
 }
 
 /**

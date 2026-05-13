@@ -1,9 +1,9 @@
 // Content-script-side wrapper over chrome.runtime.sendMessage.
 //
 // The panel components (SignedOutPanel, QueuePanel, NotAuthorizedPanel,
-// RequestCard, CompleteDialog) live in the content-script bundle and
-// cannot touch chrome.identity or the Firebase SDK directly. They
-// import from here instead; this module round-trips through the
+// RequestCard, ResultDialog, ConfigurePanel) live in the content-script
+// bundle and cannot touch chrome.identity or the Firebase SDK directly.
+// They import from here instead; this module round-trips through the
 // service worker which owns those surfaces.
 //
 // Hook shapes mirror the previous direct-Firebase versions
@@ -34,6 +34,10 @@ import type {
   WireError,
   WriteKindooConfigPayload,
 } from './messaging';
+
+/** Public alias for the stake-config bundle the panel passes between
+ * components. */
+export type StakeConfigBundle = DataGetStakeConfigPayload;
 import type {
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
