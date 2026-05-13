@@ -7,7 +7,7 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 ---
 
 ## [B-6] auditDiff reports nested-object key reorderings as field changes
-Status: open
+Status: closed (fixed in PR #86)
 Owner: @backend-engineer
 Phase: post Phase 11
 Severity: low-medium
@@ -36,7 +36,9 @@ Identical data, different key order. The Manager Audit Log page displays nested-
 
 **Won't fix in:** any in-flight PR — file as a standalone bug, fix in its own PR.
 
-**Branch / PR:** none — fix not yet started.
+**Fix:** PR #86 replaces the `JSON.stringify`-based `deepEqual` in `functions/src/lib/auditDiff.ts` with a recursive deep-equal helper that compares objects by key set (not key order), recurses on values, and continues to compare arrays positionally; new unit tests in `functions/src/lib/auditDiff.test.ts` cover the key-order-irrelevance behaviour including the prod `kindoo_config` regression case.
+
+**Branch / PR:** PR #86 (`docs/b-6-audit-diff-key-order-false-positive`) — docs entry + fix.
 
 ---
 
