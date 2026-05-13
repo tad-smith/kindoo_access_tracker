@@ -475,6 +475,35 @@ describe('accessRequestSchema', () => {
     expect(accessRequestSchema.parse(seed)).toEqual(seed);
   });
 
+  // Extension v2.2 — `kindoo_uid` + `provisioning_note` are optional
+  // completion-side metadata, set by the extension's Provision &
+  // Complete flow. Round-trip cleanly when present; absence is fine
+  // (covered by the other completed-request fixtures).
+  it('parses a completed add request with v2.2 kindoo_uid + provisioning_note', () => {
+    const seed = {
+      request_id: 'req-5',
+      type: 'add_manual' as const,
+      scope: 'stake',
+      member_email: 'E@gmail.com',
+      member_canonical: 'e@gmail.com',
+      member_name: 'Erin',
+      reason: 'Visiting authority',
+      comment: '',
+      building_names: ['Cordera Building'],
+      status: 'complete' as const,
+      requester_email: 'Alice@gmail.com',
+      requester_canonical: 'alice@gmail.com',
+      requested_at: T,
+      completer_email: 'Mgr@gmail.com',
+      completer_canonical: 'mgr@gmail.com',
+      completed_at: T,
+      kindoo_uid: 'kindoo-user-12345',
+      provisioning_note: 'Added Erin to Kindoo with access to Cordera Building.',
+      lastActor: ACTOR,
+    };
+    expect(accessRequestSchema.parse(seed)).toEqual(seed);
+  });
+
   it('parses a remove that was a no-op (R-1 race) with completion_note', () => {
     const seed = {
       request_id: 'req-4',

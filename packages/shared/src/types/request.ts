@@ -68,6 +68,21 @@ export type AccessRequest = {
   completion_note?: string;
 
   /**
+   * Extension v2.2 — Kindoo internal user id captured at provision
+   * time. Optional; only set when v2.2's "Provision & Complete" flow
+   * successfully resolved the user in Kindoo (added or matched on
+   * lookup). Absent for the SPA mark-complete path and for v2.2's
+   * remove-no-op (user not in Kindoo).
+   */
+  kindoo_uid?: string;
+  /**
+   * Extension v2.2 — human-readable summary of what the Provision &
+   * Complete flow did in Kindoo (e.g. "Added X to Kindoo with access
+   * to Cordera Building."). Same shape contract as `completion_note`.
+   */
+  provisioning_note?: string;
+
+  /**
    * For `type='remove'`, denormalised at submit time so the
    * completion path can target the seat doc by ID without running a
    * query (Firestore client transactions can't query). Same value as

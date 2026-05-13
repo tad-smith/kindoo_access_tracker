@@ -38,6 +38,19 @@ export type MarkRequestCompleteInput = {
    * on the email body when present.
    */
   completionNote?: string;
+  /**
+   * Extension v2.2 — Kindoo internal user id captured by the
+   * "Provision & Complete" flow. When present, persisted on the
+   * request doc as `kindoo_uid`. The SPA mark-complete path does
+   * not set this.
+   */
+  kindooUid?: string;
+  /**
+   * Extension v2.2 — human-readable summary of what the provision
+   * flow did in Kindoo. Trimmed server-side; max ~500 chars. When
+   * present, persisted on the request doc as `provisioning_note`.
+   */
+  provisioningNote?: string;
 };
 
 export type MarkRequestCompleteOutput = {
