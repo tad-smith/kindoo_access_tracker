@@ -36,12 +36,12 @@ extension/
 ├── src/
 │   ├── manifest.config.ts         # (mirror — see top)
 │   ├── background/
-│   │   ├── index.ts               # SW entry — wires the three subsystems below
+│   │   ├── service-worker.ts      # SW entry — wires the three subsystems below
 │   │   ├── messages.ts            # chrome.runtime.onMessage dispatcher
 │   │   ├── authPush.ts            # broadcast auth state to all CS tabs
 │   │   └── actionToggle.ts        # toolbar click → CS toggle message
 │   ├── content/
-│   │   ├── index.ts               # CS entry — calls mountPanel
+│   │   ├── content-script.ts      # CS entry — calls mountPanel
 │   │   ├── mount.tsx              # Shadow-DOM + React mount + toggle wiring
 │   │   └── container.css          # slide-over chrome (Shadow DOM)
 │   ├── panel/

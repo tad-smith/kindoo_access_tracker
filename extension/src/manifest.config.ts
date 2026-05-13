@@ -60,7 +60,7 @@ export default defineManifest(({ mode }) => {
     short_name: 'SBA Helper',
     description:
       'Surfaces pending Stake Building Access requests in a slide-over panel on Kindoo so a Kindoo Manager can work the queue alongside the Kindoo admin UI.',
-    version: '0.1.0',
+    version: '0.1.1',
     // `key` pins the extension ID across rebuilds when set. Omit
     // when unset so Chrome auto-assigns a random ID for first-time
     // dev before the operator generates a keypair.
@@ -74,13 +74,18 @@ export default defineManifest(({ mode }) => {
     permissions: ['identity', 'identity.email', 'storage'],
     host_permissions: [KINDOO_UI_ORIGIN, KINDOO_API_ORIGIN],
     background: {
-      service_worker: 'src/background/index.ts',
+      // Entry filenames are distinct (service-worker.ts vs
+      // content-script.ts) instead of both `index.ts`. @crxjs's chunk
+      // naming collides on same-named entries and cross-wires the
+      // loader scripts, which manifested as the SW loader importing
+      // the content-script bundle (React → `document is not defined`).
+      service_worker: 'src/background/service-worker.ts',
       type: 'module',
     },
     content_scripts: [
       {
         matches: [KINDOO_UI_ORIGIN],
-        js: ['src/content/index.ts'],
+        js: ['src/content/content-script.ts'],
         run_at: 'document_idle',
       },
     ],
