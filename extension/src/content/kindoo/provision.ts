@@ -1,18 +1,25 @@
-// v2.2 — orchestrates the Kindoo-side work for one SBA AccessRequest
-// using a read-first / merged-state pattern. Two top-level functions:
+// v2.2 — orchestrates the Kindoo-side work for one SBA AccessRequest.
+// Two top-level functions:
 //
 //   provisionAddOrChange(req, seat, ...)  // add_manual / add_temp
-//   provisionRemove(req, seat, ...)       // remove
+//   provisionRemove(req, ...)             // remove (whole-user revoke)
 //
-// Both compute the **post-completion** target state (which buildings
-// the user should have access to, what description the seat should
-// carry, whether the user is temp + their date bounds), then drive
-// Kindoo to it via:
-//   - `editUser` for env-user advanced settings (description, temp,
-//     dates) — only when the target differs from lookup.
-//   - `saveAccessRule` always sending the COMPLETE target rule set
-//     (never a delta) — Kindoo's REPLACE-vs-MERGE semantics aren't
-//     pinned down; full-set REPLACE is unambiguous.
+// **Add / change** uses a read-first / merged-state pattern: compute
+// the post-completion target state (buildings, description, temp +
+// date bounds), then drive Kindoo to it via:
+//   - `editUser` for env-user advanced settings — only when the target
+//     differs from lookup.
+//   - `saveAccessRule` to ADD missing rules. `saveAccessRule` is
+//     MERGE-only (confirmed in staging 2026-05-12): it can grow the
+//     rule set but cannot shrink it. That's fine on the add path —
+//     we never want to drop existing grants here.
+//
+// **Remove** always whole-user-revokes via `revokeUser`. The
+// scope-specific partial-remove case (`saveAccessRule` MERGE can't
+// narrow, so we'd have to call `revokeUserFromAccessSchedule` per
+// dropped rule) is deferred (see `docs/BUGS.md` B-10). This matches
+// SBA's `removeSeatOnRequestComplete` trigger which always deletes
+// the whole seat.
 //
 // "Read first" means: every flow starts with `lookupUserByEmail`
 // (whose `null` return IS the "not in Kindoo" signal — `checkUserType`
@@ -511,28 +518,30 @@ function noteForAction(
 
 export interface ProvisionRemoveArgs {
   request: AccessRequest;
-  /** SBA seat for the request's subject; `null` if already gone. */
-  seat: Seat | null;
-  stake: Stake;
-  buildings: Building[];
-  wards: Ward[];
   session: KindooSession;
   deps?: ProvisionDeps;
 }
 
 /**
- * Remove (or narrow) a user's Kindoo access to match the
- * post-completion seat state.
+ * Whole-user revoke from Kindoo. v2.2 always treats a remove request
+ * as a whole-user revoke (matching SBA's `removeSeatOnRequestComplete`
+ * trigger which always deletes the whole seat).
+ *
+ * `saveAccessRule` is MERGE not REPLACE, so we can't use it to narrow
+ * a rule set; the only way to remove a rule is `revokeUser`
+ * (whole-user) or `revokeUserFromAccessSchedule` (per-rule). The
+ * multi-grant partial-remove case — where a user has grants from
+ * multiple SBA scopes and the operator wants to remove just one — is
+ * deferred (see `docs/BUGS.md` B-10).
  *
  * Flow:
- *   1. targetBuildings = seat.building_names − request.building_names.
- *      For the typical whole-seat remove case targetBuildings = [].
- *   2. lookupUserByEmail(email).
- *   3. Not found → noop-remove (SBA still flips complete).
- *   4. Found + targetRIDs.length === 0 → revokeUser. Description edit
- *      skipped (user is gone).
- *   5. Found + targetRIDs.length > 0  → saveAccessRule with remaining
- *      RIDs + editUser if the trimmed description differs.
+ *   1. lookupUserByEmail(email).
+ *   2. Not found → noop-remove (SBA still flips complete).
+ *   3. Found → revokeUser.
+ *
+ * `request.building_names` is intentionally ignored — the v2.2 contract
+ * is whole-user-revoke-on-remove regardless of what buildings the
+ * request lists.
  */
 export async function provisionRemove(args: ProvisionRemoveArgs): Promise<ProvisionResult> {
   if (args.request.type !== 'remove') {
@@ -540,16 +549,6 @@ export async function provisionRemove(args: ProvisionRemoveArgs): Promise<Provis
   }
   const fetchImpl = args.deps?.fetchImpl;
 
-  // ---- Compute target buildings ----
-  const removeBuildings = buildingsForRequest(args.request, args.wards);
-  const seatBuildings = args.seat?.building_names ?? [];
-  // v2.2 single-stake convention: a remove with empty building_names
-  // clears the whole seat. Otherwise drop only the listed buildings.
-  const targetBuildings =
-    removeBuildings.length === 0 ? [] : seatBuildings.filter((b) => !removeBuildings.includes(b));
-  const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
-
-  // ---- Read Kindoo state ----
   const existing = await lookupUserByEmail(args.session, args.request.member_email, fetchImpl);
   if (!existing) {
     return {
@@ -559,45 +558,11 @@ export async function provisionRemove(args: ProvisionRemoveArgs): Promise<Provis
     };
   }
 
-  if (targetRIDs.length === 0) {
-    await revokeUser(args.session, existing.userId, fetchImpl);
-    return {
-      kindoo_uid: existing.userId,
-      action: 'removed',
-      note: noteForAction('removed', args.request, []),
-    };
-  }
-
-  // Partial remove — narrow the rule set + (maybe) refresh the
-  // description to drop the removed scope. Compute a description from
-  // the seat post-removal: same callings/duplicates minus the
-  // departing grant. For v2.2 single-stake we don't synthesize a
-  // post-removal seat shape (out of scope); reuse the existing seat's
-  // description as a best-effort match.
-  await saveAccessRule(args.session, existing.userId, targetRIDs, fetchImpl);
-
-  const targetDescription = synthesizeDescription(
-    args.seat,
-    args.request,
-    args.stake,
-    args.wards,
-    false,
-  );
-  if (targetDescription !== existing.description) {
-    const editPayload: KindooEditUserPayload = {
-      description: targetDescription,
-      isTemp: existing.isTempUser,
-      startAccessDoorsDateTime: existing.startAccessDoorsDateAtTimeZone ?? '',
-      expiryDate: existing.expiryDateAtTimeZone ?? '',
-      timeZone: existing.expiryTimeZone,
-    };
-    await editUser(args.session, existing.euid, editPayload, fetchImpl);
-  }
-
+  await revokeUser(args.session, existing.userId, fetchImpl);
   return {
     kindoo_uid: existing.userId,
-    action: 'updated',
-    note: noteForAction('updated', args.request, targetBuildings),
+    action: 'removed',
+    note: noteForAction('removed', args.request, []),
   };
 }
 

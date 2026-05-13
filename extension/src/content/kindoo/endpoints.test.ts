@@ -13,6 +13,7 @@ import {
   inviteUser,
   lookupUserByEmail,
   revokeUser,
+  revokeUserFromAccessSchedule,
   saveAccessRule,
   type KindooInviteUserPayload,
 } from './endpoints';
@@ -410,5 +411,47 @@ describe('revokeUser', () => {
       code: 'http-error',
       status: 500,
     });
+  });
+});
+
+describe('revokeUserFromAccessSchedule', () => {
+  it('sends EUID + ID (the rule RID) in the form envelope', async () => {
+    // Body `1` parses as the number 1 — captured live shape.
+    const fetchImpl = vi.fn(async () => new Response('1', { status: 200 }));
+    await revokeUserFromAccessSchedule(
+      SESSION,
+      'fcf38b4c-1111-1111-1111-111111111111',
+      6250,
+      fetchImpl,
+    );
+    const form = await formFromLastCall(fetchImpl);
+    expect(form.get('EUID')).toBe('fcf38b4c-1111-1111-1111-111111111111');
+    expect(form.get('ID')).toBe('6250');
+    // Standard envelope still present.
+    expect(form.get('SessionTokenID')).toBe('sess-123');
+    expect(form.get('EID')).toBe('27994');
+    expect(form.get('AppVersion')).toBe('6.1.0');
+    expect(form.get('PlatformOS')).toBe('web');
+  });
+
+  it('returns ok=true on a plain "1" success response', async () => {
+    const fetchImpl = vi.fn(async () => new Response('1', { status: 200 }));
+    const result = await revokeUserFromAccessSchedule(SESSION, 'euid', 6250, fetchImpl);
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('throws unexpected-shape on any non-"1" response body', async () => {
+    // `"0"` body — parses as the number 0 → treated as error.
+    const fetchImpl = vi.fn(async () => new Response('0', { status: 200 }));
+    await expect(
+      revokeUserFromAccessSchedule(SESSION, 'euid', 6250, fetchImpl),
+    ).rejects.toMatchObject({ code: 'unexpected-shape' });
+  });
+
+  it('bubbles up HTTP errors from the underlying postKindoo', async () => {
+    const fetchImpl = vi.fn(async () => new Response('boom', { status: 500 }));
+    await expect(
+      revokeUserFromAccessSchedule(SESSION, 'euid', 6250, fetchImpl),
+    ).rejects.toMatchObject({ code: 'http-error', status: 500 });
   });
 });

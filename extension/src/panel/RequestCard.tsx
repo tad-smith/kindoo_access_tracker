@@ -69,33 +69,26 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
     }
     const session: KindooSession = sessionResult.session;
 
-    // 2. Read the SBA seat for the request subject. `null` is a valid
-    //    return — first-time-add cases have no seat yet. v2.2's
-    //    read-first orchestrator merges the seat's existing
-    //    building_names with the request's incoming grants to compute
-    //    the post-completion rule set.
-    let seat: Awaited<ReturnType<typeof getSeatByEmail>>;
-    try {
-      seat = await getSeatByEmail(request.member_canonical);
-    } catch (err) {
-      setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
-      return;
-    }
-
-    // 3. Run the orchestrator. For add types we also need envs (for
-    //    TimeZone); skip that fetch for remove.
+    // 2. Run the orchestrator. Remove is a whole-user revoke and only
+    //    needs `request` + `session` (B-10: partial remove deferred).
+    //    Add types also need the SBA seat (read-first merged-state)
+    //    + envs (for TimeZone).
     let result: ProvisionResult;
     try {
       if (request.type === 'remove') {
         result = await provisionRemove({
           request,
-          seat,
-          stake: bundle.stake,
-          buildings: bundle.buildings,
-          wards: bundle.wards,
           session,
         });
       } else {
+        // `seat` may be null — first-time-add has no prior seat.
+        let seat: Awaited<ReturnType<typeof getSeatByEmail>>;
+        try {
+          seat = await getSeatByEmail(request.member_canonical);
+        } catch (err) {
+          setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+          return;
+        }
         let envs: KindooEnvironment[];
         try {
           envs = await getEnvironments(session);

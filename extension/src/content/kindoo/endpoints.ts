@@ -8,15 +8,22 @@
 // On a malformed response shape we throw `KindooApiError('unexpected-shape', …)`
 // so the caller's catch can render a "Kindoo API changed" recovery.
 //
-// **v2.2 write endpoints.** Six wrappers around the mutation surface:
-// `checkUserType`, `inviteUser`, `editUser`, `saveAccessRule`,
-// `lookupUserByEmail`, `revokeUser`. `lookupUserByEmail` returns a
-// rich `KindooEnvironmentUser | null` — the orchestrator reads the
-// user's current EUID / UserID / Description / temp flag / dates /
+// **v2.2 write endpoints.** Seven wrappers around the mutation
+// surface: `checkUserType`, `inviteUser`, `editUser`,
+// `saveAccessRule`, `lookupUserByEmail`, `revokeUser`,
+// `revokeUserFromAccessSchedule`. `lookupUserByEmail` returns a rich
+// `KindooEnvironmentUser | null` — the orchestrator reads the user's
+// current EUID / UserID / Description / temp flag / dates /
 // AccessSchedules from the lookup, computes the post-completion
 // target state, and drives Kindoo to it via `editUser` (env-user
 // settings) and/or `saveAccessRule` (rule set). EUID vs UserID:
-// `editUser` takes EUID; `saveAccessRule` / `revokeUser` take UserID.
+// `editUser` and `revokeUserFromAccessSchedule` take EUID;
+// `saveAccessRule` / `revokeUser` take UserID.
+//
+// `revokeUserFromAccessSchedule` is shipped but unused by v2.2 — v2.2
+// always whole-revokes via `revokeUser` because `saveAccessRule` is
+// MERGE-only and can't narrow a rule set. Reserved for the future
+// scope-specific remove flow (see `docs/BUGS.md` B-10).
 
 import { postKindoo, KindooApiError } from './client';
 import type { KindooSession } from './auth';
@@ -372,9 +379,12 @@ export async function editUser(
  * as a JSON array in the `RIDs` form field; `username` is empty
  * (captured live as empty string — purpose unclear, safest to match).
  *
- * The orchestrator always sends the COMPLETE target rule set (never a
- * delta) because Kindoo's `SaveAccessRule` REPLACE-vs-MERGE semantics
- * aren't pinned down; full-set REPLACE is unambiguous.
+ * **Semantics are MERGE, not REPLACE** (confirmed in staging
+ * 2026-05-12): sending a subset of the user's current RIDs does NOT
+ * remove the omitted rules — only additions land. To remove a rule
+ * use `revokeUserFromAccessSchedule` (scope-specific) or `revokeUser`
+ * (whole-user). v2.2 only uses this on the add path, where MERGE is
+ * exactly what we want.
  *
  * `uid` is **UserID** (NOT EUID — different from `editUser`'s param).
  *
@@ -527,4 +537,42 @@ export async function revokeUser(
     fetchImpl,
   );
   return { ok: true };
+}
+
+/**
+ * Revoke a single Access Rule from a user — narrows the rule set
+ * without touching the rest of the user. Wraps
+ * `KindooRevokeUserFromAccesSchedule` (NOTE: Kindoo's typo — single
+ * `s` in `AccesSchedule`; keep the typo as the wire spelling).
+ *
+ * Response is a plain string: `"1"` is success; any other response is
+ * treated as an error.
+ *
+ * `euId` is **EUID** (env-scoped); `ruleId` is the rule's RID
+ * (e.g. 6250).
+ *
+ * v2.2 doesn't use this — its orchestrator always whole-revokes via
+ * `revokeUser`. Reserved for the future scope-specific remove flow
+ * (see `docs/BUGS.md` B-10).
+ */
+export async function revokeUserFromAccessSchedule(
+  session: KindooSession,
+  euId: string,
+  ruleId: number,
+  fetchImpl?: typeof fetch,
+): Promise<{ ok: true }> {
+  const raw = await postKindoo(
+    'KindooRevokeUserFromAccesSchedule',
+    session,
+    {
+      EUID: euId,
+      ID: String(ruleId),
+    },
+    fetchImpl,
+  );
+  if (raw === '1' || raw === 1) return { ok: true };
+  throw new KindooApiError(
+    'unexpected-shape',
+    `KindooRevokeUserFromAccesSchedule returned ${JSON.stringify(raw)} (expected "1")`,
+  );
 }

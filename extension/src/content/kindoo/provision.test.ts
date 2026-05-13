@@ -12,10 +12,11 @@
 //   - existing perm  + add_temp     → no demote; saveAccessRule (rule-only diff)
 //   - existing user, full no-diff   → skip both edit + saveAccessRule
 //
-// REMOVE branches:
-//   - lookup miss      → noop-remove
-//   - lookup hit, full → revokeUser (no saveAccessRule)
-//   - lookup hit, partial → saveAccessRule (+ edit if description diffs)
+// REMOVE branches (v2.2 always whole-user-revokes — partial remove
+// deferred per `docs/BUGS.md` B-10):
+//   - lookup miss → noop-remove (no revokeUser)
+//   - lookup hit  → revokeUser (no saveAccessRule, no editUser),
+//                   regardless of `request.building_names`
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -583,15 +584,12 @@ describe('provisionRemove', () => {
 
     const result = await provisionRemove({
       request: removeRequest(),
-      seat: null,
-      stake: STAKE,
-      buildings: BUILDINGS,
-      wards: WARDS,
       session: SESSION,
     });
 
     expect(revokeUserMock).not.toHaveBeenCalled();
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
+    expect(editUserMock).not.toHaveBeenCalled();
     expect(result).toEqual({
       kindoo_uid: null,
       action: 'noop-remove',
@@ -599,23 +597,13 @@ describe('provisionRemove', () => {
     });
   });
 
-  it('full remove (no remaining buildings): calls revokeUser, skips saveAccessRule', async () => {
+  it('existing user: whole-user revokeUser; no saveAccessRule, no editUser', async () => {
     const existing = existingUser();
     lookupUserByEmailMock.mockResolvedValue(existing);
     revokeUserMock.mockResolvedValue({ ok: true });
 
-    // Request carries no building_names → whole-seat remove per the
-    // v2.2 single-stake convention.
     const result = await provisionRemove({
       request: removeRequest({ building_names: [] }),
-      seat: {
-        member_canonical: 'tad.e.smith@gmail.com',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
-        duplicate_grants: [],
-      } as unknown as Seat,
-      stake: STAKE,
-      buildings: BUILDINGS,
-      wards: WARDS,
       session: SESSION,
     });
 
@@ -629,71 +617,36 @@ describe('provisionRemove', () => {
     });
   });
 
-  it('partial remove: calls saveAccessRule with remaining RIDs, skips revokeUser', async () => {
+  it('whole-user revoke regardless of request.building_names (B-10: partial remove deferred)', async () => {
+    // Even when the request lists a subset of buildings — the v2.2
+    // contract is whole-user revoke. saveAccessRule is MERGE not
+    // REPLACE so we can't narrow the rule set from here; partial
+    // remove is deferred per docs/BUGS.md B-10.
     const existing = existingUser({
-      description: 'Cordera Ward (Sunday School Teacher) | Pine Creek Ward (Accompanist)',
       accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
     });
     lookupUserByEmailMock.mockResolvedValue(existing);
-    saveAccessRuleMock.mockResolvedValue({ ok: true });
+    revokeUserMock.mockResolvedValue({ ok: true });
 
     const result = await provisionRemove({
       request: removeRequest({ building_names: ['Pine Creek Building'] }),
-      seat: {
-        member_canonical: 'tad.e.smith@gmail.com',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
-        duplicate_grants: [],
-      } as unknown as Seat,
-      stake: STAKE,
-      buildings: BUILDINGS,
-      wards: WARDS,
       session: SESSION,
     });
 
-    expect(revokeUserMock).not.toHaveBeenCalled();
-    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6248], undefined);
-    expect(result.action).toBe('updated');
+    expect(revokeUserMock).toHaveBeenCalledWith(SESSION, existing.userId, undefined);
+    expect(saveAccessRuleMock).not.toHaveBeenCalled();
+    expect(editUserMock).not.toHaveBeenCalled();
+    expect(result.action).toBe('removed');
     expect(result.kindoo_uid).toBe(existing.userId);
-  });
-
-  it('partial remove triggers editUser when the synthesized description differs', async () => {
-    const existing = existingUser({
-      description: 'Some completely different description',
-      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
-    });
-    lookupUserByEmailMock.mockResolvedValue(existing);
-    saveAccessRuleMock.mockResolvedValue({ ok: true });
-    editUserMock.mockResolvedValue({ ok: true });
-
-    await provisionRemove({
-      request: removeRequest({ building_names: ['Pine Creek Building'] }),
-      seat: {
-        member_canonical: 'tad.e.smith@gmail.com',
-        member_email: 'tad.e.smith@gmail.com',
-        member_name: 'Tad Smith',
-        scope: 'CO',
-        type: 'auto',
-        callings: ['Sunday School Teacher'],
-        building_names: ['Cordera Building', 'Pine Creek Building'],
-        duplicate_grants: [],
-      } as unknown as Seat,
-      stake: STAKE,
-      buildings: BUILDINGS,
-      wards: WARDS,
-      session: SESSION,
-    });
-
-    expect(editUserMock).toHaveBeenCalledTimes(1);
+    // Note still describes a whole-user removal regardless of the
+    // building_names value.
+    expect(result.note).toBe('Removed Tad Smith from Kindoo.');
   });
 
   it('rejects with a clear error when called with the wrong request type', async () => {
     await expect(
       provisionRemove({
         request: addManualRequest(),
-        seat: null,
-        stake: STAKE,
-        buildings: BUILDINGS,
-        wards: WARDS,
         session: SESSION,
       }),
     ).rejects.toThrow(/non-remove type/);
@@ -704,10 +657,6 @@ describe('provisionRemove', () => {
 
     const result = await provisionRemove({
       request: removeRequest({ member_name: '' }),
-      seat: null,
-      stake: STAKE,
-      buildings: BUILDINGS,
-      wards: WARDS,
       session: SESSION,
     });
     expect(result.note).toBe('tad.e.smith@gmail.com was not in Kindoo (no-op).');
