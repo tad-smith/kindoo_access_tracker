@@ -8,4 +8,5 @@ packages:
   - 'firestore'
   - 'packages/*'
   - 'e2e'
+  - 'extension'
   - 'infra'

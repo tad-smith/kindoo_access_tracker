@@ -1,5 +1,6 @@
 # Build artifacts
 apps/*/dist/
+extension/dist/
 functions/lib/
 functions/dist/
 coverage/

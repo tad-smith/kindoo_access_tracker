@@ -1,0 +1,67 @@
+/* Slide-over container styles. Live in the Shadow DOM so Kindoo CSS
+ * cannot reach them. The host element on the page itself is
+ * non-visible; the slide-over chrome lives inside the shadow root. */
+
+/* :host targets the shadow-root host element from inside the shadow
+ * tree. We use a data attribute on the host to drive the open /
+ * closed transition without re-rendering. */
+:host {
+  all: initial;
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 2147483647; /* max int32 — Kindoo cannot z-index above us */
+  pointer-events: none;
+}
+
+:host([data-sba-open='false']) .sba-slideover {
+  transform: translateX(100%);
+}
+
+:host([data-sba-open='true']) .sba-slideover {
+  transform: translateX(0);
+}
+
+.sba-slideover {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 400px;
+  max-width: 100vw;
+  background: #ffffff;
+  border-left: 1px solid #d8d8dc;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.08);
+  transition: transform 180ms ease-out;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.sba-slideover-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #5a5a5a;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.sba-slideover-close:hover {
+  background: #f0f0f3;
+  color: #1a1a1a;
+}
+
+.sba-slideover-root {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}

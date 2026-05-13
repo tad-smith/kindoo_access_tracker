@@ -1,0 +1,278 @@
+/* Panel styles. Vanilla CSS — no Tailwind / shadcn in v1. The
+ * panel is narrow (slide-over is ~400px wide) so layouts stay
+ * single-column and copy stays terse.
+ *
+ * These styles live inside the content-script Shadow DOM (see
+ * `content/mount.tsx`). `:host` and `html, body` selectors do not
+ * apply; the slide-over container in `container.css` sets the
+ * outer frame. Custom properties below are declared on a
+ * descendant root so they are available everywhere inside. */
+
+.sba-slideover-root {
+  --sba-fg: #1a1a1a;
+  --sba-fg-muted: #5a5a5a;
+  --sba-bg: #ffffff;
+  --sba-surface: #f7f7f8;
+  --sba-border: #d8d8dc;
+  --sba-primary: #2563eb;
+  --sba-primary-fg: #ffffff;
+  --sba-success: #15803d;
+  --sba-danger: #b91c1c;
+  --sba-warning: #b45309;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--sba-fg);
+  background: var(--sba-bg);
+}
+
+.sba-slideover-root *,
+.sba-slideover-root *::before,
+.sba-slideover-root *::after {
+  box-sizing: border-box;
+}
+
+main.sba-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.sba-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--sba-border);
+  background: var(--sba-surface);
+}
+
+.sba-header h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sba-header .sba-header-meta {
+  font-size: 11px;
+  color: var(--sba-fg-muted);
+}
+
+.sba-body {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sba-body.sba-body-center {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.sba-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--sba-border);
+  border-radius: 4px;
+  background: var(--sba-bg);
+  color: var(--sba-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sba-btn:hover:not(:disabled) {
+  background: var(--sba-surface);
+}
+
+.sba-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sba-btn-primary {
+  background: var(--sba-primary);
+  border-color: var(--sba-primary);
+  color: var(--sba-primary-fg);
+}
+
+.sba-btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.sba-btn-success {
+  background: var(--sba-success);
+  border-color: var(--sba-success);
+  color: #ffffff;
+}
+
+.sba-btn-success:hover:not(:disabled) {
+  background: #166534;
+}
+
+.sba-btn-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--sba-primary);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.sba-error {
+  color: var(--sba-danger);
+  font-size: 12px;
+}
+
+.sba-muted {
+  color: var(--sba-fg-muted);
+}
+
+.sba-request-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sba-request-card {
+  border: 1px solid var(--sba-border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  background: var(--sba-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sba-request-card[data-urgent='true'] {
+  border-top: 3px solid var(--sba-danger);
+}
+
+.sba-request-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.sba-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--sba-surface);
+  color: var(--sba-fg);
+}
+
+.sba-badge-manual {
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+
+.sba-badge-temp {
+  background: #fef3c7;
+  color: #78350f;
+}
+
+.sba-badge-remove {
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+.sba-badge-urgent {
+  background: var(--sba-danger);
+  color: #ffffff;
+}
+
+.sba-request-meta {
+  font-size: 12px;
+  color: var(--sba-fg-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.sba-request-meta strong {
+  color: var(--sba-fg);
+  font-weight: 600;
+  margin-right: 0.2rem;
+}
+
+.sba-request-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.sba-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 10;
+}
+
+.sba-dialog {
+  background: var(--sba-bg);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  max-width: 22rem;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+}
+
+.sba-dialog h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sba-dialog label {
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sba-dialog textarea {
+  font: inherit;
+  padding: 0.4rem;
+  border: 1px solid var(--sba-border);
+  border-radius: 4px;
+  resize: vertical;
+  min-height: 4rem;
+}
+
+.sba-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.sba-empty {
+  margin-top: 1rem;
+  font-size: 13px;
+  color: var(--sba-fg-muted);
+  text-align: center;
+}

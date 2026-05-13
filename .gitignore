@@ -41,6 +41,8 @@ functions/lib/
 functions/dist/
 # packages/shared/ build output (TS project references emit to dist/)
 packages/*/dist/
+# Chrome extension build output (Vite + @crxjs emits to dist/)
+extension/dist/
 # firestore/ tsconfig outDir (typecheck-only; tests run via vitest)
 firestore/.tsbuild/
 # functions/ tests tsconfig outDir (typecheck-only; tests run via vitest)
