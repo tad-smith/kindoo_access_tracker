@@ -22,6 +22,16 @@ export const EXPIRY_ACTOR: ActorRef = {
   canonical: 'ExpiryTrigger',
 };
 
+// Stamped by `removeSeatOnRequestComplete` when it edits or deletes a
+// seat in response to a completed remove request. The human completer
+// attribution lives on the request doc; this synthetic actor surfaces
+// the seat-side write as automated so the audit log can distinguish
+// "manager flipped the request" from "trigger reconciled the seat."
+export const REMOVE_TRIGGER_ACTOR: ActorRef = {
+  email: 'RemoveTrigger',
+  canonical: 'RemoveTrigger',
+};
+
 // Substituted by `auditTrigger` when a write changed tracked fields
 // without touching `lastActor` — the signature of an out-of-band write
 // (Firestore Console edit, ad-hoc `gcloud firestore` tweak, Admin-SDK
