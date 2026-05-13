@@ -123,4 +123,81 @@ describe('firestore.rules — stakes/{sid}/buildings/{buildingId}', () => {
       );
     });
   });
+
+  // Extension v2.1 — `kindoo_rule` is manager-only and shape-checked.
+  describe('kindoo_rule (extension v2.1)', () => {
+    const validKindooRule = { rule_id: 1234, rule_name: 'Cordera Bldg Access Schedule' };
+
+    it('manager can add kindoo_rule', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(db.doc(PATH).set(freshBuildingDoc({ kindoo_rule: validKindooRule })));
+    });
+
+    it('manager can modify an existing kindoo_rule', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(freshBuildingDoc({ kindoo_rule: validKindooRule }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).set(
+          freshBuildingDoc({
+            kindoo_rule: { rule_id: 5678, rule_name: 'Cordera Bldg Access Schedule (revised)' },
+          }),
+        ),
+      );
+    });
+
+    it('stake-scope member cannot add kindoo_rule', async () => {
+      await assertFails(
+        stakeMemberContext(env, STAKE_ID)
+          .firestore()
+          .doc(PATH)
+          .set(
+            freshBuildingDoc({
+              kindoo_rule: validKindooRule,
+              lastActor: lastActorOf(personas.stakeMember),
+            }),
+          ),
+      );
+    });
+
+    it('outsider cannot add kindoo_rule', async () => {
+      await assertFails(
+        outsiderContext(env, STAKE_ID)
+          .firestore()
+          .doc(PATH)
+          .set(
+            freshBuildingDoc({
+              kindoo_rule: validKindooRule,
+              lastActor: lastActorOf(personas.outsider),
+            }),
+          ),
+      );
+    });
+
+    it('manager write with badly-shaped kindoo_rule (rule_id as string) → denied', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshBuildingDoc({
+            kindoo_rule: { rule_id: 'not-a-number', rule_name: 'X' },
+          }),
+        ),
+      );
+    });
+
+    it('manager write with missing kindoo_rule.rule_name → denied', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshBuildingDoc({
+            kindoo_rule: { rule_id: 1234 },
+          }),
+        ),
+      );
+    });
+  });
 });

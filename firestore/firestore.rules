@@ -164,6 +164,36 @@ service cloud.firestore {
         && data.lastActor.email == request.auth.token.email;
     }
 
+    // Extension v2.1 — shape check for `stake.kindoo_config`. Field is
+    // optional; absence is fine. When present, must carry `site_id`
+    // (number), `site_name` (string), `configured_at` (timestamp), and
+    // `configured_by.{email, canonical}` (the ActorRef of the manager
+    // who ran the config wizard). The check is structural — value
+    // semantics (e.g. site_id matching Kindoo's actual EID) are
+    // verified client-side before the write lands.
+    function validKindooConfig(data) {
+      return !('kindoo_config' in data)
+        || (
+             data.kindoo_config.site_id is int
+          && data.kindoo_config.site_name is string
+          && 'configured_at' in data.kindoo_config
+          && data.kindoo_config.configured_by.email is string
+          && data.kindoo_config.configured_by.canonical is string
+        );
+    }
+
+    // Extension v2.1 — shape check for `building.kindoo_rule`. Same
+    // pattern: optional; when present must carry `rule_id` (number) +
+    // `rule_name` (string), the `{RID, Name}` pair captured from the
+    // Kindoo admin UI's existing rule list.
+    function validKindooRule(data) {
+      return !('kindoo_rule' in data)
+        || (
+             data.kindoo_rule.rule_id is int
+          && data.kindoo_rule.rule_name is string
+        );
+    }
+
     // ===== Top-level collections =====
 
     // userIndex/{canonical} — written by `onAuthUserCreate` (Admin
@@ -229,8 +259,14 @@ service cloud.firestore {
       allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId)
         || isSetupInProgressReadable(stakeId);
       allow create: if isPlatformSuperadmin();
+      // `kindoo_config` (extension v2.1) is manager-writable as part of
+      // the standard stake update path. Validation enforces the field
+      // shape when present; absence is fine. Bootstrap admin path
+      // pre-dates the extension and never writes this field, but the
+      // validator is no-op when absent so it stays in the predicate.
       allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
-        && lastActorMatchesAuth(request.resource.data);
+        && lastActorMatchesAuth(request.resource.data)
+        && validKindooConfig(request.resource.data);
       allow delete: if false;
 
       // ----- Wards -----
@@ -258,8 +294,12 @@ service cloud.firestore {
       // Step 2 (≥1 building) writes here.
       match /buildings/{buildingId} {
         allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
+        // `kindoo_rule` (extension v2.1) is manager-writable as part of
+        // the standard building update path. Validation enforces the
+        // field shape when present; absence is fine.
         allow create, update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
-          && lastActorMatchesAuth(request.resource.data);
+          && lastActorMatchesAuth(request.resource.data)
+          && validKindooRule(request.resource.data);
         allow delete: if isManager(stakeId) || isBootstrapAdmin(stakeId);
       }
 
