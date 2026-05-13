@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { KindooApiError } from './client';
 import {
   checkUserType,
+  editUser,
   getEnvironments,
   getEnvironmentRules,
   inviteUser,
@@ -26,6 +27,34 @@ async function formFromLastCall(spy: ReturnType<typeof vi.fn>): Promise<FormData
   const calls = spy.mock.calls as unknown as Array<[unknown, RequestInit | undefined]>;
   const init = calls[calls.length - 1]![1];
   return new Request('https://test.invalid/', init!).formData();
+}
+
+/** Rich-user shape from `KindooGetEnvironmentUsersLightWithTotalNumberOfRecords`,
+ * matching `extension/docs/v2-kindoo-api-capture.md`. */
+function richUser(overrides: Record<string, unknown> = {}) {
+  return {
+    EUID: 'fcf38b4c-1111-1111-1111-111111111111',
+    UserID: '85bea3c7-1c18-40f0-b514-c828e48bd983',
+    Username: 'tad.e.smith@gmail.com',
+    DisplayName: 'Tad Smith',
+    Description: 'Cordera Ward (Sunday School Teacher)',
+    IsTempUser: false,
+    StartAccessDoorsDate: '2026-05-13T14:00:00Z',
+    StartAccessDoorsDateAtTimeZone: '2026-05-13T08:00',
+    ExpiryDate: '2026-05-15T04:00:00Z',
+    ExpiryDateAtTimeZone: '2026-05-14T22:00',
+    ExpiryTimeZone: 'Mountain Standard Time',
+    AccessSchedules: [
+      {
+        EUID: 'fcf38b4c-1111-1111-1111-111111111111',
+        RuleID: 6249,
+        rules_sets: { ID: 6249, Name: 'Monument - Everyday' },
+      },
+    ],
+    HasAcceptedInvitation: false,
+    InvitedOn: '2026-05-13T16:17:59Z',
+    ...overrides,
+  };
 }
 
 describe('getEnvironments', () => {
@@ -179,6 +208,53 @@ describe('inviteUser', () => {
   });
 });
 
+describe('editUser', () => {
+  const payload = {
+    description: 'Cordera Ward (Sunday School Teacher)',
+    isTemp: false,
+    startAccessDoorsDateTime: '',
+    expiryDate: '',
+    timeZone: 'Mountain Standard Time',
+  };
+
+  it('sends euID + the lowercase payload fields with the T-separator date format', async () => {
+    const fetchImpl = vi.fn(async () => ok({ Success: true }));
+    await editUser(
+      SESSION,
+      'fcf38b4c-1111-1111-1111-111111111111',
+      {
+        description: 'Pine Creek Ward (Temp)',
+        isTemp: true,
+        startAccessDoorsDateTime: '2026-05-13T00:00',
+        expiryDate: '2026-05-14T23:59',
+        timeZone: 'Mountain Standard Time',
+      },
+      fetchImpl,
+    );
+    const form = await formFromLastCall(fetchImpl);
+    expect(form.get('euID')).toBe('fcf38b4c-1111-1111-1111-111111111111');
+    expect(form.get('description')).toBe('Pine Creek Ward (Temp)');
+    expect(form.get('isTemp')).toBe('true');
+    expect(form.get('startAccessDoorsDateTime')).toBe('2026-05-13T00:00');
+    expect(form.get('expiryDate')).toBe('2026-05-14T23:59');
+    expect(form.get('timeZone')).toBe('Mountain Standard Time');
+  });
+
+  it('returns ok=true on a 200 response regardless of body content', async () => {
+    const fetchImpl = vi.fn(async () => ok({ AnythingAtAll: true }));
+    const result = await editUser(SESSION, 'euid', payload, fetchImpl);
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('bubbles up HTTP errors from the underlying postKindoo', async () => {
+    const fetchImpl = vi.fn(async () => new Response('boom', { status: 500 }));
+    await expect(editUser(SESSION, 'euid', payload, fetchImpl)).rejects.toMatchObject({
+      code: 'http-error',
+      status: 500,
+    });
+  });
+});
+
 describe('saveAccessRule', () => {
   it('sends UID, JSON-array RIDs, and an empty username', async () => {
     const fetchImpl = vi.fn(async () => ok({}));
@@ -206,7 +282,7 @@ describe('saveAccessRule', () => {
 
 describe('lookupUserByEmail', () => {
   it('sends the Kindoo-default pagination + the keyword + the invited-data flag', async () => {
-    const fetchImpl = vi.fn(async () => ok([]));
+    const fetchImpl = vi.fn(async () => ok({ EUList: [] }));
     await lookupUserByEmail(SESSION, 'tad.e.smith@gmail.com', fetchImpl);
     const form = await formFromLastCall(fetchImpl);
     expect(form.get('start')).toBe('0');
@@ -215,41 +291,101 @@ describe('lookupUserByEmail', () => {
     expect(form.get('FetchInvitedOnInvitedByData')).toBe('true');
   });
 
-  it('parses a bare-array response into { users: [{ uid, email }] }', async () => {
-    const fetchImpl = vi.fn(async () =>
-      ok([
-        { UID: 'one', Email: 'a@example.com', SomethingElse: 1 },
-        { UID: 'two', Email: 'b@example.com' },
-      ]),
-    );
-    const result = await lookupUserByEmail(SESSION, 'a@example.com', fetchImpl);
-    expect(result.users).toEqual([
-      { uid: 'one', email: 'a@example.com' },
-      { uid: 'two', email: 'b@example.com' },
-    ]);
-  });
-
-  it('parses a wrapped `{ Users: [...] }` response', async () => {
+  it('parses the rich EUList shape into a narrowed KindooEnvironmentUser', async () => {
     const fetchImpl = vi.fn(async () =>
       ok({
-        Users: [{ UID: 'x', UserEmail: 'x@example.com' }],
-        TotalNumberOfRecords: 1,
+        CurrentNumberOfRows: 0,
+        TotalRecordNumber: 1,
+        EUList: [richUser()],
       }),
     );
-    const result = await lookupUserByEmail(SESSION, 'x@example.com', fetchImpl);
-    expect(result.users).toEqual([{ uid: 'x', email: 'x@example.com' }]);
+    const user = await lookupUserByEmail(SESSION, 'tad.e.smith@gmail.com', fetchImpl);
+    expect(user).not.toBeNull();
+    expect(user).toMatchObject({
+      euid: 'fcf38b4c-1111-1111-1111-111111111111',
+      userId: '85bea3c7-1c18-40f0-b514-c828e48bd983',
+      username: 'tad.e.smith@gmail.com',
+      description: 'Cordera Ward (Sunday School Teacher)',
+      isTempUser: false,
+      startAccessDoorsDateAtTimeZone: '2026-05-13T08:00',
+      expiryDateAtTimeZone: '2026-05-14T22:00',
+      expiryTimeZone: 'Mountain Standard Time',
+      accessSchedules: [{ ruleId: 6249 }],
+    });
   });
 
-  it('returns an empty users[] when no entries carry both a UID and email', async () => {
-    const fetchImpl = vi.fn(async () => ok([{ Foo: 'Bar' }]));
-    const result = await lookupUserByEmail(SESSION, 'nothing@example.com', fetchImpl);
-    expect(result.users).toEqual([]);
+  it('filters by exact username (case-insensitive) — substring keyword matches do not leak', async () => {
+    // Kindoo's keyWord does substring; client must filter to avoid
+    // operating on the wrong user.
+    const fetchImpl = vi.fn(async () =>
+      ok({
+        EUList: [
+          richUser({ Username: 'tad.e.smith.but.different@gmail.com', EUID: 'wrong-euid' }),
+          richUser({ Username: 'TAD.E.SMITH@gmail.com' }),
+        ],
+      }),
+    );
+    const user = await lookupUserByEmail(SESSION, 'tad.e.smith@gmail.com', fetchImpl);
+    expect(user).not.toBeNull();
+    expect(user!.euid).toBe('fcf38b4c-1111-1111-1111-111111111111');
+    expect(user!.username).toBe('TAD.E.SMITH@gmail.com');
   });
 
-  it('returns an empty users[] when the response is empty', async () => {
-    const fetchImpl = vi.fn(async () => ok([]));
-    const result = await lookupUserByEmail(SESSION, 'nothing@example.com', fetchImpl);
-    expect(result.users).toEqual([]);
+  it('returns null when no entry exact-matches the email', async () => {
+    const fetchImpl = vi.fn(async () =>
+      ok({
+        EUList: [richUser({ Username: 'someone.else@example.com' })],
+      }),
+    );
+    const user = await lookupUserByEmail(SESSION, 'nothing@example.com', fetchImpl);
+    expect(user).toBeNull();
+  });
+
+  it('returns null when the EUList is empty', async () => {
+    const fetchImpl = vi.fn(async () => ok({ EUList: [] }));
+    const user = await lookupUserByEmail(SESSION, 'nothing@example.com', fetchImpl);
+    expect(user).toBeNull();
+  });
+
+  it('returns null when the response carries no EUList (or any user list)', async () => {
+    const fetchImpl = vi.fn(async () => ok({ Foo: 'Bar' }));
+    const user = await lookupUserByEmail(SESSION, 'nothing@example.com', fetchImpl);
+    expect(user).toBeNull();
+  });
+
+  it('falls back to a bare-array response shape', async () => {
+    const fetchImpl = vi.fn(async () => ok([richUser()]));
+    const user = await lookupUserByEmail(SESSION, 'tad.e.smith@gmail.com', fetchImpl);
+    expect(user).not.toBeNull();
+    expect(user!.euid).toBe('fcf38b4c-1111-1111-1111-111111111111');
+  });
+
+  it('defaults missing optional fields rather than throwing', async () => {
+    const fetchImpl = vi.fn(async () =>
+      ok({
+        EUList: [
+          {
+            EUID: 'e1',
+            UserID: 'u1',
+            Username: 'min@example.com',
+            // Description / IsTempUser / dates / AccessSchedules all missing.
+          },
+        ],
+      }),
+    );
+    const user = await lookupUserByEmail(SESSION, 'min@example.com', fetchImpl);
+    expect(user).not.toBeNull();
+    expect(user).toMatchObject({
+      euid: 'e1',
+      userId: 'u1',
+      username: 'min@example.com',
+      description: '',
+      isTempUser: false,
+      startAccessDoorsDateAtTimeZone: null,
+      expiryDateAtTimeZone: null,
+      expiryTimeZone: '',
+      accessSchedules: [],
+    });
   });
 });
 

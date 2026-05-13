@@ -17,7 +17,7 @@
 
 import { useCallback, useState } from 'react';
 import type { AccessRequest } from '@kindoo/shared';
-import { markRequestComplete, type StakeConfigBundle } from '../lib/extensionApi';
+import { getSeatByEmail, markRequestComplete, type StakeConfigBundle } from '../lib/extensionApi';
 import { STAKE_ID } from '../lib/constants';
 import { readKindooSession, type KindooSession } from '../content/kindoo/auth';
 import { KindooApiError } from '../content/kindoo/client';
@@ -69,12 +69,32 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
     }
     const session: KindooSession = sessionResult.session;
 
-    // 2. Run the orchestrator. For add types we also need envs (for
+    // 2. Read the SBA seat for the request subject. `null` is a valid
+    //    return — first-time-add cases have no seat yet. v2.2's
+    //    read-first orchestrator merges the seat's existing
+    //    building_names with the request's incoming grants to compute
+    //    the post-completion rule set.
+    let seat: Awaited<ReturnType<typeof getSeatByEmail>>;
+    try {
+      seat = await getSeatByEmail(request.member_canonical);
+    } catch (err) {
+      setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+
+    // 3. Run the orchestrator. For add types we also need envs (for
     //    TimeZone); skip that fetch for remove.
     let result: ProvisionResult;
     try {
       if (request.type === 'remove') {
-        result = await provisionRemove({ request, session });
+        result = await provisionRemove({
+          request,
+          seat,
+          stake: bundle.stake,
+          buildings: bundle.buildings,
+          wards: bundle.wards,
+          session,
+        });
       } else {
         let envs: KindooEnvironment[];
         try {
@@ -85,6 +105,7 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
         }
         result = await provisionAddOrChange({
           request,
+          seat,
           stake: bundle.stake,
           buildings: bundle.buildings,
           wards: bundle.wards,

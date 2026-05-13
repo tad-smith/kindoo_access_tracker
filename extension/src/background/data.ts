@@ -13,7 +13,7 @@
 // authorisation.
 
 import { collection, doc, getDoc, getDocs, serverTimestamp, writeBatch } from 'firebase/firestore';
-import type { Building, Stake, Ward } from '@kindoo/shared';
+import type { Building, Seat, Stake, Ward } from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
@@ -100,4 +100,19 @@ export async function writeKindooConfig(
   }
 
   await batch.commit();
+}
+
+/**
+ * One-shot read of `stakes/{STAKE_ID}/seats/{canonical}`. Returns
+ * `null` when the seat doesn't exist (first-time-add cases).
+ * Firestore rules gate read authorisation; non-managers get a
+ * permission-denied that surfaces back through the SW message
+ * pipeline.
+ */
+export async function loadSeatByEmail(canonical: string): Promise<Seat | null> {
+  const db = firestore();
+  const seatRef = doc(db, 'stakes', STAKE_ID, 'seats', canonical);
+  const snap = await getDoc(seatRef);
+  if (!snap.exists()) return null;
+  return snap.data() as Seat;
 }

@@ -1,44 +1,45 @@
-// v2.2 — orchestrates the Kindoo-side work for one SBA AccessRequest.
+// v2.2 — orchestrates the Kindoo-side work for one SBA AccessRequest
+// using a read-first / merged-state pattern. Two top-level functions:
 //
-// Two top-level functions:
-//   - provisionAddOrChange(req, ...) for `add_manual` / `add_temp`
-//   - provisionRemove(req, ...)      for `remove`
+//   provisionAddOrChange(req, seat, ...)  // add_manual / add_temp
+//   provisionRemove(req, seat, ...)       // remove
 //
-// Each runs the captured "unified provision shape" from
-// `extension/docs/v2-kindoo-api-capture.md`:
+// Both compute the **post-completion** target state (which buildings
+// the user should have access to, what description the seat should
+// carry, whether the user is temp + their date bounds), then drive
+// Kindoo to it via:
+//   - `editUser` for env-user advanced settings (description, temp,
+//     dates) — only when the target differs from lookup.
+//   - `saveAccessRule` always sending the COMPLETE target rule set
+//     (never a delta) — Kindoo's REPLACE-vs-MERGE semantics aren't
+//     pinned down; full-set REPLACE is unambiguous.
 //
-//   add (new user):       checkUserType -> inviteUser -> saveAccessRule
-//   add (existing user):  checkUserType -> saveAccessRule
-//   remove:               lookupUserByEmail -> revokeUser  (no-op if not found)
+// "Read first" means: every flow starts with `lookupUserByEmail`
+// (whose `null` return IS the "not in Kindoo" signal — `checkUserType`
+// is no longer needed in the orchestrator). The lookup returns both
+// EUID + UserID + every field needed to compute deltas.
 //
-// Idempotent on retry: the lookup steps come first, so re-clicking the
-// button after a transient Kindoo error resumes from the existing state
-// (an already-invited user is matched as existing; a SaveAccessRule
-// retry re-applies the same RIDs which is harmless).
-//
-// On any error we throw — the caller (RequestCard) renders inline and
-// re-enables the button. Successful returns carry the synthesized note
-// that the result dialog displays and that markRequestComplete persists
-// on the request doc.
+// Idempotent on retry by construction: lookup-first means a re-click
+// after a transient Kindoo error re-reads current state and only
+// re-applies whatever still differs.
 
-import type { AccessRequest, Building, Stake, Ward } from '@kindoo/shared';
+import type { AccessRequest, Building, DuplicateGrant, Seat, Stake, Ward } from '@kindoo/shared';
 import type { KindooSession } from './auth';
-import type { KindooEnvironment, KindooInviteUserPayload } from './endpoints';
-import {
-  checkUserType,
-  inviteUser,
-  lookupUserByEmail,
-  revokeUser,
-  saveAccessRule,
+import type {
+  KindooEditUserPayload,
+  KindooEnvironment,
+  KindooEnvironmentUser,
+  KindooInviteUserPayload,
 } from './endpoints';
+import { editUser, inviteUser, lookupUserByEmail, revokeUser, saveAccessRule } from './endpoints';
 import { KindooApiError } from './client';
 
 /** Returned by both orchestrators. */
 export interface ProvisionResult {
-  /** Kindoo internal UID. `null` only on the no-op remove path. */
+  /** Kindoo `UserID`. Never EUID. `null` only on the no-op remove path. */
   kindoo_uid: string | null;
   /** Discriminator for what physically happened in Kindoo. */
-  action: 'added' | 'updated' | 'removed' | 'noop-remove';
+  action: 'invited' | 'updated' | 'removed' | 'noop-remove';
   /** Human-readable summary; rendered in the result dialog AND
    * persisted on the request doc as `provisioning_note`. */
   note: string;
@@ -52,9 +53,10 @@ export interface ProvisionDeps {
 }
 
 /**
- * One of the buildings on the request has no Kindoo Access Rule mapped.
- * Caller catches and offers the "Reconfigure" recovery (matching v2.1's
- * locked-in block-on-missing-mapping decision).
+ * One of the buildings the post-completion state should grant has no
+ * Kindoo Access Rule mapped. Caller catches and offers the
+ * "Reconfigure" recovery (matching v2.1's locked-in
+ * block-on-missing-mapping decision).
  */
 export class ProvisionBuildingsMissingRuleError extends Error {
   readonly code = 'buildings-missing-rule' as const;
@@ -79,47 +81,54 @@ export class ProvisionEnvironmentNotFoundError extends Error {
   }
 }
 
-// ---- Helpers ---------------------------------------------------------
+// ---- Compute helpers -------------------------------------------------
 
 /**
- * Pick the display name shown in the Kindoo "Description" field. Stake
- * scope mirrors the v2.1 wizard's resolution (`kindoo_expected_site_name`
- * takes precedence over `stake_name`); ward scope reads the matching
- * ward doc by `ward_code`. Falls back to the scope string verbatim
- * when no ward doc matches — keeps the description meaningful even if
- * the SBA wards collection is out of sync.
+ * Pick the display name shown in the Kindoo "Description" field for a
+ * given scope. Stake scope mirrors the v2.1 wizard's resolution
+ * (`kindoo_expected_site_name` takes precedence over `stake_name`);
+ * ward scope reads the matching ward doc by `ward_code`. Falls back
+ * to the scope string verbatim when no ward doc matches.
  */
-function resolveScopeName(req: AccessRequest, stake: Stake, wards: Ward[]): string {
-  if (req.scope === 'stake') {
+function resolveScopeName(scope: string, stake: Stake, wards: Ward[]): string {
+  if (scope === 'stake') {
     const override = stake.kindoo_expected_site_name?.trim();
     return override && override.length > 0 ? override : stake.stake_name;
   }
-  const ward = wards.find((w) => w.ward_code === req.scope);
-  return ward ? ward.ward_name : req.scope;
+  const ward = wards.find((w) => w.ward_code === scope);
+  return ward ? ward.ward_name : scope;
 }
 
 /**
- * Resolve the buildings the request grants access to into Kindoo RIDs.
- * For `scope === 'stake'`, the request's `building_names[]` is the
- * explicit list. For a ward scope, the building is implicit — pulled
- * from the ward doc's `building_name` field.
- *
- * Throws `ProvisionBuildingsMissingRuleError` if any resolved building
- * lacks a mapped `kindoo_rule.rule_id`.
+ * Resolve the buildings the request grants access to into building
+ * names. For `scope === 'stake'`, the request's `building_names[]` is
+ * the explicit list. For a ward scope, the building is implicit —
+ * pulled from the ward doc's `building_name` field.
  */
-function resolveRids(
-  req: AccessRequest,
-  buildings: Building[],
-  wards: Ward[],
-): { rids: number[]; buildingNames: string[] } {
-  let buildingNames: string[];
-  if (req.scope === 'stake') {
-    buildingNames = req.building_names;
-  } else {
-    const ward = wards.find((w) => w.ward_code === req.scope);
-    buildingNames = ward ? [ward.building_name] : [];
-  }
+function buildingsForRequest(req: AccessRequest, wards: Ward[]): string[] {
+  if (req.scope === 'stake') return [...req.building_names];
+  const ward = wards.find((w) => w.ward_code === req.scope);
+  return ward ? [ward.building_name] : [];
+}
 
+/** Stable, de-duplicated union of two string lists. */
+function uniqueOrdered(a: string[], b: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of [...a, ...b]) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
+/**
+ * Map a list of building names to their Kindoo RIDs via
+ * `building.kindoo_rule.rule_id`. Throws
+ * `ProvisionBuildingsMissingRuleError` listing the gaps.
+ */
+function ridsForBuildings(buildingNames: string[], buildings: Building[]): number[] {
   const rids: number[] = [];
   const missing: string[] = [];
   for (const name of buildingNames) {
@@ -130,10 +139,8 @@ function resolveRids(
     }
     rids.push(b.kindoo_rule.rule_id);
   }
-  if (missing.length > 0) {
-    throw new ProvisionBuildingsMissingRuleError(missing);
-  }
-  return { rids, buildingNames };
+  if (missing.length > 0) throw new ProvisionBuildingsMissingRuleError(missing);
+  return rids;
 }
 
 /**
@@ -147,17 +154,167 @@ function findEnvironment(envs: KindooEnvironment[], session: KindooSession): Kin
   return env;
 }
 
-/** Format a list of building names into the prose suffix the result
- * dialog uses. One name renders as "Cordera Building"; multiple as
- * "Cordera Building, Pine Creek Building". */
-function joinBuildingNames(names: string[]): string {
-  return names.join(', ');
+/** Format one scope+attribution pair the way Kindoo's manually-typed
+ * descriptions read (see capture doc § "Description format convention"). */
+function formatDescriptionSegment(
+  scope: string,
+  type: 'auto' | 'manual' | 'temp',
+  callings: string[],
+  reason: string,
+  stake: Stake,
+  wards: Ward[],
+): string {
+  const name = resolveScopeName(scope, stake, wards);
+  if (type === 'auto' && callings.length > 0) {
+    return `${name} (${callings.join(', ')})`;
+  }
+  // manual / temp / auto-with-no-callings — fall back to reason free
+  // text. If neither callings nor reason exist, show the scope alone.
+  const r = reason.trim();
+  return r.length > 0 ? `${name} (${r})` : name;
+}
+
+/**
+ * Synthesize the Kindoo Description for the post-completion seat.
+ * Starts from the seat's existing primary grant (or the request's
+ * primary if the seat is fresh) and joins each duplicate_grants
+ * entry with ` | ` per the v2.2 design decision 6.
+ *
+ * `mergeAddIntoSeat` controls whether to also overlay the request's
+ * scope+type as if `markRequestComplete` had already merged. For
+ * ADDs that's `true` (we're computing what the seat will look like
+ * once the request commits); for REMOVEs it's `false` (the
+ * orchestrator only narrows the building set, doesn't change the
+ * description shape).
+ */
+function synthesizeDescription(
+  seat: Seat | null,
+  req: AccessRequest,
+  stake: Stake,
+  wards: Ward[],
+  mergeAddIntoSeat: boolean,
+): string {
+  // Build the post-completion (scope, type, callings, reason) list.
+  // First entry is the primary; rest are duplicates.
+  type Segment = {
+    scope: string;
+    type: 'auto' | 'manual' | 'temp';
+    callings: string[];
+    reason: string;
+  };
+
+  const segments: Segment[] = [];
+
+  if (seat) {
+    segments.push({
+      scope: seat.scope,
+      type: seat.type,
+      callings: seat.callings ?? [],
+      reason: seat.reason ?? '',
+    });
+    for (const dup of seat.duplicate_grants ?? []) {
+      segments.push(toSegment(dup));
+    }
+  }
+
+  if (mergeAddIntoSeat) {
+    const incoming: Segment = {
+      scope: req.scope,
+      type: req.type === 'add_temp' ? 'temp' : 'manual',
+      callings: [],
+      reason: req.reason,
+    };
+    if (segments.length === 0) {
+      // Fresh seat — incoming is primary.
+      segments.push(incoming);
+    } else {
+      // Already a primary; check for collision on scope+type. If
+      // present, the request collapses into it (description segments
+      // for a primary update share the same line). Otherwise append
+      // as a duplicate_grant placeholder.
+      const collides = segments.some((s) => s.scope === incoming.scope && s.type === incoming.type);
+      if (!collides) segments.push(incoming);
+    }
+  }
+
+  if (segments.length === 0) {
+    // No prior seat and no merge (REMOVE on a member with no SBA
+    // seat) — let the description fall through to the request's own
+    // primary as a safety net.
+    segments.push({
+      scope: req.scope,
+      type: req.type === 'add_temp' ? 'temp' : 'manual',
+      callings: [],
+      reason: req.reason,
+    });
+  }
+
+  return segments
+    .map((s) => formatDescriptionSegment(s.scope, s.type, s.callings, s.reason, stake, wards))
+    .join(' | ');
+}
+
+function toSegment(dup: DuplicateGrant): {
+  scope: string;
+  type: 'auto' | 'manual' | 'temp';
+  callings: string[];
+  reason: string;
+} {
+  return {
+    scope: dup.scope,
+    type: dup.type,
+    callings: dup.callings ?? [],
+    reason: dup.reason ?? '',
+  };
+}
+
+/** Stable equality on the rule-set: sort both arrays before comparing. */
+function sameRids(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort((x, y) => x - y);
+  const sb = [...b].sort((x, y) => x - y);
+  for (let i = 0; i < sa.length; i++) {
+    if (sa[i] !== sb[i]) return false;
+  }
+  return true;
+}
+
+function tempDatesFor(req: AccessRequest): { startEdit: string; expiryEdit: string } {
+  const start = req.start_date ?? '';
+  const end = req.end_date ?? '';
+  if (!start || !end) {
+    throw new KindooApiError(
+      'unexpected-shape',
+      `add_temp request ${req.request_id} missing start_date or end_date`,
+    );
+  }
+  return {
+    startEdit: `${start}T00:00`,
+    expiryEdit: `${end}T23:59`,
+  };
+}
+
+function tempDatesForInvite(req: AccessRequest): { startInvite: string; expiryInvite: string } {
+  const start = req.start_date ?? '';
+  const end = req.end_date ?? '';
+  if (!start || !end) {
+    throw new KindooApiError(
+      'unexpected-shape',
+      `add_temp request ${req.request_id} missing start_date or end_date`,
+    );
+  }
+  return {
+    startInvite: `${start} 00:00`,
+    expiryInvite: `${end} 23:59`,
+  };
 }
 
 // ---- Add / change ----------------------------------------------------
 
 export interface ProvisionAddOrChangeArgs {
   request: AccessRequest;
+  /** SBA seat for the request's subject; `null` if no prior seat. */
+  seat: Seat | null;
   stake: Stake;
   buildings: Building[];
   wards: Ward[];
@@ -167,18 +324,16 @@ export interface ProvisionAddOrChangeArgs {
 }
 
 /**
- * Add or change a user's Kindoo access to match the request.
+ * Add or change a user's Kindoo access to match the post-completion
+ * seat state. See file header for the read-first contract.
  *
  * Flow:
- *   1. Resolve RIDs from the request's effective buildings.
- *   2. Resolve env (for TimeZone).
- *   3. checkUserType(email).
- *   4. If not exists → inviteUser; capture UID.
- *   5. saveAccessRule(UID, RIDs).
- *
- * `request.type === 'add_temp'` switches the invite payload to
- * `IsTempUser=true` with `StartAccessDoorsDate` / `ExpiryDate` derived
- * from `request.start_date` + `request.end_date` (full-day bounds).
+ *   1. Compute targetBuildings = unique(seat.building_names ∪ request.building_names).
+ *   2. targetRIDs = buildings → kindoo_rule.rule_id (throws on missing mapping).
+ *   3. lookupUserByEmail(email).
+ *   4. Not found → inviteUser + saveAccessRule.
+ *   5. Found → editUser (description / temp / dates) only if diff;
+ *              saveAccessRule with full target RIDs only if diff.
  */
 export async function provisionAddOrChange(
   args: ProvisionAddOrChangeArgs,
@@ -187,67 +342,128 @@ export async function provisionAddOrChange(
     throw new Error(`provisionAddOrChange called with non-add type "${args.request.type}"`);
   }
 
-  const { rids, buildingNames } = resolveRids(args.request, args.buildings, args.wards);
-  const env = findEnvironment(args.envs, args.session);
-  const scopeName = resolveScopeName(args.request, args.stake, args.wards);
   const fetchImpl = args.deps?.fetchImpl;
 
-  const probe = await checkUserType(args.session, args.request.member_email, fetchImpl);
+  // ---- Compute target state ----
+  const requestBuildings = buildingsForRequest(args.request, args.wards);
+  const seatBuildings = args.seat?.building_names ?? [];
+  const targetBuildings = uniqueOrdered(seatBuildings, requestBuildings);
+  const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
+  const targetDescription = synthesizeDescription(
+    args.seat,
+    args.request,
+    args.stake,
+    args.wards,
+    true,
+  );
 
-  let uid: string;
-  let action: 'added' | 'updated';
+  const env = findEnvironment(args.envs, args.session);
+  const envTzRaw = env.TimeZone;
+  const envTz =
+    typeof envTzRaw === 'string' && envTzRaw.length > 0 ? envTzRaw : 'Mountain Standard Time';
 
-  if (probe.exists && probe.uid) {
-    uid = probe.uid;
-    action = 'updated';
-  } else {
-    const payload = buildInvitePayload(args.request, scopeName, env);
-    const invited = await inviteUser(args.session, payload, fetchImpl);
-    uid = invited.uid;
-    action = 'added';
+  // ---- Read Kindoo state ----
+  const existing = await lookupUserByEmail(args.session, args.request.member_email, fetchImpl);
+
+  if (!existing) {
+    // ---- Invite + full saveAccessRule path ----
+    const invitePayload = buildInvitePayload(args.request, targetDescription, envTz);
+    const invited = await inviteUser(args.session, invitePayload, fetchImpl);
+    await saveAccessRule(args.session, invited.uid, targetRIDs, fetchImpl);
+    return {
+      kindoo_uid: invited.uid,
+      action: 'invited',
+      note: noteForAction('invited', args.request, targetBuildings),
+    };
   }
 
-  await saveAccessRule(args.session, uid, rids, fetchImpl);
+  // ---- Existing user — apply truth table ----
+  // Promotion / refresh decisions:
+  // - add_manual           → permanent (promote a temp if needed; no demote-permanent)
+  // - add_temp + permanent → permanent (no demote)
+  // - add_temp + temp      → still temp; refresh dates from the request
+  const isAddTemp = args.request.type === 'add_temp';
+  const targetIsTemp = isAddTemp && existing.isTempUser === true;
 
-  const note = synthesizeAddNote(action, args.request, buildingNames);
-  return { kindoo_uid: uid, action, note };
+  // Date strings to send on edit. For permanent users Kindoo accepts
+  // empty strings on edit (per capture); echo lookup values when
+  // they're present and we're not changing them, otherwise use empty
+  // strings as a deliberate "clear" signal.
+  let targetStart = '';
+  let targetExpiry = '';
+  if (targetIsTemp) {
+    const dates = tempDatesFor(args.request);
+    targetStart = dates.startEdit;
+    targetExpiry = dates.expiryEdit;
+  } else {
+    // Permanent post-state. If the user is already permanent, echo
+    // whatever the lookup carries (likely null → empty string). If we
+    // just promoted from temp → permanent, send empty strings to clear.
+    targetStart = existing.startAccessDoorsDateAtTimeZone ?? '';
+    targetExpiry = existing.expiryDateAtTimeZone ?? '';
+    if (existing.isTempUser) {
+      // Promotion — explicit clear.
+      targetStart = '';
+      targetExpiry = '';
+    }
+  }
+
+  const descDiffers = targetDescription !== existing.description;
+  const tempDiffers = targetIsTemp !== existing.isTempUser;
+  const datesDiffer =
+    targetIsTemp &&
+    (targetStart !== (existing.startAccessDoorsDateAtTimeZone ?? '') ||
+      targetExpiry !== (existing.expiryDateAtTimeZone ?? ''));
+
+  let didEdit = false;
+  if (descDiffers || tempDiffers || datesDiffer) {
+    const editPayload: KindooEditUserPayload = {
+      description: targetDescription,
+      isTemp: targetIsTemp,
+      startAccessDoorsDateTime: targetStart,
+      expiryDate: targetExpiry,
+      timeZone: existing.expiryTimeZone || envTz,
+    };
+    await editUser(args.session, existing.euid, editPayload, fetchImpl);
+    didEdit = true;
+  }
+
+  const existingRids = existing.accessSchedules.map((s) => s.ruleId);
+  let didSaveRules = false;
+  if (!sameRids(targetRIDs, existingRids)) {
+    await saveAccessRule(args.session, existing.userId, targetRIDs, fetchImpl);
+    didSaveRules = true;
+  }
+
+  return {
+    kindoo_uid: existing.userId,
+    action: 'updated',
+    note:
+      didEdit || didSaveRules
+        ? noteForAction('updated', args.request, targetBuildings)
+        : `No Kindoo changes needed for ${nameOrEmail(args.request)}.`,
+  };
 }
 
 function buildInvitePayload(
   req: AccessRequest,
-  scopeName: string,
-  env: KindooEnvironment,
+  description: string,
+  tz: string,
 ): KindooInviteUserPayload {
-  // `TimeZone` field on the env object is Windows-style
-  // ("Mountain Standard Time"); Kindoo expects that exact wire form.
-  const rawTz = env.TimeZone;
-  const tz = typeof rawTz === 'string' && rawTz.length > 0 ? rawTz : 'Mountain Standard Time';
-
   const isTemp = req.type === 'add_temp';
-  const description = `${scopeName} (${req.reason})`;
-
   if (isTemp) {
-    // SBA stores YYYY-MM-DD only; combine with full-day bounds.
-    const start = req.start_date ?? '';
-    const end = req.end_date ?? '';
-    if (!start || !end) {
-      throw new KindooApiError(
-        'unexpected-shape',
-        `add_temp request ${req.request_id} missing start_date or end_date`,
-      );
-    }
+    const { startInvite, expiryInvite } = tempDatesForInvite(req);
     return {
       UserEmail: req.member_email,
       UserRole: 2,
       Description: description,
       CCInEmail: false,
       IsTempUser: true,
-      StartAccessDoorsDate: `${start} 00:00`,
-      ExpiryDate: `${end} 23:59`,
+      StartAccessDoorsDate: startInvite,
+      ExpiryDate: expiryInvite,
       ExpiryTimeZone: tz,
     };
   }
-
   return {
     UserEmail: req.member_email,
     UserRole: 2,
@@ -260,56 +476,126 @@ function buildInvitePayload(
   };
 }
 
-function synthesizeAddNote(
-  action: 'added' | 'updated',
+function nameOrEmail(req: AccessRequest): string {
+  return req.member_name || req.member_email;
+}
+
+function joinBuildingNames(names: string[]): string {
+  return names.join(', ');
+}
+
+function noteForAction(
+  action: 'invited' | 'updated' | 'removed',
   req: AccessRequest,
-  buildingNames: string[],
+  buildings: string[],
 ): string {
-  const who = req.member_name || req.member_email;
-  const where = joinBuildingNames(buildingNames);
-  if (action === 'added') {
-    return `Added ${who} to Kindoo with access to ${where}.`;
+  const who = nameOrEmail(req);
+  if (action === 'invited') {
+    return `Invited ${who} to Kindoo with access to ${joinBuildingNames(buildings)}.`;
   }
-  return `Updated ${who}'s Kindoo access to ${where}.`;
+  if (action === 'updated') {
+    if (buildings.length === 0) {
+      return `Updated ${who}'s Kindoo access — no buildings remain.`;
+    }
+    return `Updated ${who}'s Kindoo access to ${joinBuildingNames(buildings)}.`;
+  }
+  return `Removed ${who} from Kindoo.`;
 }
 
 // ---- Remove ----------------------------------------------------------
 
 export interface ProvisionRemoveArgs {
   request: AccessRequest;
+  /** SBA seat for the request's subject; `null` if already gone. */
+  seat: Seat | null;
+  stake: Stake;
+  buildings: Building[];
+  wards: Ward[];
   session: KindooSession;
   deps?: ProvisionDeps;
 }
 
 /**
- * Remove a user's Kindoo access. Lookup is via the email-keyword
- * search; the first match wins (Kindoo's email index makes collisions
- * vanishingly rare in practice).
+ * Remove (or narrow) a user's Kindoo access to match the
+ * post-completion seat state.
  *
- * No-op return when the user isn't in Kindoo — mirrors SBA's R-1 race
- * pattern. The caller still flips the SBA request to complete and the
- * note is persisted as `provisioning_note`.
+ * Flow:
+ *   1. targetBuildings = seat.building_names − request.building_names.
+ *      For the typical whole-seat remove case targetBuildings = [].
+ *   2. lookupUserByEmail(email).
+ *   3. Not found → noop-remove (SBA still flips complete).
+ *   4. Found + targetRIDs.length === 0 → revokeUser. Description edit
+ *      skipped (user is gone).
+ *   5. Found + targetRIDs.length > 0  → saveAccessRule with remaining
+ *      RIDs + editUser if the trimmed description differs.
  */
 export async function provisionRemove(args: ProvisionRemoveArgs): Promise<ProvisionResult> {
   if (args.request.type !== 'remove') {
     throw new Error(`provisionRemove called with non-remove type "${args.request.type}"`);
   }
   const fetchImpl = args.deps?.fetchImpl;
-  const who = args.request.member_name || args.request.member_email;
 
-  const lookup = await lookupUserByEmail(args.session, args.request.member_email, fetchImpl);
-  if (lookup.users.length === 0) {
+  // ---- Compute target buildings ----
+  const removeBuildings = buildingsForRequest(args.request, args.wards);
+  const seatBuildings = args.seat?.building_names ?? [];
+  // v2.2 single-stake convention: a remove with empty building_names
+  // clears the whole seat. Otherwise drop only the listed buildings.
+  const targetBuildings =
+    removeBuildings.length === 0 ? [] : seatBuildings.filter((b) => !removeBuildings.includes(b));
+  const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
+
+  // ---- Read Kindoo state ----
+  const existing = await lookupUserByEmail(args.session, args.request.member_email, fetchImpl);
+  if (!existing) {
     return {
       kindoo_uid: null,
       action: 'noop-remove',
-      note: `${who} was not in Kindoo (no-op).`,
+      note: `${nameOrEmail(args.request)} was not in Kindoo (no-op).`,
     };
   }
-  const match = lookup.users[0]!;
-  await revokeUser(args.session, match.uid, fetchImpl);
+
+  if (targetRIDs.length === 0) {
+    await revokeUser(args.session, existing.userId, fetchImpl);
+    return {
+      kindoo_uid: existing.userId,
+      action: 'removed',
+      note: noteForAction('removed', args.request, []),
+    };
+  }
+
+  // Partial remove — narrow the rule set + (maybe) refresh the
+  // description to drop the removed scope. Compute a description from
+  // the seat post-removal: same callings/duplicates minus the
+  // departing grant. For v2.2 single-stake we don't synthesize a
+  // post-removal seat shape (out of scope); reuse the existing seat's
+  // description as a best-effort match.
+  await saveAccessRule(args.session, existing.userId, targetRIDs, fetchImpl);
+
+  const targetDescription = synthesizeDescription(
+    args.seat,
+    args.request,
+    args.stake,
+    args.wards,
+    false,
+  );
+  if (targetDescription !== existing.description) {
+    const editPayload: KindooEditUserPayload = {
+      description: targetDescription,
+      isTemp: existing.isTempUser,
+      startAccessDoorsDateTime: existing.startAccessDoorsDateAtTimeZone ?? '',
+      expiryDate: existing.expiryDateAtTimeZone ?? '',
+      timeZone: existing.expiryTimeZone,
+    };
+    await editUser(args.session, existing.euid, editPayload, fetchImpl);
+  }
+
   return {
-    kindoo_uid: match.uid,
-    action: 'removed',
-    note: `Removed ${who} from Kindoo.`,
+    kindoo_uid: existing.userId,
+    action: 'updated',
+    note: noteForAction('updated', args.request, targetBuildings),
   };
 }
+
+// Re-export so tests + UI can use the rich Kindoo user type without
+// drilling into endpoints.
+export type { KindooEnvironmentUser };

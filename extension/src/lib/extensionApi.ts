@@ -24,6 +24,8 @@ import type {
   AuthSignOutResponse,
   AuthSnapshot,
   AuthStateChangedPush,
+  DataGetSeatByEmailRequest,
+  DataGetSeatByEmailResponse,
   DataGetStakeConfigPayload,
   DataGetStakeConfigRequest,
   DataGetStakeConfigResponse,
@@ -43,6 +45,7 @@ import type {
   GetMyPendingRequestsOutput,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
+  Seat,
 } from '@kindoo/shared';
 
 /**
@@ -191,4 +194,15 @@ export async function writeKindooConfig(payload: WriteKindooConfigPayload): Prom
   const req: DataWriteKindooConfigRequest = { type: 'data.writeKindooConfig', payload };
   const res: DataWriteKindooConfigResponse = await sendMessage(req);
   unwrap(res);
+}
+
+/**
+ * Fetch the SBA `Seat` doc for a member by canonical email. Returns
+ * `null` when the member has no seat yet — that's the v2.2 first-add
+ * signal (orchestrator treats `seat=null` as "no prior grants").
+ */
+export async function getSeatByEmail(canonical: string): Promise<Seat | null> {
+  const req: DataGetSeatByEmailRequest = { type: 'data.getSeatByEmail', canonical };
+  const res: DataGetSeatByEmailResponse = await sendMessage(req);
+  return unwrap(res);
 }

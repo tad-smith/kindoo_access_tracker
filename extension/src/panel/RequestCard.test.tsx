@@ -17,6 +17,7 @@ const provisionRemoveMock = vi.fn();
 const getEnvironmentsMock = vi.fn();
 const readKindooSessionMock = vi.fn();
 const markRequestCompleteMock = vi.fn();
+const getSeatByEmailMock = vi.fn();
 
 vi.mock('../content/kindoo/provision', async () => {
   const actual = await vi.importActual<typeof import('../content/kindoo/provision')>(
@@ -48,6 +49,7 @@ vi.mock('../lib/extensionApi', async () => {
   return {
     ...actual,
     markRequestComplete: (...args: unknown[]) => markRequestCompleteMock(...args),
+    getSeatByEmail: (...args: unknown[]) => getSeatByEmailMock(...args),
   };
 });
 
@@ -115,10 +117,14 @@ describe('RequestCard', () => {
     getEnvironmentsMock.mockReset();
     readKindooSessionMock.mockReset();
     markRequestCompleteMock.mockReset();
+    getSeatByEmailMock.mockReset();
     readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 'tok', eid: 27994 } });
     getEnvironmentsMock.mockResolvedValue([
       { EID: 27994, Name: 'Colorado Springs North Stake', TimeZone: 'Mountain Standard Time' },
     ]);
+    // Default: subject has no SBA seat yet (first-time-add path);
+    // individual tests override when they need a populated seat.
+    getSeatByEmailMock.mockResolvedValue(null);
   });
   afterEach(() => {
     vi.resetModules();
@@ -144,7 +150,7 @@ describe('RequestCard', () => {
   it('runs provisionAddOrChange and markRequestComplete on click, then shows the result dialog', async () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
-      action: 'added',
+      action: 'invited',
       note: 'Added Tad Smith to Kindoo with access to Cordera Building.',
     });
     markRequestCompleteMock.mockResolvedValue({ ok: true });
@@ -220,7 +226,7 @@ describe('RequestCard', () => {
     expect(btn).toHaveTextContent('Add Kindoo Access…');
 
     // Let the provision resolve so the test can finish cleanly.
-    resolvers[0]?.({ kindoo_uid: 'u', action: 'added', note: 'note' });
+    resolvers[0]?.({ kindoo_uid: 'u', action: 'invited', note: 'note' });
   });
 
   it('renders an inline error and re-enables the button when provision throws', async () => {
@@ -252,7 +258,7 @@ describe('RequestCard', () => {
   it('shows a partial-success dialog when Kindoo succeeds but markRequestComplete fails', async () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
-      action: 'added',
+      action: 'invited',
       note: 'Added Tad Smith to Kindoo with access to Cordera Building.',
     });
     markRequestCompleteMock.mockRejectedValueOnce(new Error('SBA down'));
@@ -269,7 +275,7 @@ describe('RequestCard', () => {
   it('retry button re-calls markRequestComplete (only — no second Kindoo call)', async () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
-      action: 'added',
+      action: 'invited',
       note: 'Added Tad Smith to Kindoo with access to Cordera Building.',
     });
     markRequestCompleteMock
@@ -293,7 +299,7 @@ describe('RequestCard', () => {
   it('dismiss calls onDismissed with the request id', async () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
-      action: 'added',
+      action: 'invited',
       note: 'Added.',
     });
     markRequestCompleteMock.mockResolvedValue({ ok: true });

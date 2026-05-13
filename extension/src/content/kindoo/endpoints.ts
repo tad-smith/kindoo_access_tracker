@@ -8,12 +8,15 @@
 // On a malformed response shape we throw `KindooApiError('unexpected-shape', …)`
 // so the caller's catch can render a "Kindoo API changed" recovery.
 //
-// **v2.2 write endpoints.** Response shapes for the five mutating
-// endpoints (checkUserType, inviteUser, saveAccessRule, lookupUserByEmail,
-// revokeUser) were not captured live before the wrappers shipped;
-// parsers extract only the fields the orchestrator needs and degrade
-// gracefully when the shape varies. Each parser throws unexpected-shape
-// only when a load-bearing field is unrecoverable.
+// **v2.2 write endpoints.** Six wrappers around the mutation surface:
+// `checkUserType`, `inviteUser`, `editUser`, `saveAccessRule`,
+// `lookupUserByEmail`, `revokeUser`. `lookupUserByEmail` returns a
+// rich `KindooEnvironmentUser | null` — the orchestrator reads the
+// user's current EUID / UserID / Description / temp flag / dates /
+// AccessSchedules from the lookup, computes the post-completion
+// target state, and drives Kindoo to it via `editUser` (env-user
+// settings) and/or `saveAccessRule` (rule set). EUID vs UserID:
+// `editUser` takes EUID; `saveAccessRule` / `revokeUser` take UserID.
 
 import { postKindoo, KindooApiError } from './client';
 import type { KindooSession } from './auth';
@@ -118,9 +121,13 @@ export async function getEnvironmentRules(
 
 /**
  * Invite payload Kindoo's add-user form sends. We build one of these
- * server-side and JSON-stringify it into the `UsersEmail` form field
- * (Kindoo's wire shape — a JSON array of user objects despite the
+ * and JSON-stringify it into the `UsersEmail` form field (Kindoo's
+ * wire shape — a JSON array of user objects despite the
  * "Email"-ish field name).
+ *
+ * Date format is `YYYY-MM-DD HH:MM` (SPACE separator) for Invite —
+ * distinct from Edit's T separator. See `extension/docs/v2-design.md`
+ * § "Date format choreography".
  */
 export interface KindooInviteUserPayload {
   UserEmail: string;
@@ -138,41 +145,69 @@ export interface KindooInviteUserPayload {
   ExpiryTimeZone: string;
 }
 
+/**
+ * Edit-user payload. Different field naming + date format from Invite:
+ *   - lowercase `description` / `isTemp` / `timeZone` (Invite uses PascalCase)
+ *   - `startAccessDoorsDateTime` / `expiryDate` with the T separator
+ * Echo lookup values for any field you don't intend to change.
+ */
+export interface KindooEditUserPayload {
+  description: string;
+  isTemp: boolean;
+  /** `YYYY-MM-DDTHH:MM` (T separator, no seconds). Empty string for
+   * permanent users — Kindoo accepts that wire form per the live
+   * capture. */
+  startAccessDoorsDateTime: string;
+  /** Same format as `startAccessDoorsDateTime`. */
+  expiryDate: string;
+  /** Windows-style; echo lookup's `ExpiryTimeZone`. */
+  timeZone: string;
+}
+
 /** Result of the email-existence probe. */
 export interface KindooUserCheckResult {
   exists: boolean;
   uid: string | null;
 }
 
-/** One user record from the email-keyword lookup. */
-export interface KindooUserSummary {
-  uid: string;
-  email: string;
+/**
+ * The fields the v2.2 orchestrator needs off a Kindoo environment-user
+ * record. The wire shape carries many more (see
+ * `extension/docs/v2-kindoo-api-capture.md`); we narrow to a stable
+ * subset and keep the index signature for opaque pass-through.
+ */
+export interface KindooEnvironmentUser {
+  /** Environment-scoped user id. Used as the `euID` form field on Edit. */
+  euid: string;
+  /** Cross-env user id. Used as the `UID` form field on SaveAccessRule / Revoke. */
+  userId: string;
+  /** Login email (Kindoo's `Username` field). */
+  username: string;
+  /** Current free-text description on the Kindoo seat. */
+  description: string;
+  /** Current temp-vs-permanent flag. */
+  isTempUser: boolean;
+  /** Lookup's `StartAccessDoorsDateAtTimeZone` — already in Edit's `YYYY-MM-DDTHH:MM` format. `null` for permanent users. */
+  startAccessDoorsDateAtTimeZone: string | null;
+  /** Lookup's `ExpiryDateAtTimeZone` — already in Edit's `YYYY-MM-DDTHH:MM` format. `null` for permanent users. */
+  expiryDateAtTimeZone: string | null;
+  /** Windows-style tz string (e.g. `"Mountain Standard Time"`). */
+  expiryTimeZone: string;
+  /** Current rule assignments — `RuleID` narrowed from `AccessSchedules[]`. */
+  accessSchedules: Array<{ ruleId: number }>;
+  /** Anything else Kindoo returns. */
+  [k: string]: unknown;
 }
 
 /**
  * Pull a string-typed UID off a Kindoo response object, recognising a
- * few common field-name spellings (we don't have a captured response
- * shape yet — defend against several). Returns null if nothing fits.
+ * few common field-name spellings (response shapes vary by endpoint).
+ * Returns null if nothing fits.
  */
 function pickUid(value: unknown): string | null {
   if (value === null || typeof value !== 'object') return null;
   const v = value as Record<string, unknown>;
   for (const key of ['UID', 'Uid', 'uid', 'UserID', 'UserId', 'userId', 'ID', 'Id', 'id']) {
-    const candidate = v[key];
-    if (typeof candidate === 'string' && candidate.length > 0) return candidate;
-  }
-  return null;
-}
-
-/**
- * Pull a string-typed email off a user-ish object, recognising a few
- * common field-name spellings.
- */
-function pickEmail(value: unknown): string | null {
-  if (value === null || typeof value !== 'object') return null;
-  const v = value as Record<string, unknown>;
-  for (const key of ['Email', 'UserEmail', 'email']) {
     const candidate = v[key];
     if (typeof candidate === 'string' && candidate.length > 0) return candidate;
   }
@@ -220,11 +255,16 @@ function findFirstUid(raw: unknown, depth = 0): string | null {
  * site. Wraps `KindooCheckUserTypeInKindoo`, which takes a JSON array
  * of emails in the `UsersEmail` form field and returns user info.
  *
- * Response shape is not captured live for v2.2; the parser tries
- * common UID field names and returns `{ exists: false, uid: null }`
- * when it sees an explicit "not found" signal (empty array, `null`,
- * `{}`). If the response carries a string-typed UID anywhere we treat
- * the user as existing.
+ * Response shape is not captured live; the parser tries common UID
+ * field names and returns `{ exists: false, uid: null }` when it sees
+ * an explicit "not found" signal (empty array, `null`, `{}`). If the
+ * response carries a string-typed UID anywhere we treat the user as
+ * existing.
+ *
+ * The v2.2 orchestrator does NOT use this directly — it relies on
+ * `lookupUserByEmail` returning `null` as the "not exists" signal so
+ * one round-trip serves both existence + rich-state queries. Kept
+ * for `inviteUser`'s fallback UID resolution.
  */
 export async function checkUserType(
   session: KindooSession,
@@ -293,13 +333,52 @@ export async function inviteUser(
 }
 
 /**
+ * Edit advanced settings on an EXISTING environment-user. Wraps
+ * `KindooEditEnvironmentUserAdvancedSettings`.
+ *
+ * Field naming is lowercase / camelCase (`euID`, `description`,
+ * `isTemp`, `startAccessDoorsDateTime`, `expiryDate`, `timeZone`) —
+ * distinct from Invite. Date format is `YYYY-MM-DDTHH:MM` (T
+ * separator). PATCH-style: echo lookup values for fields you don't
+ * intend to change.
+ *
+ * Response shape isn't captured; any HTTP-200 is success.
+ */
+export async function editUser(
+  session: KindooSession,
+  euId: string,
+  payload: KindooEditUserPayload,
+  fetchImpl?: typeof fetch,
+): Promise<{ ok: true }> {
+  await postKindoo(
+    'KindooEditEnvironmentUserAdvancedSettings',
+    session,
+    {
+      euID: euId,
+      description: payload.description,
+      isTemp: String(payload.isTemp),
+      startAccessDoorsDateTime: payload.startAccessDoorsDateTime,
+      expiryDate: payload.expiryDate,
+      timeZone: payload.timeZone,
+    },
+    fetchImpl,
+  );
+  return { ok: true };
+}
+
+/**
  * Apply a list of Access Rule RIDs to a user. Wraps
  * `KindooSaveAccessRuleFromListOfAccessSchedules`. The RIDs are sent
  * as a JSON array in the `RIDs` form field; `username` is empty
  * (captured live as empty string — purpose unclear, safest to match).
  *
- * Response shape isn't captured; we treat any HTTP-200 as success
- * (the underlying `postKindoo` already throws on non-2xx + bad JSON).
+ * The orchestrator always sends the COMPLETE target rule set (never a
+ * delta) because Kindoo's `SaveAccessRule` REPLACE-vs-MERGE semantics
+ * aren't pinned down; full-set REPLACE is unambiguous.
+ *
+ * `uid` is **UserID** (NOT EUID — different from `editUser`'s param).
+ *
+ * Response shape isn't captured; any HTTP-200 is success.
  */
 export async function saveAccessRule(
   session: KindooSession,
@@ -321,41 +400,92 @@ export async function saveAccessRule(
 }
 
 /**
- * Search users by email keyword. Wraps
- * `KindooGetEnvironmentUsersLightWithTotalNumberOfRecords` with the
- * default first-page pagination Kindoo's UI uses.
+ * Narrow one `EUList` entry to the v2.2 `KindooEnvironmentUser` shape.
+ * Returns `null` when the required identity fields aren't present.
+ * Optional fields default to empty / null when missing.
+ */
+function asEnvironmentUser(value: unknown): KindooEnvironmentUser | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  const euid = v.EUID;
+  const userId = v.UserID;
+  const username = v.Username;
+  if (typeof euid !== 'string' || euid.length === 0) return null;
+  if (typeof userId !== 'string' || userId.length === 0) return null;
+  if (typeof username !== 'string' || username.length === 0) return null;
+
+  const description = typeof v.Description === 'string' ? v.Description : '';
+  const isTempUser = v.IsTempUser === true;
+  const startAt = v.StartAccessDoorsDateAtTimeZone;
+  const expiryAt = v.ExpiryDateAtTimeZone;
+  const startAccessDoorsDateAtTimeZone =
+    typeof startAt === 'string' && startAt.length > 0 ? startAt : null;
+  const expiryDateAtTimeZone =
+    typeof expiryAt === 'string' && expiryAt.length > 0 ? expiryAt : null;
+  const expiryTimeZone = typeof v.ExpiryTimeZone === 'string' ? v.ExpiryTimeZone : '';
+
+  const accessSchedulesRaw = Array.isArray(v.AccessSchedules) ? v.AccessSchedules : [];
+  const accessSchedules: Array<{ ruleId: number }> = [];
+  for (const sched of accessSchedulesRaw) {
+    if (typeof sched !== 'object' || sched === null) continue;
+    const s = sched as Record<string, unknown>;
+    const ruleId = s.RuleID;
+    if (typeof ruleId === 'number') accessSchedules.push({ ruleId });
+  }
+
+  return {
+    ...v,
+    euid,
+    userId,
+    username,
+    description,
+    isTempUser,
+    startAccessDoorsDateAtTimeZone,
+    expiryDateAtTimeZone,
+    expiryTimeZone,
+    accessSchedules,
+  };
+}
+
+/**
+ * Look up the Kindoo environment-user for `email` and return its rich
+ * state (EUID, UserID, current description, temp flag, dates,
+ * AccessSchedules). Wraps
+ * `KindooGetEnvironmentUsersLightWithTotalNumberOfRecords`.
  *
- * Returns a slim shape — `{ uid, email }` for each match. The remove
- * flow uses the first match's UID; future disambiguation logic can be
- * added if we ever see collisions in practice.
+ * Kindoo's `keyWord` parameter does a **substring** match; we filter
+ * the returned list by exact `Username` (case-insensitive) so we
+ * never accidentally update a different user whose email contains
+ * the search term. Returns `null` when no exact match — that signal
+ * is what the orchestrator branches on for "invite vs edit."
+ *
+ * Response wraps the list in `EUList` (per capture); legacy bare-array
+ * and other key spellings are accepted defensively.
  */
 export async function lookupUserByEmail(
   session: KindooSession,
-  keyword: string,
+  email: string,
   fetchImpl?: typeof fetch,
-): Promise<{ users: KindooUserSummary[] }> {
+): Promise<KindooEnvironmentUser | null> {
   const raw = await postKindoo(
     'KindooGetEnvironmentUsersLightWithTotalNumberOfRecords',
     session,
     {
       start: '0',
       end: '50',
-      keyWord: keyword,
+      keyWord: email,
       FetchInvitedOnInvitedByData: 'true',
     },
     fetchImpl,
   );
   const body = unwrapAspNet(raw);
 
-  // Kindoo's "users + total" endpoints commonly return either a bare
-  // array of users or `{ Users: [...], TotalNumberOfRecords: N }`.
-  // Handle both.
   let list: unknown[] = [];
   if (Array.isArray(body)) {
     list = body;
   } else if (body !== null && typeof body === 'object') {
     const v = body as Record<string, unknown>;
-    for (const key of ['Users', 'users', 'Items', 'items', 'Results', 'results']) {
+    for (const key of ['EUList', 'Users', 'users', 'Items', 'items', 'Results', 'results']) {
       const candidate = v[key];
       if (Array.isArray(candidate)) {
         list = candidate;
@@ -364,19 +494,21 @@ export async function lookupUserByEmail(
     }
   }
 
-  const users: KindooUserSummary[] = [];
+  const target = email.toLowerCase();
   for (const entry of list) {
-    const uid = pickUid(entry);
-    const email = pickEmail(entry);
-    if (uid && email) users.push({ uid, email });
+    const user = asEnvironmentUser(entry);
+    if (!user) continue;
+    if (user.username.toLowerCase() === target) return user;
   }
-  return { users };
+  return null;
 }
 
 /**
  * Revoke a user from the site. Wraps
  * `KindooRevokeUserFromEnvironment`. Captured payload shows `username`
  * as an empty string — passing through verbatim.
+ *
+ * `uid` is **UserID** (NOT EUID).
  *
  * Response shape isn't captured; any HTTP-200 is success.
  */

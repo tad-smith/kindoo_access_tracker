@@ -48,9 +48,10 @@ extension/
 │   │       ├── auth.ts            # read SessionTokenID + EID from localStorage
 │   │       ├── client.ts          # multipart-form POST helper
 │   │       ├── endpoints.ts       # typed wrappers: getEnvironments, getEnvironmentRules,
-│   │       │                      # checkUserType, inviteUser, saveAccessRule,
-│   │       │                      # lookupUserByEmail, revokeUser
+│   │       │                      # checkUserType, inviteUser, editUser,
+│   │       │                      # saveAccessRule, lookupUserByEmail, revokeUser
 │   │       └── provision.ts       # v2.2 — orchestrates add/change/remove flows
+│   │                              # (read-first / merged-state pattern)
 │   ├── panel/
 │   │   ├── App.tsx                # React root — five-state router
 │   │   ├── SignedOutPanel.tsx
