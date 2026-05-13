@@ -43,14 +43,23 @@ extension/
 │   ├── content/
 │   │   ├── content-script.ts      # CS entry — calls mountPanel
 │   │   ├── mount.tsx              # Shadow-DOM + React mount + toggle wiring
-│   │   └── container.css          # slide-over chrome (Shadow DOM)
+│   │   ├── container.css          # slide-over chrome (Shadow DOM)
+│   │   └── kindoo/                # Kindoo API client (CS-side; v2.1+v2.2)
+│   │       ├── auth.ts            # read SessionTokenID + EID from localStorage
+│   │       ├── client.ts          # multipart-form POST helper
+│   │       ├── endpoints.ts       # typed wrappers: getEnvironments, getEnvironmentRules,
+│   │       │                      # checkUserType, inviteUser, editUser,
+│   │       │                      # saveAccessRule, lookupUserByEmail, revokeUser
+│   │       └── provision.ts       # v2.2 — orchestrates add/change/remove flows
+│   │                              # (read-first / merged-state pattern)
 │   ├── panel/
-│   │   ├── App.tsx                # React root — four-state router
+│   │   ├── App.tsx                # React root — five-state router
 │   │   ├── SignedOutPanel.tsx
 │   │   ├── NotAuthorizedPanel.tsx
+│   │   ├── ConfigurePanel.tsx     # v2.1 first-run + reconfigure wizard
 │   │   ├── QueuePanel.tsx
-│   │   ├── RequestCard.tsx
-│   │   ├── CompleteDialog.tsx
+│   │   ├── RequestCard.tsx        # v2.2 Provision & Complete button
+│   │   ├── ResultDialog.tsx       # v2.2 post-provision result + retry
 │   │   └── panel.css              # panel styles (Shadow DOM scoped)
 │   └── lib/
 │       ├── firebase.ts            # Firebase app + auth + functions singletons (SW)
@@ -77,31 +86,24 @@ extension/
 ## Don't
 
 - **Don't talk directly to Firestore from the extension.** Go through the callables.
-- **Don't reach into Kindoo's DOM.** The slide-over is a self-contained panel; it does not read or modify Kindoo page state. v2.2 will call the Kindoo API from the content script (no DOM scraping) per `extension/docs/v2-design.md`.
+- **Don't reach into Kindoo's DOM.** The slide-over is a self-contained panel; it does not read or modify Kindoo page state. Kindoo writes (v2.2 Provision & Complete) go through the typed wrappers in `content/kindoo/endpoints.ts`, never via DOM scraping. See `extension/docs/v2-design.md`.
 - **Don't read Kindoo's `localStorage` outside the documented `kindoo/auth.ts` helper.** The keys are documented in the Kindoo runtime state section; readers route through that helper so we have one place to handle missing/expired state.
 - **Don't bundle production credentials.** Firebase web SDK config is public; the Google OAuth client ID is public-by-design; nothing else ships in the bundle.
 - **Don't depend on `apps/web/` code.** Share types via `@kindoo/shared`. The extension is its own consumer.
 - **Don't touch the Chrome storage keys** declared in `lib/messaging.ts` `STORAGE_KEYS` from outside the SW + the content-script mount file — they are owned by those two surfaces. If you need to read them from a new place, route through a message.
 
-## Kindoo runtime state — v2 reference
+## Kindoo runtime state — reference
 
-**v1 MUST NOT read these.** Documented here because the operator captured the shapes from a live Kindoo session and the next pass (Kindoo-side automation) will need them.
+Kindoo stores everything in `localStorage` on `web.kindoo.tech`. `sessionStorage` is empty. v2.1 reads these to call the Kindoo API; v2.2 builds on the same session to drive provision writes.
 
-Kindoo stores everything in `localStorage` on `web.kindoo.tech`. `sessionStorage` is empty.
-
-- **`SessionTokenID`** — `localStorage.kindoo_token`. UUID string (e.g. `5e94a57a-3f08-4681-a01a-...`). This is the bearer token Kindoo's admin UI uses to authenticate against the ASMX API on `service89.kindoo.tech`.
+- **`SessionTokenID`** — `localStorage.kindoo_token`. UUID string (e.g. `5e94a57a-3f08-4681-a01a-...`). The bearer token Kindoo's admin UI uses to authenticate against the ASMX API on `service89.kindoo.tech`.
 - **`EID`** (environment / site id) — `localStorage.state`. A JSON blob with the shape:
   ```json
   { "sites": { "ids": [27994], "entities": { "27994": { ... } } }, ... }
   ```
   The first id is the active site; `EID = JSON.parse(localStorage.state).sites.ids[0]`.
 
-A v2 task to wire Kindoo-side automation will:
-1. Read those keys from the content-script context (we already have `web.kindoo.tech` in `host_permissions`; CS can read page-context `localStorage` directly).
-2. Call `service89.kindoo.tech` (also in `host_permissions`) with the bearer token.
-3. Surface the result back to the SW + UI through the same message protocol.
-
-Until that work is scoped, treat this section as pure documentation. Do not import Kindoo storage shapes into `src/` modules in v1.
+All reads route through `content/kindoo/auth.ts`. Do not access these keys from anywhere else — one place to handle missing / expired state.
 
 ## Boundaries
 

@@ -18,6 +18,7 @@
 // Types live here so the extension wrapper (web-engineer's lane) and
 // the callable (`functions/src/callable/`) share one shape.
 import type { AccessRequest } from './request.js';
+import type { OverCapEntry } from './stake.js';
 
 export type GetMyPendingRequestsInput = {
   stakeId: string;
@@ -38,8 +39,30 @@ export type MarkRequestCompleteInput = {
    * on the email body when present.
    */
   completionNote?: string;
+  /**
+   * Extension v2.2 — Kindoo internal user id captured by the
+   * "Provision & Complete" flow. When present, persisted on the
+   * request doc as `kindoo_uid`. The SPA mark-complete path does
+   * not set this.
+   */
+  kindooUid?: string;
+  /**
+   * Extension v2.2 — human-readable summary of what the provision
+   * flow did in Kindoo. Trimmed server-side; max ~500 chars. When
+   * present, persisted on the request doc as `provisioning_note`.
+   */
+  provisioningNote?: string;
 };
 
 export type MarkRequestCompleteOutput = {
   ok: true;
+  /**
+   * Post-completion over-cap snapshot. Recomputed inside the same
+   * transaction that flips the request and writes to `last_over_caps_json`
+   * on the stake doc. The extension renders a warning when this is
+   * non-empty. Always returned (`[]` when all pools are within cap) so
+   * the consumer can distinguish "no over-caps" from "field absent for
+   * other reasons".
+   */
+  over_caps: OverCapEntry[];
 };

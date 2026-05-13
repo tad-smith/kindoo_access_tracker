@@ -157,4 +157,31 @@ describe('extensionApi', () => {
       writeKindooConfig({ siteId: 1, siteName: 'X', buildingRules: [] }),
     ).rejects.toMatchObject({ code: 'permission-denied' });
   });
+
+  it('getSeatByEmail posts data.getSeatByEmail with the canonical and unwraps the Seat', async () => {
+    const seat = { member_canonical: 'x@example.com', building_names: ['B1'] };
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: true, data: seat });
+      },
+    );
+    const { getSeatByEmail } = await import('./extensionApi');
+    const result = await getSeatByEmail('x@example.com');
+    expect(chromeStub().runtime.sendMessage).toHaveBeenCalledWith(
+      { type: 'data.getSeatByEmail', canonical: 'x@example.com' },
+      expect.any(Function),
+    );
+    expect(result).toEqual(seat);
+  });
+
+  it('getSeatByEmail returns null when no seat exists', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: true, data: null });
+      },
+    );
+    const { getSeatByEmail } = await import('./extensionApi');
+    const result = await getSeatByEmail('nobody@example.com');
+    expect(result).toBeNull();
+  });
 });

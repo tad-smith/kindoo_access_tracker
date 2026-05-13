@@ -30,9 +30,11 @@ vi.mock('../lib/api', () => ({
 
 const loadStakeConfigMock = vi.fn();
 const writeKindooConfigMock = vi.fn();
+const loadSeatByEmailMock = vi.fn();
 vi.mock('./data', () => ({
   loadStakeConfig: (...args: unknown[]) => loadStakeConfigMock(...args),
   writeKindooConfig: (...args: unknown[]) => writeKindooConfigMock(...args),
+  loadSeatByEmail: (...args: unknown[]) => loadSeatByEmailMock(...args),
 }));
 
 describe('handleRequest', () => {
@@ -46,6 +48,7 @@ describe('handleRequest', () => {
     markRequestCompleteMock.mockReset();
     loadStakeConfigMock.mockReset();
     writeKindooConfigMock.mockReset();
+    loadSeatByEmailMock.mockReset();
   });
   afterEach(() => {
     vi.resetModules();
@@ -216,6 +219,52 @@ describe('handleRequest', () => {
     expect(result).toEqual({
       ok: false,
       error: { code: 'permission-denied', message: 'rules denied write' },
+    });
+  });
+
+  it('data.getSeatByEmail forwards the canonical and returns the seat doc', async () => {
+    const seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad Smith',
+      scope: 'CO',
+      type: 'auto',
+      callings: ['Sunday School Teacher'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [],
+    };
+    loadSeatByEmailMock.mockResolvedValue(seat);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.getSeatByEmail',
+      canonical: 'tad.e.smith@gmail.com',
+    });
+    expect(loadSeatByEmailMock).toHaveBeenCalledWith('tad.e.smith@gmail.com');
+    expect(result).toEqual({ ok: true, data: seat });
+  });
+
+  it('data.getSeatByEmail returns null data when no seat exists (first-add case)', async () => {
+    loadSeatByEmailMock.mockResolvedValue(null);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.getSeatByEmail',
+      canonical: 'unknown@example.com',
+    });
+    expect(result).toEqual({ ok: true, data: null });
+  });
+
+  it('data.getSeatByEmail surfaces loader rejections as wire errors', async () => {
+    loadSeatByEmailMock.mockRejectedValue(
+      Object.assign(new Error('rules blocked the read'), { code: 'permission-denied' }),
+    );
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.getSeatByEmail',
+      canonical: 'x@example.com',
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'permission-denied', message: 'rules blocked the read' },
     });
   });
 });

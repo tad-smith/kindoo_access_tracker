@@ -8,9 +8,10 @@ describe('isAutomatedActor', () => {
     }
   });
 
-  it('matches the three known synthetic actors (regression guard for B-5)', () => {
+  it('matches the four known synthetic actors (regression guard for B-5)', () => {
     expect(isAutomatedActor('Importer')).toBe(true);
     expect(isAutomatedActor('ExpiryTrigger')).toBe(true);
+    expect(isAutomatedActor('RemoveTrigger')).toBe(true);
     expect(isAutomatedActor('OutOfBand')).toBe(true);
   });
 

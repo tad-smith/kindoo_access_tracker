@@ -29,6 +29,13 @@ export type DuplicateGrant = {
   start_date?: string;
   /** ISO date `YYYY-MM-DD` — temp grants only. */
   end_date?: string;
+  /**
+   * Buildings recorded against this duplicate grant. Populated for
+   * manual/temp duplicates that originated from a request-completion
+   * merge (extension v2.2 auto-merge path). Auto duplicates from the
+   * importer don't set this — they inherit buildings from the ward.
+   */
+  building_names?: string[];
   detected_at: TimestampLike;
 };
 

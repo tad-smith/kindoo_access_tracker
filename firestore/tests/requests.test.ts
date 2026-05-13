@@ -674,6 +674,170 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       );
     });
 
+    // Extension v2.2 — Provision & Complete adds two optional fields
+    // to the complete-arm: `kindoo_uid` and `provisioning_note`. Both
+    // must be strings when present; provisioning_note is bounded to
+    // 500 chars by the rule. Outside of `complete`, the affected-keys
+    // allowlist on cancel / reject excludes both so they cannot leak
+    // through those transitions.
+    describe('complete with v2.2 provisioning metadata', () => {
+      it('manager completes with kindoo_uid + provisioning_note → ok', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(pendingAddManualByStakeMember());
+        });
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertSucceeds(
+          db.doc(PATH).update({
+            status: 'complete',
+            completer_email: personas.manager.email,
+            completer_canonical: personas.manager.canonical,
+            completed_at: new Date(),
+            kindoo_uid: 'kindoo-user-12345',
+            provisioning_note: 'Added Subject Person to Kindoo with access to Cordera Building.',
+            lastActor: lastActorOf(personas.manager),
+          }),
+        );
+      });
+
+      it('manager completes with kindoo_uid only → ok (provisioning_note absent)', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(pendingAddManualByStakeMember());
+        });
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertSucceeds(
+          db.doc(PATH).update({
+            status: 'complete',
+            completer_email: personas.manager.email,
+            completer_canonical: personas.manager.canonical,
+            completed_at: new Date(),
+            kindoo_uid: 'kindoo-user-12345',
+            lastActor: lastActorOf(personas.manager),
+          }),
+        );
+      });
+
+      it('non-manager cannot write kindoo_uid via complete (caller is stake-scope) → denied', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(pendingAddManualByStakeMember());
+        });
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).update({
+            status: 'complete',
+            completer_email: personas.stakeMember.email,
+            completer_canonical: personas.stakeMember.canonical,
+            completed_at: new Date(),
+            kindoo_uid: 'kindoo-user-12345',
+            provisioning_note: 'attempted',
+            lastActor: lastActorOf(personas.stakeMember),
+          }),
+        );
+      });
+
+      it('manager completes with non-string kindoo_uid → denied', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(pendingAddManualByStakeMember());
+        });
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).update({
+            status: 'complete',
+            completer_email: personas.manager.email,
+            completer_canonical: personas.manager.canonical,
+            completed_at: new Date(),
+            kindoo_uid: 42,
+            lastActor: lastActorOf(personas.manager),
+          }),
+        );
+      });
+
+      it('manager completes with non-string provisioning_note → denied', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(pendingAddManualByStakeMember());
+        });
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).update({
+            status: 'complete',
+            completer_email: personas.manager.email,
+            completer_canonical: personas.manager.canonical,
+            completed_at: new Date(),
+            provisioning_note: { foo: 'bar' },
+            lastActor: lastActorOf(personas.manager),
+          }),
+        );
+      });
+
+      it('manager completes with oversized provisioning_note (>500 chars) → denied', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(pendingAddManualByStakeMember());
+        });
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).update({
+            status: 'complete',
+            completer_email: personas.manager.email,
+            completer_canonical: personas.manager.canonical,
+            completed_at: new Date(),
+            provisioning_note: 'x'.repeat(501),
+            lastActor: lastActorOf(personas.manager),
+          }),
+        );
+      });
+
+      it('manager completes with provisioning_note at boundary (500 chars) → ok', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(pendingAddManualByStakeMember());
+        });
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertSucceeds(
+          db.doc(PATH).update({
+            status: 'complete',
+            completer_email: personas.manager.email,
+            completer_canonical: personas.manager.canonical,
+            completed_at: new Date(),
+            provisioning_note: 'x'.repeat(500),
+            lastActor: lastActorOf(personas.manager),
+          }),
+        );
+      });
+
+      // The affected-keys allowlist on cancel / reject excludes
+      // kindoo_uid + provisioning_note so neither field can leak
+      // through a non-complete transition.
+      it('requester cannot smuggle kindoo_uid through cancel → denied', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(pendingAddManualByStakeMember());
+        });
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).update({
+            status: 'cancelled',
+            kindoo_uid: 'kindoo-user-12345',
+            lastActor: lastActorOf(personas.stakeMember),
+          }),
+        );
+      });
+
+      it('manager cannot smuggle provisioning_note through reject → denied', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(pendingAddManualByStakeMember());
+        });
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).update({
+            status: 'rejected',
+            completer_email: personas.manager.email,
+            completer_canonical: personas.manager.canonical,
+            completed_at: new Date(),
+            rejection_reason: 'No.',
+            provisioning_note: 'sneaky',
+            lastActor: lastActorOf(personas.manager),
+          }),
+        );
+      });
+    });
+
     it('self-approval allowed (manager+stake submits + completes their own request)', async () => {
       // Invariant 7 (self-approval) — a manager who holds the role for
       // the scope can submit a request and then complete it. Post

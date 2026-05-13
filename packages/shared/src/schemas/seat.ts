@@ -19,6 +19,7 @@ export const duplicateGrantSchema = z.object({
   reason: z.string().optional(),
   start_date: isoDateSchema.optional(),
   end_date: isoDateSchema.optional(),
+  building_names: z.array(z.string()).optional(),
   detected_at: timestampLikeSchema,
 });
 

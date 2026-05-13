@@ -10,12 +10,21 @@
 //
 //   - `Importer` — stamped by the LCR-sheet importer service.
 //   - `ExpiryTrigger` — stamped by the daily seat-expiry scheduled job.
+//   - `RemoveTrigger` — stamped by `removeSeatOnRequestComplete` when
+//     it edits or deletes a seat in response to a completed remove
+//     request. Distinct from the human completer attribution that
+//     lands on the request doc.
 //   - `OutOfBand` — substituted by the audit trigger when a write
 //     changed tracked fields without touching `lastActor` (Firestore
 //     Console edits, ad-hoc `gcloud firestore` tweaks, Admin-SDK
 //     scripts that forgot to stamp it). See B-5 in docs/BUGS.md.
 
-export const AUTOMATED_ACTOR_NAMES = ['Importer', 'ExpiryTrigger', 'OutOfBand'] as const;
+export const AUTOMATED_ACTOR_NAMES = [
+  'Importer',
+  'ExpiryTrigger',
+  'RemoveTrigger',
+  'OutOfBand',
+] as const;
 
 export type AutomatedActorName = (typeof AUTOMATED_ACTOR_NAMES)[number];
 

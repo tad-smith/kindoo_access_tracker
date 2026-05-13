@@ -41,6 +41,11 @@ export const accessRequestSchema = z.object({
   rejection_reason: z.string().optional(),
   completion_note: z.string().optional(),
 
+  // Extension v2.2 — Provision & Complete metadata. Both optional;
+  // present only when the extension's provision flow set them.
+  kindoo_uid: z.string().optional(),
+  provisioning_note: z.string().optional(),
+
   seat_member_canonical: z.string().optional(),
 
   lastActor: actorRefSchema,

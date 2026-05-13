@@ -27,7 +27,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { auditId } from '@kindoo/shared';
 import type { AuditAction, AuditEntityType, AuditLog } from '@kindoo/shared';
 import { getDb } from '../lib/admin.js';
-import { isNoOpUpdate } from '../lib/auditDiff.js';
+import { deepEqual, isNoOpUpdate } from '../lib/auditDiff.js';
 import { OUT_OF_BAND_ACTOR } from '../lib/systemActors.js';
 
 // ===== Per-collection registrations =====
@@ -401,20 +401,37 @@ const DELETE_ACTION: Record<AuditEntityType, AuditAction> = {
  *
  * Out-of-band writes (Firestore Console edits, ad-hoc `gcloud firestore`
  * tweaks, Admin-SDK scripts that forgot to stamp `lastActor`) leave the
- * `lastActor` field untouched. For updates, detect that by comparing
- * before/after `lastActor`: when they're deep-equal, the writer didn't
- * touch the field. Since the no-op-update check earlier has already
- * rejected writes whose only changes are bookkeeping, an equal
- * `lastActor` on an update implies a non-bookkeeping field changed
- * without the canonical write path's actor stamp. Record the sentinel
- * so the audit row doesn't misattribute the change to whichever actor
- * happened to write the doc last. See B-5 in docs/BUGS.md.
+ * canonical write path's bookkeeping fields untouched. We detect them
+ * by requiring BOTH `lastActor` AND `last_modified_at` to be unchanged
+ * across before/after on an update. Two conditions matter:
+ *
+ *   - `lastActor` unchanged alone is insufficient. The same operator
+ *     touching the same doc twice in a row produces identical
+ *     `lastActor` values on both sides — a false positive that tags
+ *     legitimate in-band writes as OutOfBand (B-5 follow-up).
+ *
+ *   - Every in-band writer (SPA, callable, importer, expiry trigger)
+ *     stamps `last_modified_at` as `FieldValue.serverTimestamp()`. Two
+ *     consecutive in-band writes always produce distinct resolved
+ *     timestamps, so requiring BOTH fields unchanged narrows the
+ *     sentinel to real out-of-band writes.
+ *
+ * Carve-out: some audited collections (`kindooManagers`, `requests`,
+ * `wardCallingTemplates`, `stakeCallingTemplates`) have no
+ * `last_modified_at` field. When both sides lack it, treat it as
+ * trivially unchanged — the heuristic reduces to the original
+ * "lastActor unchanged" check for those collections. That's the best
+ * available signal there; an out-of-band edit to one of those docs
+ * still falls through to the sentinel as long as `lastActor` wasn't
+ * touched.
+ *
+ * See B-5 in docs/BUGS.md.
  */
 function resolveActor(
   before: Record<string, unknown> | null,
   after: Record<string, unknown> | null,
 ): { email: string; canonical: string } {
-  if (before && after && lastActorUnchanged(before, after)) {
+  if (before && after && isOutOfBandUpdate(before, after)) {
     return { email: OUT_OF_BAND_ACTOR.email, canonical: OUT_OF_BAND_ACTOR.canonical };
   }
   const source = after ?? before;
@@ -425,16 +442,19 @@ function resolveActor(
 }
 
 /**
- * True iff `before.lastActor` and `after.lastActor` are structurally
- * equal — including both-absent. `ActorRef` is a flat `{email, canonical}`
- * pair, so a JSON-string compare is sufficient. Matches the structural
- * compare used elsewhere in the audit diff helpers.
+ * True iff an update looks out-of-band — i.e. both `lastActor` and
+ * `last_modified_at` are structurally unchanged across before/after.
+ * Uses the audit-diff `deepEqual` (key-order-tolerant per B-6) rather
+ * than `JSON.stringify` so timestamp objects compare by value. When
+ * `last_modified_at` is absent on both sides, the carve-out kicks in
+ * and only `lastActor` equality is required.
  */
-function lastActorUnchanged(
+function isOutOfBandUpdate(
   before: Record<string, unknown>,
   after: Record<string, unknown>,
 ): boolean {
-  return JSON.stringify(before['lastActor']) === JSON.stringify(after['lastActor']);
+  if (!deepEqual(before['lastActor'], after['lastActor'])) return false;
+  return deepEqual(before['last_modified_at'], after['last_modified_at']);
 }
 
 /**

@@ -6,6 +6,41 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-6] auditDiff reports nested-object key reorderings as field changes
+Status: closed (fixed in PR #86)
+Owner: @backend-engineer
+Phase: post Phase 11
+Severity: low-medium
+
+The audit trigger's `deepEqual` helper (`functions/src/lib/auditDiff.ts:79-88`) compares values with `JSON.stringify(x) === JSON.stringify(y)`. `JSON.stringify` serialises object keys in insertion order, so two structurally identical objects whose keys happen to be ordered differently compare as not equal. Out-of-band writes (Firebase Console, ad-hoc Admin-SDK scripts) routinely round-trip nested-object fields through paths that don't preserve the original key order — the round-tripped value carries identical data with a different key order, and the diff flags the field as changed.
+
+**Symptom:** the audit row's `changed` list includes a nested-object field whose `before` and `after` snapshots contain the same keys and values in different orders. The field-level diff is correct (the bytes really are not byte-equal under `JSON.stringify`); the trigger's classification of the field as changed is wrong.
+
+**Concrete instance (prod, 2026-05-13):** operator made a Firebase Console edit changing only `stakes/csnorth.stake_name` from `STAGING - Colorado Springs North Stake` to `STAGING -- Colorado Springs North Stake` (added one dash). The audit row correctly captured the `stake_name` diff and correctly attributed the actor as `OutOfBand` (B-5 fix landed). It also reported `kindoo_config` as changed, with:
+
+- before: `configured_at=2026-05-13 3:24 am, site_id=27994, configured_by=tad.e.smith@gmail.com, site_name=Colorado Springs North Stake`
+- after: `site_name=Colorado Springs North Stake, configured_by=tad.e.smith@gmail.com, configured_at=2026-05-13 3:24 am, site_id=27994`
+
+Identical data, different key order. The Manager Audit Log page displays nested-object keys in insertion order, so the rearrangement surfaces to the reader as a "change."
+
+**Repro:**
+1. Have a doc with a nested-object field (e.g. `stakes/csnorth.kindoo_config`).
+2. Make any out-of-band write (Console, Admin SDK) that mutates a different field on the same doc.
+3. Observe the audit row reports the nested-object field as changed when only key order differs.
+
+**Severity:** low-medium. No data-integrity impact. Generates spurious audit noise — any out-of-band write that touches a doc with nested-object fields will surface false changes on the untouched nested objects. Reduces trust in audit traceability: an operator scanning audit history can't tell at a glance which "changes" reflect real edits and which are key-order artefacts.
+
+**Root cause:** `functions/src/lib/auditDiff.ts:79-88`'s `deepEqual` uses `JSON.stringify(x) === JSON.stringify(y)`. `JSON.stringify` is order-sensitive for object keys. Firestore's normal SDK writes preserve insertion order, so this worked for in-app writes; Console and Admin-SDK writes can serialise keys differently. The file's leading comment (lines 26-31) already calls out this trade-off as acceptable on the basis that "a key-reordering write is rare" — the first prod out-of-band write demonstrated it isn't.
+
+**Proposed fix:** replace the `JSON.stringify`-based `deepEqual` with a proper recursive deep-equal helper that compares object key-sets and recurses on values, treating object property order as irrelevant. Arrays remain compared positionally. Primitives, `null`, and Firestore Timestamps (`{seconds, nanoseconds}` plain objects on the trigger side) continue to compare correctly because their structure is fixed. A ~25-line pure function; no new dependency. Update the file's leading comment to drop the stale "key-reordering write is rare" caveat. Add unit tests covering the key-order-irrelevance behaviour for at least nested objects, arrays-of-objects, and the Timestamp-shaped plain object.
+
+**Won't fix in:** any in-flight PR — file as a standalone bug, fix in its own PR.
+
+**Fix:** PR #86 replaces the `JSON.stringify`-based `deepEqual` in `functions/src/lib/auditDiff.ts` with a recursive deep-equal helper that compares objects by key set (not key order), recurses on values, and continues to compare arrays positionally; new unit tests in `functions/src/lib/auditDiff.test.ts` cover the key-order-irrelevance behaviour including the prod `kindoo_config` regression case.
+
+**Branch / PR:** PR #86 (`docs/b-6-audit-diff-key-order-false-positive`) — docs entry + fix.
+
+---
 
 ## [B-9] SBA temp grant expiry doesn't downgrade Kindoo permanent users (one-way temp→permanent sync)
 Status: open

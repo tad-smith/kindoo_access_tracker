@@ -18,17 +18,13 @@
 //      Firestore). Only the *changed-keys* check excludes them.
 //
 // Map/array fields like `manual_grants`, `importer_callings`,
-// `building_codes`, `callings`, `duplicate_grants` are compared by
-// JSON-stringified equality — shallow at the top level, deep within
-// the field. Good enough for human-scale audit reads at this scale;
-// avoids pulling in a deep-equal library.
-//
-// Note on key ordering: `JSON.stringify` is order-sensitive, but
-// Firestore's normalised reads return object keys in insertion order
-// per the SDK. For our doc shapes that come from a single source
-// (the SPA / importer), that's stable enough; a key-reordering write
-// is rare and at worst produces a redundant audit row, which is the
-// safer failure mode.
+// `building_codes`, `callings`, `duplicate_grants` are compared by a
+// recursive deep-equal helper. Contract: primitives compare with
+// `===`; arrays compare positionally (same length, same value at
+// each index, recursively); plain objects compare by key SET (NOT
+// key order), then recurse on each value. `undefined` and missing
+// keys are treated identically. `null` compares only equal to
+// `null`. Self-contained, no dependency.
 
 import { BOOKKEEPING_FIELDS } from '@kindoo/shared';
 
@@ -41,7 +37,8 @@ export { BOOKKEEPING_FIELDS };
  * Return the set of top-level keys whose values changed between
  * `before` and `after`, EXCLUDING `BOOKKEEPING_FIELDS`. A missing key
  * on either side counts as a change. Map / array values are compared
- * via `JSON.stringify`.
+ * by recursive deep equality (object key order is irrelevant; array
+ * order is significant).
  */
 export function changedKeys(
   before: Record<string, unknown> | null | undefined,
@@ -76,13 +73,30 @@ export function isNoOpUpdate(
   return changedKeys(before, after).length === 0;
 }
 
-function deepEqual(x: unknown, y: unknown): boolean {
+export function deepEqual(x: unknown, y: unknown): boolean {
   if (x === y) return true;
+  // Treat `undefined` and a missing key as equal — matches how
+  // `changedKeys` unions Object.keys(before) ∪ Object.keys(after).
+  if (x === undefined || y === undefined) return x === y;
   if (x === null || y === null) return false;
   if (typeof x !== 'object' || typeof y !== 'object') return false;
-  // Cheap structural compare via JSON. Sufficient for the shapes we
-  // store; doesn't handle Firestore Timestamps specially because
-  // bookkeeping timestamps are filtered out before this is reached
-  // and any non-bookkeeping timestamp difference is real.
-  return JSON.stringify(x) === JSON.stringify(y);
+  const xArr = Array.isArray(x);
+  const yArr = Array.isArray(y);
+  if (xArr !== yArr) return false;
+  if (xArr && yArr) {
+    const a = x as unknown[];
+    const b = y as unknown[];
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  const xo = x as Record<string, unknown>;
+  const yo = y as Record<string, unknown>;
+  const keys = new Set<string>([...Object.keys(xo), ...Object.keys(yo)]);
+  for (const k of keys) {
+    if (!deepEqual(xo[k], yo[k])) return false;
+  }
+  return true;
 }

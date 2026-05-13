@@ -46,6 +46,10 @@ export async function getMyPendingRequests(
  * request is currently `pending`; out-of-order calls (already
  * complete, already rejected) surface as a typed HttpsError the UI
  * renders as a soft toast.
+ *
+ * v2.2: `kindooUid` and `provisioningNote` are forwarded through
+ * unchanged. The shared input type already declares them optional;
+ * the callable persists both on the request doc when present.
  */
 export async function markRequestComplete(
   input: MarkRequestCompleteInput,
