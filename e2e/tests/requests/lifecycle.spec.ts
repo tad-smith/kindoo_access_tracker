@@ -186,8 +186,11 @@ test.describe('Phase 6 — stake add_temp with two buildings', () => {
     await stakePage.getByTestId('new-request-email').fill('alice@example.com');
     await stakePage.getByTestId('new-request-name').fill('Alice Example');
     await stakePage.getByTestId('new-request-reason').fill('Visiting authority');
-    await stakePage.getByTestId('new-request-building-cordera-building').click();
-    await stakePage.getByTestId('new-request-building-genoa-building').click();
+    // B-11 — stake-scope defaults every building checked; both Cordera
+    // and Genoa are pre-ticked, no manual clicks needed for a
+    // stake-wide grant.
+    await expect(stakePage.getByTestId('new-request-building-cordera-building')).toBeChecked();
+    await expect(stakePage.getByTestId('new-request-building-genoa-building')).toBeChecked();
     await stakePage.getByTestId('new-request-submit').click();
 
     // Manager completes.

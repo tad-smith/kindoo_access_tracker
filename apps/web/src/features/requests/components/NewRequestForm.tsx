@@ -13,7 +13,9 @@
 //   - Buildings — collapsible checkbox group whose default selection
 //     and collapsed/expanded state are derived from the *current scope*
 //     (not from role-at-mount):
-//       - scope == 'stake'  → expanded, no defaults checked.
+//       - scope == 'stake'  → expanded, every building checked (B-11
+//         — stake-scope means "everywhere"; manager unchecks specific
+//         buildings to exclude).
 //       - scope == <ward>   → collapsed, that ward's building pre-selected.
 //     A multi-role principal toggling the scope dropdown live-updates
 //     both the selection and the open state. The user's manual expand
@@ -94,9 +96,10 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
 
   // Initial-mount default selection mirrors the scope-change rule
   // below: if the form opens on a ward, pre-select that ward's
-  // building; if it opens on `stake`, leave empty.
+  // building; if it opens on `stake`, pre-select every building (B-11
+  // — stake-scope means "everywhere," manager unchecks to exclude).
   const initialBuildings = useMemo(
-    () => defaultBuildingsForScope(initialScope, wards),
+    () => defaultBuildingsForScope(initialScope, wards, buildings),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [], // captured once for `defaultValues`; live updates flow through the scope-driven effect below.
   );
@@ -144,14 +147,15 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
 
   // Drive both the selection and the open state from `watchedScope`.
   // Two separate effects on purpose — the selection effect also
-  // depends on `wards` (live subscription late-hydration), while the
-  // open-state effect must NOT thrash on every wards push.
+  // depends on `wards` and `buildings` (live subscription late-
+  // hydration; stake-scope default is the full catalogue per B-11),
+  // while the open-state effect must NOT thrash on every push.
   const lastScopeForBuildings = useRef<string>(initialScope);
   useEffect(() => {
-    const next = defaultBuildingsForScope(watchedScope, wards);
+    const next = defaultBuildingsForScope(watchedScope, wards, buildings);
     setValue('building_names', next, { shouldDirty: false, shouldValidate: false });
     lastScopeForBuildings.current = watchedScope;
-  }, [watchedScope, wards, setValue]);
+  }, [watchedScope, wards, buildings, setValue]);
 
   const lastScopeForOpen = useRef<string>(initialScope);
   useEffect(() => {
@@ -208,7 +212,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         comment: '',
         start_date: '',
         end_date: '',
-        building_names: defaultBuildingsForScope(input.scope, wards),
+        building_names: defaultBuildingsForScope(input.scope, wards, buildings),
         urgent: false,
       });
       setBuildingsOpen(input.scope === 'stake');

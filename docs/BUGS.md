@@ -43,7 +43,7 @@ Identical data, different key order. The Manager Audit Log page displays nested-
 ---
 
 ## [B-11] New Request screen — when `scope === 'stake'`, all buildings should be checked by default
-Status: open
+Status: closed (fixed in PR #93)
 Owner: @web-engineer
 Phase: post Phase 11
 Severity: low-medium
@@ -66,7 +66,9 @@ On the New Request page, picking `scope === 'stake'` leaves every building check
 
 **Won't fix in:** any in-flight PR — this is a standalone SPA UX bug, unrelated to the Chrome extension v2.2 work on PR #88. File and fix in its own PR.
 
-**Branch / PR:** none — fix not yet started.
+**Fix:** PR #93 extends `defaultBuildingsForScope` in `apps/web/src/features/requests/schemas.ts` to accept the buildings catalogue and return every `building_name` for stake scope (ward scope unchanged). `NewRequestForm` threads its `buildings` prop into the initial-default `useMemo`, the scope-change effect, and the post-submit reset, so a stake-scope form mounts with every checkbox pre-ticked and a multi-role principal flipping ward → stake auto-populates the full list. Existing tests asserting "no defaults checked" for stake scope were updated; two new tests lock the B-11 behaviour (mount-in-stake-scope and ward→stake toggle).
+
+**Branch / PR:** PR #93 (`fix/b-11-stake-scope-default-all-buildings`).
 
 ---
 
