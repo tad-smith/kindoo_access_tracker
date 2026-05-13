@@ -502,6 +502,149 @@ describe('listAllEnvironmentUsers', () => {
     expect(result).toHaveLength(1);
     expect(result[0]?.euid).toBe('bare1');
   });
+
+  it('dedups single-page rows that share an EUID, merging accessSchedules', async () => {
+    // Kindoo's no-keyword paginated listing emits one row per
+    // access-schedule. Three rows for the same EUID with distinct
+    // RuleIDs must collapse to one user carrying all three rules.
+    const fetchImpl = vi.fn(async () =>
+      page(
+        [
+          richUser({
+            EUID: 'same-euid',
+            Username: 'multi@example.com',
+            AccessSchedules: [{ RuleID: 6248 }],
+          }),
+          richUser({
+            EUID: 'same-euid',
+            Username: 'multi@example.com',
+            AccessSchedules: [{ RuleID: 6249 }],
+          }),
+          richUser({
+            EUID: 'same-euid',
+            Username: 'multi@example.com',
+            AccessSchedules: [{ RuleID: 6250 }],
+          }),
+        ],
+        3,
+      ),
+    );
+    const result = await listAllEnvironmentUsers(SESSION, fetchImpl);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.euid).toBe('same-euid');
+    expect(result[0]?.accessSchedules.map((s) => s.ruleId).sort()).toEqual([6248, 6249, 6250]);
+  });
+
+  it('preserves distinct users in a single page when EUIDs differ', async () => {
+    const fetchImpl = vi.fn(async () =>
+      page(
+        [
+          richUser({
+            EUID: 'euid-a',
+            Username: 'a@example.com',
+            AccessSchedules: [{ RuleID: 6248 }],
+          }),
+          richUser({
+            EUID: 'euid-b',
+            Username: 'b@example.com',
+            AccessSchedules: [{ RuleID: 6249 }, { RuleID: 6250 }],
+          }),
+        ],
+        2,
+      ),
+    );
+    const result = await listAllEnvironmentUsers(SESSION, fetchImpl);
+    expect(result).toHaveLength(2);
+    const a = result.find((u) => u.euid === 'euid-a');
+    const b = result.find((u) => u.euid === 'euid-b');
+    expect(a?.accessSchedules.map((s) => s.ruleId)).toEqual([6248]);
+    expect(b?.accessSchedules.map((s) => s.ruleId).sort()).toEqual([6249, 6250]);
+  });
+
+  it('dedups across pages — duplicates split across page boundaries collapse to one user', async () => {
+    // Page 1: 50 rows, last row shares EUID 'cross' with first row on page 2.
+    // Total of 52 wire rows → 51 unique users after dedup.
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        const users = Array.from({ length: 49 }, (_, i) =>
+          richUser({
+            EUID: `e${i}`,
+            Username: `u${i}@x.com`,
+            AccessSchedules: [{ RuleID: 6000 + i }],
+          }),
+        );
+        users.push(
+          richUser({
+            EUID: 'cross',
+            Username: 'cross@example.com',
+            AccessSchedules: [{ RuleID: 7000 }],
+          }),
+        );
+        return page(users, 52);
+      }
+      // Page 2: cross-EUID row + one new EUID = 2 rows, < 50 → terminate.
+      return page(
+        [
+          richUser({
+            EUID: 'cross',
+            Username: 'cross@example.com',
+            AccessSchedules: [{ RuleID: 7001 }],
+          }),
+          richUser({
+            EUID: 'tail',
+            Username: 'tail@example.com',
+            AccessSchedules: [{ RuleID: 7002 }],
+          }),
+        ],
+        52,
+      );
+    });
+    const result = await listAllEnvironmentUsers(SESSION, fetchImpl);
+    expect(result).toHaveLength(51);
+    const cross = result.find((u) => u.euid === 'cross');
+    expect(cross).toBeDefined();
+    expect(cross?.accessSchedules.map((s) => s.ruleId).sort()).toEqual([7000, 7001]);
+  });
+
+  it('keeps first-occurrence metadata when EUIDs collide', async () => {
+    // Two rows, same EUID, but different Description / IsTempUser /
+    // dates. First-occurrence metadata must win; only accessSchedules
+    // merge across collisions.
+    const fetchImpl = vi.fn(async () =>
+      page(
+        [
+          richUser({
+            EUID: 'shared',
+            Username: 'shared@example.com',
+            Description: 'FIRST description',
+            IsTempUser: false,
+            ExpiryDateAtTimeZone: '2026-06-01T00:00',
+            AccessSchedules: [{ RuleID: 6248 }],
+          }),
+          richUser({
+            EUID: 'shared',
+            Username: 'shared@example.com',
+            Description: 'SECOND description (loses)',
+            IsTempUser: true,
+            ExpiryDateAtTimeZone: '2026-07-01T00:00',
+            AccessSchedules: [{ RuleID: 6249 }],
+          }),
+        ],
+        2,
+      ),
+    );
+    const result = await listAllEnvironmentUsers(SESSION, fetchImpl);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      euid: 'shared',
+      description: 'FIRST description',
+      isTempUser: false,
+      expiryDateAtTimeZone: '2026-06-01T00:00',
+    });
+    expect(result[0]?.accessSchedules.map((s) => s.ruleId).sort()).toEqual([6248, 6249]);
+  });
 });
 
 describe('revokeUser', () => {
