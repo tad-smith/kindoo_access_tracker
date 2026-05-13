@@ -279,6 +279,135 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
     // Pine Creek (seat) ∪ Cordera (request) → both RIDs.
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, 'new-uid', [6249, 6248], undefined);
   });
+
+  it('add to user with existing duplicate-grants: target set unions primary + duplicate + request buildings', async () => {
+    // Seat primary = PC (Cordera + Pine Creek), one duplicate = MO ward
+    // (Monument). New add request is KD scope adding Kings Deer. The
+    // post-completion target RID set must cover ALL FOUR buildings —
+    // not just the three the primary + request know about — so the
+    // saveAccessRule MERGE represents the user's true total scope.
+    const buildings: Building[] = [
+      // Replace the default Monument entry (no rule) with one that
+      // has a rule mapped, then add Kings Deer.
+      ...BUILDINGS.filter((b) => b.building_name !== 'Monument Building'),
+      {
+        building_id: 'monument',
+        building_name: 'Monument Building',
+        kindoo_rule: { rule_id: 6251, rule_name: 'Monument Doors' },
+      } as unknown as Building,
+      {
+        building_id: 'kings-deer',
+        building_name: 'Kings Deer Building',
+        kindoo_rule: { rule_id: 6250, rule_name: 'Kings Deer Doors' },
+      } as unknown as Building,
+    ];
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      scope: 'PC',
+      type: 'manual',
+      callings: [],
+      reason: 'Bishop',
+      building_names: ['Cordera Building', 'Pine Creek Building'],
+      duplicate_grants: [
+        {
+          scope: 'MO',
+          type: 'manual',
+          callings: [],
+          reason: 'Stake Clerk',
+          building_names: ['Monument Building'],
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ],
+    } as unknown as Seat;
+
+    lookupUserByEmailMock.mockResolvedValue(null);
+    inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    const result = await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'KD',
+        building_names: ['Kings Deer Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Order: primary buildings, then duplicate, then request — stable
+    // and de-duplicated by `uniqueOrdered`.
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(
+      SESSION,
+      'new-uid',
+      [6248, 6249, 6251, 6250],
+      undefined,
+    );
+    // Note mentions all four buildings, not just three.
+    expect(result.note).toBe(
+      'Invited Tad Smith to Kindoo with access to Cordera Building, Pine Creek Building, Monument Building, Kings Deer Building.',
+    );
+  });
+
+  it('add to user with duplicate-grant overlapping the primary: dedups each building once', async () => {
+    // Seat primary = PC (Cordera + Pine Creek); duplicate = MO whose
+    // building_names overlap with the primary (Cordera) plus add
+    // Monument. New add of Pine Creek (already in primary). Target
+    // should be the de-duplicated union — each building once.
+    const buildings: Building[] = [
+      ...BUILDINGS.filter((b) => b.building_name !== 'Monument Building'),
+      {
+        building_id: 'monument',
+        building_name: 'Monument Building',
+        kindoo_rule: { rule_id: 6251, rule_name: 'Monument Doors' },
+      } as unknown as Building,
+    ];
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      scope: 'PC',
+      type: 'manual',
+      callings: [],
+      reason: 'Bishop',
+      building_names: ['Cordera Building', 'Pine Creek Building'],
+      duplicate_grants: [
+        {
+          scope: 'MO',
+          type: 'manual',
+          callings: [],
+          reason: 'Stake Clerk',
+          building_names: ['Cordera Building', 'Monument Building'],
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ],
+    } as unknown as Seat;
+
+    lookupUserByEmailMock.mockResolvedValue(null);
+    inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'MO',
+        building_names: ['Pine Creek Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Three distinct RIDs in stable order: Cordera, Pine Creek, Monument.
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(
+      SESSION,
+      'new-uid',
+      [6248, 6249, 6251],
+      undefined,
+    );
+  });
 });
 
 describe('provisionAddOrChange — existing user (lookup hit)', () => {

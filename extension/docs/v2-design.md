@@ -227,7 +227,7 @@ Result:
 #### Compute step (ADD path only)
 
 For ADD requests: compute the **post-completion** seat state by merging the request into the current seat:
-- `targetBuildings = unique(seat?.building_names ?? [] + request.building_names)`
+- `targetBuildings = unique(seat.building_names ∪ seat.duplicate_grants[].building_names ∪ request.building_names)`. Aggregate `seat.building_names` ∪ `duplicate_grants[].building_names` to capture the user's total current scope coverage across all SBA grants. Top-level `seat.building_names` is primary-only by design (per `firebase-schema.md`).
 - Resulting `callings` / `duplicate_grants` per SBA's existing merge logic (extension mirrors what `markRequestComplete` will do server-side).
 
 For REMOVE requests: compute the **post-removal** seat state by mirroring the `removeSeatOnRequestComplete` trigger:

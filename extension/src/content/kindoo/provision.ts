@@ -144,6 +144,20 @@ function uniqueOrdered(a: string[], b: string[]): string[] {
 }
 
 /**
+ * The user's total current building coverage across all SBA grants
+ * captured on the seat. `seat.building_names` is primary-only by
+ * design (per `firebase-schema.md`); cross-scope grants live in
+ * `duplicate_grants[].building_names`. The add path needs the union
+ * so the post-completion target rule set covers everything the user
+ * is already entitled to, not just the primary grant's buildings.
+ */
+function currentSeatBuildings(seat: Seat | null): string[] {
+  if (!seat) return [];
+  const dupBuildings = (seat.duplicate_grants ?? []).flatMap((d) => d.building_names ?? []);
+  return uniqueOrdered(seat.building_names ?? [], dupBuildings);
+}
+
+/**
  * Map a list of building names to their Kindoo RIDs via
  * `building.kindoo_rule.rule_id`. Throws
  * `ProvisionBuildingsMissingRuleError` listing the gaps.
@@ -368,7 +382,10 @@ export interface ProvisionAddOrChangeArgs {
  * seat state. See file header for the read-first contract.
  *
  * Flow:
- *   1. Compute targetBuildings = unique(seat.building_names ∪ request.building_names).
+ *   1. Compute targetBuildings = unique(seat.building_names ∪
+ *      seat.duplicate_grants[].building_names ∪ request.building_names).
+ *      The seat-side union captures the user's total existing scope
+ *      coverage; `seat.building_names` alone is primary-only.
  *   2. targetRIDs = buildings → kindoo_rule.rule_id (throws on missing mapping).
  *   3. lookupUserByEmail(email).
  *   4. Not found → inviteUser + saveAccessRule.
@@ -386,7 +403,7 @@ export async function provisionAddOrChange(
 
   // ---- Compute target state ----
   const requestBuildings = buildingsForRequest(args.request, args.wards);
-  const seatBuildings = args.seat?.building_names ?? [];
+  const seatBuildings = currentSeatBuildings(args.seat);
   const targetBuildings = uniqueOrdered(seatBuildings, requestBuildings);
   const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
   const targetDescription = synthesizeDescription(
