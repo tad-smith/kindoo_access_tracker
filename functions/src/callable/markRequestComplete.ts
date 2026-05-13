@@ -1,10 +1,24 @@
 // Chrome extension bridge: flips a `pending` request to `complete`.
-// Scoped to the simple case the extension supports — the manager has
-// already worked the door system in the Kindoo UI and just needs to
-// record the completion. The SPA's `useCompleteAddRequest` /
-// `useCompleteRemoveRequest` hooks remain the full workflow for the
-// browser app (they also create the seat doc for add-type, or rely on
-// the `removeSeatOnRequestComplete` trigger for the remove path).
+// Mirrors the SPA's `useCompleteAddRequest` / `useCompleteRemoveRequest`
+// hooks so the callable produces the same Firestore state. The SPA
+// hooks remain the path for some flows (reject, cancel) and for any
+// flow that needs manager-supplied building overrides.
+//
+// Behaviour by request type:
+//   - `add_manual` / `add_temp`: read the seat doc inside the
+//     transaction. If absent → create it from the request body. If
+//     present → fail with `failed-precondition` (mirrors the SPA's
+//     "already has a seat" guard; the SPA tells the manager to
+//     reconcile via All Seats first). Both the seat write and the
+//     request flip land in the same transaction; the `seats.create`
+//     rule's `tiedToRequestCompletion` invariant is satisfied because
+//     the request flip happens in the same write.
+//   - `remove`: just flip the request to complete. The existing
+//     `removeSeatOnRequestComplete` trigger handles the Admin-SDK
+//     seat delete. On the R-1 race (seat already gone) we append the
+//     system note to `completion_note` so the audit trail explains
+//     why no delete fired — matching `resolveRemoveCompletionNote` in
+//     the SPA hook.
 //
 // The audit row is fanned in by `auditRequestWrites` from the
 // resulting write; `notifyOnRequestWrite` fires the requester email
@@ -14,15 +28,32 @@
 // `kindooManagers/{canonical}` doc directly.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { canonicalEmail } from '@kindoo/shared';
 import type {
   AccessRequest,
   KindooManager,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
+  Seat,
 } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
+
+/** R-1 race tag — mirrors `R1_AUTO_NOTE` in `apps/web/.../queue/hooks.ts`. */
+const R1_AUTO_NOTE = 'Seat already removed at completion time (no-op).';
+
+/**
+ * Resolve the `completion_note` for a remove-complete write. Manager's
+ * prose wins; on the R-1 race we append the `[System: ...]` tag so the
+ * email body surfaces both signals. Mirrors `resolveRemoveCompletionNote`
+ * in the SPA hook byte-for-byte.
+ */
+function resolveRemoveCompletionNote(seatExists: boolean, trimmedNote: string): string | undefined {
+  if (!seatExists) {
+    return trimmedNote.length > 0 ? `${trimmedNote}\n\n[System: ${R1_AUTO_NOTE}]` : R1_AUTO_NOTE;
+  }
+  return trimmedNote.length > 0 ? trimmedNote : undefined;
+}
 
 export const markRequestComplete = onCall(
   { serviceAccount: APP_SA },
@@ -103,6 +134,56 @@ export const markRequestComplete = onCall(
         );
       }
 
+      // Add-type: create the seat in the same transaction.
+      // Remove-type: pre-read the seat to know whether to stamp the
+      // R-1 system note; the `removeSeatOnRequestComplete` trigger
+      // does the Admin-SDK delete.
+      let seatExists = false;
+      let seatBody: Record<string, unknown> | null = null;
+      let newSeatRef: FirebaseFirestore.DocumentReference | null = null;
+      if (cur.type === 'add_manual' || cur.type === 'add_temp') {
+        const seatTarget = cur.member_canonical;
+        newSeatRef = db.doc(`stakes/${stakeId}/seats/${seatTarget}`);
+        const seatSnap = await tx.get(newSeatRef);
+        if (seatSnap.exists) {
+          // Mirrors the SPA: the rules' seat-create predicate would
+          // reject a re-create anyway; surface a friendlier message.
+          // Manager must reconcile via All Seats before re-trying.
+          throw new HttpsError(
+            'failed-precondition',
+            `${cur.member_email} already has a seat. Reconcile via All Seats first.`,
+          );
+        }
+        const now = Timestamp.now();
+        const seatType: Seat['type'] = cur.type === 'add_manual' ? 'manual' : 'temp';
+        const body: Record<string, unknown> = {
+          member_canonical: cur.member_canonical,
+          member_email: cur.member_email,
+          member_name: cur.member_name,
+          scope: cur.scope,
+          type: seatType,
+          callings: [],
+          building_names: cur.building_names ?? [],
+          duplicate_grants: [],
+          granted_by_request: cur.request_id,
+          created_at: now,
+          last_modified_at: now,
+          last_modified_by: actor,
+          lastActor: actor,
+        };
+        if (cur.type === 'add_temp') {
+          if (cur.start_date) body.start_date = cur.start_date;
+          if (cur.end_date) body.end_date = cur.end_date;
+        }
+        if (cur.reason) body.reason = cur.reason;
+        seatBody = body;
+      } else if (cur.type === 'remove') {
+        const seatTarget = cur.seat_member_canonical ?? cur.member_canonical;
+        const seatRef = db.doc(`stakes/${stakeId}/seats/${seatTarget}`);
+        const seatSnap = await tx.get(seatRef);
+        seatExists = seatSnap.exists;
+      }
+
       const update: Record<string, unknown> = {
         status: 'complete',
         completer_email: typedEmail,
@@ -110,10 +191,18 @@ export const markRequestComplete = onCall(
         completed_at: FieldValue.serverTimestamp(),
         lastActor: actor,
       };
-      if (trimmedNote.length > 0) update.completion_note = trimmedNote;
+      if (cur.type === 'remove') {
+        const resolved = resolveRemoveCompletionNote(seatExists, trimmedNote);
+        if (resolved !== undefined) update.completion_note = resolved;
+      } else if (trimmedNote.length > 0) {
+        update.completion_note = trimmedNote;
+      }
       if (kindooUid !== undefined) update.kindoo_uid = kindooUid;
       if (provisioningNote !== undefined) update.provisioning_note = provisioningNote;
 
+      if (newSeatRef && seatBody) {
+        tx.set(newSeatRef, seatBody);
+      }
       tx.update(reqRef, update);
     });
 
