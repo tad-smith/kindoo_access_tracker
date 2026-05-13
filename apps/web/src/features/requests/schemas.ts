@@ -18,21 +18,27 @@
 // or future callable validation needs it) the server side.
 
 import { z } from 'zod';
-import type { Ward } from '@kindoo/shared';
+import type { Building, Ward } from '@kindoo/shared';
 
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * The default-selected building set for a single submission scope.
- * Stake-scope is empty by design (the requester hand-picks). Ward-scope
- * resolves to the single `building_name` on the ward doc, or empty
- * when the ward isn't in the catalogue or has no building bound. The
- * form uses this to seed the buildings widget; the schema uses it to
- * decide when a ward submission has wandered outside the ward's own
- * building and therefore needs a justifying comment.
+ * Stake-scope defaults to every building in the catalogue — stake-scope
+ * means "everywhere," so the manager unchecks specific buildings to
+ * exclude rather than ticking N every time (B-11). Ward-scope resolves
+ * to the single `building_name` on the ward doc, or empty when the ward
+ * isn't in the catalogue or has no building bound. The form uses this
+ * to seed the buildings widget; the cross-ward predicate uses it for
+ * ward scopes only (stake scope short-circuits before this is called).
  */
-export function defaultBuildingsForScope(scope: string, wards: readonly Ward[]): string[] {
-  if (!scope || scope === 'stake') return [];
+export function defaultBuildingsForScope(
+  scope: string,
+  wards: readonly Ward[],
+  buildings: readonly Building[] = [],
+): string[] {
+  if (!scope) return [];
+  if (scope === 'stake') return buildings.map((b) => b.building_name);
   const ward = wards.find((w) => w.ward_code === scope);
   if (!ward || !ward.building_name) return [];
   return [ward.building_name];
