@@ -140,23 +140,50 @@ Closes the loop: from the same panel, the manager provisions (add / remove / cha
 
 ### Locked-in decisions (v2.2)
 
-1. **No confirmation dialog before provisioning.** The RequestCard already shows everything (email, scope, buildings, reason, type); a "are you sure?" step adds friction without value. Operator chose Option B for this reason.
+1. **No confirmation dialog before provisioning.** The RequestCard already shows everything; a "are you sure?" step adds friction without value.
 2. **Button label varies by request type:**
    - `add_manual` / `add_temp` → `Add Kindoo Access`
    - `remove` → `Remove Kindoo Access`
-   - Existing user matched on an add request → still `Add Kindoo Access` (the UI doesn't tell add-vs-change-access apart; it's the same flow).
-3. **Result confirmation dialog after every action.** Synthesized message describes what was done. Same dialog text is persisted on the request doc as a `provisioning_note` for audit traceability.
-4. **Single spinner during the call** — no per-step progress. Escalate to multi-step if calls turn out to be slow.
-5. **Description format**: `${scopeName} (${request.reason})`. `scopeName` resolves to the ward's `building_name`-equivalent display (read from the ward doc) for ward scope, or the stake name for stake scope.
-6. **ExpiryTimeZone**: re-fetched from `KindooGetEnvironments` at provision time. Use the env entry's `TimeZone` field verbatim — already in Kindoo's wire format. No IANA↔Windows mapping needed.
-7. **Temp-request date format**: full-day bounds. `StartAccessDoorsDate = ${request.start_date} 00:00`, `ExpiryDate = ${request.end_date} 23:59`. No time-of-day field added to SBA's request schema in v2.2; defer if anyone wants finer control.
-8. **Remove with user-not-in-Kindoo**: auto-complete the SBA request as a no-op. Mirrors SBA's existing R-1 race annotation pattern (`completion_note: "User was not in Kindoo (no-op)"`). Operator sees the result dialog noting the no-op.
-9. **Existing-user-on-add**: silent update path. CheckUserType returns existing → skip invite → SaveAccessRule with the new RIDs. The result dialog text reflects what actually happened ("Updated X's access" vs "Added X").
-10. **Audit**: extend `markRequestComplete` to accept optional Kindoo metadata. Persist on the request doc; no new collection. Captured via the existing auditTrigger.
+3. **Result confirmation dialog after every action.** Synthesized message describes what was done. Persisted on the request doc as `provisioning_note` for audit.
+4. **Single spinner during the call** — no per-step progress.
+5. **Read-first + merged-state pattern.** The orchestrator reads the SBA `Seat` doc + (for existing users) calls `lookupUserByEmail` for the Kindoo user's current state, computes the intended *post-completion* state, then drives Kindoo to that state with a full-rule-set `saveAccessRule` and (when needed) a `editEnvironmentUserAdvancedSettings`. This:
+   - Makes Kindoo's `saveAccessRule` REPLACE-vs-MERGE semantics irrelevant — we always send the full set.
+   - Means a `remove` request may end up calling `saveAccessRule` (not `revokeUser`) if the SBA seat still has remaining access from other grants after this removal.
+   - Resolves B-7 and B-8 by construction.
+6. **Description merge format** — synthesized from the SBA seat's primary grant + each `duplicate_grants[]` entry:
+   - Primary: `${scopeName} (${callings.join(', ') || reason})`
+   - Each duplicate: ` | ${dupScopeName} (${dupCallings.join(', ') || dupReason})`
+   - Final string: primary + each dup joined by ` | `. Matches the Kindoo manual convention.
+7. **ExpiryTimeZone**: read from the env's `TimeZone` field (from `KindooGetEnvironments` or persisted on `kindoo_config`). No IANA↔Windows mapping needed; Kindoo's wire format IS Windows-style.
+8. **Temp-request date format**: full-day bounds. For Invite: `${start_date} 00:00` / `${end_date} 23:59` (SPACE separator). For Edit: `${start_date}T00:00` / `${end_date}T23:59` (T separator). See "Date format choreography" below — formats differ per endpoint.
+9. **Remove with user-not-in-Kindoo**: auto-complete the SBA request as a no-op (`provisioning_note: "User was not in Kindoo (no-op)."`).
+10. **Audit**: extend `markRequestComplete` to accept optional Kindoo metadata. Persist on the request doc; auditTrigger picks it up.
+
+### Two-IDs gotcha (CRITICAL)
+
+Kindoo distinguishes two identifiers per environment-user. Both come back from `lookupUserByEmail`:
+
+| Operation | Field in request | Which ID |
+|---|---|---|
+| `SaveAccessRule` | `UID` | **UserID** (e.g. `85bea3c7-…`) |
+| `RevokeUserFromEnvironment` | `UID` | **UserID** |
+| `EditEnvironmentUserAdvancedSettings` | `euID` | **EUID** (env-scoped, e.g. `fcf38b4c-…`) |
+
+Orchestrator must keep them distinct. Conflating them silently fails on edit.
+
+### Date format choreography
+
+| Endpoint | Field | Format |
+|---|---|---|
+| `Invite` | `StartAccessDoorsDate` / `ExpiryDate` | `YYYY-MM-DD HH:MM` (space) |
+| `Edit` | `startAccessDoorsDateTime` / `expiryDate` | `YYYY-MM-DDTHH:MM` (T) |
+| Lookup returns | `StartAccessDoorsDateAtTimeZone` / `ExpiryDateAtTimeZone` | T (matches Edit — echo verbatim) |
+
+For Edit calls, prefer echoing the `…AtTimeZone` values from lookup. For Invite, compute fresh with the space separator.
 
 ### Architecture
 
-All Kindoo work runs in the content script (same as v2.1 — already on `web.kindoo.tech`, has `host_permissions` for `service89.kindoo.tech`, can read `localStorage.kindoo_token`). SBA `markRequestComplete` continues to round-trip through the SW.
+All Kindoo work runs in the content script (same as v2.1). SBA `markRequestComplete` continues to round-trip through the SW.
 
 ```
 extension/src/content/kindoo/
@@ -166,52 +193,130 @@ extension/src/content/kindoo/
 └── provision.ts            (NEW — orchestration)
 ```
 
-New endpoint wrappers in `endpoints.ts` (response shapes added to gitignored captures once each is exercised in staging):
+New endpoint wrappers in `endpoints.ts`:
 
-- `checkUserType(session, email)` → `{ exists: boolean; uid: string | null }`
-- `inviteUser(session, payload)` → `{ uid: string }` (single-user invite — extracts UID from response)
-- `saveAccessRule(session, uid, rids[])` → `{ ok: boolean }`
-- `lookupUserByEmail(session, keyword)` → `{ users: Array<{ uid, email, ... }> }` (paginated; v2.2 takes the first match)
-- `revokeUser(session, uid)` → `{ ok: boolean }`
+- `checkUserType(session, email)` → `{ exists: boolean }` — used as a cheap existence probe before deciding invite vs lookup. (Could be subsumed into `lookupUserByEmail` if its latency is similar; orchestrator just calls `lookupUserByEmail` first and treats `EUList.length === 0` as "not exists.")
+- `inviteUser(session, payload)` → `{ userId: string }` (single-user invite — extracts UserID from response; if response doesn't carry it, fall back to a follow-up `lookupUserByEmail` to resolve).
+- `saveAccessRule(session, userId, rids[])` → `{ ok: boolean }` — sends the COMPLETE rule set; orchestrator always computes the full target set, never a delta.
+- `editUser(session, euId, payload)` → `{ ok: boolean }` — `payload = { description, isTemp, startAccessDoorsDateTime, expiryDate, timeZone }`. Echo current values from lookup for fields not being changed.
+- `lookupUserByEmail(session, email)` → `KindooEnvironmentUser | null` — narrow the entry to the fields v2.2 needs: `EUID`, `UserID`, `Username`, `Description`, `IsTempUser`, `StartAccessDoorsDateAtTimeZone`, `ExpiryDateAtTimeZone`, `ExpiryTimeZone`, `AccessSchedules[]`. Filter `EUList` by exact `Username` match client-side (Kindoo's `keyWord` does substring).
+- `revokeUser(session, userId)` → `{ ok: boolean }`.
 
 ### Orchestration (`provision.ts`)
 
-Three high-level functions:
+Two top-level functions:
 
 ```ts
-provisionAddOrChange(req, stake, buildings, env, session): Promise<ProvisionResult>
-provisionRemove(req, session): Promise<ProvisionResult>
+provisionAddOrChange(req, seat, stake, buildings, env, session): Promise<ProvisionResult>
+provisionRemove(req, seat, stake, buildings, env, session): Promise<ProvisionResult>
 ```
 
-Where `ProvisionResult` is:
+`seat` is the SBA `Seat` doc for the request's subject (or `null` if it doesn't exist yet — only possible on a first-ever add for that member).
+
+Result:
+
 ```ts
 {
-  kindoo_uid: string | null;        // null only on no-op (remove-not-in-kindoo)
-  action: 'added' | 'updated' | 'removed' | 'noop-remove';
-  note: string;                     // human-readable summary; persists as provisioning_note
+  kindoo_uid: string | null;             // UserID; null only on noop-remove
+  action: 'invited' | 'updated' | 'removed' | 'noop-remove';
+  note: string;                          // synthesized; persists as provisioning_note
 }
 ```
 
+#### Compute step (shared)
+
+For ADD requests: compute the **post-completion** seat state by merging the request into the current seat:
+- `targetBuildings = unique(seat?.building_names ?? [] + request.building_names)`
+- Resulting `callings` / `duplicate_grants` per SBA's existing merge logic (extension mirrors what `markRequestComplete` will do server-side).
+
+For REMOVE requests: compute the **post-removal** seat state:
+- `targetBuildings = seat?.building_names.filter(b => !request.building_names.includes(b)) ?? []`
+- If the remove is whole-seat (the typical v2.2 single-stake case), `targetBuildings = []`.
+
+From `targetBuildings` + `buildings[].kindoo_rule`:
+- `targetRIDs = targetBuildings.map(b => buildings[b].kindoo_rule.rule_id)`. Block if any building lacks `kindoo_rule`.
+
+From the merged seat:
+- `targetDescription = synthesizeDescription(seat, request, stake, wards)` per the format in decision 6.
+
 #### add_manual / add_temp flow
 
-1. Resolve RIDs from `request.building_names` via `buildings[].kindoo_rule.rule_id`. Block if any building lacks a mapped rule.
-2. Resolve ExpiryTimeZone from env (already-fetched at panel mount; one extra getEnvironments call cached for the session).
-3. Resolve Description: `${scopeName} (${request.reason})`.
-4. `checkUserType(session, request.member_email)`.
-5. If not exists: `inviteUser(session, payload)` with the temp/permanent flags, dates, etc. Capture returned UID.
-6. `saveAccessRule(session, uid, rids)`.
-7. Synthesize note: `"Added X to Kindoo with access to Cordera Building, Pine Creek Building."` or `"Updated X's Kindoo access to Cordera Building."` based on the checkUserType branch.
+1. Compute `targetBuildings`, `targetRIDs`, `targetDescription` (above).
+2. `lookupUserByEmail(session, request.member_email)`.
+3. **Not found** (`EUList.length === 0` after exact-username filter):
+   - `inviteUser(session, payload)` with description, temp flag, dates, etc. Capture `UserID`.
+   - `saveAccessRule(session, UserID, targetRIDs)`.
+   - Action: `'invited'`. Note: `"Invited X to Kindoo with access to A, B."`.
+4. **Found**:
+   - From lookup: `EUID`, `UserID`, current `Description`, `IsTempUser`, `…AtTimeZone` values, `AccessSchedules`.
+   - If `targetDescription !== current.Description` OR `request.type === 'add_temp'` (temp flag / dates may need updating):
+     - `editUser(session, EUID, { description: targetDescription, isTemp: …, startAccessDoorsDateTime: …, expiryDate: …, timeZone: … })`. Echo current values for anything not being changed.
+   - If `sort(targetRIDs) !== sort(current.AccessSchedules.map(s => s.RuleID))`:
+     - `saveAccessRule(session, UserID, targetRIDs)`.
+   - Action: `'updated'`. Note: `"Updated X's Kindoo access to A, B."` (or whatever describes the actual diff).
 
 #### remove flow
 
-1. `lookupUserByEmail(session, request.member_email)`. First match wins (Kindoo's email index makes collisions extremely unlikely in practice; if multiple, future-us can add disambiguation).
-2. If no match: return `{ kindoo_uid: null, action: 'noop-remove', note: 'User was not in Kindoo (no-op).' }`.
-3. `revokeUser(session, uid)`.
-4. Synthesize note: `"Removed X from Kindoo."`.
+1. Compute `targetBuildings`, `targetRIDs`, `targetDescription`.
+2. `lookupUserByEmail(session, request.member_email)`.
+3. **Not found**: `{ kindoo_uid: null, action: 'noop-remove', note: "User was not in Kindoo (no-op)." }`.
+4. **Found** with `targetRIDs.length === 0` (full revoke):
+   - `revokeUser(session, UserID)`.
+   - Action: `'removed'`. Note: `"Removed X from Kindoo."`.
+5. **Found** with `targetRIDs.length > 0` (partial — user keeps remaining grants):
+   - `saveAccessRule(session, UserID, targetRIDs)`.
+   - If `targetDescription !== current.Description`: `editUser(…)` to drop the removed scope from the description.
+   - Action: `'updated'`. Note: `"Updated X's Kindoo access — now A, B."`.
 
-#### After Kindoo
+#### After Kindoo (all paths except noop-remove)
 
-Call existing `markRequestComplete` callable with `{ requestId, kindoo_uid?, provisioning_note? }`. Callable persists on the request doc.
+Call existing `markRequestComplete` callable with `{ requestId, kindoo_uid, provisioning_note }`. Callable persists on the request doc.
+
+### UI changes
+
+`RequestCard.tsx`:
+- Button label: `Add Kindoo Access` / `Remove Kindoo Access` depending on `request.type`.
+- Click → button disabled + inline spinner.
+- On success → modal-style `ResultDialog` rendered in the panel; dismiss returns to Queue.
+- On Kindoo error → spinner clears, error rendered inline. Button re-enabled (re-click resumes — orchestrator is idempotent because of the read-first pattern).
+- On Kindoo-OK-but-SBA-fail → result dialog shows partial success with a "Mark Complete in SBA" retry button that calls `markRequestComplete` with the captured `kindoo_uid` + `provisioning_note`.
+
+New `ResultDialog.tsx` — shows the synthesized note + dismiss button.
+
+### Schema additions
+
+**`packages/shared/src/types/request.ts`** — extend `AccessRequest`:
+
+```ts
+export type AccessRequest = {
+  // … existing fields …
+  /** Kindoo UserID captured at provision time. Optional — only set when v2.2 provisioning succeeded. */
+  kindoo_uid?: string;
+  /** Human-readable summary of what v2.2 did in Kindoo. */
+  provisioning_note?: string;
+};
+```
+
+### Functions changes
+
+**`functions/src/callable/markRequestComplete.ts`** — extend input to optionally accept `kindoo_uid` + `provisioning_note`. Persist both on the request doc in the existing transaction.
+
+### Firestore rules
+
+`stakes/{stakeId}/requests/{requestId}` — managers may write the new optional fields. Standard validator pattern matching v2.1's `kindoo_config` rule.
+
+### New wire-protocol message (SW ↔ CS)
+
+`data.getSeatByEmail({ canonical }): Promise<Seat | null>` — CS asks SW for the SBA seat doc for the request's subject. Used by the orchestrator's compute step. SW reads `stakes/{STAKE_ID}/seats/{canonical}` via Firestore SDK.
+
+### Test surface
+
+- **Unit:** each new endpoint wrapper (envelope assembly, response parsing — happy + each error arm).
+- **Unit:** orchestrator compute step (merge + remove math + description synthesis + RID diff detection).
+- **Unit:** orchestrator branching (mock the Kindoo client + the seat fetch — exercise: new user, existing user no-op, existing user description-only change, existing user rules-only change, existing user both, remove full, remove partial, remove not-in-Kindoo).
+- **Component:** `RequestCard` with the new button + spinner + result dialog. Mock provision module.
+- **Functions:** `markRequestComplete` accepts and persists the new optional fields.
+- **Rules:** new field writes allowed for managers, denied otherwise.
 
 ### UI changes
 
