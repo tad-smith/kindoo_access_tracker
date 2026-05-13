@@ -531,6 +531,32 @@ describe('provisionAddOrChange — guards', () => {
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, 'new-uid', [6248], undefined);
   });
 
+  it('respects req.building_names on ward-scope requests with multiple buildings', async () => {
+    // Regression for the bug where buildingsForRequest ignored
+    // req.building_names for non-stake scope and only returned the
+    // ward's single building_name — losing any additional buildings
+    // the requester selected.
+    lookupUserByEmailMock.mockResolvedValue(null);
+    inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'CO',
+        building_names: ['Cordera Building', 'Pine Creek Building'],
+      }),
+      seat: null,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Both buildings → both rules.
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, 'new-uid', [6248, 6249], undefined);
+  });
+
   it('falls back to member_email in the note when member_name is empty', async () => {
     lookupUserByEmailMock.mockResolvedValue(null);
     inviteUserMock.mockResolvedValue({ uid: 'new-uid' });

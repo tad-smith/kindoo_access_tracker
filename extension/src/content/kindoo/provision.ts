@@ -101,14 +101,19 @@ function resolveScopeName(scope: string, stake: Stake, wards: Ward[]): string {
 
 /**
  * Resolve the buildings the request grants access to into building
- * names. For `scope === 'stake'`, the request's `building_names[]` is
- * the explicit list. For a ward scope, the building is implicit —
- * pulled from the ward doc's `building_name` field.
+ * names. Trust `req.building_names` as the source of truth regardless
+ * of scope — SBA's submit form populates it (for stake scope from the
+ * requester's selection; for ward scope inheriting from the ward's
+ * `building_name`). Fall back to the ward's building only for legacy
+ * requests where `req.building_names` is empty on a ward scope.
  */
 function buildingsForRequest(req: AccessRequest, wards: Ward[]): string[] {
-  if (req.scope === 'stake') return [...req.building_names];
-  const ward = wards.find((w) => w.ward_code === req.scope);
-  return ward ? [ward.building_name] : [];
+  if (req.building_names.length > 0) return [...req.building_names];
+  if (req.scope !== 'stake') {
+    const ward = wards.find((w) => w.ward_code === req.scope);
+    if (ward) return [ward.building_name];
+  }
+  return [];
 }
 
 /** Stable, de-duplicated union of two string lists. */
