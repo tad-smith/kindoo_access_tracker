@@ -77,8 +77,8 @@ extension/
 ## Don't
 
 - **Don't talk directly to Firestore from the extension.** Go through the callables.
-- **Don't reach into Kindoo's DOM in v1.** The slide-over is a self-contained panel; it does not read or modify Kindoo page state. v2 may automate Kindoo's admin UI; that requires its own design pass.
-- **Don't read Kindoo's `localStorage` in v1.** The keys documented in the "Kindoo runtime state — v2 reference" section below are for future use only. v1 must not depend on Kindoo's storage shape; if Kindoo changes it, our extension keeps working.
+- **Don't reach into Kindoo's DOM.** The slide-over is a self-contained panel; it does not read or modify Kindoo page state. v2.2 will call the Kindoo API from the content script (no DOM scraping) per `extension/docs/v2-design.md`.
+- **Don't read Kindoo's `localStorage` outside the documented `kindoo/auth.ts` helper.** The keys are documented in the Kindoo runtime state section; readers route through that helper so we have one place to handle missing/expired state.
 - **Don't bundle production credentials.** Firebase web SDK config is public; the Google OAuth client ID is public-by-design; nothing else ships in the bundle.
 - **Don't depend on `apps/web/` code.** Share types via `@kindoo/shared`. The extension is its own consumer.
 - **Don't touch the Chrome storage keys** declared in `lib/messaging.ts` `STORAGE_KEYS` from outside the SW + the content-script mount file — they are owned by those two surfaces. If you need to read them from a new place, route through a message.

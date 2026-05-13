@@ -25,6 +25,12 @@ interface QueuePanelProps {
    * root switches to `NotAuthorizedPanel`.
    */
   onPermissionDenied: () => void;
+  /**
+   * Called when the operator clicks the reconfigure entry-point in the
+   * header. Used for adding a newly-created building, remapping rules,
+   * or recovering from a site-identity change.
+   */
+  onReconfigure?: () => void;
 }
 
 type FetchState =
@@ -32,7 +38,7 @@ type FetchState =
   | { status: 'ready'; requests: AccessRequest[] }
   | { status: 'error'; message: string };
 
-export function QueuePanel({ email, onPermissionDenied }: QueuePanelProps) {
+export function QueuePanel({ email, onPermissionDenied, onReconfigure }: QueuePanelProps) {
   const [state, setState] = useState<FetchState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -102,6 +108,16 @@ export function QueuePanel({ email, onPermissionDenied }: QueuePanelProps) {
           {email ? <div className="sba-header-meta">{email}</div> : null}
         </div>
         <div className="sba-request-actions">
+          {onReconfigure ? (
+            <button
+              type="button"
+              className="sba-btn-link"
+              onClick={onReconfigure}
+              data-testid="sba-reconfigure"
+            >
+              Configure Kindoo
+            </button>
+          ) : null}
           <button
             type="button"
             className="sba-btn"

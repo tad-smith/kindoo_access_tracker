@@ -107,4 +107,54 @@ describe('extensionApi', () => {
     const { signIn } = await import('./extensionApi');
     await expect(signIn()).rejects.toMatchObject({ code: 'sw-unreachable' });
   });
+
+  it('getStakeConfig posts data.getStakeConfig and unwraps the bundle', async () => {
+    const bundle = {
+      stake: { stake_id: 'csnorth', stake_name: 'CSN' },
+      buildings: [{ building_id: 'b1', building_name: 'B1' }],
+    };
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: true, data: bundle });
+      },
+    );
+    const { getStakeConfig } = await import('./extensionApi');
+    const result = await getStakeConfig();
+    expect(chromeStub().runtime.sendMessage).toHaveBeenCalledWith(
+      { type: 'data.getStakeConfig' },
+      expect.any(Function),
+    );
+    expect(result).toEqual(bundle);
+  });
+
+  it('writeKindooConfig posts data.writeKindooConfig with the payload', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: true, data: { ok: true } });
+      },
+    );
+    const { writeKindooConfig } = await import('./extensionApi');
+    const payload = {
+      siteId: 27994,
+      siteName: 'CSN',
+      buildingRules: [{ buildingId: 'b1', ruleId: 6248, ruleName: 'Doors' }],
+    };
+    await writeKindooConfig(payload);
+    expect(chromeStub().runtime.sendMessage).toHaveBeenCalledWith(
+      { type: 'data.writeKindooConfig', payload },
+      expect.any(Function),
+    );
+  });
+
+  it('writeKindooConfig throws on a wire-level error', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: false, error: { code: 'permission-denied', message: 'no' } });
+      },
+    );
+    const { writeKindooConfig } = await import('./extensionApi');
+    await expect(
+      writeKindooConfig({ siteId: 1, siteName: 'X', buildingRules: [] }),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+  });
 });

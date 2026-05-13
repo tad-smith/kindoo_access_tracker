@@ -16,10 +16,12 @@
 // already handles.
 
 import type {
+  Building,
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
+  Stake,
 } from '@kindoo/shared';
 
 /** Reduced user shape — the only auth fields the panel renders. */
@@ -69,6 +71,43 @@ export interface PanelTogglePushRequest {
   type: 'panel.togglePushedFromSw';
 }
 
+// ---- v2.1 configuration -----------------------------------------------
+
+/**
+ * One-shot read of the stake doc + every building doc under it. The
+ * Configure panel uses this to (a) verify the stake name against
+ * Kindoo's site name, and (b) render one row per building for rule
+ * assignment.
+ */
+export interface DataGetStakeConfigRequest {
+  type: 'data.getStakeConfig';
+}
+
+export interface DataGetStakeConfigPayload {
+  stake: Stake;
+  buildings: Building[];
+}
+
+/**
+ * Persist the operator's site-verification + per-building rule
+ * assignments. SW does a single batched write so partial application
+ * is impossible.
+ */
+export interface DataWriteKindooConfigRequest {
+  type: 'data.writeKindooConfig';
+  payload: WriteKindooConfigPayload;
+}
+
+export interface WriteKindooConfigPayload {
+  siteId: number;
+  siteName: string;
+  buildingRules: Array<{
+    buildingId: string;
+    ruleId: number;
+    ruleName: string;
+  }>;
+}
+
 /** Discriminated union of every request the panel may send. */
 export type ExtensionRequest =
   | AuthGetStateRequest
@@ -76,7 +115,9 @@ export type ExtensionRequest =
   | AuthSignOutRequest
   | ApiGetMyPendingRequestsRequest
   | ApiMarkRequestCompleteRequest
-  | PanelTogglePushRequest;
+  | PanelTogglePushRequest
+  | DataGetStakeConfigRequest
+  | DataWriteKindooConfigRequest;
 
 // ---- Response envelopes ------------------------------------------------
 
@@ -87,6 +128,8 @@ export type AuthSignInResponse = Result<AuthSnapshot>;
 export type AuthSignOutResponse = Result<{ done: true }>;
 export type ApiGetMyPendingRequestsResponse = Result<GetMyPendingRequestsOutput>;
 export type ApiMarkRequestCompleteResponse = Result<MarkRequestCompleteOutput>;
+export type DataGetStakeConfigResponse = Result<DataGetStakeConfigPayload>;
+export type DataWriteKindooConfigResponse = Result<{ ok: true }>;
 
 /** Lookup from a request `type` to its response shape. */
 export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequest
@@ -99,7 +142,11 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
         ? ApiGetMyPendingRequestsResponse
         : R extends ApiMarkRequestCompleteRequest
           ? ApiMarkRequestCompleteResponse
-          : never;
+          : R extends DataGetStakeConfigRequest
+            ? DataGetStakeConfigResponse
+            : R extends DataWriteKindooConfigRequest
+              ? DataWriteKindooConfigResponse
+              : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 
