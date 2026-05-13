@@ -45,6 +45,37 @@ Somewhere in 1–4 the chain breaks on iOS specifically. Verified: latest stagin
 
 ---
 
+## [B-5] auditTrigger misattributes out-of-band writes to the doc's prior `lastActor`
+Status: open
+Owner: @backend-engineer
+Phase: post Phase 11
+
+`auditTrigger` resolves the actor of an entity write by reading the `lastActor` ActorRef on the after-snapshot of the modified doc. Client paths and Cloud Functions that mutate entities always stamp a fresh `lastActor` alongside the rest of the write, so the field on the after-snapshot reflects who actually made the change and the audit attribution is correct. Out-of-band writes that don't go through those paths — Firestore Console edits, ad-hoc `gcloud firestore` CLI tweaks, scripted Admin-SDK writes that forget to set `lastActor` — leave the field untouched. The audit trigger then reads whatever `lastActor` was already on the doc (typically the most recent scheduled function or trigger that wrote it) and records that prior actor as the author of the new change.
+
+**Symptom:** the audit row's `actor`, field-level `before` / `after` diff, and `op` are all populated, but `actor` names a function or user who did not in fact make the change being recorded. The diff itself is correct — only the attribution is wrong.
+
+**Concrete instance (prod, 2026-05-13):** operator manually edited `stakes/csnorth.kindoo_expected_site_name` in the Firebase Console to drop the `STAGING - ` prefix. The most recent prior write to that doc was from the `runExpiry` scheduled function, which had stamped `lastActor: ExpiryTrigger`. The audit row recording the Console edit reads:
+
+- `actor: ExpiryTrigger`
+- `op: update_stake`
+- `changed: kindoo_expected_site_name`
+- `before: STAGING - Colorado Springs North Stake`
+- `after: Colorado Springs North Stake`
+
+**Repro:** any Firestore Console edit (or other out-of-band write that doesn't stamp `lastActor`) to a doc that has a non-empty `lastActor` from a prior write. Confirm by inspecting the resulting audit row — it will name the previous writer, not the actor who just made the change.
+
+**Severity:** low. No data-integrity impact (the field-level diff is correct); no security impact (Console / CLI writes bypass rules by definition and are gated at the IAM layer, not by audit attribution). The gap is purely in traceability — a row that says "this function changed this field" when the function did nothing of the kind.
+
+**Root cause:** `functions/src/triggers/auditTrigger.ts` trusts `after.lastActor` as the source of attribution unconditionally. There is no check that the current write actually changed `lastActor`, so writes that leave the field stale silently inherit the prior actor.
+
+**Proposed fix (post-v2.1):** compare `before.lastActor` and `after.lastActor`. When the two are equal AND the write mutated other fields, the trigger has no way to know who the real actor was — record a sentinel ActorRef like `{ email: 'out-of-band', canonical: 'out-of-band', source: 'console' }` (exact shape TBD; the field set should signal "attribution unknown, write did not come through a `lastActor`-stamping path"). The Admin Audit page in `apps/web` renders this distinctly from real actors so an operator scanning audit history can immediately tell a Console / CLI edit from an in-app action.
+
+**Won't fix in v2.1 (PR #83).** The extension v2.1 PR is scoped narrowly; this gap predates it and isn't on its critical path. File and defer to a separate backend-engineer task after v2.1 lands.
+
+**Branch / PR:** none — fix not yet scheduled.
+
+---
+
 ## [B-2] setupGate bootstrap-admin fallback uses `??` where `||` is needed
 Status: closed (fixed in PR #81)
 Owner: @web-engineer
