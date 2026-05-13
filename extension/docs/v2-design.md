@@ -134,27 +134,131 @@ Firestore writes are done by the SW (it owns the Firebase Auth session) in a sin
 - **Rules:** Firestore rule tests for the new field writes (manager allowed; non-manager denied).
 - **No E2E** for v2.1 — Playwright MV3 + Kindoo is still deferred.
 
-## v2.2 — Provision & Complete (outline)
+## v2.2 — Provision & Complete
 
-To be designed in detail before implementation. Key shape:
+Closes the loop: from the same panel, the manager provisions (add / remove / change-access) the user in Kindoo with one click, then SBA's request flips to complete.
 
-- "Mark Complete" button → "Provision & Complete."
-- On click, content script:
-  1. Read SessionTokenID + EID from localStorage. Fail-fast if missing.
-  2. Validate the relevant buildings all have `kindoo_rule` set. If not, block + offer Reconfigure.
-  3. For `add_manual` / `add_temp`: `KindooCheckUserTypeInKindoo` → if new, `KindooCheckUserTypeAndInviteAccordingToType` → `KindooSaveAccessRuleFromListOfAccessSchedules(RIDs)`.
-  4. For `remove`: `KindooGetEnvironmentUsersLightWithTotalNumberOfRecords` (lookup) → `KindooRevokeUserFromEnvironment`.
-  5. For change-access (existing user, different rules): `SaveAccessRuleFromListOfAccessSchedules` with the new RIDs. No new SBA RequestType — falls out of the existing flow naturally when an `add_manual` targets a user Kindoo already knows about.
-  6. On Kindoo success → call SBA's existing `markRequestComplete` callable.
-  7. On Kindoo-succeeded-but-SBA-failed: show a recovery button "Mark Complete" (SBA-only retry; Kindoo work already done).
+### Locked-in decisions (v2.2)
 
-Constants per request:
-- `UserRole=2` always.
-- `CCInEmail=false` (matches current operator default).
-- `IsTempUser=true` for `add_temp`, else `false`.
-- `StartAccessDoorsDate` / `ExpiryDate` from `request.start_date` / `request.end_date` for `add_temp`; `null` otherwise.
-- `ExpiryTimeZone="Mountain Standard Time"` — hardcoded for v1 single-stake. Future per-stake field if we expand.
-- `Description`: synthesized from `request.scope` + `request.reason`. Format per the observed convention: `Ward Name (Reason)` or `Stake Name (Reason)`. (See `v2-kindoo-api-capture.md` § "Add-user form".)
+1. **No confirmation dialog before provisioning.** The RequestCard already shows everything (email, scope, buildings, reason, type); a "are you sure?" step adds friction without value. Operator chose Option B for this reason.
+2. **Button label varies by request type:**
+   - `add_manual` / `add_temp` → `Add Kindoo Access`
+   - `remove` → `Remove Kindoo Access`
+   - Existing user matched on an add request → still `Add Kindoo Access` (the UI doesn't tell add-vs-change-access apart; it's the same flow).
+3. **Result confirmation dialog after every action.** Synthesized message describes what was done. Same dialog text is persisted on the request doc as a `provisioning_note` for audit traceability.
+4. **Single spinner during the call** — no per-step progress. Escalate to multi-step if calls turn out to be slow.
+5. **Description format**: `${scopeName} (${request.reason})`. `scopeName` resolves to the ward's `building_name`-equivalent display (read from the ward doc) for ward scope, or the stake name for stake scope.
+6. **ExpiryTimeZone**: re-fetched from `KindooGetEnvironments` at provision time. Use the env entry's `TimeZone` field verbatim — already in Kindoo's wire format. No IANA↔Windows mapping needed.
+7. **Temp-request date format**: full-day bounds. `StartAccessDoorsDate = ${request.start_date} 00:00`, `ExpiryDate = ${request.end_date} 23:59`. No time-of-day field added to SBA's request schema in v2.2; defer if anyone wants finer control.
+8. **Remove with user-not-in-Kindoo**: auto-complete the SBA request as a no-op. Mirrors SBA's existing R-1 race annotation pattern (`completion_note: "User was not in Kindoo (no-op)"`). Operator sees the result dialog noting the no-op.
+9. **Existing-user-on-add**: silent update path. CheckUserType returns existing → skip invite → SaveAccessRule with the new RIDs. The result dialog text reflects what actually happened ("Updated X's access" vs "Added X").
+10. **Audit**: extend `markRequestComplete` to accept optional Kindoo metadata. Persist on the request doc; no new collection. Captured via the existing auditTrigger.
+
+### Architecture
+
+All Kindoo work runs in the content script (same as v2.1 — already on `web.kindoo.tech`, has `host_permissions` for `service89.kindoo.tech`, can read `localStorage.kindoo_token`). SBA `markRequestComplete` continues to round-trip through the SW.
+
+```
+extension/src/content/kindoo/
+├── client.ts               (existing — multipart envelope)
+├── auth.ts                 (existing — read SessionTokenID + EID)
+├── endpoints.ts            (existing read-only + NEW write endpoints)
+└── provision.ts            (NEW — orchestration)
+```
+
+New endpoint wrappers in `endpoints.ts` (response shapes added to gitignored captures once each is exercised in staging):
+
+- `checkUserType(session, email)` → `{ exists: boolean; uid: string | null }`
+- `inviteUser(session, payload)` → `{ uid: string }` (single-user invite — extracts UID from response)
+- `saveAccessRule(session, uid, rids[])` → `{ ok: boolean }`
+- `lookupUserByEmail(session, keyword)` → `{ users: Array<{ uid, email, ... }> }` (paginated; v2.2 takes the first match)
+- `revokeUser(session, uid)` → `{ ok: boolean }`
+
+### Orchestration (`provision.ts`)
+
+Three high-level functions:
+
+```ts
+provisionAddOrChange(req, stake, buildings, env, session): Promise<ProvisionResult>
+provisionRemove(req, session): Promise<ProvisionResult>
+```
+
+Where `ProvisionResult` is:
+```ts
+{
+  kindoo_uid: string | null;        // null only on no-op (remove-not-in-kindoo)
+  action: 'added' | 'updated' | 'removed' | 'noop-remove';
+  note: string;                     // human-readable summary; persists as provisioning_note
+}
+```
+
+#### add_manual / add_temp flow
+
+1. Resolve RIDs from `request.building_names` via `buildings[].kindoo_rule.rule_id`. Block if any building lacks a mapped rule.
+2. Resolve ExpiryTimeZone from env (already-fetched at panel mount; one extra getEnvironments call cached for the session).
+3. Resolve Description: `${scopeName} (${request.reason})`.
+4. `checkUserType(session, request.member_email)`.
+5. If not exists: `inviteUser(session, payload)` with the temp/permanent flags, dates, etc. Capture returned UID.
+6. `saveAccessRule(session, uid, rids)`.
+7. Synthesize note: `"Added X to Kindoo with access to Cordera Building, Pine Creek Building."` or `"Updated X's Kindoo access to Cordera Building."` based on the checkUserType branch.
+
+#### remove flow
+
+1. `lookupUserByEmail(session, request.member_email)`. First match wins (Kindoo's email index makes collisions extremely unlikely in practice; if multiple, future-us can add disambiguation).
+2. If no match: return `{ kindoo_uid: null, action: 'noop-remove', note: 'User was not in Kindoo (no-op).' }`.
+3. `revokeUser(session, uid)`.
+4. Synthesize note: `"Removed X from Kindoo."`.
+
+#### After Kindoo
+
+Call existing `markRequestComplete` callable with `{ requestId, kindoo_uid?, provisioning_note? }`. Callable persists on the request doc.
+
+### UI changes
+
+`RequestCard.tsx`:
+- Button label: `Add Kindoo Access` / `Remove Kindoo Access` depending on `request.type`.
+- Click → button disabled + inline spinner.
+- On success → modal-style result dialog rendered in the panel; dismiss returns to Queue (card disappears).
+- On Kindoo error → spinner clears, error rendered inline below the button. Button re-enabled (re-click resumes from CheckUserType / lookup — idempotent).
+- On Kindoo-OK-but-SBA-fail → result dialog shows partial success message with a "Mark Complete in SBA" retry button that calls `markRequestComplete` with the captured `kindoo_uid` + provisioning_note (no Kindoo retry).
+
+New `ResultDialog.tsx` component — shows the synthesized note + dismiss button.
+
+### Schema additions
+
+**`packages/shared/src/types/request.ts`** — extend `AccessRequest`:
+
+```ts
+export type AccessRequest = {
+  // … existing fields …
+  /** Kindoo internal user id captured at provision time. Optional — only set when v2.2 provisioning succeeded. */
+  kindoo_uid?: string;
+  /** Human-readable summary of what v2.2 did in Kindoo. Optional — same shape contract as `completion_note`. */
+  provisioning_note?: string;
+};
+```
+
+### Functions changes
+
+**`functions/src/callable/markRequestComplete.ts`** — extend input schema to optionally accept `kindoo_uid` + `provisioning_note`. Persist both on the request doc in the same transaction that flips status to complete. The auditTrigger picks them up automatically.
+
+Input validation: both fields optional; when present, both must be strings; `provisioning_note` max length ~500 chars.
+
+### Firestore rules
+
+`stakes/{stakeId}/requests/{requestId}` — managers may write `kindoo_uid` and `provisioning_note` (in addition to whatever fields they can already write at completion). Standard validator pattern matching v2.1's `kindoo_config` rule.
+
+### Test surface
+
+- **Unit:** each new endpoint wrapper (request envelope, response parsing — happy + each error arm). Mock `fetch`.
+- **Component:** `RequestCard` with the new button + spinner + result dialog. Mock the provision module.
+- **Integration:** orchestration paths (mock the Kindoo client, exercise each branch — new user, existing user, no-op remove, Kindoo-OK-SBA-fail).
+- **Functions:** `markRequestComplete` accepts and persists the new optional fields.
+- **Rules:** new field writes allowed for managers, denied otherwise.
+
+### Phasing within v2.2
+
+**One PR.** add / remove / change flows share most of the code (lookup, error handling, payload assembly); splitting would multiply review surface without reducing risk.
 
 ## Out of scope for v2
 
@@ -162,13 +266,13 @@ Constants per request:
 - Mutating Kindoo's site-level config (site name, capacity, etc.).
 - Bulk operations. Each request is its own provision call.
 - Multi-stake (Phase 12). The config schema is stake-scoped already (Stake doc + per-building); multi-stake will work without re-design.
+- Time-of-day on temp requests. Full-day bounds used in v2.2; if a manager needs finer control they can edit the user in Kindoo directly post-provision.
 
-## Open follow-ups for v2.2 (do not block v2.1)
+## Open follow-ups (post-v2.2)
 
-- Per-stake `ExpiryTimeZone` config — currently a hardcoded constant.
-- Description templating — should it be operator-configurable per stake?
-- Error recovery: when Kindoo's `Invite` succeeds but `SaveAccessRule` fails, the user is half-created. Need a "retry rule only" button or a redo-from-step.
-- Soft-delete semantics on remove. Does `KindooRevokeUserFromEnvironment` delete the user record or just unlink them from this environment? Capture confirms the latter (the name suggests `Environment`-scoped removal). Need to verify they don't keep door access via another path.
+- Operator-configurable Description template per stake.
+- Disambiguation when `lookupUserByEmail` returns multiple matches (defer until it actually happens).
+- Verify `KindooRevokeUserFromEnvironment` semantics — does it remove site access only, or all access globally? Name suggests environment-scoped; confirm with a post-revoke check.
 
 ## Capture reference
 
