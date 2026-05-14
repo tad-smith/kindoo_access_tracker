@@ -109,13 +109,20 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 | seat | Kindoo user, unparseable | `kindoo-unparseable` (flag for review) |
 | seat | Kindoo user, parsed primary scope ≠ seat.scope | `scope-mismatch` |
 | seat | Kindoo user, intended type ≠ seat.type | `type-mismatch` |
-| seat | Kindoo user, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` |
+| seat (manual/temp) | Kindoo user, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` |
+| seat (auto) | Kindoo user, any AccessSchedules state | (buildings check skipped — see below) |
 | seat | Kindoo user, classifier hit "mixed callings" | `mixed-callings` (flag for review) |
 | seat | Kindoo user, all-good | (no row) |
 
 Severity:
 - `sba-only`, `kindoo-only`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch` → **drift** (real divergence).
 - `kindoo-unparseable`, `mixed-callings` → **review** (operator-judgment needed).
+
+**Auto seats skip the buildings comparison.** Auto-imported users (the Church Access Automation flow, ~310 of 313 users in production) receive door access via **direct door grants keyed by `VidName`**, not via `AccessSchedules`. The bulk listing endpoint (`GetEnvironmentUsersLightWithTotalNumberOfRecordsWithEntryPoints`) only exposes `AccessSchedules` on the user — direct door grants are NOT included. Auto users therefore come back with `AccessSchedules: []` regardless of how much actual access they have, so comparing it would always show false-positive drift. Manual and temp seats ARE provisioned by SBA via `AccessSchedules` (the v2.2 Provision & Complete flow writes via `saveAccessRule`), so for those the comparison is meaningful and runs as before. The scope-mismatch and type-mismatch checks above still run for auto seats; only the buildings check is gated.
+
+Proper auto-user reconciliation would require per-user `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints` calls (313 calls in our current env) and is deferred to Phase 2.
+
+**`kindoo-only` rows with `intended.type === 'auto'` are NOT filtered.** Even when the Kindoo user's description classifies as auto, the absence of an SBA seat is still drift — these users need to be imported into SBA. The drift row stays.
 
 ### UI (`SyncPanel.tsx`)
 
