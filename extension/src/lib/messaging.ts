@@ -23,7 +23,9 @@ import type {
   MarkRequestCompleteOutput,
   Seat,
   Stake,
+  StakeCallingTemplate,
   Ward,
+  WardCallingTemplate,
 } from '@kindoo/shared';
 
 /** Reduced user shape — the only auth fields the panel renders. */
@@ -130,6 +132,23 @@ export interface DataGetSeatByEmailRequest {
   canonical: string;
 }
 
+/**
+ * One-shot read of every collection the Sync feature needs to compute
+ * drift between SBA's seat state and Kindoo's user state.
+ */
+export interface DataGetSyncDataRequest {
+  type: 'data.getSyncData';
+}
+
+export interface SyncDataBundle {
+  stake: Stake;
+  wards: Ward[];
+  buildings: Building[];
+  seats: Seat[];
+  wardCallingTemplates: WardCallingTemplate[];
+  stakeCallingTemplates: StakeCallingTemplate[];
+}
+
 /** Discriminated union of every request the panel may send. */
 export type ExtensionRequest =
   | AuthGetStateRequest
@@ -140,7 +159,8 @@ export type ExtensionRequest =
   | PanelTogglePushRequest
   | DataGetStakeConfigRequest
   | DataWriteKindooConfigRequest
-  | DataGetSeatByEmailRequest;
+  | DataGetSeatByEmailRequest
+  | DataGetSyncDataRequest;
 
 // ---- Response envelopes ------------------------------------------------
 
@@ -154,6 +174,7 @@ export type ApiMarkRequestCompleteResponse = Result<MarkRequestCompleteOutput>;
 export type DataGetStakeConfigResponse = Result<DataGetStakeConfigPayload>;
 export type DataWriteKindooConfigResponse = Result<{ ok: true }>;
 export type DataGetSeatByEmailResponse = Result<Seat | null>;
+export type DataGetSyncDataResponse = Result<SyncDataBundle>;
 
 /** Lookup from a request `type` to its response shape. */
 export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequest
@@ -172,7 +193,9 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
               ? DataWriteKindooConfigResponse
               : R extends DataGetSeatByEmailRequest
                 ? DataGetSeatByEmailResponse
-                : never;
+                : R extends DataGetSyncDataRequest
+                  ? DataGetSyncDataResponse
+                  : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 

@@ -27,6 +27,9 @@ interface QueuePanelProps {
    * or recovering from a site-identity change.
    */
   onReconfigure?: () => void;
+  /** Called when the operator clicks the Sync entry-point in the
+   * header. Routes to the read-only drift report (Sync Phase 1). */
+  onOpenSync?: () => void;
 }
 
 type FetchState =
@@ -34,7 +37,13 @@ type FetchState =
   | { status: 'ready'; requests: AccessRequest[] }
   | { status: 'error'; message: string };
 
-export function QueuePanel({ email, bundle, onPermissionDenied, onReconfigure }: QueuePanelProps) {
+export function QueuePanel({
+  email,
+  bundle,
+  onPermissionDenied,
+  onReconfigure,
+  onOpenSync,
+}: QueuePanelProps) {
   const [state, setState] = useState<FetchState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
 
@@ -84,6 +93,16 @@ export function QueuePanel({ email, bundle, onPermissionDenied, onReconfigure }:
           {email ? <div className="sba-header-meta">{email}</div> : null}
         </div>
         <div className="sba-request-actions">
+          {onOpenSync ? (
+            <button
+              type="button"
+              className="sba-btn-link"
+              onClick={onOpenSync}
+              data-testid="sba-open-sync"
+            >
+              Sync
+            </button>
+          ) : null}
           {onReconfigure ? (
             <button
               type="button"

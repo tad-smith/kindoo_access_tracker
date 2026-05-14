@@ -33,6 +33,7 @@ import { ConfigurePanel } from './ConfigurePanel';
 import { NotAuthorizedPanel } from './NotAuthorizedPanel';
 import { QueuePanel } from './QueuePanel';
 import { SignedOutPanel } from './SignedOutPanel';
+import { SyncPanel } from './SyncPanel';
 
 type ConfigStatus =
   | { kind: 'loading' }
@@ -53,6 +54,7 @@ export function App() {
   const [notAuthorized, setNotAuthorized] = useState(false);
   const [configStatus, setConfigStatus] = useState<ConfigStatus>({ kind: 'loading' });
   const [reconfiguring, setReconfiguring] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const refreshConfig = useCallback(async () => {
     setConfigStatus({ kind: 'loading' });
@@ -93,6 +95,7 @@ export function App() {
     // re-runs the manager probe.
     if (notAuthorized) setNotAuthorized(false);
     if (reconfiguring) setReconfiguring(false);
+    if (syncing) setSyncing(false);
     return <SignedOutPanel />;
   }
 
@@ -151,12 +154,17 @@ export function App() {
     return <ConfigurePanel email={authState.email} onComplete={onComplete} />;
   }
 
+  if (syncing) {
+    return <SyncPanel email={authState.email} onBack={() => setSyncing(false)} />;
+  }
+
   return (
     <QueuePanel
       email={authState.email}
       bundle={configStatus.bundle}
       onPermissionDenied={() => setNotAuthorized(true)}
       onReconfigure={() => setReconfiguring(true)}
+      onOpenSync={() => setSyncing(true)}
     />
   );
 }

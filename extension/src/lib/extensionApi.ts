@@ -29,13 +29,18 @@ import type {
   DataGetStakeConfigPayload,
   DataGetStakeConfigRequest,
   DataGetStakeConfigResponse,
+  DataGetSyncDataRequest,
+  DataGetSyncDataResponse,
   DataWriteKindooConfigRequest,
   DataWriteKindooConfigResponse,
   ExtensionRequest,
   ResponseFor,
+  SyncDataBundle,
   WireError,
   WriteKindooConfigPayload,
 } from './messaging';
+
+export type { SyncDataBundle } from './messaging';
 
 /** Public alias for the stake-config bundle the panel passes between
  * components. */
@@ -204,5 +209,15 @@ export async function writeKindooConfig(payload: WriteKindooConfigPayload): Prom
 export async function getSeatByEmail(canonical: string): Promise<Seat | null> {
   const req: DataGetSeatByEmailRequest = { type: 'data.getSeatByEmail', canonical };
   const res: DataGetSeatByEmailResponse = await sendMessage(req);
+  return unwrap(res);
+}
+
+/**
+ * One-shot read of every Firestore collection the Sync feature needs.
+ * Used by `SyncPanel` to compute drift between SBA and Kindoo.
+ */
+export async function getSyncData(): Promise<SyncDataBundle> {
+  const req: DataGetSyncDataRequest = { type: 'data.getSyncData' };
+  const res: DataGetSyncDataResponse = await sendMessage(req);
   return unwrap(res);
 }

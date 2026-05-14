@@ -13,7 +13,14 @@
 // authorisation.
 
 import { collection, doc, getDoc, getDocs, serverTimestamp, writeBatch } from 'firebase/firestore';
-import type { Building, Seat, Stake, Ward } from '@kindoo/shared';
+import type {
+  Building,
+  Seat,
+  Stake,
+  StakeCallingTemplate,
+  Ward,
+  WardCallingTemplate,
+} from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
@@ -24,6 +31,15 @@ interface StakeConfigBundle {
   stake: Stake;
   buildings: Building[];
   wards: Ward[];
+}
+
+export interface SyncDataBundle {
+  stake: Stake;
+  wards: Ward[];
+  buildings: Building[];
+  seats: Seat[];
+  wardCallingTemplates: WardCallingTemplate[];
+  stakeCallingTemplates: StakeCallingTemplate[];
 }
 
 /**
@@ -100,6 +116,51 @@ export async function writeKindooConfig(
   }
 
   await batch.commit();
+}
+
+/**
+ * One-shot read of every collection the Sync feature needs. Stake doc
+ * + wards + buildings + seats + ward calling templates + stake calling
+ * templates, fetched in parallel via `Promise.all`.
+ *
+ * Firestore rules gate read authorisation; non-managers get a
+ * permission-denied that surfaces back through the SW message
+ * pipeline.
+ */
+export async function loadSyncData(): Promise<SyncDataBundle> {
+  const db = firestore();
+  const stakeRef = doc(db, 'stakes', STAKE_ID);
+
+  const [stakeSnap, wardsSnap, buildingsSnap, seatsSnap, wardTemplatesSnap, stakeTemplatesSnap] =
+    await Promise.all([
+      getDoc(stakeRef),
+      getDocs(collection(db, 'stakes', STAKE_ID, 'wards')),
+      getDocs(collection(db, 'stakes', STAKE_ID, 'buildings')),
+      getDocs(collection(db, 'stakes', STAKE_ID, 'seats')),
+      getDocs(collection(db, 'stakes', STAKE_ID, 'wardCallingTemplates')),
+      getDocs(collection(db, 'stakes', STAKE_ID, 'stakeCallingTemplates')),
+    ]);
+
+  if (!stakeSnap.exists()) {
+    throw new Error(`stake doc ${STAKE_ID} not found`);
+  }
+  const stake = stakeSnap.data() as Stake;
+  const wards = wardsSnap.docs.map((d) => d.data() as Ward);
+  const buildings = buildingsSnap.docs.map((d) => d.data() as Building);
+  const seats = seatsSnap.docs.map((d) => d.data() as Seat);
+  const wardCallingTemplates = wardTemplatesSnap.docs.map((d) => d.data() as WardCallingTemplate);
+  const stakeCallingTemplates = stakeTemplatesSnap.docs.map(
+    (d) => d.data() as StakeCallingTemplate,
+  );
+
+  return {
+    stake,
+    wards,
+    buildings,
+    seats,
+    wardCallingTemplates,
+    stakeCallingTemplates,
+  };
 }
 
 /**

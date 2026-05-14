@@ -541,6 +541,109 @@ export async function revokeUser(
 }
 
 /**
+ * Page through every environment-user in the active site. Loops
+ * `KindooGetEnvironmentUsersLightWithTotalNumberOfRecords` with
+ * `start += 50` until the page returns fewer than 50 entries OR
+ * `TotalRecordNumber` is reached.
+ *
+ * Used by the Sync feature to read the entire Kindoo user state for
+ * the drift report. `lookupUserByEmail` is the single-user variant
+ * that only reads the first page; this one drains all pages.
+ *
+ * The page size 50 matches Kindoo's own admin UI default (and is what
+ * `lookupUserByEmail` sends).
+ *
+ * **Dedup by EUID after collection.** A no-keyword paginated listing
+ * returns one row per access-schedule (a user with 3 rules → 3 rows).
+ * `lookupUserByEmail`'s keyword-filtered single-user capture didn't
+ * surface this; staging sync drove 313 SBA users to 652 reported rows
+ * before dedup. We merge `accessSchedules[]` across rows (defensively,
+ * in case different rows carry different rules) and keep the first
+ * row's other metadata.
+ */
+export async function listAllEnvironmentUsers(
+  session: KindooSession,
+  fetchImpl?: typeof fetch,
+): Promise<KindooEnvironmentUser[]> {
+  const PAGE_SIZE = 50;
+  const out: KindooEnvironmentUser[] = [];
+  let start = 0;
+  let total: number | null = null;
+  // Hard safety cap. v1 single-stake operates at ~300 users; the cap
+  // gives ample headroom while making sure an off-by-one wire issue
+  // can't infinite-loop.
+  const MAX_PAGES = 200;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const raw = await postKindoo(
+      'KindooGetEnvironmentUsersLightWithTotalNumberOfRecords',
+      session,
+      {
+        start: String(start),
+        end: String(start + PAGE_SIZE),
+        // Empty keyword fetches all users (Kindoo's substring-empty == "any").
+        keyWord: '',
+        FetchInvitedOnInvitedByData: 'true',
+      },
+      fetchImpl,
+    );
+    const body = unwrapAspNet(raw);
+    let list: unknown[] = [];
+    if (Array.isArray(body)) {
+      list = body;
+    } else if (body !== null && typeof body === 'object') {
+      const v = body as Record<string, unknown>;
+      for (const key of ['EUList', 'Users', 'users', 'Items', 'items', 'Results', 'results']) {
+        const candidate = v[key];
+        if (Array.isArray(candidate)) {
+          list = candidate;
+          break;
+        }
+      }
+      if (total === null && typeof v.TotalRecordNumber === 'number') {
+        total = v.TotalRecordNumber;
+      }
+    }
+
+    for (const entry of list) {
+      const user = asEnvironmentUser(entry);
+      if (user) out.push(user);
+    }
+
+    // Stop when the page returned fewer than PAGE_SIZE entries OR we
+    // reached the total record number.
+    if (list.length < PAGE_SIZE) break;
+    start += PAGE_SIZE;
+    if (total !== null && start >= total) break;
+  }
+
+  // Dedup by EUID — merge accessSchedules across duplicate rows,
+  // keep first row's other metadata.
+  const byEuid = new Map<string, KindooEnvironmentUser>();
+  let dupRows = 0;
+  for (const user of out) {
+    const existing = byEuid.get(user.euid);
+    if (existing) {
+      dupRows += 1;
+      const seenRuleIds = new Set(existing.accessSchedules.map((s) => s.ruleId));
+      for (const sched of user.accessSchedules) {
+        if (!seenRuleIds.has(sched.ruleId)) {
+          existing.accessSchedules.push(sched);
+          seenRuleIds.add(sched.ruleId);
+        }
+      }
+    } else {
+      byEuid.set(user.euid, user);
+    }
+  }
+  if (dupRows > 0) {
+    console.log(
+      `[sba-ext] listAllEnvironmentUsers: dedup collapsed ${dupRows} duplicate rows to ${byEuid.size} unique users.`,
+    );
+  }
+  return Array.from(byEuid.values());
+}
+
+/**
  * Revoke a single Access Rule from a user — narrows the rule set
  * without touching the rest of the user. Wraps
  * `KindooRevokeUserFromAccesSchedule` (NOTE: Kindoo's typo — single

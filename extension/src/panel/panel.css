@@ -372,3 +372,134 @@ main.sba-panel {
   border-radius: 4px;
   background: var(--sba-bg);
 }
+
+/* Sync panel — Phase 1 read-only drift report. */
+.sba-sync-summary {
+  margin: 0 0 0.5rem 0;
+  font-size: 12px;
+}
+
+.sba-sync-filters {
+  display: flex;
+  gap: 0.3rem;
+  margin: 0 0 0.6rem 0;
+  flex-wrap: wrap;
+}
+
+.sba-chip {
+  background: var(--sba-bg);
+  border: 1px solid var(--sba-border);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sba-chip:hover:not(:disabled) {
+  background: var(--sba-surface);
+}
+
+.sba-chip-active {
+  background: var(--sba-primary);
+  color: var(--sba-primary-fg);
+  border-color: var(--sba-primary);
+}
+
+.sba-chip-active:hover {
+  background: #1d4ed8;
+}
+
+.sba-sync-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sba-sync-row {
+  border: 1px solid var(--sba-border);
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  background: var(--sba-bg);
+}
+
+.sba-sync-row[data-severity='drift'] {
+  border-left: 3px solid var(--sba-danger);
+}
+
+.sba-sync-row[data-severity='review'] {
+  border-left: 3px solid var(--sba-warning);
+}
+
+.sba-sync-row-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.sba-sync-row-email {
+  font-size: 13px;
+}
+
+.sba-badge-code {
+  background: var(--sba-surface);
+  color: var(--sba-fg-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+}
+
+.sba-sync-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+@media (max-width: 420px) {
+  .sba-sync-sides {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sba-sync-side {
+  background: var(--sba-surface);
+  border: 1px solid var(--sba-border);
+  border-radius: 4px;
+  padding: 0.35rem 0.45rem;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.sba-sync-side > div {
+  word-break: break-word;
+}
+
+.sba-sync-side em {
+  font-style: normal;
+  color: var(--sba-fg-muted);
+  font-weight: 600;
+  margin-right: 0.2rem;
+}
+
+.sba-sync-side-title {
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--sba-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.sba-sync-reason {
+  margin: 0;
+  font-size: 12px;
+  color: var(--sba-fg);
+}
