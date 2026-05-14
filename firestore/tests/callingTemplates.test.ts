@@ -108,6 +108,54 @@ describe('firestore.rules — calling templates', () => {
             .set(templateDoc({ lastActor: lastActorOf(personas.stakeMember) })),
         );
       });
+
+      // B-12: deletes were previously denied because the combined
+      // `allow write` predicate required `lastActorMatchesAuth(request.resource.data)`,
+      // which evaluates against a null `request.resource.data` on delete.
+      // Split into `create, update` + `delete` to match wards / buildings /
+      // kindooManagers.
+      it('manager can delete', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(templateDoc());
+        });
+        await assertSucceeds(managerContext(env, STAKE_ID).firestore().doc(PATH).delete());
+      });
+
+      it('non-manager (stake member) delete is denied', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(templateDoc());
+        });
+        await assertFails(stakeMemberContext(env, STAKE_ID).firestore().doc(PATH).delete());
+      });
+
+      it('bishopric delete is denied', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(templateDoc());
+        });
+        await assertFails(bishopricContext(env, STAKE_ID, ['01']).firestore().doc(PATH).delete());
+      });
+
+      it('outsider delete is denied', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(templateDoc());
+        });
+        await assertFails(outsiderContext(env, STAKE_ID).firestore().doc(PATH).delete());
+      });
+
+      it('anonymous delete is denied', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(templateDoc());
+        });
+        await assertFails(unauthedContext(env).firestore().doc(PATH).delete());
+      });
+
+      it('manager of a different stake cannot delete', async () => {
+        await seedAsAdmin(env, async (ctx) => {
+          await ctx.firestore().doc(PATH).set(templateDoc());
+        });
+        // Manager persona with the manager claim under a different stake.
+        await assertFails(managerContext(env, 'demo-other-stake').firestore().doc(PATH).delete());
+      });
     });
   }
 });
