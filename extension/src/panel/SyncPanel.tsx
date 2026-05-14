@@ -11,6 +11,9 @@
 // panel renders the report. Filter chips narrow to drift-only / review-
 // only. No fix actions — Phase 2.
 //
+// Body-only: chrome (email, sign-out, navigation back to the queue)
+// has moved to the shared toolbar + tab bar in TabbedShell.
+//
 // Design doc: `extension/docs/sync-design.md`.
 
 import { useCallback, useMemo, useState } from 'react';
@@ -24,12 +27,6 @@ import {
   type DetectResult,
   type Severity,
 } from '../content/kindoo/sync/detector';
-
-interface SyncPanelProps {
-  email: string | null | undefined;
-  /** Called when the operator clicks "Back to Queue". */
-  onBack: () => void;
-}
 
 type Step =
   | { kind: 'idle' }
@@ -52,7 +49,7 @@ function describeKindooError(err: unknown): string {
   return String(err);
 }
 
-export function SyncPanel({ email, onBack }: SyncPanelProps) {
+export function SyncPanel() {
   const [step, setStep] = useState<Step>({ kind: 'idle' });
   const [filter, setFilter] = useState<FilterMode>('all');
 
@@ -81,20 +78,9 @@ export function SyncPanel({ email, onBack }: SyncPanelProps) {
   }, []);
 
   return (
-    <main className="sba-panel" data-testid="sba-sync">
-      <header className="sba-header">
-        <div>
-          <h1>Sync</h1>
-          {email ? <div className="sba-header-meta">{email}</div> : null}
-        </div>
-        <button type="button" className="sba-btn" onClick={onBack} data-testid="sba-sync-back">
-          Back to Queue
-        </button>
-      </header>
-      <div className="sba-body">
-        <SyncBody step={step} filter={filter} onRun={() => void runSync()} onFilter={setFilter} />
-      </div>
-    </main>
+    <div className="sba-body" data-testid="sba-sync">
+      <SyncBody step={step} filter={filter} onRun={() => void runSync()} onFilter={setFilter} />
+    </div>
   );
 }
 

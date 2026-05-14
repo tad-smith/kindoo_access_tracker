@@ -16,7 +16,15 @@
 //   - { kind: 'error', ... }          recoverable fetch error in Step 1
 //
 // The component owns the wizard's local state; on `Save` success it
-// fires `onComplete()` so the parent (App) can flip back to Queue.
+// fires `onComplete()` so the parent (App) re-renders into the tabbed
+// shell.
+//
+// Two render modes:
+//   - 'wizard' (first-run takeover): renders its own header + email
+//     meta + optional Cancel button. App routes to this directly until
+//     the stake is fully configured.
+//   - 'tab' (gear tab inside TabbedShell): body-only — the shell's
+//     toolbar + tab bar already supply the surrounding chrome.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Building, Stake } from '@kindoo/shared';
@@ -30,9 +38,13 @@ import {
 import { KindooApiError } from '../content/kindoo/client';
 
 interface ConfigurePanelProps {
-  email: string | null | undefined;
+  email?: string | null | undefined;
   onComplete: () => void;
   onCancel?: () => void;
+  /** 'wizard' = first-run full-takeover (own header + Cancel). 'tab' =
+   * gear-tab body, no header (TabbedShell owns chrome). Defaults to
+   * 'wizard' for backwards compatibility with existing tests. */
+  mode?: 'wizard' | 'tab';
 }
 
 type VerifyState = {
@@ -86,7 +98,12 @@ function describeExtensionError(err: unknown): string {
   return String(err);
 }
 
-export function ConfigurePanel({ email, onComplete, onCancel }: ConfigurePanelProps) {
+export function ConfigurePanel({
+  email,
+  onComplete,
+  onCancel,
+  mode = 'wizard',
+}: ConfigurePanelProps) {
   const [step, setStep] = useState<Step>({ kind: 'init' });
 
   const beginLoad = useCallback(async () => {
@@ -224,8 +241,22 @@ export function ConfigurePanel({ email, onComplete, onCancel }: ConfigurePanelPr
     [onComplete],
   );
 
+  const body = (
+    <div className="sba-body" data-testid="sba-configure">
+      <ConfigureBody
+        step={step}
+        onRetry={() => void beginLoad()}
+        onContinue={(v) => void goToRules(v)}
+        onAssign={handleAssign}
+        onSave={(rules) => void handleSave(rules)}
+      />
+    </div>
+  );
+
+  if (mode === 'tab') return body;
+
   return (
-    <main className="sba-panel" data-testid="sba-configure">
+    <main className="sba-panel">
       <header className="sba-header">
         <div>
           <h1>Configure Kindoo</h1>
@@ -242,15 +273,7 @@ export function ConfigurePanel({ email, onComplete, onCancel }: ConfigurePanelPr
           </button>
         ) : null}
       </header>
-      <div className="sba-body">
-        <ConfigureBody
-          step={step}
-          onRetry={() => void beginLoad()}
-          onContinue={(v) => void goToRules(v)}
-          onAssign={handleAssign}
-          onSave={(rules) => void handleSave(rules)}
-        />
-      </div>
+      {body}
     </main>
   );
 }

@@ -4,15 +4,18 @@
 // owns the Kindoo orchestration + the result dialog). When the
 // operator dismisses a result dialog we drop the card from the local
 // list and refetch the queue to pick up any sibling changes.
+//
+// Body-only: chrome (sign-out button, email, reconfigure / sync nav)
+// has moved to the shared toolbar + tab bar in TabbedShell. This file
+// renders the queue list and its Refresh control only.
 
 import { useCallback, useEffect, useState } from 'react';
 import type { AccessRequest } from '@kindoo/shared';
-import { getMyPendingRequests, signOut, type StakeConfigBundle } from '../lib/extensionApi';
+import { getMyPendingRequests, type StakeConfigBundle } from '../lib/extensionApi';
 import { STAKE_ID } from '../lib/constants';
 import { RequestCard } from './RequestCard';
 
 interface QueuePanelProps {
-  email: string | null | undefined;
   /** Stake / building / ward config loaded by App; threaded down so
    * each RequestCard can run the v2.2 provision flow. */
   bundle: StakeConfigBundle;
@@ -21,15 +24,6 @@ interface QueuePanelProps {
    * root switches to `NotAuthorizedPanel`.
    */
   onPermissionDenied: () => void;
-  /**
-   * Called when the operator clicks the reconfigure entry-point in the
-   * header. Used for adding a newly-created building, remapping rules,
-   * or recovering from a site-identity change.
-   */
-  onReconfigure?: () => void;
-  /** Called when the operator clicks the Sync entry-point in the
-   * header. Routes to the read-only drift report (Sync Phase 1). */
-  onOpenSync?: () => void;
 }
 
 type FetchState =
@@ -37,13 +31,7 @@ type FetchState =
   | { status: 'ready'; requests: AccessRequest[] }
   | { status: 'error'; message: string };
 
-export function QueuePanel({
-  email,
-  bundle,
-  onPermissionDenied,
-  onReconfigure,
-  onOpenSync,
-}: QueuePanelProps) {
+export function QueuePanel({ bundle, onPermissionDenied }: QueuePanelProps) {
   const [state, setState] = useState<FetchState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
 
@@ -86,75 +74,39 @@ export function QueuePanel({
   );
 
   return (
-    <main className="sba-panel" data-testid="sba-queue">
-      <header className="sba-header">
-        <div>
-          <h1>Pending requests</h1>
-          {email ? <div className="sba-header-meta">{email}</div> : null}
-        </div>
-        <div className="sba-request-actions">
-          {onOpenSync ? (
-            <button
-              type="button"
-              className="sba-btn-link"
-              onClick={onOpenSync}
-              data-testid="sba-open-sync"
-            >
-              Sync
-            </button>
-          ) : null}
-          {onReconfigure ? (
-            <button
-              type="button"
-              className="sba-btn-link"
-              onClick={onReconfigure}
-              data-testid="sba-reconfigure"
-            >
-              Configure Kindoo
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="sba-btn"
-            onClick={() => void fetchQueue('refresh')}
-            disabled={refreshing || state.status === 'loading'}
-            data-testid="sba-refresh"
-          >
-            {refreshing ? 'Refreshing…' : 'Refresh'}
-          </button>
-          <button
-            type="button"
-            className="sba-btn"
-            onClick={() => void signOut()}
-            data-testid="sba-sign-out"
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
-      <div className="sba-body">
-        {state.status === 'loading' ? <p className="sba-muted">Loading…</p> : null}
-        {state.status === 'error' ? (
-          <p role="alert" className="sba-error" data-testid="sba-queue-error">
-            {state.message}
-          </p>
-        ) : null}
-        {state.status === 'ready' && state.requests.length === 0 ? (
-          <p className="sba-empty" data-testid="sba-queue-empty">
-            No pending requests.
-          </p>
-        ) : null}
-        {state.status === 'ready' && state.requests.length > 0 ? (
-          <ul className="sba-request-list" data-testid="sba-queue-list">
-            {state.requests.map((req) => (
-              <li key={req.request_id}>
-                <RequestCard request={req} bundle={bundle} onDismissed={handleDismissed} />
-              </li>
-            ))}
-          </ul>
-        ) : null}
+    <div className="sba-body" data-testid="sba-queue">
+      <div className="sba-request-actions">
+        <button
+          type="button"
+          className="sba-btn"
+          onClick={() => void fetchQueue('refresh')}
+          disabled={refreshing || state.status === 'loading'}
+          data-testid="sba-refresh"
+        >
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
       </div>
-    </main>
+      {state.status === 'loading' ? <p className="sba-muted">Loading…</p> : null}
+      {state.status === 'error' ? (
+        <p role="alert" className="sba-error" data-testid="sba-queue-error">
+          {state.message}
+        </p>
+      ) : null}
+      {state.status === 'ready' && state.requests.length === 0 ? (
+        <p className="sba-empty" data-testid="sba-queue-empty">
+          No pending requests.
+        </p>
+      ) : null}
+      {state.status === 'ready' && state.requests.length > 0 ? (
+        <ul className="sba-request-list" data-testid="sba-queue-list">
+          {state.requests.map((req) => (
+            <li key={req.request_id}>
+              <RequestCard request={req} bundle={bundle} onDismissed={handleDismissed} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 
