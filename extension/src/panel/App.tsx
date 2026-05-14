@@ -1,10 +1,12 @@
 // React root for the content-script slide-over panel. Routes between
-// five states:
+// four top-level states:
 //   1. Auth loading (initial auth.getState round-trip in flight)
-//   2. Signed-out — render the sign-in CTA
-//   3. Signed-in non-manager — render NotAuthorized
-//   4. Signed-in manager, needs-config — render ConfigurePanel
-//   5. Signed-in manager, fully configured — render QueuePanel
+//   2. Signed-out — render the sign-in CTA (full takeover)
+//   3. Signed-in non-manager — render NotAuthorized (full takeover)
+//   4. Signed-in manager, needs-config — render ConfigurePanel in
+//      'wizard' mode (full takeover, no tab chrome)
+//   5. Signed-in manager, fully configured — render TabbedShell
+//      (toolbar + tab bar + active-tab body, default Queue)
 //
 // The "is this user a manager?" determination comes from the
 // callable: if `getMyPendingRequests` returns `permission-denied`,
@@ -13,9 +15,8 @@
 // The "needs-config?" determination comes from the v2.1
 // `data.getStakeConfig` round-trip: if `stake.kindoo_config` is absent
 // OR any building lacks `kindoo_rule`, we show ConfigurePanel until
-// the operator finishes the wizard. The Queue panel exposes a
-// `Configure Kindoo` link that drops us back into the wizard for
-// reconfigure cases (new building, new rules).
+// the operator finishes the wizard. Reconfigure once we are in the
+// tabbed shell is just the gear tab — no separate routing needed.
 //
 // Auth state is round-tripped through the service worker via
 // `chrome.runtime.sendMessage` (see `lib/extensionApi.ts`); the
@@ -31,9 +32,8 @@ import {
 } from '../lib/extensionApi';
 import { ConfigurePanel } from './ConfigurePanel';
 import { NotAuthorizedPanel } from './NotAuthorizedPanel';
-import { QueuePanel } from './QueuePanel';
 import { SignedOutPanel } from './SignedOutPanel';
-import { SyncPanel } from './SyncPanel';
+import { TabbedShell } from './TabbedShell';
 
 type ConfigStatus =
   | { kind: 'loading' }
@@ -53,8 +53,6 @@ export function App() {
   const authState = useAuthState();
   const [notAuthorized, setNotAuthorized] = useState(false);
   const [configStatus, setConfigStatus] = useState<ConfigStatus>({ kind: 'loading' });
-  const [reconfiguring, setReconfiguring] = useState(false);
-  const [syncing, setSyncing] = useState(false);
 
   const refreshConfig = useCallback(async () => {
     setConfigStatus({ kind: 'loading' });
@@ -94,8 +92,6 @@ export function App() {
     // Reset the NotAuthorized flag on sign-out so a fresh sign-in
     // re-runs the manager probe.
     if (notAuthorized) setNotAuthorized(false);
-    if (reconfiguring) setReconfiguring(false);
-    if (syncing) setSyncing(false);
     return <SignedOutPanel />;
   }
 
@@ -137,34 +133,23 @@ export function App() {
     );
   }
 
-  if (configStatus.kind === 'needs-config' || reconfiguring) {
-    const onComplete = () => {
-      setReconfiguring(false);
-      void refreshConfig();
-    };
-    if (reconfiguring) {
-      return (
-        <ConfigurePanel
-          email={authState.email}
-          onComplete={onComplete}
-          onCancel={() => setReconfiguring(false)}
-        />
-      );
-    }
-    return <ConfigurePanel email={authState.email} onComplete={onComplete} />;
-  }
-
-  if (syncing) {
-    return <SyncPanel email={authState.email} onBack={() => setSyncing(false)} />;
+  if (configStatus.kind === 'needs-config') {
+    // First-run wizard: full takeover, no tab chrome.
+    return (
+      <ConfigurePanel
+        email={authState.email}
+        mode="wizard"
+        onComplete={() => void refreshConfig()}
+      />
+    );
   }
 
   return (
-    <QueuePanel
+    <TabbedShell
       email={authState.email}
       bundle={configStatus.bundle}
       onPermissionDenied={() => setNotAuthorized(true)}
-      onReconfigure={() => setReconfiguring(true)}
-      onOpenSync={() => setSyncing(true)}
+      onConfigComplete={() => void refreshConfig()}
     />
   );
 }

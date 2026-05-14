@@ -32,9 +32,9 @@ vi.mock('../content/kindoo/endpoints', async () => {
   };
 });
 
-async function renderSync(onBack: () => void = () => undefined) {
+async function renderSync() {
   const { SyncPanel } = await import('./SyncPanel');
-  return render(<SyncPanel email="mgr@example.com" onBack={onBack} />);
+  return render(<SyncPanel />);
 }
 
 function bundle() {
@@ -75,14 +75,6 @@ describe('SyncPanel', () => {
     await renderSync();
     expect(screen.getByTestId('sba-sync-idle')).toBeInTheDocument();
     expect(screen.getByTestId('sba-sync-run')).toBeInTheDocument();
-  });
-
-  it('Back to Queue button calls onBack', async () => {
-    const user = userEvent.setup();
-    const onBack = vi.fn();
-    await renderSync(onBack);
-    await user.click(screen.getByTestId('sba-sync-back'));
-    expect(onBack).toHaveBeenCalledTimes(1);
   });
 
   it('routes idle → loading → report when both reads resolve', async () => {
