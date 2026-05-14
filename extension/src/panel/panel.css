@@ -565,6 +565,13 @@ main.sba-panel {
   outline-offset: -2px;
 }
 
+/* Gear tab floats to the right edge of the strip; the underline still
+ * tracks under it when active because margin doesn't affect the
+ * border-bottom rendering. */
+.sba-tab-gear {
+  margin-left: auto;
+}
+
 .sba-tab-icon {
   width: 16px;
   height: 16px;

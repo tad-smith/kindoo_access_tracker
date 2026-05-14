@@ -1,7 +1,11 @@
 // Underline tab strip for the tabbed shell. Three tabs:
-//   1. Request Queue
-//   2. Sync
-//   3. Configure (gear icon, no label)
+//   1. Request Queue   (left)
+//   2. Sync            (left)
+//   3. Configure       (right-justified gear icon, no label)
+//
+// The gear is shifted to the right edge via `margin-left: auto` on
+// `.sba-tab-gear` so it sits visually apart from the primary surfaces;
+// the underline still tracks under it when active.
 //
 // Accessibility: tablist semantics — role="tablist", role="tab",
 // aria-selected, aria-controls. Keyboard navigation: left/right arrows
@@ -101,7 +105,7 @@ export function TabBar({ active, onChange }: TabBarProps) {
             aria-controls={tab.panelId}
             aria-label={tab.ariaLabel}
             tabIndex={selected ? 0 : -1}
-            className="sba-tab"
+            className={tab.icon ? 'sba-tab sba-tab-gear' : 'sba-tab'}
             onClick={() => onChange(tab.key)}
             onKeyDown={(e) => handleKey(e, i)}
             data-testid={tab.testId}
