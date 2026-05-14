@@ -17,7 +17,12 @@ import type {
 } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
 import { parseDescription, pickPrimarySegment, type ParsedDescription } from './parser';
-import { buildCallingTemplateSets, classifySegment, type IntendedSeatShape } from './classifier';
+import {
+  buildCallingTemplateSets,
+  classifySegment,
+  type CallingTemplateSets,
+  type IntendedSeatShape,
+} from './classifier';
 
 export type DiscrepancyCode =
   | 'sba-only'
@@ -191,7 +196,7 @@ export function detect(inputs: DetectInputs): DetectResult {
     // 2. kindoo-only — Kindoo user present, no SBA seat.
     if (!seat && kuser) {
       const parsed = parseDescription(kuser.description, inputs.stake, inputs.wards);
-      const primary = pickPrimarySegment(parsed);
+      const primary = pickPrimarySegment(parsed, sets);
       const intended = primary ? classifySegment(primary, kuser.isTempUser, sets) : null;
       discrepancies.push({
         canonical: canon,
@@ -200,7 +205,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'drift',
         reason: 'Kindoo has a user for this email, but SBA has no seat for them.',
         sba: null,
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
+        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
       });
       continue;
     }
@@ -220,12 +225,12 @@ export function detect(inputs: DetectInputs): DetectResult {
         reason:
           "Kindoo description does not match the 'Scope (Calling)' convention; cannot classify intended seat shape.",
         sba: toSbaBlock(seat),
-        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings),
+        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
       });
       continue;
     }
 
-    const primary = pickPrimarySegment(parsed);
+    const primary = pickPrimarySegment(parsed, sets);
     if (!primary) {
       // Shouldn't be reachable when unparseable=false, but be defensive.
       discrepancies.push({
@@ -235,7 +240,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'review',
         reason: 'Kindoo description has no resolvable primary segment.',
         sba: toSbaBlock(seat),
-        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings),
+        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
       });
       continue;
     }
@@ -257,7 +262,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'review',
         reason: `Kindoo lists additional calling(s) [${extras}] beyond SBA's auto seat callings [${sbaCallings}]; add the extra calling(s) to the SBA seat.`,
         sba: toSbaBlock(seat),
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
+        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
       });
       continue;
     }
@@ -271,7 +276,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'drift',
         reason: `Primary scope differs: SBA=${seat.scope}, Kindoo=${intended.scope ?? '(unresolved)'}.`,
         sba: toSbaBlock(seat),
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
+        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
       });
       continue;
     }
@@ -285,7 +290,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'drift',
         reason: `Seat type differs: SBA=${seat.type}, Kindoo intends=${intended.type}.`,
         sba: toSbaBlock(seat),
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
+        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
       });
       continue;
     }
@@ -310,7 +315,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'drift',
           reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildings.join(', ')}].`,
           sba: toSbaBlock(seat),
-          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
         });
         continue;
       }
@@ -331,8 +336,9 @@ function buildKindooBlock(
   parsed: ParsedDescription,
   intended: IntendedSeatShape | null,
   _buildings: Building[],
+  sets: CallingTemplateSets,
 ): KindooBlock {
-  const primary = pickPrimarySegment(parsed);
+  const primary = pickPrimarySegment(parsed, sets);
   return {
     description: kuser.description,
     isTempUser: kuser.isTempUser,

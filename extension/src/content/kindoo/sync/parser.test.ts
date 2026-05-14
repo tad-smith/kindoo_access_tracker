@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { parseDescription, pickPrimarySegment } from './parser';
+import type { CallingTemplateSets } from './classifier';
 
 const STAKE = { stake_name: 'Colorado Springs North Stake' };
 const WARDS = [
@@ -256,5 +257,84 @@ describe('pickPrimarySegment', () => {
   it('returns the lone resolved segment when only one resolves', () => {
     const parsed = parseDescription('Cordera Ward (A) | Springfield Ward (B)', STAKE, WARDS);
     expect(pickPrimarySegment(parsed)?.scope).toBe('CO');
+  });
+
+  // ----- sets-aware auto-preference rule -----
+
+  /**
+   * Builds a minimal sets for tests. `wardAuto` is applied to every
+   * ward — mirrors the classifier's union-of-templates behavior.
+   */
+  function buildSets(stakeAuto: string[], wardAuto: string[]): CallingTemplateSets {
+    const wardSet = new Set(wardAuto.map((s) => s.toLowerCase()));
+    return {
+      stakeCallings: new Set(stakeAuto.map((s) => s.toLowerCase())),
+      wardCallings: new Map(WARDS.map((w) => [w.ward_code, new Set(wardSet)])),
+    };
+  }
+
+  it('prefers an auto-matching ward over a non-auto stake segment (corry@corrymac.com shape)', () => {
+    // Stake "Technology Specialist" is non-auto; ward "Bishop" is auto.
+    // The live false-positive scope-mismatch case: SBA seat lives on
+    // the ward, but the alphabetical/stake-first rule would have
+    // picked the stake segment as primary. With `sets` the auto ward
+    // wins.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Cordera Ward (Bishop)',
+      STAKE,
+      WARDS,
+    );
+    const sets = buildSets([], ['Bishop']);
+    const primary = pickPrimarySegment(parsed, sets);
+    expect(primary?.scope).toBe('CO');
+    expect(primary?.calling).toBe('Bishop');
+  });
+
+  it('returns the stake segment when both stake and ward auto-match', () => {
+    // Existing stake-first tiebreaker is preserved among auto-matching
+    // segments.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Stake Clerk) | Cordera Ward (Bishop)',
+      STAKE,
+      WARDS,
+    );
+    const sets = buildSets(['Stake Clerk'], ['Bishop']);
+    const primary = pickPrimarySegment(parsed, sets);
+    expect(primary?.scope).toBe('stake');
+  });
+
+  it('returns the alphabetically-first ward when multiple wards auto-match', () => {
+    const parsed = parseDescription(
+      'Pine Creek Ward (Bishop) | Cordera Ward (Bishop) | Monument Ward (Bishop)',
+      STAKE,
+      WARDS,
+    );
+    const sets = buildSets([], ['Bishop']);
+    const primary = pickPrimarySegment(parsed, sets);
+    expect(primary?.scope).toBe('CO');
+  });
+
+  it('falls back to stake-first when no segment auto-matches', () => {
+    // Original rule still applies when the auto-match pool is empty.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Cordera Ward (Pianist)',
+      STAKE,
+      WARDS,
+    );
+    const sets = buildSets([], []);
+    const primary = pickPrimarySegment(parsed, sets);
+    expect(primary?.scope).toBe('stake');
+  });
+
+  it('without `sets` behaves identically to the legacy stake-first rule', () => {
+    // Backward-compat guard: existing call sites that don't pass sets
+    // continue to see the original behavior.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Cordera Ward (Bishop)',
+      STAKE,
+      WARDS,
+    );
+    const primary = pickPrimarySegment(parsed);
+    expect(primary?.scope).toBe('stake');
   });
 });
