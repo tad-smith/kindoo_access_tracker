@@ -95,8 +95,8 @@ Algorithm:
 6. Mixed (some match, some don't) → segment type = `'auto'` with `reviewMixed: true`; the auto calling drives the type (the user IS an auto seat), the unmatched callings are carried in `freeText` so the detector can ask the operator to add them to the SBA seat.
 
 Resulting per-user shape:
-- If multiple parsed segments → one primary (first segment? or pick by SBA's priority rule: stake-scope wins for primary, then alphabetical ward) + duplicates.
-- The "primary picking" should mirror SBA's existing `pickPrimaryScope` helper (stake > ward, alphabetical among wards).
+- If multiple parsed segments → one primary + duplicates.
+- **Primary-pick rule (`pickPrimarySegment`):** prefer a segment that auto-matches the calling templates; among auto-matching segments — and as the fallback when none auto-match — apply SBA's existing `pickPrimaryScope` ordering (stake > ward, alphabetical by `ward_code` among wards). Rationale: a non-auto stake calling alongside an auto ward calling is a common real shape (e.g. `Colorado Springs North Stake (Technology Specialist) | Mount Herman YSA Ward (Bishop)`); the SBA seat lives on the ward (`scope=MH/auto/Bishop`). The pre-auto-pref rule picked the stake segment as primary and emitted a false-positive `scope-mismatch`. Preferring an auto-matching segment first lines primary up with the side SBA actually seats on.
 
 ### Discrepancy detector (`sync/detector.ts`)
 

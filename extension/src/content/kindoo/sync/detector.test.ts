@@ -458,6 +458,38 @@ describe('detect', () => {
     expect(result.discrepancies).toEqual([]);
   });
 
+  it('emits no scope-mismatch when stake segment is non-auto but ward segment auto-matches the seat (corry@corrymac.com shape)', () => {
+    // Live false-positive case before the auto-preference primary
+    // pick: SBA seat is scope=CO/auto/Sunday School Teacher; Kindoo
+    // description carries a non-auto stake calling alongside the auto
+    // ward calling. The pre-fix rule picked the stake segment as
+    // primary and reported scope-mismatch. Post-fix, the auto ward
+    // segment wins and no row emits.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'corry@corrymac.com',
+            member_email: 'corry@corrymac.com',
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'corry@corrymac.com',
+            description:
+              'Colorado Springs North Stake (Technology Specialist)  |  Cordera Ward (Sunday School Teacher)',
+            accessSchedules: [{ ruleId: 6248 }],
+          }),
+        ],
+      }),
+    );
+    const rowsForEmail = result.discrepancies.filter((d) => d.canonical === 'corry@corrymac.com');
+    expect(rowsForEmail).toEqual([]);
+  });
+
   it('counts kindoo-only users with unresolvable descriptions as kindoo-only (not unparseable)', () => {
     // kindoo-only takes priority over unparseable for users with no seat.
     const result = detect(
