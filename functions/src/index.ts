@@ -29,3 +29,4 @@ export { runImportNow } from './callable/runImportNow.js';
 export { installScheduledJobs } from './callable/installScheduledJobs.js';
 export { getMyPendingRequests } from './callable/getMyPendingRequests.js';
 export { markRequestComplete } from './callable/markRequestComplete.js';
+export { syncApplyFix } from './callable/syncApplyFix.js';
