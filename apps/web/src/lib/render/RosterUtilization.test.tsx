@@ -14,12 +14,33 @@ function fills(): HTMLElement[] {
 }
 
 describe('<RosterUtilization />', () => {
-  it('renders two stacked bars — committed first, pending second', () => {
-    render(<RosterUtilization committedTotal={10} cap={25} pendingAdds={0} pendingRemoves={0} />);
+  it('renders two stacked bars — committed first, pending second — when pending requests exist', () => {
+    render(<RosterUtilization committedTotal={10} cap={25} pendingAdds={2} pendingRemoves={0} />);
     const all = bars();
     expect(all).toHaveLength(2);
     expect(all[0]?.className).toContain('layout-inline');
     expect(all[1]?.className).toContain('layout-inline');
+  });
+
+  it('renders only the committed bar when there are no pending requests', () => {
+    render(<RosterUtilization committedTotal={10} cap={25} pendingAdds={0} pendingRemoves={0} />);
+    const all = bars();
+    expect(all).toHaveLength(1);
+    expect(all[0]?.className).toContain('layout-inline');
+    expect(screen.getByText(/10 \/ 25 seats used/)).toBeInTheDocument();
+    expect(screen.queryByText(/seats pending/)).toBeNull();
+  });
+
+  it('renders both bars when only pendingAdds is non-zero', () => {
+    render(<RosterUtilization committedTotal={10} cap={25} pendingAdds={3} pendingRemoves={0} />);
+    expect(bars()).toHaveLength(2);
+    expect(screen.getByText(/13 \/ 25 seats pending/)).toBeInTheDocument();
+  });
+
+  it('renders both bars when only pendingRemoves is non-zero', () => {
+    render(<RosterUtilization committedTotal={10} cap={25} pendingAdds={0} pendingRemoves={2} />);
+    expect(bars()).toHaveLength(2);
+    expect(screen.getByText(/8 \/ 25 seats pending/)).toBeInTheDocument();
   });
 
   it('places both rows inside one shared grid wrapper so the bars line up at the same width', () => {
@@ -51,7 +72,7 @@ describe('<RosterUtilization />', () => {
   });
 
   it('labels the committed bar with "seats used" and the pending bar with "seats pending"', () => {
-    render(<RosterUtilization committedTotal={10} cap={25} pendingAdds={0} pendingRemoves={0} />);
+    render(<RosterUtilization committedTotal={10} cap={25} pendingAdds={1} pendingRemoves={1} />);
     expect(screen.getByText(/10 \/ 25 seats used/)).toBeInTheDocument();
     expect(screen.getByText(/10 \/ 25 seats pending/)).toBeInTheDocument();
   });
@@ -76,12 +97,12 @@ describe('<RosterUtilization />', () => {
       expect(pendingFill?.className).toBe(committedFill?.className);
     });
 
-    it('matches the committed bar color when there are no pending requests at all', () => {
+    it('omits the pending bar entirely when there are no pending requests at all', () => {
       render(<RosterUtilization committedTotal={10} cap={25} pendingAdds={0} pendingRemoves={0} />);
-      const [committedFill, pendingFill] = fills();
-      expect(pendingFill?.className).toBe(committedFill?.className);
-      // And neither side carries the warning amber.
-      expect(pendingFill?.className).not.toContain('near');
+      const all = fills();
+      expect(all).toHaveLength(1);
+      // The single bar is the committed bar and carries no warning amber.
+      expect(all[0]?.className).not.toContain('near');
     });
 
     it('forces amber when projected > committed (net add)', () => {

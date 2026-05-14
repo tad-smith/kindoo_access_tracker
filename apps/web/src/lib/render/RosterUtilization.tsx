@@ -7,6 +7,11 @@
 //      / cap seats pending`. Projects what utilization will look like
 //      after every in-flight request resolves.
 //
+// Pending bar renders only when there are in-flight pending requests
+// for the scope (`pendingAdds > 0 || pendingRemoves > 0`); absent any,
+// only the committed bar shows so the widget doesn't duplicate the
+// same number twice.
+//
 // Both bars sit inside a CSS grid (`grid-template-columns: 1fr auto`)
 // declared on the wrapper so the bar column resolves to the SAME width
 // across both rows regardless of label-text length. Without the shared
@@ -53,6 +58,7 @@ export function RosterUtilization({
   const projected = Math.max(0, committedTotal + pendingAdds - pendingRemoves);
   const projectedOverCap = typeof cap === 'number' && cap > 0 && projected > cap;
   const hasNetChange = projected !== committedTotal;
+  const hasPending = pendingAdds > 0 || pendingRemoves > 0;
   return (
     <div className="kd-roster-utilization">
       <UtilizationBar
@@ -62,14 +68,16 @@ export function RosterUtilization({
         layout="inline"
         verb="used"
       />
-      <UtilizationBar
-        total={projected}
-        cap={cap}
-        overCap={projectedOverCap}
-        layout="inline"
-        verb="pending"
-        accent={hasNetChange ? 'warn' : 'auto'}
-      />
+      {hasPending ? (
+        <UtilizationBar
+          total={projected}
+          cap={cap}
+          overCap={projectedOverCap}
+          layout="inline"
+          verb="pending"
+          accent={hasNetChange ? 'warn' : 'auto'}
+        />
+      ) : null}
     </div>
   );
 }
