@@ -120,6 +120,110 @@ describe('parseDescription', () => {
     expect(parsed.segments).toHaveLength(1);
     expect(parsed.segments[0]?.calling).toBe('Sunday School Teacher (Primary)');
   });
+
+  // ----- kindoo_expected_site_name override -----
+
+  it('resolves stake scope via kindoo_expected_site_name override when present', () => {
+    // Staging Firestore: `stake_name` carries a STAGING prefix, but
+    // Kindoo's description carries the un-prefixed real name. The
+    // override field bridges the gap.
+    const stagingStake = {
+      stake_name: 'STAGING - Colorado Springs North Stake',
+      kindoo_expected_site_name: 'Colorado Springs North Stake',
+    };
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Stake Clerk)',
+      stagingStake,
+      WARDS,
+    );
+    expect(parsed.unparseable).toBe(false);
+    expect(parsed.segments[0]).toMatchObject({ scope: 'stake', resolvedScope: true });
+  });
+
+  it('falls back to stake_name when kindoo_expected_site_name is absent', () => {
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Stake Clerk)',
+      { stake_name: 'Colorado Springs North Stake' },
+      WARDS,
+    );
+    expect(parsed.unparseable).toBe(false);
+    expect(parsed.segments[0]?.scope).toBe('stake');
+  });
+
+  it('falls back to stake_name when kindoo_expected_site_name is empty / whitespace', () => {
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Stake Clerk)',
+      { stake_name: 'Colorado Springs North Stake', kindoo_expected_site_name: '   ' },
+      WARDS,
+    );
+    expect(parsed.unparseable).toBe(false);
+    expect(parsed.segments[0]?.scope).toBe('stake');
+  });
+
+  it('does not resolve when neither stake_name nor kindoo_expected_site_name matches', () => {
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Stake Clerk)',
+      {
+        stake_name: 'STAGING - Colorado Springs North Stake',
+        kindoo_expected_site_name: 'Some Other Stake',
+      },
+      WARDS,
+    );
+    expect(parsed.unparseable).toBe(true);
+    expect(parsed.segments[0]?.resolvedScope).toBe(false);
+  });
+
+  // ----- ward " Ward" suffix asymmetry -----
+
+  it('resolves a ward when ward_name lacks " Ward" but the description carries it', () => {
+    // SBA stores ward names without the trailing " Ward". Kindoo
+    // descriptions include it. Both forms must resolve.
+    const wardsNoSuffix = [{ ward_code: 'JC', ward_name: 'Jackson Creek' }];
+    const parsed = parseDescription(
+      'Jackson Creek Ward (Young Women President)',
+      STAKE,
+      wardsNoSuffix,
+    );
+    expect(parsed.unparseable).toBe(false);
+    expect(parsed.segments[0]?.scope).toBe('JC');
+  });
+
+  it('resolves a ward when neither ward_name nor description carries " Ward"', () => {
+    const wardsNoSuffix = [{ ward_code: 'JC', ward_name: 'Jackson Creek' }];
+    const parsed = parseDescription('Jackson Creek (Young Women President)', STAKE, wardsNoSuffix);
+    expect(parsed.unparseable).toBe(false);
+    expect(parsed.segments[0]?.scope).toBe('JC');
+  });
+
+  it('resolves a ward whose ward_name already ends in " Ward" via the suffix form', () => {
+    // ward_name with the suffix → only the with-suffix key is
+    // registered. Descriptions with the suffix still resolve.
+    const wardsWithSuffix = [{ ward_code: 'JC', ward_name: 'Jackson Creek Ward' }];
+    const parsed = parseDescription(
+      'Jackson Creek Ward (Young Women President)',
+      STAKE,
+      wardsWithSuffix,
+    );
+    expect(parsed.unparseable).toBe(false);
+    expect(parsed.segments[0]?.scope).toBe('JC');
+  });
+
+  it('does NOT resolve an unsuffixed description against a ward_name that includes " Ward"', () => {
+    // When ward_name is "Jackson Creek Ward", only that exact form is
+    // registered as a lookup key. An unsuffixed "Jackson Creek (X)"
+    // description does not match — the parser only strips/adds the
+    // " Ward" suffix on the ward_name side, never on the description
+    // side. Documented to keep the two-key behavior asymmetric and
+    // predictable.
+    const wardsWithSuffix = [{ ward_code: 'JC', ward_name: 'Jackson Creek Ward' }];
+    const parsed = parseDescription(
+      'Jackson Creek (Young Women President)',
+      STAKE,
+      wardsWithSuffix,
+    );
+    expect(parsed.unparseable).toBe(true);
+    expect(parsed.segments[0]?.resolvedScope).toBe(false);
+  });
 });
 
 describe('pickPrimarySegment', () => {

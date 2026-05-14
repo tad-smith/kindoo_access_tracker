@@ -52,13 +52,26 @@ function normalise(s: string): string {
  * case-insensitive and trims surrounding whitespace; otherwise exact
  * match.
  *
+ * Stake matching honours `stake.kindoo_expected_site_name` when set —
+ * mirrors the wizard, lets staging stake docs carry a `"STAGING - "`
+ * prefix in `stake_name` without breaking parsing of real Kindoo
+ * descriptions. Falls back to `stake_name` when the override is absent
+ * or empty.
+ *
+ * Ward matching registers each ward under two keys: the bare
+ * `ward_name` and `ward_name + " Ward"`. SBA stores ward names without
+ * the trailing `" Ward"` suffix (`"Jackson Creek"`) but Kindoo
+ * descriptions carry the full form (`"Jackson Creek Ward"`); both
+ * variants resolve. Wards whose `ward_name` already ends in `" Ward"`
+ * register only the single key (`Map.set` collapses duplicates).
+ *
  * Returns `unparseable: true` when no segment resolves — including the
  * case of an empty string, a non-conforming string with no parens, or
  * Kindoo Manager descriptions like `"Kindoo Manager - Stake Clerk"`.
  */
 export function parseDescription(
   raw: string,
-  stake: Pick<Stake, 'stake_name'>,
+  stake: Pick<Stake, 'stake_name' | 'kindoo_expected_site_name'>,
   wards: Array<Pick<Ward, 'ward_code' | 'ward_name'>>,
 ): ParsedDescription {
   const input = raw ?? '';
@@ -66,10 +79,23 @@ export function parseDescription(
     return { segments: [], unparseable: true, raw: input };
   }
 
-  const stakeKey = normalise(stake.stake_name);
+  const expectedSiteName = stake.kindoo_expected_site_name?.trim();
+  const stakeKey = normalise(
+    expectedSiteName && expectedSiteName.length > 0 ? expectedSiteName : stake.stake_name,
+  );
   const wardLookup = new Map<string, string>();
   for (const w of wards) {
-    wardLookup.set(normalise(w.ward_name), w.ward_code);
+    const baseKey = normalise(w.ward_name);
+    wardLookup.set(baseKey, w.ward_code);
+    // Kindoo descriptions render the ward with a " Ward" suffix
+    // (e.g. "Jackson Creek Ward") while SBA stores `ward_name`
+    // without it ("Jackson Creek"). Register both forms so the
+    // exact-match lookup succeeds regardless of which form the
+    // description carries.
+    const suffixKey = normalise(`${w.ward_name} Ward`);
+    if (suffixKey !== baseKey) {
+      wardLookup.set(suffixKey, w.ward_code);
+    }
   }
 
   const rawSegments = input.split(' | ');
