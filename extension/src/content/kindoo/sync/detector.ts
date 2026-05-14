@@ -285,22 +285,29 @@ export function detect(inputs: DetectInputs): DetectResult {
     }
 
     // 7. buildings-mismatch — Kindoo rule set vs SBA building → RID mapping.
-    const expectedBuildings = seat.building_names ?? [];
-    const kindooBuildings = ruleIdsToBuildingNames(
-      kuser.accessSchedules.map((s) => s.ruleId),
-      inputs.buildings,
-    );
-    if (!setsEqual(expectedBuildings, kindooBuildings)) {
-      discrepancies.push({
-        canonical: canon,
-        displayEmail,
-        code: 'buildings-mismatch',
-        severity: 'drift',
-        reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildings.join(', ')}].`,
-        sba: toSbaBlock(seat),
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
-      });
-      continue;
+    // Auto seats are provisioned via direct door grants from Church Access
+    // Automation (keyed by VidName), which the bulk listing's AccessSchedules
+    // array does not expose; comparing it for auto seats would always show
+    // false drift. Manual/temp seats ARE provisioned via AccessSchedules by
+    // SBA's v2.2 flow, so the comparison is meaningful there.
+    if (intended.type === 'manual' || intended.type === 'temp') {
+      const expectedBuildings = seat.building_names ?? [];
+      const kindooBuildings = ruleIdsToBuildingNames(
+        kuser.accessSchedules.map((s) => s.ruleId),
+        inputs.buildings,
+      );
+      if (!setsEqual(expectedBuildings, kindooBuildings)) {
+        discrepancies.push({
+          canonical: canon,
+          displayEmail,
+          code: 'buildings-mismatch',
+          severity: 'drift',
+          reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildings.join(', ')}].`,
+          sba: toSbaBlock(seat),
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
+        });
+        continue;
+      }
     }
     // No discrepancy — skip.
   }

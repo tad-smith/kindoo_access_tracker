@@ -201,11 +201,85 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.code).toBe('type-mismatch');
   });
 
-  it('emits buildings-mismatch when rule set vs SBA building set differs', () => {
+  it('emits buildings-mismatch when manual seat rule set vs SBA building set differs', () => {
     const result = detect(
       baseInputs({
-        seats: [seat({ building_names: ['Cordera Building', 'Pine Creek Building'] })],
-        kindooUsers: [kuser({ accessSchedules: [{ ruleId: 6248 }] })],
+        seats: [
+          seat({
+            type: 'manual',
+            callings: [],
+            reason: 'Requested by bishop',
+            building_names: ['Cordera Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Cordera Ward (Building Greeter)',
+            accessSchedules: [{ ruleId: 6248 }],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
+  });
+
+  it('skips buildings comparison for auto seats (direct door grants not in AccessSchedules)', () => {
+    // Auto-imported users receive door access via direct door grants keyed by
+    // VidName, which the bulk listing's AccessSchedules array does not
+    // expose. Even with an empty (or stale) AccessSchedules list, the auto
+    // seat should not emit a buildings-mismatch row.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'auto-user@example.com',
+            member_email: 'auto-user@example.com',
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Cordera Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'auto-user@example.com',
+            description: 'Cordera Ward (Sunday School Teacher)',
+            accessSchedules: [],
+          }),
+        ],
+      }),
+    );
+    const buildingsRows = result.discrepancies.filter(
+      (d) => d.canonical === 'auto-user@example.com' && d.code === 'buildings-mismatch',
+    );
+    expect(buildingsRows).toEqual([]);
+    // The auto path should emit nothing at all for this email — scope and
+    // type both match, and buildings is skipped.
+    const allRowsForEmail = result.discrepancies.filter(
+      (d) => d.canonical === 'auto-user@example.com',
+    );
+    expect(allRowsForEmail).toEqual([]);
+  });
+
+  it('emits buildings-mismatch for temp seats when rule set differs', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            type: 'temp',
+            callings: [],
+            reason: 'Visiting speaker',
+            building_names: ['Cordera Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            isTempUser: true,
+            description: 'Cordera Ward (Visiting speaker)',
+            accessSchedules: [{ ruleId: 6248 }],
+          }),
+        ],
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
@@ -311,8 +385,20 @@ describe('detect', () => {
   it('flags an unknown Kindoo rule ID via "(unknown rule X)" placeholder', () => {
     const result = detect(
       baseInputs({
-        seats: [seat({ building_names: ['Cordera Building'] })],
-        kindooUsers: [kuser({ accessSchedules: [{ ruleId: 99999 }] })],
+        seats: [
+          seat({
+            type: 'manual',
+            callings: [],
+            reason: 'Requested by bishop',
+            building_names: ['Cordera Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Cordera Ward (Building Greeter)',
+            accessSchedules: [{ ruleId: 99999 }],
+          }),
+        ],
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
@@ -320,11 +406,23 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.reason).toContain('(unknown rule 99999)');
   });
 
-  it('detects equal building sets ordered differently', () => {
+  it('detects equal building sets ordered differently (manual seat)', () => {
     const result = detect(
       baseInputs({
-        seats: [seat({ building_names: ['Cordera Building', 'Pine Creek Building'] })],
-        kindooUsers: [kuser({ accessSchedules: [{ ruleId: 6249 }, { ruleId: 6248 }] })],
+        seats: [
+          seat({
+            type: 'manual',
+            callings: [],
+            reason: 'Requested by bishop',
+            building_names: ['Cordera Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Cordera Ward (Building Greeter)',
+            accessSchedules: [{ ruleId: 6249 }, { ruleId: 6248 }],
+          }),
+        ],
       }),
     );
     expect(result.discrepancies).toEqual([]);
