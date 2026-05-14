@@ -286,18 +286,48 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
   });
 
-  it('emits mixed-callings when classifier flags reviewMixed', () => {
+  it('emits extra-kindoo-calling when Kindoo parens add non-auto callings to an auto seat', () => {
     const result = detect(
       baseInputs({
-        seats: [seat({ scope: 'CO' })],
+        seats: [seat({ scope: 'CO', type: 'auto', callings: ['Sunday School Teacher'] })],
         kindooUsers: [
           kuser({ description: 'Cordera Ward (Sunday School Teacher, Building Janitor)' }),
         ],
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
-    expect(result.discrepancies[0]?.code).toBe('mixed-callings');
-    expect(result.discrepancies[0]?.severity).toBe('review');
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('extra-kindoo-calling');
+    expect(row.severity).toBe('review');
+    expect(row.reason).toContain('[Building Janitor]');
+    expect(row.reason).toContain('[Sunday School Teacher]');
+    expect(row.reason).toContain('add the extra calling(s) to the SBA seat');
+  });
+
+  it('extra-kindoo-calling is the only row emitted when scope and type otherwise agree', () => {
+    // Mixed segment now classifies as auto (not manual), so the
+    // downstream type-mismatch / buildings-mismatch checks must not
+    // also fire on the same row.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Cordera Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Cordera Ward (Sunday School Teacher, Accompanist)',
+            accessSchedules: [{ ruleId: 6248 }],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('extra-kindoo-calling');
   });
 
   it('respects temp override and emits type-mismatch (auto seat vs temp kindoo)', () => {
@@ -335,7 +365,7 @@ describe('detect', () => {
           seat({ member_canonical: 'a@example.com', member_email: 'a@example.com' }),
         ],
         kindooUsers: [
-          // mixed-callings → review
+          // extra-kindoo-calling → review
           kuser({
             username: 'z@example.com',
             description: 'Cordera Ward (Sunday School Teacher, Janitor)',
@@ -364,7 +394,7 @@ describe('detect', () => {
     const sorted = detect(inputs);
     expect(sorted.discrepancies[0]?.code).toBe('sba-only');
     expect(sorted.discrepancies[0]?.displayEmail).toBe('b-orphan@example.com');
-    expect(sorted.discrepancies[1]?.code).toBe('mixed-callings');
+    expect(sorted.discrepancies[1]?.code).toBe('extra-kindoo-calling');
     // (suppress unused-var lint on the helper above)
     expect(result).toBeDefined();
   });

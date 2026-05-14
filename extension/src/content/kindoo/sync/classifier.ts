@@ -7,14 +7,17 @@
 // scope. The match rule per the design doc:
 //   - All callings match → segment.type = 'auto'
 //   - None match         → segment.type = 'manual'
-//   - Mixed              → segment.type = 'manual' with reviewMixed = true
+//   - Mixed              → segment.type = 'auto' with reviewMixed = true,
+//                          unmatched callings carried in freeText
 //   - IsTempUser=true    → segment.type = 'temp' (overrides everything)
 //
-// Mixed-callings tiebreaker (the brief calls this out): a mixed segment
-// is conservatively classified as `manual` and flagged for review. The
-// classifier returns the matched callings in the `callings` field so
-// the report can surface them for diagnostic context, but the `type`
-// stays `'manual'`.
+// Mixed-callings policy: when Kindoo's parens list at least one auto-
+// template calling alongside additional non-auto callings, the auto
+// calling drives the seat type (the user IS an auto seat). The
+// unmatched callings are extra detail Kindoo records that SBA's seat
+// doesn't yet — they ride along in `freeText` so the detector can
+// surface a review row asking the operator to add them to the SBA
+// seat.
 //
 // Phase 1 of the sync feature; design doc at
 // `extension/docs/sync-design.md` §"Classifier".
@@ -40,9 +43,9 @@ export interface IntendedSeatShape {
   freeText: string;
   /**
    * True when some (but not all) callings in the parens matched the
-   * auto set. Mixed segments fall to `manual` per the conservative
-   * tiebreaker but are flagged so the report can surface them in the
-   * "review" bucket.
+   * auto set. Mixed segments classify as `auto` (the matched calling
+   * drives the type) and surface in the report's "review" bucket so
+   * the operator can add the unmatched callings to the SBA seat.
    */
   reviewMixed: boolean;
 }
@@ -116,8 +119,10 @@ function splitCallings(parenText: string): string[] {
  *      type=`manual`, freeText=raw (operator review).
  *   3. Else split the calling text on `,`, look up each against the
  *      scope's auto set. ALL match → `auto`. NONE match → `manual`.
- *      Mixed → `manual` with `reviewMixed=true`; the matched callings
- *      stay in `callings[]` for diagnostic context.
+ *      Mixed → `auto` with `reviewMixed=true`; the matched callings
+ *      stay in `callings[]` and the unmatched ones go to `freeText`
+ *      so the detector can ask the operator to add them to the SBA
+ *      seat.
  */
 export function classifySegment(
   segment: ParsedSegment,
@@ -190,12 +195,13 @@ export function classifySegment(
     };
   }
 
-  // Mixed — conservative tiebreaker per design doc + brief: manual +
-  // review flag. Matched callings stay on `callings[]` for diagnostic
-  // context in the report.
+  // Mixed — the auto calling(s) drive the type; the user IS an auto
+  // seat. The unmatched callings are extra detail Kindoo records but
+  // SBA doesn't — they ride along in `freeText` so the detector can
+  // ask the operator to add them to the SBA seat.
   return {
     scope: segment.scope,
-    type: 'manual',
+    type: 'auto',
     callings: matched,
     freeText: unmatched.join(', '),
     reviewMixed: true,
