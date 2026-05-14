@@ -24,6 +24,8 @@ import type {
   Seat,
   Stake,
   StakeCallingTemplate,
+  SyncApplyFixInput,
+  SyncApplyFixResult,
   Ward,
   WardCallingTemplate,
 } from '@kindoo/shared';
@@ -140,6 +142,19 @@ export interface DataGetSyncDataRequest {
   type: 'data.getSyncData';
 }
 
+/**
+ * Apply a single per-row Sync Phase 2 fix on the SBA side. The callable
+ * itself stamps the seat write with the `SyncActor:<code>` sentinel;
+ * the extension just shuttles the operator's discriminated payload
+ * through. Kindoo-side fixes (sba-only, *-mismatch "Update Kindoo")
+ * never reach this handler — they run client-side through the v2.2
+ * provision orchestrator.
+ */
+export interface DataSyncApplyFixRequest {
+  type: 'data.syncApplyFix';
+  payload: SyncApplyFixInput;
+}
+
 export interface SyncDataBundle {
   stake: Stake;
   wards: Ward[];
@@ -160,7 +175,8 @@ export type ExtensionRequest =
   | DataGetStakeConfigRequest
   | DataWriteKindooConfigRequest
   | DataGetSeatByEmailRequest
-  | DataGetSyncDataRequest;
+  | DataGetSyncDataRequest
+  | DataSyncApplyFixRequest;
 
 // ---- Response envelopes ------------------------------------------------
 
@@ -175,6 +191,7 @@ export type DataGetStakeConfigResponse = Result<DataGetStakeConfigPayload>;
 export type DataWriteKindooConfigResponse = Result<{ ok: true }>;
 export type DataGetSeatByEmailResponse = Result<Seat | null>;
 export type DataGetSyncDataResponse = Result<SyncDataBundle>;
+export type DataSyncApplyFixResponse = Result<SyncApplyFixResult>;
 
 /** Lookup from a request `type` to its response shape. */
 export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequest
@@ -195,7 +212,9 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
                 ? DataGetSeatByEmailResponse
                 : R extends DataGetSyncDataRequest
                   ? DataGetSyncDataResponse
-                  : never;
+                  : R extends DataSyncApplyFixRequest
+                    ? DataSyncApplyFixResponse
+                    : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 

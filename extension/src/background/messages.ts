@@ -9,7 +9,7 @@
 // unconditionally for known message types.
 
 import { signIn, signOut, currentUser, waitForAuthHydrated, AuthError } from '../lib/auth';
-import { getMyPendingRequests, markRequestComplete } from '../lib/api';
+import { getMyPendingRequests, markRequestComplete, syncApplyFix } from '../lib/api';
 import { loadSeatByEmail, loadStakeConfig, loadSyncData, writeKindooConfig } from './data';
 import type {
   AuthSnapshot,
@@ -137,6 +137,14 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
     case 'data.getSyncData': {
       try {
         const data = await loadSyncData();
+        return { ok: true, data };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.syncApplyFix': {
+      try {
+        const data = await syncApplyFix(req.payload);
         return { ok: true, data };
       } catch (err) {
         return { ok: false, error: toWireError(err) };

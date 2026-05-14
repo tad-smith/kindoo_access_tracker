@@ -213,22 +213,70 @@ Modified:
 - Background / scheduled sync.
 - Export to CSV.
 
-## Phase 2 — Fix actions (outline)
+## Phase 2 — Fix actions (locked in 2026-05-13)
 
-Each discrepancy row gains a "Fix this" button. The action varies by discrepancy code:
+Each discrepancy row gains one or two specific-action buttons. Per-row only — no bulk fix. Trust-fire model: no confirmation dialog, no success toast. Click → applying state → row removed from the list (on success) or inline error + Retry (on failure). The operator runs a fresh sync when they want a clean state.
 
-| Code | Direction of truth | Fix action |
+### Fix-action catalogue
+
+| Code | Buttons | What happens |
 |---|---|---|
-| `sba-only` | SBA → Kindoo | Provision the SBA seat in Kindoo (invite + saveAccessRule, mirroring v2.2's add path with the seat as input). |
-| `kindoo-only` | TBD per type | If Kindoo user's intended type is auto: probably do nothing (importer will catch it). If manual/temp: prompt operator to either create an SBA request or revoke from Kindoo. |
-| `scope-mismatch`, `type-mismatch`, `buildings-mismatch` | TBD | Two-button row: "Update Kindoo to match SBA" vs "Update SBA to match Kindoo" — operator picks the source of truth per row. |
-| `kindoo-unparseable`, `extra-kindoo-calling` | manual | No fix button; operator handles in Kindoo's admin UI (for `extra-kindoo-calling`, add the extra calling(s) to the SBA seat so the records match). |
+| `sba-only` | "Provision in Kindoo" | Kindoo-side write via `syncProvisionFromSeat`. Inviting if absent; description rewrite + per-rule reconcile if existing. |
+| `kindoo-only` | "Create SBA seat" | SBA-side: `syncApplyFix` with `code: 'kindoo-only'`. Server-side stamps the seat write with `SyncActor:kindoo-only`. |
+| `extra-kindoo-calling` | "Add to SBA seat" | SBA-side: `syncApplyFix` with `code: 'extra-kindoo-calling'`; backend de-dupes + appends to `callings[]`. |
+| `scope-mismatch` | "Update Kindoo" / "Update SBA" | Update Kindoo: rewrite Description to SBA scope via `syncProvisionFromSeat`. Update SBA: `syncApplyFix` with `code: 'scope-mismatch'` carrying Kindoo's parsed primary scope. |
+| `type-mismatch` | "Update Kindoo" / "Update SBA" | Same pattern. Update Kindoo is disabled (with a tooltip) when either side is `auto` — Church Access Automation owns direct door grants for auto seats; the extension can't write them. |
+| `buildings-mismatch` | "Update Kindoo" / "Update SBA" | Same pattern. Detector only emits this for manual/temp seats. Update Kindoo reconciles AccessSchedules to SBA's building set (per-rule revoke + saveAccessRule merge). |
+| `kindoo-unparseable` | none | Operator handles in Kindoo's admin UI. |
 
-Phase 2 needs its own design pass to settle:
-- Confirmation dialogs (each fix is potentially destructive).
-- Bulk fix ("Fix all SBA-only") with summary preview.
-- Whether to create SBA requests (existing flow) or write seat docs directly (faster but bypasses normal request audit).
-- Audit trail for sync-driven changes (probably stamped with a `SyncActor` sentinel, similar to the existing `Importer` / `ExpiryTrigger` / `OutOfBand` synthetic actors).
+### Audit + SyncActor
+
+Every backend-side seat write made by `syncApplyFix` is stamped with `lastActor: SyncActor:<code>` where `<code>` is the discrepancy code that triggered it. The parameterised `auditTrigger` fans an audit row off the resulting Firestore write the same way every other write goes through audit — Sync writes don't bypass anything.
+
+The `SyncActor:` prefix is recognised by the web renderer's `isAutomatedActor` helper and rendered with the automated-actor chip in the audit log + dashboard, alongside `Importer` / `ExpiryTrigger` / `RemoveTrigger` / `OutOfBand`. Helpers (`syncActorName`, `parseSyncActorCode`, `SYNC_DISCREPANCY_CODES`) live in `packages/shared/src/systemActors.ts`.
+
+Kindoo-side writes (`sba-only`, every `*-mismatch` "Update Kindoo") don't reach Firestore — they're Kindoo API calls and have no SBA audit row by design. The seat docs themselves don't change on those paths.
+
+### Per-row state machine
+
+- `idle` — buttons visible.
+- `applying` — buttons replaced by "Applying \<label\>…" text + `aria-live="polite"` so screen readers announce the in-flight state.
+- success — splice the row out of the local list. Drift / review counters in the summary decrement automatically (counters are derived from the rendered list, not the raw detector output).
+- `error` — inline danger-coloured message in the row + a single "Retry" button that re-fires the last attempted action.
+
+No detector re-run on success: the in-memory list edits forward. The operator clicks "Run Sync" again to get a clean state from scratch.
+
+### Sourcing payload data
+
+Most payload fields come straight off the `Discrepancy` row's `kindoo` block (`KindooBlock`). The detector's Phase 2 work expanded that block to carry `memberName`, `intendedCallings`, `intendedFreeText`, `buildingNames`, and (for temp users) `startDate` / `endDate` — derived from Kindoo's `FirstName` / `LastName` + the classifier output + the rule-id-to-building-name lookup. `KindooEnvironmentUser`'s `startAccessDoorsDateAtTimeZone` / `expiryDateAtTimeZone` are stripped to ISO `YYYY-MM-DD` for the temp date fields.
+
+`kindoo-only` payload edge cases:
+- `intendedType === 'auto'` → callings = `intendedCallings`; no reason.
+- `intendedType === 'manual'` → callings = comma-split `intendedFreeText`; reason = full `intendedFreeText`.
+- `intendedType === 'temp'` → callings = `[]`; reason = `intendedFreeText`; `startDate` / `endDate` set when present.
+- `intendedType === null` (couldn't classify) → fall through as `manual` with the free text as reason.
+
+### Files
+
+New:
+- `extension/src/content/kindoo/sync/fix.ts` + `fix.test.ts` — dispatcher + payload builder.
+- `extension/src/content/kindoo/sync-provision.ts` — Kindoo-side orchestrator that drives Kindoo to a single `Seat`. Sibling of `provision.ts`; reuses the same low-level endpoint helpers without piping through the request-driven merge path.
+
+Modified:
+- `extension/src/content/kindoo/sync/detector.ts` — `KindooBlock` extended with `memberName` + classifier fields + building names + temp dates.
+- `extension/src/panel/SyncPanel.tsx` — per-row Fix UI + state machine.
+- `extension/src/lib/messaging.ts` — `data.syncApplyFix` wire type.
+- `extension/src/lib/api.ts` — SW-side callable wrapper.
+- `extension/src/background/messages.ts` — dispatcher routes `data.syncApplyFix`.
+- `extension/src/lib/extensionApi.ts` — CS-side wrapper.
+
+### Out of scope (deferred to future)
+
+- Bulk fix ("Fix all SBA-only" etc.) with summary preview. Single-row is enough for v1 traffic.
+- Per-row confirmation dialogs. Operator chose trust-fire.
+- Undo affordance. Operator can run sync again and fix forward.
+- Sync-driven Firestore writes that bypass the callable. Every SBA write goes through `syncApplyFix`.
+- Reconciling auto-user door grants (Church Access Automation territory). Auto seats skip the buildings comparison in Phase 1 + can't be type-changed via Update Kindoo in Phase 2.
 
 ## Out of scope for Sync entirely (any phase)
 

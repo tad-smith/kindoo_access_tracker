@@ -504,6 +504,23 @@ main.sba-panel {
   color: var(--sba-fg);
 }
 
+/* Phase 2 — per-row fix action row. Sits at the bottom of each
+ * discrepancy row; switches between three states: idle (buttons),
+ * applying (status text), error (inline message + Retry). */
+.sba-sync-fix-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.sba-sync-fix-error {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
 /* Tabbed-shell chrome: gray toolbar (email + Sign out) + underline tab
  * bar. Toolbar reuses the visual weight of .sba-header (surface bg +
  * border) so existing panels feel anchored under it. */
