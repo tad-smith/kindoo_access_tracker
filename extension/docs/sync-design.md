@@ -92,7 +92,7 @@ Algorithm:
    - For ward scope: look up against `wardCallingTemplates/*` calling-name set for that ward (templates may be scoped per ward). Match → auto.
 4. If ALL individual callings in the segment match the auto set → segment type = `'auto'`; collect matched callings.
 5. If NONE match → segment type = `'manual'`; the calling text becomes the `reason` equivalent.
-6. Mixed (some match, some don't) → segment type = `'manual'`; flag for review (mixed callings violate the segment-is-one-type assumption).
+6. Mixed (some match, some don't) → segment type = `'auto'` with `reviewMixed: true`; the auto calling drives the type (the user IS an auto seat), the unmatched callings are carried in `freeText` so the detector can ask the operator to add them to the SBA seat.
 
 Resulting per-user shape:
 - If multiple parsed segments → one primary (first segment? or pick by SBA's priority rule: stake-scope wins for primary, then alphabetical ward) + duplicates.
@@ -111,12 +111,12 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 | seat | Kindoo user, intended type ≠ seat.type | `type-mismatch` |
 | seat (manual/temp) | Kindoo user, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` |
 | seat (auto) | Kindoo user, any AccessSchedules state | (buildings check skipped — see below) |
-| seat | Kindoo user, classifier hit "mixed callings" | `mixed-callings` (flag for review) |
+| seat (auto) | Kindoo user lists auto calling + additional non-auto calling(s) | `extra-kindoo-calling` (flag for review — operator adds the extras to the SBA seat) |
 | seat | Kindoo user, all-good | (no row) |
 
 Severity:
 - `sba-only`, `kindoo-only`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch` → **drift** (real divergence).
-- `kindoo-unparseable`, `mixed-callings` → **review** (operator-judgment needed).
+- `kindoo-unparseable`, `extra-kindoo-calling` → **review** (operator-judgment needed).
 
 **Auto seats skip the buildings comparison.** Auto-imported users (the Church Access Automation flow, ~310 of 313 users in production) receive door access via **direct door grants keyed by `VidName`**, not via `AccessSchedules`. The bulk listing endpoint (`GetEnvironmentUsersLightWithTotalNumberOfRecordsWithEntryPoints`) only exposes `AccessSchedules` on the user — direct door grants are NOT included. Auto users therefore come back with `AccessSchedules: []` regardless of how much actual access they have, so comparing it would always show false-positive drift. Manual and temp seats ARE provisioned by SBA via `AccessSchedules` (the v2.2 Provision & Complete flow writes via `saveAccessRule`), so for those the comparison is meaningful and runs as before. The scope-mismatch and type-mismatch checks above still run for auto seats; only the buildings check is gated.
 
@@ -222,7 +222,7 @@ Each discrepancy row gains a "Fix this" button. The action varies by discrepancy
 | `sba-only` | SBA → Kindoo | Provision the SBA seat in Kindoo (invite + saveAccessRule, mirroring v2.2's add path with the seat as input). |
 | `kindoo-only` | TBD per type | If Kindoo user's intended type is auto: probably do nothing (importer will catch it). If manual/temp: prompt operator to either create an SBA request or revoke from Kindoo. |
 | `scope-mismatch`, `type-mismatch`, `buildings-mismatch` | TBD | Two-button row: "Update Kindoo to match SBA" vs "Update SBA to match Kindoo" — operator picks the source of truth per row. |
-| `kindoo-unparseable`, `mixed-callings` | manual | No fix button; operator handles in Kindoo's admin UI. |
+| `kindoo-unparseable`, `extra-kindoo-calling` | manual | No fix button; operator handles in Kindoo's admin UI (for `extra-kindoo-calling`, add the extra calling(s) to the SBA seat so the records match). |
 
 Phase 2 needs its own design pass to settle:
 - Confirmation dialogs (each fix is potentially destructive).

@@ -26,7 +26,7 @@ export type DiscrepancyCode =
   | 'scope-mismatch'
   | 'type-mismatch'
   | 'buildings-mismatch'
-  | 'mixed-callings';
+  | 'extra-kindoo-calling';
 
 export type Severity = 'drift' | 'review';
 
@@ -241,15 +241,21 @@ export function detect(inputs: DetectInputs): DetectResult {
     }
     const intended = classifySegment(primary, kuser.isTempUser, sets);
 
-    // 4. mixed-callings — classifier flagged it; emit review before drift checks.
+    // 4. extra-kindoo-calling — Kindoo's parens list at least one auto
+    // calling plus additional non-auto calling(s). The auto calling
+    // drives the seat type (the user IS an auto seat); the extras are
+    // detail Kindoo records but SBA's seat does not. Surface as a
+    // review so the operator can add the extras to the SBA seat.
     if (intended.reviewMixed) {
+      const extras = intended.freeText || 'non-auto';
+      const sbaCallings =
+        seat.callings && seat.callings.length > 0 ? seat.callings.join(', ') : '(none)';
       discrepancies.push({
         canonical: canon,
         displayEmail,
-        code: 'mixed-callings',
+        code: 'extra-kindoo-calling',
         severity: 'review',
-        reason:
-          "Kindoo description's primary segment has a mix of auto-template and non-auto callings; manual review required.",
+        reason: `Kindoo lists additional calling(s) [${extras}] beyond SBA's auto seat callings [${sbaCallings}]; add the extra calling(s) to the SBA seat.`,
         sba: toSbaBlock(seat),
         kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
       });

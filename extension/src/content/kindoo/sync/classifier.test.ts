@@ -108,18 +108,39 @@ describe('classifySegment', () => {
     expect(result.reviewMixed).toBe(false);
   });
 
-  it('classifies a mixed-callings segment as manual + reviewMixed=true (tiebreaker)', () => {
+  it('classifies a mixed-callings segment as auto + reviewMixed=true (auto calling drives type)', () => {
     const result = classifySegment(
       segment({ calling: 'Sunday School Teacher, Building Janitor' }),
       false,
       SETS,
     );
-    expect(result.type).toBe('manual');
+    // The auto calling drives the seat type — the user IS an auto seat.
+    expect(result.type).toBe('auto');
     expect(result.reviewMixed).toBe(true);
-    // matched callings stay for diagnostic context
+    // Matched (auto) callings populate `callings`
     expect(result.callings).toEqual(['Sunday School Teacher']);
-    // unmatched lives in freeText
+    // Unmatched (extra) callings ride along in `freeText` so the
+    // detector can ask the operator to add them to the SBA seat.
     expect(result.freeText).toBe('Building Janitor');
+  });
+
+  it('classifies a stake-scope mixed-callings segment as auto + reviewMixed=true', () => {
+    // Mirrors the production example: Kindoo Description is
+    // "Colorado Springs North Stake (Technology Specialist, Stake Clerk)".
+    // Stake Clerk is an auto template; Technology Specialist is not.
+    const result = classifySegment(
+      segment({
+        scope: 'stake',
+        rawScopeName: 'Colorado Springs North Stake',
+        calling: 'Technology Specialist, Stake Clerk',
+      }),
+      false,
+      SETS,
+    );
+    expect(result.type).toBe('auto');
+    expect(result.reviewMixed).toBe(true);
+    expect(result.callings).toEqual(['Stake Clerk']);
+    expect(result.freeText).toBe('Technology Specialist');
   });
 
   it('falls back to manual + scope=null when the parsed segment did not resolve its scope', () => {
