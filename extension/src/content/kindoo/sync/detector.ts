@@ -63,12 +63,28 @@ export interface SbaBlock {
 export interface KindooBlock {
   description: string;
   isTempUser: boolean;
+  /** Member display name (`FirstName LastName`) — derived from Kindoo's
+   * `FirstName` / `LastName` (or `Username` if neither resolves). The
+   * Phase 2 fix dispatcher needs this to populate `memberName` on
+   * `kindoo-only` callable payloads (SBA seat schema requires it). */
+  memberName: string;
   /** Parsed primary segment's scope (`'stake'` / ward_code / `null`). */
   primaryScope: 'stake' | string | null;
   /** Intended seat shape derived by the classifier from the primary segment. */
   intendedType: IntendedSeatShape['type'] | null;
+  /** Auto-matched callings on the primary segment. Empty for manual/temp/unresolved. */
+  intendedCallings: string[];
+  /** Free-text reason carried by the primary segment (manual/temp parens,
+   * or the unmatched-callings remainder on a mixed-auto segment). */
+  intendedFreeText: string;
   /** Rule IDs Kindoo currently assigns. */
   ruleIds: number[];
+  /** Building names mapped from `ruleIds` via the v2.1 config. */
+  buildingNames: string[];
+  /** ISO date `YYYY-MM-DD` derived from Kindoo's `startAccessDoorsDateAtTimeZone`. Only set when the user is temp. */
+  startDate?: string;
+  /** ISO date `YYYY-MM-DD` derived from Kindoo's `expiryDateAtTimeZone`. Only set when the user is temp. */
+  endDate?: string;
 }
 
 export interface DetectInputs {
@@ -335,15 +351,55 @@ function buildKindooBlock(
   kuser: KindooEnvironmentUser,
   parsed: ParsedDescription,
   intended: IntendedSeatShape | null,
-  _buildings: Building[],
+  buildings: Building[],
   sets: CallingTemplateSets,
 ): KindooBlock {
   const primary = pickPrimarySegment(parsed, sets);
-  return {
+  const ruleIds = kuser.accessSchedules.map((s) => s.ruleId);
+  const block: KindooBlock = {
     description: kuser.description,
     isTempUser: kuser.isTempUser,
+    memberName: deriveMemberName(kuser),
     primaryScope: primary?.scope ?? null,
     intendedType: intended?.type ?? null,
-    ruleIds: kuser.accessSchedules.map((s) => s.ruleId),
+    intendedCallings: intended?.callings ?? [],
+    intendedFreeText: intended?.freeText ?? '',
+    ruleIds,
+    buildingNames: ruleIdsToBuildingNames(ruleIds, buildings),
   };
+  if (kuser.isTempUser) {
+    const start = toIsoDate(kuser.startAccessDoorsDateAtTimeZone);
+    const end = toIsoDate(kuser.expiryDateAtTimeZone);
+    if (start) block.startDate = start;
+    if (end) block.endDate = end;
+  }
+  return block;
+}
+
+/**
+ * Derive a display name from the Kindoo user record. Kindoo's bulk
+ * listing returns `FirstName` / `LastName` for most users; fall back to
+ * the username when both are absent so callers always have a non-empty
+ * string (the `memberName` field on `kindoo-only` payloads is required
+ * server-side).
+ */
+function deriveMemberName(kuser: KindooEnvironmentUser): string {
+  const first = typeof kuser.FirstName === 'string' ? kuser.FirstName.trim() : '';
+  const last = typeof kuser.LastName === 'string' ? kuser.LastName.trim() : '';
+  const joined = [first, last].filter((s) => s.length > 0).join(' ');
+  if (joined.length > 0) return joined;
+  const displayName = typeof kuser.DisplayName === 'string' ? kuser.DisplayName.trim() : '';
+  if (displayName.length > 0) return displayName;
+  return kuser.username;
+}
+
+/**
+ * Strip the time component off Kindoo's `YYYY-MM-DDTHH:MM` date strings.
+ * Returns `null` when the input is falsy or doesn't match the expected
+ * shape; the caller decides whether to omit the field entirely.
+ */
+function toIsoDate(value: string | null | undefined): string | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(value);
+  return match ? match[1]! : null;
 }

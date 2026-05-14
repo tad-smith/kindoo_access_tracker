@@ -31,5 +31,14 @@ export type { PlatformSuperadmin } from './platformSuperadmin.js';
 export type { AccessRequest, RequestStatus, RequestType } from './request.js';
 export type { DuplicateGrant, Seat, SeatType } from './seat.js';
 export type { ImportDay, KindooConfig, OverCapEntry, Stake } from './stake.js';
+export type {
+  BuildingsMismatchPayload,
+  ExtraKindooCallingPayload,
+  KindooOnlyPayload,
+  ScopeMismatchPayload,
+  SyncApplyFixInput,
+  SyncApplyFixResult,
+  TypeMismatchPayload,
+} from './syncApplyFix.js';
 export type { TimestampLike, UserIndexEntry } from './userIndex.js';
 export type { Ward } from './ward.js';

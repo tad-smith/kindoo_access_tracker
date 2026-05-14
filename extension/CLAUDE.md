@@ -53,10 +53,13 @@ extension/
 │   │       │                      # listAllEnvironmentUsers (Sync, paginated)
 │   │       ├── provision.ts       # v2.2 — orchestrates add/change/remove flows
 │   │       │                      # (read-first / merged-state pattern)
-│   │       └── sync/              # Sync Phase 1 — read-only drift detection
+│   │       ├── sync-provision.ts  # Sync Phase 2 — drives Kindoo to a single Seat
+│   │       │                      # (sba-only + *-mismatch "Update Kindoo")
+│   │       └── sync/              # Sync — drift detection + per-row fix dispatch
 │   │           ├── parser.ts      # Kindoo Description → resolved scope+calling segments
 │   │           ├── classifier.ts  # segment → intended seat shape (auto/manual/temp)
-│   │           └── detector.ts    # union(seats, kindoo users) → Discrepancy[]
+│   │           ├── detector.ts    # union(seats, kindoo users) → Discrepancy[]
+│   │           └── fix.ts         # Phase 2 — per-row fix dispatcher (callable | orchestrator)
 │   ├── panel/
 │   │   ├── App.tsx                # React root — five-state router
 │   │   ├── SignedOutPanel.tsx
@@ -65,7 +68,7 @@ extension/
 │   │   ├── QueuePanel.tsx
 │   │   ├── RequestCard.tsx        # v2.2 Provision & Complete button
 │   │   ├── ResultDialog.tsx       # v2.2 post-provision result + retry
-│   │   ├── SyncPanel.tsx          # Sync Phase 1 — read-only drift report
+│   │   ├── SyncPanel.tsx          # Sync — drift report + per-row Fix actions (Phase 2)
 │   │   └── panel.css              # panel styles (Shadow DOM scoped)
 │   └── lib/
 │       ├── firebase.ts            # Firebase app + auth + functions singletons (SW)

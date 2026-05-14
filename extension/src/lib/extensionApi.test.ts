@@ -184,4 +184,44 @@ describe('extensionApi', () => {
     const result = await getSeatByEmail('nobody@example.com');
     expect(result).toBeNull();
   });
+
+  it('syncApplyFix posts the discriminated payload + unwraps the callable result', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: true, data: { success: true, seatId: 'a@example.com' } });
+      },
+    );
+    const { syncApplyFix } = await import('./extensionApi');
+    const input = {
+      stakeId: 'csnorth',
+      fix: {
+        code: 'scope-mismatch' as const,
+        payload: { memberEmail: 'a@example.com', newScope: 'CO' },
+      },
+    };
+    const result = await syncApplyFix(input);
+    expect(chromeStub().runtime.sendMessage).toHaveBeenCalledWith(
+      { type: 'data.syncApplyFix', payload: input },
+      expect.any(Function),
+    );
+    expect(result).toEqual({ success: true, seatId: 'a@example.com' });
+  });
+
+  it('syncApplyFix throws on a wire-level error envelope', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: false, error: { code: 'permission-denied', message: 'no' } });
+      },
+    );
+    const { syncApplyFix } = await import('./extensionApi');
+    await expect(
+      syncApplyFix({
+        stakeId: 'csnorth',
+        fix: {
+          code: 'scope-mismatch',
+          payload: { memberEmail: 'a@example.com', newScope: 'CO' },
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+  });
 });

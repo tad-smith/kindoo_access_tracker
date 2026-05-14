@@ -12,6 +12,8 @@ import type {
   GetMyPendingRequestsOutput,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
+  SyncApplyFixInput,
+  SyncApplyFixResult,
 } from '@kindoo/shared';
 import { functions } from './firebase';
 
@@ -20,6 +22,8 @@ export type {
   GetMyPendingRequestsOutput,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
+  SyncApplyFixInput,
+  SyncApplyFixResult,
 };
 
 /**
@@ -58,6 +62,18 @@ export async function markRequestComplete(
     functions(),
     'markRequestComplete',
   );
+  const result = await fn(input);
+  return result.data;
+}
+
+/**
+ * Apply one per-row Sync Phase 2 fix on the SBA side. Domain-level
+ * misses (seat already exists, seat not found) come back as
+ * `{ success: false, error }`; auth / shape errors throw `HttpsError`
+ * which the SW dispatcher surfaces as a typed wire error.
+ */
+export async function syncApplyFix(input: SyncApplyFixInput): Promise<SyncApplyFixResult> {
+  const fn = httpsCallable<SyncApplyFixInput, SyncApplyFixResult>(functions(), 'syncApplyFix');
   const result = await fn(input);
   return result.data;
 }

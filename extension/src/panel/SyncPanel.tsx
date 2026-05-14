@@ -1,4 +1,5 @@
-// Sync drift report panel. Phase 1 of the Sync feature — read-only.
+// Sync drift report panel. Phase 1 was read-only; Phase 2 adds per-row
+// Fix buttons that dispatch through `content/kindoo/sync/fix.ts`.
 //
 // State machine: idle → loading → report | error.
 //
@@ -9,7 +10,10 @@
 // Once both resolve, `detect()` (in content/kindoo/sync/detector.ts)
 // classifies divergence into one Discrepancy row per email and the
 // panel renders the report. Filter chips narrow to drift-only / review-
-// only. No fix actions — Phase 2.
+// only. Per-row Fix buttons (Phase 2) dispatch the appropriate action;
+// successful applies splice the row out and decrement the matching
+// counter (drift or review) in the summary header — no toast, no
+// confirm, trust-fire per operator decision.
 //
 // Body-only: chrome (email, sign-out, navigation back to the queue)
 // has moved to the shared toolbar + tab bar in TabbedShell.
@@ -17,9 +21,10 @@
 // Design doc: `extension/docs/sync-design.md`.
 
 import { useCallback, useMemo, useState } from 'react';
-import { ExtensionApiError, getSyncData } from '../lib/extensionApi';
+import { ExtensionApiError, getSyncData, type SyncDataBundle } from '../lib/extensionApi';
 import { readKindooSession, type KindooSessionError } from '../content/kindoo/auth';
-import { listAllEnvironmentUsers } from '../content/kindoo/endpoints';
+import { getEnvironments, listAllEnvironmentUsers } from '../content/kindoo/endpoints';
+import type { KindooEnvironment } from '../content/kindoo/endpoints';
 import { KindooApiError } from '../content/kindoo/client';
 import {
   detect,
@@ -27,15 +32,30 @@ import {
   type DetectResult,
   type Severity,
 } from '../content/kindoo/sync/detector';
+import {
+  applyFix,
+  fixActionsFor,
+  type DispatchContext,
+  type FixAction,
+} from '../content/kindoo/sync/fix';
+import type { KindooSession } from '../content/kindoo/auth';
 
 type Step =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'report'; result: DetectResult }
+  | { kind: 'report'; result: DetectResult; ctx: DispatchContext }
   | { kind: 'error'; message: string }
   | { kind: 'no-kindoo'; error: KindooSessionError };
 
 type FilterMode = 'all' | 'drift' | 'review';
+
+/** Per-row fix state. `idle` → buttons visible; `applying` → in flight;
+ * `error` → inline error + Retry; success removes the row entirely so
+ * there is no `success` state to render. */
+type RowState =
+  | { kind: 'idle' }
+  | { kind: 'applying'; action: FixAction }
+  | { kind: 'error'; message: string; lastAction: FixAction };
 
 function describeExtensionError(err: unknown): string {
   if (err instanceof ExtensionApiError) return `${err.code}: ${err.message}`;
@@ -64,12 +84,14 @@ export function SyncPanel() {
     const session = sessionResult.session;
 
     try {
-      const [bundle, kindooUsers] = await Promise.all([
+      const [bundle, kindooUsers, envs] = await Promise.all([
         getSyncData(),
         listAllEnvironmentUsers(session),
+        getEnvironments(session),
       ]);
       const result = detect({ ...bundle, kindooUsers });
-      setStep({ kind: 'report', result });
+      const ctx = buildDispatchContext(bundle, envs, session);
+      setStep({ kind: 'report', result, ctx });
     } catch (err) {
       const message =
         err instanceof KindooApiError ? describeKindooError(err) : describeExtensionError(err);
@@ -84,6 +106,20 @@ export function SyncPanel() {
   );
 }
 
+function buildDispatchContext(
+  bundle: SyncDataBundle,
+  envs: KindooEnvironment[],
+  session: KindooSession,
+): DispatchContext {
+  return {
+    stake: bundle.stake,
+    wards: bundle.wards,
+    buildings: bundle.buildings,
+    envs,
+    session,
+  };
+}
+
 interface BodyProps {
   step: Step;
   filter: FilterMode;
@@ -96,7 +132,8 @@ function SyncBody({ step, filter, onRun, onFilter }: BodyProps) {
     return (
       <div data-testid="sba-sync-idle">
         <p>
-          Compares SBA seats with Kindoo users and reports drift. Read-only — no changes are made.
+          Compares SBA seats with Kindoo users and reports drift. Fix buttons apply changes one row
+          at a time — no confirmation, no undo. Run a fresh sync to verify.
         </p>
         <button
           type="button"
@@ -140,30 +177,66 @@ function SyncBody({ step, filter, onRun, onFilter }: BodyProps) {
       </div>
     );
   }
-  return <ReportView result={step.result} filter={filter} onFilter={onFilter} />;
+  return <ReportView result={step.result} ctx={step.ctx} filter={filter} onFilter={onFilter} />;
 }
 
 interface ReportProps {
   result: DetectResult;
+  ctx: DispatchContext;
   filter: FilterMode;
   onFilter: (f: FilterMode) => void;
 }
 
-function ReportView({ result, filter, onFilter }: ReportProps) {
+function ReportView({ result, ctx, filter, onFilter }: ReportProps) {
+  // Splice-on-success: once a fix applies, drop the row from the
+  // rendered list. The detector is not re-run; the operator triggers
+  // a fresh sync to get a clean state.
+  const [removed, setRemoved] = useState<Set<string>>(() => new Set());
+  const [rowStates, setRowStates] = useState<Record<string, RowState>>({});
+
+  const visibleDiscrepancies = useMemo(
+    () => result.discrepancies.filter((d) => !removed.has(d.canonical)),
+    [result.discrepancies, removed],
+  );
   const driftCount = useMemo(
-    () => result.discrepancies.filter((d) => d.severity === 'drift').length,
-    [result.discrepancies],
+    () => visibleDiscrepancies.filter((d) => d.severity === 'drift').length,
+    [visibleDiscrepancies],
   );
   const reviewCount = useMemo(
-    () => result.discrepancies.filter((d) => d.severity === 'review').length,
-    [result.discrepancies],
+    () => visibleDiscrepancies.filter((d) => d.severity === 'review').length,
+    [visibleDiscrepancies],
   );
   const filtered = useMemo(() => {
-    if (filter === 'all') return result.discrepancies;
-    return result.discrepancies.filter((d) =>
+    if (filter === 'all') return visibleDiscrepancies;
+    return visibleDiscrepancies.filter((d) =>
       filter === 'drift' ? d.severity === 'drift' : d.severity === 'review',
     );
-  }, [filter, result.discrepancies]);
+  }, [filter, visibleDiscrepancies]);
+
+  const handleFix = useCallback(
+    async (d: Discrepancy, action: FixAction) => {
+      setRowStates((prev) => ({ ...prev, [d.canonical]: { kind: 'applying', action } }));
+      const outcome = await applyFix(d, action, ctx);
+      if (outcome.ok) {
+        setRemoved((prev) => {
+          const next = new Set(prev);
+          next.add(d.canonical);
+          return next;
+        });
+        setRowStates((prev) => {
+          const next = { ...prev };
+          delete next[d.canonical];
+          return next;
+        });
+      } else {
+        setRowStates((prev) => ({
+          ...prev,
+          [d.canonical]: { kind: 'error', message: outcome.error, lastAction: action },
+        }));
+      }
+    },
+    [ctx],
+  );
 
   return (
     <div data-testid="sba-sync-report">
@@ -185,7 +258,11 @@ function ReportView({ result, filter, onFilter }: ReportProps) {
         <ul className="sba-sync-list" data-testid="sba-sync-list">
           {filtered.map((d) => (
             <li key={d.canonical}>
-              <DiscrepancyRow discrepancy={d} />
+              <DiscrepancyRow
+                discrepancy={d}
+                state={rowStates[d.canonical] ?? { kind: 'idle' }}
+                onFix={(action) => void handleFix(d, action)}
+              />
             </li>
           ))}
         </ul>
@@ -216,8 +293,22 @@ function FilterChip({ current, value, label, onFilter }: FilterChipProps) {
   );
 }
 
-function DiscrepancyRow({ discrepancy }: { discrepancy: Discrepancy }) {
+interface DiscrepancyRowProps {
+  discrepancy: Discrepancy;
+  state: RowState;
+  onFix: (action: FixAction) => void;
+}
+
+function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
   const severityClass = discrepancy.severity === 'drift' ? 'sba-badge-remove' : 'sba-badge-temp';
+  const actions = fixActionsFor(discrepancy);
+  // Type-mismatch with `auto` on either side can't drive Kindoo from the
+  // extension (Church Access Automation owns direct door grants). Mark
+  // the Kindoo-side button disabled with a tooltip in that case.
+  const autoLocked =
+    discrepancy.code === 'type-mismatch' &&
+    (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto');
+
   return (
     <div
       className="sba-sync-row"
@@ -289,6 +380,80 @@ function DiscrepancyRow({ discrepancy }: { discrepancy: Discrepancy }) {
         />
       </div>
       <p className="sba-sync-reason">{discrepancy.reason}</p>
+      <FixActions
+        canonical={discrepancy.canonical}
+        actions={actions}
+        state={state}
+        autoLocked={autoLocked}
+        onFix={onFix}
+      />
+    </div>
+  );
+}
+
+interface FixActionsProps {
+  canonical: string;
+  actions: FixAction[];
+  state: RowState;
+  autoLocked: boolean;
+  onFix: (action: FixAction) => void;
+}
+
+function FixActions({ canonical, actions, state, autoLocked, onFix }: FixActionsProps) {
+  if (actions.length === 0) return null;
+
+  if (state.kind === 'applying') {
+    return (
+      <div
+        className="sba-sync-fix-row"
+        data-testid={`sba-sync-fix-applying-${canonical}`}
+        aria-live="polite"
+      >
+        <span className="sba-muted">Applying {state.action.label}…</span>
+      </div>
+    );
+  }
+
+  if (state.kind === 'error') {
+    return (
+      <div className="sba-sync-fix-row" data-testid={`sba-sync-fix-error-${canonical}`}>
+        <span className="sba-error sba-sync-fix-error" role="alert">
+          {state.message}
+        </span>
+        <button
+          type="button"
+          className="sba-btn"
+          onClick={() => onFix(state.lastAction)}
+          data-testid={`sba-sync-fix-retry-${canonical}`}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="sba-sync-fix-row">
+      {actions.map((a) => {
+        const isAutoLockedKindoo = autoLocked && a.side === 'kindoo';
+        return (
+          <button
+            key={a.testId}
+            type="button"
+            className={a.side === 'sba' ? 'sba-btn sba-btn-primary' : 'sba-btn sba-btn-success'}
+            onClick={() => onFix(a)}
+            disabled={isAutoLockedKindoo}
+            title={
+              isAutoLockedKindoo
+                ? 'auto seats provisioned by Church Access Automation; not modifiable here.'
+                : undefined
+            }
+            data-testid={`sba-sync-fix-${a.testId}-${canonical}`}
+          >
+            {a.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

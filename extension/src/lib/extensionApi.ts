@@ -31,6 +31,8 @@ import type {
   DataGetStakeConfigResponse,
   DataGetSyncDataRequest,
   DataGetSyncDataResponse,
+  DataSyncApplyFixRequest,
+  DataSyncApplyFixResponse,
   DataWriteKindooConfigRequest,
   DataWriteKindooConfigResponse,
   ExtensionRequest,
@@ -51,6 +53,8 @@ import type {
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
   Seat,
+  SyncApplyFixInput,
+  SyncApplyFixResult,
 } from '@kindoo/shared';
 
 /**
@@ -219,5 +223,17 @@ export async function getSeatByEmail(canonical: string): Promise<Seat | null> {
 export async function getSyncData(): Promise<SyncDataBundle> {
   const req: DataGetSyncDataRequest = { type: 'data.getSyncData' };
   const res: DataGetSyncDataResponse = await sendMessage(req);
+  return unwrap(res);
+}
+
+/**
+ * Dispatch one SBA-side per-row Sync Phase 2 fix to the callable.
+ * Wire-level / auth errors throw `ExtensionApiError`; domain misses
+ * (seat already exists, seat not found) come back as
+ * `{ success: false, error }` for the caller to render inline.
+ */
+export async function syncApplyFix(input: SyncApplyFixInput): Promise<SyncApplyFixResult> {
+  const req: DataSyncApplyFixRequest = { type: 'data.syncApplyFix', payload: input };
+  const res: DataSyncApplyFixResponse = await sendMessage(req);
   return unwrap(res);
 }

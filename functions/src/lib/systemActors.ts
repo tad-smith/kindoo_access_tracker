@@ -10,6 +10,7 @@
 // `apps/web/src/features/manager/auditLog/AuditLogPage.tsx`
 // (`isAutomatedActor`) and the dashboard's equivalent check.
 
+import { syncActorName, type SyncDiscrepancyCode } from '@kindoo/shared';
 import type { ActorRef } from '@kindoo/shared';
 
 export const IMPORTER_ACTOR: ActorRef = {
@@ -42,3 +43,16 @@ export const OUT_OF_BAND_ACTOR: ActorRef = {
   email: 'OutOfBand',
   canonical: 'OutOfBand',
 };
+
+/**
+ * Build the `ActorRef` stamp for a Sync Phase 2 fix write. The
+ * discrepancy `code` rides in the encoded string so the audit row
+ * preserves which drift class triggered the write. The web renderer
+ * paints this as automated via `isAutomatedActor` (which recognises the
+ * `SyncActor:` prefix) and downstream consumers can recover the code
+ * via `parseSyncActorCode` from `@kindoo/shared`.
+ */
+export function syncActor(code: SyncDiscrepancyCode): ActorRef {
+  const name = syncActorName(code);
+  return { email: name, canonical: name };
+}

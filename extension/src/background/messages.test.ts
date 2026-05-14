@@ -23,9 +23,11 @@ vi.mock('../lib/auth', async () => {
 
 const getMyPendingRequestsMock = vi.fn();
 const markRequestCompleteMock = vi.fn();
+const syncApplyFixMock = vi.fn();
 vi.mock('../lib/api', () => ({
   getMyPendingRequests: (...args: unknown[]) => getMyPendingRequestsMock(...args),
   markRequestComplete: (...args: unknown[]) => markRequestCompleteMock(...args),
+  syncApplyFix: (...args: unknown[]) => syncApplyFixMock(...args),
 }));
 
 const loadStakeConfigMock = vi.fn();
@@ -48,6 +50,7 @@ describe('handleRequest', () => {
     waitForAuthHydratedMock.mockResolvedValue(null);
     getMyPendingRequestsMock.mockReset();
     markRequestCompleteMock.mockReset();
+    syncApplyFixMock.mockReset();
     loadStakeConfigMock.mockReset();
     writeKindooConfigMock.mockReset();
     loadSeatByEmailMock.mockReset();
@@ -296,6 +299,36 @@ describe('handleRequest', () => {
     expect(result).toEqual({
       ok: false,
       error: { code: 'permission-denied', message: 'rules blocked the read' },
+    });
+  });
+
+  it('data.syncApplyFix forwards the payload and unwraps the callable result', async () => {
+    syncApplyFixMock.mockResolvedValue({ success: true, seatId: 'a@example.com' });
+    const { handleRequest } = await import('./messages');
+    const payload = {
+      stakeId: 'csnorth',
+      fix: { code: 'scope-mismatch' as const, payload: { memberEmail: 'a@x.com', newScope: 'CO' } },
+    };
+    const result = await handleRequest({ type: 'data.syncApplyFix', payload });
+    expect(syncApplyFixMock).toHaveBeenCalledWith(payload);
+    expect(result).toEqual({ ok: true, data: { success: true, seatId: 'a@example.com' } });
+  });
+
+  it('data.syncApplyFix surfaces callable HttpsError codes as wire errors', async () => {
+    syncApplyFixMock.mockRejectedValue(
+      Object.assign(new Error('not a manager'), { code: 'permission-denied' }),
+    );
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.syncApplyFix',
+      payload: {
+        stakeId: 'csnorth',
+        fix: { code: 'scope-mismatch', payload: { memberEmail: 'a@x.com', newScope: 'CO' } },
+      },
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'permission-denied', message: 'not a manager' },
     });
   });
 });
