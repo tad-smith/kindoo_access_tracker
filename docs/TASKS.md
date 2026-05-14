@@ -638,3 +638,28 @@ The staging extension is in active use. The production extension is fully built 
 **Decision deferred.** Whether the listing eventually goes Public (vs staying Unlisted) is operator's call once the user base extends beyond a single stake. Tracked under Phase 12 (multi-stake) as a follow-up.
 
 **No dependencies.** Every prerequisite is already shipped. Pick up when operator is ready to put the listing live.
+
+## [T-40] Enforce Firebase App Check on user-callable Cloud Functions
+Status: open
+Owner: @backend-engineer + @infra-engineer
+Phase: cross-cutting
+
+Surfaced by the 2026-05-14 callable-permission security review: none of the five user-callable Cloud Functions (`getMyPendingRequests`, `runImportNow`, `markRequestComplete`, `syncApplyFix`, `installScheduledJobs`) currently enforce App Check. Any signed-in Firebase Auth user can invoke them from any origin (web, mobile, curl, scripts). The existing per-callable `kindooManagers` doc check is the only authorization gate.
+
+Add App Check enforcement so calls without a valid App Check token are rejected at the Functions runtime. Defense-in-depth against bot / scripted / MITM invocation — does not replace the per-callable manager auth check. Web app (Firebase Hosting) registers via reCAPTCHA Enterprise; Chrome extension needs a separate App Check provider (custom debug provider during development; production attestation TBD — operator decision).
+
+## [T-41] Enable Firestore TTL on `platformAuditLog`
+Status: open
+Owner: @infra-engineer (operator runs gcloud) + @tad
+Phase: cross-cutting
+
+T-15 closed 2026-04-29 by enabling Firestore TTL on the `auditLog` collection-group. The sibling `platformAuditLog` collection (superadmin records — see Q20) was deferred at operator's discretion and remains unbounded. Enable TTL on the same `ttl` field shape so superadmin audit rows auto-expire.
+
+```
+gcloud firestore fields ttls update ttl \
+  --collection-group=platformAuditLog \
+  --enable-ttl \
+  --project=<staging-project>
+```
+
+Repeat for production. Decide retention duration before enabling (the in-code default for `auditLog` is 365 days; superadmin records may warrant longer — operator decision). Add a corresponding subsection to `infra/runbooks/provision-firebase-projects.md` next to the existing TTL setup notes.
