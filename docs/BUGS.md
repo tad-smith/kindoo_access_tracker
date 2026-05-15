@@ -26,6 +26,43 @@ Manager-Configuration "Auto Callings" tab — clicking Delete on a `wardCallingT
 
 ---
 
+## [B-7] syncApplyFix doesn't populate sort_order or write access docs for auto seats
+Status: closed (fixed in PR — branch `fix/b-7-sync-fix-importer-parity`)
+Owner: @backend-engineer
+Phase: post Phase 11
+Severity: medium
+
+`functions/src/callable/syncApplyFix.ts` (the Sync Phase 2 per-row fix endpoint) is an incomplete clone of the LCR Sheet importer's seat-create / seat-mutate paths. When a manager uses the extension's Sync Phase 2 fix flow to create or modify an **auto** seat, two fields that the importer always sets get dropped:
+
+1. **`sort_order` on the seat doc.** The importer computes `MIN(sheet_order)` across matched calling templates and stamps it on auto seats (`functions/src/services/Importer.ts:384`; `functions/src/lib/diff.ts:61-65`). The roster pages sort auto seats by this field (`apps/web/src/lib/sort/seats.ts:44-51`); missing values fall to `Number.POSITIVE_INFINITY`, so sync-created auto seats sink to the bottom of the auto band.
+2. **`access` doc creation.** For each matched calling template where `give_app_access === true`, the importer writes a corresponding `access` row that grants the user SBA app login + role (`Importer.ts:328, 344`). The extension's fix path didn't touch `access` at all, so sync-created auto seats never gained app access.
+
+Both fields apply only to auto seats. Manual / temp seats don't have `sort_order` and don't drive `access`-doc creation in the importer — `syncApplyFix` mirrors that.
+
+**Symptom:** a manager clicks Apply on a Sync Phase 2 drift fix that creates or makes-auto a seat. The seat appears on the roster but sorts after every importer-stamped auto seat (no sort_order), and the user doesn't appear in the access roster / can't sign in to the SBA app even when their calling template has `give_app_access=true`.
+
+**Repro:**
+1. Have a Kindoo seat the LCR sheet doesn't yet reflect (or whose type SBA records as non-auto).
+2. Open the extension's Sync tab; pick the corresponding `kindoo-only` / `extra-kindoo-calling` / `type-mismatch (→auto)` drift row.
+3. Click Apply.
+4. SBA roster: seat appears at the bottom of the auto band (no `sort_order`); access roster: user absent even when the calling has `give_app_access=true`.
+
+**Root cause:** the Sync Phase 2 callable was a partial clone of the importer's write logic — it preserved seat shape but lost the template-driven `sort_order` derivation and the parallel `access`-doc fan-out. Behavioural drift between two code paths that touch the same data; invisible to type-check.
+
+**Fix (this PR):**
+- `applyKindooOnly` (auto path): inside the transaction, load calling templates for the seat's scope, compute `sort_order = MIN(sheet_order)`, write the seat with `sort_order` stamped, and write an `access` doc with `importer_callings[scope] = [give_app_access=true callings]`. Manual / temp paths unchanged.
+- `applyExtraKindooCalling` (auto seat): recompute `sort_order` over the full post-append calling set; write/merge `access` doc for any newly-appended `give_app_access=true` callings.
+- `applyTypeMismatch`:
+  - `manual/temp → auto`: stamp `sort_order` from existing callings; write `access` doc for `give_app_access=true` matches.
+  - `auto → manual/temp`: clear `sort_order` (via `FieldValue.delete()`); drop `importer_callings[scope]` on the access doc. If the post-drop importer_callings is empty AND no `manual_grants` remain, delete the access doc (mirrors the importer's `planDiff` `accessDeletes` predicate); otherwise update it.
+- Cross-reference comments added at the top of `syncApplyFix.ts` and mirror-image comments at the top of `Importer.ts` + `diff.ts` so the next agent touching either side knows to update its sibling.
+
+`applyScopeMismatch` / `applyBuildingsMismatch` don't touch type or callings, so the parity bookkeeping doesn't apply to them.
+
+**Branch / PR:** `fix/b-7-sync-fix-importer-parity`.
+
+---
+
 ## [B-6] auditDiff reports nested-object key reorderings as field changes
 Status: closed (fixed in PR #86)
 Owner: @backend-engineer

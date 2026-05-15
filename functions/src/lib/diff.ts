@@ -12,6 +12,14 @@
 //     cross-scope auto findings go to `duplicate_grants[]`.
 //   - Promotion-on-empty-callings: if primary auto callings → empty AND
 //     a manual/temp duplicate exists, promote it to primary.
+//
+// PARITY: `functions/src/callable/syncApplyFix.ts` re-derives
+// `sort_order` (via its own `minSheetOrder` helper) and decides
+// `access`-doc create/clear/delete using the same rules implemented
+// here. When you change `minSheetOrderForCallings`, the wholesale-
+// replacement semantics for `importer_callings[scope]`, or the
+// access-delete predicate (`finalImporterEmpty && !hasManual`), update
+// the sibling logic in `syncApplyFix.ts` in the same PR.
 
 import { canonicalEmail } from '@kindoo/shared';
 import type { Access, Seat } from '@kindoo/shared';

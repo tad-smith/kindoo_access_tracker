@@ -7,7 +7,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
-import type { AuditLog, Seat } from '@kindoo/shared';
+import type { Access, AuditLog, Seat } from '@kindoo/shared';
 import { syncApplyFix } from '../src/callable/syncApplyFix.js';
 import { auditSeatWrites } from '../src/triggers/auditTrigger.js';
 import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.js';
@@ -36,10 +36,11 @@ async function seedSeat(opts: {
   type?: Seat['type'];
   callings?: string[];
   building_names?: string[];
+  sort_order?: number | null;
 }): Promise<void> {
   const { db } = requireEmulators();
   const canonical = opts.canonical ?? MEMBER_EMAIL;
-  await db.doc(`stakes/${STAKE_ID}/seats/${canonical}`).set({
+  const body: Record<string, unknown> = {
     member_canonical: canonical,
     member_email: canonical,
     member_name: 'Alice',
@@ -52,7 +53,60 @@ async function seedSeat(opts: {
     last_modified_at: Timestamp.now(),
     last_modified_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
     lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+  };
+  if (opts.sort_order !== undefined) body.sort_order = opts.sort_order;
+  await db.doc(`stakes/${STAKE_ID}/seats/${canonical}`).set(body);
+}
+
+/**
+ * Seed a calling-template doc. Default scope='CO' writes to
+ * `wardCallingTemplates`; scope='stake' writes to
+ * `stakeCallingTemplates`. The collection split mirrors the importer's
+ * shape (stake-wide ward templates + per-stake stake templates).
+ */
+async function seedTemplate(opts: {
+  scope?: 'stake' | string;
+  calling_name: string;
+  give_app_access?: boolean;
+  auto_kindoo_access?: boolean;
+  sheet_order?: number;
+}): Promise<void> {
+  const { db } = requireEmulators();
+  const scope = opts.scope ?? 'CO';
+  const collection = scope === 'stake' ? 'stakeCallingTemplates' : 'wardCallingTemplates';
+  // Use the calling name URL-encoded as the doc ID; matches firebase-schema.md §§4.8–4.9.
+  const docId = encodeURIComponent(opts.calling_name);
+  await db.doc(`stakes/${STAKE_ID}/${collection}/${docId}`).set({
+    calling_name: opts.calling_name,
+    give_app_access: opts.give_app_access ?? false,
+    auto_kindoo_access: opts.auto_kindoo_access ?? true,
+    sheet_order: opts.sheet_order ?? 0,
+    created_at: Timestamp.now(),
+    lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
   });
+}
+
+async function seedAccess(opts: {
+  canonical?: string;
+  importer_callings?: Record<string, string[]>;
+  manual_grants?: Record<string, Access['manual_grants'][string]>;
+  sort_order?: number | null;
+}): Promise<void> {
+  const { db } = requireEmulators();
+  const canonical = opts.canonical ?? MEMBER_EMAIL;
+  const body: Record<string, unknown> = {
+    member_canonical: canonical,
+    member_email: canonical,
+    member_name: 'Alice',
+    importer_callings: opts.importer_callings ?? {},
+    manual_grants: opts.manual_grants ?? {},
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    last_modified_by: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+  };
+  if (opts.sort_order !== undefined) body.sort_order = opts.sort_order;
+  await db.doc(`stakes/${STAKE_ID}/access/${canonical}`).set(body);
 }
 
 function callableReq(opts: { auth?: { email: string } | null; data: unknown }): never {
@@ -589,6 +643,426 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         }),
       );
       expect(result).toEqual({ success: false, error: 'seat not found' });
+    });
+  });
+
+  // ----- Importer parity: sort_order + access-doc bookkeeping -----
+  //
+  // The seat-create / seat-mutate paths in `syncApplyFix` must leave
+  // Firestore in the same shape the LCR Sheet importer would produce
+  // on its next run. See the PARITY note at the top of
+  // `functions/src/callable/syncApplyFix.ts` and the mirror notes in
+  // `functions/src/services/Importer.ts` + `functions/src/lib/diff.ts`.
+  // These tests cover sort_order stamping and `access`-doc fan-out for
+  // `give_app_access` templates across the three apply paths that can
+  // turn a seat auto.
+
+  describe('importer parity (auto-seat sort_order + access bookkeeping)', () => {
+    describe("code='kindoo-only' on auto seats", () => {
+      it('stamps sort_order = MIN(sheet_order) and writes access docs for give_app_access templates', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 10,
+        });
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Ward Clerk',
+          give_app_access: true,
+          sheet_order: 3,
+        });
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Sunday School Teacher',
+          give_app_access: false,
+          sheet_order: 50,
+        });
+
+        const result = await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'CO',
+                  type: 'auto',
+                  callings: ['Bishop', 'Ward Clerk', 'Sunday School Teacher'],
+                  buildingNames: ['Cordera Building'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+        expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        // MIN(10, 3, 50) = 3.
+        expect(seat.sort_order).toBe(3);
+
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        // Only the two give_app_access=true callings should appear under
+        // importer_callings[CO]; the give_app_access=false one is dropped.
+        // Sorted alphabetically per the importer's contract.
+        expect(access.importer_callings).toEqual({ CO: ['Bishop', 'Ward Clerk'] });
+        expect(access.manual_grants).toEqual({});
+        expect(access.sort_order).toBe(3);
+        expect(access.lastActor).toEqual({
+          email: 'SyncActor:kindoo-only',
+          canonical: 'SyncActor:kindoo-only',
+        });
+      });
+
+      it('writes no access doc when no calling matches a give_app_access template; sort_order may be null', async () => {
+        await seedManager();
+        // No templates seeded — every calling is an orphan.
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'CO',
+                  type: 'auto',
+                  callings: ['Unknown Calling'],
+                  buildingNames: ['Cordera Building'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        // Orphan auto seat: sort_order is null (no template matches).
+        expect(seat.sort_order).toBe(null);
+        const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+        expect(accessSnap.exists).toBe(false);
+      });
+    });
+
+    describe("code='kindoo-only' on non-auto seats", () => {
+      it('manual: writes no sort_order and no access doc even when templates exist', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 1,
+        });
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'CO',
+                  type: 'manual',
+                  callings: [],
+                  buildingNames: ['Cordera Building'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat & { sort_order?: unknown };
+        expect(seat.type).toBe('manual');
+        // No sort_order field stamped at all for non-auto.
+        expect(seat.sort_order).toBeUndefined();
+        const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+        expect(accessSnap.exists).toBe(false);
+      });
+
+      it('temp: writes no sort_order and no access doc even when templates exist', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 1,
+        });
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'CO',
+                  type: 'temp',
+                  callings: [],
+                  buildingNames: ['Cordera Building'],
+                  startDate: '2026-06-01',
+                  endDate: '2026-06-30',
+                  isTempUser: true,
+                },
+              },
+            },
+          }),
+        );
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat & { sort_order?: unknown };
+        expect(seat.type).toBe('temp');
+        expect(seat.sort_order).toBeUndefined();
+        const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+        expect(accessSnap.exists).toBe(false);
+      });
+    });
+
+    describe("code='extra-kindoo-calling'", () => {
+      it('on auto: writes access doc for newly-appended give_app_access calling and recomputes sort_order if smaller', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Ward Clerk',
+          give_app_access: false,
+          sheet_order: 10,
+        });
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 2,
+        });
+        await seedSeat({
+          scope: 'CO',
+          type: 'auto',
+          callings: ['Ward Clerk'],
+          sort_order: 10,
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'extra-kindoo-calling',
+                payload: { memberEmail: MEMBER_EMAIL, extraCallings: ['Bishop'] },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.callings).toEqual(['Ward Clerk', 'Bishop']);
+        // MIN(Ward Clerk=10, Bishop=2) = 2; sort_order recomputed.
+        expect(seat.sort_order).toBe(2);
+
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
+        expect(access.sort_order).toBe(2);
+      });
+
+      it('on manual: leaves sort_order absent and writes no access doc even when give_app_access templates match', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 1,
+        });
+        await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'extra-kindoo-calling',
+                payload: { memberEmail: MEMBER_EMAIL, extraCallings: ['Bishop'] },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat & { sort_order?: unknown };
+        expect(seat.callings).toEqual(['Bishop']);
+        expect(seat.sort_order).toBeUndefined();
+        const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+        expect(accessSnap.exists).toBe(false);
+      });
+    });
+
+    describe("code='type-mismatch' flipping to auto", () => {
+      it('manual → auto: stamps sort_order from existing callings, writes access doc for give_app_access matches', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 5,
+        });
+        await seedSeat({ scope: 'CO', type: 'manual', callings: ['Bishop'] });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'type-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, newType: 'auto' },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.type).toBe('auto');
+        expect(seat.sort_order).toBe(5);
+
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
+        expect(access.sort_order).toBe(5);
+      });
+    });
+
+    describe("code='type-mismatch' flipping away from auto", () => {
+      it('auto → manual with no manual_grants: clears sort_order and deletes the access doc', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 5,
+        });
+        await seedSeat({
+          scope: 'CO',
+          type: 'auto',
+          callings: ['Bishop'],
+          sort_order: 5,
+        });
+        await seedAccess({
+          importer_callings: { CO: ['Bishop'] },
+          sort_order: 5,
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'type-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, newType: 'manual' },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat & { sort_order?: unknown };
+        expect(seat.type).toBe('manual');
+        // FieldValue.delete() removed sort_order entirely.
+        expect(seat.sort_order).toBeUndefined();
+
+        const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+        expect(accessSnap.exists).toBe(false);
+      });
+
+      it('auto → manual with manual_grants present: clears sort_order and clears importer_callings[scope] but keeps the doc', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 5,
+        });
+        await seedSeat({
+          scope: 'CO',
+          type: 'auto',
+          callings: ['Bishop'],
+          sort_order: 5,
+        });
+        await seedAccess({
+          importer_callings: { CO: ['Bishop'] },
+          manual_grants: {
+            CO: [
+              {
+                grant_id: 'grant-1',
+                reason: 'Bishop training',
+                granted_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+                granted_at: Timestamp.now(),
+              },
+            ],
+          },
+          sort_order: 5,
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'type-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, newType: 'manual' },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        // importer_callings[CO] dropped; manual_grants preserved; doc remains.
+        expect(access.importer_callings).toEqual({});
+        expect(access.manual_grants.CO?.length).toBe(1);
+        expect(access.sort_order).toBe(null);
+        expect(access.lastActor).toEqual({
+          email: 'SyncActor:type-mismatch',
+          canonical: 'SyncActor:type-mismatch',
+        });
+      });
     });
   });
 

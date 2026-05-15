@@ -16,6 +16,16 @@
 //   - `import_start` / `import_end` / `over_cap_warning` audit rows
 //     are written directly by this service (no entity write to fan
 //     from).
+//
+// PARITY: the Sync Phase 2 fix callable
+// `functions/src/callable/syncApplyFix.ts` mirrors the seat-upsert /
+// access-upsert / access-delete bookkeeping in `applyPlan` below (and
+// the `sort_order` derivation in `functions/src/lib/diff.ts`). When you
+// change one side's logic — sort_order stamping, access-doc
+// creation/deletion driven by `give_app_access` templates, or the
+// wholesale-per-scope replacement semantics — update the other side in
+// the same PR. Drift here is invisible to type-check but breaks roster
+// sort + app-access grants for sync-created auto seats.
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
