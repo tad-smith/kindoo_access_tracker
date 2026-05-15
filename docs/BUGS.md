@@ -6,6 +6,26 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-12] Manager cannot delete a calling template — "missing or insufficient permissions"
+Status: closed (fixed in PR — branch `fix/b-12-calling-template-delete-rule`)
+Owner: @backend-engineer
+Phase: post Phase 11
+Severity: low-medium
+
+Manager-Configuration "Auto Callings" tab — clicking Delete on a `wardCallingTemplates` or `stakeCallingTemplates` row throws `"missing or insufficient permissions"` from Firestore. Editing and adding rows work; only delete fails.
+
+**Symptom:** SPA's `useDeleteWardCallingTemplateWithResequenceMutation` / `useDeleteStakeCallingTemplateWithResequenceMutation` issues a `writeBatch` that deletes the doc and resequences survivors. The delete leg is rejected with `FirebaseError: Missing or insufficient permissions`.
+
+**Repro:** sign in as a Kindoo Manager; Configuration → Auto Callings (ward or stake) → Delete any row; observe the permission error and the row remains.
+
+**Root cause:** `firestore.rules` had a combined `allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);` predicate for both calling-template collections. For a delete, `request.resource.data` is null (no after-state), so `lastActorMatchesAuth` evaluates against an absent value and the predicate fails. Wards / buildings / kindooManagers already split into `allow create, update` + `allow delete` for exactly this reason; calling templates were the odd ones out.
+
+**Fix:** split the combined `write` into `allow create, update: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);` + `allow delete: if isManager(stakeId);` on both `wardCallingTemplates` and `stakeCallingTemplates`. Same authority that can edit can also delete; no widening beyond that. No SPA change needed — the audit trigger already reads `lastActor` from the BEFORE snapshot on deletes, so the pre-delete stamp from the last upsert/reorder surfaces in the audit row. Both calling-template collections are in the audited list (`auditWardCallingTemplateWrites` + `auditStakeCallingTemplateWrites` in `functions/src/triggers/auditTrigger.ts`).
+
+**Branch / PR:** `fix/b-12-calling-template-delete-rule`.
+
+---
+
 ## [B-6] auditDiff reports nested-object key reorderings as field changes
 Status: closed (fixed in PR #86)
 Owner: @backend-engineer

@@ -591,14 +591,25 @@ service cloud.firestore {
       // importer's mapping from calling-name → app-access; they're
       // configuration data, not member data, so non-managers don't
       // need read access.
+      //
+      // Create + update carry the `lastActorMatchesAuth` integrity
+      // check; delete cannot (no `request.resource.data` on delete) and
+      // is gated only by the role predicate. Same split applied to
+      // wards / buildings / kindooManagers above. The audit trigger
+      // reads `lastActor` from the BEFORE snapshot for deletes, so the
+      // pre-delete row's stamp surfaces in the audit log.
       match /wardCallingTemplates/{callingName} {
         allow read: if isManager(stakeId);
-        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+        allow create, update: if isManager(stakeId)
+          && lastActorMatchesAuth(request.resource.data);
+        allow delete: if isManager(stakeId);
       }
 
       match /stakeCallingTemplates/{callingName} {
         allow read: if isManager(stakeId);
-        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
+        allow create, update: if isManager(stakeId)
+          && lastActorMatchesAuth(request.resource.data);
+        allow delete: if isManager(stakeId);
       }
 
       // ----- AuditLog -----
