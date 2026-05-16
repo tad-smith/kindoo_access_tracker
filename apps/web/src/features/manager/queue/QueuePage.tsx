@@ -182,7 +182,9 @@ function QueueSection({ title, testid, requests, buildings, focusedId }: QueueSe
   if (requests.length === 0) return null;
   return (
     <div className="kd-queue-section" data-testid={testid}>
-      <h2 className="kd-queue-section-header">{title}</h2>
+      <h2 className="kd-queue-section-header">
+        {title} ({requests.length})
+      </h2>
       <div className="kd-queue-cards">
         {requests.map((request) => (
           <QueueCard
