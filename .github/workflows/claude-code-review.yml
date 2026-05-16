@@ -52,6 +52,6 @@ jobs:
             Tone: terse, no praise, no preamble, no hedging. If the PR is genuinely fine, one line saying so is the right answer. One well-reasoned objection beats five nitpicks. Do NOT comment on style if a linter would catch it.
           claude_args: |
             --model claude-opus-4-7
-            --max-turns 15
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(rg:*),Bash(cat:*),Bash(ls:*),Read,Grep,Glob"
-            --disallowedTools "Edit,Write,Bash(git push:*),Bash(gh pr merge:*),Bash(gh pr close:*),WebSearch"
+            --max-turns 30
+            --allowedTools "Bash,Read,Grep,Glob"
+            --disallowedTools "Edit,Write,Bash(git push:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr edit:*),WebSearch"
