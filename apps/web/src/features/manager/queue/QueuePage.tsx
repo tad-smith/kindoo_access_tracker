@@ -351,6 +351,12 @@ function labelForType(t: AccessRequest['type']): string {
       return 'Add (temp)';
     case 'remove':
       return 'Remove';
+    case 'edit_auto':
+      return 'Edit (auto)';
+    case 'edit_manual':
+      return 'Edit (manual)';
+    case 'edit_temp':
+      return 'Edit (temp)';
   }
 }
 

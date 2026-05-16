@@ -504,6 +504,68 @@ describe('accessRequestSchema', () => {
     expect(accessRequestSchema.parse(seed)).toEqual(seed);
   });
 
+  it('parses a representative pending edit_auto request (ward scope)', () => {
+    const seed = {
+      request_id: 'req-edit-auto-1',
+      type: 'edit_auto' as const,
+      scope: '01',
+      member_email: 'Alice@gmail.com',
+      member_canonical: 'alice@gmail.com',
+      member_name: 'Alice Smith',
+      reason: '',
+      comment: '',
+      building_names: ['Cordera Building', 'Briargate Building'],
+      status: 'pending' as const,
+      requester_email: 'Bishop@gmail.com',
+      requester_canonical: 'bishop@gmail.com',
+      requested_at: T,
+      lastActor: ACTOR,
+    };
+    expect(accessRequestSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a representative pending edit_manual request', () => {
+    const seed = {
+      request_id: 'req-edit-manual-1',
+      type: 'edit_manual' as const,
+      scope: 'stake',
+      member_email: 'Alice@gmail.com',
+      member_canonical: 'alice@gmail.com',
+      member_name: 'Alice Smith',
+      reason: 'Visiting authority (extended)',
+      comment: '',
+      building_names: ['Cordera Building'],
+      status: 'pending' as const,
+      requester_email: 'Mgr@gmail.com',
+      requester_canonical: 'mgr@gmail.com',
+      requested_at: T,
+      lastActor: ACTOR,
+    };
+    expect(accessRequestSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a representative pending edit_temp request', () => {
+    const seed = {
+      request_id: 'req-edit-temp-1',
+      type: 'edit_temp' as const,
+      scope: '01',
+      member_email: 'Bob@gmail.com',
+      member_canonical: 'bob@gmail.com',
+      member_name: 'Bob Brown',
+      reason: 'Visiting speaker (extended)',
+      comment: '',
+      start_date: '2026-05-01',
+      end_date: '2026-05-15',
+      building_names: ['Cordera Building'],
+      status: 'pending' as const,
+      requester_email: 'Bishop@gmail.com',
+      requester_canonical: 'bishop@gmail.com',
+      requested_at: T,
+      lastActor: ACTOR,
+    };
+    expect(accessRequestSchema.parse(seed)).toEqual(seed);
+  });
+
   it('parses a remove that was a no-op (R-1 race) with completion_note', () => {
     const seed = {
       request_id: 'req-4',

@@ -6,7 +6,13 @@
 import type { ActorRef } from './actor.js';
 import type { TimestampLike } from './userIndex.js';
 
-export type RequestType = 'add_manual' | 'add_temp' | 'remove';
+export type RequestType =
+  | 'add_manual'
+  | 'add_temp'
+  | 'remove'
+  | 'edit_auto'
+  | 'edit_manual'
+  | 'edit_temp';
 export type RequestStatus = 'pending' | 'complete' | 'rejected' | 'cancelled';
 
 export type AccessRequest = {
@@ -32,8 +38,11 @@ export type AccessRequest = {
   /** ISO date `YYYY-MM-DD` — `add_temp` only. */
   end_date?: string;
   /**
-   * Buildings the requester selected (stake-scope add types only;
-   * non-stake-scope inherits the ward's `building_name` automatically).
+   * Buildings the requester selected. Required for stake-scope add
+   * types (non-stake-scope add types inherit the ward's `building_name`
+   * automatically) and for every edit type (`edit_auto`, `edit_manual`,
+   * `edit_temp`) since edits carry the full post-edit building set as
+   * the replacement payload.
    */
   building_names: string[];
 

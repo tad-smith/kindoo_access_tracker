@@ -27,6 +27,9 @@ const TYPE_LABEL: Record<RequestType, string> = {
   add_manual: 'add',
   add_temp: 'add (temp)',
   remove: 'remove',
+  edit_auto: 'edit (auto)',
+  edit_manual: 'edit (manual)',
+  edit_temp: 'edit (temp)',
 };
 
 // FCM error codes for which the offending token will never succeed for

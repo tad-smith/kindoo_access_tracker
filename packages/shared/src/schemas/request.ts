@@ -7,7 +7,14 @@ import { z } from 'zod';
 import { actorRefSchema } from './actor.js';
 import { timestampLikeSchema } from './timestampLike.js';
 
-export const requestTypeSchema = z.enum(['add_manual', 'add_temp', 'remove']);
+export const requestTypeSchema = z.enum([
+  'add_manual',
+  'add_temp',
+  'remove',
+  'edit_auto',
+  'edit_manual',
+  'edit_temp',
+]);
 export const requestStatusSchema = z.enum(['pending', 'complete', 'rejected', 'cancelled']);
 
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');

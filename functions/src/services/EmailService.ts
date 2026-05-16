@@ -35,12 +35,18 @@ const TYPE_LEAD_VERB: Record<RequestType, string> = {
   add_manual: 'submitted a new manual-add request',
   add_temp: 'requested temp access for',
   remove: 'requested removal of',
+  edit_auto: 'requested an edit to the auto seat for',
+  edit_manual: 'requested an edit to the manual seat for',
+  edit_temp: 'requested an edit to the temp seat for',
 };
 
 const TYPE_NOUN: Record<RequestType, string> = {
   add_manual: 'manual access',
   add_temp: 'temp access',
   remove: 'removal',
+  edit_auto: 'auto-seat edit',
+  edit_manual: 'manual-seat edit',
+  edit_temp: 'temp-seat edit',
 };
 
 // ---------------------------------------------------------------------------

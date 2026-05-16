@@ -289,6 +289,12 @@ function typeBadgeLabel(t: AccessRequest['type']): string {
       return 'Add (temp)';
     case 'remove':
       return 'Remove';
+    case 'edit_auto':
+      return 'Edit (auto)';
+    case 'edit_manual':
+      return 'Edit (manual)';
+    case 'edit_temp':
+      return 'Edit (temp)';
   }
 }
 
@@ -300,6 +306,10 @@ function badgeClass(t: AccessRequest['type']): string {
       return 'sba-badge sba-badge-temp';
     case 'remove':
       return 'sba-badge sba-badge-remove';
+    case 'edit_auto':
+    case 'edit_manual':
+    case 'edit_temp':
+      return 'sba-badge sba-badge-manual';
   }
 }
 

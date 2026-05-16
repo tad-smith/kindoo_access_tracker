@@ -24,6 +24,14 @@
 //     system note to `completion_note` so the audit trail explains
 //     why no delete fired — matching `resolveRemoveCompletionNote` in
 //     the SPA hook.
+//   - `edit_auto` / `edit_manual` / `edit_temp`: locate the seat by
+//     `member_canonical`, find the matching slot by (scope, type)
+//     (primary first, then `duplicate_grants[]`), and replace the
+//     editable fields in place via `planEditSeat`. `edit_auto` is
+//     rejected when `scope === 'stake'` (Policy 1 — stake auto seats
+//     are Church-granted to all stake buildings and can't be edited).
+//     Edits don't change scope/type, so no over-cap recompute. The
+//     seat write + request flip land in the same transaction.
 //
 // Over-cap policy (post-2026-05-12 pivot): Kindoo is the source of
 // truth — if Kindoo accepted the user, SBA reflects that. Completion
@@ -162,6 +170,74 @@ export function planAddMerge(opts: {
     update: { duplicate_grants: [...dupes, entry] },
     touchedScopes,
   };
+}
+
+/**
+ * Plan an edit against an existing seat. Symmetric with `planAddMerge`
+ * but the edit replaces fields on the matching slot rather than merging.
+ *
+ * Slot-resolution order: primary `{scope, type}` match wins; otherwise
+ * walk `duplicate_grants[]` for the first `{scope, type}` match. If no
+ * slot matches, returns `null` — caller throws a `failed-precondition`
+ * error.
+ *
+ * `edit_auto`: replaces `building_names` only. Per Policy B the template's
+ * `allowed_buildings` are pre-checked AND disabled in the modal so the
+ * incoming `building_names` is the template's set plus extras; no extra
+ * server-side enforcement needed.
+ *
+ * `edit_manual`: replaces `reason` + `building_names`. Manual seats
+ * store the operator-typed calling name in `reason`. `seat.callings`
+ * for manual seats is left untouched — manual seats by convention
+ * carry `callings: []`, and the existing convention is preserved.
+ *
+ * `edit_temp`: replaces `reason` + `building_names` + `start_date` +
+ * `end_date`. All four fields are operator-editable in the modal.
+ */
+export function planEditSeat(
+  existingSeat: Seat,
+  targetType: Seat['type'],
+  scope: string,
+  fields: {
+    building_names: string[];
+    reason?: string;
+    start_date?: string;
+    end_date?: string;
+  },
+): { update: Record<string, unknown>; slot: 'primary' | 'duplicate'; index: number } | null {
+  // Primary match: scope + type.
+  if (existingSeat.scope === scope && existingSeat.type === targetType) {
+    const update: Record<string, unknown> = {
+      building_names: fields.building_names,
+    };
+    if (fields.reason !== undefined) update.reason = fields.reason;
+    if (fields.start_date !== undefined) update.start_date = fields.start_date;
+    if (fields.end_date !== undefined) update.end_date = fields.end_date;
+    return { update, slot: 'primary', index: -1 };
+  }
+
+  // Walk duplicate_grants[] for a (scope, type) match.
+  const dupes = existingSeat.duplicate_grants ?? [];
+  const matchIdx = dupes.findIndex((d) => d.scope === scope && d.type === targetType);
+  if (matchIdx >= 0) {
+    const matched = dupes[matchIdx]!;
+    const next = dupes.slice();
+    const replacement: DuplicateGrant = {
+      ...matched,
+      building_names: fields.building_names,
+    };
+    if (fields.reason !== undefined) replacement.reason = fields.reason;
+    if (fields.start_date !== undefined) replacement.start_date = fields.start_date;
+    if (fields.end_date !== undefined) replacement.end_date = fields.end_date;
+    next[matchIdx] = replacement;
+    return {
+      update: { duplicate_grants: next },
+      slot: 'duplicate',
+      index: matchIdx,
+    };
+  }
+
+  return null;
 }
 
 export const markRequestComplete = onCall(
@@ -363,6 +439,69 @@ export const markRequestComplete = onCall(
         const seatRef = seatsRef.doc(seatTarget);
         const seatSnap = await tx.get(seatRef);
         seatExists = seatSnap.exists;
+      } else if (
+        cur.type === 'edit_auto' ||
+        cur.type === 'edit_manual' ||
+        cur.type === 'edit_temp'
+      ) {
+        // Stake auto seats are non-editable — Church-granted access to
+        // all stake buildings, nothing to remove. Three layers of
+        // defense (UI hides Edit, rules reject edit_auto create at
+        // scope='stake', and this callable check). Policy 1.
+        if (cur.type === 'edit_auto' && cur.scope === 'stake') {
+          throw new HttpsError(
+            'permission-denied',
+            'edit_auto requests with scope=stake are not allowed (stake auto seats are not editable)',
+          );
+        }
+
+        const seatRef = seatsRef.doc(cur.member_canonical);
+        const seatSnap = await tx.get(seatRef);
+        if (!seatSnap.exists) {
+          throw new HttpsError(
+            'failed-precondition',
+            `no seat found for member ${cur.member_canonical} — cannot ${cur.type}`,
+          );
+        }
+        const existingSeat = seatSnap.data() as Seat;
+        const targetType: Seat['type'] =
+          cur.type === 'edit_auto' ? 'auto' : cur.type === 'edit_manual' ? 'manual' : 'temp';
+
+        const fields: {
+          building_names: string[];
+          reason?: string;
+          start_date?: string;
+          end_date?: string;
+        } = { building_names: cur.building_names ?? [] };
+        if (cur.type === 'edit_manual' || cur.type === 'edit_temp') {
+          fields.reason = cur.reason ?? '';
+        }
+        if (cur.type === 'edit_temp') {
+          if (cur.start_date) fields.start_date = cur.start_date;
+          if (cur.end_date) fields.end_date = cur.end_date;
+        }
+
+        const plan = planEditSeat(existingSeat, targetType, cur.scope, fields);
+        if (plan === null) {
+          throw new HttpsError(
+            'failed-precondition',
+            `no editable slot found for (scope=${cur.scope}, type=${targetType}) on member ${cur.member_canonical}`,
+          );
+        }
+
+        const seatUpdate: Record<string, unknown> = {
+          ...plan.update,
+          last_modified_at: FieldValue.serverTimestamp(),
+          last_modified_by: actor,
+          lastActor: actor,
+        };
+        mergeSeatRef = seatRef;
+        mergeUpdate = seatUpdate;
+
+        // Edits never change scope/type, so per-pool counts are
+        // unchanged. We deliberately leave `postWriteSeats` null so the
+        // over-cap recompute (and the `stake.last_over_caps_json` write)
+        // is skipped — same responsibility split as the remove path.
       }
 
       const update: Record<string, unknown> = {

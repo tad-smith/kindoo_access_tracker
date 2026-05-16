@@ -160,6 +160,35 @@ Remove-requests follow the same lifecycle; the `complete` action triggers `remov
 - **R-1 race (seat already gone at completion time).** If the seat is missing when the trigger fires (a duplicate remove already ran, or the daily expiry trigger removed a temp seat between submit and complete), the request still flips to `complete`. A `completion_note = "Seat already removed at completion time (no-op)."` is stamped on the request. Only ONE audit row is fanned (`complete_request` on the request — there is no seat to delete). The completion email body surfaces the note (`Note: ...`) so the requester is not confused that nothing visibly changed.
 - **Submit-time guards.** A remove submit is rejected by client transaction (rules cannot do a presence check at create time without a `getAfter` against a non-existent doc) if no active manual/temp seat exists for `(scope, member_canonical)`, or if another `pending` remove request for the same `(scope, member_canonical)` is already open. The UI also gates: the remove control is only rendered on manual/temp rows and is disabled when `removal_pending` is set.
 
+### 6.1 Edit-seat requests
+
+In addition to `add_manual`, `add_temp`, and `remove`, managers can mutate an existing seat in place through three edit request types. All three flow through the same Pending Queue → Mark Complete pipeline as the existing add/remove types: requester submits a `pending` request; manager hits Mark Complete; the `markRequestComplete` callable resolves the seat slot and writes the field replacements in the same transaction. The `auditTrigger` fans audit rows on the request flip and the seat update automatically — no new audit semantics.
+
+| Seat type / scope | Edit allowed? | Editable fields |
+| --- | --- | --- |
+| **Auto, stake scope** | **No.** Church-granted access to all stake buildings; nothing to remove or constrain. Three-layer defense (see below). | — |
+| **Auto, ward scope** | Yes (`edit_auto`) | `building_names` only (template buildings pre-checked + disabled — extras only, per Policy B). |
+| **Manual (any scope)** | Yes (`edit_manual`) | `reason` (= the calling name for manual seats) and `building_names`. `seat.callings` is **not** touched (manual seats carry `callings: []` by convention). |
+| **Temp (any scope)** | Yes (`edit_temp`) | `reason`, `building_names`, `start_date`, `end_date`. |
+
+**Who can submit.** Same `allowedScopesFor(seat.scope)` gate as `remove`: a bishopric for that ward can submit ward-scope edits; stake-scope members can submit stake-scope edits. Manager status alone does not grant submit rights (B-3 / T-36) — the role-for-scope rule applies.
+
+**Policy 1 — stake auto seats are non-editable.** Three layers of defense:
+
+1. **Web UI** hides the Edit button on stake auto rows (All Seats / Roster).
+2. **Firestore rule** rejects creation of an `edit_auto` request when `scope == 'stake'` — see `firestore/firestore.rules` §requests.create.
+3. **`markRequestComplete` callable** rejects `edit_auto` completion when `scope === 'stake'` with `permission-denied` — see `functions/src/callable/markRequestComplete.ts`.
+
+**Policy B — `edit_auto` building selection.** The matched calling-template's `allowed_buildings` are pre-checked AND disabled in the edit modal. Operator can ADD buildings; cannot REMOVE template buildings. The orchestrator does not need to re-enforce this server-side because the request can only carry the template's allowed_buildings PLUS extras. The modal is the constraint.
+
+**`edit_manual` reason semantics.** Manual seats store the operator-typed calling name in `seat.reason` (not `seat.callings`, which stays `[]`). The `edit_manual` request's `reason` field replaces `seat.reason` verbatim. `seat.callings` is left untouched.
+
+**Slot resolution** (in `planEditSeat`, `functions/src/callable/markRequestComplete.ts`): primary `(scope, type)` match wins; otherwise walk `seat.duplicate_grants[]` for the first `(scope, type)` match. If neither matches, the callable throws `failed-precondition` (no editable slot found). Edits never change scope/type, so per-pool counts are unchanged — the callable skips the over-cap recompute (responsibility split with `removeSeatOnRequestComplete`).
+
+**Edit badge in the Pending Queue.** Edit requests render with a distinct "Edit (auto)" / "Edit (manual)" / "Edit (temp)" type badge so managers can disambiguate them at a glance against add/remove.
+
+**Audit trail.** `markRequestComplete` stamps the manager's email on both the request flip (`lastActor`, `completer_*`) and the seat update (`lastActor`, `last_modified_by`). The `auditTrigger` fans one row per write, same as add/remove. No new audit `action` values needed (existing `update_seat` and `complete_request` cover edits).
+
 ## 7. Temporary-seat expiry
 
 The `runExpiry` Cloud Function (Phase 8) is invoked hourly by Cloud Scheduler and iterates over stakes whose `expiry_hour` matches the current local hour in their `timezone` (default `America/Denver`, set on the stake doc). For each matching stake it queries `stakes/{stakeId}/seats` for `type='temp' AND end_date < today` (today computed in the stake's timezone), deletes each matching seat doc, and writes per-row audit rows (`auto_expire`, `actor_email='ExpiryTrigger'`). The default `expiry_hour` is `3` (i.e. 03:00 stake-local).
