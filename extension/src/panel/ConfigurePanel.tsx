@@ -1,19 +1,19 @@
-// First-run configuration wizard for v2.1.
+// First-run + reconfigure wizard for v2.1 / Phase 5.
 //
-// Two sequential steps inside the same slide-over:
-//   1. Site verification — read EID from web.kindoo.tech's localStorage,
-//      call KindooGetEnvironments, match against `stake.stake_name`.
-//      Mismatch is a hard block (no override) — wrong-site provisioning
-//      would grant access in the wrong physical buildings.
-//   2. Building → Access Rule mapping — call KindooGetEnvironmentRules,
-//      render one row per SBA building, persist via SW writeBatch.
+// One wizard run = one Kindoo site. Which site is determined by the
+// active Kindoo session — the operator switches sites via Kindoo's own
+// UI and reopens the panel; the wizard scopes to whichever site is
+// active. Buildings whose `kindoo_site_id` doesn't match the active
+// site are filtered out (a foreign-site wizard never prompts for home
+// buildings, and vice versa).
 //
 // State machine (`step`):
 //   - 'init'                          loading the stake + buildings + EID
-//   - { kind: 'verify', ... }         Step 1 rendered
-//   - { kind: 'rules', ... }          Step 2 rendered
+//   - { kind: 'unknown-site', ... }   active Kindoo site isn't configured in SBA
+//   - { kind: 'rules', ... }          rule-mapping step rendered
 //   - { kind: 'saving', ... }         Save in flight
-//   - { kind: 'error', ... }          recoverable fetch error in Step 1
+//   - { kind: 'fatal', ... }          recoverable fetch error
+//   - { kind: 'no-kindoo', ... }      Kindoo session missing
 //
 // The component owns the wizard's local state; on `Save` success it
 // fires `onComplete()` so the parent (App) re-renders into the tabbed
@@ -34,8 +34,10 @@ import {
   getEnvironments,
   getEnvironmentRules,
   type KindooAccessRule,
+  type KindooEnvironment,
 } from '../content/kindoo/endpoints';
 import { KindooApiError } from '../content/kindoo/client';
+import { resolveActiveKindooSite, type ActiveSiteResolution } from '../content/kindoo/siteCheck';
 
 interface ConfigurePanelProps {
   email?: string | null | undefined;
@@ -47,23 +49,19 @@ interface ConfigurePanelProps {
   mode?: 'wizard' | 'tab';
 }
 
-type VerifyState = {
-  kind: 'verify';
-  stake: Stake;
-  buildings: Building[];
-  kindooSiteName: string;
-  /** Resolved comparison input: `stake.kindoo_expected_site_name || stake.stake_name`. */
-  sbaExpectedName: string;
-  match: boolean;
-  eid: number;
-};
-
 type RulesState = {
   kind: 'rules';
   stake: Stake;
+  /** Buildings filtered to the active site only. */
   buildings: Building[];
-  kindooSiteName: string;
+  /** Active Kindoo session site classification — drives both the header
+   * label and the save's `kindooSiteId` discriminator. */
+  active: ActiveSiteResolution & ({ kind: 'home' } | { kind: 'foreign' });
+  /** Active session's EID, persisted onto stake.kindoo_config (home) or
+   * the foreign KindooSite doc (foreign auto-populate). */
   eid: number;
+  /** Active session's Kindoo `Name`, persisted on home save. */
+  kindooSiteName: string;
   rules: KindooAccessRule[];
   /** buildingId → ruleId */
   assignments: Record<string, number>;
@@ -72,15 +70,16 @@ type RulesState = {
 
 type Step =
   | { kind: 'init' }
-  | VerifyState
   | RulesState
   | { kind: 'saving'; from: RulesState }
   | { kind: 'fatal'; message: string }
-  | { kind: 'no-kindoo'; error: KindooSessionError };
-
-function normaliseName(s: string): string {
-  return s.trim().toLowerCase();
-}
+  | { kind: 'no-kindoo'; error: KindooSessionError }
+  | {
+      kind: 'unknown-site';
+      /** Active site's display name from `getEnvironments()`. Empty when no
+       * env matched the active EID. */
+      activeSiteName: string;
+    };
 
 function describeKindooError(err: unknown): string {
   if (err instanceof KindooApiError) {
@@ -96,6 +95,19 @@ function describeExtensionError(err: unknown): string {
   }
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/** Filter buildings to the active Kindoo site. `null` / undefined
+ * `kindoo_site_id` means home; a string value points at a foreign
+ * KindooSite doc id. Phase 5 — wizards see only their site's buildings. */
+function filterBuildingsForSite(
+  buildings: Building[],
+  active: ActiveSiteResolution & ({ kind: 'home' } | { kind: 'foreign' }),
+): Building[] {
+  if (active.kind === 'home') {
+    return buildings.filter((b) => b.kindoo_site_id === null || b.kindoo_site_id === undefined);
+  }
+  return buildings.filter((b) => b.kindoo_site_id === active.siteId);
 }
 
 export function ConfigurePanel({
@@ -116,7 +128,7 @@ export function ConfigurePanel({
     }
     const session = sessionResult.session;
 
-    let bundle: { stake: Stake; buildings: Building[] };
+    let bundle: Awaited<ReturnType<typeof getStakeConfig>>;
     try {
       bundle = await getStakeConfig();
     } catch (err) {
@@ -127,7 +139,7 @@ export function ConfigurePanel({
       return;
     }
 
-    let envs: Awaited<ReturnType<typeof getEnvironments>>;
+    let envs: KindooEnvironment[];
     try {
       envs = await getEnvironments(session);
     } catch (err) {
@@ -137,41 +149,23 @@ export function ConfigurePanel({
       });
       return;
     }
-    const env = envs.find((e) => e.EID === session.eid);
-    const kindooSiteName = env ? env.Name : '';
-    // `kindoo_expected_site_name` is an optional override on the stake
-    // doc — set when `stake_name` carries a label (e.g. STAGING prefix)
-    // that isn't part of the real Kindoo site name. Falls back to
-    // `stake_name` when absent.
-    const sbaExpectedName =
-      bundle.stake.kindoo_expected_site_name?.trim() || bundle.stake.stake_name;
-    const match =
-      kindooSiteName.length > 0 && normaliseName(kindooSiteName) === normaliseName(sbaExpectedName);
 
-    setStep({
-      kind: 'verify',
+    const active = resolveActiveKindooSite({
+      session,
+      envs,
       stake: bundle.stake,
-      buildings: bundle.buildings,
-      kindooSiteName,
-      sbaExpectedName,
-      match,
-      eid: session.eid,
+      kindooSites: bundle.kindooSites,
     });
-  }, []);
 
-  useEffect(() => {
-    void beginLoad();
-  }, [beginLoad]);
-
-  const goToRules = useCallback(async (verify: VerifyState) => {
-    const sessionResult = readKindooSession();
-    if (!sessionResult.ok) {
-      setStep({ kind: 'no-kindoo', error: sessionResult.error });
+    if (active.kind === 'unknown') {
+      setStep({ kind: 'unknown-site', activeSiteName: active.activeSiteName });
       return;
     }
+
+    // Active = home | foreign. Load this site's rules + filter buildings.
     let rules: KindooAccessRule[];
     try {
-      rules = await getEnvironmentRules(sessionResult.session, verify.eid);
+      rules = await getEnvironmentRules(session, session.eid);
     } catch (err) {
       setStep({
         kind: 'fatal',
@@ -179,25 +173,36 @@ export function ConfigurePanel({
       });
       return;
     }
+
+    const buildings = filterBuildingsForSite(bundle.buildings, active);
     // Pre-fill assignments from any existing kindoo_rule on each building.
     const assignments: Record<string, number> = {};
-    for (const b of verify.buildings) {
+    for (const b of buildings) {
       const existing = b.kindoo_rule;
       if (existing && rules.some((r) => r.RID === existing.rule_id)) {
         assignments[b.building_id] = existing.rule_id;
       }
     }
+
+    const env = envs.find((e) => e.EID === session.eid);
+    const kindooSiteName = env ? env.Name : '';
+
     setStep({
       kind: 'rules',
-      stake: verify.stake,
-      buildings: verify.buildings,
-      kindooSiteName: verify.kindooSiteName,
-      eid: verify.eid,
+      stake: bundle.stake,
+      buildings,
+      active,
+      eid: session.eid,
+      kindooSiteName,
       rules,
       assignments,
       saveError: null,
     });
   }, []);
+
+  useEffect(() => {
+    void beginLoad();
+  }, [beginLoad]);
 
   const handleAssign = useCallback((buildingId: string, ruleId: number | null) => {
     setStep((prev) => {
@@ -226,6 +231,7 @@ export function ConfigurePanel({
       });
       try {
         await writeKindooConfig({
+          kindooSiteId: current.active.kind === 'home' ? null : current.active.siteId,
           siteId: current.eid,
           siteName: current.kindooSiteName,
           buildingRules,
@@ -241,12 +247,17 @@ export function ConfigurePanel({
     [onComplete],
   );
 
+  const headerLabel = useMemo(() => {
+    if (step.kind === 'rules') return `Configuring: ${step.active.displayName}`;
+    if (step.kind === 'saving') return `Configuring: ${step.from.active.displayName}`;
+    return 'Configure Kindoo';
+  }, [step]);
+
   const body = (
     <div className="sba-body" data-testid="sba-configure">
       <ConfigureBody
         step={step}
         onRetry={() => void beginLoad()}
-        onContinue={(v) => void goToRules(v)}
         onAssign={handleAssign}
         onSave={(rules) => void handleSave(rules)}
       />
@@ -259,7 +270,7 @@ export function ConfigurePanel({
     <main className="sba-panel">
       <header className="sba-header">
         <div>
-          <h1>Configure Kindoo</h1>
+          <h1>{headerLabel}</h1>
           {email ? <div className="sba-header-meta">{email}</div> : null}
         </div>
         {onCancel ? (
@@ -281,12 +292,11 @@ export function ConfigurePanel({
 interface BodyProps {
   step: Step;
   onRetry: () => void;
-  onContinue: (verify: VerifyState) => void;
   onAssign: (buildingId: string, ruleId: number | null) => void;
   onSave: (rules: RulesState) => void;
 }
 
-function ConfigureBody({ step, onRetry, onContinue, onAssign, onSave }: BodyProps) {
+function ConfigureBody({ step, onRetry, onAssign, onSave }: BodyProps) {
   if (step.kind === 'init') {
     return <p className="sba-muted">Loading…</p>;
   }
@@ -314,8 +324,18 @@ function ConfigureBody({ step, onRetry, onContinue, onAssign, onSave }: BodyProp
       </div>
     );
   }
-  if (step.kind === 'verify') {
-    return <VerifyStep state={step} onContinue={onContinue} />;
+  if (step.kind === 'unknown-site') {
+    return (
+      <div data-testid="sba-configure-unknown-site">
+        <p className="sba-error">
+          This Kindoo site (<code>{step.activeSiteName || 'unknown'}</code>) isn&rsquo;t configured
+          in SBA. Add it in Configuration → Kindoo Sites first.
+        </p>
+        <button type="button" className="sba-btn" onClick={onRetry}>
+          Retry
+        </button>
+      </div>
+    );
   }
   if (step.kind === 'rules') {
     return <RulesStep state={step} onAssign={onAssign} onSave={onSave} />;
@@ -324,47 +344,6 @@ function ConfigureBody({ step, onRetry, onContinue, onAssign, onSave }: BodyProp
   return (
     <div data-testid="sba-configure-saving">
       <p className="sba-muted">Saving…</p>
-    </div>
-  );
-}
-
-function VerifyStep({
-  state,
-  onContinue,
-}: {
-  state: VerifyState;
-  onContinue: (s: VerifyState) => void;
-}) {
-  return (
-    <div data-testid="sba-configure-verify">
-      <h2 className="sba-configure-step-title">Step 1 of 2 — verify site</h2>
-      <dl className="sba-configure-pair">
-        <dt>SBA expects</dt>
-        <dd>{state.sbaExpectedName}</dd>
-        <dt>Kindoo site</dt>
-        <dd>{state.kindooSiteName || <em className="sba-muted">no site found for EID</em>}</dd>
-      </dl>
-      {state.match ? (
-        <p className="sba-success-msg" data-testid="sba-configure-match">
-          Site matches the SBA stake. You can continue.
-        </p>
-      ) : (
-        <p className="sba-error" data-testid="sba-configure-mismatch">
-          The Kindoo site does not match. Sign into the correct Kindoo site, or set{' '}
-          <code>stake.kindoo_expected_site_name</code> if the names differ intentionally.
-        </p>
-      )}
-      <div className="sba-request-actions">
-        <button
-          type="button"
-          className="sba-btn sba-btn-primary"
-          disabled={!state.match}
-          onClick={() => onContinue(state)}
-          data-testid="sba-configure-continue"
-        >
-          Continue
-        </button>
-      </div>
     </div>
   );
 }
@@ -385,37 +364,47 @@ function RulesStep({
 
   return (
     <div data-testid="sba-configure-rules">
-      <h2 className="sba-configure-step-title">Step 2 of 2 — assign rules</h2>
+      <p className="sba-muted">
+        To configure a different Kindoo site, switch your Kindoo browser session to that site and
+        reopen this panel.
+      </p>
       <p className="sba-muted">
         Pick the Kindoo Access Rule for each SBA building. Every building must have a rule before
         saving.
       </p>
-      <ul className="sba-configure-rule-list">
-        {state.buildings.map((b) => {
-          const selected = state.assignments[b.building_id];
-          return (
-            <li key={b.building_id} className="sba-configure-rule-row">
-              <span className="sba-configure-rule-building">{b.building_name}</span>
-              <select
-                className="sba-configure-rule-select"
-                value={selected ?? ''}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  onAssign(b.building_id, v === '' ? null : Number(v));
-                }}
-                data-testid={`sba-configure-rule-${b.building_id}`}
-              >
-                <option value="">Select a rule…</option>
-                {state.rules.map((r) => (
-                  <option key={r.RID} value={r.RID}>
-                    {r.Name}
-                  </option>
-                ))}
-              </select>
-            </li>
-          );
-        })}
-      </ul>
+      {state.buildings.length === 0 ? (
+        <p className="sba-muted" data-testid="sba-configure-no-buildings">
+          No SBA buildings are assigned to this Kindoo site yet. Assign buildings to it in
+          Configuration → Buildings, then reopen this panel.
+        </p>
+      ) : (
+        <ul className="sba-configure-rule-list">
+          {state.buildings.map((b) => {
+            const selected = state.assignments[b.building_id];
+            return (
+              <li key={b.building_id} className="sba-configure-rule-row">
+                <span className="sba-configure-rule-building">{b.building_name}</span>
+                <select
+                  className="sba-configure-rule-select"
+                  value={selected ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    onAssign(b.building_id, v === '' ? null : Number(v));
+                  }}
+                  data-testid={`sba-configure-rule-${b.building_id}`}
+                >
+                  <option value="">Select a rule…</option>
+                  {state.rules.map((r) => (
+                    <option key={r.RID} value={r.RID}>
+                      {r.Name}
+                    </option>
+                  ))}
+                </select>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {state.saveError ? (
         <p role="alert" className="sba-error" data-testid="sba-configure-save-error">
           {state.saveError}
@@ -425,7 +414,7 @@ function RulesStep({
         <button
           type="button"
           className="sba-btn sba-btn-primary"
-          disabled={!allAssigned}
+          disabled={!allAssigned || state.buildings.length === 0}
           onClick={() => onSave(state)}
           data-testid="sba-configure-save"
         >
