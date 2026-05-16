@@ -680,4 +680,9 @@ Documented as a known limitation in `docs/spec.md` §15 Phase 4 prose. The curre
 - `extension/src/content/kindoo/sync/activeSite.ts` — the active-site resolver; likely unchanged, but the diff layer that consumes its output needs to gain per-site fan-out.
 - Spec §15 Phase 4 prose — drop the "known limitation" paragraph once the fix lands.
 
-**Acceptance.** A Kindoo user with Description `'Cordera Ward (Bishop) | Foothills Ward (Stake Clerk)'` (Cordera home, Foothills foreign) appears on both the home-site sync view and the foreign-site sync view, each with the site-scoped expectation correctly derived from that site's segment. Neither side manufactures `sba-only` / `kindoo-only` drift for the user when SBA's grants match each site's segment-derived expectation.
+**Acceptance.** Both of the following must hold — a fix scoped only to the ward+ward shape would leave the stake+foreign-ward shape still broken:
+
+1. **Ward + foreign-ward.** A Kindoo user with Description `'Cordera Ward (Bishop) | Foothills Ward (Stake Clerk)'` (Cordera home, Foothills foreign) appears on both the home-site sync view and the foreign-site sync view, each with the site-scoped expectation correctly derived from that site's segment.
+2. **Stake + foreign-ward.** A Kindoo user with Description `'<StakeName> (Stake Clerk) | Foothills Ward (Elders Quorum President)'` (where `<StakeName>` matches the home stake and Foothills is on a foreign Kindoo site) appears on both the home-site sync view (with the stake-segment expectation) and the foreign-Foothills sync view (with the EQP expectation). Today `pickPrimarySegment` prefers stake on tie, so this user disappears from the Foothills view; the fix must surface them on both.
+
+Neither side manufactures `sba-only` / `kindoo-only` drift for the user when SBA's grants match each site's segment-derived expectation.
