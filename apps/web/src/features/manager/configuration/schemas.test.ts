@@ -5,6 +5,7 @@ import {
   buildingSchema,
   callingTemplateSchema,
   configSchema,
+  kindooSiteFormSchema,
   managerSchema,
   wardSchema,
 } from './schemas';
@@ -70,6 +71,53 @@ describe('configuration callingTemplateSchema', () => {
       calling_name: 'Bishop',
       give_app_access: true,
       sheet_order: 1,
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe('configuration kindooSiteFormSchema', () => {
+  it('accepts a fully populated kindoo site', () => {
+    const r = kindooSiteFormSchema.safeParse({
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake CS',
+      kindoo_eid: 42,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects empty display_name', () => {
+    const r = kindooSiteFormSchema.safeParse({
+      display_name: '   ',
+      kindoo_expected_site_name: 'X',
+      kindoo_eid: 1,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects empty kindoo_expected_site_name', () => {
+    const r = kindooSiteFormSchema.safeParse({
+      display_name: 'X',
+      kindoo_expected_site_name: '',
+      kindoo_eid: 1,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects zero EID', () => {
+    const r = kindooSiteFormSchema.safeParse({
+      display_name: 'X',
+      kindoo_expected_site_name: 'X',
+      kindoo_eid: 0,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects non-integer EID', () => {
+    const r = kindooSiteFormSchema.safeParse({
+      display_name: 'X',
+      kindoo_expected_site_name: 'X',
+      kindoo_eid: 1.5,
     });
     expect(r.success).toBe(false);
   });

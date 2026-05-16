@@ -32,6 +32,21 @@ export const buildingSchema = z.object({
 });
 export type BuildingForm = z.infer<typeof buildingSchema>;
 
+// Kindoo Sites — foreign Kindoo environments this stake's managers can
+// write to. Home site is implicit on the parent stake doc; this form
+// only ever creates / edits foreign-site rows. Fields mirror
+// `packages/shared/src/schemas/kindooSite.ts` minus the bookkeeping
+// fields the mutation fills in.
+export const kindooSiteFormSchema = z.object({
+  display_name: z.string().trim().min(1, 'Display name is required.'),
+  kindoo_expected_site_name: z.string().trim().min(1, 'Kindoo site name is required.'),
+  kindoo_eid: z
+    .number({ message: 'Kindoo EID must be a number.' })
+    .int('Kindoo EID must be an integer.')
+    .positive('Kindoo EID must be 1 or greater.'),
+});
+export type KindooSiteForm = z.infer<typeof kindooSiteFormSchema>;
+
 // `active` is no longer a form input — the add-manager form always
 // creates managers with `active: true`. Toggling existing managers
 // happens via the deactivate / activate row buttons. The persisted

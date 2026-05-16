@@ -17,6 +17,7 @@ const tabSchema = z.enum([
   'managers',
   'wards',
   'buildings',
+  'kindoo-sites',
   'ward-callings',
   'stake-callings',
 ]);

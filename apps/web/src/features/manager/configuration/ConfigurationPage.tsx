@@ -2,7 +2,7 @@
 // table.
 //
 // Tabs (left → right): Config, Managers, Wards, Buildings,
-// Auto Ward Callings, Auto Stake Callings.
+// Kindoo Sites, Auto Ward Callings, Auto Stake Callings.
 //
 // Sub-tabs are selected via a query param `?tab=<key>` so the URL
 // remains deep-linkable. The TanStack Router file-route validates the
@@ -13,7 +13,13 @@
 // for create. Wards / Buildings rows expose a per-row Edit button that
 // opens the modal pre-populated. Wards: `ward_code` is read-only when
 // editing (it's the doc id). Buildings: `building_id` is never shown
-// (it's a slug derived from `building_name` server-side).
+// (it's a slug derived from `building_name` server-side). Kindoo Site
+// id is similarly slugged from `display_name` at create time and pinned
+// for the doc's life.
+//
+// Wards and Buildings rows expose an inline Kindoo Site dropdown that
+// writes only the `kindoo_site_id` field — toggling between home (null)
+// and a foreign-site row does NOT round-trip through the Edit dialog.
 //
 // The Config tab is single-document; it keeps its inline form, no
 // modal.
@@ -22,14 +28,22 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import type { Building, StakeCallingTemplate, Ward, WardCallingTemplate } from '@kindoo/shared';
+import type {
+  Building,
+  KindooSite,
+  StakeCallingTemplate,
+  Ward,
+  WardCallingTemplate,
+} from '@kindoo/shared';
 import {
   buildingSchema,
   configSchema,
+  kindooSiteFormSchema,
   managerSchema,
   wardSchema,
   type BuildingForm,
   type ConfigForm,
+  type KindooSiteForm,
   type ManagerForm,
   type WardForm,
 } from './schemas';
@@ -38,17 +52,22 @@ import {
   useAddWardCallingTemplateMutation,
   useBuildings,
   useDeleteBuildingMutation,
+  useDeleteKindooSiteMutation,
   useDeleteManagerMutation,
   useDeleteStakeCallingTemplateWithResequenceMutation,
   useDeleteWardCallingTemplateWithResequenceMutation,
   useDeleteWardMutation,
+  useKindooSites,
   useManagers,
   useReorderStakeCallingTemplatesMutation,
   useReorderWardCallingTemplatesMutation,
   useStakeCallingTemplates,
   useStakeDoc,
+  useUpdateBuildingKindooSiteMutation,
   useUpdateStakeConfigMutation,
+  useUpdateWardKindooSiteMutation,
   useUpsertBuildingMutation,
+  useUpsertKindooSiteMutation,
   useUpsertManagerMutation,
   useUpsertStakeCallingTemplateMutation,
   useUpsertWardCallingTemplateMutation,
@@ -72,6 +91,7 @@ export type ConfigTabKey =
   | 'managers'
   | 'wards'
   | 'buildings'
+  | 'kindoo-sites'
   | 'ward-callings'
   | 'stake-callings';
 
@@ -80,6 +100,7 @@ const TABS: Array<{ key: ConfigTabKey; label: string }> = [
   { key: 'managers', label: 'Managers' },
   { key: 'wards', label: 'Wards' },
   { key: 'buildings', label: 'Buildings' },
+  { key: 'kindoo-sites', label: 'Kindoo Sites' },
   { key: 'ward-callings', label: 'Auto Ward Callings' },
   { key: 'stake-callings', label: 'Auto Stake Callings' },
 ];
@@ -129,6 +150,7 @@ export function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
         {tab === 'managers' ? <ManagersTab /> : null}
         {tab === 'wards' ? <WardsTab /> : null}
         {tab === 'buildings' ? <BuildingsTab /> : null}
+        {tab === 'kindoo-sites' ? <KindooSitesTab /> : null}
         {tab === 'ward-callings' ? <WardCallingsTab /> : null}
         {tab === 'stake-callings' ? <StakeCallingsTab /> : null}
       </div>
@@ -161,7 +183,9 @@ function SectionHeader({ title, addLabel, onAdd, testid }: SectionHeaderProps) {
 function WardsTab() {
   const wards = useWards();
   const buildings = useBuildings();
+  const kindooSites = useKindooSites();
   const upsert = useUpsertWardMutation();
+  const updateSite = useUpdateWardKindooSiteMutation();
   const del = useDeleteWardMutation();
 
   const [openMode, setOpenMode] = useState<'closed' | 'add' | { kind: 'edit'; ward: Ward }>(
@@ -191,6 +215,19 @@ function WardsTab() {
               — building: {w.building_name} · cap {w.seat_cap}
             </span>
             <span className="kd-config-row-actions">
+              <KindooSiteDropdown
+                value={w.kindoo_site_id ?? null}
+                sites={kindooSites.data ?? []}
+                disabled={updateSite.isPending}
+                onChange={(next) =>
+                  updateSite
+                    .mutateAsync({ ward_code: w.ward_code, kindoo_site_id: next })
+                    .then(() => toast('Ward saved.', 'success'))
+                    .catch((err) => toast(errorMessage(err), 'error'))
+                }
+                testid={`config-ward-kindoo-site-${w.ward_code}`}
+                ariaLabel={`Kindoo site for ${w.ward_name}`}
+              />
               <Button
                 variant="secondary"
                 onClick={() => setOpenMode({ kind: 'edit', ward: w })}
@@ -226,6 +263,53 @@ function WardsTab() {
         onClose={() => setOpenMode('closed')}
       />
     </div>
+  );
+}
+
+// Per-row dropdown shared by the Wards and Buildings tabs. "Home"
+// (value = `null`) is the default option; foreign sites follow. The
+// dropdown writes immediately on change — no Save button on the row
+// itself; the row-level inline edit is the point. Form-dialog edits
+// (Wards / Buildings) own the rest of the doc's fields.
+interface KindooSiteDropdownProps {
+  value: string | null;
+  sites: ReadonlyArray<KindooSite>;
+  disabled?: boolean;
+  onChange: (next: string | null) => void;
+  testid: string;
+  ariaLabel: string;
+}
+
+function KindooSiteDropdown({
+  value,
+  sites,
+  disabled,
+  onChange,
+  testid,
+  ariaLabel,
+}: KindooSiteDropdownProps) {
+  const sortedSites = useMemo(
+    () => [...sites].sort((a, b) => a.display_name.localeCompare(b.display_name)),
+    [sites],
+  );
+  return (
+    <Select
+      value={value ?? '__home__'}
+      onChange={(e) => {
+        const next = e.target.value;
+        onChange(next === '__home__' ? null : next);
+      }}
+      disabled={disabled}
+      data-testid={testid}
+      aria-label={ariaLabel}
+    >
+      <option value="__home__">Home</option>
+      {sortedSites.map((s) => (
+        <option key={s.id} value={s.id}>
+          {s.display_name}
+        </option>
+      ))}
+    </Select>
   );
 }
 
@@ -362,7 +446,9 @@ function BuildingsTab() {
   // Subscribe to wards so the building delete ref-guard can block when
   // any ward references this building (wards FK on building_name).
   const wards = useWards();
+  const kindooSites = useKindooSites();
   const upsert = useUpsertBuildingMutation();
+  const updateSite = useUpdateBuildingKindooSiteMutation();
   const del = useDeleteBuildingMutation();
 
   const [openMode, setOpenMode] = useState<'closed' | 'add' | { kind: 'edit'; building: Building }>(
@@ -391,6 +477,19 @@ function BuildingsTab() {
               {b.address ? <> — {b.address}</> : null}
             </span>
             <span className="kd-config-row-actions">
+              <KindooSiteDropdown
+                value={b.kindoo_site_id ?? null}
+                sites={kindooSites.data ?? []}
+                disabled={updateSite.isPending}
+                onChange={(next) =>
+                  updateSite
+                    .mutateAsync({ building_id: b.building_id, kindoo_site_id: next })
+                    .then(() => toast('Building saved.', 'success'))
+                    .catch((err) => toast(errorMessage(err), 'error'))
+                }
+                testid={`config-building-kindoo-site-${b.building_id}`}
+                ariaLabel={`Kindoo site for ${b.building_name}`}
+              />
               <Button
                 variant="secondary"
                 onClick={() => setOpenMode({ kind: 'edit', building: b })}
@@ -496,6 +595,186 @@ function BuildingFormDialog({ mode, isPending, onSubmit, onClose }: BuildingForm
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>
           <Button type="submit" disabled={isPending} data-testid="config-building-submit">
             {isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create building'}
+          </Button>
+        </Dialog.Footer>
+      </form>
+    </Dialog>
+  );
+}
+
+// ---- Kindoo Sites tab -----------------------------------------------
+//
+// Foreign Kindoo environments this stake's managers can write to. Home
+// site is implicit (lives on the parent stake doc); the UI only edits
+// the foreign-site rows. Wards and Buildings carry a `kindoo_site_id`
+// that points at a row here (or `null` for home) — Phase 1 stores the
+// value; downstream phases consume it.
+
+function KindooSitesTab() {
+  const sites = useKindooSites();
+  const upsert = useUpsertKindooSiteMutation();
+  const del = useDeleteKindooSiteMutation();
+
+  const [openMode, setOpenMode] = useState<'closed' | 'add' | { kind: 'edit'; site: KindooSite }>(
+    'closed',
+  );
+
+  const sorted = useMemo(
+    () => [...(sites.data ?? [])].sort((a, b) => a.display_name.localeCompare(b.display_name)),
+    [sites.data],
+  );
+
+  return (
+    <div className="kd-config-section">
+      <SectionHeader
+        title="Kindoo Sites"
+        addLabel="Add Kindoo Site"
+        onAdd={() => setOpenMode('add')}
+        testid="config-kindoo-sites"
+      />
+      <p className="kd-form-hint">
+        Additional Kindoo sites your managers operate alongside the home site. Wards and buildings
+        can be assigned to a Kindoo site so the extension knows which site to provision against. The
+        home site is implicit — leave wards / buildings on “Home” unless they belong to a different
+        Kindoo environment.
+      </p>
+      {sorted.length === 0 ? (
+        <p className="kd-empty-state" data-testid="config-kindoo-sites-empty">
+          No foreign Kindoo sites configured. All wards and buildings default to the home site.
+        </p>
+      ) : (
+        <ul className="kd-config-rows" data-testid="config-kindoo-sites-list">
+          {sorted.map((s) => (
+            <li key={s.id} data-testid={`config-kindoo-sites-row-${s.id}`}>
+              <span>
+                <strong>{s.display_name}</strong> — site name:{' '}
+                <code>{s.kindoo_expected_site_name}</code> · EID {s.kindoo_eid}
+              </span>
+              <span className="kd-config-row-actions">
+                <Button
+                  variant="secondary"
+                  onClick={() => setOpenMode({ kind: 'edit', site: s })}
+                  data-testid={`config-kindoo-site-edit-${s.id}`}
+                >
+                  Edit
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={() =>
+                    del
+                      .mutateAsync(s.id)
+                      .then(() => toast('Kindoo site deleted.', 'success'))
+                      .catch((err) => toast(errorMessage(err), 'error'))
+                  }
+                  data-testid={`config-kindoo-site-delete-${s.id}`}
+                >
+                  Delete
+                </Button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <KindooSiteFormDialog
+        mode={openMode}
+        isPending={upsert.isPending}
+        onSubmit={async (input, existingId) => {
+          await upsert.mutateAsync({ ...input, ...(existingId ? { id: existingId } : {}) });
+          toast('Kindoo site saved.', 'success');
+        }}
+        onClose={() => setOpenMode('closed')}
+      />
+    </div>
+  );
+}
+
+interface KindooSiteFormDialogProps {
+  mode: 'closed' | 'add' | { kind: 'edit'; site: KindooSite };
+  isPending: boolean;
+  onSubmit: (input: KindooSiteForm, existingId: string | null) => Promise<void>;
+  onClose: () => void;
+}
+
+function KindooSiteFormDialog({ mode, isPending, onSubmit, onClose }: KindooSiteFormDialogProps) {
+  const isEdit = typeof mode === 'object' && mode.kind === 'edit';
+  const editingSite = isEdit ? mode.site : null;
+  const open = mode !== 'closed';
+
+  const defaults: KindooSiteForm = editingSite
+    ? {
+        display_name: editingSite.display_name,
+        kindoo_expected_site_name: editingSite.kindoo_expected_site_name,
+        kindoo_eid: editingSite.kindoo_eid,
+      }
+    : { display_name: '', kindoo_expected_site_name: '', kindoo_eid: 1 };
+
+  const form = useForm<KindooSiteForm>({
+    resolver: zodResolver(kindooSiteFormSchema),
+    defaultValues: defaults,
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  useEffect(() => {
+    if (!open) return;
+    reset(defaults);
+    // `defaults` is derived from `editingSite`; depending on it
+    // directly captures the active edit target without an extra ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editingSite, reset]);
+
+  const submit = handleSubmit(async (input) => {
+    try {
+      await onSubmit(input, editingSite?.id ?? null);
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title={isEdit ? `Edit Kindoo site — ${editingSite?.display_name ?? ''}` : 'Add Kindoo site'}
+    >
+      <form onSubmit={submit} className="kd-wizard-form" data-testid="config-kindoo-site-form">
+        <label>
+          Display name
+          <Input {...register('display_name')} placeholder="East Stake (Foothills Building)" />
+        </label>
+        {formState.errors.display_name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.display_name.message}
+          </p>
+        ) : null}
+        <label>
+          Kindoo site name
+          <Input
+            {...register('kindoo_expected_site_name')}
+            placeholder="Matches the name Kindoo shows for the site"
+          />
+        </label>
+        {formState.errors.kindoo_expected_site_name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.kindoo_expected_site_name.message}
+          </p>
+        ) : null}
+        <label>
+          Kindoo EID
+          <Input type="number" step={1} {...register('kindoo_eid', { valueAsNumber: true })} />
+        </label>
+        {formState.errors.kindoo_eid ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.kindoo_eid.message}
+          </p>
+        ) : null}
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Button type="submit" disabled={isPending} data-testid="config-kindoo-site-submit">
+            {isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create Kindoo site'}
           </Button>
         </Dialog.Footer>
       </form>
