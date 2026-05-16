@@ -1,5 +1,5 @@
 // `KindooSite` — `stakes/{stakeId}/kindooSites/{kindooSiteId}` doc per
-// `docs/firebase-schema.md` §4.N (Kindoo Sites). Doc ID is a manager-
+// `docs/firebase-schema.md` §4.11 (Kindoo Sites). Doc ID is a manager-
 // chosen slug (e.g. `'foreign-1'`).
 //
 // "Kindoo sites" track the Kindoo environments an SBA stake's

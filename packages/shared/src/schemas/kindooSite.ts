@@ -1,6 +1,6 @@
 // `kindooSiteSchema` mirrors `types/kindooSite.ts`. The
 // `stakes/{stakeId}/kindooSites/{kindooSiteId}` doc — see
-// `firebase-schema.md` §4.N (Kindoo Sites).
+// `firebase-schema.md` §4.11 (Kindoo Sites).
 
 import { z } from 'zod';
 import { actorRefSchema } from './actor.js';

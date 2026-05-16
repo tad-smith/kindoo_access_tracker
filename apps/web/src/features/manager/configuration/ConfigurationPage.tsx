@@ -1,8 +1,8 @@
 // Manager Configuration page — multi-tab CRUD over every editable
 // table.
 //
-// Tabs (left → right): Config, Managers, Wards, Buildings,
-// Kindoo Sites, Auto Ward Callings, Auto Stake Callings.
+// Tabs (left → right): Config, Managers, Kindoo Sites, Wards,
+// Buildings, Auto Ward Callings, Auto Stake Callings.
 //
 // Sub-tabs are selected via a query param `?tab=<key>` so the URL
 // remains deep-linkable. The TanStack Router file-route validates the
