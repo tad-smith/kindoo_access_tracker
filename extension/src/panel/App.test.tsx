@@ -75,6 +75,7 @@ function configuredBundle() {
       },
     ],
     wards: [],
+    kindooSites: [],
   };
 }
 
@@ -87,6 +88,7 @@ function unconfiguredBundle() {
     },
     buildings: [{ building_id: 'cordera', building_name: 'Cordera Building' }],
     wards: [],
+    kindooSites: [],
   };
 }
 

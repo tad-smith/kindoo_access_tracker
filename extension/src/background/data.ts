@@ -3,18 +3,31 @@
 // directly (no SDK; no auth token from this context); it round-trips
 // through these handlers.
 //
-// Two operations:
-//   - `loadStakeConfig()`           — one-shot read of stake + buildings
+// Operations:
+//   - `loadStakeConfig()`           — one-shot read of stake + buildings +
+//                                     wards + kindooSites
 //   - `writeKindooConfig(payload)`  — single batched write across stake +
 //                                     building docs
+//   - `writeKindooSiteEid(...)`     — auto-populate `kindoo_eid` on a
+//                                     foreign `KindooSite` doc (Kindoo
+//                                     Sites Phase 3 — see spec §15)
 //
 // Both run under the SW's Firebase Auth session — the same one that
 // signs the v1 callable invocations. Firestore rules gate the actual
 // authorisation.
 
-import { collection, doc, getDoc, getDocs, serverTimestamp, writeBatch } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  updateDoc,
+  writeBatch,
+} from 'firebase/firestore';
 import type {
   Building,
+  KindooSite,
   Seat,
   Stake,
   StakeCallingTemplate,
@@ -31,6 +44,13 @@ interface StakeConfigBundle {
   stake: Stake;
   buildings: Building[];
   wards: Ward[];
+  /**
+   * Foreign Kindoo sites configured for this stake. Empty when the
+   * stake only operates its home site. Kindoo Sites Phase 3 reads
+   * these in the extension's orchestrator to validate that the active
+   * Kindoo session's EID matches the request's target site.
+   */
+  kindooSites: KindooSite[];
 }
 
 export interface SyncDataBundle {
@@ -44,30 +64,69 @@ export interface SyncDataBundle {
 
 /**
  * One-shot read of `stakes/{STAKE_ID}` plus every doc under
- * `stakes/{STAKE_ID}/buildings/*` and `stakes/{STAKE_ID}/wards/*`.
- * Buildings sorted by name (stable order in the v2.1 wizard);
- * wards sorted by code (stable order for v2.2 ward-scope resolution).
+ * `stakes/{STAKE_ID}/buildings/*`, `stakes/{STAKE_ID}/wards/*`, and
+ * `stakes/{STAKE_ID}/kindooSites/*`. Buildings sorted by name (stable
+ * order in the v2.1 wizard); wards sorted by code (stable order for
+ * v2.2 ward-scope resolution); kindooSites sorted by display_name for
+ * predictable surfacing if a UI ever lists them inline.
  */
 export async function loadStakeConfig(): Promise<StakeConfigBundle> {
   const db = firestore();
   const stakeRef = doc(db, 'stakes', STAKE_ID);
-  const stakeSnap = await getDoc(stakeRef);
+
+  const [stakeSnap, buildingsSnap, wardsSnap, kindooSitesSnap] = await Promise.all([
+    getDoc(stakeRef),
+    getDocs(collection(db, 'stakes', STAKE_ID, 'buildings')),
+    getDocs(collection(db, 'stakes', STAKE_ID, 'wards')),
+    getDocs(collection(db, 'stakes', STAKE_ID, 'kindooSites')),
+  ]);
+
   if (!stakeSnap.exists()) {
     throw new Error(`stake doc ${STAKE_ID} not found`);
   }
   const stake = stakeSnap.data() as Stake;
 
-  const buildingsCol = collection(db, 'stakes', STAKE_ID, 'buildings');
-  const buildingsSnap = await getDocs(buildingsCol);
   const buildings = buildingsSnap.docs.map((d) => d.data() as Building);
   buildings.sort((a, b) => a.building_name.localeCompare(b.building_name));
 
-  const wardsCol = collection(db, 'stakes', STAKE_ID, 'wards');
-  const wardsSnap = await getDocs(wardsCol);
   const wards = wardsSnap.docs.map((d) => d.data() as Ward);
   wards.sort((a, b) => a.ward_code.localeCompare(b.ward_code));
 
-  return { stake, buildings, wards };
+  const kindooSites = kindooSitesSnap.docs.map((d) => d.data() as KindooSite);
+  kindooSites.sort((a, b) => a.display_name.localeCompare(b.display_name));
+
+  return { stake, buildings, wards, kindooSites };
+}
+
+/**
+ * Auto-populate `kindoo_eid` on a foreign `KindooSite` doc. The
+ * extension calls this when an operator is about to run a provision
+ * against a foreign site that has no EID recorded yet AND the active
+ * Kindoo session's site name matches the foreign site's
+ * `kindoo_expected_site_name`. Manager-only by Firestore rules
+ * (`kindooSites/{id}` write rule gates on `isManager(stakeId)`); the
+ * extension's caller is already a manager — the runtime check is just
+ * defense in depth. See spec §15.
+ */
+export async function writeKindooSiteEid(
+  kindooSiteId: string,
+  kindooEid: number,
+  actor: User,
+): Promise<void> {
+  if (!actor.email) {
+    throw new Error('signed-in user has no email; cannot write actor ref');
+  }
+  const actorRef = {
+    email: actor.email,
+    canonical: canonicalEmail(actor.email),
+  };
+  const db = firestore();
+  const siteRef = doc(db, 'stakes', STAKE_ID, 'kindooSites', kindooSiteId);
+  await updateDoc(siteRef, {
+    kindoo_eid: kindooEid,
+    last_modified_at: serverTimestamp(),
+    lastActor: actorRef,
+  });
 }
 
 /**

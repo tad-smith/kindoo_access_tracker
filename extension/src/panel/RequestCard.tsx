@@ -17,7 +17,12 @@
 
 import { useCallback, useState } from 'react';
 import type { AccessRequest } from '@kindoo/shared';
-import { getSeatByEmail, markRequestComplete, type StakeConfigBundle } from '../lib/extensionApi';
+import {
+  getSeatByEmail,
+  markRequestComplete,
+  writeKindooSiteEid,
+  type StakeConfigBundle,
+} from '../lib/extensionApi';
 import { STAKE_ID } from '../lib/constants';
 import { readKindooSession, type KindooSession } from '../content/kindoo/auth';
 import { KindooApiError } from '../content/kindoo/client';
@@ -32,6 +37,12 @@ import {
   ProvisionStakeAutoEditError,
   type ProvisionResult,
 } from '../content/kindoo/provision';
+import {
+  checkRequestSite,
+  ProvisionForeignSiteMissingError,
+  ProvisionHomeSiteNotConfiguredError,
+  ProvisionSiteMismatchError,
+} from '../content/kindoo/siteCheck';
 import { ResultDialog, type ResultDialogState } from './ResultDialog';
 
 interface RequestCardProps {
@@ -89,6 +100,38 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
     } catch (err) {
       setState({ kind: 'error', message: describeKindooError(err) });
       return;
+    }
+
+    // Kindoo Sites Phase 3 — refuse to provision when the active
+    // Kindoo session points at the wrong site for this request. Foreign
+    // sites with no recorded EID get auto-populated here on a site-name
+    // match; the EID write must complete BEFORE any Kindoo write so a
+    // subsequent provision against this site short-circuits.
+    let siteCheck: ReturnType<typeof checkRequestSite>;
+    try {
+      siteCheck = checkRequestSite({
+        request,
+        session,
+        envs,
+        stake: bundle.stake,
+        wards: bundle.wards,
+        kindooSites: bundle.kindooSites,
+      });
+    } catch (err) {
+      setState({ kind: 'error', message: describeProvisionError(err) });
+      return;
+    }
+    if (!siteCheck.ok) {
+      setState({ kind: 'error', message: siteCheck.error.message });
+      return;
+    }
+    if (siteCheck.populate) {
+      try {
+        await writeKindooSiteEid(siteCheck.populate.kindooSiteId, siteCheck.populate.kindooEid);
+      } catch (err) {
+        setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        return;
+      }
     }
 
     let result: ProvisionResult;
@@ -305,6 +348,15 @@ function describeProvisionError(err: unknown): string {
     return err.message;
   }
   if (err instanceof ProvisionStakeAutoEditError) {
+    return err.message;
+  }
+  if (err instanceof ProvisionSiteMismatchError) {
+    return err.message;
+  }
+  if (err instanceof ProvisionHomeSiteNotConfiguredError) {
+    return err.message;
+  }
+  if (err instanceof ProvisionForeignSiteMissingError) {
     return err.message;
   }
   return describeKindooError(err);

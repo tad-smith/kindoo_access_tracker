@@ -214,6 +214,16 @@ provisionRemove(req, seat, stake, buildings, wards, envs, session): Promise<Prov
 
 `seat` is the SBA `Seat` doc for the request's subject pre-completion (or `null` if it doesn't exist yet — only possible on a first-ever add for that member, or on a remove that lost an R-1 race). Both paths compute the post-completion seat shape and reconcile Kindoo to it.
 
+#### Kindoo Sites Phase 3 — entry guard (`siteCheck.ts`)
+
+Every orchestrator entry (`provisionAddOrChange`, `provisionRemove`, `provisionEdit`) is gated on `checkRequestSite(...)` in `RequestCard.tsx` — see spec §15 Phase 3. The check runs after `getEnvironments` (which yields the active session's `Name`) and BEFORE any Kindoo write:
+
+- Stake-scope / home-ward requests: expected EID is `stake.kindoo_config.site_id`.
+- Foreign-ward requests (`ward.kindoo_site_id` set): expected EID is `kindooSites/<id>.kindoo_eid`.
+- Foreign site with no recorded `kindoo_eid`: compare the active session's site name against the doc's `kindoo_expected_site_name` (trim + lowercase). Match → `writeKindooSiteEid(...)` populates the EID, then the orchestrator runs. Mismatch → refuse with `ProvisionSiteMismatchError` ("This request needs to be provisioned on '<expected>'. Switch Kindoo sites and try again.").
+
+`checkRequestSite` is a pure function; it takes `{ request, session, envs, stake, wards, kindooSites }` and returns a discriminated `{ ok: true }` / `{ ok: true, populate }` / `{ ok: false, error }` result. The `kindooSites` array reaches the orchestrator through the `data.getStakeConfig` callable response — extended in Phase 3 to also fetch `stakes/{STAKE_ID}/kindooSites/*`.
+
 Result:
 
 ```ts

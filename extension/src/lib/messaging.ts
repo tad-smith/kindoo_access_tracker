@@ -19,6 +19,7 @@ import type {
   Building,
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
+  KindooSite,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
   Seat,
@@ -99,6 +100,13 @@ export interface DataGetStakeConfigPayload {
    * Kindoo Description field). Empty for stakes with no wards yet.
    */
   wards: Ward[];
+  /**
+   * Foreign Kindoo sites configured for the stake — see Kindoo Sites
+   * (spec §15). Empty for stakes operating only their home site.
+   * Phase 3 reads this on the provision flow to validate the active
+   * Kindoo session's EID matches the request's target site.
+   */
+  kindooSites: KindooSite[];
 }
 
 /**
@@ -132,6 +140,24 @@ export interface DataGetSeatByEmailRequest {
   type: 'data.getSeatByEmail';
   /** Canonical email — caller has already run `canonicalEmail()`. */
   canonical: string;
+}
+
+/**
+ * Persist a discovered Kindoo environment ID onto a foreign
+ * `KindooSite` doc. Kindoo Sites Phase 3 — the manager UI captures
+ * only display name + expected site name; the extension auto-
+ * populates `kindoo_eid` the first time the operator runs a provision
+ * on a session whose site name matches the foreign site. One doc-id
+ * + eid pair per call; rules already gate the write manager-only.
+ */
+export interface DataWriteKindooSiteEidRequest {
+  type: 'data.writeKindooSiteEid';
+  payload: {
+    /** Foreign `KindooSite` doc id under `stakes/{stakeId}/kindooSites/`. */
+    kindooSiteId: string;
+    /** EID discovered on the active Kindoo session. */
+    kindooEid: number;
+  };
 }
 
 /**
@@ -176,7 +202,8 @@ export type ExtensionRequest =
   | DataWriteKindooConfigRequest
   | DataGetSeatByEmailRequest
   | DataGetSyncDataRequest
-  | DataSyncApplyFixRequest;
+  | DataSyncApplyFixRequest
+  | DataWriteKindooSiteEidRequest;
 
 // ---- Response envelopes ------------------------------------------------
 
@@ -192,6 +219,7 @@ export type DataWriteKindooConfigResponse = Result<{ ok: true }>;
 export type DataGetSeatByEmailResponse = Result<Seat | null>;
 export type DataGetSyncDataResponse = Result<SyncDataBundle>;
 export type DataSyncApplyFixResponse = Result<SyncApplyFixResult>;
+export type DataWriteKindooSiteEidResponse = Result<{ ok: true }>;
 
 /** Lookup from a request `type` to its response shape. */
 export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequest
@@ -214,7 +242,9 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
                   ? DataGetSyncDataResponse
                   : R extends DataSyncApplyFixRequest
                     ? DataSyncApplyFixResponse
-                    : never;
+                    : R extends DataWriteKindooSiteEidRequest
+                      ? DataWriteKindooSiteEidResponse
+                      : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 

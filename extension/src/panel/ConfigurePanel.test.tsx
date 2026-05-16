@@ -79,6 +79,7 @@ function bundle(
       { building_id: 'pine-creek', building_name: 'Pine Creek Building' },
     ],
     wards: [],
+    kindooSites: [],
   };
 }
 
