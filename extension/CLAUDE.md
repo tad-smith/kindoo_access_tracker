@@ -51,7 +51,7 @@ extension/
 │   │       │                      # checkUserType, inviteUser, editUser,
 │   │       │                      # saveAccessRule, lookupUserByEmail, revokeUser,
 │   │       │                      # listAllEnvironmentUsers (Sync, paginated)
-│   │       ├── provision.ts       # v2.2 — orchestrates add/change/remove flows
+│   │       ├── provision.ts       # v2.2 — orchestrates add/change/remove/edit flows
 │   │       │                      # (read-first / merged-state pattern)
 │   │       ├── sync-provision.ts  # Sync Phase 2 — drives Kindoo to a single Seat
 │   │       │                      # (sba-only + *-mismatch "Update Kindoo")

@@ -82,6 +82,76 @@ function pendingAddTempByBishopric(
   };
 }
 
+function pendingEditAutoByBishopric(
+  wardCode: string,
+  overrides: Partial<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    request_id: REQUEST_ID,
+    type: 'edit_auto',
+    scope: wardCode,
+    member_email: 'Subject@gmail.com',
+    member_canonical: 'subject@gmail.com',
+    member_name: 'Subject Person',
+    reason: '',
+    comment: '',
+    building_names: ['Cordera Building', 'Briargate Building'],
+    status: 'pending',
+    requester_email: personas.bishopric.email,
+    requester_canonical: personas.bishopric.canonical,
+    requested_at: SERVER_TIMESTAMP(),
+    lastActor: lastActorOf(personas.bishopric),
+    ...overrides,
+  };
+}
+
+function pendingEditManualByStakeMember(
+  overrides: Partial<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    request_id: REQUEST_ID,
+    type: 'edit_manual',
+    scope: 'stake',
+    member_email: 'Subject@gmail.com',
+    member_canonical: 'subject@gmail.com',
+    member_name: 'Subject Person',
+    reason: 'Visiting authority (extended)',
+    comment: '',
+    building_names: ['Cordera Building'],
+    status: 'pending',
+    requester_email: personas.stakeMember.email,
+    requester_canonical: personas.stakeMember.canonical,
+    requested_at: SERVER_TIMESTAMP(),
+    lastActor: lastActorOf(personas.stakeMember),
+    ...overrides,
+  };
+}
+
+function pendingEditTempByBishopric(
+  wardCode: string,
+  overrides: Partial<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    request_id: REQUEST_ID,
+    type: 'edit_temp',
+    scope: wardCode,
+    member_email: 'Subject@gmail.com',
+    member_canonical: 'subject@gmail.com',
+    member_name: 'Subject Person',
+    reason: 'Visiting speaker (extended)',
+    comment: '',
+    start_date: '2026-05-01',
+    end_date: '2026-05-15',
+    building_names: ['Cordera Building'],
+    status: 'pending',
+    requester_email: personas.bishopric.email,
+    requester_canonical: personas.bishopric.canonical,
+    requested_at: SERVER_TIMESTAMP(),
+    lastActor: lastActorOf(personas.bishopric),
+    ...overrides,
+  };
+}
+
 function pendingRemoveByBishopric(
   wardCode: string,
   overrides: Partial<Record<string, unknown>> = {},
@@ -498,6 +568,247 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       it('remove with no dates → ok (preserve existing behavior)', async () => {
         const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
         await assertSucceeds(db.doc(PATH).set(pendingRemoveByBishopric('01')));
+      });
+    });
+
+    // Edit types — `edit_auto`, `edit_manual`, `edit_temp` — flow
+    // through the same submit path as add / remove. Same role-for-scope
+    // gating; same `lastActor` integrity; `edit_auto` adds the
+    // stake-scope rejection (Policy 1); `edit_temp` adds the same
+    // start/end date shape check as `add_temp`.
+    describe('edit_auto', () => {
+      it('ward-scope by bishopric → ok', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingEditAutoByBishopric('01')));
+      });
+
+      it('ward-scope by manager+bishopric for their own ward → ok', async () => {
+        const db = contextFor(env, personas.manager, STAKE_ID, {
+          manager: true,
+          wards: ['01'],
+        }).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingEditAutoByBishopric('01', {
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      it('ward-scope by bishopric for another ward → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['02']).firestore();
+        await assertFails(db.doc(PATH).set(pendingEditAutoByBishopric('01')));
+      });
+
+      it('ward-scope by pure manager (no role for scope) → denied', async () => {
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditAutoByBishopric('01', {
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      it('ward-scope by stake-only user (no bishopric claim for that ward) → denied', async () => {
+        // The role-for-scope gate mirrors add / remove. `stake: true`
+        // alone does not extend the ward list; cross-ward submit
+        // requires a bishopric claim for the target ward.
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditAutoByBishopric('01', {
+              requester_email: personas.stakeMember.email,
+              requester_canonical: personas.stakeMember.canonical,
+              lastActor: lastActorOf(personas.stakeMember),
+            }),
+          ),
+        );
+      });
+
+      it('unauthenticated → denied', async () => {
+        const db = unauthedContext(env).firestore();
+        await assertFails(db.doc(PATH).set(pendingEditAutoByBishopric('01')));
+      });
+
+      // Policy 1 — stake auto seats are non-editable. All roles denied,
+      // even a manager+stake-scope user (who would otherwise inherit
+      // submit rights through the stake branch). Mirrors the
+      // `markRequestComplete` callable check and the web UI hide-Edit
+      // behavior on the All Seats page.
+      it('stake-scope by manager+stake → denied (Policy 1)', async () => {
+        const db = contextFor(env, personas.manager, STAKE_ID, {
+          manager: true,
+          stake: true,
+        }).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditAutoByBishopric('01', {
+              scope: 'stake',
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      it('stake-scope by stake-scope member → denied (Policy 1)', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditAutoByBishopric('01', {
+              scope: 'stake',
+              requester_email: personas.stakeMember.email,
+              requester_canonical: personas.stakeMember.canonical,
+              lastActor: lastActorOf(personas.stakeMember),
+            }),
+          ),
+        );
+      });
+    });
+
+    describe('edit_manual', () => {
+      it('stake-scope by stake-scope member → ok', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingEditManualByStakeMember()));
+      });
+
+      it('ward-scope by bishopric → ok', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingEditManualByStakeMember({
+              scope: '01',
+              building_names: [],
+              requester_email: personas.bishopric.email,
+              requester_canonical: personas.bishopric.canonical,
+              lastActor: lastActorOf(personas.bishopric),
+            }),
+          ),
+        );
+      });
+
+      it('stake-scope by bishopric (no stake claim) → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditManualByStakeMember({
+              requester_email: personas.bishopric.email,
+              requester_canonical: personas.bishopric.canonical,
+              lastActor: lastActorOf(personas.bishopric),
+            }),
+          ),
+        );
+      });
+
+      it('ward-scope by bishopric for another ward → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['02']).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditManualByStakeMember({
+              scope: '01',
+              building_names: [],
+              requester_email: personas.bishopric.email,
+              requester_canonical: personas.bishopric.canonical,
+              lastActor: lastActorOf(personas.bishopric),
+            }),
+          ),
+        );
+      });
+
+      it('ward-scope by pure manager → denied', async () => {
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditManualByStakeMember({
+              scope: '01',
+              building_names: [],
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      it('stake-scope with empty building_names → denied', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertFails(db.doc(PATH).set(pendingEditManualByStakeMember({ building_names: [] })));
+      });
+
+      it('unauthenticated → denied', async () => {
+        const db = unauthedContext(env).firestore();
+        await assertFails(db.doc(PATH).set(pendingEditManualByStakeMember()));
+      });
+    });
+
+    describe('edit_temp', () => {
+      it('ward-scope by bishopric → ok', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingEditTempByBishopric('01')));
+      });
+
+      it('stake-scope by stake-scope member → ok', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingEditTempByBishopric('01', {
+              scope: 'stake',
+              requester_email: personas.stakeMember.email,
+              requester_canonical: personas.stakeMember.canonical,
+              lastActor: lastActorOf(personas.stakeMember),
+            }),
+          ),
+        );
+      });
+
+      it('stake-scope by bishopric → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditTempByBishopric('01', {
+              scope: 'stake',
+            }),
+          ),
+        );
+      });
+
+      it('ward-scope by bishopric for another ward → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['02']).firestore();
+        await assertFails(db.doc(PATH).set(pendingEditTempByBishopric('01')));
+      });
+
+      it('edit_temp without start_date → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        const payload = pendingEditTempByBishopric('01');
+        delete payload['start_date'];
+        await assertFails(db.doc(PATH).set(payload));
+      });
+
+      it('edit_temp with malformed start_date → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingEditTempByBishopric('01', { start_date: 'not-a-date' })),
+        );
+      });
+
+      it('edit_temp with start > end → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditTempByBishopric('01', {
+              start_date: '2026-06-10',
+              end_date: '2026-06-01',
+            }),
+          ),
+        );
       });
     });
   });

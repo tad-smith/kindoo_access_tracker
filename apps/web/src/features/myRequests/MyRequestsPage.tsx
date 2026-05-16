@@ -226,12 +226,19 @@ function labelForType(t: AccessRequest['type']): string {
       return 'Add (temp)';
     case 'remove':
       return 'Remove';
+    case 'edit_auto':
+      return 'Edit (auto)';
+    case 'edit_manual':
+      return 'Edit (manual)';
+    case 'edit_temp':
+      return 'Edit (temp)';
   }
 }
 
 function badgeVariantForType(t: AccessRequest['type']) {
   if (t === 'add_temp') return 'temp' as const;
   if (t === 'remove') return 'danger' as const;
+  if (t === 'edit_auto' || t === 'edit_manual' || t === 'edit_temp') return 'info' as const;
   return 'manual' as const;
 }
 

@@ -42,11 +42,29 @@ vi.mock('@tanstack/react-router', () => ({
 
 // RemovalAffordance subscribes via the requests hooks; mock so we
 // don't need a real QueryClient / Firestore listener.
+// EditSeatDialog (mounted on Edit click) subscribes to stake-wide ward
+// + building catalogues; stub them so the dialog can render without a
+// real Firestore listener. We don't assert on those reads in this
+// file — the dialog has its own focused test.
+const stakeListResult = {
+  data: [],
+  error: null,
+  status: 'success' as const,
+  isPending: false,
+  isLoading: false,
+  isSuccess: true,
+  isError: false,
+  isFetching: false,
+  fetchStatus: 'idle' as const,
+};
+
 vi.mock('../requests/hooks', () => ({
   usePendingRemoveRequests: (canonical: string | null, scope: string | null) =>
     usePendingRemoveRequestsMock(canonical, scope),
   usePendingRequestsForScope: (scope: string | null) => usePendingRequestsForScopeMock(scope),
   useSubmitRequest: () => ({ mutateAsync: submitMutateAsyncMock, isPending: false }),
+  useStakeWards: () => stakeListResult,
+  useStakeBuildings: () => stakeListResult,
 }));
 
 function mockNoPendingRemoves() {
@@ -526,6 +544,82 @@ describe('<BishopricRosterPage />', () => {
       mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
       render(<BishopricRosterPage />);
       expect(screen.queryByTestId('remove-btn-wrongward@x.com')).toBeNull();
+    });
+  });
+
+  describe('per-row Edit affordance', () => {
+    it('renders an Edit button on every ward-scope seat (auto / manual / temp) for the ward bishopric', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+          callings: ['Bishop'],
+          scope: 'CO',
+        }),
+        makeSeat({
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+          scope: 'CO',
+        }),
+        makeSeat({
+          member_canonical: 'temp@x.com',
+          member_email: 'temp@x.com',
+          member_name: 'Temp Person',
+          type: 'temp',
+          callings: [],
+          scope: 'CO',
+          start_date: '2026-05-01',
+          end_date: '2026-12-31',
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      expect(screen.getByTestId('edit-btn-auto@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    });
+
+    it('hides the Edit button on rows whose scope the principal lacks authority for', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          scope: 'GE',
+          member_canonical: 'wrongward@x.com',
+          member_email: 'wrongward@x.com',
+          member_name: 'Wrong Ward Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      expect(screen.queryByTestId('edit-btn-wrongward@x.com')).toBeNull();
+    });
+
+    it('opens the edit dialog when Edit is clicked', async () => {
+      const user = userEvent.setup();
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+          scope: 'CO',
+          reason: 'sub teacher',
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      await user.click(screen.getByTestId('edit-btn-manual@x.com'));
+      expect(screen.getByTestId('edit-seat-dialog-form')).toBeInTheDocument();
     });
   });
 });

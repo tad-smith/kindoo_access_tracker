@@ -463,7 +463,8 @@ service cloud.firestore {
       //
       // Creates (Submit): only `pending` is a legal starting status.
       // The requester_canonical must match the auth token's canonical
-      // claim. Add-types require member_name; stake-scope add-types
+      // claim. Add-types and edit-types require member_name (only
+      // `remove` may have an empty name); stake-scope add/edit-types
       // require at least one building selection. Scope must match
       // the requester's role:
       //   - stake-scope: stake membership
@@ -476,6 +477,17 @@ service cloud.firestore {
       // (spec §6, F12 invariant 7) still works: a manager who holds
       // the role for the scope can submit then complete their own
       // request.
+      //
+      // Edit types — `edit_auto`, `edit_manual`, `edit_temp` — flow
+      // through the same submit / Mark Complete path as add / remove.
+      // Same role-for-scope gating applies. Two extra constraints:
+      //   - `edit_auto` is forbidden when `scope == 'stake'` (Policy 1).
+      //     Stake auto seats are Church-granted to all stake buildings
+      //     and have nothing editable. Three layers of defense for
+      //     this: web UI hides the Edit button, this rule rejects the
+      //     create, and `markRequestComplete` rejects the completion.
+      //   - `edit_temp` requires the same `start_date` / `end_date`
+      //     shape as `add_temp` (ISO YYYY-MM-DD; start <= end).
       //
       // Updates: pending → terminal only. Cancellation is requester-
       // only; complete / reject are manager-only. Reject requires a
@@ -514,6 +526,7 @@ service cloud.firestore {
               || request.resource.data.scope != 'stake'
               || request.resource.data.building_names.size() > 0)
           && (request.resource.data.type != 'add_temp'
+              && request.resource.data.type != 'edit_temp'
               || (
                    'start_date' in request.resource.data
                 && 'end_date' in request.resource.data
@@ -523,6 +536,13 @@ service cloud.firestore {
                 && request.resource.data.end_date.matches('^\\d{4}-\\d{2}-\\d{2}$')
                 && request.resource.data.start_date <= request.resource.data.end_date
               ))
+          // Policy 1 — edit_auto is forbidden on stake scope. Stake
+          // auto seats have no editable surface (Church-granted access
+          // to all stake buildings). Web UI hides the Edit button;
+          // `markRequestComplete` also rejects this; the rule is the
+          // third defense layer.
+          && (request.resource.data.type != 'edit_auto'
+              || request.resource.data.scope != 'stake')
           // Role-for-scope gate (defense-in-depth complement to the
           // SPA's `allowedScopesFor` filter, B-3 / T-36). The submitter
           // must hold the role matching the scope they are writing:

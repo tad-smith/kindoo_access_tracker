@@ -31,7 +31,7 @@ async function seedManager(opts: { active?: boolean; email?: string } = {}): Pro
 async function seedRequest(opts: {
   requestId: string;
   status: 'pending' | 'complete' | 'rejected' | 'cancelled';
-  type?: 'add_manual' | 'add_temp' | 'remove';
+  type?: 'add_manual' | 'add_temp' | 'remove' | 'edit_auto' | 'edit_manual' | 'edit_temp';
   scope?: string;
   member_email?: string;
   member_name?: string;
@@ -59,7 +59,7 @@ async function seedRequest(opts: {
     requested_at: Timestamp.fromMillis(1_000),
     lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
   };
-  if (type === 'add_temp') {
+  if (type === 'add_temp' || type === 'edit_temp') {
     if (opts.start_date) body.start_date = opts.start_date;
     if (opts.end_date) body.end_date = opts.end_date;
   }
@@ -941,6 +941,275 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         'Briargate Building',
         'Lexington Building',
       ]);
+    });
+
+    // Edit branches — `edit_auto`, `edit_manual`, `edit_temp` — replace
+    // fields on the matching slot (primary or duplicate_grants[]). The
+    // callable mirrors the rule's three-layer defense for stake auto:
+    // hides at the UI, rejects at the rule, rejects here too.
+    describe('edit_auto', () => {
+      it('happy path (ward scope, primary match): replaces building_names', async () => {
+        await seedManager();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'CO',
+          type: 'auto',
+          building_names: ['Cordera Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_auto',
+          scope: 'CO',
+          building_names: ['Cordera Building', 'Briargate Building'],
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('CO');
+        expect(seat.type).toBe('auto');
+        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.lastActor).toEqual({ email: MANAGER_EMAIL, canonical: MANAGER_EMAIL });
+        const after = (
+          await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()
+        ).data() as AccessRequest;
+        expect(after.status).toBe('complete');
+      });
+
+      it('stake-scope: rejects with permission-denied (Policy 1)', async () => {
+        await seedManager();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'auto',
+          building_names: ['Cordera Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_auto',
+          scope: 'stake',
+          building_names: ['Cordera Building', 'Briargate Building'],
+        });
+
+        await expect(
+          markRequestComplete.run(
+            callableReq({
+              auth: { email: MANAGER_EMAIL },
+              data: { stakeId: STAKE_ID, requestId: 'r1' },
+            }),
+          ),
+        ).rejects.toMatchObject({ code: 'permission-denied' });
+
+        // Seat untouched.
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Cordera Building']);
+      });
+
+      it('missing seat: rejects with failed-precondition', async () => {
+        await seedManager();
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_auto',
+          scope: 'CO',
+          building_names: ['Cordera Building'],
+        });
+
+        await expect(
+          markRequestComplete.run(
+            callableReq({
+              auth: { email: MANAGER_EMAIL },
+              data: { stakeId: STAKE_ID, requestId: 'r1' },
+            }),
+          ),
+        ).rejects.toMatchObject({ code: 'failed-precondition' });
+      });
+
+      it('duplicate-grant slot match: updates that duplicate; primary untouched', async () => {
+        await seedManager();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+          reason: 'Visiting authority',
+          duplicate_grants: [
+            {
+              scope: 'CO',
+              type: 'auto',
+              callings: ['Bishop'],
+              building_names: ['Cordera Building'],
+              detected_at: Timestamp.fromMillis(2_000),
+            },
+          ],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_auto',
+          scope: 'CO',
+          building_names: ['Cordera Building', 'Briargate Building'],
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        // Primary untouched.
+        expect(seat.scope).toBe('stake');
+        expect(seat.type).toBe('manual');
+        expect(seat.building_names).toEqual(['Cordera Building']);
+        expect(seat.reason).toBe('Visiting authority');
+        // Duplicate's building_names replaced.
+        expect(seat.duplicate_grants.length).toBe(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('CO');
+        expect(dup.type).toBe('auto');
+        expect(dup.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        // Callings on the duplicate are preserved (only building_names
+        // is replaced for edit_auto).
+        expect(dup.callings).toEqual(['Bishop']);
+      });
+    });
+
+    describe('edit_manual', () => {
+      it('happy path: replaces reason + building_names; callings untouched', async () => {
+        await seedManager();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+          reason: 'Visiting authority',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_manual',
+          scope: 'stake',
+          building_names: ['Cordera Building', 'Briargate Building'],
+          reason: 'Visiting authority (extended)',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.reason).toBe('Visiting authority (extended)');
+        // `seat.callings` is untouched — manual seats convention is
+        // `callings: []` and the edit never touches it.
+        expect(seat.callings).toEqual([]);
+      });
+
+      it('missing seat: rejects with failed-precondition', async () => {
+        await seedManager();
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_manual',
+          scope: 'stake',
+          building_names: ['Cordera Building'],
+        });
+
+        await expect(
+          markRequestComplete.run(
+            callableReq({
+              auth: { email: MANAGER_EMAIL },
+              data: { stakeId: STAKE_ID, requestId: 'r1' },
+            }),
+          ),
+        ).rejects.toMatchObject({ code: 'failed-precondition' });
+      });
+    });
+
+    describe('edit_temp', () => {
+      it('happy path: replaces reason + building_names + start_date + end_date', async () => {
+        await seedManager();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'temp',
+          building_names: ['Cordera Building'],
+          reason: 'Visiting speaker',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_temp',
+          scope: 'stake',
+          building_names: ['Cordera Building', 'Briargate Building'],
+          reason: 'Visiting speaker (extended)',
+          start_date: '2026-06-01',
+          end_date: '2026-06-30',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.type).toBe('temp');
+        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.reason).toBe('Visiting speaker (extended)');
+        expect(seat.start_date).toBe('2026-06-01');
+        expect(seat.end_date).toBe('2026-06-30');
+      });
+
+      it('missing seat: rejects with failed-precondition', async () => {
+        await seedManager();
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_temp',
+          scope: 'stake',
+          building_names: ['Cordera Building'],
+          start_date: '2026-06-01',
+          end_date: '2026-06-30',
+        });
+
+        await expect(
+          markRequestComplete.run(
+            callableReq({
+              auth: { email: MANAGER_EMAIL },
+              data: { stakeId: STAKE_ID, requestId: 'r1' },
+            }),
+          ),
+        ).rejects.toMatchObject({ code: 'failed-precondition' });
+      });
     });
 
     it('add_manual ward-scope with empty building_names: falls back to ward.building_name', async () => {

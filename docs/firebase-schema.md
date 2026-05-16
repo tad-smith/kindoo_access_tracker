@@ -364,19 +364,19 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 ```typescript
 {
   request_id: string;          // = doc.id
-  type: 'add_manual' | 'add_temp' | 'remove';
+  type: 'add_manual' | 'add_temp' | 'remove' | 'edit_auto' | 'edit_manual' | 'edit_temp';
   scope: string;               // 'stake' or ward_code
 
   member_email: string;
   member_canonical: string;
   member_name: string;
 
-  reason: string;
+  reason: string;              // free-text on submit; edit_manual / edit_temp carry the replacement reason
   comment: string;
   urgent: boolean;             // requester flag; defaults false. Client gates the comment-required UX on it.
-  start_date?: string;         // temp only
-  end_date?: string;           // temp only
-  building_names: string[];    // requester's selection (stake-scope add types only)
+  start_date?: string;         // add_temp / edit_temp
+  end_date?: string;           // add_temp / edit_temp
+  building_names: string[];    // requester's selection: stake-scope add types AND every edit type (carries the post-edit set)
 
   status: 'pending' | 'complete' | 'rejected' | 'cancelled';
 
@@ -406,6 +406,7 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 - Only the original requester can cancel; only managers can complete or reject.
 - For `remove`, server-side guards (rules + client tx): no pending-pending duplicate for same (scope, member); no remove against a non-existent manual/temp seat (the latter caught by client tx, not rules).
 - `urgent` is set at create time (rules validate `urgent is bool`) and immutable thereafter — the cancel/complete/reject `affectedKeys()` allowlists exclude it.
+- Edit types (`edit_auto`, `edit_manual`, `edit_temp`) — see [`spec.md`](spec.md) §6.1. `edit_auto` is forbidden at `scope == 'stake'` (Policy 1) at three layers: web UI, rules, and the `markRequestComplete` callable. `edit_temp` carries `start_date` + `end_date` with the same ISO YYYY-MM-DD + start <= end shape as `add_temp`.
 
 ### 4.8 `stakes/{stakeId}/wardCallingTemplates/{callingName}`
 

@@ -1,10 +1,11 @@
 // v2.2 — orchestrates the Kindoo-side work for one SBA AccessRequest.
-// Two top-level functions:
+// Three top-level functions:
 //
 //   provisionAddOrChange(req, seat, ...)  // add_manual / add_temp
 //   provisionRemove(req, seat, ...)       // remove (scope-specific)
+//   provisionEdit(req, seat, ...)         // edit_auto / edit_manual / edit_temp
 //
-// Both flows use a read-first / merged-state pattern: compute the
+// All flows use a read-first / merged-state pattern: compute the
 // post-completion target state (buildings, description, temp + date
 // bounds), then drive Kindoo to it via:
 //   - `saveAccessRule` to ADD missing rules. `saveAccessRule` is
@@ -48,6 +49,11 @@ import {
   saveAccessRule,
 } from './endpoints';
 import { KindooApiError } from './client';
+import {
+  buildRuleDoorMap,
+  deriveEffectiveRuleIds,
+  getUserDoorIds,
+} from './sync/buildingsFromDoors';
 
 /** Returned by both orchestrators. */
 export interface ProvisionResult {
@@ -93,6 +99,40 @@ export class ProvisionEnvironmentNotFoundError extends Error {
   constructor(eid: number) {
     super(`Kindoo did not return an environment matching EID=${eid}.`);
     this.name = 'ProvisionEnvironmentNotFoundError';
+  }
+}
+
+/**
+ * Edit flow can only operate on a Kindoo user record that already
+ * exists — there is no "create a user as part of an edit" path. If the
+ * lookup misses, surface a clean error so the operator knows to
+ * provision the user via an add request first.
+ */
+export class ProvisionEditUserMissingError extends Error {
+  readonly code = 'edit-user-missing' as const;
+  constructor(email: string) {
+    super(
+      `Cannot edit Kindoo access for ${email}: user not found in Kindoo. ` +
+        `Provision them via an add request first.`,
+    );
+    this.name = 'ProvisionEditUserMissingError';
+  }
+}
+
+/**
+ * Defense in depth: `edit_auto` requests with `scope='stake'` should
+ * never reach the extension (web hides the affordance; rules reject
+ * the create; the callable rejects the complete). If one does, we
+ * refuse to write to Kindoo so a stale request can never grant access
+ * outside what the Church-automation already grants.
+ */
+export class ProvisionStakeAutoEditError extends Error {
+  readonly code = 'stake-auto-edit' as const;
+  constructor() {
+    super(
+      'edit_auto requests with scope=stake are not allowed (stake auto seats are not editable).',
+    );
+    this.name = 'ProvisionStakeAutoEditError';
   }
 }
 
@@ -155,6 +195,67 @@ function currentSeatBuildings(seat: Seat | null): string[] {
   if (!seat) return [];
   const dupBuildings = (seat.duplicate_grants ?? []).flatMap((d) => d.building_names ?? []);
   return uniqueOrdered(seat.building_names ?? [], dupBuildings);
+}
+
+/**
+ * Mirror of `functions/src/callable/markRequestComplete.ts` `planEditSeat`
+ * — apply an edit request to the seat in memory, returning the
+ * post-edit seat. The backend resolves the slot identically; we
+ * recompute the post-edit shape locally so the extension can derive
+ * the post-edit composite building set (primary ∪ surviving duplicates)
+ * before talking to Kindoo. Returns `null` when no slot matches
+ * (callable will throw `failed-precondition`); the orchestrator falls
+ * back to a pre-edit composite + the request's building set so the
+ * Kindoo write still covers the user's existing scope, and the
+ * subsequent callable invocation is the canonical authority on whether
+ * the edit is accepted.
+ *
+ * Slot resolution (backend-aligned):
+ *   1. If `(seat.scope, seat.type) == (scope, targetType)` → primary
+ *      gets its `building_names` (and `reason` / dates if supplied)
+ *      replaced.
+ *   2. Else walk `duplicate_grants[]` for the first `(scope, type)`
+ *      match; replace its fields.
+ *   3. Else return `null` — no slot matched.
+ */
+function applyEditToSeat(
+  seat: Seat,
+  scope: string,
+  targetType: 'auto' | 'manual' | 'temp',
+  fields: {
+    building_names: string[];
+    reason?: string;
+    start_date?: string;
+    end_date?: string;
+  },
+): Seat | null {
+  // Primary slot match.
+  if (seat.scope === scope && seat.type === targetType) {
+    const next: Seat = { ...seat, building_names: [...fields.building_names] };
+    if (fields.reason !== undefined) next.reason = fields.reason;
+    if (fields.start_date !== undefined) next.start_date = fields.start_date;
+    if (fields.end_date !== undefined) next.end_date = fields.end_date;
+    return next;
+  }
+
+  // Duplicate slot match.
+  const dupes = seat.duplicate_grants ?? [];
+  const matchIdx = dupes.findIndex((d) => d.scope === scope && d.type === targetType);
+  if (matchIdx >= 0) {
+    const matched = dupes[matchIdx]!;
+    const replacement: DuplicateGrant = {
+      ...matched,
+      building_names: [...fields.building_names],
+    };
+    if (fields.reason !== undefined) replacement.reason = fields.reason;
+    if (fields.start_date !== undefined) replacement.start_date = fields.start_date;
+    if (fields.end_date !== undefined) replacement.end_date = fields.end_date;
+    const nextDupes = dupes.slice();
+    nextDupes[matchIdx] = replacement;
+    return { ...seat, duplicate_grants: nextDupes };
+  }
+
+  return null;
 }
 
 /**
@@ -232,6 +333,7 @@ function synthesizeDescription(
   wards: Ward[],
   mergeAddIntoSeat: boolean,
   removeScope?: string,
+  editTarget?: { scope: string; type: 'auto' | 'manual' | 'temp'; reason: string },
 ): string {
   // Build the post-completion (scope, type, callings, reason) list.
   // First entry is the primary; rest are duplicates.
@@ -291,6 +393,26 @@ function synthesizeDescription(
     });
   }
 
+  if (editTarget !== undefined) {
+    // Replace the matching (scope, type) segment's `reason` with the
+    // request's reason. For `edit_auto` the description text is
+    // driven by callings (reason is unused in formatDescriptionSegment),
+    // so the resulting description is unchanged — that's intentional;
+    // the edit only mutates building grants. For `edit_manual` /
+    // `edit_temp` the reason field drives the description text.
+    //
+    // Mirrors `planEditSeat`'s slot resolution: primary `(scope, type)`
+    // wins; otherwise the first duplicate-segment match.
+    let replaced = false;
+    segments = segments.map((s) => {
+      if (!replaced && s.scope === editTarget.scope && s.type === editTarget.type) {
+        replaced = true;
+        return { ...s, reason: editTarget.reason };
+      }
+      return s;
+    });
+  }
+
   if (segments.length === 0) {
     // No prior seat and no merge (REMOVE on a member with no SBA
     // seat) — let the description fall through to the request's own
@@ -339,7 +461,7 @@ function tempDatesFor(req: AccessRequest): { startEdit: string; expiryEdit: stri
   if (!start || !end) {
     throw new KindooApiError(
       'unexpected-shape',
-      `add_temp request ${req.request_id} missing start_date or end_date`,
+      `${req.type} request ${req.request_id} missing start_date or end_date`,
     );
   }
   return {
@@ -361,6 +483,100 @@ function tempDatesForInvite(req: AccessRequest): { startInvite: string; expiryIn
     startInvite: `${start} 00:00`,
     expiryInvite: `${end} 23:59`,
   };
+}
+
+/**
+ * Effective rule IDs the user already holds via Church Access
+ * Automation's direct door grants. Strict-subset derivation:
+ * `getUserDoorIds` returns every DoorID the user can open (both
+ * AccessRule-derived AND `AccessScheduleID === 0` direct grants);
+ * `deriveEffectiveRuleIds` claims a rule iff EVERY door in that
+ * rule's door set is in the user's door set.
+ *
+ * The orchestrator subtracts these from `ridsToAdd` so it never
+ * writes a redundant AccessSchedule for a building the user already
+ * has effective access to. Without this, `saveAccessRule`'s MERGE
+ * semantics would add a parallel AccessRule alongside the direct
+ * door grants — two grant sources for the same building. Functionally
+ * harmless (the user can still open the door) but pollutes the user's
+ * Kindoo state and creates the exact divergence the Sync feature is
+ * meant to surface.
+ *
+ * Returns `null` on any I/O failure in the derivation chain. The
+ * caller falls back to the legacy diff (`currentSchedules` only).
+ * The provision write still proceeds; in the worst case we re-introduce
+ * the redundant-rule scenario but don't block the operator on a
+ * transient Kindoo error.
+ */
+async function deriveDirectGrantRids(
+  session: KindooSession,
+  buildings: Building[],
+  userId: string,
+  fetchImpl: typeof fetch | undefined,
+): Promise<Set<number> | null> {
+  const stakeRuleIds = buildings
+    .map((b) => b.kindoo_rule?.rule_id)
+    .filter((id): id is number => typeof id === 'number');
+  if (stakeRuleIds.length === 0) return new Set();
+  try {
+    const ruleDoorMap = await buildRuleDoorMap(session, session.eid, stakeRuleIds, fetchImpl);
+    const userDoorIds = await getUserDoorIds(session, userId, session.eid, fetchImpl);
+    return deriveEffectiveRuleIds(userDoorIds, ruleDoorMap);
+  } catch (err) {
+    console.log(
+      `[sba-ext] deriveDirectGrantRids: door-grant derivation failed for ${userId}; ` +
+        `falling back to legacy diff. ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Compute the add/revoke RID diff for a Kindoo write, accounting for
+ * BOTH the user's existing AccessSchedules AND Church Access
+ * Automation's direct door grants.
+ *
+ *   ridsAlreadyEffective = currentSchedules ∪ effectiveRuleIdsFromDoors
+ *   ridsToAdd            = targetRids   - ridsAlreadyEffective
+ *   ridsToRevoke         = currentSchedules - targetRids
+ *
+ * `ridsToRevoke` only looks at the schedules — we can't revoke a
+ * direct door grant via `revokeUserFromAccessSchedule` (it operates
+ * on AccessSchedules); Church Access Automation owns those.
+ *
+ * If door-grant derivation fails, falls back to the legacy diff
+ * (`ridsToAdd = targetRids - currentSchedules`). `derivationFailed`
+ * lets the caller distinguish "no direct grants" (Set) from "we
+ * don't know" (null) for logging / behavior assertions.
+ */
+async function computeKindooDiff(args: {
+  session: KindooSession;
+  buildings: Building[];
+  userId: string;
+  currentSchedules: number[];
+  targetRids: number[];
+  fetchImpl: typeof fetch | undefined;
+}): Promise<{ ridsToAdd: number[]; ridsToRevoke: number[]; derivationFailed: boolean }> {
+  const targetSet = new Set(args.targetRids);
+  const currentSet = new Set(args.currentSchedules);
+  const ridsToRevoke = args.currentSchedules.filter((id) => !targetSet.has(id));
+
+  const directGrantRids = await deriveDirectGrantRids(
+    args.session,
+    args.buildings,
+    args.userId,
+    args.fetchImpl,
+  );
+
+  if (directGrantRids === null) {
+    // Fallback: ignore direct grants. May write a redundant rule but
+    // the provision still completes.
+    const ridsToAdd = args.targetRids.filter((id) => !currentSet.has(id));
+    return { ridsToAdd, ridsToRevoke, derivationFailed: true };
+  }
+
+  const ridsToAdd = args.targetRids.filter((id) => !currentSet.has(id) && !directGrantRids.has(id));
+  return { ridsToAdd, ridsToRevoke, derivationFailed: false };
 }
 
 // ---- Add / change ----------------------------------------------------
@@ -388,9 +604,16 @@ export interface ProvisionAddOrChangeArgs {
  *      coverage; `seat.building_names` alone is primary-only.
  *   2. targetRIDs = buildings → kindoo_rule.rule_id (throws on missing mapping).
  *   3. lookupUserByEmail(email).
- *   4. Not found → inviteUser + saveAccessRule.
- *   5. Found → editUser (description / temp / dates) only if diff;
- *              saveAccessRule with full target RIDs only if diff.
+ *   4. Not found → inviteUser + saveAccessRule(targetRIDs). A brand-new
+ *      user has no direct grants yet, so the full target set ships.
+ *   5. Found → computeKindooDiff against the user's current
+ *      AccessSchedules AND Church Access Automation's direct door
+ *      grants. saveAccessRule only for RIDs not already effectively
+ *      held; editUser (description / temp / dates) only if diff.
+ *      Direct grants are read via `deriveDirectGrantRids` (4 rule
+ *      calls + 1 user call); failure falls back to the legacy
+ *      schedules-only diff so a transient Kindoo error doesn't block
+ *      the operator.
  */
 export async function provisionAddOrChange(
   args: ProvisionAddOrChangeArgs,
@@ -486,9 +709,26 @@ export async function provisionAddOrChange(
   }
 
   const existingRids = existing.accessSchedules.map((s) => s.ruleId);
+  // Compute the additive diff against schedules ∪ direct door grants.
+  // We only call saveAccessRule for RIDs not already effectively held;
+  // a building whose entire rule door set is covered by Church Access
+  // Automation's direct grants is skipped to avoid writing a
+  // redundant AccessSchedule (the MERGE-pollution scenario).
+  //
+  // The add path does NOT issue per-rule revokes — adds only grow the
+  // rule set. We still pass currentSchedules so the helper produces
+  // the canonical pair, but only `ridsToAdd` drives the write here.
+  const { ridsToAdd } = await computeKindooDiff({
+    session: args.session,
+    buildings: args.buildings,
+    userId: existing.userId,
+    currentSchedules: existingRids,
+    targetRids: targetRIDs,
+    fetchImpl,
+  });
   let didSaveRules = false;
-  if (!sameRids(targetRIDs, existingRids)) {
-    await saveAccessRule(args.session, existing.userId, targetRIDs, fetchImpl);
+  if (ridsToAdd.length > 0) {
+    await saveAccessRule(args.session, existing.userId, ridsToAdd, fetchImpl);
     didSaveRules = true;
   }
 
@@ -733,6 +973,231 @@ export async function provisionRemove(args: ProvisionRemoveArgs): Promise<Provis
     kindoo_uid: existing.userId,
     action: 'updated',
     note: noteForAction('updated', args.request, targetBuildings),
+  };
+}
+
+// ---- Edit ------------------------------------------------------------
+
+export interface ProvisionEditArgs {
+  request: AccessRequest;
+  /** SBA seat for the request's subject. Edit requires a seat — the
+   * web UI and rules only allow editing an existing seat. If null,
+   * we still proceed but the description-rewrite falls back to the
+   * request's own segment as a safety net (matches the orphan
+   * recovery shape used elsewhere). */
+  seat: Seat | null;
+  stake: Stake;
+  buildings: Building[];
+  wards: Ward[];
+  envs: KindooEnvironment[];
+  session: KindooSession;
+  deps?: ProvisionDeps;
+}
+
+/**
+ * Edit a user's Kindoo access in place — replace the buildings on the
+ * matching seat slot, refresh the Description, and (for `edit_temp`)
+ * update the date bounds.
+ *
+ * Replace-semantics for the EDITED slot — `request.building_names` IS
+ * the new building set on the matching seat slot. The orchestrator
+ * does NOT union the request's buildings with the slot's pre-edit
+ * buildings: the requester explicitly chose the post-edit set in the
+ * dialog, and any buildings that were on this slot but aren't in the
+ * new set should be dropped from that slot.
+ *
+ * Cross-slot preservation — buildings belonging to OTHER seat slots
+ * (the primary slot if a duplicate is being edited, or surviving
+ * duplicate slots if the primary is being edited) must stay. The
+ * orchestrator computes a post-edit seat in memory (`applyEditToSeat`,
+ * mirroring the backend's `planEditSeat`), then unions building_names
+ * across primary + ALL surviving duplicate slots — that union is the
+ * post-edit composite the user is entitled to.
+ *
+ * The Kindoo diff is composite-vs-composite, AND consults Church
+ * Access Automation's direct door grants so we never write a redundant
+ * AccessSchedule for a building the user already has effective access
+ * to:
+ *   - `targetRids` = rules backing the post-edit composite.
+ *   - `ridsAlreadyEffective` = currentSchedules ∪ rules whose door set
+ *     is fully covered by the user's direct door grants (the
+ *     `buildingsFromDoors` strict-subset derivation; covers both
+ *     AccessRule-derived doors AND `AccessScheduleID === 0` Church
+ *     direct grants).
+ *   - `ridsToAdd` = targetRids - ridsAlreadyEffective. A building
+ *     covered by direct grants alone is skipped — `saveAccessRule`'s
+ *     MERGE semantics would otherwise create a parallel AccessSchedule
+ *     alongside the direct grants, polluting the user's Kindoo state.
+ *   - `ridsToRevoke` = currentSchedules - targetRids. Only operates on
+ *     AccessSchedules; direct grants can't be revoked here (Church
+ *     Access Automation owns them). RIDs belonging to an UNTOUCHED
+ *     slot are in `targetRids` (because that slot contributes its
+ *     buildings to the composite), so they're never in `ridsToRevoke`.
+ *
+ * Flow:
+ *   1. Stake-auto guard — refuse `edit_auto` + `scope='stake'`.
+ *   2. Apply the edit to the seat in memory to derive the post-edit
+ *      seat (`applyEditToSeat`). If no slot matches (stale request),
+ *      fall back to the pre-edit seat ∪ request's buildings; the
+ *      callable invocation will reject the request with
+ *      `failed-precondition` and the Kindoo write is a benign add.
+ *   3. Compute targetBuildings = union over primary + all surviving
+ *      duplicate `building_names` of the post-edit seat.
+ *   4. targetRids = ridsForBuildings(targetBuildings) (throws on
+ *      missing mapping).
+ *   5. lookupUserByEmail — must exist; otherwise
+ *      `ProvisionEditUserMissingError`.
+ *   6. computeKindooDiff against currentSchedules AND direct door
+ *      grants. Door-grant derivation failure falls back to the legacy
+ *      schedules-only diff so a transient Kindoo error doesn't block
+ *      the operator.
+ *   7. saveAccessRule(ridsToAdd) (MERGE); revokeUserFromAccessSchedule
+ *      per ridsToRevoke rid.
+ *   8. Synthesize description with the matching slot's `reason`
+ *      replaced by the request's reason. For `edit_auto` this leaves
+ *      the description unchanged (callings drive the text, not
+ *      reason); for manual/temp the text changes if `reason` changed.
+ *   9. editUser with the new description; for `edit_temp` also update
+ *      isTemp + dates from the request.
+ */
+export async function provisionEdit(args: ProvisionEditArgs): Promise<ProvisionResult> {
+  const req = args.request;
+  if (req.type !== 'edit_auto' && req.type !== 'edit_manual' && req.type !== 'edit_temp') {
+    throw new Error(`provisionEdit called with non-edit type "${req.type}"`);
+  }
+
+  // 1. Stake-auto defense in depth.
+  if (req.type === 'edit_auto' && req.scope === 'stake') {
+    throw new ProvisionStakeAutoEditError();
+  }
+
+  // edit_temp must carry both dates — validate at the boundary so a
+  // bad request never reaches the wire.
+  if (req.type === 'edit_temp') {
+    tempDatesFor(req); // throws KindooApiError('unexpected-shape', ...) on miss
+  }
+
+  const fetchImpl = args.deps?.fetchImpl;
+
+  // ---- Compute target state ----
+  // Apply the edit in memory to derive the post-edit seat shape, then
+  // union building_names across primary + all surviving duplicates.
+  // That union is what the user is entitled to AFTER the edit commits;
+  // the Kindoo diff against this composite leaves untouched slots'
+  // RIDs intact (they remain in the target set, so they're never in
+  // `toRevoke`).
+  const requestBuildings = [...(req.building_names ?? [])];
+  const targetType: 'auto' | 'manual' | 'temp' =
+    req.type === 'edit_auto' ? 'auto' : req.type === 'edit_manual' ? 'manual' : 'temp';
+  const editFields: {
+    building_names: string[];
+    reason?: string;
+    start_date?: string;
+    end_date?: string;
+  } = { building_names: requestBuildings };
+  if (req.type !== 'edit_auto') editFields.reason = req.reason;
+  if (req.type === 'edit_temp') {
+    if (req.start_date !== undefined) editFields.start_date = req.start_date;
+    if (req.end_date !== undefined) editFields.end_date = req.end_date;
+  }
+  const postEditSeat = args.seat
+    ? applyEditToSeat(args.seat, req.scope, targetType, editFields)
+    : null;
+  // If a slot matched, take the post-edit composite. If no slot
+  // matched (stale request, or no seat) fall back to the pre-edit
+  // seat ∪ request — the Kindoo write is a benign add and the
+  // callable will reject the request authoritatively.
+  const targetBuildings = postEditSeat
+    ? currentSeatBuildings(postEditSeat)
+    : uniqueOrdered(currentSeatBuildings(args.seat), requestBuildings);
+  const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
+
+  const env = findEnvironment(args.envs, args.session);
+  const envTzRaw = env.TimeZone;
+  const envTz =
+    typeof envTzRaw === 'string' && envTzRaw.length > 0 ? envTzRaw : 'Mountain Standard Time';
+
+  const targetDescription = synthesizeDescription(
+    args.seat,
+    req,
+    args.stake,
+    args.wards,
+    false,
+    undefined,
+    { scope: req.scope, type: targetType, reason: req.reason },
+  );
+
+  // ---- Read Kindoo state ----
+  const existing = await lookupUserByEmail(args.session, req.member_email, fetchImpl);
+  if (!existing) {
+    throw new ProvisionEditUserMissingError(req.member_email);
+  }
+
+  // ---- Reconcile rule set (add + revoke diff) ----
+  const currentRIDs = existing.accessSchedules.map((s) => s.ruleId);
+  const { ridsToAdd, ridsToRevoke } = await computeKindooDiff({
+    session: args.session,
+    buildings: args.buildings,
+    userId: existing.userId,
+    currentSchedules: currentRIDs,
+    targetRids: targetRIDs,
+    fetchImpl,
+  });
+
+  let didRuleWrite = false;
+  if (ridsToAdd.length > 0) {
+    // saveAccessRule MERGES — adds the missing rids without disturbing
+    // unrelated grants on the same user record.
+    await saveAccessRule(args.session, existing.userId, ridsToAdd, fetchImpl);
+    didRuleWrite = true;
+  }
+  for (const ruleId of ridsToRevoke) {
+    await revokeUserFromAccessSchedule(args.session, existing.euid, ruleId, fetchImpl);
+    didRuleWrite = true;
+  }
+
+  // ---- Description + date sync ----
+  const isTempTarget = req.type === 'edit_temp';
+  let targetStart: string;
+  let targetExpiry: string;
+  if (isTempTarget) {
+    const dates = tempDatesFor(req);
+    targetStart = dates.startEdit;
+    targetExpiry = dates.expiryEdit;
+  } else {
+    // For edit_auto / edit_manual we don't touch dates. Echo the
+    // current values from lookup so editUser preserves them.
+    targetStart = existing.startAccessDoorsDateAtTimeZone ?? '';
+    targetExpiry = existing.expiryDateAtTimeZone ?? '';
+  }
+
+  const descDiffers = targetDescription !== existing.description;
+  const tempDiffers = isTempTarget !== existing.isTempUser;
+  const datesDiffer =
+    isTempTarget &&
+    (targetStart !== (existing.startAccessDoorsDateAtTimeZone ?? '') ||
+      targetExpiry !== (existing.expiryDateAtTimeZone ?? ''));
+
+  let didEdit = false;
+  if (descDiffers || tempDiffers || datesDiffer) {
+    const editPayload: KindooEditUserPayload = {
+      description: targetDescription,
+      isTemp: isTempTarget,
+      startAccessDoorsDateTime: targetStart,
+      expiryDate: targetExpiry,
+      timeZone: existing.expiryTimeZone || envTz,
+    };
+    await editUser(args.session, existing.euid, editPayload, fetchImpl);
+    didEdit = true;
+  }
+
+  return {
+    kindoo_uid: existing.userId,
+    action: 'updated',
+    note:
+      didEdit || didRuleWrite
+        ? noteForAction('updated', req, targetBuildings)
+        : `No Kindoo changes needed for ${nameOrEmail(req)}.`,
   };
 }
 

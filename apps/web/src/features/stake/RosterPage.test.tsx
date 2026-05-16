@@ -28,11 +28,28 @@ vi.mock('../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
 }));
 
+// EditSeatDialog (mounted on Edit click) subscribes to stake-wide ward
+// + building catalogues; stub them so the dialog can render without a
+// real Firestore listener. The dialog has its own focused test file.
+const stakeListResult = {
+  data: [],
+  error: null,
+  status: 'success' as const,
+  isPending: false,
+  isLoading: false,
+  isSuccess: true,
+  isError: false,
+  isFetching: false,
+  fetchStatus: 'idle' as const,
+};
+
 vi.mock('../requests/hooks', () => ({
   usePendingRemoveRequests: (canonical: string | null, scope: string | null) =>
     usePendingRemoveRequestsMock(canonical, scope),
   usePendingRequestsForScope: (scope: string | null) => usePendingRequestsForScopeMock(scope),
   useSubmitRequest: () => ({ mutateAsync: submitMutateAsyncMock, isPending: false }),
+  useStakeWards: () => stakeListResult,
+  useStakeBuildings: () => stakeListResult,
 }));
 
 function mockNoPendingRemoves() {
@@ -429,6 +446,68 @@ describe('<StakeRosterPage />', () => {
       mockStakeDoc({ stake_seat_cap: 200 });
       render(<StakeRosterPage />);
       expect(screen.queryByTestId('remove-btn-manual@x.com')).toBeNull();
+    });
+  });
+
+  describe('per-row Edit affordance', () => {
+    it('hides the Edit button on stake-scope auto seats (Policy 1 — not editable for anyone)', () => {
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+          callings: ['Stake President'],
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.queryByTestId('edit-btn-auto@x.com')).toBeNull();
+    });
+
+    it('renders an Edit button on stake-scope manual / temp seats for a stake user', () => {
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'temp@x.com',
+          member_email: 'temp@x.com',
+          member_name: 'Temp Person',
+          type: 'temp',
+          callings: [],
+          start_date: '2026-05-01',
+          end_date: '2026-12-31',
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    });
+
+    it('hides the Edit button when the principal lacks stake-scope authority', () => {
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.queryByTestId('edit-btn-manual@x.com')).toBeNull();
     });
   });
 });
