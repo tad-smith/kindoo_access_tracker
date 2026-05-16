@@ -60,7 +60,7 @@ export default defineManifest(({ mode }) => {
     short_name: 'SBA Helper',
     description:
       'Surfaces pending Stake Building Access requests in a slide-over panel on Kindoo so a Kindoo Manager can work the queue alongside the Kindoo admin UI.',
-    version: '0.8.2',
+    version: '0.8.3',
     // `key` pins the extension ID across rebuilds when set. Omit
     // when unset so Chrome auto-assigns a random ID for first-time
     // dev before the operator generates a keypair.

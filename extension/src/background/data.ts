@@ -15,6 +15,7 @@
 import { collection, doc, getDoc, getDocs, serverTimestamp, writeBatch } from 'firebase/firestore';
 import type {
   Building,
+  KindooSite,
   Seat,
   Stake,
   StakeCallingTemplate,
@@ -40,6 +41,13 @@ export interface SyncDataBundle {
   seats: Seat[];
   wardCallingTemplates: WardCallingTemplate[];
   stakeCallingTemplates: StakeCallingTemplate[];
+  /**
+   * Foreign Kindoo sites under `stakes/{STAKE_ID}/kindooSites/*`. The
+   * Sync feature filters its comparison to seats / users on the
+   * currently-active Kindoo site (see `content/kindoo/sync/activeSite.ts`).
+   * Empty for stakes that operate only the home Kindoo site.
+   */
+  kindooSites: KindooSite[];
 }
 
 /**
@@ -131,15 +139,23 @@ export async function loadSyncData(): Promise<SyncDataBundle> {
   const db = firestore();
   const stakeRef = doc(db, 'stakes', STAKE_ID);
 
-  const [stakeSnap, wardsSnap, buildingsSnap, seatsSnap, wardTemplatesSnap, stakeTemplatesSnap] =
-    await Promise.all([
-      getDoc(stakeRef),
-      getDocs(collection(db, 'stakes', STAKE_ID, 'wards')),
-      getDocs(collection(db, 'stakes', STAKE_ID, 'buildings')),
-      getDocs(collection(db, 'stakes', STAKE_ID, 'seats')),
-      getDocs(collection(db, 'stakes', STAKE_ID, 'wardCallingTemplates')),
-      getDocs(collection(db, 'stakes', STAKE_ID, 'stakeCallingTemplates')),
-    ]);
+  const [
+    stakeSnap,
+    wardsSnap,
+    buildingsSnap,
+    seatsSnap,
+    wardTemplatesSnap,
+    stakeTemplatesSnap,
+    kindooSitesSnap,
+  ] = await Promise.all([
+    getDoc(stakeRef),
+    getDocs(collection(db, 'stakes', STAKE_ID, 'wards')),
+    getDocs(collection(db, 'stakes', STAKE_ID, 'buildings')),
+    getDocs(collection(db, 'stakes', STAKE_ID, 'seats')),
+    getDocs(collection(db, 'stakes', STAKE_ID, 'wardCallingTemplates')),
+    getDocs(collection(db, 'stakes', STAKE_ID, 'stakeCallingTemplates')),
+    getDocs(collection(db, 'stakes', STAKE_ID, 'kindooSites')),
+  ]);
 
   if (!stakeSnap.exists()) {
     throw new Error(`stake doc ${STAKE_ID} not found`);
@@ -152,6 +168,7 @@ export async function loadSyncData(): Promise<SyncDataBundle> {
   const stakeCallingTemplates = stakeTemplatesSnap.docs.map(
     (d) => d.data() as StakeCallingTemplate,
   );
+  const kindooSites = kindooSitesSnap.docs.map((d) => d.data() as KindooSite);
 
   return {
     stake,
@@ -160,6 +177,7 @@ export async function loadSyncData(): Promise<SyncDataBundle> {
     seats,
     wardCallingTemplates,
     stakeCallingTemplates,
+    kindooSites,
   };
 }
 

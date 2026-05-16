@@ -23,6 +23,7 @@ import {
   type CallingTemplateSets,
   type IntendedSeatShape,
 } from './classifier';
+import type { ActiveSite } from './activeSite';
 
 export type DiscrepancyCode =
   | 'sba-only'
@@ -105,6 +106,23 @@ export interface DetectInputs {
   stakeCallingTemplates: StakeCallingTemplate[];
   /** Every Kindoo environment-user (paginated list flattened). */
   kindooUsers: KindooEnvironmentUser[];
+  /**
+   * Which Kindoo site the operator's active session is pointed at —
+   * resolved by `identifyActiveSite()` from the live EID + SBA config.
+   * Scopes the diff to seats / users belonging to that site:
+   *   - `home`            → only wards / seats with `kindoo_site_id`
+   *                         null / absent (and stake-scope seats).
+   *   - `foreign(siteId)` → only wards / seats whose
+   *                         `kindoo_site_id === siteId`. Stake-scope
+   *                         seats are home-only (Phase 1 policy), so
+   *                         they're excluded.
+   *   - `unknown`         → caller is responsible for the empty-state
+   *                         UX; we still return an empty diff defensively.
+   *
+   * Optional for backwards compatibility (tests that pre-date Phase 4
+   * may not pass one); absence is treated as "no filtering".
+   */
+  activeSite?: ActiveSite;
 }
 
 export interface DetectResult {
@@ -193,8 +211,33 @@ export function detect(inputs: DetectInputs): DetectResult {
     inputs.wardCallingTemplates,
     inputs.wards.map((w) => w.ward_code),
   );
-  const seatsByEmail = indexSeats(inputs.seats);
-  const kindooByEmail = indexKindooUsers(inputs.kindooUsers);
+
+  // Active-site filter: scope the union of (seats, kindoo users) to
+  // wards belonging to the active Kindoo site. `unknown` returns an
+  // empty diff up front (the panel renders an empty-state recovery
+  // message instead). `home` / `foreign` build a ward_code allow-set
+  // and filter both sides through it.
+  if (inputs.activeSite && inputs.activeSite.kind === 'unknown') {
+    return {
+      discrepancies: [],
+      seatCount: 0,
+      kindooCount: 0,
+    };
+  }
+  const activeWardCodes = computeActiveWardCodes(inputs.wards, inputs.activeSite);
+  const stakeAllowed = !inputs.activeSite || inputs.activeSite.kind === 'home';
+  const filteredSeats = filterSeatsByActiveSite(inputs.seats, activeWardCodes, stakeAllowed);
+  const filteredKindooUsers = filterKindooUsersByActiveSite(
+    inputs.kindooUsers,
+    inputs.stake,
+    inputs.wards,
+    sets,
+    activeWardCodes,
+    stakeAllowed,
+  );
+
+  const seatsByEmail = indexSeats(filteredSeats);
+  const kindooByEmail = indexKindooUsers(filteredKindooUsers);
 
   const allCanonical = new Set<string>([...seatsByEmail.keys(), ...kindooByEmail.keys()]);
   const discrepancies: Discrepancy[] = [];
@@ -368,9 +411,90 @@ export function detect(inputs: DetectInputs): DetectResult {
   discrepancies.sort(compareDiscrepancies);
   return {
     discrepancies,
-    seatCount: inputs.seats.length,
-    kindooCount: inputs.kindooUsers.length,
+    seatCount: filteredSeats.length,
+    kindooCount: filteredKindooUsers.length,
   };
+}
+
+/**
+ * Build the allow-set of ward codes for the active Kindoo site.
+ *
+ *   - `home`            → wards with `kindoo_site_id` null / absent.
+ *   - `foreign(siteId)` → wards with `kindoo_site_id === siteId`.
+ *   - missing           → every ward (backwards compat for callers that
+ *                         pre-date Phase 4 and don't pass an
+ *                         `activeSite`).
+ */
+function computeActiveWardCodes(
+  wards: Ward[],
+  activeSite: ActiveSite | undefined,
+): Set<string> | null {
+  if (!activeSite) return null;
+  const out = new Set<string>();
+  for (const w of wards) {
+    const homeBound = w.kindoo_site_id === null || w.kindoo_site_id === undefined;
+    if (activeSite.kind === 'home' && homeBound) {
+      out.add(w.ward_code);
+    } else if (activeSite.kind === 'foreign' && w.kindoo_site_id === activeSite.siteId) {
+      out.add(w.ward_code);
+    }
+  }
+  return out;
+}
+
+/**
+ * Keep only seats whose scope belongs to the active Kindoo site.
+ * Stake-scope seats are home-only (per Phase 1 policy — see
+ * `docs/spec.md` §15).
+ */
+function filterSeatsByActiveSite(
+  seats: Seat[],
+  activeWardCodes: Set<string> | null,
+  stakeAllowed: boolean,
+): Seat[] {
+  if (activeWardCodes === null) return seats;
+  return seats.filter((s) => {
+    if (s.scope === 'stake') return stakeAllowed;
+    return activeWardCodes.has(s.scope);
+  });
+}
+
+/**
+ * Keep only Kindoo users whose parsed Description resolves to a scope
+ * (ward or stake) belonging to the active Kindoo site. Users whose
+ * Description resolves to OTHER wards belong to another site's manager;
+ * they're excluded entirely from the report (no `kindoo-only` drift
+ * row). Unparseable Kindoo users on a foreign site are also dropped
+ * (not our responsibility to classify).
+ *
+ * On the home site, the historical behavior must be preserved exactly
+ * — including emitting `kindoo-only` rows for unparseable users with
+ * no SBA seat. That's why we bypass the filter when active is home AND
+ * the parsed primary is `null` (unparseable / unresolved).
+ */
+function filterKindooUsersByActiveSite(
+  users: KindooEnvironmentUser[],
+  stake: Stake,
+  wards: Ward[],
+  sets: CallingTemplateSets,
+  activeWardCodes: Set<string> | null,
+  stakeAllowed: boolean,
+): KindooEnvironmentUser[] {
+  if (activeWardCodes === null) return users;
+  return users.filter((u) => {
+    const parsed = parseDescription(u.description, stake, wards);
+    const primary = pickPrimarySegment(parsed, sets);
+    if (!primary || primary.scope === null) {
+      // Unparseable / unresolvable. On home, keep so the historical
+      // `kindoo-only` / `kindoo-unparseable` rows still surface. On
+      // foreign, drop — we can't claim the user without a resolved
+      // scope, and if they belong to OUR foreign-site wards they'd
+      // already have a seat (which short-circuits the kindoo-side path).
+      return stakeAllowed;
+    }
+    if (primary.scope === 'stake') return stakeAllowed;
+    return activeWardCodes.has(primary.scope);
+  });
 }
 
 function buildKindooBlock(
