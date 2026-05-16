@@ -543,6 +543,24 @@ service cloud.firestore {
           // third defense layer.
           && (request.resource.data.type != 'edit_auto'
               || request.resource.data.scope != 'stake')
+          // Edit types require a non-empty `comment` so the manager
+          // queue surfaces the operator's rationale. Rules check the
+          // simpler "is a non-empty string" predicate; the shared
+          // `accessRequestSchema` zod refinement at the SDK boundary
+          // applies the stricter trim-then-check semantics. Add /
+          // remove types are unaffected (any comment value or absence
+          // is allowed here; web form layers the cross-ward-add
+          // comment rule on top).
+          && (
+            (request.resource.data.type != 'edit_auto'
+             && request.resource.data.type != 'edit_manual'
+             && request.resource.data.type != 'edit_temp')
+            || (
+                 'comment' in request.resource.data
+              && request.resource.data.comment is string
+              && request.resource.data.comment.size() > 0
+            )
+          )
           // Role-for-scope gate (defense-in-depth complement to the
           // SPA's `allowedScopesFor` filter, B-3 / T-36). The submitter
           // must hold the role matching the scope they are writing:

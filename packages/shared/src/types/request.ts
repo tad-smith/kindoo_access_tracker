@@ -31,8 +31,14 @@ export type AccessRequest = {
 
   /** Free-text — the calling / role / reason a manual or temp seat is being requested for. */
   reason: string;
-  /** Free-text — additional context the requester typed. May be empty. */
-  comment: string;
+  /**
+   * Free-text — additional context the requester typed. Optional at
+   * the wire boundary. `edit_*` types require a non-empty trimmed
+   * comment (enforced by `accessRequestSchema.superRefine`, the
+   * Firestore rule predicate, and the web form); `add_*` / `remove`
+   * leave it free-form and may omit the field entirely.
+   */
+  comment?: string;
   /** ISO date `YYYY-MM-DD` — `add_temp` only. */
   start_date?: string;
   /** ISO date `YYYY-MM-DD` — `add_temp` only. */

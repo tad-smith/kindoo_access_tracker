@@ -183,6 +183,8 @@ In addition to `add_manual`, `add_temp`, and `remove`, managers can mutate an ex
 
 **`edit_manual` reason semantics.** Manual seats store the operator-typed calling name in `seat.reason` (not `seat.callings`, which stays `[]`). The `edit_manual` request's `reason` field replaces `seat.reason` verbatim. `seat.callings` is left untouched.
 
+**Comment required on edit requests.** All `edit_*` requests require a non-empty `comment` field at creation time. Enforced by (a) the shared `accessRequestSchema` zod refinement (trimmed non-empty), (b) the Firestore rule predicate on creation (non-empty string), (c) the web form validation. Add and remove requests are unaffected — their existing comment behavior is preserved (optional at the wire boundary; the cross-ward-add comment-required rule lives in the web form schema, not the wire schema).
+
 **Slot resolution** (in `planEditSeat`, `functions/src/callable/markRequestComplete.ts`): primary `(scope, type)` match wins; otherwise walk `seat.duplicate_grants[]` for the first `(scope, type)` match. If neither matches, the callable throws `failed-precondition` (no editable slot found). Edits never change scope/type, so per-pool counts are unchanged — the callable skips the over-cap recompute (responsibility split with `removeSeatOnRequestComplete`).
 
 **Edit badge in the Pending Queue.** Edit requests render with a distinct "Edit (auto)" / "Edit (manual)" / "Edit (temp)" type badge so managers can disambiguate them at a glance against add/remove.
