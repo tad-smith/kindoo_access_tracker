@@ -12,6 +12,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   auditAccessWrites,
   auditBuildingWrites,
+  auditKindooSiteWrites,
   auditManagerWrites,
   auditRequestWrites,
   auditSeatWrites,
@@ -147,6 +148,88 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.entity_id).toBe('building:cordera');
     expect(rows[0]!.action).toBe('update_stake');
+  });
+
+  // -------- KindooSites --------
+
+  it('create on a kindooSite emits a row with entity_id=kindooSite:<slug>', async () => {
+    const after = {
+      id: 'east-stake',
+      display_name: 'East Stake (Foothills Building)',
+      kindoo_expected_site_name: 'East Stake',
+      lastActor: lastActor('alice@gmail.com'),
+    };
+    await auditKindooSiteWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, kindooSiteId: 'east-stake' },
+        before: null,
+        after,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('update_stake');
+    expect(rows[0]!.entity_type).toBe('stake');
+    expect(rows[0]!.entity_id).toBe('kindooSite:east-stake');
+    expect(rows[0]!.before).toBeNull();
+    expect(rows[0]!.after).toMatchObject({
+      id: 'east-stake',
+      display_name: 'East Stake (Foothills Building)',
+    });
+    expect(rows[0]!.actor_canonical).toBe('alice@gmail.com');
+    expect(rows[0]!.member_canonical).toBeUndefined();
+  });
+
+  it('update on a kindooSite emits an audit row with diff in before/after', async () => {
+    const before = {
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake',
+      lastActor: lastActor('alice@gmail.com'),
+    };
+    const after = {
+      ...before,
+      display_name: 'East Stake (Foothills)',
+      lastActor: lastActor('bob@gmail.com'),
+    };
+    await auditKindooSiteWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, kindooSiteId: 'east-stake' },
+        before,
+        after,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('update_stake');
+    expect(rows[0]!.entity_id).toBe('kindooSite:east-stake');
+    expect((rows[0]!.before as Record<string, unknown>)['display_name']).toBe('East Stake');
+    expect((rows[0]!.after as Record<string, unknown>)['display_name']).toBe(
+      'East Stake (Foothills)',
+    );
+    expect(rows[0]!.actor_canonical).toBe('bob@gmail.com');
+  });
+
+  it('delete on a kindooSite pulls actor from the BEFORE snapshot', async () => {
+    const before = {
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake',
+      lastActor: lastActor('carol@gmail.com'),
+    };
+    await auditKindooSiteWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, kindooSiteId: 'east-stake' },
+        before,
+        after: null,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('update_stake');
+    expect(rows[0]!.entity_id).toBe('kindooSite:east-stake');
+    expect(rows[0]!.after).toBeNull();
+    expect(rows[0]!.actor_canonical).toBe('carol@gmail.com');
   });
 
   // -------- KindooManagers --------

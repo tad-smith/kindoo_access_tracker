@@ -12,6 +12,7 @@ import { APP_SA, getDb } from '../lib/admin.js';
 const AUDITED_COLLECTIONS = [
   'wards',
   'buildings',
+  'kindooSites',
   'kindooManagers',
   'access',
   'seats',

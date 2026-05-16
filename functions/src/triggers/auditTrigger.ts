@@ -167,6 +167,24 @@ export const auditRequestWrites = onDocumentWritten(
   },
 );
 
+export const auditKindooSiteWrites = onDocumentWritten(
+  'stakes/{stakeId}/kindooSites/{kindooSiteId}',
+  async (event) => {
+    const { stakeId, kindooSiteId } = event.params as { stakeId: string; kindooSiteId: string };
+    if (!event.data) return;
+    await emitAuditRow({
+      stakeId,
+      collection: 'kindooSites',
+      docId: kindooSiteId,
+      entityType: 'stake',
+      entityIdOverride: `kindooSite:${kindooSiteId}`,
+      before: snapshotData(event.data.before),
+      after: snapshotData(event.data.after),
+      eventTime: event.time,
+    });
+  },
+);
+
 export const auditWardCallingTemplateWrites = onDocumentWritten(
   'stakes/{stakeId}/wardCallingTemplates/{calling}',
   async (event) => {
@@ -232,6 +250,7 @@ export type AuditCollection =
   | 'stake'
   | 'wards'
   | 'buildings'
+  | 'kindooSites'
   | 'kindooManagers'
   | 'access'
   | 'seats'

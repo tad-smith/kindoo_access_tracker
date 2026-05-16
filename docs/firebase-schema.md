@@ -513,6 +513,7 @@ Multi-Kindoo-site management for a single SBA stake. A doc here represents a **f
 - The home site has NO `KindooSite` document. Its identity lives on the stake doc (`stake.kindoo_config.site_id` / `kindoo_config.site_name`, plus the optional `kindoo_expected_site_name` override). A `null` / absent `kindoo_site_id` on a ward or building means home.
 - Authority gating uses the existing per-stake `kindooManagers` allow-list. The SBA stake remains a single SBA stake; foreign-site management does NOT create a new role or multi-stake principal.
 - Field-level referential integrity (a ward / building's `kindoo_site_id` actually existing here) is the UI's concern; rules gate WHO can write, not field-level FK checks.
+- Writes to this collection are audited by `auditKindooSiteWrites` (entity_type=`stake`, entity_id=`kindooSite:<slug>`) and reconciled by the nightly `reconcileAuditGaps` job.
 
 ## 5. Indexes
 
