@@ -23,7 +23,7 @@ import { STAKE_ID } from '../../lib/constants';
 import { useFirestoreOnce } from '../../lib/data';
 import { wardRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
-import { useBishopricRoster } from './hooks';
+import { useBishopricRoster, useKindooSites, useStakeWards } from './hooks';
 import { RosterCardList } from '../../components/roster/RosterCardList';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { RosterUtilization } from '../../lib/render/RosterUtilization';
@@ -36,6 +36,7 @@ import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster } from '../requests/rosterPending';
 import { canEditSeat, isScopeAllowed } from '../requests/scopeOptions';
 import { Badge } from '../../components/ui/Badge';
+import { siteLabelForSeat } from '../../lib/kindooSites';
 
 export interface BishopricRosterPageProps {
   /** Pre-selected ward code from `?ward=...`. */
@@ -60,6 +61,12 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
   const wardDocResult = useFirestoreOnce(activeWard ? wardRef(db, STAKE_ID, activeWard) : null);
   const wardDoc = wardDocResult.data;
   const sortedSeats = useMemo(() => sortSeatsWithinScope(seats.data ?? []), [seats.data]);
+
+  // Wards + Kindoo Sites — feed the foreign-site badge on ward seats
+  // (spec §15). Both subscriptions are stake-wide live reads; the
+  // helper short-circuits to `null` until the catalogues hydrate.
+  const wardsCatalogue = useStakeWards();
+  const kindooSites = useKindooSites();
 
   // Pending requests for the active ward — drives the "Outstanding
   // Requests" section + the per-row "Pending Removal" badge.
@@ -149,16 +156,33 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
                 </span>
               );
             }}
-            extraBadges={(seat) =>
-              pendingRemovesByCanonical.has(seat.member_canonical) ? (
-                <Badge
-                  variant="danger"
-                  data-testid={`pending-removal-badge-${seat.member_canonical}`}
-                >
-                  Pending Removal
-                </Badge>
-              ) : null
-            }
+            extraBadges={(seat) => {
+              const siteLabel = siteLabelForSeat(
+                seat,
+                wardsCatalogue.data ?? [],
+                kindooSites.data ?? [],
+              );
+              return (
+                <>
+                  {pendingRemovesByCanonical.has(seat.member_canonical) ? (
+                    <Badge
+                      variant="danger"
+                      data-testid={`pending-removal-badge-${seat.member_canonical}`}
+                    >
+                      Pending Removal
+                    </Badge>
+                  ) : null}
+                  {siteLabel ? (
+                    <Badge
+                      variant="info"
+                      data-testid={`kindoo-site-badge-${seat.member_canonical}`}
+                    >
+                      {siteLabel}
+                    </Badge>
+                  ) : null}
+                </>
+              );
+            }}
             rowClass={(seat) =>
               pendingRemovesByCanonical.has(seat.member_canonical)
                 ? 'has-removal-pending'

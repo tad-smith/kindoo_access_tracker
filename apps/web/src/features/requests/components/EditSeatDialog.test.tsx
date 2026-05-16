@@ -263,7 +263,11 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     expect(arg.end_date).toBeUndefined();
   });
 
-  it('blocks submission with an inline error when no buildings are checked', async () => {
+  it('blocks submission (button disabled) when no buildings are checked', async () => {
+    // Matches the NewRequestForm gate — every `edit_*` / `add_*` request
+    // must carry ≥ 1 building (operator decision 2026-05-16, spec §5.1
+    // / §6). Submit is disabled while the building checklist is empty;
+    // the schema layer is the second defense.
     const user = userEvent.setup();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
@@ -278,9 +282,10 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     await user.type(screen.getByTestId('edit-seat-comment'), 'note');
-    await user.click(screen.getByTestId('edit-seat-confirm'));
+    const confirmBtn = screen.getByTestId('edit-seat-confirm');
+    expect(confirmBtn).toBeDisabled();
+    await user.click(confirmBtn);
     expect(submitMutateAsync).not.toHaveBeenCalled();
-    expect(screen.getByText(/pick at least one building/i)).toBeInTheDocument();
   });
 
   it('renders a required Comment field in the dialog body', () => {
@@ -506,6 +511,153 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
     await user.click(screen.getByTestId('edit-seat-confirm'));
     expect(submitMutateAsync).not.toHaveBeenCalled();
     expect(screen.getByTestId('edit-seat-comment-error')).toBeInTheDocument();
+  });
+});
+
+describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () => {
+  // Phase 2 narrows the Edit Seat dialog's building checklist to the
+  // seat's scope's Kindoo site. Foreign-site ward seats see foreign
+  // buildings only; home ward seats (and stake-scope seats) see home
+  // buildings only. Pre-checked seat building_names outside the visible
+  // set are dropped from the form defaults so the user can only check
+  // / uncheck what they can see (Risk 2 — invisible home pre-check on
+  // a legacy ward where ward.building_name disagrees with ward.kindoo_site_id).
+
+  it('shows ONLY foreign-site buildings on a foreign-site ward seat', () => {
+    mockCatalogue(
+      [
+        makeWard({
+          ward_code: 'FN',
+          building_name: 'Foothills Building',
+          kindoo_site_id: 'foreign-1',
+        }),
+      ],
+      [
+        makeBuilding({
+          building_id: 'cordera',
+          building_name: 'Cordera Building',
+          kindoo_site_id: null,
+        }),
+        makeBuilding({
+          building_id: 'foothills',
+          building_name: 'Foothills Building',
+          kindoo_site_id: 'foreign-1',
+        }),
+      ],
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'FN',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: ['Foothills Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    expect(screen.getByTestId('edit-seat-building-foothills')).toBeInTheDocument();
+    expect(screen.queryByTestId('edit-seat-building-cordera')).toBeNull();
+  });
+
+  it('shows ONLY home-site buildings on a home ward seat', () => {
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [
+        makeBuilding({
+          building_id: 'cordera',
+          building_name: 'Cordera Building',
+          kindoo_site_id: null,
+        }),
+        makeBuilding({
+          building_id: 'foothills',
+          building_name: 'Foothills Building',
+          kindoo_site_id: 'foreign-1',
+        }),
+      ],
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'CO',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: ['Cordera Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    expect(screen.getByTestId('edit-seat-building-cordera')).toBeInTheDocument();
+    expect(screen.queryByTestId('edit-seat-building-foothills')).toBeNull();
+  });
+
+  it('drops a seat building_name outside the visible set from the form defaults (Risk 2 clamp)', () => {
+    // Ward FN is foreign-1; seat's `building_names` carries a stale
+    // home building ('Cordera Building'). The home building is hidden
+    // by the site filter; the form must NOT pre-check it (which would
+    // be invisible and impossible to uncheck) and must NOT ship it on
+    // submit. With no foreign building also ticked, the dialog renders
+    // zero pre-checked checkboxes.
+    mockCatalogue(
+      [
+        makeWard({
+          ward_code: 'FN',
+          building_name: 'Foothills Building',
+          kindoo_site_id: 'foreign-1',
+        }),
+      ],
+      [
+        makeBuilding({
+          building_id: 'cordera',
+          building_name: 'Cordera Building',
+          kindoo_site_id: null,
+        }),
+        makeBuilding({
+          building_id: 'foothills',
+          building_name: 'Foothills Building',
+          kindoo_site_id: 'foreign-1',
+        }),
+      ],
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'FN',
+      callings: [],
+      reason: 'sub teacher',
+      // Stale home building only — nothing in the foreign-1 set.
+      building_names: ['Cordera Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    // Hidden home building's checkbox is not rendered at all.
+    expect(screen.queryByTestId('edit-seat-building-cordera')).toBeNull();
+    // Visible foreign building is rendered but NOT pre-checked.
+    expect(screen.getByTestId('edit-seat-building-foothills')).not.toBeChecked();
+  });
+
+  it('renders an empty-state when the site filter narrows the catalogue to zero', () => {
+    // Foreign-site ward but no foreign building configured yet → the
+    // visible set is empty. The dialog renders an explicit message
+    // rather than an empty list.
+    mockCatalogue(
+      [
+        makeWard({
+          ward_code: 'FN',
+          building_name: '',
+          kindoo_site_id: 'foreign-1',
+        }),
+      ],
+      [
+        makeBuilding({
+          building_id: 'cordera',
+          building_name: 'Cordera Building',
+          kindoo_site_id: null,
+        }),
+      ],
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'FN',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: [],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    expect(screen.getByTestId('edit-seat-buildings-empty-for-scope')).toBeInTheDocument();
+    expect(screen.queryByTestId('edit-seat-building-cordera')).toBeNull();
   });
 });
 

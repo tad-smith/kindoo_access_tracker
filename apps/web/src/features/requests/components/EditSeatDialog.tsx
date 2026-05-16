@@ -33,6 +33,7 @@ import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
 import { useSubmitRequest, useStakeBuildings, useStakeWards } from '../hooks';
 import { editSeatSchema, type EditSeatForm } from '../schemas';
+import { filterBuildingsBySite, siteIdForScope } from '../../../lib/kindooSites';
 import { toast } from '../../../lib/store/toast';
 
 function errorMessage(err: unknown): string {
@@ -70,18 +71,40 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
   const wards = wardsResult.data ?? [];
   const buildings = buildingsResult.data ?? [];
 
-  // Forced-checked buildings — applied to the rendered checkbox list as
-  // both `checked` AND `disabled`. Empty for manual/temp seats.
-  const lockedBuildings = useMemo(
-    () => (seat ? templateBuildingsFor(seat, wards) : []),
-    [seat, wards],
+  // Visible buildings — site-filtered by the seat's scope per spec §15
+  // Phase 2. Ward-scope seats see only their site's buildings; stake-
+  // scope (which only auto seats reach via this dialog's templateBuildings
+  // path, see Policy 1) sees home buildings only. Legacy buildings
+  // without `kindoo_site_id` are treated as home.
+  const visibleBuildings = useMemo(
+    () => filterBuildingsBySite(buildings, siteIdForScope(seat?.scope ?? '', wards)),
+    [buildings, wards, seat?.scope],
   );
+
+  // Forced-checked buildings — applied to the rendered checkbox list as
+  // both `checked` AND `disabled`. Empty for manual/temp seats. Clamped
+  // to the visible set so a template building hidden by the site filter
+  // (a legacy auto seat whose ward.building_name disagrees with
+  // ward.kindoo_site_id) is silently dropped from the locked set rather
+  // than rendered as an invisible-and-uncheckable pre-check.
+  const lockedBuildings = useMemo(() => {
+    const raw = seat ? templateBuildingsFor(seat, wards) : [];
+    const visibleNames = new Set(visibleBuildings.map((b) => b.building_name));
+    return raw.filter((n) => visibleNames.has(n));
+  }, [seat, wards, visibleBuildings]);
 
   // Initial form values are derived from the seat. `values` (not
   // `defaultValues`) re-syncs when the prop changes, so opening for a
   // different seat starts pre-populated correctly. Comment always
   // starts empty — the dialog opens to compose a fresh edit request,
   // not to resume an existing draft.
+  //
+  // Pre-checked buildings are clamped to the visible (site-filtered)
+  // set: anything outside the visible set is dropped silently so the
+  // user can only check / uncheck what they can see. Without this clamp
+  // a legacy seat whose `building_names` overlaps a hidden home building
+  // would ship that building back on submit with no way for the user to
+  // notice.
   const initial: EditSeatForm = useMemo(() => {
     if (!seat) {
       return {
@@ -95,15 +118,16 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
     }
     const type: EditSeatForm['type'] =
       seat.type === 'auto' ? 'edit_auto' : seat.type === 'temp' ? 'edit_temp' : 'edit_manual';
+    const visibleNames = new Set(visibleBuildings.map((b) => b.building_name));
     return {
       type,
       reason: seat.reason ?? '',
       comment: '',
-      building_names: [...seat.building_names],
+      building_names: seat.building_names.filter((n) => visibleNames.has(n)),
       start_date: seat.start_date ?? '',
       end_date: seat.end_date ?? '',
     };
-  }, [seat]);
+  }, [seat, visibleBuildings]);
 
   const form = useForm<EditSeatForm>({
     resolver: zodResolver(editSeatSchema),
@@ -232,9 +256,17 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
           </legend>
           {buildings.length === 0 ? (
             <p className="kd-empty-state">No buildings configured.</p>
+          ) : visibleBuildings.length === 0 ? (
+            // Site-filter narrowed the catalogue to zero (foreign-site
+            // seat with no foreign building yet, etc). Block the dialog
+            // with an explicit message rather than an empty list.
+            <p className="kd-empty-state" data-testid="edit-seat-buildings-empty-for-scope">
+              No buildings are available for this scope. Ask a Kindoo Manager to assign a building
+              to this Kindoo site via Configuration.
+            </p>
           ) : (
             <ul className="kd-checkbox-list">
-              {buildings.map((b: Building) => {
+              {visibleBuildings.map((b: Building) => {
                 const isLocked = lockedBuildings.includes(b.building_name);
                 const checked = isLocked || watchedBuildings.includes(b.building_name);
                 return (
@@ -298,7 +330,7 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>
           <Dialog.ConfirmButton
             type="submit"
-            disabled={submit.isPending}
+            disabled={submit.isPending || watchedBuildings.length === 0}
             data-testid="edit-seat-confirm"
           >
             {submit.isPending ? 'Submitting…' : 'Submit edit'}

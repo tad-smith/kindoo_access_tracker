@@ -11,11 +11,11 @@
 import { useMemo } from 'react';
 import { serverTimestamp, updateDoc } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { Building, DuplicateGrant, Seat, Ward } from '@kindoo/shared';
+import type { Building, DuplicateGrant, KindooSite, Seat, Ward } from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../../lib/data';
 import { db } from '../../../lib/firebase';
-import { buildingsCol, seatRef, seatsCol, wardsCol } from '../../../lib/docs';
+import { buildingsCol, kindooSitesCol, seatRef, seatsCol, wardsCol } from '../../../lib/docs';
 import { STAKE_ID } from '../../../lib/constants';
 import { usePrincipal } from '../../../lib/principal';
 
@@ -32,6 +32,15 @@ export function useWards() {
 export function useBuildings() {
   const q = useMemo(() => buildingsCol(db, STAKE_ID), []);
   return useFirestoreCollection<Building>(q);
+}
+
+/**
+ * Live Kindoo Sites catalogue — feeds the foreign-site label on ward
+ * seats (spec §15). Empty when the stake only operates its home site.
+ */
+export function useKindooSites() {
+  const q = useMemo(() => kindooSitesCol(db, STAKE_ID), []);
+  return useFirestoreCollection<KindooSite>(q);
 }
 
 function actorOf(principal: ReturnType<typeof usePrincipal>) {

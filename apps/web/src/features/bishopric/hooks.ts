@@ -12,10 +12,10 @@
 
 import { query, where, orderBy } from 'firebase/firestore';
 import { useMemo } from 'react';
-import type { AccessRequest, Seat } from '@kindoo/shared';
+import type { AccessRequest, KindooSite, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
-import { requestsCol, seatsCol } from '../../lib/docs';
+import { kindooSitesCol, requestsCol, seatsCol, wardsCol } from '../../lib/docs';
 import { STAKE_ID } from '../../lib/constants';
 
 /**
@@ -28,6 +28,25 @@ export function useBishopricRoster(wardCode: string | null) {
     return query(seatsCol(db, STAKE_ID), where('scope', '==', wardCode));
   }, [wardCode]);
   return useFirestoreCollection<Seat>(seatsQuery);
+}
+
+/**
+ * Live wards catalogue — feeds the Kindoo-site label on ward seats
+ * (spec §15). One subscription regardless of how many wards the
+ * bishopric holds; the page filters client-side.
+ */
+export function useStakeWards() {
+  const q = useMemo(() => wardsCol(db, STAKE_ID), []);
+  return useFirestoreCollection<Ward>(q);
+}
+
+/**
+ * Live Kindoo Sites catalogue — feeds the foreign-site label on ward
+ * seats (spec §15). Empty when the stake only operates its home site.
+ */
+export function useKindooSites() {
+  const q = useMemo(() => kindooSitesCol(db, STAKE_ID), []);
+  return useFirestoreCollection<KindooSite>(q);
 }
 
 /**
