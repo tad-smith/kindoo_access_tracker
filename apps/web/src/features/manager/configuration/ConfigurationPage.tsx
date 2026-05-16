@@ -622,6 +622,11 @@ function BuildingFormDialog({
 
 function KindooSitesTab() {
   const sites = useKindooSites();
+  // Subscribe to wards + buildings so the delete ref-guard can block
+  // when either side still points at this site (wards / buildings carry
+  // kindoo_site_id FK; rules don't enforce field-level integrity).
+  const wards = useWards();
+  const buildings = useBuildings();
   const upsert = useUpsertKindooSiteMutation();
   const del = useDeleteKindooSiteMutation();
 
@@ -672,7 +677,11 @@ function KindooSitesTab() {
                   variant="danger"
                   onClick={() =>
                     del
-                      .mutateAsync(s.id)
+                      .mutateAsync({
+                        kindooSiteId: s.id,
+                        wards: wards.data ?? [],
+                        buildings: buildings.data ?? [],
+                      })
                       .then(() => toast('Kindoo site deleted.', 'success'))
                       .catch((err) => toast(errorMessage(err), 'error'))
                   }

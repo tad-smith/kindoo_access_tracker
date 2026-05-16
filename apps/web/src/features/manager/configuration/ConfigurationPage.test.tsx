@@ -532,13 +532,73 @@ describe('Kindoo Sites tab', () => {
     expect(upsertKindooSiteMock.mock.calls[0]?.[0]).not.toHaveProperty('kindoo_eid');
   });
 
-  it('Delete calls the delete mutation with the doc id', async () => {
+  it('Delete calls the delete mutation with the doc id and live wards/buildings snapshots', async () => {
     const user = userEvent.setup();
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
+    const wardRef = {
+      ward_code: 'OT',
+      ward_name: 'Other',
+      building_name: 'Other Building',
+      seat_cap: 20,
+      kindoo_site_id: null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const buildingRef = {
+      building_id: 'other-building',
+      building_name: 'Other Building',
+      kindoo_site_id: null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    useWardsMock.mockReturnValue(liveResult<Ward>([wardRef]));
+    useBuildingsMock.mockReturnValue(liveResult<Building>([buildingRef]));
     deleteKindooSiteMock.mockResolvedValue(undefined);
     render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-kindoo-site-delete-east-stake'));
-    expect(deleteKindooSiteMock).toHaveBeenCalledWith('east-stake');
+    expect(deleteKindooSiteMock).toHaveBeenCalledWith({
+      kindooSiteId: 'east-stake',
+      wards: [wardRef],
+      buildings: [buildingRef],
+    });
+  });
+
+  it('Delete surfaces the FK ref-guard error via toast when wards / buildings still reference the site', async () => {
+    const { useToastStore } = await import('../../../lib/store/toast');
+    useToastStore.getState().clear();
+    const user = userEvent.setup();
+    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
+    const blockingWard = {
+      ward_code: 'CO',
+      ward_name: 'Cordera',
+      building_name: 'Cordera Building',
+      seat_cap: 20,
+      kindoo_site_id: 'east-stake',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const blockingBuilding = {
+      building_id: 'foothills',
+      building_name: 'Foothills Stake Center',
+      kindoo_site_id: 'east-stake',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    useWardsMock.mockReturnValue(liveResult<Ward>([blockingWard]));
+    useBuildingsMock.mockReturnValue(liveResult<Building>([blockingBuilding]));
+    // Mimic the real hook: throw the blocker string when refs exist.
+    deleteKindooSiteMock.mockImplementation(async (input: { kindooSiteId: string }) => {
+      throw new Error(
+        `Cannot delete Kindoo site "${input.kindooSiteId}". The following wards and buildings still reference this site: Wards: Cordera (CO) Buildings: Foothills Stake Center Unassign these wards / buildings from this site before deleting.`,
+      );
+    });
+    render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-kindoo-site-delete-east-stake'));
+    // Toast host isn't mounted in this test wrapper; assert against
+    // the store the page handler pushes into.
+    await vi.waitFor(() => {
+      const errorToasts = useToastStore.getState().toasts.filter((t) => t.kind === 'error');
+      expect(errorToasts).toHaveLength(1);
+      expect(errorToasts[0]!.message).toContain('Cannot delete Kindoo site "east-stake"');
+      expect(errorToasts[0]!.message).toContain('Cordera (CO)');
+      expect(errorToasts[0]!.message).toContain('Foothills Stake Center');
+    });
   });
 });
 

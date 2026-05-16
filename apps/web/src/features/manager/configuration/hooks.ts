@@ -777,14 +777,56 @@ export function useUpsertKindooSiteMutation() {
   });
 }
 
+// Block deletes when any ward or building still references this site.
+// Wards and buildings carry `kindoo_site_id: string | null` — orphaning
+// either side silently severs the foreign-key string without a server-
+// rules check (rules don't iterate sibling collections; field-level FK
+// is the UI's concern per firebase-schema.md §4.11). Caller passes the
+// live wards + buildings snapshots so the guard fires against the exact
+// rows the operator just saw — no extra Firestore reads.
+export interface DeleteKindooSiteInput {
+  kindooSiteId: string;
+  wards: ReadonlyArray<Ward>;
+  buildings: ReadonlyArray<Building>;
+}
 export function useDeleteKindooSiteMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (kindooSiteId: string) => {
-      await deleteDoc(kindooSiteRef(db, STAKE_ID, kindooSiteId));
+    mutationFn: async (input: DeleteKindooSiteInput) => {
+      const wardRefs = input.wards.filter((w) => w.kindoo_site_id === input.kindooSiteId);
+      const buildingRefs = input.buildings.filter((b) => b.kindoo_site_id === input.kindooSiteId);
+      const blocker = kindooSiteDeleteBlocker(input.kindooSiteId, wardRefs, buildingRefs);
+      if (blocker) throw new Error(blocker);
+      await deleteDoc(kindooSiteRef(db, STAKE_ID, input.kindooSiteId));
     },
     onSuccess: () => {
       void qc.invalidateQueries();
     },
   });
+}
+
+/**
+ * Pure guard helper — symmetric with `buildingDeleteBlocker`. Returns
+ * null when no ward or building still points at the site; otherwise a
+ * human-readable message listing the blocking refs grouped by kind.
+ */
+export function kindooSiteDeleteBlocker(
+  kindooSiteId: string,
+  referencingWards: ReadonlyArray<Ward>,
+  referencingBuildings: ReadonlyArray<Building>,
+): string | null {
+  if (referencingWards.length === 0 && referencingBuildings.length === 0) return null;
+  const lines: string[] = [
+    `Cannot delete Kindoo site "${kindooSiteId}". The following wards and buildings still reference this site:`,
+  ];
+  if (referencingWards.length > 0) {
+    const labels = referencingWards.map((w) => `${w.ward_name} (${w.ward_code})`);
+    lines.push(`Wards: ${labels.join(', ')}`);
+  }
+  if (referencingBuildings.length > 0) {
+    const labels = referencingBuildings.map((b) => b.building_name);
+    lines.push(`Buildings: ${labels.join(', ')}`);
+  }
+  lines.push('Unassign these wards / buildings from this site before deleting.');
+  return lines.join(' ');
 }
