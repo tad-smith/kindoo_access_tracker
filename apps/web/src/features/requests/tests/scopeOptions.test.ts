@@ -2,8 +2,9 @@
 // helper. Covers each row in the operator-stated spec table for B-3.
 
 import { describe, expect, it } from 'vitest';
-import { allowedScopesFor, isScopeAllowed } from '../scopeOptions';
+import { allowedScopesFor, canEditSeat, isScopeAllowed } from '../scopeOptions';
 import type { Principal } from '../../../lib/principal';
+import { makeSeat } from '../../../../test/fixtures';
 
 const STAKE_ID = 'csnorth';
 
@@ -141,5 +142,62 @@ describe('isScopeAllowed — symmetric authority gate for the per-row Remove but
     });
     expect(isScopeAllowed(principal, STAKE_ID, 'BA')).toBe(true);
     expect(isScopeAllowed(principal, STAKE_ID, 'CO')).toBe(false);
+  });
+});
+
+describe('canEditSeat — per-row Edit affordance gate', () => {
+  it('stake-scope auto seat: never editable, even for a stake user (Policy 1)', () => {
+    const principal = makePrincipal({ stakeMemberStakes: [STAKE_ID] });
+    const seat = makeSeat({ type: 'auto', scope: 'stake' });
+    expect(canEditSeat(principal, STAKE_ID, seat)).toBe(false);
+  });
+
+  it('ward-scope auto seat: editable by the bishopric of that ward', () => {
+    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['CO'] } });
+    const seat = makeSeat({ type: 'auto', scope: 'CO' });
+    expect(canEditSeat(principal, STAKE_ID, seat)).toBe(true);
+  });
+
+  it('ward-scope auto seat: NOT editable by an unrelated bishopric', () => {
+    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['GE'] } });
+    const seat = makeSeat({ type: 'auto', scope: 'CO' });
+    expect(canEditSeat(principal, STAKE_ID, seat)).toBe(false);
+  });
+
+  it('manual seat (ward scope): editable by the bishopric of that ward', () => {
+    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['CO'] } });
+    const seat = makeSeat({ type: 'manual', scope: 'CO', callings: [] });
+    expect(canEditSeat(principal, STAKE_ID, seat)).toBe(true);
+  });
+
+  it('manual seat (stake scope): editable by a stake user', () => {
+    const principal = makePrincipal({ stakeMemberStakes: [STAKE_ID] });
+    const seat = makeSeat({ type: 'manual', scope: 'stake', callings: [] });
+    expect(canEditSeat(principal, STAKE_ID, seat)).toBe(true);
+  });
+
+  it('temp seat (ward scope): editable by the bishopric of that ward', () => {
+    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['CO'] } });
+    const seat = makeSeat({
+      type: 'temp',
+      scope: 'CO',
+      callings: [],
+      start_date: '2026-05-01',
+      end_date: '2026-12-31',
+    });
+    expect(canEditSeat(principal, STAKE_ID, seat)).toBe(true);
+  });
+
+  it('manager-only (no stake / no ward claim): never editable — symmetric with Remove', () => {
+    const principal = makePrincipal({ managerStakes: [STAKE_ID] });
+    expect(canEditSeat(principal, STAKE_ID, makeSeat({ type: 'auto', scope: 'CO' }))).toBe(false);
+    expect(
+      canEditSeat(principal, STAKE_ID, makeSeat({ type: 'manual', scope: 'CO', callings: [] })),
+    ).toBe(false);
+  });
+
+  it('no role: never editable', () => {
+    const principal = makePrincipal({});
+    expect(canEditSeat(principal, STAKE_ID, makeSeat({ type: 'manual', scope: 'CO' }))).toBe(false);
   });
 });

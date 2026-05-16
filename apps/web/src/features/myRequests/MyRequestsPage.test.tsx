@@ -89,6 +89,32 @@ describe('<MyRequestsPage />', () => {
     expect(screen.getByTestId('myrequest-r2')).toHaveAttribute('data-status', 'complete');
   });
 
+  it('labels edit_* requests with the right edit-family badge text', () => {
+    usePrincipalMock.mockReturnValue(principal());
+    mockRequests([
+      makeRequest({ request_id: 'r-ea', status: 'pending', type: 'edit_auto', scope: 'CO' }),
+      makeRequest({ request_id: 'r-em', status: 'pending', type: 'edit_manual', scope: 'CO' }),
+      makeRequest({
+        request_id: 'r-et',
+        status: 'pending',
+        type: 'edit_temp',
+        scope: 'CO',
+        start_date: '2026-05-01',
+        end_date: '2026-05-08',
+      }),
+    ]);
+    render(<MyRequestsPage />);
+    expect(
+      within(screen.getByTestId('myrequest-r-ea')).getByText('Edit (auto)'),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('myrequest-r-em')).getByText('Edit (manual)'),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('myrequest-r-et')).getByText('Edit (temp)'),
+    ).toBeInTheDocument();
+  });
+
   it('shows the Cancel button only on pending rows', () => {
     usePrincipalMock.mockReturnValue(principal());
     mockRequests([

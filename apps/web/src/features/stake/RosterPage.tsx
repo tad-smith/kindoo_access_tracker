@@ -15,10 +15,11 @@ import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { stakeAvailablePoolSize } from '../../lib/render/stakePool';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { RemovalAffordance } from '../requests/components/RemovalAffordance';
+import { EditSeatAffordance } from '../requests/components/EditSeatAffordance';
 import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
 import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster } from '../requests/rosterPending';
-import { isScopeAllowed } from '../requests/scopeOptions';
+import { canEditSeat, isScopeAllowed } from '../requests/scopeOptions';
 import { Badge } from '../../components/ui/Badge';
 
 export function StakeRosterPage() {
@@ -68,11 +69,18 @@ export function StakeRosterPage() {
           <RosterCardList
             seats={sortedSeats}
             emptyMessage="No stake seats yet. The next import seeds auto-seats from the LCR Stake tab; manual additions land via the New Kindoo Request page."
-            actions={(seat) =>
-              seat.type === 'auto' || !isScopeAllowed(principal, STAKE_ID, seat.scope) ? null : (
-                <RemovalAffordance seat={seat} />
-              )
-            }
+            actions={(seat) => {
+              const canEdit = canEditSeat(principal, STAKE_ID, seat);
+              const canRemove =
+                seat.type !== 'auto' && isScopeAllowed(principal, STAKE_ID, seat.scope);
+              if (!canEdit && !canRemove) return null;
+              return (
+                <span style={{ display: 'inline-flex', gap: 8 }}>
+                  {canEdit ? <EditSeatAffordance seat={seat} /> : null}
+                  {canRemove ? <RemovalAffordance seat={seat} /> : null}
+                </span>
+              );
+            }}
             extraBadges={(seat) =>
               pendingRemovesByCanonical.has(seat.member_canonical) ? (
                 <Badge

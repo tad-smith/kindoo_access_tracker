@@ -197,3 +197,71 @@ export const completeRemoveRequestSchema = z.object({
 });
 
 export type CompleteRemoveRequestForm = z.infer<typeof completeRemoveRequestSchema>;
+
+/**
+ * Edit-seat modal schema. One flat shape that fans into three request
+ * types via the `type` discriminator. Per-type required-field gates
+ * fire in the `superRefine`:
+ *
+ *   - `edit_auto`: building_names ≥ 1.
+ *   - `edit_manual`: reason non-empty + building_names ≥ 1.
+ *   - `edit_temp`: reason non-empty + building_names ≥ 1 + ISO
+ *     start_date + ISO end_date + end_date >= start_date.
+ *
+ * The dialog uses `useForm<EditSeatForm>({ values: initial })` so
+ * opening for a different seat re-seeds the fields. Submission threads
+ * the validated payload into `useSubmitRequest`.
+ */
+export const editSeatSchema = z
+  .object({
+    type: z.enum(['edit_auto', 'edit_manual', 'edit_temp']),
+    reason: z.string(),
+    building_names: z.array(z.string()),
+    start_date: z.string(),
+    end_date: z.string(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.type !== 'edit_auto' && val.reason.trim().length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['reason'],
+        message: val.type === 'edit_temp' ? 'Reason is required.' : 'Calling is required.',
+      });
+    }
+    if (val.building_names.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['building_names'],
+        message: 'Pick at least one building.',
+      });
+    }
+    if (val.type === 'edit_temp') {
+      if (!isoDateRegex.test(val.start_date)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['start_date'],
+          message: 'Start date is required (YYYY-MM-DD).',
+        });
+      }
+      if (!isoDateRegex.test(val.end_date)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['end_date'],
+          message: 'End date is required (YYYY-MM-DD).',
+        });
+      }
+      if (
+        isoDateRegex.test(val.start_date) &&
+        isoDateRegex.test(val.end_date) &&
+        val.end_date < val.start_date
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['end_date'],
+          message: 'End date must be on or after the start date.',
+        });
+      }
+    }
+  });
+
+export type EditSeatForm = z.infer<typeof editSeatSchema>;

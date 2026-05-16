@@ -7,6 +7,7 @@ import type { Ward } from '@kindoo/shared';
 import {
   completeAddRequestSchema,
   completeRemoveRequestSchema,
+  editSeatSchema,
   makeNewRequestSchema,
   newRequestSchema,
   rejectRequestSchema,
@@ -312,5 +313,126 @@ describe('completeRemoveRequestSchema', () => {
     expect(
       completeRemoveRequestSchema.safeParse({ completion_note: 'Removed manually.' }).success,
     ).toBe(true);
+  });
+});
+
+describe('editSeatSchema', () => {
+  // edit_auto: only buildings required (reason is empty / Church-managed).
+  describe('edit_auto', () => {
+    it('admits a submission with ≥1 building and an empty reason', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_auto',
+        reason: '',
+        building_names: ['Cordera Building'],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects a submission with zero buildings', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_auto',
+        reason: '',
+        building_names: [],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // edit_manual: reason + buildings both required.
+  describe('edit_manual', () => {
+    it('admits reason + ≥1 building', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_manual',
+        reason: 'Primary Activity Days Leader',
+        building_names: ['Cordera Building'],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects an empty reason', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_manual',
+        reason: '',
+        building_names: ['Cordera Building'],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects a whitespace-only reason', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_manual',
+        reason: '   ',
+        building_names: ['Cordera Building'],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects an empty building list', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_manual',
+        reason: 'sub teacher',
+        building_names: [],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // edit_temp: reason + buildings + ISO date pair required.
+  describe('edit_temp', () => {
+    it('admits reason + ≥1 building + valid date pair', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_temp',
+        reason: 'sub teacher',
+        building_names: ['Cordera Building'],
+        start_date: '2026-05-01',
+        end_date: '2026-05-08',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects a missing start_date', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_temp',
+        reason: 'sub teacher',
+        building_names: ['Cordera Building'],
+        start_date: '',
+        end_date: '2026-05-08',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects an end_date before the start_date', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_temp',
+        reason: 'sub teacher',
+        building_names: ['Cordera Building'],
+        start_date: '2026-05-08',
+        end_date: '2026-05-01',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('admits a same-day start_date and end_date', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_temp',
+        reason: 'sub teacher',
+        building_names: ['Cordera Building'],
+        start_date: '2026-05-01',
+        end_date: '2026-05-01',
+      });
+      expect(result.success).toBe(true);
+    });
   });
 });

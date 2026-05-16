@@ -15,10 +15,10 @@ import { doc, orderBy, query, serverTimestamp, setDoc, where } from 'firebase/fi
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail } from '@kindoo/shared';
-import type { AccessRequest, Seat } from '@kindoo/shared';
+import type { AccessRequest, Building, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreDoc, useFirestoreCollection } from '../../lib/data';
 import { db, auth } from '../../lib/firebase';
-import { requestsCol, seatRef } from '../../lib/docs';
+import { buildingsCol, requestsCol, seatRef, wardsCol } from '../../lib/docs';
 import { STAKE_ID } from '../../lib/constants';
 
 /**
@@ -95,10 +95,30 @@ export function usePendingRequestsForScope(scope: string | null) {
   return useFirestoreCollection<AccessRequest>(q);
 }
 
+/**
+ * Stake ward catalogue — rules permit any stake member to read, so the
+ * edit-modal can resolve a ward's `building_name` (used to compute the
+ * "template / Church-managed" pre-checked + disabled buildings for an
+ * `edit_auto` request) without a manager claim.
+ */
+export function useStakeWards() {
+  const q = useMemo(() => wardsCol(db, STAKE_ID), []);
+  return useFirestoreCollection<Ward>(q);
+}
+
+/**
+ * Stake building catalogue — same `isAnyMember` read gate as wards.
+ * Powers the building checklist in the edit modal for every role.
+ */
+export function useStakeBuildings() {
+  const q = useMemo(() => buildingsCol(db, STAKE_ID), []);
+  return useFirestoreCollection<Building>(q);
+}
+
 // ---- Submit ---------------------------------------------------------
 
 export interface SubmitRequestInput {
-  type: 'add_manual' | 'add_temp' | 'remove';
+  type: 'add_manual' | 'add_temp' | 'remove' | 'edit_auto' | 'edit_manual' | 'edit_temp';
   scope: string;
   member_email: string;
   member_name: string;
@@ -174,7 +194,11 @@ export function useSubmitRequest() {
         requested_at: serverTimestamp(),
         lastActor: actor,
       };
-      if (input.type === 'add_temp') {
+      if (input.type === 'add_temp' || input.type === 'edit_temp') {
+        // `edit_temp` carries the full replacement date pair so the
+        // markRequestComplete callable can write the seat's new window.
+        // Rules apply the same ISO YYYY-MM-DD regex + start<=end gate
+        // as `add_temp`.
         if (input.start_date) body.start_date = input.start_date;
         if (input.end_date) body.end_date = input.end_date;
       }

@@ -14,6 +14,7 @@
 // renders deterministically across renders. The 'stake' option, when
 // present, always sorts first; ward options follow.
 
+import type { Seat } from '@kindoo/shared';
 import type { Principal } from '../../lib/principal';
 import type { ScopeOption } from './components/NewRequestForm';
 
@@ -54,4 +55,23 @@ export function isScopeAllowed(principal: Principal, stakeId: string, scope: str
   }
   const wards = principal.bishopricWards[stakeId] ?? [];
   return wards.includes(scope);
+}
+
+/**
+ * "Can this principal submit an edit for this seat?" Two gates:
+ *
+ *   1. **Policy 1 — stake-scope auto seats are non-editable.** Church-
+ *      granted access to all stake buildings; nothing to constrain or
+ *      remove. Hidden everywhere; no UI affordance.
+ *
+ *   2. **Role-for-scope.** Same `isScopeAllowed` predicate as the per-
+ *      row Remove button — if you can Remove, you can Edit. A bishopric
+ *      can edit ward-scope seats in their ward; a stake member can edit
+ *      stake-scope seats; manager status alone is not enough.
+ *
+ * Pure helper; tested in `tests/scopeOptions.test.ts`.
+ */
+export function canEditSeat(principal: Principal, stakeId: string, seat: Seat): boolean {
+  if (seat.type === 'auto' && seat.scope === 'stake') return false;
+  return isScopeAllowed(principal, stakeId, seat.scope);
 }

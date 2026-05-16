@@ -234,13 +234,7 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
       data-urgent={isUrgent ? 'true' : 'false'}
     >
       <div className="kd-queue-card-line1">
-        <Badge
-          variant={
-            request.type === 'add_temp' ? 'temp' : request.type === 'remove' ? 'danger' : 'manual'
-          }
-        >
-          {labelForType(request.type)}
-        </Badge>
+        <Badge variant={badgeVariantForType(request.type)}>{labelForType(request.type)}</Badge>
         <span className="roster-card-chip roster-card-scope">
           <code>{request.scope}</code>
         </span>
@@ -272,7 +266,8 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
           </span>
         </div>
       ) : null}
-      {request.type === 'add_temp' && (request.start_date || request.end_date) ? (
+      {(request.type === 'add_temp' || request.type === 'edit_temp') &&
+      (request.start_date || request.end_date) ? (
         <div className="kd-queue-card-meta">
           <span>
             <strong>Dates:</strong> {request.start_date ?? '?'} → {request.end_date ?? '?'}
@@ -282,7 +277,14 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
       {request.building_names.length > 0 ? (
         <div className="kd-queue-card-meta" data-testid={`queue-buildings-${request.request_id}`}>
           <span>
-            <strong>Buildings:</strong> {request.building_names.join(', ')}
+            <strong>
+              {request.type === 'edit_auto' ||
+              request.type === 'edit_manual' ||
+              request.type === 'edit_temp'
+                ? '→ Buildings:'
+                : 'Buildings:'}
+            </strong>{' '}
+            {request.building_names.join(', ')}
           </span>
         </div>
       ) : null}
@@ -357,6 +359,25 @@ function labelForType(t: AccessRequest['type']): string {
       return 'Edit (manual)';
     case 'edit_temp':
       return 'Edit (temp)';
+  }
+}
+
+// Badge palette per request type. Edit types share the `info` variant
+// so they read as a distinct "Edit" family at a glance against the
+// add/remove badges; the type label (Edit (auto) / (manual) / (temp))
+// still disambiguates within that family.
+function badgeVariantForType(t: AccessRequest['type']) {
+  switch (t) {
+    case 'add_manual':
+      return 'manual' as const;
+    case 'add_temp':
+      return 'temp' as const;
+    case 'remove':
+      return 'danger' as const;
+    case 'edit_auto':
+    case 'edit_manual':
+    case 'edit_temp':
+      return 'info' as const;
   }
 }
 

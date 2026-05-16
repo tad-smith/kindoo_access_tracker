@@ -19,11 +19,29 @@ vi.mock('./hooks', () => ({
   useWardSeats: (ward: string | null) => useWardSeatsMock(ward),
 }));
 
+// EditSeatDialog (mounted on Edit click) subscribes to stake-wide ward
+// + building catalogues via the requests/hooks module. Stub them so
+// the dialog can render without a real Firestore listener. The dialog
+// has its own focused test file.
+const stakeListResult = {
+  data: [],
+  error: null,
+  status: 'success' as const,
+  isPending: false,
+  isLoading: false,
+  isSuccess: true,
+  isError: false,
+  isFetching: false,
+  fetchStatus: 'idle' as const,
+};
+
 vi.mock('../requests/hooks', () => ({
   usePendingRequestsForScope: (scope: string | null) => usePendingRequestsForScopeMock(scope),
   usePendingRemoveRequests: (canonical: string | null, scope: string | null) =>
     usePendingRemoveRequestsMock(canonical, scope),
   useSubmitRequest: () => ({ mutateAsync: submitMutateAsyncMock, isPending: false }),
+  useStakeWards: () => stakeListResult,
+  useStakeBuildings: () => stakeListResult,
 }));
 
 vi.mock('../../lib/principal', () => ({
@@ -434,6 +452,64 @@ describe('<WardRostersPage />', () => {
       ]);
       render(<WardRostersPage initialWard="CO" />);
       expect(screen.queryByTestId('remove-btn-manual@x.com')).toBeNull();
+    });
+  });
+
+  describe('per-row Edit affordance', () => {
+    it('renders an Edit button on every ward-scope seat (including auto) for a stake-only user', () => {
+      // A stake user can edit ward-scope auto seats per the policy
+      // table — only stake-scope auto is the locked-out case.
+      usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO'] }));
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+          callings: ['Bishop'],
+        }),
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'temp@x.com',
+          member_email: 'temp@x.com',
+          member_name: 'Temp Person',
+          type: 'temp',
+          callings: [],
+          start_date: '2026-05-01',
+          end_date: '2026-12-31',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.getByTestId('edit-btn-auto@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    });
+
+    it('hides the Edit button on rows whose scope the principal lacks authority for', () => {
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Genoa', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'GE',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      render(<WardRostersPage initialWard="GE" />);
+      expect(screen.queryByTestId('edit-btn-manual@x.com')).toBeNull();
     });
   });
 });

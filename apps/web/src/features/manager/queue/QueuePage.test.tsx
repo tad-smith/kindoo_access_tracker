@@ -593,4 +593,88 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
       vi.useRealTimers();
     }
   });
+
+  describe('edit request rendering', () => {
+    it('labels an edit_auto card "Edit (auto)" and shows the proposed buildings with the "→" prefix', () => {
+      const requests = [
+        makeRequest({
+          request_id: 'r1',
+          type: 'edit_auto',
+          scope: 'CO',
+          member_email: 'auto@x.com',
+          member_canonical: 'auto@x.com',
+          building_names: ['Cordera Building', 'Genoa Building'],
+        }),
+      ];
+      usePendingMock.mockReturnValue(liveResult(requests));
+      render(<ManagerQueuePage />);
+      const card = screen.getByTestId('queue-card-r1');
+      expect(within(card).getByText('Edit (auto)')).toBeInTheDocument();
+      const buildingsRow = screen.getByTestId('queue-buildings-r1');
+      expect(buildingsRow.textContent).toMatch(/→ Buildings:/);
+      expect(buildingsRow.textContent).toMatch(/Cordera Building, Genoa Building/);
+    });
+
+    it('labels an edit_manual card "Edit (manual)" with the reason + buildings', () => {
+      const requests = [
+        makeRequest({
+          request_id: 'r2',
+          type: 'edit_manual',
+          scope: 'CO',
+          member_email: 'manual@x.com',
+          member_canonical: 'manual@x.com',
+          reason: 'Primary Activity Days Leader',
+          building_names: ['Cordera Building'],
+        }),
+      ];
+      usePendingMock.mockReturnValue(liveResult(requests));
+      render(<ManagerQueuePage />);
+      const card = screen.getByTestId('queue-card-r2');
+      expect(within(card).getByText('Edit (manual)')).toBeInTheDocument();
+      expect(within(card).getByText(/Primary Activity Days Leader/)).toBeInTheDocument();
+      expect(screen.getByTestId('queue-buildings-r2').textContent).toMatch(
+        /→ Buildings:.*Cordera Building/,
+      );
+    });
+
+    it('labels an edit_temp card "Edit (temp)" and renders the date range alongside the proposed buildings', () => {
+      const requests = [
+        makeRequest({
+          request_id: 'r3',
+          type: 'edit_temp',
+          scope: 'CO',
+          member_email: 'temp@x.com',
+          member_canonical: 'temp@x.com',
+          reason: 'youth conference',
+          building_names: ['Cordera Building'],
+          start_date: '2026-05-01',
+          end_date: '2026-05-15',
+        }),
+      ];
+      usePendingMock.mockReturnValue(liveResult(requests));
+      render(<ManagerQueuePage />);
+      const card = screen.getByTestId('queue-card-r3');
+      expect(within(card).getByText('Edit (temp)')).toBeInTheDocument();
+      expect(card.textContent).toMatch(/2026-05-01.*2026-05-15/);
+      expect(screen.getByTestId('queue-buildings-r3').textContent).toMatch(
+        /→ Buildings:.*Cordera Building/,
+      );
+    });
+
+    it('does not prefix the buildings row with "→" on non-edit (add/remove) cards', () => {
+      const requests = [
+        makeRequest({
+          request_id: 'r-add',
+          type: 'add_manual',
+          scope: 'CO',
+          building_names: ['Cordera Building'],
+        }),
+      ];
+      usePendingMock.mockReturnValue(liveResult(requests));
+      render(<ManagerQueuePage />);
+      const row = screen.getByTestId('queue-buildings-r-add');
+      expect(row.textContent).not.toMatch(/→/);
+      expect(row.textContent).toMatch(/^Buildings:/);
+    });
+  });
 });
