@@ -406,7 +406,7 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 - Only the original requester can cancel; only managers can complete or reject.
 - For `remove`, server-side guards (rules + client tx): no pending-pending duplicate for same (scope, member); no remove against a non-existent manual/temp seat (the latter caught by client tx, not rules).
 - `urgent` is set at create time (rules validate `urgent is bool`) and immutable thereafter — the cancel/complete/reject `affectedKeys()` allowlists exclude it.
-- Edit types (`edit_auto`, `edit_manual`, `edit_temp`) — see [`spec.md`](spec.md) §6.1. `edit_auto` is forbidden at `scope == 'stake'` (Policy 1) at three layers: web UI, rules, and the `markRequestComplete` callable. `edit_temp` carries `start_date` + `end_date` with the same ISO YYYY-MM-DD + start <= end shape as `add_temp`.
+- Edit types (`edit_auto`, `edit_manual`, `edit_temp`) — see [`spec.md`](spec.md) §6.1. `edit_auto` is forbidden at `scope == 'stake'` (Policy 1) at three layers: web UI, rules, and the `markRequestComplete` callable. `edit_temp` carries `start_date` + `end_date` with the same ISO YYYY-MM-DD + start <= end shape as `add_temp`. All three edit types require a non-empty `comment` at creation time, enforced by the shared zod schema, the Firestore rule, and the web form.
 
 ### 4.8 `stakes/{stakeId}/wardCallingTemplates/{callingName}`
 

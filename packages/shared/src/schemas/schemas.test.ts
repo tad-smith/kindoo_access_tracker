@@ -513,7 +513,7 @@ describe('accessRequestSchema', () => {
       member_canonical: 'alice@gmail.com',
       member_name: 'Alice Smith',
       reason: '',
-      comment: '',
+      comment: 'Adding stake center for choir practice',
       building_names: ['Cordera Building', 'Briargate Building'],
       status: 'pending' as const,
       requester_email: 'Bishop@gmail.com',
@@ -533,7 +533,7 @@ describe('accessRequestSchema', () => {
       member_canonical: 'alice@gmail.com',
       member_name: 'Alice Smith',
       reason: 'Visiting authority (extended)',
-      comment: '',
+      comment: 'Extending visiting-authority assignment',
       building_names: ['Cordera Building'],
       status: 'pending' as const,
       requester_email: 'Mgr@gmail.com',
@@ -553,7 +553,7 @@ describe('accessRequestSchema', () => {
       member_canonical: 'bob@gmail.com',
       member_name: 'Bob Brown',
       reason: 'Visiting speaker (extended)',
-      comment: '',
+      comment: 'Visit extended through May 15',
       start_date: '2026-05-01',
       end_date: '2026-05-15',
       building_names: ['Cordera Building'],
@@ -564,6 +564,128 @@ describe('accessRequestSchema', () => {
       lastActor: ACTOR,
     };
     expect(accessRequestSchema.parse(seed)).toEqual(seed);
+  });
+
+  // Edit-type comment requirement (trimmed non-empty). Add / remove
+  // are unaffected — they round-trip with `comment: ''` or with the
+  // field omitted entirely.
+  describe('edit-type comment requirement', () => {
+    function editAutoSeed(comment: unknown): Record<string, unknown> {
+      const seed: Record<string, unknown> = {
+        request_id: 'req-edit-auto-comment',
+        type: 'edit_auto',
+        scope: '01',
+        member_email: 'Alice@gmail.com',
+        member_canonical: 'alice@gmail.com',
+        member_name: 'Alice Smith',
+        reason: '',
+        building_names: ['Cordera Building'],
+        status: 'pending',
+        requester_email: 'Bishop@gmail.com',
+        requester_canonical: 'bishop@gmail.com',
+        requested_at: T,
+        lastActor: ACTOR,
+      };
+      if (comment !== undefined) seed['comment'] = comment;
+      return seed;
+    }
+
+    function editManualSeed(comment: unknown): Record<string, unknown> {
+      const seed: Record<string, unknown> = {
+        request_id: 'req-edit-manual-comment',
+        type: 'edit_manual',
+        scope: 'stake',
+        member_email: 'Alice@gmail.com',
+        member_canonical: 'alice@gmail.com',
+        member_name: 'Alice Smith',
+        reason: 'Visiting authority (extended)',
+        building_names: ['Cordera Building'],
+        status: 'pending',
+        requester_email: 'Mgr@gmail.com',
+        requester_canonical: 'mgr@gmail.com',
+        requested_at: T,
+        lastActor: ACTOR,
+      };
+      if (comment !== undefined) seed['comment'] = comment;
+      return seed;
+    }
+
+    function editTempSeed(comment: unknown): Record<string, unknown> {
+      const seed: Record<string, unknown> = {
+        request_id: 'req-edit-temp-comment',
+        type: 'edit_temp',
+        scope: '01',
+        member_email: 'Bob@gmail.com',
+        member_canonical: 'bob@gmail.com',
+        member_name: 'Bob Brown',
+        reason: 'Visiting speaker (extended)',
+        start_date: '2026-05-01',
+        end_date: '2026-05-15',
+        building_names: ['Cordera Building'],
+        status: 'pending',
+        requester_email: 'Bishop@gmail.com',
+        requester_canonical: 'bishop@gmail.com',
+        requested_at: T,
+        lastActor: ACTOR,
+      };
+      if (comment !== undefined) seed['comment'] = comment;
+      return seed;
+    }
+
+    /** Asserts the schema rejects with an issue at `['comment']`. */
+    function expectCommentRejection(seed: Record<string, unknown>): void {
+      const result = accessRequestSchema.safeParse(seed);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.some((i) => i.path.join('.') === 'comment')).toBe(true);
+      }
+    }
+
+    for (const [label, builder] of [
+      ['edit_auto', editAutoSeed],
+      ['edit_manual', editManualSeed],
+      ['edit_temp', editTempSeed],
+    ] as const) {
+      it(`${label} with empty comment → rejected (path: comment)`, () => {
+        expectCommentRejection(builder(''));
+      });
+
+      it(`${label} with whitespace-only comment → rejected (path: comment)`, () => {
+        expectCommentRejection(builder('   '));
+      });
+
+      it(`${label} with missing comment field → rejected (path: comment)`, () => {
+        expectCommentRejection(builder(undefined));
+      });
+
+      it(`${label} with non-empty comment → accepted`, () => {
+        const seed = builder('note');
+        expect(accessRequestSchema.parse(seed)).toEqual(seed);
+      });
+    }
+
+    // Add / remove unaffected: the wire schema is permissive about
+    // comment for these types. The cross-ward-add comment-required
+    // rule lives in the web form's local schema, not at the wire
+    // boundary.
+    it('add_manual with comment field omitted → accepted (existing behavior preserved)', () => {
+      const seed = {
+        request_id: 'req-add-manual-no-comment',
+        type: 'add_manual' as const,
+        scope: 'stake',
+        member_email: 'Subject@gmail.com',
+        member_canonical: 'subject@gmail.com',
+        member_name: 'Subject Person',
+        reason: 'Visiting authority',
+        building_names: ['Cordera Building'],
+        status: 'pending' as const,
+        requester_email: 'Alice@gmail.com',
+        requester_canonical: 'alice@gmail.com',
+        requested_at: T,
+        lastActor: ACTOR,
+      };
+      expect(accessRequestSchema.parse(seed)).toEqual(seed);
+    });
   });
 
   it('parses a remove that was a no-op (R-1 race) with completion_note', () => {

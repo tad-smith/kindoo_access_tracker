@@ -79,12 +79,15 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
 
   // Initial form values are derived from the seat. `values` (not
   // `defaultValues`) re-syncs when the prop changes, so opening for a
-  // different seat starts pre-populated correctly.
+  // different seat starts pre-populated correctly. Comment always
+  // starts empty — the dialog opens to compose a fresh edit request,
+  // not to resume an existing draft.
   const initial: EditSeatForm = useMemo(() => {
     if (!seat) {
       return {
         type: 'edit_manual',
         reason: '',
+        comment: '',
         building_names: [],
         start_date: '',
         end_date: '',
@@ -95,6 +98,7 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
     return {
       type,
       reason: seat.reason ?? '',
+      comment: '',
       building_names: [...seat.building_names],
       start_date: seat.start_date ?? '',
       end_date: seat.end_date ?? '',
@@ -132,7 +136,7 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
         // pass empty string and the hook trims it out. Manual/temp edits
         // forward the operator's typed value.
         reason: editType === 'edit_auto' ? '' : input.reason,
-        comment: '',
+        comment: input.comment,
         building_names: finalBuildings,
         ...(editType === 'edit_temp'
           ? { start_date: input.start_date, end_date: input.end_date }
@@ -275,6 +279,20 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
             </p>
           ) : null}
         </fieldset>
+
+        <label>
+          Comment
+          <span className="kd-required-marker" data-testid="edit-seat-comment-marker">
+            {' '}
+            (required)
+          </span>
+          <Input type="text" {...register('comment')} data-testid="edit-seat-comment" />
+        </label>
+        {formState.errors.comment ? (
+          <p role="alert" className="kd-form-error" data-testid="edit-seat-comment-error">
+            {formState.errors.comment.message}
+          </p>
+        ) : null}
 
         <Dialog.Footer>
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>

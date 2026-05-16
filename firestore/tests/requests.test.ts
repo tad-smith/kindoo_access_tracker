@@ -94,7 +94,10 @@ function pendingEditAutoByBishopric(
     member_canonical: 'subject@gmail.com',
     member_name: 'Subject Person',
     reason: '',
-    comment: '',
+    // Edit types require a non-empty comment on creation. Fixture
+    // defaults provide one; tests below assert the rule fires when the
+    // field is empty or missing.
+    comment: 'Adding stake center for choir practice',
     building_names: ['Cordera Building', 'Briargate Building'],
     status: 'pending',
     requester_email: personas.bishopric.email,
@@ -116,7 +119,7 @@ function pendingEditManualByStakeMember(
     member_canonical: 'subject@gmail.com',
     member_name: 'Subject Person',
     reason: 'Visiting authority (extended)',
-    comment: '',
+    comment: 'Extending visiting-authority assignment',
     building_names: ['Cordera Building'],
     status: 'pending',
     requester_email: personas.stakeMember.email,
@@ -139,7 +142,7 @@ function pendingEditTempByBishopric(
     member_canonical: 'subject@gmail.com',
     member_name: 'Subject Person',
     reason: 'Visiting speaker (extended)',
-    comment: '',
+    comment: 'Visit extended through May 15',
     start_date: '2026-05-01',
     end_date: '2026-05-15',
     building_names: ['Cordera Building'],
@@ -809,6 +812,50 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
             }),
           ),
         );
+      });
+    });
+
+    // Edit types require a non-empty `comment` on creation. Rules
+    // check the simpler "is a non-empty string" predicate; the shared
+    // `accessRequestSchema` zod refinement enforces the stricter
+    // trim-then-check at the SDK boundary. The rule's job is to keep
+    // a hand-crafted POST from creating an edit-type request with
+    // no rationale captured.
+    describe('edit-type comment requirement', () => {
+      it('edit_auto with empty comment → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(db.doc(PATH).set(pendingEditAutoByBishopric('01', { comment: '' })));
+      });
+
+      it('edit_auto with no comment field → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        const payload = pendingEditAutoByBishopric('01');
+        delete payload['comment'];
+        await assertFails(db.doc(PATH).set(payload));
+      });
+
+      it('edit_manual with empty comment → denied', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertFails(db.doc(PATH).set(pendingEditManualByStakeMember({ comment: '' })));
+      });
+
+      it('edit_manual with no comment field → denied', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        const payload = pendingEditManualByStakeMember();
+        delete payload['comment'];
+        await assertFails(db.doc(PATH).set(payload));
+      });
+
+      it('edit_temp with empty comment → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(db.doc(PATH).set(pendingEditTempByBishopric('01', { comment: '' })));
+      });
+
+      it('edit_temp with no comment field → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        const payload = pendingEditTempByBishopric('01');
+        delete payload['comment'];
+        await assertFails(db.doc(PATH).set(payload));
       });
     });
   });

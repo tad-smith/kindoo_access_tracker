@@ -318,11 +318,13 @@ describe('completeRemoveRequestSchema', () => {
 
 describe('editSeatSchema', () => {
   // edit_auto: only buildings required (reason is empty / Church-managed).
+  // Comment is required across all three edit_* types per spec §6.1.
   describe('edit_auto', () => {
-    it('admits a submission with ≥1 building and an empty reason', () => {
+    it('admits a submission with ≥1 building, empty reason, non-empty comment', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_auto',
         reason: '',
+        comment: 'adding Genoa for stake conference setup',
         building_names: ['Cordera Building'],
         start_date: '',
         end_date: '',
@@ -334,7 +336,47 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_auto',
         reason: '',
+        comment: 'why',
         building_names: [],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects an empty comment with comment-path issue', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_auto',
+        reason: '',
+        comment: '',
+        building_names: ['Cordera Building'],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const paths = result.error.issues.map((i) => i.path.join('.'));
+        expect(paths).toContain('comment');
+      }
+    });
+
+    it('rejects a whitespace-only comment', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_auto',
+        reason: '',
+        comment: '   ',
+        building_names: ['Cordera Building'],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects a missing comment field', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_auto',
+        reason: '',
+        building_names: ['Cordera Building'],
         start_date: '',
         end_date: '',
       });
@@ -342,12 +384,13 @@ describe('editSeatSchema', () => {
     });
   });
 
-  // edit_manual: reason + buildings both required.
+  // edit_manual: reason + buildings + comment all required.
   describe('edit_manual', () => {
-    it('admits reason + ≥1 building', () => {
+    it('admits reason + ≥1 building + non-empty comment', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_manual',
         reason: 'Primary Activity Days Leader',
+        comment: 'new ward calling',
         building_names: ['Cordera Building'],
         start_date: '',
         end_date: '',
@@ -359,6 +402,7 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_manual',
         reason: '',
+        comment: 'why',
         building_names: ['Cordera Building'],
         start_date: '',
         end_date: '',
@@ -370,6 +414,7 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_manual',
         reason: '   ',
+        comment: 'why',
         building_names: ['Cordera Building'],
         start_date: '',
         end_date: '',
@@ -381,7 +426,47 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_manual',
         reason: 'sub teacher',
+        comment: 'why',
         building_names: [],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects an empty comment with comment-path issue', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_manual',
+        reason: 'sub teacher',
+        comment: '',
+        building_names: ['Cordera Building'],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const paths = result.error.issues.map((i) => i.path.join('.'));
+        expect(paths).toContain('comment');
+      }
+    });
+
+    it('rejects a whitespace-only comment', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_manual',
+        reason: 'sub teacher',
+        comment: '   ',
+        building_names: ['Cordera Building'],
+        start_date: '',
+        end_date: '',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects a missing comment field', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_manual',
+        reason: 'sub teacher',
+        building_names: ['Cordera Building'],
         start_date: '',
         end_date: '',
       });
@@ -389,12 +474,13 @@ describe('editSeatSchema', () => {
     });
   });
 
-  // edit_temp: reason + buildings + ISO date pair required.
+  // edit_temp: reason + buildings + comment + ISO date pair required.
   describe('edit_temp', () => {
-    it('admits reason + ≥1 building + valid date pair', () => {
+    it('admits reason + ≥1 building + valid date pair + non-empty comment', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_temp',
         reason: 'sub teacher',
+        comment: 'covering while regular is travelling',
         building_names: ['Cordera Building'],
         start_date: '2026-05-01',
         end_date: '2026-05-08',
@@ -406,6 +492,7 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_temp',
         reason: 'sub teacher',
+        comment: 'why',
         building_names: ['Cordera Building'],
         start_date: '',
         end_date: '2026-05-08',
@@ -417,6 +504,7 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_temp',
         reason: 'sub teacher',
+        comment: 'why',
         building_names: ['Cordera Building'],
         start_date: '2026-05-08',
         end_date: '2026-05-01',
@@ -428,11 +516,51 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_temp',
         reason: 'sub teacher',
+        comment: 'why',
         building_names: ['Cordera Building'],
         start_date: '2026-05-01',
         end_date: '2026-05-01',
       });
       expect(result.success).toBe(true);
+    });
+
+    it('rejects an empty comment with comment-path issue', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_temp',
+        reason: 'sub teacher',
+        comment: '',
+        building_names: ['Cordera Building'],
+        start_date: '2026-05-01',
+        end_date: '2026-05-08',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const paths = result.error.issues.map((i) => i.path.join('.'));
+        expect(paths).toContain('comment');
+      }
+    });
+
+    it('rejects a whitespace-only comment', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_temp',
+        reason: 'sub teacher',
+        comment: '   ',
+        building_names: ['Cordera Building'],
+        start_date: '2026-05-01',
+        end_date: '2026-05-08',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects a missing comment field', () => {
+      const result = editSeatSchema.safeParse({
+        type: 'edit_temp',
+        reason: 'sub teacher',
+        building_names: ['Cordera Building'],
+        start_date: '2026-05-01',
+        end_date: '2026-05-08',
+      });
+      expect(result.success).toBe(false);
     });
   });
 });
