@@ -14,6 +14,7 @@ import userEvent from '@testing-library/user-event';
 
 const provisionAddOrChangeMock = vi.fn();
 const provisionRemoveMock = vi.fn();
+const provisionEditMock = vi.fn();
 const getEnvironmentsMock = vi.fn();
 const readKindooSessionMock = vi.fn();
 const markRequestCompleteMock = vi.fn();
@@ -28,6 +29,7 @@ vi.mock('../content/kindoo/provision', async () => {
     ...actual,
     provisionAddOrChange: (...args: unknown[]) => provisionAddOrChangeMock(...args),
     provisionRemove: (...args: unknown[]) => provisionRemoveMock(...args),
+    provisionEdit: (...args: unknown[]) => provisionEditMock(...args),
   };
 });
 
@@ -124,6 +126,7 @@ describe('RequestCard', () => {
   beforeEach(() => {
     provisionAddOrChangeMock.mockReset();
     provisionRemoveMock.mockReset();
+    provisionEditMock.mockReset();
     getEnvironmentsMock.mockReset();
     readKindooSessionMock.mockReset();
     markRequestCompleteMock.mockReset();
@@ -363,7 +366,7 @@ describe('RequestCard', () => {
     return render(<RequestCard request={request} bundle={customBundle} onDismissed={vi.fn()} />);
   }
 
-  it('refuses with the foreign expected site name before any Kindoo write on EID mismatch', async () => {
+  it('refuses with the foreign site display_name before any Kindoo write on EID mismatch (add path)', async () => {
     // Active session = home (27994); request = foreign ward; foreign
     // site has a recorded EID (4321). Refuse must fire before
     // provisionAddOrChange touches anything.
@@ -375,11 +378,46 @@ describe('RequestCard', () => {
     await user.click(screen.getByTestId('sba-add-r1'));
 
     await waitFor(() =>
-      expect(screen.getByTestId('sba-provision-error-r1')).toHaveTextContent(/East Stake/),
+      // Operator-facing message uses display_name ("East Stake (Foothills)"),
+      // not the slug ("east-stake") or the internal matching key ("East Stake").
+      expect(screen.getByTestId('sba-provision-error-r1')).toHaveTextContent(
+        "'East Stake (Foothills)'",
+      ),
     );
     expect(screen.getByTestId('sba-provision-error-r1')).toHaveTextContent(
       /Switch Kindoo sites and try again/,
     );
+    expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
+    expect(provisionRemoveMock).not.toHaveBeenCalled();
+    expect(provisionEditMock).not.toHaveBeenCalled();
+    expect(writeKindooSiteEidMock).not.toHaveBeenCalled();
+    expect(markRequestCompleteMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses on EID mismatch on the edit path too (shared site-check entry guard)', async () => {
+    // Mirror the add-path foreign-mismatch scenario but with an
+    // edit_manual request type. The site check sits in front of all
+    // three provision dispatches (add / edit / remove) at a single
+    // shared call site in RequestCard.provision — this test proves the
+    // gate runs on the edit path so the shared call site isn't
+    // covered only by inspection.
+    const user = userEvent.setup();
+    await renderCardWithBundle(
+      addRequest({ request_id: 'r-edit', type: 'edit_manual', scope: 'FN' }),
+      bundleWithForeignWard({ withEid: true }),
+    );
+    await user.click(screen.getByTestId('sba-edit-r-edit'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sba-provision-error-r-edit')).toHaveTextContent(
+        "'East Stake (Foothills)'",
+      ),
+    );
+    expect(screen.getByTestId('sba-provision-error-r-edit')).toHaveTextContent(
+      /Switch Kindoo sites and try again/,
+    );
+    // No orchestrator side effects fire on a refused site check.
+    expect(provisionEditMock).not.toHaveBeenCalled();
     expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
     expect(provisionRemoveMock).not.toHaveBeenCalled();
     expect(writeKindooSiteEidMock).not.toHaveBeenCalled();

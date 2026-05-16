@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest';
 import type { AccessRequest, KindooSite, Stake, Ward } from '@kindoo/shared';
 import {
   checkRequestSite,
+  ProvisionForeignSiteMissingError,
   ProvisionHomeSiteNotConfiguredError,
   ProvisionSiteMismatchError,
   resolveActiveKindooSite,
@@ -119,6 +120,7 @@ describe('checkRequestSite — stake-scope', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return; // narrowing
     expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
+    if (!(result.error instanceof ProvisionSiteMismatchError)) return;
     expect(result.error.expectedSiteName).toBe('Colorado Springs North Stake');
     expect(result.error.message).toContain('Switch Kindoo sites and try again');
   });
@@ -138,6 +140,8 @@ describe('checkRequestSite — stake-scope', () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
+    expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
+    if (!(result.error instanceof ProvisionSiteMismatchError)) return;
     expect(result.error.expectedSiteName).toBe('CSN Stake');
   });
 
@@ -196,6 +200,8 @@ describe('checkRequestSite — ward-scope, home ward', () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
+    expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
+    if (!(result.error instanceof ProvisionSiteMismatchError)) return;
     expect(result.error.expectedSiteName).toBe('Colorado Springs North Stake');
   });
 });
@@ -213,7 +219,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     expect(result).toEqual({ ok: true });
   });
 
-  it('refuses with the foreign expected site name when EID mismatches', () => {
+  it('refuses with the foreign site display_name (not slug, not kindoo_expected_site_name) when EID mismatches', () => {
     const result = checkRequestSite({
       request: wardRequest('FN'),
       session: { token: 'tok', eid: HOME_EID },
@@ -224,7 +230,14 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.expectedSiteName).toBe('East Stake');
+    expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
+    if (!(result.error instanceof ProvisionSiteMismatchError)) return;
+    // Operator-facing wording must use the human-readable `display_name`,
+    // never the slug (`east-stake`) or the internal matching key
+    // (`kindoo_expected_site_name`).
+    expect(result.error.expectedSiteName).toBe('East Stake (Foothills Building)');
+    expect(result.error.message).toContain("'East Stake (Foothills Building)'");
+    expect(result.error.message).toContain('Switch Kindoo sites and try again');
   });
 
   it('auto-populates the foreign site EID when active session name matches expected', () => {
@@ -256,7 +269,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     expect(result.populate).toEqual({ kindooSiteId: 'east-stake', kindooEid: FOREIGN_EID });
   });
 
-  it('refuses when active session name does not match foreign expected name', () => {
+  it('refuses (using display_name) when active session name does not match foreign expected name', () => {
     const result = checkRequestSite({
       request: wardRequest('FN'),
       session: { token: 'tok', eid: HOME_EID },
@@ -267,13 +280,19 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.expectedSiteName).toBe('East Stake');
+    expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
+    if (!(result.error instanceof ProvisionSiteMismatchError)) return;
+    expect(result.error.expectedSiteName).toBe('East Stake (Foothills Building)');
   });
 
-  it('refuses when ward references a kindoo_site_id not in the loaded set', () => {
+  it('refuses with ProvisionForeignSiteMissingError when ward references a kindoo_site_id not in the loaded set', () => {
+    // The site isn't configured in SBA at all — switching Kindoo sites
+    // won't help. Surface the dedicated missing-site error so the card
+    // formatter can direct the operator to Configuration → Kindoo Sites
+    // rather than telling them to switch sites.
     const stranded: Ward = {
       ...FOREIGN_WARD,
-      kindoo_site_id: 'unknown-site',
+      kindoo_site_id: 'never-configured',
     } as unknown as Ward;
     const result = checkRequestSite({
       request: wardRequest('FN'),
@@ -281,14 +300,23 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
       envs: homeEnvs(),
       stake: STAKE,
       wards: [stranded],
-      kindooSites: [FOREIGN_SITE_WITH_EID],
+      kindooSites: [], // empty — ward points at a site that was never added
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.expectedSiteName).toBe('unknown-site');
+    expect(result.error).toBeInstanceOf(ProvisionForeignSiteMissingError);
+    expect(result.error).not.toBeInstanceOf(ProvisionSiteMismatchError);
+    // ProvisionForeignSiteMissingError carries the slug as kindooSiteId
+    // (operator-actionable: it's what to add in Configuration), and the
+    // message must NOT tell the operator to switch sites.
+    if (result.error instanceof ProvisionForeignSiteMissingError) {
+      expect(result.error.kindooSiteId).toBe('never-configured');
+    }
+    expect(result.error.message).toContain('never-configured');
+    expect(result.error.message).not.toContain('Switch Kindoo sites');
   });
 
-  it('refuses when active session has no matching env entry (unknown site name)', () => {
+  it('refuses (using display_name) when active session has no matching env entry (unknown site name)', () => {
     const result = checkRequestSite({
       request: wardRequest('FN'),
       session: { token: 'tok', eid: FOREIGN_EID },
@@ -299,7 +327,9 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.expectedSiteName).toBe('East Stake');
+    expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
+    if (!(result.error instanceof ProvisionSiteMismatchError)) return;
+    expect(result.error.expectedSiteName).toBe('East Stake (Foothills Building)');
   });
 });
 

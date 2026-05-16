@@ -49,7 +49,7 @@ import type { KindooSession } from './auth';
 
 export type SiteCheckResult =
   | { ok: true; populate?: { kindooSiteId: string; kindooEid: number } }
-  | { ok: false; error: ProvisionSiteMismatchError };
+  | { ok: false; error: ProvisionSiteMismatchError | ProvisionForeignSiteMissingError };
 
 /**
  * Active Kindoo session doesn't match the EID the request needs. The
@@ -181,14 +181,14 @@ export function checkRequestSite(args: CheckRequestSiteArgs): SiteCheckResult {
     try {
       wardSite = resolveWardSite(request.scope, wards, kindooSites);
     } catch (err) {
-      // Caller surfaces this as an error before any Kindoo write.
-      return {
-        ok: false,
-        error:
-          err instanceof ProvisionForeignSiteMissingError
-            ? new ProvisionSiteMismatchError(err.kindooSiteId)
-            : new ProvisionSiteMismatchError('unknown site'),
-      };
+      // Ward references a `kindoo_site_id` whose KindooSite doc isn't
+      // in the loaded set. Surface the dedicated error class so the
+      // operator-facing message can direct them to Configure (NOT to
+      // switch sites, which won't help).
+      if (err instanceof ProvisionForeignSiteMissingError) {
+        return { ok: false, error: err };
+      }
+      throw err;
     }
     if (!wardSite) {
       // Home-site ward — same logic as stake-scope.
@@ -198,16 +198,22 @@ export function checkRequestSite(args: CheckRequestSiteArgs): SiteCheckResult {
       expectedEid = stake.kindoo_config.site_id;
       expectedSiteName = stake.kindoo_expected_site_name?.trim() || stake.stake_name;
     } else {
-      // Foreign-site ward.
-      expectedSiteName = wardSite.kindoo_expected_site_name;
+      // Foreign-site ward. Mismatch error wording uses `display_name`
+      // (operator-facing label) — the `kindoo_expected_site_name` is an
+      // internal config knob used for name-based matching only.
+      expectedSiteName = wardSite.display_name;
       if (wardSite.kindoo_eid !== undefined && wardSite.kindoo_eid !== null) {
         expectedEid = wardSite.kindoo_eid;
       } else {
         // Auto-populate path: no EID on the foreign-site doc yet.
-        // Compare the active session's site name; on match, the
-        // caller persists `kindoo_eid = session.eid` and proceeds.
+        // Compare the active session's site name (matched against the
+        // internal `kindoo_expected_site_name`); on match, the caller
+        // persists `kindoo_eid = session.eid` and proceeds.
         const actual = activeSiteName(envs, session);
-        if (actual.length > 0 && normaliseName(actual) === normaliseName(expectedSiteName)) {
+        if (
+          actual.length > 0 &&
+          normaliseName(actual) === normaliseName(wardSite.kindoo_expected_site_name)
+        ) {
           return {
             ok: true,
             populate: { kindooSiteId: wardSite.id, kindooEid: session.eid },
