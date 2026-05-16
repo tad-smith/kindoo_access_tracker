@@ -1705,3 +1705,143 @@ describe('provisionEdit — guards + edge cases', () => {
     expect(lookupUserByEmailMock).not.toHaveBeenCalled();
   });
 });
+
+describe('provisionEdit — cross-slot revoke regression', () => {
+  // The fix derives the post-edit composite (primary ∪ surviving
+  // duplicates) before diffing against Kindoo, so a RID belonging to
+  // an untouched slot never lands in `toRevoke`.
+
+  it('primary stake-manual + duplicate ward-manual: edit on stake does NOT revoke the duplicate ward RID', async () => {
+    // Reviewer's failing case verbatim:
+    //   primary = stake manual @ Cordera (rid 6248)
+    //   duplicate = ward (PC) manual @ Pine Creek (rid 6249)
+    //   Kindoo AccessSchedules = [6248, 6249]
+    //   edit_manual scope=stake, new building_names = [Cordera, Briargate]
+    // Before the fix: targetRids = [6248, 6250], ridsToRevoke = [6249]
+    //   → Pine Creek (belonging to the unedited duplicate) was wrongly
+    //   revoked.
+    // After the fix: post-edit primary = [Cordera, Briargate],
+    //   surviving duplicate = [Pine Creek], composite = [Cordera,
+    //   Briargate, Pine Creek] → targetRids = [6248, 6250, 6249] →
+    //   toAdd = [6250], toRevoke = [].
+    const buildings: Building[] = [
+      ...BUILDINGS.filter((b) => b.building_name !== 'Monument Building'),
+      {
+        building_id: 'briargate',
+        building_name: 'Briargate Building',
+        kindoo_rule: { rule_id: 6250, rule_name: 'Briargate Doors' },
+      } as unknown as Building,
+    ];
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad Smith',
+      scope: 'stake',
+      type: 'manual',
+      callings: [],
+      reason: 'Sunday School Teacher',
+      building_names: ['Cordera Building'],
+      duplicate_grants: [
+        {
+          scope: 'PC',
+          type: 'manual',
+          callings: [],
+          reason: 'Ward Clerk',
+          building_names: ['Pine Creek Building'],
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ],
+    } as unknown as Seat;
+    const existing = existingUser({
+      description:
+        'Colorado Springs North Stake (Sunday School Teacher) | Pine Creek Ward (Ward Clerk)',
+      isTempUser: false,
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+    editUserMock.mockResolvedValue({ ok: true });
+
+    await provisionEdit({
+      request: editManualRequest({
+        scope: 'stake',
+        reason: 'Sunday School Teacher',
+        building_names: ['Cordera Building', 'Briargate Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Briargate (6250) is the only RID added; Pine Creek (6249) is
+    // NOT revoked — the duplicate slot keeps it.
+    expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6250], undefined);
+    expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
+  });
+
+  it('edit on a duplicate slot that overlaps primary: no revokes, no adds (target already in Kindoo)', async () => {
+    // Pre-edit:
+    //   primary = auto @ Cordera ward, buildings=[Cordera] (rid 6248)
+    //   duplicate = stake manual, buildings=[Cordera, Briargate] (rids 6248, 6250)
+    //   Kindoo schedules = [6248, 6250]
+    // Edit replaces the stake duplicate's buildings with [Briargate].
+    // Post-edit composite = [Cordera (primary), Briargate (duplicate)]
+    //   = rids [6248, 6250]. No diff against Kindoo → no rule writes.
+    const buildings: Building[] = [
+      ...BUILDINGS.filter((b) => b.building_name !== 'Monument Building'),
+      {
+        building_id: 'briargate',
+        building_name: 'Briargate Building',
+        kindoo_rule: { rule_id: 6250, rule_name: 'Briargate Doors' },
+      } as unknown as Building,
+    ];
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad Smith',
+      scope: 'CO',
+      type: 'auto',
+      callings: ['Primary President'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [
+        {
+          scope: 'stake',
+          type: 'manual',
+          callings: [],
+          reason: 'Sunday School Teacher',
+          building_names: ['Cordera Building', 'Briargate Building'],
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ],
+    } as unknown as Seat;
+    const existing = existingUser({
+      description:
+        'Cordera Ward (Primary President) | Colorado Springs North Stake (Sunday School Teacher)',
+      isTempUser: false,
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6250 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    editUserMock.mockResolvedValue({ ok: true });
+
+    await provisionEdit({
+      request: editManualRequest({
+        scope: 'stake',
+        reason: 'Sunday School Teacher',
+        building_names: ['Briargate Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    expect(saveAccessRuleMock).not.toHaveBeenCalled();
+    expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
+  });
+});

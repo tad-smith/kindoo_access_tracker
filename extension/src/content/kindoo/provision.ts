@@ -193,6 +193,67 @@ function currentSeatBuildings(seat: Seat | null): string[] {
 }
 
 /**
+ * Mirror of `functions/src/callable/markRequestComplete.ts` `planEditSeat`
+ * — apply an edit request to the seat in memory, returning the
+ * post-edit seat. The backend resolves the slot identically; we
+ * recompute the post-edit shape locally so the extension can derive
+ * the post-edit composite building set (primary ∪ surviving duplicates)
+ * before talking to Kindoo. Returns `null` when no slot matches
+ * (callable will throw `failed-precondition`); the orchestrator falls
+ * back to a pre-edit composite + the request's building set so the
+ * Kindoo write still covers the user's existing scope, and the
+ * subsequent callable invocation is the canonical authority on whether
+ * the edit is accepted.
+ *
+ * Slot resolution (backend-aligned):
+ *   1. If `(seat.scope, seat.type) == (scope, targetType)` → primary
+ *      gets its `building_names` (and `reason` / dates if supplied)
+ *      replaced.
+ *   2. Else walk `duplicate_grants[]` for the first `(scope, type)`
+ *      match; replace its fields.
+ *   3. Else return `null` — no slot matched.
+ */
+function applyEditToSeat(
+  seat: Seat,
+  scope: string,
+  targetType: 'auto' | 'manual' | 'temp',
+  fields: {
+    building_names: string[];
+    reason?: string;
+    start_date?: string;
+    end_date?: string;
+  },
+): Seat | null {
+  // Primary slot match.
+  if (seat.scope === scope && seat.type === targetType) {
+    const next: Seat = { ...seat, building_names: [...fields.building_names] };
+    if (fields.reason !== undefined) next.reason = fields.reason;
+    if (fields.start_date !== undefined) next.start_date = fields.start_date;
+    if (fields.end_date !== undefined) next.end_date = fields.end_date;
+    return next;
+  }
+
+  // Duplicate slot match.
+  const dupes = seat.duplicate_grants ?? [];
+  const matchIdx = dupes.findIndex((d) => d.scope === scope && d.type === targetType);
+  if (matchIdx >= 0) {
+    const matched = dupes[matchIdx]!;
+    const replacement: DuplicateGrant = {
+      ...matched,
+      building_names: [...fields.building_names],
+    };
+    if (fields.reason !== undefined) replacement.reason = fields.reason;
+    if (fields.start_date !== undefined) replacement.start_date = fields.start_date;
+    if (fields.end_date !== undefined) replacement.end_date = fields.end_date;
+    const nextDupes = dupes.slice();
+    nextDupes[matchIdx] = replacement;
+    return { ...seat, duplicate_grants: nextDupes };
+  }
+
+  return null;
+}
+
+/**
  * Map a list of building names to their Kindoo RIDs via
  * `building.kindoo_rule.rule_id`. Throws
  * `ProvisionBuildingsMissingRuleError` listing the gaps.
@@ -815,32 +876,53 @@ export interface ProvisionEditArgs {
  * matching seat slot, refresh the Description, and (for `edit_temp`)
  * update the date bounds.
  *
- * Replace-semantics — `request.building_names` IS the new target set
- * for the matching slot. We DO NOT union with current seat coverage:
- * the requester explicitly chose the post-edit building set in the
- * dialog, and any prior buildings on this slot that aren't in the new
- * set should be revoked.
+ * Replace-semantics for the EDITED slot — `request.building_names` IS
+ * the new building set on the matching seat slot. The orchestrator
+ * does NOT union the request's buildings with the slot's pre-edit
+ * buildings: the requester explicitly chose the post-edit set in the
+ * dialog, and any buildings that were on this slot but aren't in the
+ * new set should be dropped from that slot.
  *
- * Diff vs the user's current AccessSchedules (NOT against the seat's
- * other slots — those live on the same Kindoo user record but on
- * different AccessSchedule grants we don't touch). RIDs the user
- * already has from OTHER slots stay because the request's target
- * buildings happen to map to a subset; revokes are only the rules
- * that were granted earlier and no longer match the target.
+ * Cross-slot preservation — buildings belonging to OTHER seat slots
+ * (the primary slot if a duplicate is being edited, or surviving
+ * duplicate slots if the primary is being edited) must stay. The
+ * orchestrator computes a post-edit seat in memory (`applyEditToSeat`,
+ * mirroring the backend's `planEditSeat`), then unions building_names
+ * across primary + ALL surviving duplicate slots — that union is the
+ * post-edit composite the user is entitled to.
+ *
+ * The Kindoo diff is composite-vs-composite:
+ *   - `targetRids` = rules backing the post-edit composite.
+ *   - `toRevoke` = current Kindoo schedules MINUS targetRids. Only
+ *     rules that no post-edit slot needs get revoked. RIDs belonging
+ *     to an UNTOUCHED slot are in `targetRids` (because that slot
+ *     contributes its buildings to the composite), so they're never
+ *     in `toRevoke`. This matches the add path (`provisionAddOrChange`)
+ *     which already unions seat coverage with the request's buildings.
+ *   - `toAdd` = targetRids MINUS current Kindoo schedules.
  *
  * Flow:
  *   1. Stake-auto guard — refuse `edit_auto` + `scope='stake'`.
- *   2. lookupUserByEmail — must exist; otherwise
+ *   2. Apply the edit to the seat in memory to derive the post-edit
+ *      seat (`applyEditToSeat`). If no slot matches (stale request),
+ *      fall back to the pre-edit seat ∪ request's buildings; the
+ *      callable invocation will reject the request with
+ *      `failed-precondition` and the Kindoo write is a benign add.
+ *   3. Compute targetBuildings = union over primary + all surviving
+ *      duplicate `building_names` of the post-edit seat.
+ *   4. targetRids = ridsForBuildings(targetBuildings) (throws on
+ *      missing mapping).
+ *   5. lookupUserByEmail — must exist; otherwise
  *      `ProvisionEditUserMissingError`.
- *   3. Compute targetRids from `request.building_names`.
- *   4. Compute add = target - current, revoke = current - target.
- *   5. saveAccessRule(add) (MERGE); revokeUserFromAccessSchedule per
- *      revoke rid.
- *   6. Synthesize description with the matching slot's `reason`
+ *   6. Compute toAdd = targetRids \ currentSchedules; toRevoke =
+ *      currentSchedules \ targetRids.
+ *   7. saveAccessRule(toAdd) (MERGE); revokeUserFromAccessSchedule
+ *      per toRevoke rid.
+ *   8. Synthesize description with the matching slot's `reason`
  *      replaced by the request's reason. For `edit_auto` this leaves
  *      the description unchanged (callings drive the text, not
  *      reason); for manual/temp the text changes if `reason` changed.
- *   7. editUser with the new description; for `edit_temp` also update
+ *   9. editUser with the new description; for `edit_temp` also update
  *      isTemp + dates from the request.
  */
 export async function provisionEdit(args: ProvisionEditArgs): Promise<ProvisionResult> {
@@ -863,9 +945,36 @@ export async function provisionEdit(args: ProvisionEditArgs): Promise<ProvisionR
   const fetchImpl = args.deps?.fetchImpl;
 
   // ---- Compute target state ----
-  // Replace semantics — the request's building list IS the new target
-  // set for the edited slot.
-  const targetBuildings = [...(req.building_names ?? [])];
+  // Apply the edit in memory to derive the post-edit seat shape, then
+  // union building_names across primary + all surviving duplicates.
+  // That union is what the user is entitled to AFTER the edit commits;
+  // the Kindoo diff against this composite leaves untouched slots'
+  // RIDs intact (they remain in the target set, so they're never in
+  // `toRevoke`).
+  const requestBuildings = [...(req.building_names ?? [])];
+  const targetType: 'auto' | 'manual' | 'temp' =
+    req.type === 'edit_auto' ? 'auto' : req.type === 'edit_manual' ? 'manual' : 'temp';
+  const editFields: {
+    building_names: string[];
+    reason?: string;
+    start_date?: string;
+    end_date?: string;
+  } = { building_names: requestBuildings };
+  if (req.type !== 'edit_auto') editFields.reason = req.reason;
+  if (req.type === 'edit_temp') {
+    if (req.start_date !== undefined) editFields.start_date = req.start_date;
+    if (req.end_date !== undefined) editFields.end_date = req.end_date;
+  }
+  const postEditSeat = args.seat
+    ? applyEditToSeat(args.seat, req.scope, targetType, editFields)
+    : null;
+  // If a slot matched, take the post-edit composite. If no slot
+  // matched (stale request, or no seat) fall back to the pre-edit
+  // seat ∪ request — the Kindoo write is a benign add and the
+  // callable will reject the request authoritatively.
+  const targetBuildings = postEditSeat
+    ? currentSeatBuildings(postEditSeat)
+    : uniqueOrdered(currentSeatBuildings(args.seat), requestBuildings);
   const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
 
   const env = findEnvironment(args.envs, args.session);
@@ -873,8 +982,6 @@ export async function provisionEdit(args: ProvisionEditArgs): Promise<ProvisionR
   const envTz =
     typeof envTzRaw === 'string' && envTzRaw.length > 0 ? envTzRaw : 'Mountain Standard Time';
 
-  const targetType: 'auto' | 'manual' | 'temp' =
-    req.type === 'edit_auto' ? 'auto' : req.type === 'edit_manual' ? 'manual' : 'temp';
   const targetDescription = synthesizeDescription(
     args.seat,
     req,
