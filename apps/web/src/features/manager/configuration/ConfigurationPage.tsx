@@ -96,9 +96,9 @@ export type ConfigTabKey =
 const TABS: Array<{ key: ConfigTabKey; label: string }> = [
   { key: 'config', label: 'Config' },
   { key: 'managers', label: 'Managers' },
+  { key: 'kindoo-sites', label: 'Kindoo Sites' },
   { key: 'wards', label: 'Wards' },
   { key: 'buildings', label: 'Buildings' },
-  { key: 'kindoo-sites', label: 'Kindoo Sites' },
   { key: 'ward-callings', label: 'Auto Ward Callings' },
   { key: 'stake-callings', label: 'Auto Stake Callings' },
 ];
