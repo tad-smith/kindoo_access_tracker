@@ -167,7 +167,7 @@ In addition to `add_manual`, `add_temp`, and `remove`, managers can mutate an ex
 | Seat type / scope | Edit allowed? | Editable fields |
 | --- | --- | --- |
 | **Auto, stake scope** | **No.** Church-granted access to all stake buildings; nothing to remove or constrain. Three-layer defense (see below). | — |
-| **Auto, ward scope** | Yes (`edit_auto`) | `building_names` only (template buildings pre-checked + disabled — extras only, per Policy B). |
+| **Auto, ward scope** | Yes (`edit_auto`) | `building_names` only (ward's own `building_name` pre-checked + disabled — extras only, per Policy B). |
 | **Manual (any scope)** | Yes (`edit_manual`) | `reason` (= the calling name for manual seats) and `building_names`. `seat.callings` is **not** touched (manual seats carry `callings: []` by convention). |
 | **Temp (any scope)** | Yes (`edit_temp`) | `reason`, `building_names`, `start_date`, `end_date`. |
 
@@ -179,7 +179,7 @@ In addition to `add_manual`, `add_temp`, and `remove`, managers can mutate an ex
 2. **Firestore rule** rejects creation of an `edit_auto` request when `scope == 'stake'` — see `firestore/firestore.rules` §requests.create.
 3. **`markRequestComplete` callable** rejects `edit_auto` completion when `scope === 'stake'` with `permission-denied` — see `functions/src/callable/markRequestComplete.ts`.
 
-**Policy B — `edit_auto` building selection.** The matched calling-template's `allowed_buildings` are pre-checked AND disabled in the edit modal. Operator can ADD buildings; cannot REMOVE template buildings. The orchestrator does not need to re-enforce this server-side because the request can only carry the template's allowed_buildings PLUS extras. The modal is the constraint.
+**Policy B — `edit_auto` building selection.** The ward's `building_name` (the building Church Access Automation grants by default for any ward calling at that ward) is pre-checked AND disabled in the edit modal. Operator can ADD other stake buildings beyond it; cannot REMOVE the ward's own building (Church automation owns that grant). `wardCallingTemplates` has no per-template building list — the constraint is the ward's single building, resolved from `wards.{ward_code}.building_name` (see `firebase-schema.md` §4.4). The orchestrator does not need to re-enforce this server-side because the modal already locks the checkbox; the request payload carries the ward's building plus any extras. Stake auto seats never reach this modal (Policy 1).
 
 **`edit_manual` reason semantics.** Manual seats store the operator-typed calling name in `seat.reason` (not `seat.callings`, which stays `[]`). The `edit_manual` request's `reason` field replaces `seat.reason` verbatim. `seat.callings` is left untouched.
 
