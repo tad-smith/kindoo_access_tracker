@@ -65,7 +65,9 @@ test.describe('auth-flow', () => {
 
   test('anonymous visit shows the SignInPage', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /Stake Building Access/i })).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: /Building access for your stake/i }),
+    ).toBeVisible();
     await expect(page.getByRole('button', { name: /Sign in with Google/i })).toBeVisible();
   });
 
