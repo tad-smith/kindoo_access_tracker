@@ -39,6 +39,7 @@ import {
   detect,
   type Discrepancy,
   type DetectResult,
+  type DiscrepancyCode,
   type Severity,
 } from '../content/kindoo/sync/detector';
 import {
@@ -67,6 +68,24 @@ const PROGRESS_UPDATE_EVERY = 10;
 
 type FilterMode = 'all' | 'drift' | 'review';
 
+/** Sentinel for "no code filter" — keep separate from the union so we
+ * can spread `DiscrepancyCode` into the dropdown options without
+ * carving out a "doesn't match any row" value. */
+type CodeFilter = 'all' | DiscrepancyCode;
+
+/** Order of the dropdown options. Mirrors the order in `DiscrepancyCode`
+ * so the labels read top-to-bottom in the order the detector files
+ * them. */
+const CODE_FILTER_OPTIONS: readonly DiscrepancyCode[] = [
+  'sba-only',
+  'kindoo-only',
+  'kindoo-unparseable',
+  'scope-mismatch',
+  'type-mismatch',
+  'buildings-mismatch',
+  'extra-kindoo-calling',
+];
+
 /** Per-row fix state. `idle` → buttons visible; `applying` → in flight;
  * `error` → inline error + Retry; success removes the row entirely so
  * there is no `success` state to render. */
@@ -90,6 +109,7 @@ function describeKindooError(err: unknown): string {
 export function SyncPanel() {
   const [step, setStep] = useState<Step>({ kind: 'idle' });
   const [filter, setFilter] = useState<FilterMode>('all');
+  const [codeFilter, setCodeFilter] = useState<CodeFilter>('all');
 
   const runSync = useCallback(async () => {
     setStep({ kind: 'loading', progress: null });
@@ -152,7 +172,14 @@ export function SyncPanel() {
 
   return (
     <div className="sba-body" data-testid="sba-sync">
-      <SyncBody step={step} filter={filter} onRun={() => void runSync()} onFilter={setFilter} />
+      <SyncBody
+        step={step}
+        filter={filter}
+        codeFilter={codeFilter}
+        onRun={() => void runSync()}
+        onFilter={setFilter}
+        onCodeFilter={setCodeFilter}
+      />
     </div>
   );
 }
@@ -186,11 +213,13 @@ function collectRuleIds(bundle: SyncDataBundle): number[] {
 interface BodyProps {
   step: Step;
   filter: FilterMode;
+  codeFilter: CodeFilter;
   onRun: () => void;
   onFilter: (f: FilterMode) => void;
+  onCodeFilter: (c: CodeFilter) => void;
 }
 
-function SyncBody({ step, filter, onRun, onFilter }: BodyProps) {
+function SyncBody({ step, filter, codeFilter, onRun, onFilter, onCodeFilter }: BodyProps) {
   if (step.kind === 'idle') {
     return (
       <div data-testid="sba-sync-idle">
@@ -245,17 +274,28 @@ function SyncBody({ step, filter, onRun, onFilter }: BodyProps) {
       </div>
     );
   }
-  return <ReportView result={step.result} ctx={step.ctx} filter={filter} onFilter={onFilter} />;
+  return (
+    <ReportView
+      result={step.result}
+      ctx={step.ctx}
+      filter={filter}
+      codeFilter={codeFilter}
+      onFilter={onFilter}
+      onCodeFilter={onCodeFilter}
+    />
+  );
 }
 
 interface ReportProps {
   result: DetectResult;
   ctx: DispatchContext;
   filter: FilterMode;
+  codeFilter: CodeFilter;
   onFilter: (f: FilterMode) => void;
+  onCodeFilter: (c: CodeFilter) => void;
 }
 
-function ReportView({ result, ctx, filter, onFilter }: ReportProps) {
+function ReportView({ result, ctx, filter, codeFilter, onFilter, onCodeFilter }: ReportProps) {
   // Splice-on-success: once a fix applies, drop the row from the
   // rendered list. The detector is not re-run; the operator triggers
   // a fresh sync to get a clean state.
@@ -275,11 +315,18 @@ function ReportView({ result, ctx, filter, onFilter }: ReportProps) {
     [visibleDiscrepancies],
   );
   const filtered = useMemo(() => {
-    if (filter === 'all') return visibleDiscrepancies;
-    return visibleDiscrepancies.filter((d) =>
-      filter === 'drift' ? d.severity === 'drift' : d.severity === 'review',
-    );
-  }, [filter, visibleDiscrepancies]);
+    return visibleDiscrepancies.filter((d) => {
+      if (filter === 'drift' && d.severity !== 'drift') return false;
+      if (filter === 'review' && d.severity !== 'review') return false;
+      if (codeFilter !== 'all' && d.code !== codeFilter) return false;
+      return true;
+    });
+  }, [filter, codeFilter, visibleDiscrepancies]);
+  // Distinguish "report is empty" (both sides agree — show the
+  // existing reassuring message) from "filters combine to zero rows"
+  // (show a filter-specific hint so the operator knows the data is
+  // there, just hidden).
+  const hasAnyDiscrepancies = visibleDiscrepancies.length > 0;
 
   const handleFix = useCallback(
     async (d: Discrepancy, action: FixAction) => {
@@ -317,10 +364,26 @@ function ReportView({ result, ctx, filter, onFilter }: ReportProps) {
         <FilterChip current={filter} value="all" label="All" onFilter={onFilter} />
         <FilterChip current={filter} value="drift" label="Drift only" onFilter={onFilter} />
         <FilterChip current={filter} value="review" label="Review only" onFilter={onFilter} />
+        <select
+          className="sba-code-filter"
+          aria-label="Filter by code"
+          value={codeFilter}
+          onChange={(e) => onCodeFilter(e.target.value as CodeFilter)}
+          data-testid="sba-sync-code-filter"
+        >
+          <option value="all">All codes</option>
+          {CODE_FILTER_OPTIONS.map((code) => (
+            <option key={code} value={code}>
+              {code}
+            </option>
+          ))}
+        </select>
       </div>
       {filtered.length === 0 ? (
         <p className="sba-empty" data-testid="sba-sync-empty">
-          No discrepancies to show.
+          {hasAnyDiscrepancies
+            ? 'No discrepancies match the current filters.'
+            : 'No discrepancies to show.'}
         </p>
       ) : (
         <ul className="sba-sync-list" data-testid="sba-sync-list">

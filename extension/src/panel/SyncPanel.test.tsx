@@ -545,6 +545,169 @@ describe('SyncPanel', () => {
     expect(screen.getByTestId('sba-sync-summary')).toHaveTextContent(/0\s+drift items/);
   });
 
+  // --------------------------------------------------------------------
+  // Code-filter dropdown — independent of the severity chips,
+  // combined via AND.
+  // --------------------------------------------------------------------
+
+  it('renders the code-filter dropdown with All codes + 7 codes', async () => {
+    getSyncDataMock.mockResolvedValue(bundle());
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+    const select = screen.getByTestId('sba-sync-code-filter') as HTMLSelectElement;
+    expect(select).toBeInTheDocument();
+    expect(select).toHaveAttribute('aria-label', 'Filter by code');
+    // Default selection is "all".
+    expect(select.value).toBe('all');
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    expect(optionValues).toEqual([
+      'all',
+      'sba-only',
+      'kindoo-only',
+      'kindoo-unparseable',
+      'scope-mismatch',
+      'type-mismatch',
+      'buildings-mismatch',
+      'extra-kindoo-calling',
+    ]);
+    const optionLabels = Array.from(select.options).map((o) => o.textContent);
+    expect(optionLabels).toEqual([
+      'All codes',
+      'sba-only',
+      'kindoo-only',
+      'kindoo-unparseable',
+      'scope-mismatch',
+      'type-mismatch',
+      'buildings-mismatch',
+      'extra-kindoo-calling',
+    ]);
+  });
+
+  it('filters by code when a specific code is picked and resets on All codes', async () => {
+    const b = bundle();
+    // sba-only row (drift).
+    b.seats.push({
+      member_canonical: 'orphan@example.com',
+      member_email: 'orphan@example.com',
+      member_name: 'O',
+      scope: 'CO',
+      type: 'auto',
+      callings: [],
+      building_names: [],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    // kindoo-only row (drift).
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      {
+        euid: 'e1',
+        userId: 'u1',
+        username: 'newbie@example.com',
+        FirstName: 'New',
+        LastName: 'Bie',
+        description: 'Cordera Ward (Sunday School Teacher)',
+        isTempUser: false,
+        startAccessDoorsDateAtTimeZone: null,
+        expiryDateAtTimeZone: null,
+        expiryTimeZone: 'MST',
+        accessSchedules: [{ ruleId: 6248 }],
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-sync-row-orphan@example.com')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-sync-row-newbie@example.com')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'kindoo-only');
+    expect(screen.queryByTestId('sba-sync-row-orphan@example.com')).toBeNull();
+    expect(screen.getByTestId('sba-sync-row-newbie@example.com')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'all');
+    expect(screen.getByTestId('sba-sync-row-orphan@example.com')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-sync-row-newbie@example.com')).toBeInTheDocument();
+  });
+
+  it('combines severity chip + code dropdown with AND semantics', async () => {
+    const b = bundle();
+    b.wardCallingTemplates.push({
+      calling_name: 'Sunday School Teacher',
+      auto_kindoo_access: true,
+    } as never);
+    // sba-only auto seat (drift).
+    b.seats.push({
+      member_canonical: 'orphan@example.com',
+      member_email: 'orphan@example.com',
+      member_name: 'O',
+      scope: 'CO',
+      type: 'auto',
+      callings: [],
+      building_names: [],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      // kindoo-only (drift).
+      {
+        euid: 'e1',
+        userId: 'u1',
+        username: 'newbie@example.com',
+        FirstName: 'New',
+        LastName: 'Bie',
+        description: 'Cordera Ward (Sunday School Teacher)',
+        isTempUser: false,
+        startAccessDoorsDateAtTimeZone: null,
+        expiryDateAtTimeZone: null,
+        expiryTimeZone: 'MST',
+        accessSchedules: [{ ruleId: 6248 }],
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    // Drift chip + kindoo-only code — only the kindoo-only drift row stays.
+    await user.click(screen.getByTestId('sba-sync-filter-drift'));
+    await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'kindoo-only');
+    expect(screen.queryByTestId('sba-sync-row-orphan@example.com')).toBeNull();
+    expect(screen.getByTestId('sba-sync-row-newbie@example.com')).toBeInTheDocument();
+  });
+
+  it('renders the filter-empty hint when severity + code AND eliminates all rows', async () => {
+    const b = bundle();
+    // sba-only seat (sba-only is severity=drift). No kindoo-only or
+    // review-severity rows present.
+    b.seats.push({
+      member_canonical: 'orphan@example.com',
+      member_email: 'orphan@example.com',
+      member_name: 'O',
+      scope: 'CO',
+      type: 'auto',
+      callings: [],
+      building_names: [],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    // Drift chip + extra-kindoo-calling (review-severity) → no overlap.
+    await user.click(screen.getByTestId('sba-sync-filter-drift'));
+    await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'extra-kindoo-calling');
+    expect(screen.queryByTestId('sba-sync-list')).toBeNull();
+    expect(screen.getByTestId('sba-sync-empty')).toHaveTextContent(
+      'No discrepancies match the current filters.',
+    );
+  });
+
   it('error path shows inline message + Retry button; Retry re-fires the same action', async () => {
     applyFixMock.mockResolvedValueOnce({ ok: false, error: 'boom' });
     applyFixMock.mockResolvedValueOnce({ ok: true });
