@@ -315,7 +315,7 @@ describe('buildCallableInput', () => {
     expect(payload.newType).toBe('temp');
   });
 
-  it('buildings-mismatch sends Kindoo building names', () => {
+  it('buildings-mismatch on a manual seat sends AccessSchedules-derived buildingNames', () => {
     const input = buildCallableInput(
       discrepancy({
         code: 'buildings-mismatch',
@@ -336,6 +336,57 @@ describe('buildCallableInput', () => {
     );
     const payload = input.fix.payload as Record<string, unknown>;
     expect(payload.newBuildingNames).toEqual(['Pine Creek Building']);
+  });
+
+  it('buildings-mismatch on an auto seat sends derivedBuildings, NOT buildingNames', () => {
+    // Auto seats: the bulk listing's AccessSchedules-derived
+    // `buildingNames` excludes Church Access Automation direct grants
+    // (empty for ~310 of 313 users). Sending `buildingNames` would wipe
+    // the seat's correct buildings server-side. `derivedBuildings` is
+    // the truth.
+    const input = buildCallableInput(
+      discrepancy({
+        code: 'buildings-mismatch',
+        sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Cordera Building'] },
+        kindoo: {
+          description: 'Cordera Ward (Sunday School Teacher)',
+          isTempUser: false,
+          memberName: 'A A',
+          primaryScope: 'CO',
+          intendedType: 'auto',
+          intendedCallings: ['Sunday School Teacher'],
+          intendedFreeText: '',
+          ruleIds: [],
+          buildingNames: [],
+          derivedBuildings: ['Cordera Building', 'Pine Creek Building'],
+        },
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.newBuildingNames).toEqual(['Cordera Building', 'Pine Creek Building']);
+  });
+
+  it('buildings-mismatch on an auto seat with null derivedBuildings throws (no valid source)', () => {
+    expect(() =>
+      buildCallableInput(
+        discrepancy({
+          code: 'buildings-mismatch',
+          sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Cordera Building'] },
+          kindoo: {
+            description: 'Cordera Ward (Sunday School Teacher)',
+            isTempUser: false,
+            memberName: 'A A',
+            primaryScope: 'CO',
+            intendedType: 'auto',
+            intendedCallings: ['Sunday School Teacher'],
+            intendedFreeText: '',
+            ruleIds: [],
+            buildingNames: [],
+            derivedBuildings: null,
+          },
+        }),
+      ),
+    ).toThrow(/derivation/i);
   });
 
   it('throws for sba-only (no SBA-side path)', () => {
@@ -397,6 +448,33 @@ describe('applyFix', () => {
     const action = fixActionsFor(d)[0]!;
     const outcome = await applyFix(d, action, ctx);
     expect(outcome).toEqual({ ok: false, error: 'Kindoo 401' });
+  });
+
+  it('Update SBA on auto buildings-mismatch with null derivedBuildings is refused as a flat error', async () => {
+    const ctx = ctxWith();
+    const d = discrepancy({
+      code: 'buildings-mismatch',
+      sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Cordera Building'] },
+      kindoo: {
+        description: 'Cordera Ward (Sunday School Teacher)',
+        isTempUser: false,
+        memberName: 'A A',
+        primaryScope: 'CO',
+        intendedType: 'auto',
+        intendedCallings: ['Sunday School Teacher'],
+        intendedFreeText: '',
+        ruleIds: [],
+        buildingNames: [],
+        derivedBuildings: null,
+      },
+    });
+    const sbaAction = fixActionsFor(d).find((a) => a.side === 'sba')!;
+    const outcome = await applyFix(d, sbaAction, ctx);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).toMatch(/derivation/i);
+    }
+    expect(ctx.callSyncApplyFix).not.toHaveBeenCalled();
   });
 
   it('Update Kindoo on a type-mismatch with an auto SBA seat is rejected with a clear error', async () => {

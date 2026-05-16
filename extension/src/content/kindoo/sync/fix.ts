@@ -237,13 +237,33 @@ export function buildCallableInput(d: Discrepancy): SyncApplyFixInput {
     }
     case 'buildings-mismatch': {
       if (!d.kindoo) throw new Error('buildings-mismatch row missing Kindoo block');
+      // Auto seats: the bulk listing's AccessSchedules-derived
+      // `buildingNames` is empty for ~310 of ~313 users because Church
+      // Access Automation grants are direct (per-door) not rule-based.
+      // `derivedBuildings` (door-grant strict-subset chain) is the
+      // truth. Sending `buildingNames` here would wipe the seat's
+      // correct buildings server-side (`applyBuildingsMismatch`
+      // replaces unconditionally). For manual/temp seats the
+      // AccessSchedules-derived `buildingNames` is the truth.
+      const isAuto = (d.sba?.type ?? null) === 'auto' || d.kindoo.intendedType === 'auto';
+      let newBuildingNames: string[];
+      if (isAuto) {
+        if (d.kindoo.derivedBuildings === null || d.kindoo.derivedBuildings === undefined) {
+          throw new Error(
+            'auto seat door-grant derivation failed; cannot update SBA buildings — re-run Sync.',
+          );
+        }
+        newBuildingNames = d.kindoo.derivedBuildings;
+      } else {
+        newBuildingNames = d.kindoo.buildingNames;
+      }
       return {
         stakeId: STAKE_ID,
         fix: {
           code: 'buildings-mismatch',
           payload: {
             memberEmail: d.displayEmail,
-            newBuildingNames: d.kindoo.buildingNames,
+            newBuildingNames,
           },
         },
       };

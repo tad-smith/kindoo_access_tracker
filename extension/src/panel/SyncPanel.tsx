@@ -433,12 +433,24 @@ interface DiscrepancyRowProps {
 function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
   const severityClass = discrepancy.severity === 'drift' ? 'sba-badge-remove' : 'sba-badge-temp';
   const actions = fixActionsFor(discrepancy);
-  // Type-mismatch with `auto` on either side can't drive Kindoo from the
-  // extension (Church Access Automation owns direct door grants). Mark
-  // the Kindoo-side button disabled with a tooltip in that case.
-  const autoLocked =
-    discrepancy.code === 'type-mismatch' &&
+  // Auto seats: Church Access Automation owns direct door grants — the
+  // extension can't write them. The Kindoo-side button is disabled on:
+  //   - type-mismatch when either side is auto
+  //   - buildings-mismatch when the SBA seat is auto
+  // For buildings-mismatch on auto where `derivedBuildings === null`
+  // the SBA-side write has no valid source either, so disable both
+  // buttons.
+  const isAutoBuildingsMismatch =
+    discrepancy.code === 'buildings-mismatch' &&
     (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto');
+  const autoLockedKindoo =
+    (discrepancy.code === 'type-mismatch' &&
+      (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto')) ||
+    isAutoBuildingsMismatch;
+  const autoLockedSba =
+    isAutoBuildingsMismatch &&
+    (discrepancy.kindoo?.derivedBuildings === null ||
+      discrepancy.kindoo?.derivedBuildings === undefined);
 
   return (
     <div
@@ -515,7 +527,8 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
         canonical={discrepancy.canonical}
         actions={actions}
         state={state}
-        autoLocked={autoLocked}
+        autoLockedKindoo={autoLockedKindoo}
+        autoLockedSba={autoLockedSba}
         onFix={onFix}
       />
     </div>
@@ -526,11 +539,23 @@ interface FixActionsProps {
   canonical: string;
   actions: FixAction[];
   state: RowState;
-  autoLocked: boolean;
+  /** Disable the Kindoo-side button (Church Access Automation owns
+   * auto-seat door grants). */
+  autoLockedKindoo: boolean;
+  /** Disable the SBA-side button (auto buildings-mismatch where
+   * `derivedBuildings` failed — no valid source to send). */
+  autoLockedSba: boolean;
   onFix: (action: FixAction) => void;
 }
 
-function FixActions({ canonical, actions, state, autoLocked, onFix }: FixActionsProps) {
+function FixActions({
+  canonical,
+  actions,
+  state,
+  autoLockedKindoo,
+  autoLockedSba,
+  onFix,
+}: FixActionsProps) {
   if (actions.length === 0) return null;
 
   if (state.kind === 'applying') {
@@ -566,19 +591,22 @@ function FixActions({ canonical, actions, state, autoLocked, onFix }: FixActions
   return (
     <div className="sba-sync-fix-row">
       {actions.map((a) => {
-        const isAutoLockedKindoo = autoLocked && a.side === 'kindoo';
+        const lockedKindoo = autoLockedKindoo && a.side === 'kindoo';
+        const lockedSba = autoLockedSba && a.side === 'sba';
+        const disabled = lockedKindoo || lockedSba;
+        const title = lockedKindoo
+          ? 'auto seats provisioned by Church Access Automation; not modifiable here.'
+          : lockedSba
+            ? 'door-grant derivation failed; cannot determine the correct building set — re-run Sync.'
+            : undefined;
         return (
           <button
             key={a.testId}
             type="button"
             className={a.side === 'sba' ? 'sba-btn sba-btn-primary' : 'sba-btn sba-btn-success'}
             onClick={() => onFix(a)}
-            disabled={isAutoLockedKindoo}
-            title={
-              isAutoLockedKindoo
-                ? 'auto seats provisioned by Church Access Automation; not modifiable here.'
-                : undefined
-            }
+            disabled={disabled}
+            title={title}
             data-testid={`sba-sync-fix-${a.testId}-${canonical}`}
           >
             {a.label}

@@ -241,7 +241,7 @@ Each discrepancy row gains one or two specific-action buttons. Per-row only — 
 | `extra-kindoo-calling` | "Add to SBA seat" | SBA-side: `syncApplyFix` with `code: 'extra-kindoo-calling'`; backend de-dupes + appends to `callings[]`. |
 | `scope-mismatch` | "Update Kindoo" / "Update SBA" | Update Kindoo: rewrite Description to SBA scope via `syncProvisionFromSeat`. Update SBA: `syncApplyFix` with `code: 'scope-mismatch'` carrying Kindoo's parsed primary scope. |
 | `type-mismatch` | "Update Kindoo" / "Update SBA" | Same pattern. Update Kindoo is disabled (with a tooltip) when either side is `auto` — Church Access Automation owns direct door grants for auto seats; the extension can't write them. |
-| `buildings-mismatch` | "Update Kindoo" / "Update SBA" | Same pattern. Detector only emits this for manual/temp seats. Update Kindoo reconciles AccessSchedules to SBA's building set (per-rule revoke + saveAccessRule merge). |
+| `buildings-mismatch` | "Update Kindoo" / "Update SBA" | Manual/temp seats: Update Kindoo reconciles AccessSchedules to SBA's building set (per-rule revoke + saveAccessRule merge); Update SBA sends Kindoo's AccessSchedules-derived `buildingNames`. Auto seats: Update Kindoo is disabled (Church Access Automation owns direct door grants); Update SBA sends `derivedBuildings` (the door-grant strict-subset chain) — never `buildingNames`, which is empty for ~all auto users and would wipe the seat's buildings. If `derivedBuildings === null` (door-grant read failed for the user) both buttons are disabled. |
 | `kindoo-unparseable` | none | Operator handles in Kindoo's admin UI. |
 
 ### Audit + SyncActor
@@ -293,7 +293,7 @@ Modified:
 - Per-row confirmation dialogs. Operator chose trust-fire.
 - Undo affordance. Operator can run sync again and fix forward.
 - Sync-driven Firestore writes that bypass the callable. Every SBA write goes through `syncApplyFix`.
-- Reconciling auto-user door grants (Church Access Automation territory). Auto seats skip the buildings comparison in Phase 1 + can't be type-changed via Update Kindoo in Phase 2.
+- Writing auto-user door grants from the extension (Church Access Automation territory). Auto seats can't be type-changed and can't have their Kindoo-side buildings written via Update Kindoo in Phase 2 — Update SBA on `buildings-mismatch` is allowed and reconciles SBA to `derivedBuildings`.
 
 ## Out of scope for Sync entirely (any phase)
 
