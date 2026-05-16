@@ -203,10 +203,16 @@ export type CompleteRemoveRequestForm = z.infer<typeof completeRemoveRequestSche
  * types via the `type` discriminator. Per-type required-field gates
  * fire in the `superRefine`:
  *
- *   - `edit_auto`: building_names ≥ 1.
- *   - `edit_manual`: reason non-empty + building_names ≥ 1.
+ *   - `edit_auto`: building_names ≥ 1 + non-empty trimmed comment.
+ *   - `edit_manual`: reason non-empty + building_names ≥ 1 + non-empty
+ *     trimmed comment.
  *   - `edit_temp`: reason non-empty + building_names ≥ 1 + ISO
- *     start_date + ISO end_date + end_date >= start_date.
+ *     start_date + ISO end_date + end_date >= start_date + non-empty
+ *     trimmed comment.
+ *
+ * The comment gate matches the shared `accessRequestSchema` and the
+ * Firestore rules' edit-request predicate (defense in depth, see
+ * spec.md §6.1).
  *
  * The dialog uses `useForm<EditSeatForm>({ values: initial })` so
  * opening for a different seat re-seeds the fields. Submission threads
@@ -216,6 +222,7 @@ export const editSeatSchema = z
   .object({
     type: z.enum(['edit_auto', 'edit_manual', 'edit_temp']),
     reason: z.string(),
+    comment: z.string(),
     building_names: z.array(z.string()),
     start_date: z.string(),
     end_date: z.string(),
@@ -226,6 +233,13 @@ export const editSeatSchema = z
         code: 'custom',
         path: ['reason'],
         message: val.type === 'edit_temp' ? 'Reason is required.' : 'Calling is required.',
+      });
+    }
+    if (val.comment.trim().length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['comment'],
+        message: 'A comment is required for edit requests.',
       });
     }
     if (val.building_names.length === 0) {

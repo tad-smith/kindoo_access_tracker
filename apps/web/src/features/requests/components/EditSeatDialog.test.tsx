@@ -128,6 +128,7 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     await user.click(screen.getByTestId('edit-seat-building-genoa'));
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
     await user.click(screen.getByTestId('edit-seat-confirm'));
     await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
     const arg = submitMutateAsync.mock.calls[0]?.[0] as Record<string, unknown> & {
@@ -138,9 +139,63 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     expect(arg.member_email).toBe('auto@x.com');
     expect(arg.member_name).toBe('Auto Person');
     expect([...arg.building_names].sort()).toEqual(['Cordera Building', 'Genoa Building']);
+    expect(arg.comment).toBe('note');
     // No dates on edit_auto.
     expect(arg.start_date).toBeUndefined();
     expect(arg.end_date).toBeUndefined();
+  });
+
+  it('renders a required Comment field in the dialog body', () => {
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+    );
+    const seat = makeSeat({
+      type: 'auto',
+      scope: 'CO',
+      callings: ['Bishop'],
+      building_names: ['Cordera Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    expect(screen.getByTestId('edit-seat-comment')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-seat-comment-marker').textContent).toMatch(/required/i);
+  });
+
+  it('blocks submit with an inline error when comment is empty', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+    );
+    const seat = makeSeat({
+      type: 'auto',
+      scope: 'CO',
+      callings: ['Bishop'],
+      building_names: ['Cordera Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    expect(submitMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByTestId('edit-seat-comment-error')).toBeInTheDocument();
+  });
+
+  it('blocks submit with an inline error when comment is whitespace-only', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+    );
+    const seat = makeSeat({
+      type: 'auto',
+      scope: 'CO',
+      callings: ['Bishop'],
+      building_names: ['Cordera Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.type(screen.getByTestId('edit-seat-comment'), '   ');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    expect(submitMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByTestId('edit-seat-comment-error')).toBeInTheDocument();
   });
 });
 
@@ -194,6 +249,7 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     // Add the second building.
     await user.click(screen.getByTestId('edit-seat-building-genoa'));
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
     await user.click(screen.getByTestId('edit-seat-confirm'));
     await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
     const arg = submitMutateAsync.mock.calls[0]?.[0] as Record<string, unknown> & {
@@ -202,6 +258,7 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     expect(arg.type).toBe('edit_manual');
     expect(arg.reason).toBe('sub teacher');
     expect([...arg.building_names].sort()).toEqual(['Cordera Building', 'Genoa Building']);
+    expect(arg.comment).toBe('note');
     expect(arg.start_date).toBeUndefined();
     expect(arg.end_date).toBeUndefined();
   });
@@ -220,9 +277,66 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
       building_names: [],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
     await user.click(screen.getByTestId('edit-seat-confirm'));
     expect(submitMutateAsync).not.toHaveBeenCalled();
     expect(screen.getByText(/pick at least one building/i)).toBeInTheDocument();
+  });
+
+  it('renders a required Comment field in the dialog body', () => {
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO' })],
+      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'CO',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: ['Cordera Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    expect(screen.getByTestId('edit-seat-comment')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-seat-comment-marker').textContent).toMatch(/required/i);
+  });
+
+  it('blocks submit with an inline error when comment is empty', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO' })],
+      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'CO',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: ['Cordera Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    expect(submitMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByTestId('edit-seat-comment-error')).toBeInTheDocument();
+  });
+
+  it('blocks submit with an inline error when comment is whitespace-only', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO' })],
+      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'CO',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: ['Cordera Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.type(screen.getByTestId('edit-seat-comment'), '   ');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    expect(submitMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByTestId('edit-seat-comment-error')).toBeInTheDocument();
   });
 });
 
@@ -274,6 +388,7 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
     const end = screen.getByTestId('edit-seat-end-date') as HTMLInputElement;
     await user.clear(end);
     await user.type(end, '2026-05-15');
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
     await user.click(screen.getByTestId('edit-seat-confirm'));
     await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
     const arg = submitMutateAsync.mock.calls[0]?.[0] as Record<string, unknown> & {
@@ -282,6 +397,7 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
     expect(arg.type).toBe('edit_temp');
     expect(arg.reason).toBe('youth conference');
     expect(arg.building_names).toEqual(['Cordera Building']);
+    expect(arg.comment).toBe('note');
     expect(arg.start_date).toBe('2026-05-01');
     expect(arg.end_date).toBe('2026-05-15');
   });
@@ -302,6 +418,7 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
       end_date: '2026-05-01',
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
     await user.click(screen.getByTestId('edit-seat-confirm'));
     expect(submitMutateAsync).not.toHaveBeenCalled();
     expect(screen.getByText(/end date must be on or after the start date/i)).toBeInTheDocument();
@@ -323,9 +440,72 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
       end_date: '2026-05-08',
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
     await user.click(screen.getByTestId('edit-seat-confirm'));
     expect(submitMutateAsync).not.toHaveBeenCalled();
     expect(screen.getByText(/reason is required/i)).toBeInTheDocument();
+  });
+
+  it('renders a required Comment field in the dialog body', () => {
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO' })],
+      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+    );
+    const seat = makeSeat({
+      type: 'temp',
+      scope: 'CO',
+      callings: [],
+      reason: 'youth conference',
+      building_names: ['Cordera Building'],
+      start_date: '2026-05-01',
+      end_date: '2026-05-08',
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    expect(screen.getByTestId('edit-seat-comment')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-seat-comment-marker').textContent).toMatch(/required/i);
+  });
+
+  it('blocks submit with an inline error when comment is empty', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO' })],
+      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+    );
+    const seat = makeSeat({
+      type: 'temp',
+      scope: 'CO',
+      callings: [],
+      reason: 'youth conference',
+      building_names: ['Cordera Building'],
+      start_date: '2026-05-01',
+      end_date: '2026-05-08',
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    expect(submitMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByTestId('edit-seat-comment-error')).toBeInTheDocument();
+  });
+
+  it('blocks submit with an inline error when comment is whitespace-only', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO' })],
+      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+    );
+    const seat = makeSeat({
+      type: 'temp',
+      scope: 'CO',
+      callings: [],
+      reason: 'youth conference',
+      building_names: ['Cordera Building'],
+      start_date: '2026-05-01',
+      end_date: '2026-05-08',
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.type(screen.getByTestId('edit-seat-comment'), '   ');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    expect(submitMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByTestId('edit-seat-comment-error')).toBeInTheDocument();
   });
 });
 
@@ -345,6 +525,7 @@ describe('<EditSeatDialog /> — dialog lifecycle', () => {
       building_names: ['Cordera Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={onOpenChange} />);
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
     await user.click(screen.getByTestId('edit-seat-confirm'));
     await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
     expect(onOpenChange).toHaveBeenCalledWith(false);
