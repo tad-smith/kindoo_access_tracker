@@ -202,6 +202,11 @@ main.sba-panel {
   color: #7f1d1d;
 }
 
+.sba-badge-edit {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
 .sba-badge-urgent {
   background: var(--sba-danger);
   color: #ffffff;

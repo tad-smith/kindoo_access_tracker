@@ -1,10 +1,11 @@
 // v2.2 — orchestrates the Kindoo-side work for one SBA AccessRequest.
-// Two top-level functions:
+// Three top-level functions:
 //
 //   provisionAddOrChange(req, seat, ...)  // add_manual / add_temp
 //   provisionRemove(req, seat, ...)       // remove (scope-specific)
+//   provisionEdit(req, seat, ...)         // edit_auto / edit_manual / edit_temp
 //
-// Both flows use a read-first / merged-state pattern: compute the
+// All flows use a read-first / merged-state pattern: compute the
 // post-completion target state (buildings, description, temp + date
 // bounds), then drive Kindoo to it via:
 //   - `saveAccessRule` to ADD missing rules. `saveAccessRule` is
@@ -93,6 +94,40 @@ export class ProvisionEnvironmentNotFoundError extends Error {
   constructor(eid: number) {
     super(`Kindoo did not return an environment matching EID=${eid}.`);
     this.name = 'ProvisionEnvironmentNotFoundError';
+  }
+}
+
+/**
+ * Edit flow can only operate on a Kindoo user record that already
+ * exists — there is no "create a user as part of an edit" path. If the
+ * lookup misses, surface a clean error so the operator knows to
+ * provision the user via an add request first.
+ */
+export class ProvisionEditUserMissingError extends Error {
+  readonly code = 'edit-user-missing' as const;
+  constructor(email: string) {
+    super(
+      `Cannot edit Kindoo access for ${email}: user not found in Kindoo. ` +
+        `Provision them via an add request first.`,
+    );
+    this.name = 'ProvisionEditUserMissingError';
+  }
+}
+
+/**
+ * Defense in depth: `edit_auto` requests with `scope='stake'` should
+ * never reach the extension (web hides the affordance; rules reject
+ * the create; the callable rejects the complete). If one does, we
+ * refuse to write to Kindoo so a stale request can never grant access
+ * outside what the Church-automation already grants.
+ */
+export class ProvisionStakeAutoEditError extends Error {
+  readonly code = 'stake-auto-edit' as const;
+  constructor() {
+    super(
+      'edit_auto requests with scope=stake are not allowed (stake auto seats are not editable).',
+    );
+    this.name = 'ProvisionStakeAutoEditError';
   }
 }
 
@@ -232,6 +267,7 @@ function synthesizeDescription(
   wards: Ward[],
   mergeAddIntoSeat: boolean,
   removeScope?: string,
+  editTarget?: { scope: string; type: 'auto' | 'manual' | 'temp'; reason: string },
 ): string {
   // Build the post-completion (scope, type, callings, reason) list.
   // First entry is the primary; rest are duplicates.
@@ -291,6 +327,26 @@ function synthesizeDescription(
     });
   }
 
+  if (editTarget !== undefined) {
+    // Replace the matching (scope, type) segment's `reason` with the
+    // request's reason. For `edit_auto` the description text is
+    // driven by callings (reason is unused in formatDescriptionSegment),
+    // so the resulting description is unchanged — that's intentional;
+    // the edit only mutates building grants. For `edit_manual` /
+    // `edit_temp` the reason field drives the description text.
+    //
+    // Mirrors `planEditSeat`'s slot resolution: primary `(scope, type)`
+    // wins; otherwise the first duplicate-segment match.
+    let replaced = false;
+    segments = segments.map((s) => {
+      if (!replaced && s.scope === editTarget.scope && s.type === editTarget.type) {
+        replaced = true;
+        return { ...s, reason: editTarget.reason };
+      }
+      return s;
+    });
+  }
+
   if (segments.length === 0) {
     // No prior seat and no merge (REMOVE on a member with no SBA
     // seat) — let the description fall through to the request's own
@@ -339,7 +395,7 @@ function tempDatesFor(req: AccessRequest): { startEdit: string; expiryEdit: stri
   if (!start || !end) {
     throw new KindooApiError(
       'unexpected-shape',
-      `add_temp request ${req.request_id} missing start_date or end_date`,
+      `${req.type} request ${req.request_id} missing start_date or end_date`,
     );
   }
   return {
@@ -733,6 +789,169 @@ export async function provisionRemove(args: ProvisionRemoveArgs): Promise<Provis
     kindoo_uid: existing.userId,
     action: 'updated',
     note: noteForAction('updated', args.request, targetBuildings),
+  };
+}
+
+// ---- Edit ------------------------------------------------------------
+
+export interface ProvisionEditArgs {
+  request: AccessRequest;
+  /** SBA seat for the request's subject. Edit requires a seat — the
+   * web UI and rules only allow editing an existing seat. If null,
+   * we still proceed but the description-rewrite falls back to the
+   * request's own segment as a safety net (matches the orphan
+   * recovery shape used elsewhere). */
+  seat: Seat | null;
+  stake: Stake;
+  buildings: Building[];
+  wards: Ward[];
+  envs: KindooEnvironment[];
+  session: KindooSession;
+  deps?: ProvisionDeps;
+}
+
+/**
+ * Edit a user's Kindoo access in place — replace the buildings on the
+ * matching seat slot, refresh the Description, and (for `edit_temp`)
+ * update the date bounds.
+ *
+ * Replace-semantics — `request.building_names` IS the new target set
+ * for the matching slot. We DO NOT union with current seat coverage:
+ * the requester explicitly chose the post-edit building set in the
+ * dialog, and any prior buildings on this slot that aren't in the new
+ * set should be revoked.
+ *
+ * Diff vs the user's current AccessSchedules (NOT against the seat's
+ * other slots — those live on the same Kindoo user record but on
+ * different AccessSchedule grants we don't touch). RIDs the user
+ * already has from OTHER slots stay because the request's target
+ * buildings happen to map to a subset; revokes are only the rules
+ * that were granted earlier and no longer match the target.
+ *
+ * Flow:
+ *   1. Stake-auto guard — refuse `edit_auto` + `scope='stake'`.
+ *   2. lookupUserByEmail — must exist; otherwise
+ *      `ProvisionEditUserMissingError`.
+ *   3. Compute targetRids from `request.building_names`.
+ *   4. Compute add = target - current, revoke = current - target.
+ *   5. saveAccessRule(add) (MERGE); revokeUserFromAccessSchedule per
+ *      revoke rid.
+ *   6. Synthesize description with the matching slot's `reason`
+ *      replaced by the request's reason. For `edit_auto` this leaves
+ *      the description unchanged (callings drive the text, not
+ *      reason); for manual/temp the text changes if `reason` changed.
+ *   7. editUser with the new description; for `edit_temp` also update
+ *      isTemp + dates from the request.
+ */
+export async function provisionEdit(args: ProvisionEditArgs): Promise<ProvisionResult> {
+  const req = args.request;
+  if (req.type !== 'edit_auto' && req.type !== 'edit_manual' && req.type !== 'edit_temp') {
+    throw new Error(`provisionEdit called with non-edit type "${req.type}"`);
+  }
+
+  // 1. Stake-auto defense in depth.
+  if (req.type === 'edit_auto' && req.scope === 'stake') {
+    throw new ProvisionStakeAutoEditError();
+  }
+
+  // edit_temp must carry both dates — validate at the boundary so a
+  // bad request never reaches the wire.
+  if (req.type === 'edit_temp') {
+    tempDatesFor(req); // throws KindooApiError('unexpected-shape', ...) on miss
+  }
+
+  const fetchImpl = args.deps?.fetchImpl;
+
+  // ---- Compute target state ----
+  // Replace semantics — the request's building list IS the new target
+  // set for the edited slot.
+  const targetBuildings = [...(req.building_names ?? [])];
+  const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
+
+  const env = findEnvironment(args.envs, args.session);
+  const envTzRaw = env.TimeZone;
+  const envTz =
+    typeof envTzRaw === 'string' && envTzRaw.length > 0 ? envTzRaw : 'Mountain Standard Time';
+
+  const targetType: 'auto' | 'manual' | 'temp' =
+    req.type === 'edit_auto' ? 'auto' : req.type === 'edit_manual' ? 'manual' : 'temp';
+  const targetDescription = synthesizeDescription(
+    args.seat,
+    req,
+    args.stake,
+    args.wards,
+    false,
+    undefined,
+    { scope: req.scope, type: targetType, reason: req.reason },
+  );
+
+  // ---- Read Kindoo state ----
+  const existing = await lookupUserByEmail(args.session, req.member_email, fetchImpl);
+  if (!existing) {
+    throw new ProvisionEditUserMissingError(req.member_email);
+  }
+
+  // ---- Reconcile rule set (add + revoke diff) ----
+  const currentRIDs = existing.accessSchedules.map((s) => s.ruleId);
+  const targetSet = new Set(targetRIDs);
+  const currentSet = new Set(currentRIDs);
+  const toAdd = targetRIDs.filter((id) => !currentSet.has(id));
+  const toRevoke = currentRIDs.filter((id) => !targetSet.has(id));
+
+  let didRuleWrite = false;
+  if (toAdd.length > 0) {
+    // saveAccessRule MERGES — adds the missing rids without disturbing
+    // unrelated grants on the same user record.
+    await saveAccessRule(args.session, existing.userId, toAdd, fetchImpl);
+    didRuleWrite = true;
+  }
+  for (const ruleId of toRevoke) {
+    await revokeUserFromAccessSchedule(args.session, existing.euid, ruleId, fetchImpl);
+    didRuleWrite = true;
+  }
+
+  // ---- Description + date sync ----
+  const isTempTarget = req.type === 'edit_temp';
+  let targetStart: string;
+  let targetExpiry: string;
+  if (isTempTarget) {
+    const dates = tempDatesFor(req);
+    targetStart = dates.startEdit;
+    targetExpiry = dates.expiryEdit;
+  } else {
+    // For edit_auto / edit_manual we don't touch dates. Echo the
+    // current values from lookup so editUser preserves them.
+    targetStart = existing.startAccessDoorsDateAtTimeZone ?? '';
+    targetExpiry = existing.expiryDateAtTimeZone ?? '';
+  }
+
+  const descDiffers = targetDescription !== existing.description;
+  const tempDiffers = isTempTarget !== existing.isTempUser;
+  const datesDiffer =
+    isTempTarget &&
+    (targetStart !== (existing.startAccessDoorsDateAtTimeZone ?? '') ||
+      targetExpiry !== (existing.expiryDateAtTimeZone ?? ''));
+
+  let didEdit = false;
+  if (descDiffers || tempDiffers || datesDiffer) {
+    const editPayload: KindooEditUserPayload = {
+      description: targetDescription,
+      isTemp: isTempTarget,
+      startAccessDoorsDateTime: targetStart,
+      expiryDate: targetExpiry,
+      timeZone: existing.expiryTimeZone || envTz,
+    };
+    await editUser(args.session, existing.euid, editPayload, fetchImpl);
+    didEdit = true;
+  }
+
+  return {
+    kindoo_uid: existing.userId,
+    action: 'updated',
+    note:
+      didEdit || didRuleWrite
+        ? noteForAction('updated', req, targetBuildings)
+        : `No Kindoo changes needed for ${nameOrEmail(req)}.`,
   };
 }
 

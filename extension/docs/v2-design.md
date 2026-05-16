@@ -270,6 +270,56 @@ Scope-specific, mirroring SBA's `removeSeatOnRequestComplete` trigger:
    - **If `targetRIDs` is empty**: `revokeUser(session, UserID)` to wipe the env-user record entirely. Action: `'removed'`. Note: `"Removed X from Kindoo."`.
    - **Else**: if `targetDescription !== current.Description`, `editUser(session, EUID, …)` to sync. Action: `'updated'`. Note: `"Updated X's Kindoo access to A, B."` (post-removal building set).
 
+#### edit_auto / edit_manual / edit_temp flow
+
+The three edit request types share a single orchestrator entry —
+`provisionEdit(req, seat, …)`. Replace-semantics: `request.building_names`
+IS the new target set for the matching seat slot; we do NOT union with
+the seat's current building set. The edit dialog enforces Policy B for
+`edit_auto` (template buildings pre-checked + disabled in the UI).
+
+1. **Stake-auto guard.** `request.type === 'edit_auto'` + `request.scope
+   === 'stake'` → throw `ProvisionStakeAutoEditError` before any Kindoo
+   read or write. Defense in depth alongside the UI / rules / callable
+   layers (spec §6.1 Policy 1).
+2. **Date validity (`edit_temp` only).** `tempDatesFor(req)` throws
+   `KindooApiError('unexpected-shape', …)` if `start_date` or `end_date`
+   are missing.
+3. **Compute target RIDs** from `request.building_names` directly via
+   `ridsForBuildings`. Same missing-mapping guard as add/remove.
+4. **Synthesize target description** by replacing the matching seat
+   slot's `reason` with the request's reason (slot resolution mirrors
+   `planEditSeat`: primary `(scope, type)` first, then duplicates). For
+   `edit_auto` the description is callings-driven so the text doesn't
+   change; for `edit_manual` / `edit_temp` the segment's reason is
+   replaced verbatim.
+5. **`lookupUserByEmail(session, request.member_email)`.** Edit MUST
+   find the user — there's no "create as part of an edit" path. Missing
+   → throw `ProvisionEditUserMissingError`; operator provisions the
+   user via an add request first.
+6. **Reconcile rule set:**
+   - `toAdd = targetRids - currentSchedules` → `saveAccessRule(session,
+     UserID, toAdd)` (MERGE — preserves unrelated rules on the user).
+   - `toRevoke = currentSchedules - targetRids` → per-rule
+     `revokeUserFromAccessSchedule(session, EUID, ruleId)`. Required
+     because `saveAccessRule` cannot shrink.
+7. **`editUser`** only if description / temp flag / dates differ. For
+   `edit_temp` the payload carries `isTemp=true` + the new dates
+   (`YYYY-MM-DDTHH:MM` with 00:00 / 23:59 day bounds). For
+   `edit_auto` / `edit_manual` the payload echoes the user's existing
+   dates so editUser preserves them.
+8. **Result** — `action='updated'`. Note: `"Updated X's Kindoo access to
+   A, B."` (the post-edit building set) when any Kindoo write
+   happened; `"No Kindoo changes needed for X."` when nothing
+   differed.
+
+**Note on side-effects in the SBA callable.** The Kindoo write happens
+BEFORE `markRequestComplete` is called. If the callable rejects (e.g.
+no matching seat slot for the resolved `(scope, type)` pair), the
+Kindoo state may already reflect the edit. The orchestrator surfaces
+the callable error via the existing partial-success dialog, and the
+operator can either retry the SBA side or manually reconcile.
+
 #### After Kindoo (all paths except noop-remove)
 
 Call existing `markRequestComplete` callable with `{ requestId, kindoo_uid, provisioning_note }`. Callable persists on the request doc.

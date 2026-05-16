@@ -24,9 +24,12 @@ import { KindooApiError } from '../content/kindoo/client';
 import { getEnvironments, type KindooEnvironment } from '../content/kindoo/endpoints';
 import {
   provisionAddOrChange,
+  provisionEdit,
   provisionRemove,
   ProvisionBuildingsMissingRuleError,
+  ProvisionEditUserMissingError,
   ProvisionEnvironmentNotFoundError,
+  ProvisionStakeAutoEditError,
   type ProvisionResult,
 } from '../content/kindoo/provision';
 import { ResultDialog, type ResultDialogState } from './ResultDialog';
@@ -100,6 +103,20 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
           envs,
           session,
         });
+      } else if (
+        request.type === 'edit_auto' ||
+        request.type === 'edit_manual' ||
+        request.type === 'edit_temp'
+      ) {
+        result = await provisionEdit({
+          request,
+          seat,
+          stake: bundle.stake,
+          buildings: bundle.buildings,
+          wards: bundle.wards,
+          envs,
+          session,
+        });
       } else {
         result = await provisionAddOrChange({
           request,
@@ -129,10 +146,20 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
 
   const buttonLabel = labelForType(request.type);
   const isBusy = state.kind === 'provisioning';
+  const isEdit =
+    request.type === 'edit_auto' || request.type === 'edit_manual' || request.type === 'edit_temp';
   const buttonTestId =
     request.type === 'remove'
       ? `sba-remove-${request.request_id}`
-      : `sba-add-${request.request_id}`;
+      : isEdit
+        ? `sba-edit-${request.request_id}`
+        : `sba-add-${request.request_id}`;
+  const buttonClass =
+    request.type === 'remove'
+      ? 'sba-btn sba-btn-danger'
+      : isEdit
+        ? 'sba-btn sba-btn-primary'
+        : 'sba-btn sba-btn-success';
 
   return (
     <div
@@ -172,7 +199,8 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
           </span>
         </div>
       ) : null}
-      {request.type === 'add_temp' && (request.start_date || request.end_date) ? (
+      {(request.type === 'add_temp' || request.type === 'edit_temp') &&
+      (request.start_date || request.end_date) ? (
         <div className="sba-request-meta">
           <span>
             <strong>Dates:</strong> {request.start_date ?? '?'} → {request.end_date ?? '?'}
@@ -182,7 +210,8 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
       {request.building_names.length > 0 ? (
         <div className="sba-request-meta">
           <span>
-            <strong>Buildings:</strong> {request.building_names.join(', ')}
+            <strong>{isEdit ? '→ Buildings:' : 'Buildings:'}</strong>{' '}
+            {request.building_names.join(', ')}
           </span>
         </div>
       ) : null}
@@ -196,9 +225,7 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
       <div className="sba-request-actions">
         <button
           type="button"
-          className={
-            request.type === 'remove' ? 'sba-btn sba-btn-danger' : 'sba-btn sba-btn-success'
-          }
+          className={buttonClass}
           onClick={() => void provision()}
           disabled={isBusy}
           data-testid={buttonTestId}
@@ -274,11 +301,27 @@ function describeProvisionError(err: unknown): string {
   if (err instanceof ProvisionEnvironmentNotFoundError) {
     return err.message;
   }
+  if (err instanceof ProvisionEditUserMissingError) {
+    return err.message;
+  }
+  if (err instanceof ProvisionStakeAutoEditError) {
+    return err.message;
+  }
   return describeKindooError(err);
 }
 
 function labelForType(t: AccessRequest['type']): string {
-  return t === 'remove' ? 'Remove Kindoo Access' : 'Add Kindoo Access';
+  switch (t) {
+    case 'remove':
+      return 'Remove Kindoo Access';
+    case 'edit_auto':
+    case 'edit_manual':
+    case 'edit_temp':
+      return 'Update Kindoo Access';
+    case 'add_manual':
+    case 'add_temp':
+      return 'Add Kindoo Access';
+  }
 }
 
 function typeBadgeLabel(t: AccessRequest['type']): string {
@@ -309,7 +352,7 @@ function badgeClass(t: AccessRequest['type']): string {
     case 'edit_auto':
     case 'edit_manual':
     case 'edit_temp':
-      return 'sba-badge sba-badge-manual';
+      return 'sba-badge sba-badge-edit';
   }
 }
 
