@@ -108,6 +108,15 @@ The SPA is built on TanStack Router with file-based routes under `apps/web/src/r
 
 **Default landing rule.** Multi-role principals resolve via priority — manager > stake > bishopric — and land on the most-privileged role's default page.
 
+### 5.0 Public pages
+
+Two routes render without an auth gate; neither participates in role resolution or `gateDecision()`.
+
+- **`/` (signed-out homepage)** — rendered by `apps/web/src/features/auth/SignInPage.tsx` whenever no Firebase Auth user is present. Audience is ward and stake leadership (bishopric, stake presidency, executive secretaries, clerks) — not Kindoo Managers, who are a downstream role. Layout: a sticky top bar (brand + secondary "Sign in" button), a centred hero (headline + sub-line + primary "Sign in with Google" button), three short feature bullets (request access, routed to the right approver, auto-expiring temporary grants), a one-paragraph explainer, and a footer linking to `/privacy`, the Chrome Web Store listing, and a contact `mailto:`. Both sign-in buttons call the same `signIn()` flow; the duplicated CTA is intentional (topbar remains reachable after scroll). Once authenticated the route re-renders and falls through to the existing `gateDecision()` in `apps/web/src/routes/index.tsx`, unchanged.
+- **`/privacy`** — TanStack Router file route at `apps/web/src/routes/privacy.tsx`. Public; no auth gate; renders identically for reviewers, signed-out visitors, and signed-in users. Hosts the privacy policy for both the web app and the companion "Stake Building Access — Kindoo Helper" Chrome MV3 extension, and is the privacy URL declared on the Chrome Web Store listing. Sections cover: operator identity, what the extension does, data accessed and why, storage and processing (Firestore + Cloud Functions, US region), authentication via `chrome.identity` + Firebase, per-permission justifications for the extension's MV3 manifest, user rights, and a change log keyed on `LAST_UPDATED`. When the extension manifest changes (permissions, host_permissions, OAuth scopes) the corresponding section is updated in the same commit.
+
+Both pages currently carry `[PLACEHOLDER: ...]` tokens (operator legal name, contact email, stake admin contact email — 5 instances on `/privacy`; none on the homepage) that must be filled before public publish. See §13.
+
 ### 5.1 Bishopric (scoped to own ward)
 
 - **Roster** — active ward seats. All rows show calling + person (auto rows included). Manual/temp rows show reason; temp rows show dates. Each manual/temp row has a remove affordance; clicking opens "Remove access for [person]?" with a required reason field and submits a `remove` request via the shared submit flow. The row's remove control flips to a "removal pending" badge once submitted, so the requester cannot double-submit. Auto rows render no remove control — auto seats track LCR callings and are removed by the next import after the calling change in LCR. Utilization bar shows `current / cap`. Principals holding more than one bishopric role see a "Ward:" dropdown above the utilization bar; rules and the read-side query both validate the requested `wardCode` against the principal's claims so a bishopric for ward CO cannot read ward GE.
@@ -310,6 +319,7 @@ The Resend `mail.stakebuildingaccess.org` subdomain is verified and in active us
 - Building permissions UI on bishopric requests (the `building_names` defaulting + manager pre-tick on the complete dialog covers it; the comment field handles exceptions).
 - Per-stake tz handling beyond `America/Denver` for v1 (each stake doc carries `timezone` but only one value is in use).
 - Push notifications for completion / rejection / cancel / over-cap — Phase 10.6 (deferred).
+- Filling the `[PLACEHOLDER: ...]` tokens on `/privacy` (operator legal name, two contact emails) — operator-owned, blocks Chrome Web Store public publish but not the app itself.
 
 ## 14. Build history
 
