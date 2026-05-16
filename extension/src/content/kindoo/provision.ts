@@ -48,6 +48,12 @@ import {
   saveAccessRule,
 } from './endpoints';
 import { KindooApiError } from './client';
+import {
+  buildRuleDoorMap,
+  deriveEffectiveRuleIds,
+  derivedBuildingNames,
+  getUserDoorIds,
+} from './sync/buildingsFromDoors';
 
 /** Returned by both orchestrators. */
 export interface ProvisionResult {
@@ -382,15 +388,20 @@ export interface ProvisionAddOrChangeArgs {
  * seat state. See file header for the read-first contract.
  *
  * Flow:
- *   1. Compute targetBuildings = unique(seat.building_names ∪
- *      seat.duplicate_grants[].building_names ∪ request.building_names).
- *      The seat-side union captures the user's total existing scope
- *      coverage; `seat.building_names` alone is primary-only.
- *   2. targetRIDs = buildings → kindoo_rule.rule_id (throws on missing mapping).
- *   3. lookupUserByEmail(email).
- *   4. Not found → inviteUser + saveAccessRule.
- *   5. Found → editUser (description / temp / dates) only if diff;
- *              saveAccessRule with full target RIDs only if diff.
+ *   1. Compute an early `targetBuildings` from `seat ∪ request` so
+ *      `ridsForBuildings` can fail fast when a requested building has
+ *      no Kindoo Access Rule mapped (operator sees the error before
+ *      any Kindoo call).
+ *   2. lookupUserByEmail(email).
+ *   3. Not found → inviteUser + saveAccessRule against the seat∪request
+ *      target.
+ *   4. Found → recompute the baseline from Kindoo's actual door grants
+ *      (auto users get direct grants Church Access Automation manages
+ *      that don't appear in `AccessSchedules`). Final target =
+ *      derivedBuildings ∪ requestBuildings. On derivation failure log
+ *      a warning and fall back to the seat-derived baseline. Then:
+ *      editUser (description / temp / dates) if diff; saveAccessRule
+ *      with the refreshed target RIDs if diff.
  */
 export async function provisionAddOrChange(
   args: ProvisionAddOrChangeArgs,
@@ -442,6 +453,26 @@ export async function provisionAddOrChange(
   const isAddTemp = args.request.type === 'add_temp';
   const targetIsTemp = isAddTemp && existing.isTempUser === true;
 
+  // Recompute the buildings baseline from Kindoo's actual door grants
+  // rather than SBA's recorded seat. Direct door grants from Church
+  // Access Automation never show up in the bulk listing's
+  // AccessSchedules; SBA's seat captures what we THINK the user has,
+  // but if Church silently revoked a building the seat lags reality.
+  // Deriving from per-door grants closes that gap — same chain Sync
+  // uses (`buildingsFromDoors.ts`).
+  //
+  // Fall back to `currentSeatBuildings(seat)` on any derivation error;
+  // a flaky Kindoo call should not block the operator's provision.
+  const kindooBaseline = await deriveKindooBaselineBuildings(
+    args.session,
+    existing.userId,
+    args.buildings,
+    fetchImpl,
+    () => currentSeatBuildings(args.seat),
+  );
+  const refreshedTargetBuildings = uniqueOrdered(kindooBaseline, requestBuildings);
+  const refreshedTargetRIDs = ridsForBuildings(refreshedTargetBuildings, args.buildings);
+
   // Date strings to send on edit. For permanent users Kindoo accepts
   // empty strings on edit (per capture); echo lookup values when
   // they're present and we're not changing them, otherwise use empty
@@ -487,8 +518,8 @@ export async function provisionAddOrChange(
 
   const existingRids = existing.accessSchedules.map((s) => s.ruleId);
   let didSaveRules = false;
-  if (!sameRids(targetRIDs, existingRids)) {
-    await saveAccessRule(args.session, existing.userId, targetRIDs, fetchImpl);
+  if (!sameRids(refreshedTargetRIDs, existingRids)) {
+    await saveAccessRule(args.session, existing.userId, refreshedTargetRIDs, fetchImpl);
     didSaveRules = true;
   }
 
@@ -497,9 +528,47 @@ export async function provisionAddOrChange(
     action: 'updated',
     note:
       didEdit || didSaveRules
-        ? noteForAction('updated', args.request, targetBuildings)
+        ? noteForAction('updated', args.request, refreshedTargetBuildings)
         : `No Kindoo changes needed for ${nameOrEmail(args.request)}.`,
   };
+}
+
+/**
+ * Derive the user's TRUE building baseline from Kindoo's per-door
+ * grants. The bulk listing's `AccessSchedules` array hides direct door
+ * grants (Church Access Automation), so reading them is the only way
+ * to know what a user really has — especially for auto seats where
+ * SBA's recorded `building_names` lags reality when Church revokes a
+ * building.
+ *
+ * On any failure, log a `[sba-ext]` warning and fall back to the
+ * provided fallback. We never block provision on a flaky Kindoo call.
+ */
+async function deriveKindooBaselineBuildings(
+  session: KindooSession,
+  userId: string,
+  buildings: Building[],
+  fetchImpl: typeof fetch | undefined,
+  fallback: () => string[],
+): Promise<string[]> {
+  try {
+    const ruleIds: number[] = [];
+    for (const b of buildings) {
+      const rid = b.kindoo_rule?.rule_id;
+      if (typeof rid === 'number') ruleIds.push(rid);
+    }
+    const ruleDoorMap = await buildRuleDoorMap(session, session.eid, ruleIds, fetchImpl);
+    const userDoorIds = await getUserDoorIds(session, userId, session.eid, fetchImpl);
+    const effective = deriveEffectiveRuleIds(userDoorIds, ruleDoorMap);
+    return derivedBuildingNames(effective, buildings);
+  } catch (err) {
+    console.warn(
+      `[sba-ext] provisionAddOrChange: door-grant derivation failed for user ${userId}; falling back to seat baseline. ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return fallback();
+  }
 }
 
 function buildInvitePayload(

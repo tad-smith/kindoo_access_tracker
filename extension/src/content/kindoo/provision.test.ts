@@ -47,6 +47,25 @@ vi.mock('./endpoints', async () => {
   };
 });
 
+// Door-grant derivation chain runs on the existing-user provision path
+// to derive the TRUE buildings baseline from Kindoo (vs the SBA seat's
+// recorded state). Default both calls to "succeeded with no rules
+// claimed" — most existing tests pass `seat: null`, so this matches
+// their pre-derivation expectations (baseline = []).
+const buildRuleDoorMapMock = vi.fn();
+const getUserDoorIdsMock = vi.fn();
+
+vi.mock('./sync/buildingsFromDoors', async () => {
+  const actual = await vi.importActual<typeof import('./sync/buildingsFromDoors')>(
+    './sync/buildingsFromDoors',
+  );
+  return {
+    ...actual,
+    buildRuleDoorMap: (...args: unknown[]) => buildRuleDoorMapMock(...args),
+    getUserDoorIds: (...args: unknown[]) => getUserDoorIdsMock(...args),
+  };
+});
+
 import type { AccessRequest, Building, DuplicateGrant, Seat, Stake, Ward } from '@kindoo/shared';
 import {
   provisionAddOrChange,
@@ -163,6 +182,13 @@ beforeEach(() => {
   lookupUserByEmailMock.mockReset();
   revokeUserMock.mockReset();
   revokeUserFromAccessScheduleMock.mockReset();
+  buildRuleDoorMapMock.mockReset();
+  getUserDoorIdsMock.mockReset();
+  // Default: derivation succeeds but the user claims no rules — gives
+  // existing tests (which pass seat:null) the same `[]` baseline they
+  // had pre-derivation.
+  buildRuleDoorMapMock.mockResolvedValue(new Map());
+  getUserDoorIdsMock.mockResolvedValue(new Set<number>());
 });
 afterEach(() => {
   vi.resetModules();
@@ -581,6 +607,225 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
     expect(result.action).toBe('updated');
     expect(result.kindoo_uid).toBe(existing.userId);
     expect(result.note).toBe('No Kindoo changes needed for Tad Smith.');
+  });
+});
+
+describe('provisionAddOrChange — Kindoo-derived baseline (door grants)', () => {
+  // The existing-user branch reads each user's per-door grants and
+  // strict-subset-derives the set of AccessRules they EFFECTIVELY have
+  // — covers both direct grants from Church Access Automation AND
+  // rule-derived grants. Then unions with the request's buildings to
+  // compute targetRIDs. SBA's recorded `seat.building_names` is no
+  // longer the source of truth; Kindoo's door grants are.
+
+  it('auto user with matching Kindoo state: derivedBuildings == seat.building_names, target == derived ∪ request', async () => {
+    // Seat says [Cordera, Pine Creek]; Kindoo's door grants also imply
+    // [Cordera, Pine Creek] (because the user has every door in both
+    // rules). Request adds nothing new (already in baseline) → no
+    // saveAccessRule diff.
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Bishop'],
+      reason: '',
+      building_names: ['Cordera Building', 'Pine Creek Building'],
+      duplicate_grants: [],
+    } as unknown as Seat;
+    const existing = existingUser({
+      description: 'Colorado Springs North Stake (Bishop)',
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+
+    buildRuleDoorMapMock.mockResolvedValue(
+      new Map<number, Set<number>>([
+        [6248, new Set([1, 2])],
+        [6249, new Set([10, 11])],
+      ]),
+    );
+    getUserDoorIdsMock.mockResolvedValue(new Set<number>([1, 2, 10, 11]));
+
+    await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'stake',
+        building_names: ['Cordera Building'], // already in baseline
+      }),
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Baseline already covers Cordera + Pine Creek; request adds
+    // nothing new; existing rules match → no saveAccessRule.
+    expect(saveAccessRuleMock).not.toHaveBeenCalled();
+  });
+
+  it('auto user where Church revoked Pine Creek: target uses Kindoo-derived [Cordera] ∪ request, NOT seat [Cordera, Pine Creek]', async () => {
+    // The headline behavior change. SBA seat still records both
+    // buildings, but Kindoo's door grants only cover Cordera now —
+    // Church silently revoked Pine Creek. Old (seat-derived) code
+    // would re-grant Pine Creek; new code respects the revoke.
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Bishop'],
+      reason: '',
+      // SBA THINKS user still has both.
+      building_names: ['Cordera Building', 'Pine Creek Building'],
+      duplicate_grants: [],
+    } as unknown as Seat;
+    // Kindoo currently only has the Cordera rule (Church revoked Pine Creek).
+    const existing = existingUser({
+      description: 'Colorado Springs North Stake (Bishop)',
+      accessSchedules: [{ ruleId: 6248 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+
+    buildRuleDoorMapMock.mockResolvedValue(
+      new Map<number, Set<number>>([
+        [6248, new Set([1, 2])],
+        [6249, new Set([10, 11])],
+      ]),
+    );
+    // User holds Cordera doors only.
+    getUserDoorIdsMock.mockResolvedValue(new Set<number>([1, 2]));
+
+    // Request adds a third building (e.g. operator manually granting).
+    const buildings: Building[] = [
+      ...BUILDINGS.filter((b) => b.building_name !== 'Monument Building'),
+      {
+        building_id: 'monument',
+        building_name: 'Monument Building',
+        kindoo_rule: { rule_id: 6251, rule_name: 'Monument Doors' },
+      } as unknown as Building,
+    ];
+
+    await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'stake',
+        building_names: ['Monument Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Critical: NOT [6248, 6249, 6251] (which the old seat-derived
+    // baseline would have produced). The Pine Creek rule (6249) must
+    // be absent — Church already revoked it.
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(
+      SESSION,
+      existing.userId,
+      [6248, 6251],
+      undefined,
+    );
+  });
+
+  it('manual user with rule-derived AccessSchedules: derivation matches seat → no false drift', async () => {
+    // Manual users get access via AccessSchedules (no direct door
+    // grants). The per-door endpoint surfaces every door the rules
+    // cover; the derivation chain reconstructs the rule set. Result
+    // should match the seat's recorded buildings.
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      scope: 'stake',
+      type: 'manual',
+      callings: [],
+      reason: 'Sunday School Teacher',
+      building_names: ['Cordera Building', 'Pine Creek Building'],
+      duplicate_grants: [],
+    } as unknown as Seat;
+    const existing = existingUser({
+      description: 'Colorado Springs North Stake (Sunday School Teacher)',
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+
+    buildRuleDoorMapMock.mockResolvedValue(
+      new Map<number, Set<number>>([
+        [6248, new Set([1, 2])],
+        [6249, new Set([10, 11])],
+      ]),
+    );
+    // The per-door endpoint includes every door covered by the rules
+    // the user holds.
+    getUserDoorIdsMock.mockResolvedValue(new Set<number>([1, 2, 10, 11]));
+
+    await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'stake',
+        building_names: ['Cordera Building', 'Pine Creek Building'], // matches existing
+      }),
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Derived [Cordera, Pine Creek] ∪ request [Cordera, Pine Creek] =
+    // [Cordera, Pine Creek]. Existing rules match → no saveAccessRule.
+    expect(saveAccessRuleMock).not.toHaveBeenCalled();
+  });
+
+  it('derivation failure: falls back to currentSeatBuildings + logs a warn; provision still completes', async () => {
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      scope: 'stake',
+      type: 'manual',
+      callings: [],
+      reason: 'Sunday School Teacher',
+      building_names: ['Cordera Building'],
+      duplicate_grants: [],
+    } as unknown as Seat;
+    const existing = existingUser({
+      description: 'Colorado Springs North Stake (Sunday School Teacher)',
+      accessSchedules: [{ ruleId: 6248 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    // The per-door fetch blows up — extension must NOT block; it
+    // should fall back to the SBA seat's recorded buildings.
+    buildRuleDoorMapMock.mockRejectedValue(new Error('Kindoo down'));
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const result = await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'stake',
+        building_names: ['Pine Creek Building'], // add Pine Creek
+      }),
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Fallback baseline = seat = [Cordera] → target = [Cordera, Pine Creek].
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(
+      SESSION,
+      existing.userId,
+      [6248, 6249],
+      undefined,
+    );
+    expect(result.action).toBe('updated');
+    expect(warnSpy).toHaveBeenCalled();
+    const warnMsg = String(warnSpy.mock.calls[0]?.[0] ?? '');
+    expect(warnMsg).toContain('[sba-ext]');
+    expect(warnMsg).toContain('door-grant derivation failed');
+    warnSpy.mockRestore();
   });
 });
 

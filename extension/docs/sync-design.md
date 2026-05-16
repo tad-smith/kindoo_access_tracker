@@ -273,6 +273,8 @@ Most payload fields come straight off the `Discrepancy` row's `kindoo` block (`K
 
 The auto-type building source matters because the bulk listing's AccessSchedules excludes Church Access Automation direct grants. `derivedBuildings` is the truth for auto users (covers BOTH grant kinds via the door-set strict-subset chain); only the auto branch uses it.
 
+The same `buildingsFromDoors.ts` chain backs the v2.2 Provision orchestrator's existing-user baseline (`provisionAddOrChange` in `extension/src/content/kindoo/provision.ts`). Provision used to read the SBA seat's `building_names` as the baseline and union with the request; that was correct-by-MERGE-idempotency in the happy path but re-granted buildings Church had revoked behind SBA's back. Reading the actual door grants makes the baseline correct-by-construction for both Sync and Provision.
+
 ### Files
 
 New:

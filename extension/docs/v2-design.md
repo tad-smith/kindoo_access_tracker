@@ -226,8 +226,13 @@ Result:
 
 #### Compute step (ADD path only)
 
-For ADD requests: compute the **post-completion** seat state by merging the request into the current seat:
-- `targetBuildings = unique(seat.building_names ∪ seat.duplicate_grants[].building_names ∪ request.building_names)`. Aggregate `seat.building_names` ∪ `duplicate_grants[].building_names` to capture the user's total current scope coverage across all SBA grants. Top-level `seat.building_names` is primary-only by design (per `firebase-schema.md`).
+For ADD requests: compute the **post-completion** seat state by merging the request into the current seat.
+
+**Baseline source:** For the EXISTING-USER branch the baseline buildings are derived from Kindoo's actual per-door grants — NOT the SBA seat's recorded `building_names`. The strict-subset chain in `extension/src/content/kindoo/sync/buildingsFromDoors.ts` (the same one Sync uses) reads per-rule door sets via `KindooGetEnvRuleWithEntryPointsFormatted`, reads the user's per-door grants via `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints`, and matches each rule whose door set is a strict subset of the user's. This catches direct door grants from Church Access Automation that never show up in the bulk listing's `AccessSchedules` — without it, an auto user whose Church grant was silently revoked would have that building re-granted on the next provision.
+
+- `targetBuildings = unique(derivedBuildings ∪ request.building_names)` (existing user).
+- `targetBuildings = unique(seat.building_names ∪ seat.duplicate_grants[].building_names ∪ request.building_names)` (new user — no Kindoo state to derive from).
+- On derivation failure (network blip, malformed response) the existing-user path falls back to `seat.building_names ∪ duplicate_grants[].building_names` and logs a `[sba-ext]` warn. Provision still completes — a flaky read should not block the operator's flow.
 - Resulting `callings` / `duplicate_grants` per SBA's existing merge logic (extension mirrors what `markRequestComplete` will do server-side).
 
 For REMOVE requests: compute the **post-removal** seat state by mirroring the `removeSeatOnRequestComplete` trigger:
