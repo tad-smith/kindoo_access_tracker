@@ -11,6 +11,7 @@
 import {
   deleteDoc,
   getDoc,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -23,6 +24,7 @@ import type {
   Building,
   ImportDay,
   KindooManager,
+  KindooSite,
   Stake,
   Ward,
   WardCallingTemplate,
@@ -35,6 +37,8 @@ import {
   buildingsCol,
   kindooManagerRef,
   kindooManagersCol,
+  kindooSiteRef,
+  kindooSitesCol,
   stakeCallingTemplateRef,
   stakeCallingTemplatesCol,
   stakeRef,
@@ -79,6 +83,11 @@ export function useStakeCallingTemplates() {
   return useFirestoreCollection<StakeCallingTemplate>(q);
 }
 
+export function useKindooSites() {
+  const q = useMemo(() => kindooSitesCol(db, STAKE_ID), []);
+  return useFirestoreCollection<KindooSite>(q);
+}
+
 // ---- Helper ---------------------------------------------------------
 
 function actorOf(principal: Principal): { email: string; canonical: string } {
@@ -95,6 +104,13 @@ export interface WardInput {
   ward_name: string;
   building_name: string;
   seat_cap: number;
+  /**
+   * Kindoo Sites — `null` (or absent) means the home site; a string
+   * value points at a doc id under `stakes/{stakeId}/kindooSites/`.
+   * Always pass an explicit value (including `null`) so that toggling
+   * a ward back to home overwrites a prior foreign-site assignment.
+   */
+  kindoo_site_id?: string | null;
 }
 
 export function useUpsertWardMutation() {
@@ -112,6 +128,7 @@ export function useUpsertWardMutation() {
           ward_name: input.ward_name.trim(),
           building_name: input.building_name,
           seat_cap: input.seat_cap,
+          kindoo_site_id: input.kindoo_site_id ?? null,
           created_at: serverTimestamp(),
           last_modified_at: serverTimestamp(),
           lastActor: actor,
@@ -146,6 +163,13 @@ export function useDeleteWardMutation() {
 export interface BuildingInput {
   building_name: string;
   address: string;
+  /**
+   * Kindoo Sites — `null` (or absent) means the home site; a string
+   * value points at a doc id under `stakes/{stakeId}/kindooSites/`.
+   * Always pass an explicit value (including `null`) so that toggling
+   * a building back to home overwrites a prior foreign-site assignment.
+   */
+  kindoo_site_id?: string | null;
 }
 
 export function useUpsertBuildingMutation() {
@@ -162,6 +186,7 @@ export function useUpsertBuildingMutation() {
           building_id: slug,
           building_name: input.building_name.trim(),
           address: input.address.trim(),
+          kindoo_site_id: input.kindoo_site_id ?? null,
           created_at: serverTimestamp(),
           last_modified_at: serverTimestamp(),
           lastActor: actor,
@@ -691,4 +716,128 @@ export function useUpdateStakeConfigMutation() {
       void qc.invalidateQueries();
     },
   });
+}
+
+// ---- Kindoo Sites mutations -----------------------------------------
+//
+// Foreign Kindoo sites this stake's managers write to. Add / edit / delete.
+// The home site is implicit on the parent stake doc — no `KindooSite` doc
+// represents it; the UI surfaces "Home" as the default dropdown option.
+//
+// Slug strategy: derive from `display_name` via `buildingSlug()` at
+// create time and pin the slug for the doc's life. Editing the
+// display_name does NOT re-slug — keeping the doc id stable preserves
+// the foreign-key string stored on wards / buildings. Rejects empty
+// slugs (sanitised display_name with no usable characters).
+
+// `kindoo_eid` is intentionally NOT a manager-supplied field — the
+// extension discovers it from `localStorage.state.sites.ids[0]` on a
+// session logged into the site and writes it on first use (Phase 3).
+// The merge-write below leaves any existing `kindoo_eid` untouched.
+export interface KindooSiteInput {
+  display_name: string;
+  kindoo_expected_site_name: string;
+}
+
+export function useUpsertKindooSiteMutation() {
+  const principal = usePrincipal();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: KindooSiteInput & { id?: string }) => {
+      const actor = actorOf(principal);
+      const displayName = input.display_name.trim();
+      const expectedSiteName = input.kindoo_expected_site_name.trim();
+      const slug = input.id ?? buildingSlug(displayName);
+      if (!slug) throw new Error('Display name is required.');
+      const ref = kindooSiteRef(db, STAKE_ID, slug);
+      const body = {
+        id: slug,
+        display_name: displayName,
+        kindoo_expected_site_name: expectedSiteName,
+        created_at: serverTimestamp(),
+        last_modified_at: serverTimestamp(),
+        lastActor: actor,
+      } as unknown as KindooSite;
+      // Both branches wrap the read + write in one transaction.
+      // Create path: pre-check guards against two concurrent creates
+      // with the same slug both passing and clobbering. Edit path:
+      // pre-check guards against `merge: true` resurrecting a doc
+      // another tab just deleted (which would re-stamp `created_at`
+      // and `lastActor` on a tombstoned site).
+      if (input.id) {
+        await runTransaction(db, async (tx) => {
+          const existing = await tx.get(ref);
+          if (!existing.exists()) {
+            throw new Error('Kindoo site no longer exists.');
+          }
+          tx.set(ref, body, { merge: true });
+        });
+      } else {
+        await runTransaction(db, async (tx) => {
+          const existing = await tx.get(ref);
+          if (existing.exists()) {
+            throw new Error('A Kindoo site with that display name already exists.');
+          }
+          tx.set(ref, body, { merge: true });
+        });
+      }
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+// Block deletes when any ward or building still references this site.
+// Wards and buildings carry `kindoo_site_id: string | null` — orphaning
+// either side silently severs the foreign-key string without a server-
+// rules check (rules don't iterate sibling collections; field-level FK
+// is the UI's concern per firebase-schema.md §4.11). Caller passes the
+// live wards + buildings snapshots so the guard fires against the exact
+// rows the operator just saw — no extra Firestore reads.
+export interface DeleteKindooSiteInput {
+  kindooSiteId: string;
+  wards: ReadonlyArray<Ward>;
+  buildings: ReadonlyArray<Building>;
+}
+export function useDeleteKindooSiteMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: DeleteKindooSiteInput) => {
+      const wardRefs = input.wards.filter((w) => w.kindoo_site_id === input.kindooSiteId);
+      const buildingRefs = input.buildings.filter((b) => b.kindoo_site_id === input.kindooSiteId);
+      const blocker = kindooSiteDeleteBlocker(input.kindooSiteId, wardRefs, buildingRefs);
+      if (blocker) throw new Error(blocker);
+      await deleteDoc(kindooSiteRef(db, STAKE_ID, input.kindooSiteId));
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+/**
+ * Pure guard helper — symmetric with `buildingDeleteBlocker`. Returns
+ * null when no ward or building still points at the site; otherwise a
+ * human-readable message listing the blocking refs grouped by kind.
+ */
+export function kindooSiteDeleteBlocker(
+  kindooSiteId: string,
+  referencingWards: ReadonlyArray<Ward>,
+  referencingBuildings: ReadonlyArray<Building>,
+): string | null {
+  if (referencingWards.length === 0 && referencingBuildings.length === 0) return null;
+  const lines: string[] = [
+    `Cannot delete Kindoo site "${kindooSiteId}". The following wards and buildings still reference this site:`,
+  ];
+  if (referencingWards.length > 0) {
+    const labels = referencingWards.map((w) => `${w.ward_name} (${w.ward_code})`);
+    lines.push(`Wards: ${labels.join(', ')}`);
+  }
+  if (referencingBuildings.length > 0) {
+    const labels = referencingBuildings.map((b) => b.building_name);
+    lines.push(`Buildings: ${labels.join(', ')}`);
+  }
+  lines.push('Unassign these wards / buildings from this site before deleting.');
+  return lines.join(' ');
 }

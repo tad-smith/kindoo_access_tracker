@@ -23,14 +23,30 @@ export const wardSchema = z.object({
     .number({ message: 'Seat cap must be a number.' })
     .int('Seat cap must be an integer.')
     .min(0, 'Seat cap must be 0 or greater.'),
+  // Home site = `null`; a foreign-site doc id = string. Always present
+  // on the form so toggling back to Home overwrites a stale value.
+  kindoo_site_id: z.string().nullable(),
 });
 export type WardForm = z.infer<typeof wardSchema>;
 
 export const buildingSchema = z.object({
   building_name: z.string().trim().min(1, 'Building name is required.'),
   address: z.string().trim(),
+  // Same convention as `wardSchema.kindoo_site_id`.
+  kindoo_site_id: z.string().nullable(),
 });
 export type BuildingForm = z.infer<typeof buildingSchema>;
+
+// Kindoo Sites — foreign Kindoo environments this stake's managers can
+// write to. Home site is implicit on the parent stake doc; this form
+// only ever creates / edits foreign-site rows. `kindoo_eid` is NOT a
+// manager-supplied field — the extension discovers and writes it on
+// first use (Phase 3); the Configuration UI doesn't expose it.
+export const kindooSiteFormSchema = z.object({
+  display_name: z.string().trim().min(1, 'Display name is required.'),
+  kindoo_expected_site_name: z.string().trim().min(1, 'Kindoo site name is required.'),
+});
+export type KindooSiteForm = z.infer<typeof kindooSiteFormSchema>;
 
 // `active` is no longer a form input — the add-manager form always
 // creates managers with `active: true`. Toggling existing managers

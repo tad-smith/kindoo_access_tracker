@@ -49,8 +49,9 @@ The authoritative schema reference is [`firebase-schema.md`](firebase-schema.md)
 All under `stakes/{stakeId}/`. Schema authoritative in `firebase-schema.md` §4.
 
 - **`stakes/{stakeId}` (parent doc)** — collapses what was the legacy `Config` tab: stake_name, callings_sheet_id, bootstrap_admin_email, setup_complete, stake_seat_cap, expiry_hour / import_day / import_hour, timezone, notifications_enabled, last_over_caps_json, last_import_at, last_expiry_at, etc.
-- **`stakes/{stakeId}/wards/{wardCode}`** — 2-letter PK matching the LCR tab name and the `scope` value used elsewhere.
-- **`stakes/{stakeId}/buildings/{buildingId}`** — slug-keyed (`Cordera Building` → `cordera-building`).
+- **`stakes/{stakeId}/wards/{wardCode}`** — 2-letter PK matching the LCR tab name and the `scope` value used elsewhere. Carries an optional `kindoo_site_id: string | null` (Kindoo Sites — §15); `null` / absent means the home site.
+- **`stakes/{stakeId}/buildings/{buildingId}`** — slug-keyed (`Cordera Building` → `cordera-building`). Also carries `kindoo_site_id: string | null` with the same semantics.
+- **`stakes/{stakeId}/kindooSites/{kindooSiteId}`** — foreign-Kindoo-site directory (§15). Manager-chosen slug as doc ID. Empty when the stake operates only its home Kindoo site.
 - **`stakes/{stakeId}/kindooManagers/{canonicalEmail}`** — the manager allow-list. Doc existence + `active=true` defines the manager set.
 - **`stakes/{stakeId}/access/{canonicalEmail}`** — per-user role-grant doc. Splits `importer_callings` (Cloud-Function-managed; Admin SDK only) and `manual_grants` (manager-managed, via the manager Access page). Composite-key uniqueness on (canonical_email, scope, calling) is *structurally absent* — the two maps cannot collide. F7. Doc-level `sort_order` (Phase 10.3) denormalizes the lowest `sheet_order` across `importer_callings`.
 - **`stakes/{stakeId}/seats/{canonicalEmail}`** — one doc per (stake, member). Multi-calling people get `callings: [...]`; the rare cross-scope collision lands the secondary grant in `duplicate_grants[]` and is informational, not counted in utilization. F5, F6. `sort_order` denormalizes the MIN of `sheet_order` across `callings[]`.
@@ -324,3 +325,32 @@ The Resend `mail.stakebuildingaccess.org` subdomain is verified and in active us
 ## 14. Build history
 
 The Apps Script implementation shipped in 11 chunks (chunks 1-11 in `docs/changelog/chunk-N-*.md`). The Firebase migration shipped in phases 1-11 plus four interleaved sub-phases (10.2 / 10.3 / 10.4 / 10.5); see `docs/changelog/phase-N-*.md`. Phase 11 cutover (2026-05-03) closed Phase A. Phase 12 (multi-stake) is deferred.
+
+## 15. Kindoo Sites (multi-site Kindoo management)
+
+The operator manages a single SBA stake (`csnorth`) but is a Kindoo Manager on multiple Kindoo sites — two wards in csnorth live in buildings whose access doors are physically governed by a different stake's Kindoo environment than the SBA stake's own home site. "Kindoo Sites" tracks those N Kindoo environments the operator's managers can write to (home + 0..N foreign), so the SPA, the companion Chrome extension, and the weekly sync can route Kindoo-side operations to the correct environment without misprovisioning.
+
+This is **not** multi-stake on the SBA side. The SBA stake remains a single SBA stake; only the Kindoo-side cardinality changes. The existing `kindooManagers` allow-list governs all Kindoo writes regardless of which Kindoo site they target — Kindoo Sites does NOT introduce a new role or principal shape. Phase B (multi-stake) is unaffected by this work.
+
+### Data model
+
+- **Home site is implicit.** It lives on the parent stake doc (`stake.kindoo_config.site_id` / `kindoo_config.site_name`, plus the optional `kindoo_expected_site_name` override). There is no `KindooSite` document representing the home site.
+- **Foreign sites live as documents** under `stakes/{stakeId}/kindooSites/{kindooSiteId}`. The doc ID is a manager-chosen slug. See [`firebase-schema.md`](firebase-schema.md) §4.11. The Kindoo environment ID (`kindoo_eid`) is NOT a manager-supplied field — the extension discovers it from `localStorage.state.sites.ids[0]` on a session logged into the site and writes it on first use (Phase 3). The Configuration UI captures only the display name and the Kindoo site-name string.
+- **Each `Ward` and `Building`** carries an optional `kindoo_site_id: string | null`. `null` (or field absent) means the home site; a string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. Wards and buildings carry the field independently — a foreign-site building hosts foreign-site wards, and the building's value is the load-bearing one for door access, while the ward's value flags Kindoo-side roster placement.
+
+### Phase plan
+
+Kindoo Sites lands in four phases. **Phase 1 ships the data model + the Configuration UI only — no behavioural changes elsewhere.** Defaults treat everything as home site (`kindoo_site_id: null` on every existing ward and building). No backfill is required.
+
+- **Phase 1 (data model + Configuration UI).** This phase. Adds the `kindooSites` collection, the `kindoo_site_id` field on `wards` / `buildings`, security rules, and a Configure-tab UI for managers to add / edit foreign sites and assign them to wards / buildings.
+- **Phase 2 (form filtering).** Request forms (add / edit / remove) filter their building dropdowns to the buildings whose `kindoo_site_id` matches the ward's `kindoo_site_id`. Stake-scope auto seats are intentionally restricted to home-site buildings only — a stake-scope auto seat is for stake-wide presidency / clerks whose roles do not extend into foreign-Kindoo-governed buildings.
+- **Phase 3 (extension orchestrator enforcement).** The companion Chrome extension's Provision & Complete flow validates that the active Kindoo session's EID matches the request's ward's `kindoo_site_id` (resolved through the building) before writing to Kindoo. On mismatch the extension refuses to provision with an explicit error directing the manager to switch Kindoo sites first; no silent fallback.
+- **Phase 4 (sync filtering).** The weekly Kindoo↔SBA sync run scopes its diff to one Kindoo site at a time, so a session pointed at the home site does not flag foreign-site grants as drift (and vice versa).
+
+### Operator decisions locked in (2026-05-16)
+
+1. **Schema naming: "Kindoo sites".** Collection `kindooSites`, field `kindoo_site_id`. Picks the Kindoo-side noun over the stake-side noun precisely because this is not multi-stake.
+2. **Stake-scope auto seats grant access to home-site buildings only.** Foreign-site buildings are excluded from the stake-wide auto-seat pool. Cross-Kindoo-site presidency-wide door grants are not in scope; an explicit per-foreign-site manual grant covers the rare case.
+3. **Extension refuses provision on EID mismatch with an explicit error** when the active Kindoo session's EID does not match the request's target site. Phase 3 work; no silent fallback.
+4. **Small scale; no pagination.** Operator expects 1-2 foreign sites total. Configuration UI lists them inline alongside wards and buildings.
+5. **Authority gating unchanged.** The csnorth `kindooManagers` allow-list governs all Kindoo writes regardless of which Kindoo site they target. Kindoo Sites does NOT introduce a new role.

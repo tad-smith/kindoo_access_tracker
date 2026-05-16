@@ -36,6 +36,7 @@ import type {
   AuditLog,
   Building,
   KindooManager,
+  KindooSite,
   PlatformAuditLog,
   PlatformSuperadmin,
   Seat,
@@ -156,6 +157,22 @@ export function kindooManagersCol(
 ): CollectionReference<KindooManager> {
   return collection(db, 'stakes', stakeId, 'kindooManagers').withConverter(
     passthroughConverter<KindooManager>(),
+  );
+}
+
+export function kindooSiteRef(
+  db: Firestore,
+  stakeId: string,
+  kindooSiteId: string,
+): DocumentReference<KindooSite> {
+  return doc(db, 'stakes', stakeId, 'kindooSites', kindooSiteId).withConverter(
+    passthroughConverter<KindooSite>(),
+  );
+}
+
+export function kindooSitesCol(db: Firestore, stakeId: string): CollectionReference<KindooSite> {
+  return collection(db, 'stakes', stakeId, 'kindooSites').withConverter(
+    passthroughConverter<KindooSite>(),
   );
 }
 

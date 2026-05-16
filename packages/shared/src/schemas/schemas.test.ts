@@ -20,6 +20,7 @@ import {
   buildingSchema,
   callingTemplateSchema,
   kindooManagerSchema,
+  kindooSiteSchema,
   manualGrantSchema,
   platformAuditLogSchema,
   platformSuperadminSchema,
@@ -229,6 +230,36 @@ describe('wardSchema', () => {
     };
     expect(wardSchema.parse(seed)).toEqual(seed);
   });
+
+  // Kindoo Sites — `null` (or absent) means home site; a string
+  // points at a doc id under `stakes/{stakeId}/kindooSites/`.
+  it('parses with kindoo_site_id explicitly null', () => {
+    const seed = {
+      ward_code: '01',
+      ward_name: '1st Ward',
+      building_name: 'Cordera Building',
+      seat_cap: 30,
+      kindoo_site_id: null,
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(wardSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses with kindoo_site_id set to a foreign-site doc id', () => {
+    const seed = {
+      ward_code: '07',
+      ward_name: '7th Ward',
+      building_name: 'Foothills Building',
+      seat_cap: 30,
+      kindoo_site_id: 'east-stake',
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(wardSchema.parse(seed)).toEqual(seed);
+  });
 });
 
 describe('buildingSchema', () => {
@@ -242,6 +273,89 @@ describe('buildingSchema', () => {
       lastActor: ACTOR,
     };
     expect(buildingSchema.parse(seed)).toEqual(seed);
+  });
+
+  // Kindoo Sites — same shape as wards.
+  it('parses with kindoo_site_id set to a foreign-site doc id', () => {
+    const seed = {
+      building_id: 'foothills-building',
+      building_name: 'Foothills Building',
+      address: '4321 Foothills Pkwy',
+      kindoo_site_id: 'east-stake',
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(buildingSchema.parse(seed)).toEqual(seed);
+  });
+});
+
+describe('kindooSiteSchema', () => {
+  // `kindoo_eid` is extension-populated; the manager UI creates the
+  // doc without setting it. Round-trip cleanly with the field set
+  // (forward-compat for Phase 3 writes from the extension) and with
+  // the field omitted entirely (manager-created shape).
+  it('parses a representative foreign-site entry with kindoo_eid set', () => {
+    const seed = {
+      id: 'east-stake',
+      display_name: 'East Stake (Foothills Building)',
+      kindoo_expected_site_name: 'East Stake',
+      kindoo_eid: 4321,
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(kindooSiteSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a foreign-site entry with kindoo_eid omitted (manager-created shape)', () => {
+    const seed = {
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake',
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(kindooSiteSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a foreign-site entry with kindoo_eid explicitly null', () => {
+    const seed = {
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake',
+      kindoo_eid: null,
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(kindooSiteSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('rejects a non-integer kindoo_eid', () => {
+    const bad = {
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake',
+      kindoo_eid: '4321',
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(() => kindooSiteSchema.parse(bad)).toThrow();
+  });
+
+  it('rejects a missing display_name', () => {
+    const bad = {
+      id: 'east-stake',
+      kindoo_expected_site_name: 'East Stake',
+      kindoo_eid: 4321,
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(() => kindooSiteSchema.parse(bad)).toThrow();
   });
 });
 

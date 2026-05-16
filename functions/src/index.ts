@@ -12,6 +12,7 @@ export { notifyOnOverCap } from './triggers/notifyOnOverCap.js';
 export {
   auditAccessWrites,
   auditBuildingWrites,
+  auditKindooSiteWrites,
   auditManagerWrites,
   auditRequestWrites,
   auditSeatWrites,

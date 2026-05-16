@@ -188,6 +188,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   ward_name: string;
   building_name: string;   // FK to buildings (by building_name natural key)
   seat_cap: number;
+  kindoo_site_id?: string | null;  // §4.11 — `null` / absent = home site
   created_at: Timestamp;
   last_modified_at: Timestamp;
   lastActor: { email: string; canonical: string };
@@ -196,6 +197,8 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 
 **Written by:** Bootstrap wizard; manager via Configuration page.
 **Read by:** Roster pages (utilization), importer (scope resolution).
+
+**`kindoo_site_id`** identifies which Kindoo site (per §4.11) governs this ward. `null` or absent means the home site (the SBA stake's own Kindoo environment, captured on the parent stake doc). A string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. Phase 1 of the Kindoo Sites feature stores the value only; downstream phases (request-form filters, extension orchestrator enforcement, sync filtering) consume it.
 
 ### 4.3 `stakes/{stakeId}/buildings/{buildingId}`
 
@@ -208,6 +211,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   building_id: string;     // = doc.id (slug)
   building_name: string;   // display form
   address: string;
+  kindoo_site_id?: string | null;  // §4.11 — `null` / absent = home site
   created_at: Timestamp;
   last_modified_at: Timestamp;
   lastActor: { email: string; canonical: string };
@@ -216,6 +220,8 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 
 **Written by:** Bootstrap wizard; manager via Configuration page.
 **Read by:** Wards (FK), seat building_names defaults.
+
+**`kindoo_site_id`** identifies the Kindoo site that physically governs this building. Same semantics as `wards.kindoo_site_id`: `null` / absent means home site; a string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. A foreign-site building is one whose physical access doors are managed by a different stake's Kindoo environment than the SBA stake's home site, even though the building hosts SBA-stake wards.
 
 ### 4.4 `stakes/{stakeId}/kindooManagers/{canonicalEmail}`
 
@@ -474,6 +480,41 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
 - `member_canonical` is set whenever the underlying doc has a `member_canonical` field; absent for system actions (`import_start`, `import_end`, `over_cap_warning`, `setup_complete`, `email_send_failed`).
 - Firestore TTL policy on the `ttl` field deletes rows ~24h after their `ttl` timestamp passes.
 
+### 4.11 `stakes/{stakeId}/kindooSites/{kindooSiteId}`
+
+Multi-Kindoo-site management for a single SBA stake. A doc here represents a **foreign** Kindoo site this stake's kindooManagers can write to — i.e. a Kindoo environment that is not the SBA stake's own home site. The home site lives on the parent stake doc; there is no `KindooSite` document for it.
+
+**Doc ID:** manager-chosen slug (e.g. `east-stake`, `foreign-1`).
+
+**Fields:**
+
+```typescript
+{
+  id: string;                          // = doc.id
+  display_name: string;                // human-readable label (e.g. 'East Stake (Foothills Building)')
+  kindoo_expected_site_name: string;   // matches the site-name string Kindoo's admin UI surfaces;
+                                       //   the extension's active-session validation compares this
+                                       //   against the live Kindoo session's site name
+  kindoo_eid?: number | null;          // Kindoo environment ID — the extension matches
+                                       //   `localStorage.state.sites.ids[0]` against this.
+                                       //   Populated by the extension at first use on a
+                                       //   session logged into the site; the manager UI does
+                                       //   not expose this field.
+  created_at: Timestamp;
+  last_modified_at: Timestamp;
+  lastActor: { email: string; canonical: string };
+}
+```
+
+**Written by:** Manager via the Configuration page (Phase 1 ships data model + Configuration UI only; no behavioural consumers yet).
+**Read by:** Configuration page (list + edit); downstream phases — Phase 2 request-form filters, Phase 3 extension orchestrator's active-session validation, Phase 4 sync filtering.
+
+**Invariants:**
+- The home site has NO `KindooSite` document. Its identity lives on the stake doc (`stake.kindoo_config.site_id` / `kindoo_config.site_name`, plus the optional `kindoo_expected_site_name` override). A `null` / absent `kindoo_site_id` on a ward or building means home.
+- Authority gating uses the existing per-stake `kindooManagers` allow-list. The SBA stake remains a single SBA stake; foreign-site management does NOT create a new role or multi-stake principal.
+- Field-level referential integrity (a ward / building's `kindoo_site_id` actually existing here) is the UI's concern; rules gate WHO can write, not field-level FK checks.
+- Writes to this collection are audited by `auditKindooSiteWrites` (entity_type=`stake`, entity_id=`kindooSite:<slug>`) and reconciled by the nightly `reconcileAuditGaps` job.
+
 ## 5. Indexes
 
 ### 5.1 Firestore composite indexes
@@ -504,7 +545,7 @@ Combinations beyond these (e.g. `action AND entity_type AND date range`) Firesto
 
 **`seats`:** single-field on `scope` covers most queries. No composite needed at this scale.
 
-**`access`, `kindooManagers`, `wards`, `buildings`, `*CallingTemplates`:** small enough to load fully and filter client-side. No composite indexes.
+**`access`, `kindooManagers`, `wards`, `buildings`, `kindooSites`, `*CallingTemplates`:** small enough to load fully and filter client-side. No composite indexes.
 
 ### 5.2 Firestore TTL policy
 
@@ -626,6 +667,21 @@ service cloud.firestore {
         allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
         allow write: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
           && lastActorMatchesAuth(request.resource.data);
+      }
+
+      // ----- KindooSites (§4.11) -----
+      // Manager-only writes; any stake member can read. Same gating
+      // pattern as wardCallingTemplates / kindooManagers — authority
+      // over which Kindoo environments this stake can target is a
+      // stake-level configuration concern. Existing csnorth
+      // `kindooManagers` allow-list governs all Kindoo writes
+      // regardless of which Kindoo site they target; this rule does
+      // not introduce a new role.
+      match /kindooSites/{kindooSiteId} {
+        allow read: if isAnyMember(stakeId);
+        allow create, update: if isManager(stakeId)
+          && lastActorMatchesAuth(request.resource.data);
+        allow delete: if isManager(stakeId);
       }
 
       // ----- KindooManagers -----
