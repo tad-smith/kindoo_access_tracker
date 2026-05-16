@@ -124,10 +124,9 @@ export function useUpsertWardMutation() {
       const ref = wardRef(db, STAKE_ID, code);
       // Stamp `created_at` only on the create path. `merge: true` would
       // otherwise re-stamp it on every edit, silently losing the
-      // original creation timestamp. The transaction also guards
-      // against `merge: true` resurrecting a doc another tab just
-      // deleted (which would re-stamp `created_at` + `lastActor` on a
-      // tombstoned ward). Same shape as `useUpsertKindooSiteMutation`.
+      // original creation timestamp. `runTransaction` makes the
+      // existence read + write atomic, so the create/edit branch
+      // decision can't race itself within this transaction.
       await runTransaction(db, async (tx) => {
         const existing = await tx.get(ref);
         const editBody = {
@@ -200,10 +199,9 @@ export function useUpsertBuildingMutation() {
       const ref = buildingRef(db, STAKE_ID, slug);
       // Stamp `created_at` only on the create path. `merge: true` would
       // otherwise re-stamp it on every edit, silently losing the
-      // original creation timestamp. The transaction also guards
-      // against `merge: true` resurrecting a doc another tab just
-      // deleted (which would re-stamp `created_at` + `lastActor` on a
-      // tombstoned building). Same shape as `useUpsertKindooSiteMutation`.
+      // original creation timestamp. `runTransaction` makes the
+      // existence read + write atomic, so the create/edit branch
+      // decision can't race itself within this transaction.
       await runTransaction(db, async (tx) => {
         const existing = await tx.get(ref);
         const editBody = {
