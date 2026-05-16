@@ -11,6 +11,7 @@
 import {
   deleteDoc,
   getDoc,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -749,27 +750,29 @@ export function useUpsertKindooSiteMutation() {
       const slug = input.id ?? buildingSlug(displayName);
       if (!slug) throw new Error('Display name is required.');
       const ref = kindooSiteRef(db, STAKE_ID, slug);
-      // For creates, refuse silent collisions on the slug — surfaces
-      // "Already exists" to the user instead of merging into a
-      // different site's row.
-      if (!input.id) {
-        const existing = await getDoc(ref);
-        if (existing.exists()) {
-          throw new Error('A Kindoo site with that display name already exists.');
-        }
+      const body = {
+        id: slug,
+        display_name: displayName,
+        kindoo_expected_site_name: expectedSiteName,
+        created_at: serverTimestamp(),
+        last_modified_at: serverTimestamp(),
+        lastActor: actor,
+      } as unknown as KindooSite;
+      // Create path: wrap the existence check + write in one transaction
+      // so two concurrent creates with the same slug can't both pass the
+      // pre-check and clobber. Edit path: a plain merge-write is fine
+      // since the doc id is the operator's existing site.
+      if (input.id) {
+        await setDoc(ref, body, { merge: true });
+      } else {
+        await runTransaction(db, async (tx) => {
+          const existing = await tx.get(ref);
+          if (existing.exists()) {
+            throw new Error('A Kindoo site with that display name already exists.');
+          }
+          tx.set(ref, body, { merge: true });
+        });
       }
-      await setDoc(
-        ref,
-        {
-          id: slug,
-          display_name: displayName,
-          kindoo_expected_site_name: expectedSiteName,
-          created_at: serverTimestamp(),
-          last_modified_at: serverTimestamp(),
-          lastActor: actor,
-        } as unknown as KindooSite,
-        { merge: true },
-      );
     },
     onSuccess: () => {
       void qc.invalidateQueries();

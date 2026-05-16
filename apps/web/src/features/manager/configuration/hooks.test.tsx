@@ -201,6 +201,17 @@ const getDocMock = vi.fn();
 const updateDocMock = vi.fn().mockResolvedValue(undefined);
 const writeBatchMock = vi.fn();
 const serverTimestampMock = vi.fn(() => '__server_timestamp__');
+// runTransaction shim — invokes the callback with a tx that delegates
+// tx.get to getDocMock and tx.set to setDocMock so create-path assertions
+// (collision pre-check + payload shape) work without a real Firestore.
+const runTransactionMock = vi.fn(async (_db: unknown, fn: (tx: unknown) => Promise<unknown>) => {
+  const tx = {
+    get: (ref: unknown) => getDocMock(ref),
+    set: (ref: unknown, data: unknown, options?: unknown) =>
+      options === undefined ? setDocMock(ref, data) : setDocMock(ref, data, options),
+  };
+  return fn(tx);
+});
 
 vi.mock('firebase/firestore', async () => {
   const actual = await vi.importActual<object>('firebase/firestore');
@@ -210,6 +221,8 @@ vi.mock('firebase/firestore', async () => {
     deleteDoc: (...args: unknown[]) => deleteDocMock(...args),
     getDoc: (...args: unknown[]) => getDocMock(...args),
     updateDoc: (...args: unknown[]) => updateDocMock(...args),
+    runTransaction: (db: unknown, fn: (tx: unknown) => Promise<unknown>) =>
+      runTransactionMock(db, fn),
     writeBatch: () => writeBatchMock(),
     serverTimestamp: () => serverTimestampMock(),
   };
@@ -257,6 +270,7 @@ beforeEach(() => {
   updateDocMock.mockClear();
   writeBatchMock.mockClear();
   serverTimestampMock.mockClear();
+  runTransactionMock.mockClear();
 });
 
 describe('useUpsertKindooSiteMutation', () => {
@@ -362,6 +376,31 @@ describe('useUpsertKindooSiteMutation', () => {
     expect(body).toMatchObject({
       lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
     });
+  });
+
+  it('wraps the create-path existence check + set in a single runTransaction', async () => {
+    // Guards against the read-then-write race: two concurrent creates
+    // with the same slug must not both pass the pre-check and clobber.
+    // Edit path takes a plain setDoc — no transaction needed.
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({
+      display_name: 'East Stake Foothills',
+      kindoo_expected_site_name: 'East Stake Foothills CS',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('edit path skips runTransaction (no existence check; plain merge-write)', async () => {
+    const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({
+      id: 'east-stake-foothills',
+      display_name: 'East Stake Foothills (renamed)',
+      kindoo_expected_site_name: 'East Stake Foothills CS',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    expect(runTransactionMock).not.toHaveBeenCalled();
   });
 });
 
