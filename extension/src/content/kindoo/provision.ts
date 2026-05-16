@@ -49,6 +49,11 @@ import {
   saveAccessRule,
 } from './endpoints';
 import { KindooApiError } from './client';
+import {
+  buildRuleDoorMap,
+  deriveEffectiveRuleIds,
+  getUserDoorIds,
+} from './sync/buildingsFromDoors';
 
 /** Returned by both orchestrators. */
 export interface ProvisionResult {
@@ -480,6 +485,100 @@ function tempDatesForInvite(req: AccessRequest): { startInvite: string; expiryIn
   };
 }
 
+/**
+ * Effective rule IDs the user already holds via Church Access
+ * Automation's direct door grants. Strict-subset derivation:
+ * `getUserDoorIds` returns every DoorID the user can open (both
+ * AccessRule-derived AND `AccessScheduleID === 0` direct grants);
+ * `deriveEffectiveRuleIds` claims a rule iff EVERY door in that
+ * rule's door set is in the user's door set.
+ *
+ * The orchestrator subtracts these from `ridsToAdd` so it never
+ * writes a redundant AccessSchedule for a building the user already
+ * has effective access to. Without this, `saveAccessRule`'s MERGE
+ * semantics would add a parallel AccessRule alongside the direct
+ * door grants — two grant sources for the same building. Functionally
+ * harmless (the user can still open the door) but pollutes the user's
+ * Kindoo state and creates the exact divergence the Sync feature is
+ * meant to surface.
+ *
+ * Returns `null` on any I/O failure in the derivation chain. The
+ * caller falls back to the legacy diff (`currentSchedules` only).
+ * The provision write still proceeds; in the worst case we re-introduce
+ * the redundant-rule scenario but don't block the operator on a
+ * transient Kindoo error.
+ */
+async function deriveDirectGrantRids(
+  session: KindooSession,
+  buildings: Building[],
+  userId: string,
+  fetchImpl: typeof fetch | undefined,
+): Promise<Set<number> | null> {
+  const stakeRuleIds = buildings
+    .map((b) => b.kindoo_rule?.rule_id)
+    .filter((id): id is number => typeof id === 'number');
+  if (stakeRuleIds.length === 0) return new Set();
+  try {
+    const ruleDoorMap = await buildRuleDoorMap(session, session.eid, stakeRuleIds, fetchImpl);
+    const userDoorIds = await getUserDoorIds(session, userId, session.eid, fetchImpl);
+    return deriveEffectiveRuleIds(userDoorIds, ruleDoorMap);
+  } catch (err) {
+    console.log(
+      `[sba-ext] deriveDirectGrantRids: door-grant derivation failed for ${userId}; ` +
+        `falling back to legacy diff. ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Compute the add/revoke RID diff for a Kindoo write, accounting for
+ * BOTH the user's existing AccessSchedules AND Church Access
+ * Automation's direct door grants.
+ *
+ *   ridsAlreadyEffective = currentSchedules ∪ effectiveRuleIdsFromDoors
+ *   ridsToAdd            = targetRids   - ridsAlreadyEffective
+ *   ridsToRevoke         = currentSchedules - targetRids
+ *
+ * `ridsToRevoke` only looks at the schedules — we can't revoke a
+ * direct door grant via `revokeUserFromAccessSchedule` (it operates
+ * on AccessSchedules); Church Access Automation owns those.
+ *
+ * If door-grant derivation fails, falls back to the legacy diff
+ * (`ridsToAdd = targetRids - currentSchedules`). `derivationFailed`
+ * lets the caller distinguish "no direct grants" (Set) from "we
+ * don't know" (null) for logging / behavior assertions.
+ */
+async function computeKindooDiff(args: {
+  session: KindooSession;
+  buildings: Building[];
+  userId: string;
+  currentSchedules: number[];
+  targetRids: number[];
+  fetchImpl: typeof fetch | undefined;
+}): Promise<{ ridsToAdd: number[]; ridsToRevoke: number[]; derivationFailed: boolean }> {
+  const targetSet = new Set(args.targetRids);
+  const currentSet = new Set(args.currentSchedules);
+  const ridsToRevoke = args.currentSchedules.filter((id) => !targetSet.has(id));
+
+  const directGrantRids = await deriveDirectGrantRids(
+    args.session,
+    args.buildings,
+    args.userId,
+    args.fetchImpl,
+  );
+
+  if (directGrantRids === null) {
+    // Fallback: ignore direct grants. May write a redundant rule but
+    // the provision still completes.
+    const ridsToAdd = args.targetRids.filter((id) => !currentSet.has(id));
+    return { ridsToAdd, ridsToRevoke, derivationFailed: true };
+  }
+
+  const ridsToAdd = args.targetRids.filter((id) => !currentSet.has(id) && !directGrantRids.has(id));
+  return { ridsToAdd, ridsToRevoke, derivationFailed: false };
+}
+
 // ---- Add / change ----------------------------------------------------
 
 export interface ProvisionAddOrChangeArgs {
@@ -505,9 +604,16 @@ export interface ProvisionAddOrChangeArgs {
  *      coverage; `seat.building_names` alone is primary-only.
  *   2. targetRIDs = buildings → kindoo_rule.rule_id (throws on missing mapping).
  *   3. lookupUserByEmail(email).
- *   4. Not found → inviteUser + saveAccessRule.
- *   5. Found → editUser (description / temp / dates) only if diff;
- *              saveAccessRule with full target RIDs only if diff.
+ *   4. Not found → inviteUser + saveAccessRule(targetRIDs). A brand-new
+ *      user has no direct grants yet, so the full target set ships.
+ *   5. Found → computeKindooDiff against the user's current
+ *      AccessSchedules AND Church Access Automation's direct door
+ *      grants. saveAccessRule only for RIDs not already effectively
+ *      held; editUser (description / temp / dates) only if diff.
+ *      Direct grants are read via `deriveDirectGrantRids` (4 rule
+ *      calls + 1 user call); failure falls back to the legacy
+ *      schedules-only diff so a transient Kindoo error doesn't block
+ *      the operator.
  */
 export async function provisionAddOrChange(
   args: ProvisionAddOrChangeArgs,
@@ -603,9 +709,26 @@ export async function provisionAddOrChange(
   }
 
   const existingRids = existing.accessSchedules.map((s) => s.ruleId);
+  // Compute the additive diff against schedules ∪ direct door grants.
+  // We only call saveAccessRule for RIDs not already effectively held;
+  // a building whose entire rule door set is covered by Church Access
+  // Automation's direct grants is skipped to avoid writing a
+  // redundant AccessSchedule (the MERGE-pollution scenario).
+  //
+  // The add path does NOT issue per-rule revokes — adds only grow the
+  // rule set. We still pass currentSchedules so the helper produces
+  // the canonical pair, but only `ridsToAdd` drives the write here.
+  const { ridsToAdd } = await computeKindooDiff({
+    session: args.session,
+    buildings: args.buildings,
+    userId: existing.userId,
+    currentSchedules: existingRids,
+    targetRids: targetRIDs,
+    fetchImpl,
+  });
   let didSaveRules = false;
-  if (!sameRids(targetRIDs, existingRids)) {
-    await saveAccessRule(args.session, existing.userId, targetRIDs, fetchImpl);
+  if (ridsToAdd.length > 0) {
+    await saveAccessRule(args.session, existing.userId, ridsToAdd, fetchImpl);
     didSaveRules = true;
   }
 
@@ -891,15 +1014,25 @@ export interface ProvisionEditArgs {
  * across primary + ALL surviving duplicate slots — that union is the
  * post-edit composite the user is entitled to.
  *
- * The Kindoo diff is composite-vs-composite:
+ * The Kindoo diff is composite-vs-composite, AND consults Church
+ * Access Automation's direct door grants so we never write a redundant
+ * AccessSchedule for a building the user already has effective access
+ * to:
  *   - `targetRids` = rules backing the post-edit composite.
- *   - `toRevoke` = current Kindoo schedules MINUS targetRids. Only
- *     rules that no post-edit slot needs get revoked. RIDs belonging
- *     to an UNTOUCHED slot are in `targetRids` (because that slot
- *     contributes its buildings to the composite), so they're never
- *     in `toRevoke`. This matches the add path (`provisionAddOrChange`)
- *     which already unions seat coverage with the request's buildings.
- *   - `toAdd` = targetRids MINUS current Kindoo schedules.
+ *   - `ridsAlreadyEffective` = currentSchedules ∪ rules whose door set
+ *     is fully covered by the user's direct door grants (the
+ *     `buildingsFromDoors` strict-subset derivation; covers both
+ *     AccessRule-derived doors AND `AccessScheduleID === 0` Church
+ *     direct grants).
+ *   - `ridsToAdd` = targetRids - ridsAlreadyEffective. A building
+ *     covered by direct grants alone is skipped — `saveAccessRule`'s
+ *     MERGE semantics would otherwise create a parallel AccessSchedule
+ *     alongside the direct grants, polluting the user's Kindoo state.
+ *   - `ridsToRevoke` = currentSchedules - targetRids. Only operates on
+ *     AccessSchedules; direct grants can't be revoked here (Church
+ *     Access Automation owns them). RIDs belonging to an UNTOUCHED
+ *     slot are in `targetRids` (because that slot contributes its
+ *     buildings to the composite), so they're never in `ridsToRevoke`.
  *
  * Flow:
  *   1. Stake-auto guard — refuse `edit_auto` + `scope='stake'`.
@@ -914,10 +1047,12 @@ export interface ProvisionEditArgs {
  *      missing mapping).
  *   5. lookupUserByEmail — must exist; otherwise
  *      `ProvisionEditUserMissingError`.
- *   6. Compute toAdd = targetRids \ currentSchedules; toRevoke =
- *      currentSchedules \ targetRids.
- *   7. saveAccessRule(toAdd) (MERGE); revokeUserFromAccessSchedule
- *      per toRevoke rid.
+ *   6. computeKindooDiff against currentSchedules AND direct door
+ *      grants. Door-grant derivation failure falls back to the legacy
+ *      schedules-only diff so a transient Kindoo error doesn't block
+ *      the operator.
+ *   7. saveAccessRule(ridsToAdd) (MERGE); revokeUserFromAccessSchedule
+ *      per ridsToRevoke rid.
  *   8. Synthesize description with the matching slot's `reason`
  *      replaced by the request's reason. For `edit_auto` this leaves
  *      the description unchanged (callings drive the text, not
@@ -1000,19 +1135,23 @@ export async function provisionEdit(args: ProvisionEditArgs): Promise<ProvisionR
 
   // ---- Reconcile rule set (add + revoke diff) ----
   const currentRIDs = existing.accessSchedules.map((s) => s.ruleId);
-  const targetSet = new Set(targetRIDs);
-  const currentSet = new Set(currentRIDs);
-  const toAdd = targetRIDs.filter((id) => !currentSet.has(id));
-  const toRevoke = currentRIDs.filter((id) => !targetSet.has(id));
+  const { ridsToAdd, ridsToRevoke } = await computeKindooDiff({
+    session: args.session,
+    buildings: args.buildings,
+    userId: existing.userId,
+    currentSchedules: currentRIDs,
+    targetRids: targetRIDs,
+    fetchImpl,
+  });
 
   let didRuleWrite = false;
-  if (toAdd.length > 0) {
+  if (ridsToAdd.length > 0) {
     // saveAccessRule MERGES — adds the missing rids without disturbing
     // unrelated grants on the same user record.
-    await saveAccessRule(args.session, existing.userId, toAdd, fetchImpl);
+    await saveAccessRule(args.session, existing.userId, ridsToAdd, fetchImpl);
     didRuleWrite = true;
   }
-  for (const ruleId of toRevoke) {
+  for (const ruleId of ridsToRevoke) {
     await revokeUserFromAccessSchedule(args.session, existing.euid, ruleId, fetchImpl);
     didRuleWrite = true;
   }

@@ -253,8 +253,7 @@ From the merged seat:
    - From lookup: `EUID`, `UserID`, current `Description`, `IsTempUser`, `…AtTimeZone` values, `AccessSchedules`.
    - If `targetDescription !== current.Description` OR `request.type === 'add_temp'` (temp flag / dates may need updating):
      - `editUser(session, EUID, { description: targetDescription, isTemp: …, startAccessDoorsDateTime: …, expiryDate: …, timeZone: … })`. Echo current values for anything not being changed.
-   - If `sort(targetRIDs) !== sort(current.AccessSchedules.map(s => s.RuleID))`:
-     - `saveAccessRule(session, UserID, targetRIDs)`.
+   - `ridsToAdd = targetRIDs - (currentSchedules ∪ effectiveRulesFromDirectGrants)` via `computeKindooDiff`. The direct-grant subtraction uses the strict-subset chain in `content/kindoo/sync/buildingsFromDoors.ts` (`buildRuleDoorMap` + `getUserDoorIds` + `deriveEffectiveRuleIds`) so a rule whose door set is fully covered by Church Access Automation's direct grants is skipped — never write a redundant AccessSchedule. If `ridsToAdd.length > 0`: `saveAccessRule(session, UserID, ridsToAdd)`. Derivation failure (transient Kindoo error) logs `[sba-ext]` and falls back to `targetRIDs - currentSchedules`.
    - Action: `'updated'`. Note: `"Updated X's Kindoo access to A, B."` (or whatever describes the actual diff).
 
 #### remove flow
@@ -297,12 +296,11 @@ the seat's current building set. The edit dialog enforces Policy B for
    find the user — there's no "create as part of an edit" path. Missing
    → throw `ProvisionEditUserMissingError`; operator provisions the
    user via an add request first.
-6. **Reconcile rule set:**
-   - `toAdd = targetRids - currentSchedules` → `saveAccessRule(session,
-     UserID, toAdd)` (MERGE — preserves unrelated rules on the user).
-   - `toRevoke = currentSchedules - targetRids` → per-rule
-     `revokeUserFromAccessSchedule(session, EUID, ruleId)`. Required
-     because `saveAccessRule` cannot shrink.
+6. **Reconcile rule set** via `computeKindooDiff`:
+   - `ridsAlreadyEffective = currentSchedules ∪ effectiveRulesFromDirectGrants`. The direct-grant subtraction comes from `content/kindoo/sync/buildingsFromDoors.ts` (`buildRuleDoorMap` + `getUserDoorIds` + `deriveEffectiveRuleIds`). A rule whose door set is fully covered by Church Access Automation's direct grants is treated as already held; the orchestrator never writes a redundant AccessSchedule for it.
+   - `ridsToAdd = targetRids - ridsAlreadyEffective` → `saveAccessRule(session, UserID, ridsToAdd)` (MERGE — preserves unrelated rules on the user).
+   - `ridsToRevoke = currentSchedules - targetRids` → per-rule `revokeUserFromAccessSchedule(session, EUID, ruleId)`. Required because `saveAccessRule` cannot shrink. Operates only on AccessSchedules; direct grants are owned by Church Access Automation and can't be revoked from this surface.
+   - On derivation failure (transient Kindoo error during the rule-door / user-door reads): log a `[sba-ext]` warning and fall back to the legacy `ridsToAdd = targetRids - currentSchedules`. Provision still completes; worst case we re-introduce the redundant-rule scenario rather than block the operator.
 7. **`editUser`** only if description / temp flag / dates differ. For
    `edit_temp` the payload carries `isTemp=true` + the new dates
    (`YYYY-MM-DDTHH:MM` with 00:00 / 23:59 day bounds). For

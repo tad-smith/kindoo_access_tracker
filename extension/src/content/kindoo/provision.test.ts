@@ -33,6 +33,16 @@ const saveAccessRuleMock = vi.fn();
 const lookupUserByEmailMock = vi.fn();
 const revokeUserMock = vi.fn();
 const revokeUserFromAccessScheduleMock = vi.fn();
+// Door-grant derivation. `buildingsFromDoors.ts` calls these two
+// endpoints via the `./endpoints` module barrel; mocking them here
+// lets a test stage Church Access Automation's direct grants so the
+// orchestrator's "skip redundant rules" logic gets exercised.
+// Default: empty rule door map + empty user door set → no direct
+// grants, so the diff degenerates to the pre-fix `targetRids -
+// currentSchedules` semantic. Tests opt in to direct-grant scenarios
+// by overriding these mocks.
+const getEnvironmentRuleWithEntryPointsMock = vi.fn();
+const getUserAccessRulesWithEntryPointsMock = vi.fn();
 
 vi.mock('./endpoints', async () => {
   const actual = await vi.importActual<typeof import('./endpoints')>('./endpoints');
@@ -44,6 +54,10 @@ vi.mock('./endpoints', async () => {
     lookupUserByEmail: (...args: unknown[]) => lookupUserByEmailMock(...args),
     revokeUser: (...args: unknown[]) => revokeUserMock(...args),
     revokeUserFromAccessSchedule: (...args: unknown[]) => revokeUserFromAccessScheduleMock(...args),
+    getEnvironmentRuleWithEntryPoints: (...args: unknown[]) =>
+      getEnvironmentRuleWithEntryPointsMock(...args),
+    getUserAccessRulesWithEntryPoints: (...args: unknown[]) =>
+      getUserAccessRulesWithEntryPointsMock(...args),
   };
 });
 
@@ -166,6 +180,22 @@ beforeEach(() => {
   lookupUserByEmailMock.mockReset();
   revokeUserMock.mockReset();
   revokeUserFromAccessScheduleMock.mockReset();
+  // Default: rules exist (one stub per rid) with non-empty door sets;
+  // the user has no direct grants. With empty user-door rows the
+  // strict-subset derivation claims nothing → diff falls back to
+  // schedules-only. Tests that exercise direct-grant scenarios
+  // override these mocks. Stubbing both prevents the real endpoints
+  // from being invoked (which would fail with "no fetch in test
+  // environment") and silences the fallback-path warn log.
+  getEnvironmentRuleWithEntryPointsMock.mockReset();
+  getEnvironmentRuleWithEntryPointsMock.mockImplementation(async (_session, ruleId: number) => ({
+    ruleId,
+    ruleName: `rule-${ruleId}`,
+    selectedDoorIds: [ruleId * 100], // unique door per rule
+    allDoors: [],
+  }));
+  getUserAccessRulesWithEntryPointsMock.mockReset();
+  getUserAccessRulesWithEntryPointsMock.mockResolvedValue([]); // no direct grants
 });
 afterEach(() => {
   vi.resetModules();
@@ -448,12 +478,11 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
       expiryDate: '',
       timeZone: 'Mountain Standard Time',
     });
-    expect(saveAccessRuleMock).toHaveBeenCalledWith(
-      SESSION,
-      existing.userId,
-      [6248, 6249],
-      undefined,
-    );
+    // Additive MERGE diff: only the missing rule (Cordera = 6248) is
+    // sent. Pine Creek (6249) already on the user; no need to
+    // re-write it (saveAccessRule MERGEs, so the no-op rid would
+    // be a wasted round-trip).
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6248], undefined);
     expect(result.action).toBe('updated');
     expect(result.kindoo_uid).toBe(existing.userId);
   });
@@ -483,12 +512,9 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
       description: 'Colorado Springs North Stake (Sunday School Teacher)',
       isTemp: false,
     });
-    expect(saveAccessRuleMock).toHaveBeenCalledWith(
-      SESSION,
-      existing.userId,
-      [6248, 6249],
-      undefined,
-    );
+    // Additive diff: only Cordera (6248) needs adding; Pine Creek
+    // (6249) already on the user.
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6248], undefined);
   });
 
   it('existing temp user + add_temp: refreshes dates via editUser, saves rule set if changed', async () => {
@@ -552,13 +578,9 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
 
     // Description matches; user already permanent; no demote → no editUser.
     expect(editUserMock).not.toHaveBeenCalled();
-    // Pine Creek being added → rule set diff.
-    expect(saveAccessRuleMock).toHaveBeenCalledWith(
-      SESSION,
-      existing.userId,
-      [6248, 6249],
-      undefined,
-    );
+    // Additive diff: only Pine Creek (6249) needs adding; Cordera
+    // (6248) already on the user.
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6249], undefined);
   });
 
   it('existing user with NO diffs at all: skips both edit + saveAccessRule', async () => {
@@ -1843,5 +1865,341 @@ describe('provisionEdit — cross-slot revoke regression', () => {
 
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
     expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---- Direct-grant skip --------------------------------------------
+//
+// Both `provisionAddOrChange` (existing-user branch) and `provisionEdit`
+// must subtract Church Access Automation's direct door grants from
+// `ridsToAdd` so the orchestrator never writes a redundant
+// AccessSchedule for a building the user already has effective access
+// to. Without this, `saveAccessRule`'s MERGE semantics would create a
+// parallel rule alongside the direct grants — pollutes Kindoo state
+// and creates the divergence the Sync feature is meant to flag.
+//
+// The strict-subset chain lives in
+// `content/kindoo/sync/buildingsFromDoors.ts`; mocks here stage
+// per-rule door sets + per-user door rows directly at the endpoints
+// layer.
+
+/** Sugar: stage Lexington (rule 6248) to own door 100, Monument
+ *  (rule 6251) door 200, Cordera (6248 — see below) is reused
+ *  for simplicity. Tests pick which rule IDs map to which doors. */
+function stageRuleDoors(map: Record<number, number[]>) {
+  getEnvironmentRuleWithEntryPointsMock.mockImplementation(async (_session, ruleId: number) => ({
+    ruleId,
+    ruleName: `rule-${ruleId}`,
+    selectedDoorIds: map[ruleId] ?? [],
+    allDoors: [],
+  }));
+}
+
+function stageUserDoors(doorIds: number[]) {
+  getUserAccessRulesWithEntryPointsMock.mockResolvedValue(
+    doorIds.map((id) => ({ doorId: id, accessScheduleId: 0 })),
+  );
+}
+
+describe('provisionEdit — skip AccessSchedules already covered by direct grants', () => {
+  it('operator scenario: ward auto user with Lexington direct grants + edit_auto adding Monument writes Monument only', async () => {
+    // User has Lexington door access entirely from Church Access
+    // Automation's direct door grants (AccessSchedules === []).
+    // Operator submits edit_auto adding Monument.
+    //
+    // Before fix: ridsToAdd = [Lexington, Monument] - [] =
+    //   [Lexington, Monument] → saveAccessRule writes a REDUNDANT
+    //   Lexington AccessSchedule alongside the existing direct grant.
+    // After fix: effective rules from direct doors = {Lexington} →
+    //   ridsToAdd = [Lexington, Monument] - ({} ∪ {Lexington}) =
+    //   [Monument] only.
+    const buildings: Building[] = [
+      {
+        building_id: 'lexington',
+        building_name: 'Lexington Building',
+        kindoo_rule: { rule_id: 6248, rule_name: 'Lexington Doors' },
+      } as unknown as Building,
+      {
+        building_id: 'monument',
+        building_name: 'Monument Building',
+        kindoo_rule: { rule_id: 6251, rule_name: 'Monument Doors' },
+      } as unknown as Building,
+    ];
+    const wards: Ward[] = [
+      {
+        ward_code: 'LX',
+        ward_name: 'Lexington Ward',
+        building_name: 'Lexington Building',
+      } as unknown as Ward,
+    ];
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad Smith',
+      scope: 'LX',
+      type: 'auto',
+      callings: ['Primary President'],
+      building_names: ['Lexington Building'],
+      duplicate_grants: [],
+    } as unknown as Seat;
+    // Lexington's rule owns doors [1001, 1002, 1003]; Monument owns [2001].
+    stageRuleDoors({ 6248: [1001, 1002, 1003], 6251: [2001] });
+    // User has every Lexington door via direct grants; no Monument.
+    stageUserDoors([1001, 1002, 1003]);
+    const existing = existingUser({
+      description: 'Lexington Ward (Primary President)',
+      isTempUser: false,
+      // No AccessSchedules — Church Automation gave doors directly.
+      accessSchedules: [],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    await provisionEdit({
+      request: editAutoRequest({
+        scope: 'LX',
+        building_names: ['Lexington Building', 'Monument Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Critical: Monument-only. Lexington was already effectively held
+    // via direct grants, so the orchestrator skips it.
+    expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6251], undefined);
+    expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
+  });
+
+  it('partial overlap with direct grants: rule NOT effectively held → orchestrator still writes the AccessSchedule', async () => {
+    // Strict-subset: the user has 2 of 3 doors in Lexington's rule via
+    // direct grants. `deriveEffectiveRuleIds` requires EVERY door in
+    // the rule's set; partial overlap does not claim. The
+    // orchestrator must still write the Lexington AccessSchedule so
+    // the user gets the missing door.
+    const buildings: Building[] = [
+      {
+        building_id: 'lexington',
+        building_name: 'Lexington Building',
+        kindoo_rule: { rule_id: 6248, rule_name: 'Lexington Doors' },
+      } as unknown as Building,
+      {
+        building_id: 'monument',
+        building_name: 'Monument Building',
+        kindoo_rule: { rule_id: 6251, rule_name: 'Monument Doors' },
+      } as unknown as Building,
+    ];
+    const wards: Ward[] = [
+      {
+        ward_code: 'LX',
+        ward_name: 'Lexington Ward',
+        building_name: 'Lexington Building',
+      } as unknown as Ward,
+    ];
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad Smith',
+      scope: 'LX',
+      type: 'auto',
+      callings: ['Primary President'],
+      building_names: ['Lexington Building'],
+      duplicate_grants: [],
+    } as unknown as Seat;
+    stageRuleDoors({ 6248: [1001, 1002, 1003], 6251: [2001] });
+    // Partial — only 2 of Lexington's 3 doors. Strict-subset → NOT
+    // effectively held.
+    stageUserDoors([1001, 1002]);
+    const existing = existingUser({
+      description: 'Lexington Ward (Primary President)',
+      isTempUser: false,
+      accessSchedules: [],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    await provisionEdit({
+      request: editAutoRequest({
+        scope: 'LX',
+        building_names: ['Lexington Building', 'Monument Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Both rules: Lexington (partial-overlap doesn't claim) +
+    // Monument (new). Single call carrying both.
+    expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(
+      SESSION,
+      existing.userId,
+      [6248, 6251],
+      undefined,
+    );
+  });
+
+  it('derivation chain fails: falls back to schedules-only diff, logs warn, provision completes', async () => {
+    // Simulates a transient Kindoo error during the door-grant
+    // derivation chain. The orchestrator falls back to the legacy
+    // diff (`targetRids - currentSchedules`), logs a `[sba-ext]`
+    // warning, and still writes the AccessSchedules. In the worst
+    // case we re-introduce the redundant-rule scenario, but the
+    // operator is never blocked.
+    const buildings: Building[] = [
+      {
+        building_id: 'lexington',
+        building_name: 'Lexington Building',
+        kindoo_rule: { rule_id: 6248, rule_name: 'Lexington Doors' },
+      } as unknown as Building,
+      {
+        building_id: 'monument',
+        building_name: 'Monument Building',
+        kindoo_rule: { rule_id: 6251, rule_name: 'Monument Doors' },
+      } as unknown as Building,
+    ];
+    const wards: Ward[] = [
+      {
+        ward_code: 'LX',
+        ward_name: 'Lexington Ward',
+        building_name: 'Lexington Building',
+      } as unknown as Ward,
+    ];
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad Smith',
+      scope: 'LX',
+      type: 'auto',
+      callings: ['Primary President'],
+      building_names: ['Lexington Building'],
+      duplicate_grants: [],
+    } as unknown as Seat;
+    // getUserDoorIds throws — simulating the transient blip.
+    getUserAccessRulesWithEntryPointsMock.mockRejectedValue(new Error('kindoo blip 503'));
+    const existing = existingUser({
+      description: 'Lexington Ward (Primary President)',
+      isTempUser: false,
+      accessSchedules: [],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await provisionEdit({
+      request: editAutoRequest({
+        scope: 'LX',
+        building_names: ['Lexington Building', 'Monument Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Fallback: legacy diff = [Lexington, Monument] - [] = both.
+    // (Redundant Lexington is the cost of the fallback; documented.)
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(
+      SESSION,
+      existing.userId,
+      [6248, 6251],
+      undefined,
+    );
+    // Warn log fired with the `[sba-ext]` prefix.
+    const warnLogged = logSpy.mock.calls.some(
+      (call) =>
+        typeof call[0] === 'string' &&
+        call[0].startsWith('[sba-ext] deriveDirectGrantRids:') &&
+        call[0].includes('falling back to legacy diff'),
+    );
+    expect(warnLogged).toBe(true);
+    logSpy.mockRestore();
+  });
+});
+
+describe('provisionAddOrChange — skip AccessSchedules already covered by direct grants', () => {
+  it('analogous add_manual case: user has Lexington via direct grants + add_manual for Cordera writes Cordera only', async () => {
+    // Adapted to the operator's scenario for the add path: ward auto
+    // seat at LX with Lexington access via direct grants (no
+    // AccessSchedules). New add_manual request adds Cordera under a
+    // different scope. After the seat-side union with the existing
+    // auto seat's Lexington building, targetBuildings = [Lexington,
+    // Cordera]. Without the fix the orchestrator would write a
+    // redundant Lexington AccessSchedule; with the fix Lexington is
+    // skipped because direct grants already cover it.
+    const buildings: Building[] = [
+      {
+        building_id: 'lexington',
+        building_name: 'Lexington Building',
+        kindoo_rule: { rule_id: 6248, rule_name: 'Lexington Doors' },
+      } as unknown as Building,
+      {
+        building_id: 'cordera',
+        building_name: 'Cordera Building',
+        kindoo_rule: { rule_id: 6300, rule_name: 'Cordera Doors' },
+      } as unknown as Building,
+    ];
+    const wards: Ward[] = [
+      {
+        ward_code: 'LX',
+        ward_name: 'Lexington Ward',
+        building_name: 'Lexington Building',
+      } as unknown as Ward,
+      {
+        ward_code: 'CO',
+        ward_name: 'Cordera Ward',
+        building_name: 'Cordera Building',
+      } as unknown as Ward,
+    ];
+    // Pre-existing SBA seat is the auto LX seat with Lexington
+    // Building. The new add_manual under stake scope contributes
+    // Cordera. The merged target = [Lexington, Cordera].
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad Smith',
+      scope: 'LX',
+      type: 'auto',
+      callings: ['Primary President'],
+      building_names: ['Lexington Building'],
+      duplicate_grants: [],
+    } as unknown as Seat;
+    stageRuleDoors({ 6248: [1001, 1002], 6300: [3001] });
+    stageUserDoors([1001, 1002]); // covers Lexington only
+    const existing = existingUser({
+      description: 'Lexington Ward (Primary President)',
+      isTempUser: false,
+      accessSchedules: [], // no schedules — direct grants only
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+    editUserMock.mockResolvedValue({ ok: true });
+
+    await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'stake',
+        reason: 'Sunday School Teacher',
+        building_names: ['Cordera Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Cordera only — Lexington was already effectively held.
+    expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6300], undefined);
   });
 });
