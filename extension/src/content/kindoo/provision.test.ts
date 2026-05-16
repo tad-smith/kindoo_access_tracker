@@ -2093,36 +2093,42 @@ describe('provisionEdit — skip AccessSchedules already covered by direct grant
     saveAccessRuleMock.mockResolvedValue({ ok: true });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await provisionEdit({
-      request: editAutoRequest({
-        scope: 'LX',
-        building_names: ['Lexington Building', 'Monument Building'],
-      }),
-      seat,
-      stake: STAKE,
-      buildings,
-      wards,
-      envs: ENVS,
-      session: SESSION,
-    });
+    try {
+      await provisionEdit({
+        request: editAutoRequest({
+          scope: 'LX',
+          building_names: ['Lexington Building', 'Monument Building'],
+        }),
+        seat,
+        stake: STAKE,
+        buildings,
+        wards,
+        envs: ENVS,
+        session: SESSION,
+      });
 
-    // Fallback: legacy diff = [Lexington, Monument] - [] = both.
-    // (Redundant Lexington is the cost of the fallback; documented.)
-    expect(saveAccessRuleMock).toHaveBeenCalledWith(
-      SESSION,
-      existing.userId,
-      [6248, 6251],
-      undefined,
-    );
-    // Warn log fired with the `[sba-ext]` prefix.
-    const warnLogged = logSpy.mock.calls.some(
-      (call) =>
-        typeof call[0] === 'string' &&
-        call[0].startsWith('[sba-ext] deriveDirectGrantRids:') &&
-        call[0].includes('falling back to legacy diff'),
-    );
-    expect(warnLogged).toBe(true);
-    logSpy.mockRestore();
+      // Fallback: legacy diff = [Lexington, Monument] - [] = both.
+      // (Redundant Lexington is the cost of the fallback; documented.)
+      expect(saveAccessRuleMock).toHaveBeenCalledWith(
+        SESSION,
+        existing.userId,
+        [6248, 6251],
+        undefined,
+      );
+      // Warn log fired with the `[sba-ext]` prefix.
+      const warnLogged = logSpy.mock.calls.some(
+        (call) =>
+          typeof call[0] === 'string' &&
+          call[0].startsWith('[sba-ext] deriveDirectGrantRids:') &&
+          call[0].includes('falling back to legacy diff'),
+      );
+      expect(warnLogged).toBe(true);
+    } finally {
+      // Restore the global console even on assertion failure so the
+      // spy never leaks into later test files (vitest workers can
+      // share jsdom globals across files in the same pool slot).
+      logSpy.mockRestore();
+    }
   });
 });
 
