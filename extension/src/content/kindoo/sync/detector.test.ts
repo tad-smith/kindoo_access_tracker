@@ -588,4 +588,162 @@ describe('detect', () => {
     expect(result.discrepancies).toHaveLength(1);
     expect(result.discrepancies[0]?.code).toBe('kindoo-only');
   });
+
+  // --------------------------------------------------------------------
+  // Phase 4 — active-site filter. The detector filters both sides of
+  // the diff to seats / users belonging to the active Kindoo site. See
+  // `content/kindoo/sync/activeSite.ts` + `docs/spec.md` §15.
+  // --------------------------------------------------------------------
+
+  // Mixed home + foreign fixture. Two wards: Cordera (home) and Foothills
+  // (foreign-site 'east-stake'). Plus stake-scope seats and Kindoo users
+  // on each side.
+  const WARDS_MIXED: Ward[] = [
+    ward('CO', 'Cordera Ward', 'Cordera Building'),
+    {
+      ...ward('FT', 'Foothills Ward', 'Foothills Building'),
+      kindoo_site_id: 'east-stake',
+    },
+  ];
+
+  function mixedInputs(overrides: {
+    seats?: Seat[];
+    kindooUsers?: KindooEnvironmentUser[];
+    activeSite?: import('./activeSite').ActiveSite;
+  }) {
+    return {
+      stake: STAKE,
+      wards: WARDS_MIXED,
+      buildings: BUILDINGS,
+      seats: overrides.seats ?? [],
+      wardCallingTemplates: WARD_TEMPLATES,
+      stakeCallingTemplates: STAKE_TEMPLATES,
+      kindooUsers: overrides.kindooUsers ?? [],
+      ...(overrides.activeSite !== undefined ? { activeSite: overrides.activeSite } : {}),
+    };
+  }
+
+  it('home-active preserves existing behavior across the existing fixture (no kindoo_site_id set)', () => {
+    // Wards without `kindoo_site_id` are treated as home — passing
+    // `activeSite: home` against the original fixture should not drop
+    // any rows.
+    const result = detect({
+      ...baseInputs({
+        seats: [seat({})],
+        kindooUsers: [kuser({})],
+      }),
+      activeSite: { kind: 'home' },
+    });
+    expect(result.discrepancies).toEqual([]);
+    expect(result.seatCount).toBe(1);
+    expect(result.kindooCount).toBe(1);
+  });
+
+  it('home-active includes home-ward seats + stake-scope seats; excludes foreign-ward seats', () => {
+    const homeSeat = seat({
+      member_canonical: 'home@example.com',
+      member_email: 'home@example.com',
+      scope: 'CO',
+    });
+    const stakeSeat = seat({
+      member_canonical: 'stake@example.com',
+      member_email: 'stake@example.com',
+      scope: 'stake',
+    });
+    const foreignSeat = seat({
+      member_canonical: 'foreign@example.com',
+      member_email: 'foreign@example.com',
+      scope: 'FT',
+    });
+    const result = detect(
+      mixedInputs({
+        seats: [homeSeat, stakeSeat, foreignSeat],
+        kindooUsers: [],
+        activeSite: { kind: 'home' },
+      }),
+    );
+    // foreign-ward seat dropped; home + stake remain as sba-only drift.
+    const canonicals = result.discrepancies.map((d) => d.canonical).sort();
+    expect(canonicals).toEqual(['home@example.com', 'stake@example.com']);
+    expect(result.seatCount).toBe(2);
+  });
+
+  it('foreign-active includes only that foreign-ward seats; excludes home + other-foreign + stake', () => {
+    const homeSeat = seat({
+      member_canonical: 'home@example.com',
+      member_email: 'home@example.com',
+      scope: 'CO',
+    });
+    const stakeSeat = seat({
+      member_canonical: 'stake@example.com',
+      member_email: 'stake@example.com',
+      scope: 'stake',
+    });
+    const foreignSeat = seat({
+      member_canonical: 'foreign@example.com',
+      member_email: 'foreign@example.com',
+      scope: 'FT',
+    });
+    const result = detect(
+      mixedInputs({
+        seats: [homeSeat, stakeSeat, foreignSeat],
+        kindooUsers: [],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    // Stake-scope dropped (home-only per Phase 1 policy). Home dropped.
+    expect(result.discrepancies.map((d) => d.canonical)).toEqual(['foreign@example.com']);
+    expect(result.seatCount).toBe(1);
+  });
+
+  it('foreign-active drops Kindoo users whose description resolves to home wards', () => {
+    // A home-ward Kindoo user appears in the bulk listing even when the
+    // operator is logged into a foreign site (Kindoo doesn't filter the
+    // listing for us — it's all users in that environment). When parsed
+    // to a home ward, the user belongs to another manager's queue and
+    // should NOT surface as kindoo-only drift.
+    const result = detect(
+      mixedInputs({
+        seats: [],
+        kindooUsers: [
+          kuser({
+            username: 'home-user@example.com',
+            description: 'Cordera Ward (Sunday School Teacher)',
+          }),
+          kuser({
+            username: 'foreign-user@example.com',
+            description: 'Foothills Ward (Sunday School Teacher)',
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    // Only the foreign-ward Kindoo user shows up as kindoo-only drift.
+    expect(result.discrepancies.map((d) => d.canonical)).toEqual(['foreign-user@example.com']);
+    expect(result.kindooCount).toBe(1);
+  });
+
+  it('unknown-active returns an empty diff and zero counts', () => {
+    const result = detect(
+      mixedInputs({
+        seats: [
+          seat({
+            member_canonical: 'home@example.com',
+            member_email: 'home@example.com',
+            scope: 'CO',
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'k@example.com',
+            description: 'Cordera Ward (Sunday School Teacher)',
+          }),
+        ],
+        activeSite: { kind: 'unknown' },
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+    expect(result.seatCount).toBe(0);
+    expect(result.kindooCount).toBe(0);
+  });
 });

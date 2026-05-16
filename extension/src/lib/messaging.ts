@@ -19,6 +19,7 @@ import type {
   Building,
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
+  KindooSite,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
   Seat,
@@ -162,6 +163,12 @@ export interface SyncDataBundle {
   seats: Seat[];
   wardCallingTemplates: WardCallingTemplate[];
   stakeCallingTemplates: StakeCallingTemplate[];
+  /**
+   * Foreign Kindoo sites (`stakes/{STAKE_ID}/kindooSites/*`). Used by
+   * the Sync detector to scope drift comparisons to the active Kindoo
+   * site (see `content/kindoo/sync/activeSite.ts`).
+   */
+  kindooSites: KindooSite[];
 }
 
 /** Discriminated union of every request the panel may send. */
