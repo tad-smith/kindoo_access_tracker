@@ -143,33 +143,6 @@ export function useUpsertWardMutation() {
   });
 }
 
-// Patch only the `kindoo_site_id` field on a ward. Used by the per-row
-// dropdown on the Wards tab — toggling a ward between home and a
-// foreign site does NOT round-trip through the full Edit dialog, so the
-// other ward fields (name, building, cap) should not be touched.
-export interface UpdateWardKindooSiteInput {
-  ward_code: string;
-  kindoo_site_id: string | null;
-}
-
-export function useUpdateWardKindooSiteMutation() {
-  const principal = usePrincipal();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: UpdateWardKindooSiteInput) => {
-      const actor = actorOf(principal);
-      await updateDoc(wardRef(db, STAKE_ID, input.ward_code), {
-        kindoo_site_id: input.kindoo_site_id,
-        last_modified_at: serverTimestamp(),
-        lastActor: actor,
-      });
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries();
-    },
-  });
-}
-
 export function useDeleteWardMutation() {
   const qc = useQueryClient();
   return useMutation({
@@ -189,6 +162,13 @@ export function useDeleteWardMutation() {
 export interface BuildingInput {
   building_name: string;
   address: string;
+  /**
+   * Kindoo Sites — `null` (or absent) means the home site; a string
+   * value points at a doc id under `stakes/{stakeId}/kindooSites/`.
+   * Always pass an explicit value (including `null`) so that toggling
+   * a building back to home overwrites a prior foreign-site assignment.
+   */
+  kindoo_site_id?: string | null;
 }
 
 export function useUpsertBuildingMutation() {
@@ -205,6 +185,7 @@ export function useUpsertBuildingMutation() {
           building_id: slug,
           building_name: input.building_name.trim(),
           address: input.address.trim(),
+          kindoo_site_id: input.kindoo_site_id ?? null,
           created_at: serverTimestamp(),
           last_modified_at: serverTimestamp(),
           lastActor: actor,
@@ -215,32 +196,6 @@ export function useUpsertBuildingMutation() {
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
       // so awaiting invalidateQueries would hang the mutation.
-      void qc.invalidateQueries();
-    },
-  });
-}
-
-// Patch only the `kindoo_site_id` field on a building. Symmetric with
-// `useUpdateWardKindooSiteMutation` — the per-row dropdown shouldn't
-// disturb other building fields (name, address, rule mapping).
-export interface UpdateBuildingKindooSiteInput {
-  building_id: string;
-  kindoo_site_id: string | null;
-}
-
-export function useUpdateBuildingKindooSiteMutation() {
-  const principal = usePrincipal();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: UpdateBuildingKindooSiteInput) => {
-      const actor = actorOf(principal);
-      await updateDoc(buildingRef(db, STAKE_ID, input.building_id), {
-        kindoo_site_id: input.kindoo_site_id,
-        last_modified_at: serverTimestamp(),
-        lastActor: actor,
-      });
-    },
-    onSuccess: () => {
       void qc.invalidateQueries();
     },
   });
@@ -774,10 +729,13 @@ export function useUpdateStakeConfigMutation() {
 // the foreign-key string stored on wards / buildings. Rejects empty
 // slugs (sanitised display_name with no usable characters).
 
+// `kindoo_eid` is intentionally NOT a manager-supplied field — the
+// extension discovers it from `localStorage.state.sites.ids[0]` on a
+// session logged into the site and writes it on first use (Phase 3).
+// The merge-write below leaves any existing `kindoo_eid` untouched.
 export interface KindooSiteInput {
   display_name: string;
   kindoo_expected_site_name: string;
-  kindoo_eid: number;
 }
 
 export function useUpsertKindooSiteMutation() {
@@ -806,7 +764,6 @@ export function useUpsertKindooSiteMutation() {
           id: slug,
           display_name: displayName,
           kindoo_expected_site_name: expectedSiteName,
-          kindoo_eid: input.kindoo_eid,
           created_at: serverTimestamp(),
           last_modified_at: serverTimestamp(),
           lastActor: actor,

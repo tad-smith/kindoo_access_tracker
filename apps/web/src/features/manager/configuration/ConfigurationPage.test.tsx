@@ -2,7 +2,7 @@
 // once: list rendering + form validation. Mutations are mocked.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -27,8 +27,8 @@ const deleteStakeCallingTemplateWithResequenceMock = vi.fn();
 const reorderStakeCallingTemplatesMock = vi.fn();
 const upsertKindooSiteMock = vi.fn();
 const deleteKindooSiteMock = vi.fn();
-const updateWardKindooSiteMock = vi.fn();
-const updateBuildingKindooSiteMock = vi.fn();
+const upsertWardMock = vi.fn();
+const upsertBuildingMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   useStakeDoc: () => useStakeDocMock(),
@@ -38,18 +38,10 @@ vi.mock('./hooks', () => ({
   useWardCallingTemplates: () => useWardCallingTemplatesMock(),
   useStakeCallingTemplates: () => useStakeCallingTemplatesMock(),
   useKindooSites: () => useKindooSitesMock(),
-  useUpsertWardMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpsertWardMutation: () => ({ mutateAsync: upsertWardMock, isPending: false }),
   useDeleteWardMutation: () => ({ mutateAsync: vi.fn() }),
-  useUpdateWardKindooSiteMutation: () => ({
-    mutateAsync: updateWardKindooSiteMock,
-    isPending: false,
-  }),
-  useUpsertBuildingMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpsertBuildingMutation: () => ({ mutateAsync: upsertBuildingMock, isPending: false }),
   useDeleteBuildingMutation: () => ({ mutateAsync: vi.fn() }),
-  useUpdateBuildingKindooSiteMutation: () => ({
-    mutateAsync: updateBuildingKindooSiteMock,
-    isPending: false,
-  }),
   useUpsertManagerMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteManagerMutation: () => ({ mutateAsync: vi.fn() }),
   useUpsertKindooSiteMutation: () => ({
@@ -433,6 +425,9 @@ describe('Auto Ward Callings tab', () => {
 });
 
 describe('Kindoo Sites tab', () => {
+  // `kindoo_eid` is extension-populated (Phase 3); the manager UI
+  // neither displays nor edits it. Fixtures still set it to pin that
+  // the row UI does NOT surface it.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mkSite = (overrides: Partial<KindooSite> = {}): KindooSite => ({
     id: 'east-stake',
@@ -450,7 +445,7 @@ describe('Kindoo Sites tab', () => {
     expect(screen.queryByTestId('config-kindoo-sites-list')).toBeNull();
   });
 
-  it('renders foreign-site rows with display_name, site name, and EID', () => {
+  it('renders foreign-site rows with display_name and site name only (no EID)', () => {
     useKindooSitesMock.mockReturnValue(
       liveResult<KindooSite>([
         mkSite({
@@ -466,27 +461,29 @@ describe('Kindoo Sites tab', () => {
     expect(row).toBeInTheDocument();
     expect(row.textContent).toContain('East');
     expect(row.textContent).toContain('East CS');
-    expect(row.textContent).toContain('7');
+    // EID is intentionally not displayed.
+    expect(row.textContent).not.toContain('EID');
+    expect(row.textContent).not.toContain('7');
   });
 
-  it('submits the Add form with display_name, site name, and EID', async () => {
+  it('submits the Add form with display_name and site name (no EID field)', async () => {
     const user = userEvent.setup();
     upsertKindooSiteMock.mockResolvedValue(undefined);
     render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-kindoo-sites-add-button'));
+    // The form must not expose Kindoo EID — extension-populated.
+    expect(screen.queryByLabelText(/Kindoo EID/i)).toBeNull();
     await user.type(screen.getByLabelText(/Display name/i), 'East Stake');
     await user.type(screen.getByLabelText(/Kindoo site name/i), 'East Stake CS');
-    const eidInput = screen.getByLabelText(/Kindoo EID/i);
-    await user.clear(eidInput);
-    await user.type(eidInput, '42');
     await user.click(screen.getByTestId('config-kindoo-site-submit'));
     expect(upsertKindooSiteMock).toHaveBeenCalledWith(
       expect.objectContaining({
         display_name: 'East Stake',
         kindoo_expected_site_name: 'East Stake CS',
-        kindoo_eid: 42,
       }),
     );
+    // Mutation payload must not carry `kindoo_eid` from the form.
+    expect(upsertKindooSiteMock.mock.calls[0]?.[0]).not.toHaveProperty('kindoo_eid');
   });
 
   it('rejects empty display_name on Add submit', async () => {
@@ -506,25 +503,7 @@ describe('Kindoo Sites tab', () => {
     expect(await screen.findByText(/Kindoo site name is required/i)).toBeInTheDocument();
   });
 
-  it('rejects negative EID on Add submit', async () => {
-    const user = userEvent.setup();
-    upsertKindooSiteMock.mockResolvedValue(undefined);
-    render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-kindoo-sites-add-button'));
-    await user.type(screen.getByLabelText(/Display name/i), 'OK');
-    await user.type(screen.getByLabelText(/Kindoo site name/i), 'OK CS');
-    const eidInput = screen.getByLabelText(/Kindoo EID/i) as HTMLInputElement;
-    // RHF tracks values via React's synthetic onChange. fireEvent.input
-    // dispatches that event; user.type on a number input with min={1}
-    // is unreliable in jsdom (the browser-level constraint silently
-    // strips the leading minus).
-    fireEvent.input(eidInput, { target: { value: '-5' } });
-    await user.click(screen.getByTestId('config-kindoo-site-submit'));
-    expect(await screen.findByText(/Kindoo EID must be 1 or greater/i)).toBeInTheDocument();
-    expect(upsertKindooSiteMock).not.toHaveBeenCalled();
-  });
-
-  it('opens the Edit modal pre-populated', async () => {
+  it('opens the Edit modal pre-populated (no EID input)', async () => {
     const user = userEvent.setup();
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
     render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
@@ -534,22 +513,23 @@ describe('Kindoo Sites tab', () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/Display name/i)).toHaveValue('East Stake');
     expect(screen.getByLabelText(/Kindoo site name/i)).toHaveValue('East Stake CS');
-    expect(screen.getByLabelText(/Kindoo EID/i)).toHaveValue(42);
+    expect(screen.queryByLabelText(/Kindoo EID/i)).toBeNull();
   });
 
-  it('Edit submit passes the existing id through to the mutation', async () => {
+  it('Edit submit passes the existing id through to the mutation (no EID)', async () => {
     const user = userEvent.setup();
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
     upsertKindooSiteMock.mockResolvedValue(undefined);
     render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-kindoo-site-edit-east-stake'));
-    const eidInput = screen.getByLabelText(/Kindoo EID/i);
-    await user.clear(eidInput);
-    await user.type(eidInput, '99');
+    const nameInput = screen.getByLabelText(/Kindoo site name/i);
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Renamed CS');
     await user.click(screen.getByTestId('config-kindoo-site-submit'));
     expect(upsertKindooSiteMock).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'east-stake', kindoo_eid: 99 }),
+      expect.objectContaining({ id: 'east-stake', kindoo_expected_site_name: 'Renamed CS' }),
     );
+    expect(upsertKindooSiteMock.mock.calls[0]?.[0]).not.toHaveProperty('kindoo_eid');
   });
 
   it('Delete calls the delete mutation with the doc id', async () => {
@@ -562,7 +542,11 @@ describe('Kindoo Sites tab', () => {
   });
 });
 
-describe('Ward row Kindoo Site dropdown', () => {
+describe('Ward dialog Kindoo Site field', () => {
+  // The `kindoo_site_id` dropdown moved off the inline list rows and
+  // into the Ward create/edit dialog. The dialog submits the full ward
+  // payload via the existing upsert mutation — there is no dedicated
+  // dropdown-only mutation any more.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ward = (overrides: Partial<Ward> = {}): Ward => ({
     ward_code: 'CO',
@@ -583,54 +567,90 @@ describe('Ward row Kindoo Site dropdown', () => {
     ...(overrides as any),
   });
 
-  it('renders Home as the default option plus every foreign site', () => {
+  it('does not render a Kindoo Site dropdown on the list row', () => {
     useWardsMock.mockReturnValue(liveResult<Ward>([ward()]));
-    useKindooSitesMock.mockReturnValue(
-      liveResult<KindooSite>([site({ id: 'east', display_name: 'East' })]),
-    );
+    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    const dd = screen.getByTestId('config-ward-kindoo-site-CO') as HTMLSelectElement;
-    const labels = Array.from(dd.options).map((o) => o.text);
-    expect(labels).toEqual(['Home', 'East']);
+    expect(screen.queryByTestId('config-ward-kindoo-site-CO')).toBeNull();
+  });
+
+  it('Edit dialog defaults Kindoo Site to Home for a home-site ward', async () => {
+    const user = userEvent.setup();
+    useWardsMock.mockReturnValue(liveResult<Ward>([ward()]));
+    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const dd = screen.getByTestId('config-ward-kindoo-site') as HTMLSelectElement;
+    expect(Array.from(dd.options).map((o) => o.text)).toEqual(['Home', 'East']);
     expect(dd.value).toBe('__home__');
   });
 
-  it('renders the existing kindoo_site_id selection', () => {
+  it('Edit dialog pre-selects the existing kindoo_site_id', async () => {
+    const user = userEvent.setup();
     useWardsMock.mockReturnValue(liveResult<Ward>([ward({ kindoo_site_id: 'east' })]));
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    const dd = screen.getByTestId('config-ward-kindoo-site-CO') as HTMLSelectElement;
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const dd = screen.getByTestId('config-ward-kindoo-site') as HTMLSelectElement;
     expect(dd.value).toBe('east');
   });
 
-  it('writes the selected site id when the operator picks a foreign site', async () => {
+  it('Edit submit writes the selected kindoo_site_id through the ward upsert', async () => {
     const user = userEvent.setup();
     useWardsMock.mockReturnValue(liveResult<Ward>([ward()]));
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        {
+          building_id: 'cordera-building',
+          building_name: 'Cordera Building',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
-    updateWardKindooSiteMock.mockResolvedValue(undefined);
+    upsertWardMock.mockResolvedValue(undefined);
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    await user.selectOptions(screen.getByTestId('config-ward-kindoo-site-CO'), 'east');
-    expect(updateWardKindooSiteMock).toHaveBeenCalledWith({
-      ward_code: 'CO',
-      kindoo_site_id: 'east',
-    });
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    await user.selectOptions(screen.getByTestId('config-ward-kindoo-site'), 'east');
+    await user.click(screen.getByTestId('config-ward-submit'));
+    expect(upsertWardMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ward_code: 'CO',
+        ward_name: 'Cordera',
+        building_name: 'Cordera Building',
+        seat_cap: 22,
+        kindoo_site_id: 'east',
+      }),
+    );
   });
 
-  it('writes null when the operator picks Home', async () => {
+  it('Edit submit writes null when the operator picks Home', async () => {
     const user = userEvent.setup();
     useWardsMock.mockReturnValue(liveResult<Ward>([ward({ kindoo_site_id: 'east' })]));
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        {
+          building_id: 'cordera-building',
+          building_name: 'Cordera Building',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
-    updateWardKindooSiteMock.mockResolvedValue(undefined);
+    upsertWardMock.mockResolvedValue(undefined);
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    await user.selectOptions(screen.getByTestId('config-ward-kindoo-site-CO'), '__home__');
-    expect(updateWardKindooSiteMock).toHaveBeenCalledWith({
-      ward_code: 'CO',
-      kindoo_site_id: null,
-    });
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    await user.selectOptions(screen.getByTestId('config-ward-kindoo-site'), '__home__');
+    await user.click(screen.getByTestId('config-ward-submit'));
+    expect(upsertWardMock).toHaveBeenCalledWith(
+      expect.objectContaining({ ward_code: 'CO', kindoo_site_id: null }),
+    );
   });
 });
 
-describe('Building row Kindoo Site dropdown', () => {
+describe('Building dialog Kindoo Site field', () => {
+  // The `kindoo_site_id` dropdown moved off the inline list rows and
+  // into the Building create/edit dialog.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const building = (overrides: Partial<Building> = {}): Building => ({
     building_id: 'cordera-building',
@@ -650,46 +670,63 @@ describe('Building row Kindoo Site dropdown', () => {
     ...(overrides as any),
   });
 
-  it('renders Home plus every foreign site', () => {
+  it('does not render a Kindoo Site dropdown on the list row', () => {
     useBuildingsMock.mockReturnValue(liveResult<Building>([building()]));
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
     render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-    const dd = screen.getByTestId(
-      'config-building-kindoo-site-cordera-building',
-    ) as HTMLSelectElement;
+    expect(screen.queryByTestId('config-building-kindoo-site-cordera-building')).toBeNull();
+  });
+
+  it('Edit dialog defaults Kindoo Site to Home for a home-site building', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(liveResult<Building>([building()]));
+    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-building-edit-cordera-building'));
+    const dd = screen.getByTestId('config-building-kindoo-site') as HTMLSelectElement;
     expect(Array.from(dd.options).map((o) => o.text)).toEqual(['Home', 'East']);
     expect(dd.value).toBe('__home__');
   });
 
-  it('writes the selected site id when the operator picks a foreign site', async () => {
-    const user = userEvent.setup();
-    useBuildingsMock.mockReturnValue(liveResult<Building>([building()]));
-    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
-    updateBuildingKindooSiteMock.mockResolvedValue(undefined);
-    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-    await user.selectOptions(
-      screen.getByTestId('config-building-kindoo-site-cordera-building'),
-      'east',
-    );
-    expect(updateBuildingKindooSiteMock).toHaveBeenCalledWith({
-      building_id: 'cordera-building',
-      kindoo_site_id: 'east',
-    });
-  });
-
-  it('writes null when the operator picks Home', async () => {
+  it('Edit dialog pre-selects the existing kindoo_site_id', async () => {
     const user = userEvent.setup();
     useBuildingsMock.mockReturnValue(liveResult<Building>([building({ kindoo_site_id: 'east' })]));
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
-    updateBuildingKindooSiteMock.mockResolvedValue(undefined);
     render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-    await user.selectOptions(
-      screen.getByTestId('config-building-kindoo-site-cordera-building'),
-      '__home__',
+    await user.click(screen.getByTestId('config-building-edit-cordera-building'));
+    const dd = screen.getByTestId('config-building-kindoo-site') as HTMLSelectElement;
+    expect(dd.value).toBe('east');
+  });
+
+  it('Edit submit writes the selected kindoo_site_id through the building upsert', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(liveResult<Building>([building()]));
+    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
+    upsertBuildingMock.mockResolvedValue(undefined);
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-building-edit-cordera-building'));
+    await user.selectOptions(screen.getByTestId('config-building-kindoo-site'), 'east');
+    await user.click(screen.getByTestId('config-building-submit'));
+    expect(upsertBuildingMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        building_name: 'Cordera Building',
+        address: '123 Main',
+        kindoo_site_id: 'east',
+      }),
     );
-    expect(updateBuildingKindooSiteMock).toHaveBeenCalledWith({
-      building_id: 'cordera-building',
-      kindoo_site_id: null,
-    });
+  });
+
+  it('Edit submit writes null when the operator picks Home', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(liveResult<Building>([building({ kindoo_site_id: 'east' })]));
+    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
+    upsertBuildingMock.mockResolvedValue(undefined);
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-building-edit-cordera-building'));
+    await user.selectOptions(screen.getByTestId('config-building-kindoo-site'), '__home__');
+    await user.click(screen.getByTestId('config-building-submit'));
+    expect(upsertBuildingMock).toHaveBeenCalledWith(
+      expect.objectContaining({ building_name: 'Cordera Building', kindoo_site_id: null }),
+    );
   });
 });

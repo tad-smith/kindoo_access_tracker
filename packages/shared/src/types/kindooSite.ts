@@ -36,8 +36,12 @@ export type KindooSite = {
    * exposes at `state.sites.ids[0]` for an active session — the
    * extension uses this for active-session validation. Mirrors the
    * role `stake.kindoo_config.site_id` plays for the home site.
+   *
+   * Populated by the extension once the operator first uses it on a
+   * session logged into the site. Manager UI does not expose this
+   * field.
    */
-  kindoo_eid: number;
+  kindoo_eid?: number | null;
 
   created_at: TimestampLike;
   last_modified_at: TimestampLike;

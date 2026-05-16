@@ -495,8 +495,11 @@ Multi-Kindoo-site management for a single SBA stake. A doc here represents a **f
   kindoo_expected_site_name: string;   // matches the site-name string Kindoo's admin UI surfaces;
                                        //   the extension's active-session validation compares this
                                        //   against the live Kindoo session's site name
-  kindoo_eid: number;                  // Kindoo environment ID — the extension matches
-                                       //   `localStorage.state.sites.ids[0]` against this
+  kindoo_eid?: number | null;          // Kindoo environment ID — the extension matches
+                                       //   `localStorage.state.sites.ids[0]` against this.
+                                       //   Populated by the extension at first use on a
+                                       //   session logged into the site; the manager UI does
+                                       //   not expose this field.
   created_at: Timestamp;
   last_modified_at: Timestamp;
   lastActor: { email: string; canonical: string };

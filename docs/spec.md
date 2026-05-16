@@ -335,7 +335,7 @@ This is **not** multi-stake on the SBA side. The SBA stake remains a single SBA 
 ### Data model
 
 - **Home site is implicit.** It lives on the parent stake doc (`stake.kindoo_config.site_id` / `kindoo_config.site_name`, plus the optional `kindoo_expected_site_name` override). There is no `KindooSite` document representing the home site.
-- **Foreign sites live as documents** under `stakes/{stakeId}/kindooSites/{kindooSiteId}`. The doc ID is a manager-chosen slug. See [`firebase-schema.md`](firebase-schema.md) §4.11.
+- **Foreign sites live as documents** under `stakes/{stakeId}/kindooSites/{kindooSiteId}`. The doc ID is a manager-chosen slug. See [`firebase-schema.md`](firebase-schema.md) §4.11. The Kindoo environment ID (`kindoo_eid`) is NOT a manager-supplied field — the extension discovers it from `localStorage.state.sites.ids[0]` on a session logged into the site and writes it on first use (Phase 3). The Configuration UI captures only the display name and the Kindoo site-name string.
 - **Each `Ward` and `Building`** carries an optional `kindoo_site_id: string | null`. `null` (or field absent) means the home site; a string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. Wards and buildings carry the field independently — a foreign-site building hosts foreign-site wards, and the building's value is the load-bearing one for door access, while the ward's value flags Kindoo-side roster placement.
 
 ### Phase plan

@@ -11,29 +11,65 @@ import {
 } from './schemas';
 
 describe('configuration wardSchema', () => {
-  it('accepts a valid ward', () => {
+  it('accepts a valid ward (Home site)', () => {
     const r = wardSchema.safeParse({
       ward_code: 'CO',
       ward_name: 'Cordera',
       building_name: 'Main',
       seat_cap: 20,
+      kindoo_site_id: null,
     });
     expect(r.success).toBe(true);
   });
+
+  it('accepts a valid ward (foreign site)', () => {
+    const r = wardSchema.safeParse({
+      ward_code: 'CO',
+      ward_name: 'Cordera',
+      building_name: 'Main',
+      seat_cap: 20,
+      kindoo_site_id: 'east-stake',
+    });
+    expect(r.success).toBe(true);
+  });
+
   it('rejects ward code with hyphens', () => {
     const r = wardSchema.safeParse({
       ward_code: 'C-O',
       ward_name: 'X',
       building_name: 'Main',
       seat_cap: 1,
+      kindoo_site_id: null,
     });
     expect(r.success).toBe(false);
   });
 });
 
 describe('configuration buildingSchema', () => {
+  it('accepts a valid building (Home site)', () => {
+    const r = buildingSchema.safeParse({
+      building_name: 'Cordera Building',
+      address: '',
+      kindoo_site_id: null,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts a valid building (foreign site)', () => {
+    const r = buildingSchema.safeParse({
+      building_name: 'Foothills Building',
+      address: '',
+      kindoo_site_id: 'east-stake',
+    });
+    expect(r.success).toBe(true);
+  });
+
   it('rejects empty name', () => {
-    const r = buildingSchema.safeParse({ building_name: '', address: '' });
+    const r = buildingSchema.safeParse({
+      building_name: '',
+      address: '',
+      kindoo_site_id: null,
+    });
     expect(r.success).toBe(false);
   });
 });
@@ -77,11 +113,10 @@ describe('configuration callingTemplateSchema', () => {
 });
 
 describe('configuration kindooSiteFormSchema', () => {
-  it('accepts a fully populated kindoo site', () => {
+  it('accepts a fully populated kindoo site (no EID — extension-populated)', () => {
     const r = kindooSiteFormSchema.safeParse({
       display_name: 'East Stake',
       kindoo_expected_site_name: 'East Stake CS',
-      kindoo_eid: 42,
     });
     expect(r.success).toBe(true);
   });
@@ -90,7 +125,6 @@ describe('configuration kindooSiteFormSchema', () => {
     const r = kindooSiteFormSchema.safeParse({
       display_name: '   ',
       kindoo_expected_site_name: 'X',
-      kindoo_eid: 1,
     });
     expect(r.success).toBe(false);
   });
@@ -99,25 +133,6 @@ describe('configuration kindooSiteFormSchema', () => {
     const r = kindooSiteFormSchema.safeParse({
       display_name: 'X',
       kindoo_expected_site_name: '',
-      kindoo_eid: 1,
-    });
-    expect(r.success).toBe(false);
-  });
-
-  it('rejects zero EID', () => {
-    const r = kindooSiteFormSchema.safeParse({
-      display_name: 'X',
-      kindoo_expected_site_name: 'X',
-      kindoo_eid: 0,
-    });
-    expect(r.success).toBe(false);
-  });
-
-  it('rejects non-integer EID', () => {
-    const r = kindooSiteFormSchema.safeParse({
-      display_name: 'X',
-      kindoo_expected_site_name: 'X',
-      kindoo_eid: 1.5,
     });
     expect(r.success).toBe(false);
   });

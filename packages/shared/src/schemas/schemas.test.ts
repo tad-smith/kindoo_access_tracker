@@ -291,12 +291,41 @@ describe('buildingSchema', () => {
 });
 
 describe('kindooSiteSchema', () => {
-  it('parses a representative foreign-site entry', () => {
+  // `kindoo_eid` is extension-populated; the manager UI creates the
+  // doc without setting it. Round-trip cleanly with the field set
+  // (forward-compat for Phase 3 writes from the extension) and with
+  // the field omitted entirely (manager-created shape).
+  it('parses a representative foreign-site entry with kindoo_eid set', () => {
     const seed = {
       id: 'east-stake',
       display_name: 'East Stake (Foothills Building)',
       kindoo_expected_site_name: 'East Stake',
       kindoo_eid: 4321,
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(kindooSiteSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a foreign-site entry with kindoo_eid omitted (manager-created shape)', () => {
+    const seed = {
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake',
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(kindooSiteSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a foreign-site entry with kindoo_eid explicitly null', () => {
+    const seed = {
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake',
+      kindoo_eid: null,
       created_at: T,
       last_modified_at: T,
       lastActor: ACTOR,

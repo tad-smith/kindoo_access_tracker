@@ -63,9 +63,7 @@ import {
   useReorderWardCallingTemplatesMutation,
   useStakeCallingTemplates,
   useStakeDoc,
-  useUpdateBuildingKindooSiteMutation,
   useUpdateStakeConfigMutation,
-  useUpdateWardKindooSiteMutation,
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
   useUpsertManagerMutation,
@@ -185,7 +183,6 @@ function WardsTab() {
   const buildings = useBuildings();
   const kindooSites = useKindooSites();
   const upsert = useUpsertWardMutation();
-  const updateSite = useUpdateWardKindooSiteMutation();
   const del = useDeleteWardMutation();
 
   const [openMode, setOpenMode] = useState<'closed' | 'add' | { kind: 'edit'; ward: Ward }>(
@@ -215,19 +212,6 @@ function WardsTab() {
               — building: {w.building_name} · cap {w.seat_cap}
             </span>
             <span className="kd-config-row-actions">
-              <KindooSiteDropdown
-                value={w.kindoo_site_id ?? null}
-                sites={kindooSites.data ?? []}
-                disabled={updateSite.isPending}
-                onChange={(next) =>
-                  updateSite
-                    .mutateAsync({ ward_code: w.ward_code, kindoo_site_id: next })
-                    .then(() => toast('Ward saved.', 'success'))
-                    .catch((err) => toast(errorMessage(err), 'error'))
-                }
-                testid={`config-ward-kindoo-site-${w.ward_code}`}
-                ariaLabel={`Kindoo site for ${w.ward_name}`}
-              />
               <Button
                 variant="secondary"
                 onClick={() => setOpenMode({ kind: 'edit', ward: w })}
@@ -255,6 +239,7 @@ function WardsTab() {
       <WardFormDialog
         mode={openMode}
         buildingOptions={buildings.data ?? []}
+        kindooSiteOptions={kindooSites.data ?? []}
         isPending={upsert.isPending}
         onSubmit={async (input) => {
           await upsert.mutateAsync(input);
@@ -266,28 +251,23 @@ function WardsTab() {
   );
 }
 
-// Per-row dropdown shared by the Wards and Buildings tabs. "Home"
-// (value = `null`) is the default option; foreign sites follow. The
-// dropdown writes immediately on change — no Save button on the row
-// itself; the row-level inline edit is the point. Form-dialog edits
-// (Wards / Buildings) own the rest of the doc's fields.
-interface KindooSiteDropdownProps {
+// Kindoo Site form field rendered inside the Ward / Building dialogs.
+// "Home" (form value = `null`) is the default option; foreign sites
+// follow. The dialog form persists `kindoo_site_id` alongside the rest
+// of the entity's fields via the existing upsert mutation — no inline
+// auto-save on the list rows.
+//
+// Wrapped over the `<select>` so the form-control hidden-value carries
+// `string | null` straight into the RHF state (the sentinel
+// `__home__` only exists as a DOM value).
+interface KindooSiteFormFieldProps {
   value: string | null;
   sites: ReadonlyArray<KindooSite>;
-  disabled?: boolean;
   onChange: (next: string | null) => void;
   testid: string;
-  ariaLabel: string;
 }
 
-function KindooSiteDropdown({
-  value,
-  sites,
-  disabled,
-  onChange,
-  testid,
-  ariaLabel,
-}: KindooSiteDropdownProps) {
+function KindooSiteFormField({ value, sites, onChange, testid }: KindooSiteFormFieldProps) {
   const sortedSites = useMemo(
     () => [...sites].sort((a, b) => a.display_name.localeCompare(b.display_name)),
     [sites],
@@ -299,9 +279,7 @@ function KindooSiteDropdown({
         const next = e.target.value;
         onChange(next === '__home__' ? null : next);
       }}
-      disabled={disabled}
       data-testid={testid}
-      aria-label={ariaLabel}
     >
       <option value="__home__">Home</option>
       {sortedSites.map((s) => (
@@ -316,14 +294,34 @@ function KindooSiteDropdown({
 interface WardFormDialogProps {
   mode: 'closed' | 'add' | { kind: 'edit'; ward: Ward };
   buildingOptions: readonly Building[];
+  kindooSiteOptions: readonly KindooSite[];
   isPending: boolean;
   onSubmit: (input: WardForm) => Promise<void>;
   onClose: () => void;
 }
 
+function wardFormDefaults(editingWard: Ward | null): WardForm {
+  return editingWard
+    ? {
+        ward_code: editingWard.ward_code,
+        ward_name: editingWard.ward_name,
+        building_name: editingWard.building_name,
+        seat_cap: editingWard.seat_cap,
+        kindoo_site_id: editingWard.kindoo_site_id ?? null,
+      }
+    : {
+        ward_code: '',
+        ward_name: '',
+        building_name: '',
+        seat_cap: 20,
+        kindoo_site_id: null,
+      };
+}
+
 function WardFormDialog({
   mode,
   buildingOptions,
+  kindooSiteOptions,
   isPending,
   onSubmit,
   onClose,
@@ -334,31 +332,15 @@ function WardFormDialog({
 
   const form = useForm<WardForm>({
     resolver: zodResolver(wardSchema),
-    defaultValues: editingWard
-      ? {
-          ward_code: editingWard.ward_code,
-          ward_name: editingWard.ward_name,
-          building_name: editingWard.building_name,
-          seat_cap: editingWard.seat_cap,
-        }
-      : { ward_code: '', ward_name: '', building_name: '', seat_cap: 20 },
+    defaultValues: wardFormDefaults(editingWard),
   });
-  const { register, handleSubmit, reset, formState } = form;
+  const { control, register, handleSubmit, reset, formState } = form;
 
   // Reset whenever the dialog flips open/closed or the editing target
   // changes — RHF doesn't automatically re-pick up new defaultValues.
   useEffect(() => {
     if (!open) return;
-    reset(
-      editingWard
-        ? {
-            ward_code: editingWard.ward_code,
-            ward_name: editingWard.ward_name,
-            building_name: editingWard.building_name,
-            seat_cap: editingWard.seat_cap,
-          }
-        : { ward_code: '', ward_name: '', building_name: '', seat_cap: 20 },
-    );
+    reset(wardFormDefaults(editingWard));
   }, [open, editingWard, reset]);
 
   const submit = handleSubmit(async (input) => {
@@ -428,6 +410,21 @@ function WardFormDialog({
             {formState.errors.seat_cap.message}
           </p>
         ) : null}
+        <label>
+          Kindoo site
+          <Controller
+            name="kindoo_site_id"
+            control={control}
+            render={({ field }) => (
+              <KindooSiteFormField
+                value={field.value ?? null}
+                sites={kindooSiteOptions}
+                onChange={field.onChange}
+                testid="config-ward-kindoo-site"
+              />
+            )}
+          />
+        </label>
         <Dialog.Footer>
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>
           <Button type="submit" disabled={isPending} data-testid="config-ward-submit">
@@ -448,7 +445,6 @@ function BuildingsTab() {
   const wards = useWards();
   const kindooSites = useKindooSites();
   const upsert = useUpsertBuildingMutation();
-  const updateSite = useUpdateBuildingKindooSiteMutation();
   const del = useDeleteBuildingMutation();
 
   const [openMode, setOpenMode] = useState<'closed' | 'add' | { kind: 'edit'; building: Building }>(
@@ -477,19 +473,6 @@ function BuildingsTab() {
               {b.address ? <> — {b.address}</> : null}
             </span>
             <span className="kd-config-row-actions">
-              <KindooSiteDropdown
-                value={b.kindoo_site_id ?? null}
-                sites={kindooSites.data ?? []}
-                disabled={updateSite.isPending}
-                onChange={(next) =>
-                  updateSite
-                    .mutateAsync({ building_id: b.building_id, kindoo_site_id: next })
-                    .then(() => toast('Building saved.', 'success'))
-                    .catch((err) => toast(errorMessage(err), 'error'))
-                }
-                testid={`config-building-kindoo-site-${b.building_id}`}
-                ariaLabel={`Kindoo site for ${b.building_name}`}
-              />
               <Button
                 variant="secondary"
                 onClick={() => setOpenMode({ kind: 'edit', building: b })}
@@ -520,6 +503,7 @@ function BuildingsTab() {
 
       <BuildingFormDialog
         mode={openMode}
+        kindooSiteOptions={kindooSites.data ?? []}
         isPending={upsert.isPending}
         onSubmit={async (input) => {
           await upsert.mutateAsync(input);
@@ -533,31 +517,42 @@ function BuildingsTab() {
 
 interface BuildingFormDialogProps {
   mode: 'closed' | 'add' | { kind: 'edit'; building: Building };
+  kindooSiteOptions: readonly KindooSite[];
   isPending: boolean;
   onSubmit: (input: BuildingForm) => Promise<void>;
   onClose: () => void;
 }
 
-function BuildingFormDialog({ mode, isPending, onSubmit, onClose }: BuildingFormDialogProps) {
+function buildingFormDefaults(editingBuilding: Building | null): BuildingForm {
+  return editingBuilding
+    ? {
+        building_name: editingBuilding.building_name,
+        address: editingBuilding.address ?? '',
+        kindoo_site_id: editingBuilding.kindoo_site_id ?? null,
+      }
+    : { building_name: '', address: '', kindoo_site_id: null };
+}
+
+function BuildingFormDialog({
+  mode,
+  kindooSiteOptions,
+  isPending,
+  onSubmit,
+  onClose,
+}: BuildingFormDialogProps) {
   const isEdit = typeof mode === 'object' && mode.kind === 'edit';
   const editingBuilding = isEdit ? mode.building : null;
   const open = mode !== 'closed';
 
   const form = useForm<BuildingForm>({
     resolver: zodResolver(buildingSchema),
-    defaultValues: editingBuilding
-      ? { building_name: editingBuilding.building_name, address: editingBuilding.address ?? '' }
-      : { building_name: '', address: '' },
+    defaultValues: buildingFormDefaults(editingBuilding),
   });
-  const { register, handleSubmit, reset, formState } = form;
+  const { control, register, handleSubmit, reset, formState } = form;
 
   useEffect(() => {
     if (!open) return;
-    reset(
-      editingBuilding
-        ? { building_name: editingBuilding.building_name, address: editingBuilding.address ?? '' }
-        : { building_name: '', address: '' },
-    );
+    reset(buildingFormDefaults(editingBuilding));
   }, [open, editingBuilding, reset]);
 
   const submit = handleSubmit(async (input) => {
@@ -590,6 +585,21 @@ function BuildingFormDialog({ mode, isPending, onSubmit, onClose }: BuildingForm
         <label>
           Address
           <Input {...register('address')} placeholder="123 Main St" />
+        </label>
+        <label>
+          Kindoo site
+          <Controller
+            name="kindoo_site_id"
+            control={control}
+            render={({ field }) => (
+              <KindooSiteFormField
+                value={field.value ?? null}
+                sites={kindooSiteOptions}
+                onChange={field.onChange}
+                testid="config-building-kindoo-site"
+              />
+            )}
+          />
         </label>
         <Dialog.Footer>
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>
@@ -648,7 +658,7 @@ function KindooSitesTab() {
             <li key={s.id} data-testid={`config-kindoo-sites-row-${s.id}`}>
               <span>
                 <strong>{s.display_name}</strong> — site name:{' '}
-                <code>{s.kindoo_expected_site_name}</code> · EID {s.kindoo_eid}
+                <code>{s.kindoo_expected_site_name}</code>
               </span>
               <span className="kd-config-row-actions">
                 <Button
@@ -705,9 +715,8 @@ function KindooSiteFormDialog({ mode, isPending, onSubmit, onClose }: KindooSite
     ? {
         display_name: editingSite.display_name,
         kindoo_expected_site_name: editingSite.kindoo_expected_site_name,
-        kindoo_eid: editingSite.kindoo_eid,
       }
-    : { display_name: '', kindoo_expected_site_name: '', kindoo_eid: 1 };
+    : { display_name: '', kindoo_expected_site_name: '' };
 
   const form = useForm<KindooSiteForm>({
     resolver: zodResolver(kindooSiteFormSchema),
@@ -760,15 +769,6 @@ function KindooSiteFormDialog({ mode, isPending, onSubmit, onClose }: KindooSite
         {formState.errors.kindoo_expected_site_name ? (
           <p role="alert" className="kd-form-error">
             {formState.errors.kindoo_expected_site_name.message}
-          </p>
-        ) : null}
-        <label>
-          Kindoo EID
-          <Input type="number" step={1} {...register('kindoo_eid', { valueAsNumber: true })} />
-        </label>
-        {formState.errors.kindoo_eid ? (
-          <p role="alert" className="kd-form-error">
-            {formState.errors.kindoo_eid.message}
           </p>
         ) : null}
         <Dialog.Footer>
