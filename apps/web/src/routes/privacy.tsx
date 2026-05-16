@@ -48,11 +48,16 @@ function PrivacyPage() {
 
           <Section title="1. Who we are">
             <p>
-              Stake Building Access is software operated by{' '}
-              <Placeholder>[PLACEHOLDER: stake legal / organizational name]</Placeholder> to manage
-              door access for stake-owned meetinghouses. Questions about this policy or about data
-              we hold can be sent to{' '}
-              <Placeholder>[PLACEHOLDER: contact email, e.g. admin@example.org]</Placeholder>.
+              Stake Building Access is a personal project operated by Tad Smith. It manages door
+              access for stake-owned meetinghouses. Questions about this policy or about data we
+              hold can be sent to{' '}
+              <a
+                href="mailto:support@stakebuildingaccess.org"
+                className="text-[color:var(--kd-primary)] hover:underline"
+              >
+                support@stakebuildingaccess.org
+              </a>
+              .
             </p>
             <p>This policy covers two surfaces that share one backend:</p>
             <ul className="list-disc pl-6">
@@ -230,11 +235,15 @@ function PrivacyPage() {
 
           <Section title="7. Your rights and how to contact us">
             <p>
-              Building access is administered by each stake&rsquo;s leadership. To correct,
-              restrict, or delete data Stake Building Access holds about you, contact your
-              stake&rsquo;s administrator at{' '}
-              <Placeholder>[PLACEHOLDER: stake admin contact email]</Placeholder>. They can remove a
-              request, revoke a seat, or escalate a deletion request to us.
+              To correct, restrict, or delete data Stake Building Access holds about you, contact us
+              at{' '}
+              <a
+                href="mailto:support@stakebuildingaccess.org"
+                className="text-[color:var(--kd-primary)] hover:underline"
+              >
+                support@stakebuildingaccess.org
+              </a>
+              .
             </p>
             <p>
               You can stop the Chrome extension from accessing your account at any time by
@@ -280,17 +289,5 @@ function Section({ title, children }: SectionProps) {
         {children}
       </div>
     </section>
-  );
-}
-
-// Visual marker for spots the operator must fill in before this policy
-// is the published version. Subtle yellow tint so it stands out in the
-// rendered page without screaming at a reviewer if it accidentally
-// ships unfilled.
-function Placeholder({ children }: { children: React.ReactNode }) {
-  return (
-    <mark className="rounded bg-[color:var(--kd-warn-tint)] px-1 py-0 text-[color:var(--kd-warn-mid)]">
-      {children}
-    </mark>
   );
 }

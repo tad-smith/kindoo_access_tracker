@@ -27,7 +27,7 @@ import { BrandIcon } from '../../components/layout/BrandIcon';
 import { signIn } from './signIn';
 
 const CHROME_WEB_STORE_URL = 'https://chrome.google.com/webstore';
-const CONTACT_MAILTO = 'mailto:admin@csnorth.org';
+const CONTACT_MAILTO = 'mailto:support@stakebuildingaccess.org';
 
 export function SignInPage() {
   const [error, setError] = useState<string | null>(null);

@@ -115,7 +115,7 @@ Two routes render without an auth gate; neither participates in role resolution 
 - **`/` (signed-out homepage)** — rendered by `apps/web/src/features/auth/SignInPage.tsx` whenever no Firebase Auth user is present. Audience is ward and stake leadership (bishopric, stake presidency, executive secretaries, clerks) — not Kindoo Managers, who are a downstream role. Layout: a sticky top bar (brand + secondary "Sign in" button), a centred hero (headline + sub-line + primary "Sign in with Google" button), three short feature bullets (request access, routed to the right approver, auto-expiring temporary grants), a one-paragraph explainer, and a footer linking to `/privacy`, the Chrome Web Store listing, and a contact `mailto:`. Both sign-in buttons call the same `signIn()` flow; the duplicated CTA is intentional (topbar remains reachable after scroll). Once authenticated the route re-renders and falls through to the existing `gateDecision()` in `apps/web/src/routes/index.tsx`, unchanged.
 - **`/privacy`** — TanStack Router file route at `apps/web/src/routes/privacy.tsx`. Public; no auth gate; renders identically for reviewers, signed-out visitors, and signed-in users. Hosts the privacy policy for both the web app and the companion "Stake Building Access — Kindoo Helper" Chrome MV3 extension, and is the privacy URL declared on the Chrome Web Store listing. Sections cover: operator identity, what the extension does, data accessed and why, storage and processing (Firestore + Cloud Functions, US region), authentication via `chrome.identity` + Firebase, per-permission justifications for the extension's MV3 manifest, user rights, and a change log keyed on `LAST_UPDATED`. When the extension manifest changes (permissions, host_permissions, OAuth scopes) the corresponding section is updated in the same commit.
 
-Both pages carry values that must be replaced before public publish: 3 `[PLACEHOLDER]` tokens on `/privacy` covering stake legal name, contact email, and stake admin contact email; and on the homepage two top-of-file constants — `CHROME_WEB_STORE_URL` and `CONTACT_MAILTO` — that point at placeholder values (Web Store root, legacy `admin@csnorth.org`) rather than the real targets. See §13.
+`/privacy` carries zero `[PLACEHOLDER]` tokens. The homepage carries one remaining placeholder: `CHROME_WEB_STORE_URL` points at the Web Store root pending the actual extension listing. `CONTACT_MAILTO` is `mailto:support@stakebuildingaccess.org`. See §13.
 
 ### 5.1 Bishopric (scoped to own ward)
 
@@ -319,7 +319,7 @@ The Resend `mail.stakebuildingaccess.org` subdomain is verified and in active us
 - Building permissions UI on bishopric requests (the `building_names` defaulting + manager pre-tick on the complete dialog covers it; the comment field handles exceptions).
 - Per-stake tz handling beyond `America/Denver` for v1 (each stake doc carries `timezone` but only one value is in use).
 - Push notifications for completion / rejection / cancel / over-cap — Phase 10.6 (deferred).
-- Filling the `[PLACEHOLDER: ...]` tokens on `/privacy` (operator legal name, two contact emails) — operator-owned, blocks Chrome Web Store public publish but not the app itself.
+- Pointing `CHROME_WEB_STORE_URL` on the homepage at the actual Chrome Web Store listing once the extension is published — currently the Web Store root.
 
 ## 14. Build history
 
