@@ -161,12 +161,26 @@ export async function writeKindooConfig(
 
   if (payload.kindooSiteId === null) {
     // Home save — writes stake.kindoo_config alongside the per-building
-    // rule rows.
+    // rule rows. Defensive read first: if the wizard couldn't resolve
+    // a fresh site name (env missing from a Kindoo paginated/transient
+    // /Environments response), preserve the existing
+    // `kindoo_config.site_name` rather than clobbering it with ''.
+    // The site-check resolver returns `home` purely by EID compare, so
+    // a re-configure of a valid home is legitimate even when
+    // getEnvironments() doesn't list the active env.
     const stakeRef = doc(db, 'stakes', STAKE_ID);
+    let siteName = payload.siteName;
+    if (!siteName) {
+      const stakeSnap = await getDoc(stakeRef);
+      const existing = stakeSnap.exists()
+        ? ((stakeSnap.data() as Stake).kindoo_config?.site_name ?? '')
+        : '';
+      siteName = existing;
+    }
     batch.update(stakeRef, {
       kindoo_config: {
         site_id: payload.siteId,
-        site_name: payload.siteName,
+        site_name: siteName,
         configured_at: serverTimestamp(),
         configured_by: actorRef,
       },

@@ -424,6 +424,36 @@ describe('RequestCard', () => {
     expect(markRequestCompleteMock).not.toHaveBeenCalled();
   });
 
+  it('refuses on EID mismatch on the remove path too (shared site-check entry guard)', async () => {
+    // Mirror the add-path foreign-mismatch scenario but with a remove
+    // request type. The site check sits in front of all three provision
+    // dispatches (add / edit / remove) at a single shared call site in
+    // RequestCard.provision — this test proves the gate runs on the
+    // remove path so the shared call site isn't covered only by
+    // inspection.
+    const user = userEvent.setup();
+    await renderCardWithBundle(
+      removeReq({ request_id: 'r-remove', scope: 'FN' }),
+      bundleWithForeignWard({ withEid: true }),
+    );
+    await user.click(screen.getByTestId('sba-remove-r-remove'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sba-provision-error-r-remove')).toHaveTextContent(
+        "'East Stake (Foothills)'",
+      ),
+    );
+    expect(screen.getByTestId('sba-provision-error-r-remove')).toHaveTextContent(
+      /Switch Kindoo sites and try again/,
+    );
+    // No orchestrator side effects fire on a refused site check.
+    expect(provisionRemoveMock).not.toHaveBeenCalled();
+    expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
+    expect(provisionEditMock).not.toHaveBeenCalled();
+    expect(writeKindooSiteEidMock).not.toHaveBeenCalled();
+    expect(markRequestCompleteMock).not.toHaveBeenCalled();
+  });
+
   it('auto-populates kindoo_eid then proceeds when foreign site has no EID and session name matches', async () => {
     // Active session is on the FOREIGN env (EID 4321), name "East Stake".
     // Foreign site has no recorded kindoo_eid. The site check populates
