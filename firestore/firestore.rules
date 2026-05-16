@@ -549,8 +549,12 @@ service cloud.firestore {
               || request.resource.data.urgent is bool)
           && (request.resource.data.type == 'remove'
               || request.resource.data.member_name.size() > 0)
+          // Every `add_*` / `edit_*` request must carry at least one
+          // building regardless of scope (operator decision 2026-05-16,
+          // ratified in spec §5.1 / §6). The web form schema gates
+          // Submit on the same predicate; this is the rule-side defense.
+          // `remove` is exempt — no building selection involved.
           && (request.resource.data.type == 'remove'
-              || request.resource.data.scope != 'stake'
               || request.resource.data.building_names.size() > 0)
           && (request.resource.data.type != 'add_temp'
               && request.resource.data.type != 'edit_temp'

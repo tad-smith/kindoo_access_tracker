@@ -263,7 +263,11 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     expect(arg.end_date).toBeUndefined();
   });
 
-  it('blocks submission with an inline error when no buildings are checked', async () => {
+  it('blocks submission (button disabled) when no buildings are checked', async () => {
+    // Matches the NewRequestForm gate — every `edit_*` / `add_*` request
+    // must carry ≥ 1 building (operator decision 2026-05-16, spec §5.1
+    // / §6). Submit is disabled while the building checklist is empty;
+    // the schema layer is the second defense.
     const user = userEvent.setup();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
@@ -278,9 +282,10 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     await user.type(screen.getByTestId('edit-seat-comment'), 'note');
-    await user.click(screen.getByTestId('edit-seat-confirm'));
+    const confirmBtn = screen.getByTestId('edit-seat-confirm');
+    expect(confirmBtn).toBeDisabled();
+    await user.click(confirmBtn);
     expect(submitMutateAsync).not.toHaveBeenCalled();
-    expect(screen.getByText(/pick at least one building/i)).toBeInTheDocument();
   });
 
   it('renders a required Comment field in the dialog body', () => {

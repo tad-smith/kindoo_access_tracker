@@ -330,7 +330,7 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>
           <Dialog.ConfirmButton
             type="submit"
-            disabled={submit.isPending}
+            disabled={submit.isPending || watchedBuildings.length === 0}
             data-testid="edit-seat-confirm"
           >
             {submit.isPending ? 'Submitting…' : 'Submit edit'}

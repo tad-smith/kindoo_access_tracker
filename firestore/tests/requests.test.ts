@@ -72,7 +72,9 @@ function pendingAddTempByBishopric(
     comment: '',
     start_date: '2026-05-01',
     end_date: '2026-05-08',
-    building_names: [],
+    // Every `add_*` / `edit_*` request must carry ≥ 1 building
+    // (operator decision 2026-05-16, spec §5.1 / §6).
+    building_names: ['Cordera Building'],
     status: 'pending',
     requester_email: personas.bishopric.email,
     requester_canonical: personas.bishopric.canonical,
@@ -313,6 +315,46 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
     it('stake-scope add with empty building_names → denied', async () => {
       const db = stakeMemberContext(env, STAKE_ID).firestore();
       await assertFails(db.doc(PATH).set(pendingAddManualByStakeMember({ building_names: [] })));
+    });
+
+    // Universal `building_names ≥ 1` gate (operator decision 2026-05-16,
+    // spec §5.1 / §6). Ward-scope `add_manual` / `add_temp` must also
+    // carry ≥ 1 building — pre-decision the rule exempted ward scope and
+    // relied on a Mark Complete default. The new contract is "every
+    // request carries the buildings the requester chose."
+    it('ward-scope add_manual with empty building_names → denied', async () => {
+      const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          pendingAddManualByStakeMember({
+            scope: '01',
+            building_names: [],
+            requester_email: personas.bishopric.email,
+            requester_canonical: personas.bishopric.canonical,
+            lastActor: lastActorOf(personas.bishopric),
+          }),
+        ),
+      );
+    });
+
+    it('ward-scope add_temp with empty building_names → denied', async () => {
+      const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+      await assertFails(db.doc(PATH).set(pendingAddTempByBishopric('01', { building_names: [] })));
+    });
+
+    it('ward-scope add_manual with ≥ 1 building → ok', async () => {
+      const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+      await assertSucceeds(
+        db.doc(PATH).set(
+          pendingAddManualByStakeMember({
+            scope: '01',
+            building_names: ['Cordera Building'],
+            requester_email: personas.bishopric.email,
+            requester_canonical: personas.bishopric.canonical,
+            lastActor: lastActorOf(personas.bishopric),
+          }),
+        ),
+      );
     });
 
     it('stake-scope submit by a non-stake-member → denied', async () => {
@@ -675,6 +717,18 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
           ),
         );
       });
+
+      // Universal `building_names ≥ 1` gate (operator decision
+      // 2026-05-16, spec §5.1 / §6). edit_auto is ward-scope only
+      // (Policy 1); empty buildings is denied even though pre-decision
+      // ward-scope edit_auto was permitted to ship with `building_names:
+      // []` at the rule level.
+      it('ward-scope with empty building_names → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingEditAutoByBishopric('01', { building_names: [] })),
+        );
+      });
     });
 
     describe('edit_manual', () => {
@@ -689,7 +743,6 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
           db.doc(PATH).set(
             pendingEditManualByStakeMember({
               scope: '01',
-              building_names: [],
               requester_email: personas.bishopric.email,
               requester_canonical: personas.bishopric.canonical,
               lastActor: lastActorOf(personas.bishopric),
@@ -717,7 +770,6 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
           db.doc(PATH).set(
             pendingEditManualByStakeMember({
               scope: '01',
-              building_names: [],
               requester_email: personas.bishopric.email,
               requester_canonical: personas.bishopric.canonical,
               lastActor: lastActorOf(personas.bishopric),
@@ -732,7 +784,6 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
           db.doc(PATH).set(
             pendingEditManualByStakeMember({
               scope: '01',
-              building_names: [],
               requester_email: personas.manager.email,
               requester_canonical: personas.manager.canonical,
               lastActor: lastActorOf(personas.manager),
@@ -741,9 +792,28 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
         );
       });
 
+      // Universal `building_names ≥ 1` gate (operator decision
+      // 2026-05-16, spec §5.1 / §6). Applies to every `add_*` / `edit_*`
+      // regardless of scope — including ward-scope, which used to be
+      // allowed at the rule level pre-decision.
       it('stake-scope with empty building_names → denied', async () => {
         const db = stakeMemberContext(env, STAKE_ID).firestore();
         await assertFails(db.doc(PATH).set(pendingEditManualByStakeMember({ building_names: [] })));
+      });
+
+      it('ward-scope with empty building_names → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditManualByStakeMember({
+              scope: '01',
+              building_names: [],
+              requester_email: personas.bishopric.email,
+              requester_canonical: personas.bishopric.canonical,
+              lastActor: lastActorOf(personas.bishopric),
+            }),
+          ),
+        );
       });
 
       it('unauthenticated → denied', async () => {
@@ -809,6 +879,30 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
             pendingEditTempByBishopric('01', {
               start_date: '2026-06-10',
               end_date: '2026-06-01',
+            }),
+          ),
+        );
+      });
+
+      // Universal `building_names ≥ 1` gate (operator decision
+      // 2026-05-16, spec §5.1 / §6).
+      it('ward-scope with empty building_names → denied', async () => {
+        const db = bishopricContext(env, STAKE_ID, ['01']).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingEditTempByBishopric('01', { building_names: [] })),
+        );
+      });
+
+      it('stake-scope with empty building_names → denied', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditTempByBishopric('01', {
+              scope: 'stake',
+              building_names: [],
+              requester_email: personas.stakeMember.email,
+              requester_canonical: personas.stakeMember.canonical,
+              lastActor: lastActorOf(personas.stakeMember),
             }),
           ),
         );
