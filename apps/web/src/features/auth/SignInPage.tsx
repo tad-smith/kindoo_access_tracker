@@ -106,7 +106,7 @@ function HomeHero({ onSignIn, pending, error }: HeroProps) {
           Building access for your stake.
         </h1>
         <p className="mx-auto mt-4 max-w-[44ch] text-[1rem] leading-relaxed text-[color:var(--kd-fg-2)] sm:text-[1.05rem]">
-          Grant church members the buildings they need — approved by the right leaders.
+          Grant church members access to the buildings they need — approved by the right leaders.
         </p>
         <div className="mt-7">
           {/* No aria-label — visible text is the accessible name. The
