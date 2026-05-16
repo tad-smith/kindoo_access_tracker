@@ -3,14 +3,23 @@
 //
 // State machine: idle → loading → report | error.
 //
-// On "Run Sync" the panel fires two reads in parallel:
+// On "Run Sync" the panel fires reads in parallel:
 //   - getSyncData() (SW → Firestore) — all SBA collections needed for drift.
 //   - listAllEnvironmentUsers() (CS → Kindoo) — every Kindoo env-user, paginated.
+//   - buildRuleDoorMap() (CS → Kindoo) — one call per AccessRule to
+//     learn each rule's door set. Used downstream to derive each
+//     user's effective building access from their per-door grants
+//     (covers BOTH AccessSchedules-derived AND Church Access
+//     Automation direct grants).
 //
-// Once both resolve, `detect()` (in content/kindoo/sync/detector.ts)
-// classifies divergence into one Discrepancy row per email and the
-// panel renders the report. Filter chips narrow to drift-only / review-
-// only. Per-row Fix buttons (Phase 2) dispatch the appropriate action;
+// After the bulk listing returns, the panel walks the users with a
+// small concurrency cap, calling `getUserDoorIds` per user, and stamps
+// `derivedBuildings` onto each one. Progress text updates as users
+// complete. With ~313 users + concurrency=4 and ~100-200ms per Kindoo
+// call this lands at ~10-15s.
+//
+// Once enrichment is done, `detect()` runs and the report renders.
+// Per-row Fix buttons (Phase 2) dispatch the appropriate action;
 // successful applies splice the row out and decrement the matching
 // counter (drift or review) in the summary header — no toast, no
 // confirm, trust-fire per operator decision.
@@ -30,6 +39,7 @@ import {
   detect,
   type Discrepancy,
   type DetectResult,
+  type DiscrepancyCode,
   type Severity,
 } from '../content/kindoo/sync/detector';
 import {
@@ -38,16 +48,43 @@ import {
   type DispatchContext,
   type FixAction,
 } from '../content/kindoo/sync/fix';
+import {
+  buildRuleDoorMap,
+  enrichUsersWithDerivedBuildings,
+} from '../content/kindoo/sync/buildingsFromDoors';
 import type { KindooSession } from '../content/kindoo/auth';
 
 type Step =
   | { kind: 'idle' }
-  | { kind: 'loading' }
+  | { kind: 'loading'; progress: string | null }
   | { kind: 'report'; result: DetectResult; ctx: DispatchContext }
   | { kind: 'error'; message: string }
   | { kind: 'no-kindoo'; error: KindooSessionError };
 
+/** Update the loading progress text every Nth user. With 313 users +
+ * concurrency=4 we'd get 313 React state updates a few hundred ms
+ * apart; throttling to every 10 keeps the reconciler responsive. */
+const PROGRESS_UPDATE_EVERY = 10;
+
 type FilterMode = 'all' | 'drift' | 'review';
+
+/** Sentinel for "no code filter" — keep separate from the union so we
+ * can spread `DiscrepancyCode` into the dropdown options without
+ * carving out a "doesn't match any row" value. */
+type CodeFilter = 'all' | DiscrepancyCode;
+
+/** Order of the dropdown options. Mirrors the order in `DiscrepancyCode`
+ * so the labels read top-to-bottom in the order the detector files
+ * them. */
+const CODE_FILTER_OPTIONS: readonly DiscrepancyCode[] = [
+  'sba-only',
+  'kindoo-only',
+  'kindoo-unparseable',
+  'scope-mismatch',
+  'type-mismatch',
+  'buildings-mismatch',
+  'extra-kindoo-calling',
+];
 
 /** Per-row fix state. `idle` → buttons visible; `applying` → in flight;
  * `error` → inline error + Retry; success removes the row entirely so
@@ -72,9 +109,10 @@ function describeKindooError(err: unknown): string {
 export function SyncPanel() {
   const [step, setStep] = useState<Step>({ kind: 'idle' });
   const [filter, setFilter] = useState<FilterMode>('all');
+  const [codeFilter, setCodeFilter] = useState<CodeFilter>('all');
 
   const runSync = useCallback(async () => {
-    setStep({ kind: 'loading' });
+    setStep({ kind: 'loading', progress: null });
 
     const sessionResult = readKindooSession();
     if (!sessionResult.ok) {
@@ -84,12 +122,45 @@ export function SyncPanel() {
     const session = sessionResult.session;
 
     try {
+      // Phase A: parallel read of SBA bundle + Kindoo bulk listing +
+      // env metadata. The rule door map depends on the buildings list
+      // (to know which RIDs to fetch), so it kicks off once the
+      // bundle resolves.
       const [bundle, kindooUsers, envs] = await Promise.all([
         getSyncData(),
         listAllEnvironmentUsers(session),
         getEnvironments(session),
       ]);
-      const result = detect({ ...bundle, kindooUsers });
+
+      // Phase B: rule door map. Drives every AccessRule referenced by
+      // an SBA building via `KindooGetEnvRuleWithEntryPointsFormatted`.
+      // csnorth has 4 rules → 4 calls; cheap.
+      const ruleIds = collectRuleIds(bundle);
+      const ruleDoorMap = await buildRuleDoorMap(session, session.eid, ruleIds);
+
+      // Phase C: enrich each user with derivedBuildings. ~313 calls
+      // at concurrency=4; the operator sees "Reading Kindoo user N of
+      // M…" tick along.
+      const enriched = await enrichUsersWithDerivedBuildings(
+        session,
+        session.eid,
+        kindooUsers,
+        ruleDoorMap,
+        bundle.buildings,
+        {
+          concurrency: 4,
+          onProgress: (completed, total) => {
+            if (completed === total || completed === 1 || completed % PROGRESS_UPDATE_EVERY === 0) {
+              setStep({
+                kind: 'loading',
+                progress: `Reading Kindoo user ${completed} of ${total}…`,
+              });
+            }
+          },
+        },
+      );
+
+      const result = detect({ ...bundle, kindooUsers: enriched });
       const ctx = buildDispatchContext(bundle, envs, session);
       setStep({ kind: 'report', result, ctx });
     } catch (err) {
@@ -101,7 +172,14 @@ export function SyncPanel() {
 
   return (
     <div className="sba-body" data-testid="sba-sync">
-      <SyncBody step={step} filter={filter} onRun={() => void runSync()} onFilter={setFilter} />
+      <SyncBody
+        step={step}
+        filter={filter}
+        codeFilter={codeFilter}
+        onRun={() => void runSync()}
+        onFilter={setFilter}
+        onCodeFilter={setCodeFilter}
+      />
     </div>
   );
 }
@@ -120,14 +198,28 @@ function buildDispatchContext(
   };
 }
 
+/** Collect distinct RuleIDs referenced by SBA buildings. Used as the
+ * input to `buildRuleDoorMap` — we only fetch door sets for rules an
+ * SBA building actually maps to. */
+function collectRuleIds(bundle: SyncDataBundle): number[] {
+  const out = new Set<number>();
+  for (const b of bundle.buildings) {
+    const rid = b.kindoo_rule?.rule_id;
+    if (typeof rid === 'number') out.add(rid);
+  }
+  return Array.from(out);
+}
+
 interface BodyProps {
   step: Step;
   filter: FilterMode;
+  codeFilter: CodeFilter;
   onRun: () => void;
   onFilter: (f: FilterMode) => void;
+  onCodeFilter: (c: CodeFilter) => void;
 }
 
-function SyncBody({ step, filter, onRun, onFilter }: BodyProps) {
+function SyncBody({ step, filter, codeFilter, onRun, onFilter, onCodeFilter }: BodyProps) {
   if (step.kind === 'idle') {
     return (
       <div data-testid="sba-sync-idle">
@@ -148,9 +240,14 @@ function SyncBody({ step, filter, onRun, onFilter }: BodyProps) {
   }
   if (step.kind === 'loading') {
     return (
-      <p className="sba-muted" data-testid="sba-sync-loading">
-        Reading SBA + Kindoo…
-      </p>
+      <div data-testid="sba-sync-loading">
+        <p className="sba-muted">Reading SBA + Kindoo…</p>
+        {step.progress !== null ? (
+          <p className="sba-muted" data-testid="sba-sync-progress" aria-live="polite">
+            {step.progress}
+          </p>
+        ) : null}
+      </div>
     );
   }
   if (step.kind === 'no-kindoo') {
@@ -177,17 +274,28 @@ function SyncBody({ step, filter, onRun, onFilter }: BodyProps) {
       </div>
     );
   }
-  return <ReportView result={step.result} ctx={step.ctx} filter={filter} onFilter={onFilter} />;
+  return (
+    <ReportView
+      result={step.result}
+      ctx={step.ctx}
+      filter={filter}
+      codeFilter={codeFilter}
+      onFilter={onFilter}
+      onCodeFilter={onCodeFilter}
+    />
+  );
 }
 
 interface ReportProps {
   result: DetectResult;
   ctx: DispatchContext;
   filter: FilterMode;
+  codeFilter: CodeFilter;
   onFilter: (f: FilterMode) => void;
+  onCodeFilter: (c: CodeFilter) => void;
 }
 
-function ReportView({ result, ctx, filter, onFilter }: ReportProps) {
+function ReportView({ result, ctx, filter, codeFilter, onFilter, onCodeFilter }: ReportProps) {
   // Splice-on-success: once a fix applies, drop the row from the
   // rendered list. The detector is not re-run; the operator triggers
   // a fresh sync to get a clean state.
@@ -207,11 +315,18 @@ function ReportView({ result, ctx, filter, onFilter }: ReportProps) {
     [visibleDiscrepancies],
   );
   const filtered = useMemo(() => {
-    if (filter === 'all') return visibleDiscrepancies;
-    return visibleDiscrepancies.filter((d) =>
-      filter === 'drift' ? d.severity === 'drift' : d.severity === 'review',
-    );
-  }, [filter, visibleDiscrepancies]);
+    return visibleDiscrepancies.filter((d) => {
+      if (filter === 'drift' && d.severity !== 'drift') return false;
+      if (filter === 'review' && d.severity !== 'review') return false;
+      if (codeFilter !== 'all' && d.code !== codeFilter) return false;
+      return true;
+    });
+  }, [filter, codeFilter, visibleDiscrepancies]);
+  // Distinguish "report is empty" (both sides agree — show the
+  // existing reassuring message) from "filters combine to zero rows"
+  // (show a filter-specific hint so the operator knows the data is
+  // there, just hidden).
+  const hasAnyDiscrepancies = visibleDiscrepancies.length > 0;
 
   const handleFix = useCallback(
     async (d: Discrepancy, action: FixAction) => {
@@ -249,10 +364,26 @@ function ReportView({ result, ctx, filter, onFilter }: ReportProps) {
         <FilterChip current={filter} value="all" label="All" onFilter={onFilter} />
         <FilterChip current={filter} value="drift" label="Drift only" onFilter={onFilter} />
         <FilterChip current={filter} value="review" label="Review only" onFilter={onFilter} />
+        <select
+          className="sba-code-filter"
+          aria-label="Filter by code"
+          value={codeFilter}
+          onChange={(e) => onCodeFilter(e.target.value as CodeFilter)}
+          data-testid="sba-sync-code-filter"
+        >
+          <option value="all">All codes</option>
+          {CODE_FILTER_OPTIONS.map((code) => (
+            <option key={code} value={code}>
+              {code}
+            </option>
+          ))}
+        </select>
       </div>
       {filtered.length === 0 ? (
         <p className="sba-empty" data-testid="sba-sync-empty">
-          No discrepancies to show.
+          {hasAnyDiscrepancies
+            ? 'No discrepancies match the current filters.'
+            : 'No discrepancies to show.'}
         </p>
       ) : (
         <ul className="sba-sync-list" data-testid="sba-sync-list">
@@ -302,12 +433,24 @@ interface DiscrepancyRowProps {
 function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
   const severityClass = discrepancy.severity === 'drift' ? 'sba-badge-remove' : 'sba-badge-temp';
   const actions = fixActionsFor(discrepancy);
-  // Type-mismatch with `auto` on either side can't drive Kindoo from the
-  // extension (Church Access Automation owns direct door grants). Mark
-  // the Kindoo-side button disabled with a tooltip in that case.
-  const autoLocked =
-    discrepancy.code === 'type-mismatch' &&
+  // Auto seats: Church Access Automation owns direct door grants — the
+  // extension can't write them. The Kindoo-side button is disabled on:
+  //   - type-mismatch when either side is auto
+  //   - buildings-mismatch when the SBA seat is auto
+  // For buildings-mismatch on auto where `derivedBuildings === null`
+  // the SBA-side write has no valid source either, so disable both
+  // buttons.
+  const isAutoBuildingsMismatch =
+    discrepancy.code === 'buildings-mismatch' &&
     (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto');
+  const autoLockedKindoo =
+    (discrepancy.code === 'type-mismatch' &&
+      (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto')) ||
+    isAutoBuildingsMismatch;
+  const autoLockedSba =
+    isAutoBuildingsMismatch &&
+    (discrepancy.kindoo?.derivedBuildings === null ||
+      discrepancy.kindoo?.derivedBuildings === undefined);
 
   return (
     <div
@@ -384,7 +527,8 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
         canonical={discrepancy.canonical}
         actions={actions}
         state={state}
-        autoLocked={autoLocked}
+        autoLockedKindoo={autoLockedKindoo}
+        autoLockedSba={autoLockedSba}
         onFix={onFix}
       />
     </div>
@@ -395,11 +539,23 @@ interface FixActionsProps {
   canonical: string;
   actions: FixAction[];
   state: RowState;
-  autoLocked: boolean;
+  /** Disable the Kindoo-side button (Church Access Automation owns
+   * auto-seat door grants). */
+  autoLockedKindoo: boolean;
+  /** Disable the SBA-side button (auto buildings-mismatch where
+   * `derivedBuildings` failed — no valid source to send). */
+  autoLockedSba: boolean;
   onFix: (action: FixAction) => void;
 }
 
-function FixActions({ canonical, actions, state, autoLocked, onFix }: FixActionsProps) {
+function FixActions({
+  canonical,
+  actions,
+  state,
+  autoLockedKindoo,
+  autoLockedSba,
+  onFix,
+}: FixActionsProps) {
   if (actions.length === 0) return null;
 
   if (state.kind === 'applying') {
@@ -435,19 +591,22 @@ function FixActions({ canonical, actions, state, autoLocked, onFix }: FixActions
   return (
     <div className="sba-sync-fix-row">
       {actions.map((a) => {
-        const isAutoLockedKindoo = autoLocked && a.side === 'kindoo';
+        const lockedKindoo = autoLockedKindoo && a.side === 'kindoo';
+        const lockedSba = autoLockedSba && a.side === 'sba';
+        const disabled = lockedKindoo || lockedSba;
+        const title = lockedKindoo
+          ? 'auto seats provisioned by Church Access Automation; not modifiable here.'
+          : lockedSba
+            ? 'door-grant derivation failed; cannot determine the correct building set — re-run Sync.'
+            : undefined;
         return (
           <button
             key={a.testId}
             type="button"
             className={a.side === 'sba' ? 'sba-btn sba-btn-primary' : 'sba-btn sba-btn-success'}
             onClick={() => onFix(a)}
-            disabled={isAutoLockedKindoo}
-            title={
-              isAutoLockedKindoo
-                ? 'auto seats provisioned by Church Access Automation; not modifiable here.'
-                : undefined
-            }
+            disabled={disabled}
+            title={title}
             data-testid={`sba-sync-fix-${a.testId}-${canonical}`}
           >
             {a.label}

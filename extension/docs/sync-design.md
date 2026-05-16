@@ -110,7 +110,8 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 | seat | Kindoo user, parsed primary scope ≠ seat.scope | `scope-mismatch` |
 | seat | Kindoo user, intended type ≠ seat.type | `type-mismatch` |
 | seat (manual/temp) | Kindoo user, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` |
-| seat (auto) | Kindoo user, any AccessSchedules state | (buildings check skipped — see below) |
+| seat (auto) | Kindoo user, `derivedBuildings` ≠ seat.building_names | `buildings-mismatch` |
+| seat (auto) | Kindoo user, `derivedBuildings === null` (per-user derivation failed) | (buildings check skipped — Phase 1 fallback) |
 | seat (auto) | Kindoo user lists auto calling + additional non-auto calling(s) | `extra-kindoo-calling` (flag for review — operator adds the extras to the SBA seat) |
 | seat | Kindoo user, all-good | (no row) |
 
@@ -118,9 +119,23 @@ Severity:
 - `sba-only`, `kindoo-only`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch` → **drift** (real divergence).
 - `kindoo-unparseable`, `extra-kindoo-calling` → **review** (operator-judgment needed).
 
-**Auto seats skip the buildings comparison.** Auto-imported users (the Church Access Automation flow, ~310 of 313 users in production) receive door access via **direct door grants keyed by `VidName`**, not via `AccessSchedules`. The bulk listing endpoint (`GetEnvironmentUsersLightWithTotalNumberOfRecordsWithEntryPoints`) only exposes `AccessSchedules` on the user — direct door grants are NOT included. Auto users therefore come back with `AccessSchedules: []` regardless of how much actual access they have, so comparing it would always show false-positive drift. Manual and temp seats ARE provisioned by SBA via `AccessSchedules` (the v2.2 Provision & Complete flow writes via `saveAccessRule`), so for those the comparison is meaningful and runs as before. The scope-mismatch and type-mismatch checks above still run for auto seats; only the buildings check is gated.
+**Auto-user buildings derivation.** Auto-imported users (the Church Access Automation flow, ~310 of 313 csnorth users in production) receive door access via **direct door grants keyed by `VidName`**, not via `AccessSchedules`. The bulk listing (`KindooGetEnvironmentUsersLightWithTotalNumberOfRecordsWithEntryPoints`) only exposes `AccessSchedules` — direct grants are excluded.
 
-Proper auto-user reconciliation would require per-user `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints` calls (313 calls in our current env) and is deferred to Phase 2.
+To reconcile auto users, the Sync run derives each user's effective building set from their per-door grants. The chain (implemented in `content/kindoo/sync/buildingsFromDoors.ts`):
+
+1. **`buildRuleDoorMap`** — one `KindooGetEnvRuleWithEntryPointsFormatted` call per AccessRule referenced by an SBA building (csnorth has 4 → 4 calls). Each rule's response carries every door in the environment with `IsSelected: true` on the doors belonging to the queried rule. The map: `RuleID → Set<DoorID>`.
+2. **`getUserDoorIds`** — one `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints` call per Kindoo user (313 calls in csnorth). Paginated with `start += 40`. Every row carries a `DoorID` regardless of grant origin (rule-derived vs direct Church Access Automation grant via `AccessScheduleID === 0`). The flattened, deduplicated set is the user's effective door set.
+3. **`deriveEffectiveRuleIds`** — pure function. A user "effectively holds" a rule iff EVERY DoorID in that rule's door set is present in the user's door set. Strict subset; partial overlap does not claim the rule. Empty rule door sets are explicitly guarded against (would otherwise vacuously match every empty rule).
+4. **`derivedBuildingNames`** — pure function. Map effective RuleIDs to SBA building names via `building.kindoo_rule.rule_id`. Returns a deduplicated, alphabetically-sorted array.
+
+The `SyncPanel` orchestrates the per-user loop with a concurrency cap (4 in flight) and a throttled progress text ("Reading Kindoo user N of M…", updated every 10 users so the React reconciler stays responsive). Each user's `KindooEnvironmentUser` is enriched with `derivedBuildings: string[] | null` BEFORE the detector runs. On per-user failure the field is set to `null` and the loop continues — one user's network blip does not fail the whole sync.
+
+The detector's `buildings-mismatch` rule then:
+- Manual / temp seats: compare against AccessSchedules-derived `buildingNames` (unchanged).
+- Auto seats with `derivedBuildings: string[]`: compare against `derivedBuildings`.
+- Auto seats with `derivedBuildings: null`: skip the check (Phase 1 fallback — when derivation failed, we'd rather show nothing than false drift).
+
+Wall-time estimate: ~313 per-user calls at concurrency 4 and ~150 ms median latency → ~12 s. The summary header still surfaces seat / user counts; the operator sees the per-user progress while the loop runs.
 
 **`kindoo-only` rows with `intended.type === 'auto'` are NOT filtered.** Even when the Kindoo user's description classifies as auto, the absence of an SBA seat is still drift — these users need to be imported into SBA. The drift row stays.
 
@@ -226,7 +241,7 @@ Each discrepancy row gains one or two specific-action buttons. Per-row only — 
 | `extra-kindoo-calling` | "Add to SBA seat" | SBA-side: `syncApplyFix` with `code: 'extra-kindoo-calling'`; backend de-dupes + appends to `callings[]`. |
 | `scope-mismatch` | "Update Kindoo" / "Update SBA" | Update Kindoo: rewrite Description to SBA scope via `syncProvisionFromSeat`. Update SBA: `syncApplyFix` with `code: 'scope-mismatch'` carrying Kindoo's parsed primary scope. |
 | `type-mismatch` | "Update Kindoo" / "Update SBA" | Same pattern. Update Kindoo is disabled (with a tooltip) when either side is `auto` — Church Access Automation owns direct door grants for auto seats; the extension can't write them. |
-| `buildings-mismatch` | "Update Kindoo" / "Update SBA" | Same pattern. Detector only emits this for manual/temp seats. Update Kindoo reconciles AccessSchedules to SBA's building set (per-rule revoke + saveAccessRule merge). |
+| `buildings-mismatch` | "Update Kindoo" / "Update SBA" | Manual/temp seats: Update Kindoo reconciles AccessSchedules to SBA's building set (per-rule revoke + saveAccessRule merge); Update SBA sends Kindoo's AccessSchedules-derived `buildingNames`. Auto seats: Update Kindoo is disabled (Church Access Automation owns direct door grants); Update SBA sends `derivedBuildings` (the door-grant strict-subset chain) — never `buildingNames`, which is empty for ~all auto users and would wipe the seat's buildings. If `derivedBuildings === null` (door-grant read failed for the user) both buttons are disabled. |
 | `kindoo-unparseable` | none | Operator handles in Kindoo's admin UI. |
 
 ### Audit + SyncActor
@@ -248,13 +263,15 @@ No detector re-run on success: the in-memory list edits forward. The operator cl
 
 ### Sourcing payload data
 
-Most payload fields come straight off the `Discrepancy` row's `kindoo` block (`KindooBlock`). The detector's Phase 2 work expanded that block to carry `memberName`, `intendedCallings`, `intendedFreeText`, `buildingNames`, and (for temp users) `startDate` / `endDate` — derived from Kindoo's `FirstName` / `LastName` + the classifier output + the rule-id-to-building-name lookup. `KindooEnvironmentUser`'s `startAccessDoorsDateAtTimeZone` / `expiryDateAtTimeZone` are stripped to ISO `YYYY-MM-DD` for the temp date fields.
+Most payload fields come straight off the `Discrepancy` row's `kindoo` block (`KindooBlock`). The detector's Phase 2 work expanded that block to carry `memberName`, `intendedCallings`, `intendedFreeText`, `buildingNames`, `derivedBuildings`, and (for temp users) `startDate` / `endDate` — derived from Kindoo's `FirstName` / `LastName` + the classifier output + the rule-id-to-building-name lookup + the door-grant derivation. `KindooEnvironmentUser`'s `startAccessDoorsDateAtTimeZone` / `expiryDateAtTimeZone` are stripped to ISO `YYYY-MM-DD` for the temp date fields.
 
 `kindoo-only` payload edge cases:
-- `intendedType === 'auto'` → callings = `intendedCallings`; no reason.
-- `intendedType === 'manual'` → callings = comma-split `intendedFreeText`; reason = full `intendedFreeText`.
-- `intendedType === 'temp'` → callings = `[]`; reason = `intendedFreeText`; `startDate` / `endDate` set when present.
+- `intendedType === 'auto'` → callings = `intendedCallings`; buildings = `derivedBuildings` (when non-null; falls back to `buildingNames` if the per-user door read failed); no reason.
+- `intendedType === 'manual'` → callings = comma-split `intendedFreeText`; reason = full `intendedFreeText`; buildings = `buildingNames` (AccessSchedules-derived).
+- `intendedType === 'temp'` → callings = `[]`; reason = `intendedFreeText`; `startDate` / `endDate` set when present; buildings = `buildingNames`.
 - `intendedType === null` (couldn't classify) → fall through as `manual` with the free text as reason.
+
+The auto-type building source matters because the bulk listing's AccessSchedules excludes Church Access Automation direct grants. `derivedBuildings` is the truth for auto users (covers BOTH grant kinds via the door-set strict-subset chain); only the auto branch uses it.
 
 ### Files
 
@@ -276,7 +293,7 @@ Modified:
 - Per-row confirmation dialogs. Operator chose trust-fire.
 - Undo affordance. Operator can run sync again and fix forward.
 - Sync-driven Firestore writes that bypass the callable. Every SBA write goes through `syncApplyFix`.
-- Reconciling auto-user door grants (Church Access Automation territory). Auto seats skip the buildings comparison in Phase 1 + can't be type-changed via Update Kindoo in Phase 2.
+- Writing auto-user door grants from the extension (Church Access Automation territory). Auto seats can't be type-changed and can't have their Kindoo-side buildings written via Update Kindoo in Phase 2 — Update SBA on `buildings-mismatch` is allowed and reconciles SBA to `derivedBuildings`.
 
 ## Out of scope for Sync entirely (any phase)
 

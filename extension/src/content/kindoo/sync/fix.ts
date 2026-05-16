@@ -155,7 +155,20 @@ export function buildCallableInput(d: Discrepancy): SyncApplyFixInput {
         d.kindoo.intendedType === 'auto'
           ? d.kindoo.intendedCallings
           : splitFreeText(d.kindoo.intendedFreeText);
-      const buildingNames = d.kindoo.buildingNames;
+      // Auto seats: prefer the door-grant-derived building set when
+      // available. The bulk listing's AccessSchedules (the source of
+      // `buildingNames`) misses Church Access Automation's direct
+      // grants; `derivedBuildings` is the strict-subset chain that
+      // covers BOTH grant kinds. Fall back to `buildingNames` if
+      // derivation failed (null) so the seat still gets created with
+      // whatever building data the sync had — the operator can repair
+      // later via Update SBA on a buildings-mismatch row.
+      const buildingNames =
+        d.kindoo.intendedType === 'auto' &&
+        d.kindoo.derivedBuildings !== null &&
+        d.kindoo.derivedBuildings !== undefined
+          ? d.kindoo.derivedBuildings
+          : d.kindoo.buildingNames;
       // intended scope falls back to the parsed primary scope; without
       // either the seat can't be written. Use the raw email canonical as
       // a last-ditch fallback (server validates anyway).
@@ -224,13 +237,33 @@ export function buildCallableInput(d: Discrepancy): SyncApplyFixInput {
     }
     case 'buildings-mismatch': {
       if (!d.kindoo) throw new Error('buildings-mismatch row missing Kindoo block');
+      // Auto seats: the bulk listing's AccessSchedules-derived
+      // `buildingNames` is empty for ~310 of ~313 users because Church
+      // Access Automation grants are direct (per-door) not rule-based.
+      // `derivedBuildings` (door-grant strict-subset chain) is the
+      // truth. Sending `buildingNames` here would wipe the seat's
+      // correct buildings server-side (`applyBuildingsMismatch`
+      // replaces unconditionally). For manual/temp seats the
+      // AccessSchedules-derived `buildingNames` is the truth.
+      const isAuto = (d.sba?.type ?? null) === 'auto' || d.kindoo.intendedType === 'auto';
+      let newBuildingNames: string[];
+      if (isAuto) {
+        if (d.kindoo.derivedBuildings === null || d.kindoo.derivedBuildings === undefined) {
+          throw new Error(
+            'auto seat door-grant derivation failed; cannot update SBA buildings — re-run Sync.',
+          );
+        }
+        newBuildingNames = d.kindoo.derivedBuildings;
+      } else {
+        newBuildingNames = d.kindoo.buildingNames;
+      }
       return {
         stakeId: STAKE_ID,
         fix: {
           code: 'buildings-mismatch',
           payload: {
             memberEmail: d.displayEmail,
-            newBuildingNames: d.kindoo.buildingNames,
+            newBuildingNames,
           },
         },
       };

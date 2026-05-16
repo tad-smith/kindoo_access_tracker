@@ -81,6 +81,15 @@ export interface KindooBlock {
   ruleIds: number[];
   /** Building names mapped from `ruleIds` via the v2.1 config. */
   buildingNames: string[];
+  /**
+   * Buildings derived from per-door grants (auto-user reconciliation).
+   * `null` when derivation was skipped or failed for this user;
+   * `string[]` (possibly empty) when the door-grant chain produced a
+   * deterministic set. The detector uses this for auto seats'
+   * `buildings-mismatch` comparison; `applyKindooOnly` uses it as the
+   * truth when creating an SBA seat from a kindoo-only auto user.
+   */
+  derivedBuildings: string[] | null;
   /** ISO date `YYYY-MM-DD` derived from Kindoo's `startAccessDoorsDateAtTimeZone`. Only set when the user is temp. */
   startDate?: string;
   /** ISO date `YYYY-MM-DD` derived from Kindoo's `expiryDateAtTimeZone`. Only set when the user is temp. */
@@ -312,24 +321,41 @@ export function detect(inputs: DetectInputs): DetectResult {
     }
 
     // 7. buildings-mismatch — Kindoo rule set vs SBA building → RID mapping.
-    // Auto seats are provisioned via direct door grants from Church Access
-    // Automation (keyed by VidName), which the bulk listing's AccessSchedules
-    // array does not expose; comparing it for auto seats would always show
-    // false drift. Manual/temp seats ARE provisioned via AccessSchedules by
-    // SBA's v2.2 flow, so the comparison is meaningful there.
+    //
+    // Manual / temp seats: SBA's v2.2 provision flow writes via
+    // `saveAccessRule`, so AccessSchedules is the authoritative
+    // building-access signal. Compare directly.
+    //
+    // Auto seats: door access lands via Church Access Automation's
+    // direct grants (keyed by VidName), which the bulk listing's
+    // AccessSchedules array does NOT expose. The sync orchestrator
+    // derives the effective building set via per-user door-grant calls
+    // (`sync/buildingsFromDoors.ts`) and stamps it onto
+    // `kuser.derivedBuildings` BEFORE detect(). When derivation
+    // succeeded (non-null), compare against it; when it failed
+    // (`null`), skip the check — same Phase 1 fallback as before.
+    let kindooBuildingsForCompare: string[] | null = null;
     if (intended.type === 'manual' || intended.type === 'temp') {
-      const expectedBuildings = seat.building_names ?? [];
-      const kindooBuildings = ruleIdsToBuildingNames(
+      kindooBuildingsForCompare = ruleIdsToBuildingNames(
         kuser.accessSchedules.map((s) => s.ruleId),
         inputs.buildings,
       );
-      if (!setsEqual(expectedBuildings, kindooBuildings)) {
+    } else if (
+      intended.type === 'auto' &&
+      kuser.derivedBuildings !== null &&
+      kuser.derivedBuildings !== undefined
+    ) {
+      kindooBuildingsForCompare = kuser.derivedBuildings;
+    }
+    if (kindooBuildingsForCompare !== null) {
+      const expectedBuildings = seat.building_names ?? [];
+      if (!setsEqual(expectedBuildings, kindooBuildingsForCompare)) {
         discrepancies.push({
           canonical: canon,
           displayEmail,
           code: 'buildings-mismatch',
           severity: 'drift',
-          reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildings.join(', ')}].`,
+          reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].`,
           sba: toSbaBlock(seat),
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
         });
@@ -366,6 +392,7 @@ function buildKindooBlock(
     intendedFreeText: intended?.freeText ?? '',
     ruleIds,
     buildingNames: ruleIdsToBuildingNames(ruleIds, buildings),
+    derivedBuildings: kuser.derivedBuildings ?? null,
   };
   if (kuser.isTempUser) {
     const start = toIsoDate(kuser.startAccessDoorsDateAtTimeZone);

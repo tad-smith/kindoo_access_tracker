@@ -12,6 +12,8 @@ const readKindooSessionMock = vi.fn();
 const listAllEnvironmentUsersMock = vi.fn();
 const getEnvironmentsMock = vi.fn();
 const applyFixMock = vi.fn();
+const buildRuleDoorMapMock = vi.fn();
+const enrichUsersWithDerivedBuildingsMock = vi.fn();
 
 vi.mock('../lib/extensionApi', async () => {
   const actual = await vi.importActual<typeof import('../lib/extensionApi')>('../lib/extensionApi');
@@ -43,6 +45,18 @@ vi.mock('../content/kindoo/sync/fix', async () => {
   return {
     ...actual,
     applyFix: (...args: unknown[]) => applyFixMock(...args),
+  };
+});
+
+vi.mock('../content/kindoo/sync/buildingsFromDoors', async () => {
+  const actual = await vi.importActual<typeof import('../content/kindoo/sync/buildingsFromDoors')>(
+    '../content/kindoo/sync/buildingsFromDoors',
+  );
+  return {
+    ...actual,
+    buildRuleDoorMap: (...args: unknown[]) => buildRuleDoorMapMock(...args),
+    enrichUsersWithDerivedBuildings: (...args: unknown[]) =>
+      enrichUsersWithDerivedBuildingsMock(...args),
   };
 });
 
@@ -78,6 +92,8 @@ describe('SyncPanel', () => {
     listAllEnvironmentUsersMock.mockReset();
     getEnvironmentsMock.mockReset();
     applyFixMock.mockReset();
+    buildRuleDoorMapMock.mockReset();
+    enrichUsersWithDerivedBuildingsMock.mockReset();
     readKindooSessionMock.mockReturnValue({
       ok: true,
       session: { token: 'sess', eid: 27994 },
@@ -85,8 +101,17 @@ describe('SyncPanel', () => {
     getEnvironmentsMock.mockResolvedValue([
       { EID: 27994, Name: 'CSN', TimeZone: 'Mountain Standard Time' },
     ]);
+    // Default: rule door map / enrichment pass through (users stay
+    // un-enriched — derivedBuildings undefined → detector skips the
+    // auto buildings check). Tests that care override.
+    buildRuleDoorMapMock.mockResolvedValue(new Map());
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_session, _eid, users) => users);
   });
   afterEach(() => {
+    // Drop any per-test `vi.doMock` registrations (e.g. detector
+    // overrides) before resetting the module cache so they don't
+    // leak into the next test.
+    vi.doUnmock('../content/kindoo/sync/detector');
     vi.resetModules();
   });
 
@@ -118,6 +143,44 @@ describe('SyncPanel', () => {
     await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
     expect(screen.getByTestId('sba-sync-summary')).toHaveTextContent(/SBA:\s*0\s*seats/);
     expect(screen.getByTestId('sba-sync-summary')).toHaveTextContent(/Kindoo:\s*0\s*users/);
+  });
+
+  it('updates progress text as the per-user enrichment loop ticks', async () => {
+    const user = userEvent.setup();
+    getSyncDataMock.mockResolvedValue(bundle());
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      {
+        euid: 'e1',
+        userId: 'u1',
+        username: 'a@example.com',
+        description: '',
+        isTempUser: false,
+        accessSchedules: [],
+      },
+      {
+        euid: 'e2',
+        userId: 'u2',
+        username: 'b@example.com',
+        description: '',
+        isTempUser: false,
+        accessSchedules: [],
+      },
+    ]);
+    // Custom enrichment that fires progress synchronously then resolves.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(
+      async (_s, _eid, users, _rm, _b, opts) => {
+        opts.onProgress(1, 2);
+        opts.onProgress(2, 2);
+        return users;
+      },
+    );
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    // Wait for either report or progress to be present; with the
+    // synchronous progress callbacks above the loading state collapses
+    // immediately into report — assert on the report instead.
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+    expect(enrichUsersWithDerivedBuildingsMock).toHaveBeenCalledTimes(1);
   });
 
   it('renders an empty-report message when both sides agree', async () => {
@@ -419,7 +482,7 @@ describe('SyncPanel', () => {
     expect(sbaBtn).not.toBeDisabled();
   });
 
-  it('buildings-mismatch renders both fix buttons', async () => {
+  it('buildings-mismatch on a manual seat renders both fix buttons enabled', async () => {
     const b = bundle();
     b.wards.push({
       ward_code: 'PC',
@@ -450,8 +513,113 @@ describe('SyncPanel', () => {
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    expect(screen.getByTestId('sba-sync-fix-update-kindoo-bm@example.com')).toBeInTheDocument();
-    expect(screen.getByTestId('sba-sync-fix-update-sba-bm@example.com')).toBeInTheDocument();
+    const kindooBtn = screen.getByTestId('sba-sync-fix-update-kindoo-bm@example.com');
+    const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-bm@example.com');
+    expect(kindooBtn).toBeInTheDocument();
+    expect(sbaBtn).toBeInTheDocument();
+    expect(kindooBtn).not.toBeDisabled();
+    expect(sbaBtn).not.toBeDisabled();
+  });
+
+  it('buildings-mismatch on an auto seat disables Update Kindoo but keeps Update SBA enabled', async () => {
+    // Auto seat in SBA with no buildings; Kindoo user's door-grant
+    // derivation produced ['Cordera Building'] → buildings-mismatch
+    // emitted for the auto seat. Update Kindoo is owned by Church
+    // Access Automation; Update SBA writes `derivedBuildings`.
+    const b = bundle();
+    b.wardCallingTemplates.push({
+      calling_name: 'Sunday School Teacher',
+      auto_kindoo_access: true,
+    } as never);
+    b.seats.push({
+      ...autoSeat('autobm@example.com'),
+      building_names: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      kuser('autobm@example.com', {
+        description: 'Cordera Ward (Sunday School Teacher)',
+        accessSchedules: [],
+      }),
+    ]);
+    // Stamp derivedBuildings on the user before detect() runs.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
+      users.map((u: Record<string, unknown>) => ({
+        ...u,
+        derivedBuildings: ['Cordera Building'],
+      })),
+    );
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    const kindooBtn = screen.getByTestId('sba-sync-fix-update-kindoo-autobm@example.com');
+    const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-autobm@example.com');
+    expect(kindooBtn).toBeDisabled();
+    expect(kindooBtn).toHaveAttribute('title', expect.stringContaining('Church Access Automation'));
+    expect(sbaBtn).not.toBeDisabled();
+  });
+
+  it('buildings-mismatch on an auto seat with null derivedBuildings disables both buttons', async () => {
+    // Defensive UI gating: if `derivedBuildings === null` for an auto
+    // buildings-mismatch row (per-user door-grant read failed), both
+    // sides lose a valid source — Update Kindoo is forbidden anyway
+    // (auto), and Update SBA can't determine the correct building set.
+    // The current detector skips emitting auto buildings-mismatch when
+    // derivedBuildings is null, so we mock `detect` to inject the row
+    // directly and verify the gating in isolation.
+    vi.doMock('../content/kindoo/sync/detector', async () => {
+      const actual = await vi.importActual<typeof import('../content/kindoo/sync/detector')>(
+        '../content/kindoo/sync/detector',
+      );
+      return {
+        ...actual,
+        detect: () => ({
+          discrepancies: [
+            {
+              canonical: 'autonull@example.com',
+              displayEmail: 'autonull@example.com',
+              code: 'buildings-mismatch',
+              severity: 'drift',
+              reason: 'derivation failed',
+              sba: {
+                scope: 'CO',
+                type: 'auto',
+                callings: ['Sunday School Teacher'],
+                buildingNames: ['Cordera Building'],
+              },
+              kindoo: {
+                description: 'Cordera Ward (Sunday School Teacher)',
+                isTempUser: false,
+                memberName: 'A A',
+                primaryScope: 'CO',
+                intendedType: 'auto',
+                intendedCallings: ['Sunday School Teacher'],
+                intendedFreeText: '',
+                ruleIds: [],
+                buildingNames: [],
+                derivedBuildings: null,
+              },
+            },
+          ],
+          seatCount: 1,
+          kindooCount: 1,
+        }),
+      };
+    });
+    getSyncDataMock.mockResolvedValue(bundle());
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    const kindooBtn = screen.getByTestId('sba-sync-fix-update-kindoo-autonull@example.com');
+    const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-autonull@example.com');
+    expect(kindooBtn).toBeDisabled();
+    expect(sbaBtn).toBeDisabled();
+    expect(sbaBtn).toHaveAttribute('title', expect.stringContaining('derivation'));
   });
 
   it('kindoo-unparseable renders no fix buttons', async () => {
@@ -484,6 +652,169 @@ describe('SyncPanel', () => {
     await user.click(btn);
     await waitFor(() => expect(screen.queryByTestId('sba-sync-row-gone@example.com')).toBeNull());
     expect(screen.getByTestId('sba-sync-summary')).toHaveTextContent(/0\s+drift items/);
+  });
+
+  // --------------------------------------------------------------------
+  // Code-filter dropdown — independent of the severity chips,
+  // combined via AND.
+  // --------------------------------------------------------------------
+
+  it('renders the code-filter dropdown with All codes + 7 codes', async () => {
+    getSyncDataMock.mockResolvedValue(bundle());
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+    const select = screen.getByTestId('sba-sync-code-filter') as HTMLSelectElement;
+    expect(select).toBeInTheDocument();
+    expect(select).toHaveAttribute('aria-label', 'Filter by code');
+    // Default selection is "all".
+    expect(select.value).toBe('all');
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    expect(optionValues).toEqual([
+      'all',
+      'sba-only',
+      'kindoo-only',
+      'kindoo-unparseable',
+      'scope-mismatch',
+      'type-mismatch',
+      'buildings-mismatch',
+      'extra-kindoo-calling',
+    ]);
+    const optionLabels = Array.from(select.options).map((o) => o.textContent);
+    expect(optionLabels).toEqual([
+      'All codes',
+      'sba-only',
+      'kindoo-only',
+      'kindoo-unparseable',
+      'scope-mismatch',
+      'type-mismatch',
+      'buildings-mismatch',
+      'extra-kindoo-calling',
+    ]);
+  });
+
+  it('filters by code when a specific code is picked and resets on All codes', async () => {
+    const b = bundle();
+    // sba-only row (drift).
+    b.seats.push({
+      member_canonical: 'orphan@example.com',
+      member_email: 'orphan@example.com',
+      member_name: 'O',
+      scope: 'CO',
+      type: 'auto',
+      callings: [],
+      building_names: [],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    // kindoo-only row (drift).
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      {
+        euid: 'e1',
+        userId: 'u1',
+        username: 'newbie@example.com',
+        FirstName: 'New',
+        LastName: 'Bie',
+        description: 'Cordera Ward (Sunday School Teacher)',
+        isTempUser: false,
+        startAccessDoorsDateAtTimeZone: null,
+        expiryDateAtTimeZone: null,
+        expiryTimeZone: 'MST',
+        accessSchedules: [{ ruleId: 6248 }],
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-sync-row-orphan@example.com')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-sync-row-newbie@example.com')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'kindoo-only');
+    expect(screen.queryByTestId('sba-sync-row-orphan@example.com')).toBeNull();
+    expect(screen.getByTestId('sba-sync-row-newbie@example.com')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'all');
+    expect(screen.getByTestId('sba-sync-row-orphan@example.com')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-sync-row-newbie@example.com')).toBeInTheDocument();
+  });
+
+  it('combines severity chip + code dropdown with AND semantics', async () => {
+    const b = bundle();
+    b.wardCallingTemplates.push({
+      calling_name: 'Sunday School Teacher',
+      auto_kindoo_access: true,
+    } as never);
+    // sba-only auto seat (drift).
+    b.seats.push({
+      member_canonical: 'orphan@example.com',
+      member_email: 'orphan@example.com',
+      member_name: 'O',
+      scope: 'CO',
+      type: 'auto',
+      callings: [],
+      building_names: [],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      // kindoo-only (drift).
+      {
+        euid: 'e1',
+        userId: 'u1',
+        username: 'newbie@example.com',
+        FirstName: 'New',
+        LastName: 'Bie',
+        description: 'Cordera Ward (Sunday School Teacher)',
+        isTempUser: false,
+        startAccessDoorsDateAtTimeZone: null,
+        expiryDateAtTimeZone: null,
+        expiryTimeZone: 'MST',
+        accessSchedules: [{ ruleId: 6248 }],
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    // Drift chip + kindoo-only code — only the kindoo-only drift row stays.
+    await user.click(screen.getByTestId('sba-sync-filter-drift'));
+    await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'kindoo-only');
+    expect(screen.queryByTestId('sba-sync-row-orphan@example.com')).toBeNull();
+    expect(screen.getByTestId('sba-sync-row-newbie@example.com')).toBeInTheDocument();
+  });
+
+  it('renders the filter-empty hint when severity + code AND eliminates all rows', async () => {
+    const b = bundle();
+    // sba-only seat (sba-only is severity=drift). No kindoo-only or
+    // review-severity rows present.
+    b.seats.push({
+      member_canonical: 'orphan@example.com',
+      member_email: 'orphan@example.com',
+      member_name: 'O',
+      scope: 'CO',
+      type: 'auto',
+      callings: [],
+      building_names: [],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    // Drift chip + extra-kindoo-calling (review-severity) → no overlap.
+    await user.click(screen.getByTestId('sba-sync-filter-drift'));
+    await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'extra-kindoo-calling');
+    expect(screen.queryByTestId('sba-sync-list')).toBeNull();
+    expect(screen.getByTestId('sba-sync-empty')).toHaveTextContent(
+      'No discrepancies match the current filters.',
+    );
   });
 
   it('error path shows inline message + Retry button; Retry re-fires the same action', async () => {

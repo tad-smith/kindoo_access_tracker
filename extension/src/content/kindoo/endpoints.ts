@@ -202,6 +202,19 @@ export interface KindooEnvironmentUser {
   expiryTimeZone: string;
   /** Current rule assignments — `RuleID` narrowed from `AccessSchedules[]`. */
   accessSchedules: Array<{ ruleId: number }>;
+  /**
+   * Buildings derived from per-door grants via
+   * `sync/buildingsFromDoors.ts`. Set by the Sync orchestrator BEFORE
+   * calling `detect()`. Three states:
+   *   - `string[]` — derivation succeeded; use this as Kindoo's
+   *     effective building set (auto seats use this in
+   *     `buildings-mismatch`).
+   *   - `[]` — derived; user has no effective building access.
+   *   - `null` / `undefined` — derivation skipped or failed; the
+   *     detector falls back to Phase 1 behaviour (skip buildings
+   *     comparison for auto seats).
+   */
+  derivedBuildings?: string[] | null;
   /** Anything else Kindoo returns. */
   [k: string]: unknown;
 }
@@ -641,6 +654,180 @@ export async function listAllEnvironmentUsers(
     );
   }
   return Array.from(byEuid.values());
+}
+
+// ============================================================
+// Door-grant derivation endpoints (Phase 2 — auto-user buildings)
+// ============================================================
+//
+// `getEnvironmentRuleWithEntryPoints` returns the full door list for
+// the env with `IsSelected: true` on each door the queried rule
+// includes; `getUserAccessRulesWithEntryPoints` returns every DoorID
+// the user can open (paginated, regardless of whether the grant came
+// via an AccessRule or a Church Access Automation direct grant).
+//
+// The two together let us derive an auto user's effective AccessRule
+// set (and from there, their SBA building access) without depending on
+// the bulk listing's `AccessSchedules` array, which excludes the
+// direct-grant rows. See `sync/buildingsFromDoors.ts` for the
+// strict-subset derivation.
+
+/** One door in the environment. */
+export interface KindooDoor {
+  /** Kindoo's internal door id. */
+  doorId: number;
+  /** Display name ("Cordera - North"). */
+  name: string;
+  /** Building address text ("Meetinghouse - 8295 Jamboree Circle"). */
+  description: string;
+}
+
+/**
+ * Fetch one Kindoo Access Rule with its door membership. Wraps
+ * `KindooGetEnvRuleWithEntryPointsFormatted`.
+ *
+ * The response includes every door in the environment with
+ * `IsSelected: true` on the doors that belong to the queried rule.
+ * We return both the selected DoorID subset and the full door list —
+ * the immediate consumer (`buildRuleDoorMap`) uses the subset; the
+ * full list rides along for future diagnostics.
+ *
+ * Network cost: one call per rule. csnorth has 4 rules; the caller
+ * runs all 4 once per sync session.
+ */
+export async function getEnvironmentRuleWithEntryPoints(
+  session: KindooSession,
+  ruleId: number,
+  eid: number,
+  fetchImpl?: typeof fetch,
+): Promise<{
+  ruleId: number;
+  ruleName: string;
+  selectedDoorIds: number[];
+  allDoors: KindooDoor[];
+}> {
+  const raw = await postKindoo(
+    'KindooGetEnvRuleWithEntryPointsFormatted',
+    { ...session, eid },
+    {
+      RuleID: String(ruleId),
+      isClone: 'false',
+    },
+    fetchImpl,
+  );
+  const body = unwrapAspNet(raw);
+  if (body === null || typeof body !== 'object') {
+    throw new KindooApiError(
+      'unexpected-shape',
+      `KindooGetEnvRuleWithEntryPointsFormatted: non-object response for rule ${ruleId}`,
+    );
+  }
+  const v = body as Record<string, unknown>;
+  const id = v.ID;
+  const name = v.Name;
+  if (typeof id !== 'number' || typeof name !== 'string') {
+    throw new KindooApiError(
+      'unexpected-shape',
+      `KindooGetEnvRuleWithEntryPointsFormatted: missing ID/Name on rule ${ruleId}`,
+    );
+  }
+  const doorsRaw = Array.isArray(v.doors) ? v.doors : [];
+  const allDoors: KindooDoor[] = [];
+  const selectedDoorIds: number[] = [];
+  for (const entry of doorsRaw) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const d = entry as Record<string, unknown>;
+    const did = d.ID;
+    if (typeof did !== 'number') continue;
+    const doorName = typeof d.Name === 'string' ? d.Name : '';
+    const description = typeof d.Description === 'string' ? d.Description : '';
+    allDoors.push({ doorId: did, name: doorName, description });
+    if (d.IsSelected === true) selectedDoorIds.push(did);
+  }
+  return { ruleId: id, ruleName: name, selectedDoorIds, allDoors };
+}
+
+/** One door-grant row off
+ * `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints`.
+ * `accessScheduleId === 0` indicates a direct grant (Church Access
+ * Automation); non-zero ids point back at an AccessRule. */
+export interface UserDoorGrantRow {
+  doorId: number;
+  accessScheduleId: number;
+}
+
+/**
+ * Page through every door grant a Kindoo user has — covers BOTH
+ * rule-derived grants AND direct grants from Church Access Automation.
+ *
+ * Wraps
+ * `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints`.
+ * Loops `start = 0, 40, 80, …` (Kindoo's per-user page size) until a
+ * short page or `TotalRecordNumber` terminates. The flattened list is
+ * deduplicated by `doorId` — the same door can appear once per rule
+ * that grants it; we only care about the unique door set.
+ */
+export async function getUserAccessRulesWithEntryPoints(
+  session: KindooSession,
+  userId: string,
+  eid: number,
+  fetchImpl?: typeof fetch,
+): Promise<UserDoorGrantRow[]> {
+  const PAGE_SIZE = 40;
+  // Safety cap. A user with hundreds of doors would be an outlier; the
+  // cap stops a wire mismatch from spinning forever.
+  const MAX_PAGES = 100;
+  const seen = new Set<number>();
+  const out: UserDoorGrantRow[] = [];
+  let start = 0;
+  let total: number | null = null;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const raw = await postKindoo(
+      'KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints',
+      { ...session, eid },
+      {
+        UID: userId,
+        keyword: '',
+        start: String(start),
+        end: String(start + PAGE_SIZE),
+        source: 'SiteUserManage:useEffect:fetchUserRules',
+        fillEmptyWeeklyDaysWithOneRow: 'true',
+        FetchGrantedByData: 'true',
+      },
+      fetchImpl,
+    );
+    const body = unwrapAspNet(raw);
+    let list: unknown[] = [];
+    if (Array.isArray(body)) {
+      list = body;
+    } else if (body !== null && typeof body === 'object') {
+      const v = body as Record<string, unknown>;
+      for (const key of ['RulesList', 'rulesList', 'Rules', 'rules', 'Items', 'items']) {
+        const candidate = v[key];
+        if (Array.isArray(candidate)) {
+          list = candidate;
+          break;
+        }
+      }
+      if (total === null && typeof v.TotalRecordNumber === 'number') {
+        total = v.TotalRecordNumber;
+      }
+    }
+    for (const entry of list) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const r = entry as Record<string, unknown>;
+      const did = r.DoorID;
+      if (typeof did !== 'number') continue;
+      if (seen.has(did)) continue;
+      seen.add(did);
+      const asid = typeof r.AccessScheduleID === 'number' ? r.AccessScheduleID : 0;
+      out.push({ doorId: did, accessScheduleId: asid });
+    }
+    if (list.length < PAGE_SIZE) break;
+    start += PAGE_SIZE;
+    if (total !== null && start >= total) break;
+  }
+  return out;
 }
 
 /**
