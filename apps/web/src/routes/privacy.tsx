@@ -152,8 +152,8 @@ function PrivacyPage() {
             <p>
               Within a stake, request data is visible to the leaders whose approval is required for
               that request and to the stake&rsquo;s designated Kindoo Manager. Audit records of who
-              did what are retained for the stake&rsquo;s own accountability purposes, consistent
-              with the retention behaviour described in our public specification.
+              did what are retained for accountability purposes, consistent with the retention
+              behaviour described in our public specification.
             </p>
           </Section>
 
