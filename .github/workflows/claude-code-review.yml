@@ -1,0 +1,57 @@
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Cancel in-flight reviews when new commits land
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the reviewer can read spec.md, prior commits, changelogs
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          # Uses your Max subscription via OAuth — no API billing
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are an INDEPENDENT reviewer of PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.
+
+            Title: ${{ github.event.pull_request.title }}
+
+            The code in this PR was almost certainly written by another Claude instance. Assume its author had blind spots. Do not trust the PR description — verify everything against the actual diff.
+
+            Procedure:
+            1. Find and read `spec.md` (try repo root, `docs/`, and any subproject directories). Read every `CLAUDE.md` at relevant directory levels. These define the source of truth for what the code is supposed to do.
+            2. Read the current phase's changelog entry if present. Identify which phase/task this PR claims to implement.
+            3. Read the full diff: `gh pr diff ${{ github.event.pull_request.number }}`.
+            4. For each non-trivial change, interrogate:
+               - Does the code actually implement what the spec/changelog claims?
+               - Spec items claimed-but-not-done? Scope creep not in the spec?
+               - Unhandled edge cases, error paths, race conditions, partial-failure modes?
+               - Silent failures, swallowed exceptions, fallbacks that mask bugs?
+               - Tests that call the new code vs. tests that actually exercise its behavior?
+               - Auth, input validation, and trust boundaries — any assumptions worth challenging?
+            5. Post inline review comments on specific lines for concrete issues. Be precise about which line and why.
+            6. End with one summary comment containing exactly: spec-compliance verdict, top 3 risks, and a merge recommendation (approve / request changes / needs discussion).
+
+            Tone: terse, no praise, no preamble, no hedging. If the PR is genuinely fine, one line saying so is the right answer. One well-reasoned objection beats five nitpicks. Do NOT comment on style if a linter would catch it.
+          claude_args: |
+            --model claude-opus-4-7
+            --max-turns 15
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(rg:*),Bash(cat:*),Bash(ls:*),Read,Grep,Glob"
+            --disallowedTools "Edit,Write,Bash(git push:*),Bash(gh pr merge:*),Bash(gh pr close:*),WebSearch"
