@@ -7,7 +7,7 @@
 // extension; the homepage acknowledges it but does not pitch it.
 //
 // Layout: top bar (brand + secondary Sign-in), hero (headline + primary
-// Sign-in CTA), three short feature bullets, an explanatory paragraph,
+// Sign-in CTA), two short feature bullets, an explanatory paragraph,
 // a thin footer with Privacy / Chrome extension / Contact links. The
 // duplicate Sign-in is intentional — operator complaint was that the
 // previous page had nothing *except* the button, but signed-out flow
@@ -100,7 +100,7 @@ function HomeHero({ onSignIn, pending, error }: HeroProps) {
           Building access for your stake.
         </h1>
         <p className="mx-auto mt-4 max-w-[44ch] text-[1rem] leading-relaxed text-[color:var(--kd-fg-2)] sm:text-[1.05rem]">
-          Grant church members the doors they need — approved by the right leaders.
+          Grant church members the buildings they need — approved by the right leaders.
         </p>
         <div className="mt-7">
           {/* No aria-label — visible text is the accessible name. The
@@ -123,17 +123,10 @@ function HomeHero({ onSignIn, pending, error }: HeroProps) {
 }
 
 function HomeFeatures() {
-  // Three short factual bullets. We avoid the marketing-card / icon
-  // treatment — same restrained voice as the rest of the SPA. Each
-  // bullet is a single line on desktop, one block per row on phone.
   const items: { title: string; body: string }[] = [
     {
       title: 'Request access for any member, any building',
       body: 'Ward leaders submit requests for the buildings and members they oversee.',
-    },
-    {
-      title: 'Routed to the right approver',
-      body: 'Each request lands with the leader whose approval is required for that building.',
     },
     {
       title: 'Auto-expiring temporary grants',
@@ -143,7 +136,7 @@ function HomeFeatures() {
   return (
     <section className="bg-[color:var(--kd-surface-alt)] border-b border-[color:var(--kd-border-soft)]">
       <div className="mx-auto w-full max-w-5xl px-5 py-12 sm:py-14">
-        <ul className="grid list-none grid-cols-1 gap-6 p-0 sm:grid-cols-3 sm:gap-8">
+        <ul className="grid list-none grid-cols-1 gap-6 p-0 sm:grid-cols-2 sm:gap-8">
           {items.map((item) => (
             <li
               key={item.title}

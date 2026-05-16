@@ -75,11 +75,11 @@ describe('SignInPage', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders three feature bullets', () => {
+  it('renders two feature bullets', () => {
     render(<SignInPage />);
     // Each bullet is a level-2 heading inside the features list.
     const headings = screen.getAllByRole('heading', { level: 2 });
-    expect(headings.length).toBe(3);
+    expect(headings.length).toBe(2);
     expect(headings[0]).toHaveTextContent(/Request access for any member/i);
   });
 
