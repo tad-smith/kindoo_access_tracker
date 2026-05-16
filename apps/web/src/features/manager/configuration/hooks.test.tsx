@@ -242,6 +242,16 @@ vi.mock('../../../lib/docs', async () => {
       path: `stakes/csnorth/kindooSites/${kindooSiteId}`,
       id: kindooSiteId,
     }),
+    wardRef: (_db: unknown, _stakeId: string, wardCode: string) => ({
+      __sentinel: 'wardRef',
+      path: `stakes/csnorth/wards/${wardCode}`,
+      id: wardCode,
+    }),
+    buildingRef: (_db: unknown, _stakeId: string, buildingId: string) => ({
+      __sentinel: 'buildingRef',
+      path: `stakes/csnorth/buildings/${buildingId}`,
+      id: buildingId,
+    }),
   };
 });
 
@@ -254,7 +264,12 @@ vi.mock('../../../lib/principal', () => ({
   }),
 }));
 
-import { useDeleteKindooSiteMutation, useUpsertKindooSiteMutation } from './hooks';
+import {
+  useDeleteKindooSiteMutation,
+  useUpsertBuildingMutation,
+  useUpsertKindooSiteMutation,
+  useUpsertWardMutation,
+} from './hooks';
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({
@@ -502,5 +517,184 @@ describe('useDeleteKindooSiteMutation', () => {
       buildings: [refBuilding({ kindoo_site_id: 'west-stake' })],
     });
     await waitFor(() => expect(deleteDocMock).toHaveBeenCalled());
+  });
+});
+
+// ---- created_at preservation on edits ------------------------------
+//
+// `merge: true` overwrites every field present in the body — so a
+// stamp of `created_at: serverTimestamp()` on edit silently loses the
+// original creation timestamp. Each upsert mutation must stamp
+// `created_at` ONLY on the create path. Tests assert the payload
+// shape directly.
+
+describe('useUpsertKindooSiteMutation created_at semantics', () => {
+  it('stamps created_at on create', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({
+      display_name: 'East Stake Foothills',
+      kindoo_expected_site_name: 'East Stake Foothills CS',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body).toHaveProperty('created_at', '__server_timestamp__');
+  });
+
+  it('omits created_at on edit (preserves original timestamp)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({
+      id: 'east-stake-foothills',
+      display_name: 'East Stake Foothills (renamed)',
+      kindoo_expected_site_name: 'East Stake Foothills CS',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body).not.toHaveProperty('created_at');
+    expect(body).toHaveProperty('last_modified_at', '__server_timestamp__');
+  });
+});
+
+describe('useUpsertWardMutation', () => {
+  it('stamps created_at on create', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
+    await result.current.mutateAsync({
+      ward_code: 'CO',
+      ward_name: 'Cordera',
+      building_name: 'Main',
+      seat_cap: 20,
+      kindoo_site_id: null,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [ref, body, options] = setDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/wards/CO' });
+    expect(body).toMatchObject({
+      ward_code: 'CO',
+      ward_name: 'Cordera',
+      building_name: 'Main',
+      seat_cap: 20,
+      kindoo_site_id: null,
+      created_at: '__server_timestamp__',
+      lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
+    });
+    expect(options).toEqual({ merge: true });
+  });
+
+  it('omits created_at on edit (preserves original timestamp)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
+    await result.current.mutateAsync({
+      ward_code: 'CO',
+      ward_name: 'Cordera Renamed',
+      building_name: 'Main',
+      seat_cap: 22,
+      kindoo_site_id: 'east-stake',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body).not.toHaveProperty('created_at');
+    expect(body).toMatchObject({
+      ward_code: 'CO',
+      ward_name: 'Cordera Renamed',
+      last_modified_at: '__server_timestamp__',
+    });
+  });
+
+  it('wraps the read + write in a runTransaction (race-safe)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
+    await result.current.mutateAsync({
+      ward_code: 'CO',
+      ward_name: 'Cordera',
+      building_name: 'Main',
+      seat_cap: 20,
+      kindoo_site_id: null,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('uppercases the ward code on the create path', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
+    await result.current.mutateAsync({
+      ward_code: 'co',
+      ward_name: 'Cordera',
+      building_name: 'Main',
+      seat_cap: 20,
+      kindoo_site_id: null,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [ref, body] = setDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/wards/CO' });
+    expect(body).toMatchObject({ ward_code: 'CO' });
+  });
+});
+
+describe('useUpsertBuildingMutation', () => {
+  it('stamps created_at on create', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_name: 'Cordera Building',
+      address: '123 Main',
+      kindoo_site_id: null,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [ref, body, options] = setDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/buildings/cordera-building' });
+    expect(body).toMatchObject({
+      building_id: 'cordera-building',
+      building_name: 'Cordera Building',
+      address: '123 Main',
+      kindoo_site_id: null,
+      created_at: '__server_timestamp__',
+      lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
+    });
+    expect(options).toEqual({ merge: true });
+  });
+
+  it('omits created_at on edit (preserves original timestamp)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_name: 'Cordera Building',
+      address: '456 Other',
+      kindoo_site_id: 'east-stake',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body).not.toHaveProperty('created_at');
+    expect(body).toMatchObject({
+      building_name: 'Cordera Building',
+      address: '456 Other',
+      last_modified_at: '__server_timestamp__',
+    });
+  });
+
+  it('wraps the read + write in a runTransaction (race-safe)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_name: 'Cordera Building',
+      address: '123 Main',
+      kindoo_site_id: null,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects when the slug derived from building_name is empty', async () => {
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        building_name: '   ',
+        address: '123 Main',
+        kindoo_site_id: null,
+      }),
+    ).rejects.toThrow(/Building name is required/i);
+    expect(setDocMock).not.toHaveBeenCalled();
   });
 });
