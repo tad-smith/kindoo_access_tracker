@@ -8,6 +8,7 @@ import { makeRequest, makeSeat, makeWard } from '../../../test/fixtures';
 
 const useStakeWardsMock = vi.fn();
 const useWardSeatsMock = vi.fn();
+const useKindooSitesMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
 const usePendingRemoveRequestsMock = vi.fn();
 const submitMutateAsyncMock = vi.fn();
@@ -17,6 +18,7 @@ const navigateMock = vi.fn().mockResolvedValue(undefined);
 vi.mock('./hooks', () => ({
   useStakeWards: () => useStakeWardsMock(),
   useWardSeats: (ward: string | null) => useWardSeatsMock(ward),
+  useKindooSites: () => useKindooSitesMock(),
 }));
 
 // EditSeatDialog (mounted on Edit click) subscribes to stake-wide ward
@@ -146,6 +148,9 @@ beforeEach(() => {
   mockPendingRequests([]);
   // Default: no pending remove requests for any seat.
   mockNoPendingRemoves();
+  // Default: empty Kindoo Sites catalogue. The badge tests below
+  // override via mockKindooSites.
+  useKindooSitesMock.mockReturnValue(stakeListResult);
   submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
   // Default principal: bishopric of CO (the ward most tests target).
   // Tests that need a different authority shape override via
@@ -511,5 +516,72 @@ describe('<WardRostersPage />', () => {
       render(<WardRostersPage initialWard="GE" />);
       expect(screen.queryByTestId('edit-btn-manual@x.com')).toBeNull();
     });
+  });
+});
+
+describe('<WardRostersPage /> — Kindoo Sites label (spec §15)', () => {
+  function mockKindooSites(sites: Array<{ id: string; display_name: string }>) {
+    useKindooSitesMock.mockReturnValue({
+      data: sites.map((s) => ({
+        id: s.id,
+        display_name: s.display_name,
+        kindoo_expected_site_name: '',
+        created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+        last_modified_at: {
+          seconds: 0,
+          nanoseconds: 0,
+          toDate: () => new Date(),
+          toMillis: () => 0,
+        },
+        lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+      })),
+      error: null,
+      status: 'success',
+      isPending: false,
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      isFetching: false,
+      fetchStatus: 'idle',
+    });
+  }
+
+  it('renders the foreign-site badge on a seat whose ward.kindoo_site_id points at a foreign site', () => {
+    mockWards([
+      makeWard({
+        ward_code: 'FN',
+        ward_name: 'Foothills',
+        seat_cap: 20,
+        kindoo_site_id: 'foreign-1',
+      } as Partial<Ward>),
+    ]);
+    mockSeats([
+      makeSeat({
+        scope: 'FN',
+        member_canonical: 'a@x.com',
+        member_email: 'a@x.com',
+        member_name: 'Alpha',
+      }),
+    ]);
+    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }]);
+    render(<WardRostersPage initialWard="FN" />);
+    expect(screen.getByTestId('kindoo-site-badge-a@x.com')).toHaveTextContent(
+      'East Stake (Foothills)',
+    );
+  });
+
+  it('omits the badge when the ward is on the home site', () => {
+    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+    mockSeats([
+      makeSeat({
+        scope: 'CO',
+        member_canonical: 'a@x.com',
+        member_email: 'a@x.com',
+        member_name: 'Alpha',
+      }),
+    ]);
+    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }]);
+    render(<WardRostersPage initialWard="CO" />);
+    expect(screen.queryByTestId('kindoo-site-badge-a@x.com')).toBeNull();
   });
 });

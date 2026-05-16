@@ -9,6 +9,7 @@ import { makeSeat, makeWard } from '../../../../test/fixtures';
 const useAllSeatsMock = vi.fn();
 const useWardsMock = vi.fn();
 const useBuildingsMock = vi.fn();
+const useKindooSitesMock = vi.fn();
 const useStakeDocMock = vi.fn();
 const usePrincipalMock = vi.fn();
 const inlineEditMutate = vi.fn().mockResolvedValue(undefined);
@@ -19,6 +20,7 @@ vi.mock('./hooks', () => ({
   useAllSeats: () => useAllSeatsMock(),
   useWards: () => useWardsMock(),
   useBuildings: () => useBuildingsMock(),
+  useKindooSites: () => useKindooSitesMock(),
   useInlineSeatEditMutation: () => ({ mutateAsync: inlineEditMutate, isPending: false }),
   useReconcileSeatMutation: () => ({ mutateAsync: reconcileMutate, isPending: false }),
 }));
@@ -88,11 +90,29 @@ function mockAll(opts: {
   seats?: Seat[];
   wards?: Ward[];
   buildings?: Building[];
+  kindooSites?: Array<{ id: string; display_name: string }>;
   stake?: Partial<Stake>;
 }) {
   useAllSeatsMock.mockReturnValue(liveResult(opts.seats ?? []));
   useWardsMock.mockReturnValue(liveResult(opts.wards ?? []));
   useBuildingsMock.mockReturnValue(liveResult(opts.buildings ?? []));
+  useKindooSitesMock.mockReturnValue(
+    liveResult(
+      (opts.kindooSites ?? []).map((s) => ({
+        id: s.id,
+        display_name: s.display_name,
+        kindoo_expected_site_name: '',
+        created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+        last_modified_at: {
+          seconds: 0,
+          nanoseconds: 0,
+          toDate: () => new Date(),
+          toMillis: () => 0,
+        },
+        lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+      })),
+    ),
+  );
   useStakeDocMock.mockReturnValue({
     data: opts.stake,
     error: null,
@@ -514,5 +534,59 @@ describe('<AllSeatsPage />', () => {
       render(<AllSeatsPage />);
       expect(screen.queryByTestId('remove-btn-co-manual@x.com')).toBeNull();
     });
+  });
+});
+
+describe('<AllSeatsPage /> — Kindoo Sites label (spec §15)', () => {
+  it('renders the foreign-site badge on ward seats whose ward sits on a foreign Kindoo site', () => {
+    usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['FN'] }));
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'FN',
+          member_canonical: 'foreign@x.com',
+          member_email: 'foreign@x.com',
+          member_name: 'Foreign Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ],
+      wards: [
+        makeWard({
+          ward_code: 'FN',
+          ward_name: 'Foothills',
+          kindoo_site_id: 'foreign-1',
+        } as Partial<Ward>),
+      ],
+      buildings: [],
+      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    expect(screen.getByTestId('kindoo-site-badge-foreign@x.com')).toHaveTextContent(
+      'East Stake (Foothills)',
+    );
+  });
+
+  it('omits the foreign-site badge on home-site ward seats', () => {
+    usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO'] }));
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'home@x.com',
+          member_email: 'home@x.com',
+          member_name: 'Home Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('kindoo-site-badge-home@x.com')).toBeNull();
   });
 });

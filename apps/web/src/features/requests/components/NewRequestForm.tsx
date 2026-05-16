@@ -51,6 +51,7 @@ import {
   CollapsibleTrigger,
 } from '../../../components/ui/Collapsible';
 import { toast } from '../../../lib/store/toast';
+import { filterBuildingsBySite, siteIdForScope } from '../../../lib/kindooSites';
 
 export interface ScopeOption {
   /** `'stake'` or a ward_code. */
@@ -95,12 +96,24 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   const submit = useSubmitRequest();
   const initialScope = scopes[0]?.value ?? '';
 
+  // Kindoo-site filter (spec §15 Phase 2): the building checklist is
+  // narrowed to buildings whose `kindoo_site_id` matches the current
+  // scope's site. Stake scope → home only; ward scope → that ward's
+  // site. Legacy buildings without the field are treated as home.
+  const initialVisibleBuildings = useMemo(
+    () => filterBuildingsBySite(buildings, siteIdForScope(initialScope, wards)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [], // captured once for `defaultValues`; live updates flow through the scope-driven effect below.
+  );
+
   // Initial-mount default selection mirrors the scope-change rule
   // below: if the form opens on a ward, pre-select that ward's
   // building; if it opens on `stake`, pre-select every building (B-11
   // — stake-scope means "everywhere," manager unchecks to exclude).
+  // Stake-scope defaults across the visible (home-site) catalogue per
+  // spec §15.
   const initialBuildings = useMemo(
-    () => defaultBuildingsForScope(initialScope, wards, buildings),
+    () => defaultBuildingsForScope(initialScope, wards, initialVisibleBuildings),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [], // captured once for `defaultValues`; live updates flow through the scope-driven effect below.
   );
@@ -146,6 +159,15 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   // can override mid-edit; the override resets on the next scope flip.
   const [buildingsOpen, setBuildingsOpen] = useState<boolean>(initialScope === 'stake');
 
+  // Visible buildings = the full catalogue narrowed to the scope's
+  // Kindoo site (spec §15 Phase 2). Memoised so the scope effect's
+  // dependency list stays stable and the checkbox list re-renders only
+  // when the underlying inputs change.
+  const visibleBuildings = useMemo(
+    () => filterBuildingsBySite(buildings, siteIdForScope(watchedScope, wards)),
+    [buildings, wards, watchedScope],
+  );
+
   // Drive both the selection and the open state from `watchedScope`.
   // Two separate effects on purpose — the selection effect also
   // depends on `wards` and `buildings` (live subscription late-
@@ -153,10 +175,13 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   // while the open-state effect must NOT thrash on every push.
   const lastScopeForBuildings = useRef<string>(initialScope);
   useEffect(() => {
-    const next = defaultBuildingsForScope(watchedScope, wards, buildings);
+    // Defaults are drawn from the visible (site-filtered) catalogue.
+    // Stake-scope → every home-site building; ward-scope → the ward's
+    // home building when it exists in the visible set.
+    const next = defaultBuildingsForScope(watchedScope, wards, visibleBuildings);
     setValue('building_names', next, { shouldDirty: false, shouldValidate: false });
     lastScopeForBuildings.current = watchedScope;
-  }, [watchedScope, wards, buildings, setValue]);
+  }, [watchedScope, wards, visibleBuildings, setValue]);
 
   const lastScopeForOpen = useRef<string>(initialScope);
   useEffect(() => {
@@ -213,7 +238,11 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         comment: '',
         start_date: '',
         end_date: '',
-        building_names: defaultBuildingsForScope(input.scope, wards, buildings),
+        building_names: defaultBuildingsForScope(
+          input.scope,
+          wards,
+          filterBuildingsBySite(buildings, siteIdForScope(input.scope, wards)),
+        ),
         urgent: false,
       });
       setBuildingsOpen(input.scope === 'stake');
@@ -384,12 +413,21 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         </CollapsibleTrigger>
         <CollapsibleContent>
           {buildings.length === 0 ? (
-            <p className="kd-empty-state">
+            <p className="kd-empty-state" data-testid="new-request-buildings-empty">
               No buildings configured. Ask a Kindoo Manager to add buildings via Configuration.
+            </p>
+          ) : visibleBuildings.length === 0 ? (
+            // Site-filter narrowed the catalogue to zero (e.g. a foreign-
+            // site ward with no foreign-site buildings configured yet, or
+            // a stake-scope request with zero home-site buildings). Block
+            // submission with an explicit message instead of an empty list.
+            <p className="kd-empty-state" data-testid="new-request-buildings-empty-for-scope">
+              No buildings are available for this scope. Ask a Kindoo Manager to assign a building
+              to this Kindoo site via Configuration.
             </p>
           ) : (
             <ul className="kd-checkbox-list">
-              {buildings.map((b) => {
+              {visibleBuildings.map((b) => {
                 const checked = watchedBuildings.includes(b.building_name);
                 return (
                   <li key={b.building_id}>

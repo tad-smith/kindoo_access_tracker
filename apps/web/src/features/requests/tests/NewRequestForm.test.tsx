@@ -55,15 +55,18 @@ function liveSeatResult(seat: Seat | undefined) {
   } as const;
 }
 
-function wards(opts: { code: string; building_name: string }[] = []): Ward[] {
+function wards(
+  opts: { code: string; building_name: string; kindoo_site_id?: string | null }[] = [],
+): Ward[] {
   const stamp = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
   return opts.map(
-    ({ code, building_name }) =>
+    ({ code, building_name, kindoo_site_id }) =>
       ({
         ward_code: code,
         ward_name: `Ward ${code}`,
         building_name,
         seat_cap: 20,
+        ...(kindoo_site_id !== undefined ? { kindoo_site_id } : {}),
         created_at: stamp,
         last_modified_at: stamp,
         lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
@@ -100,6 +103,24 @@ function buildings(): Building[] {
       lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
     },
   ];
+}
+
+function buildingsWithSites(
+  opts: Array<{ id: string; name: string; kindoo_site_id?: string | null }>,
+): Building[] {
+  const stamp = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+  return opts.map(
+    ({ id, name, kindoo_site_id }) =>
+      ({
+        building_id: id,
+        building_name: name,
+        address: '123',
+        ...(kindoo_site_id !== undefined ? { kindoo_site_id } : {}),
+        created_at: stamp,
+        last_modified_at: stamp,
+        lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+      }) as unknown as Building,
+  );
 }
 
 beforeEach(() => {
@@ -1203,5 +1224,136 @@ describe('<NewRequestForm /> — duplicate warning', () => {
     );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
     expect(screen.queryByTestId('new-request-duplicate-warning')).toBeNull();
+  });
+});
+
+describe('<NewRequestForm /> — Kindoo Sites building filter (spec §15)', () => {
+  // Phase 2 narrows the building checklist to the buildings whose
+  // `kindoo_site_id` matches the current scope's Kindoo site.
+  //   - Stake scope → home buildings only (foreign sites are out of
+  //     scope for stake-wide presidency / clerks per spec §15).
+  //   - Ward scope (home) → home buildings only.
+  //   - Ward scope (foreign site `foreign-1`) → buildings tagged
+  //     `foreign-1` only. The ward's own home building is hidden.
+  //   - Empty filter (e.g., foreign ward with no foreign building
+  //     configured yet) → explicit empty-state, no crash.
+
+  it('filters the stake-scope checklist to home-site buildings only (foreign building hidden)', () => {
+    // Mixed catalogue: one home building, one foreign-site building.
+    // Stake scope expands the panel and pre-checks every visible
+    // building (B-11) — but only the home building is visible.
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildingsWithSites([
+          { id: 'cordera', name: 'Cordera Building', kindoo_site_id: null },
+          { id: 'foothills', name: 'Foothills Building', kindoo_site_id: 'foreign-1' },
+        ])}
+        wards={[]}
+      />,
+    );
+    // The foreign building's checkbox is absent from the rendered list.
+    expect(screen.getByTestId('new-request-building-cordera')).toBeInTheDocument();
+    expect(screen.queryByTestId('new-request-building-foothills')).toBeNull();
+    // Header summary reflects only the home building.
+    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
+      'Building: Cordera Building',
+    );
+  });
+
+  it('treats legacy buildings without kindoo_site_id as home (stake scope sees them)', () => {
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        // No kindoo_site_id field — legacy data; should land as home.
+        buildings={buildingsWithSites([
+          { id: 'cordera', name: 'Cordera Building' },
+          { id: 'foothills', name: 'Foothills Building', kindoo_site_id: 'foreign-1' },
+        ])}
+        wards={[]}
+      />,
+    );
+    expect(screen.getByTestId('new-request-building-cordera')).toBeInTheDocument();
+    expect(screen.queryByTestId('new-request-building-foothills')).toBeNull();
+  });
+
+  it('filters a foreign-ward-scope checklist to the matching foreign-site buildings only', async () => {
+    // Ward FN lives on foreign site `foreign-1`. The checklist shows
+    // foreign-1 buildings only; the home building Cordera is hidden.
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'FN', label: 'Ward FN' }]}
+        buildings={buildingsWithSites([
+          { id: 'cordera', name: 'Cordera Building', kindoo_site_id: null },
+          { id: 'foothills', name: 'Foothills Building', kindoo_site_id: 'foreign-1' },
+        ])}
+        wards={wards([
+          { code: 'FN', building_name: 'Foothills Building', kindoo_site_id: 'foreign-1' },
+        ])}
+      />,
+    );
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    expect(screen.getByTestId('new-request-building-foothills')).toBeInTheDocument();
+    expect(screen.queryByTestId('new-request-building-cordera')).toBeNull();
+    // Ward's home building pre-checked.
+    expect(screen.getByTestId('new-request-building-foothills')).toBeChecked();
+  });
+
+  it('renders an empty-state message when the site filter narrows the catalogue to zero', () => {
+    // Ward FN lives on `foreign-1` but no foreign-1 building is yet
+    // configured. The collapsible expands manually so the empty-state
+    // is observable. Stake users get a similar message if no home
+    // buildings exist.
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'FN', label: 'Ward FN' }]}
+        // Only a home building exists; nothing tagged foreign-1.
+        buildings={buildingsWithSites([
+          { id: 'cordera', name: 'Cordera Building', kindoo_site_id: null },
+        ])}
+        wards={wards([{ code: 'FN', building_name: '', kindoo_site_id: 'foreign-1' }])}
+      />,
+    );
+    // The collapsible defaults to closed for ward scopes; force-expand
+    // via the trigger to inspect the empty-state.
+    return userEvent
+      .setup()
+      .click(screen.getByTestId('new-request-buildings-trigger'))
+      .then(() => {
+        expect(screen.getByTestId('new-request-buildings-empty-for-scope')).toBeInTheDocument();
+        // The home-only "no buildings configured" message stays hidden
+        // — it's a different empty-state with different copy.
+        expect(screen.queryByTestId('new-request-buildings-empty')).toBeNull();
+      });
+  });
+
+  it('switches the visible building set when the scope dropdown moves between home and foreign wards', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[
+          { value: 'CO', label: 'Ward CO' },
+          { value: 'FN', label: 'Ward FN' },
+        ]}
+        buildings={buildingsWithSites([
+          { id: 'cordera', name: 'Cordera Building', kindoo_site_id: null },
+          { id: 'foothills', name: 'Foothills Building', kindoo_site_id: 'foreign-1' },
+        ])}
+        wards={wards([
+          { code: 'CO', building_name: 'Cordera Building', kindoo_site_id: null },
+          { code: 'FN', building_name: 'Foothills Building', kindoo_site_id: 'foreign-1' },
+        ])}
+      />,
+    );
+    // Initial scope CO (home) → Cordera visible, Foothills hidden.
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    expect(screen.getByTestId('new-request-building-cordera')).toBeInTheDocument();
+    expect(screen.queryByTestId('new-request-building-foothills')).toBeNull();
+    // Flip to FN (foreign) → Foothills visible, Cordera hidden.
+    await user.selectOptions(screen.getByTestId('new-request-scope'), 'FN');
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    expect(screen.getByTestId('new-request-building-foothills')).toBeInTheDocument();
+    expect(screen.queryByTestId('new-request-building-cordera')).toBeNull();
   });
 });

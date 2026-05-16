@@ -9,10 +9,10 @@
 
 import { query, where } from 'firebase/firestore';
 import { useMemo } from 'react';
-import type { Seat, Ward } from '@kindoo/shared';
+import type { KindooSite, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
-import { seatsCol, wardsCol } from '../../lib/docs';
+import { kindooSitesCol, seatsCol, wardsCol } from '../../lib/docs';
 import { STAKE_ID } from '../../lib/constants';
 
 export function useStakeRoster() {
@@ -34,4 +34,13 @@ export function useWardSeats(wardCode: string | null) {
 export function useStakeWards() {
   const wardsQuery = useMemo(() => wardsCol(db, STAKE_ID), []);
   return useFirestoreCollection<Ward>(wardsQuery);
+}
+
+/**
+ * Live Kindoo Sites catalogue — feeds the foreign-site label on ward
+ * seats (spec §15). Empty when the stake only operates its home site.
+ */
+export function useKindooSites() {
+  const q = useMemo(() => kindooSitesCol(db, STAKE_ID), []);
+  return useFirestoreCollection<KindooSite>(q);
 }
