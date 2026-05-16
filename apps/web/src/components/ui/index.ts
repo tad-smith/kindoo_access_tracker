@@ -17,6 +17,15 @@ export {
   CollapsibleTrigger,
   type CollapsibleTriggerProps,
 } from './Collapsible';
+export {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from './Command';
 export { Input } from './Input';
+export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from './Popover';
 export { Select } from './Select';
 export { Skeleton } from './Skeleton';
