@@ -3,18 +3,16 @@
 // the anonymous landing page (SignInPage) renders synchronously on
 // mount, before the Firebase SDK reaches out for auth/Firestore.
 //
-// Phase 1 asserted a placeholder smoketest heading. Phase 2 replaced
-// that with the real SignInPage as the anonymous landing — the heading
-// is now `Stake Building Access`, the same one the auth-flow specs'
-// "anonymous visit" test asserts. We keep this smoke separate from
-// auth-flow because it doesn't need the Auth/Firestore emulators
-// running, so it stays useful when the larger suite is gated behind
-// emulator boot.
+// Asserts the hero <h1> on the new homepage plus the topbar brand
+// wordmark, so a regression that drops either surface is caught.
 
 import { expect, test } from '@playwright/test';
 
 test('SPA preview build renders the anonymous landing page', async ({ page }) => {
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: /Stake Building Access/i })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: /Building access for your stake/i }),
+  ).toBeVisible();
+  await expect(page.getByText(/Stake Building Access/i).first()).toBeVisible();
 });
