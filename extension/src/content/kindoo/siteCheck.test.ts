@@ -22,6 +22,7 @@ import {
   checkRequestSite,
   ProvisionHomeSiteNotConfiguredError,
   ProvisionSiteMismatchError,
+  resolveActiveKindooSite,
 } from './siteCheck';
 import type { KindooEnvironment } from './endpoints';
 
@@ -299,5 +300,121 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.expectedSiteName).toBe('East Stake');
+  });
+});
+
+describe('resolveActiveKindooSite — Phase 5 wizard helper', () => {
+  it('returns home when EID matches stake.kindoo_config.site_id', () => {
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: HOME_EID },
+      envs: homeEnvs(),
+      stake: STAKE,
+      kindooSites: [],
+    });
+    expect(result).toEqual({ kind: 'home', displayName: 'Colorado Springs North Stake' });
+  });
+
+  it('returns home (by name) when kindoo_config is absent on the stake (first run)', () => {
+    const stake: Stake = {
+      stake_id: 'csnorth',
+      stake_name: 'Colorado Springs North Stake',
+    } as unknown as Stake;
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: HOME_EID },
+      envs: homeEnvs(),
+      stake,
+      kindooSites: [],
+    });
+    expect(result).toEqual({ kind: 'home', displayName: 'Colorado Springs North Stake' });
+  });
+
+  it('uses kindoo_expected_site_name as the home displayName when set', () => {
+    const stake: Stake = {
+      ...STAKE,
+      kindoo_expected_site_name: 'CSN Stake',
+    } as unknown as Stake;
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: HOME_EID },
+      envs: homeEnvs(),
+      stake,
+      kindooSites: [],
+    });
+    expect(result).toEqual({ kind: 'home', displayName: 'CSN Stake' });
+  });
+
+  it('returns foreign by EID when a kindooSites entry carries the active EID', () => {
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: FOREIGN_EID },
+      envs: foreignEnvs(),
+      stake: STAKE,
+      kindooSites: [FOREIGN_SITE_WITH_EID],
+    });
+    expect(result).toEqual({
+      kind: 'foreign',
+      siteId: 'east-stake',
+      displayName: 'East Stake (Foothills Building)',
+    });
+  });
+
+  it('returns foreign with populateEid when the foreign doc has no kindoo_eid and the name matches', () => {
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: FOREIGN_EID },
+      envs: foreignEnvs('East Stake'),
+      stake: STAKE,
+      kindooSites: [FOREIGN_SITE_NO_EID],
+    });
+    expect(result).toEqual({
+      kind: 'foreign',
+      siteId: 'east-stake',
+      displayName: 'East Stake (Foothills Building)',
+      populateEid: FOREIGN_EID,
+    });
+  });
+
+  it('foreign name match is case- and whitespace-insensitive', () => {
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: FOREIGN_EID },
+      envs: foreignEnvs('  east stake  '),
+      stake: STAKE,
+      kindooSites: [FOREIGN_SITE_NO_EID],
+    });
+    expect(result.kind).toBe('foreign');
+  });
+
+  it('returns unknown when the active site name matches nothing the stake knows', () => {
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: 9999 },
+      envs: [{ EID: 9999, Name: 'Stranger Stake' } as unknown as KindooEnvironment],
+      stake: STAKE,
+      kindooSites: [FOREIGN_SITE_WITH_EID],
+    });
+    expect(result).toEqual({ kind: 'unknown', activeSiteName: 'Stranger Stake' });
+  });
+
+  it('returns unknown when no env entry matches the active EID at all', () => {
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: 9999 },
+      envs: [], // nothing
+      stake: STAKE,
+      kindooSites: [FOREIGN_SITE_WITH_EID],
+    });
+    expect(result).toEqual({ kind: 'unknown', activeSiteName: '' });
+  });
+
+  it('prefers home (EID match) over a foreign site that shares a stale EID record', () => {
+    // Defensive: a foreign doc still carrying a stale kindoo_eid that
+    // happens to collide with home's site_id shouldn't override the
+    // stake's authoritative home_eid.
+    const stale: KindooSite = {
+      ...FOREIGN_SITE_WITH_EID,
+      kindoo_eid: HOME_EID,
+    } as unknown as KindooSite;
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: HOME_EID },
+      envs: homeEnvs(),
+      stake: STAKE,
+      kindooSites: [stale],
+    });
+    expect(result.kind).toBe('home');
   });
 });

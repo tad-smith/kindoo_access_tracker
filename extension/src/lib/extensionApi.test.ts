@@ -135,6 +135,7 @@ describe('extensionApi', () => {
     );
     const { writeKindooConfig } = await import('./extensionApi');
     const payload = {
+      kindooSiteId: null,
       siteId: 27994,
       siteName: 'CSN',
       buildingRules: [{ buildingId: 'b1', ruleId: 6248, ruleName: 'Doors' }],
@@ -154,7 +155,7 @@ describe('extensionApi', () => {
     );
     const { writeKindooConfig } = await import('./extensionApi');
     await expect(
-      writeKindooConfig({ siteId: 1, siteName: 'X', buildingRules: [] }),
+      writeKindooConfig({ kindooSiteId: null, siteId: 1, siteName: 'X', buildingRules: [] }),
     ).rejects.toMatchObject({ code: 'permission-denied' });
   });
 

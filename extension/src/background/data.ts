@@ -130,11 +130,20 @@ export async function writeKindooSiteEid(
 }
 
 /**
- * Persist the v2.1 configuration in a single batched write. Stake doc
- * gets the new `kindoo_config` field; every building doc named in
- * `payload.buildingRules` gets `kindoo_rule`. `lastActor` and
- * `last_modified_at` are touched on every affected doc per the
- * rules' integrity contract.
+ * Persist the v2.1 / Phase 5 configuration in a single batched write.
+ *
+ * The wizard runs once per Kindoo site — home OR a specific foreign
+ * site. The site is discriminated by `payload.kindooSiteId`:
+ *
+ *  - `null` (home) — write `stake.kindoo_config` + per-building
+ *    `kindoo_rule` on the supplied home buildings.
+ *  - `<string>` (foreign) — auto-populate `kindoo_eid` on
+ *    `kindooSites/{id}` + per-building `kindoo_rule` on the supplied
+ *    foreign-site buildings. The stake doc is NOT touched (its
+ *    `kindoo_config` is home's identity and would be clobbered).
+ *
+ * `lastActor` + `last_modified_at` get bumped on every doc the batch
+ * writes, per the rules' integrity contract.
  */
 export async function writeKindooConfig(
   payload: WriteKindooConfigPayload,
@@ -150,17 +159,31 @@ export async function writeKindooConfig(
   const db = firestore();
   const batch = writeBatch(db);
 
-  const stakeRef = doc(db, 'stakes', STAKE_ID);
-  batch.update(stakeRef, {
-    kindoo_config: {
-      site_id: payload.siteId,
-      site_name: payload.siteName,
-      configured_at: serverTimestamp(),
-      configured_by: actorRef,
-    },
-    last_modified_at: serverTimestamp(),
-    lastActor: actorRef,
-  });
+  if (payload.kindooSiteId === null) {
+    // Home save — writes stake.kindoo_config alongside the per-building
+    // rule rows.
+    const stakeRef = doc(db, 'stakes', STAKE_ID);
+    batch.update(stakeRef, {
+      kindoo_config: {
+        site_id: payload.siteId,
+        site_name: payload.siteName,
+        configured_at: serverTimestamp(),
+        configured_by: actorRef,
+      },
+      last_modified_at: serverTimestamp(),
+      lastActor: actorRef,
+    });
+  } else {
+    // Foreign save — write the discovered EID onto the foreign site
+    // doc. Idempotent: re-running the wizard against the same site
+    // with `kindoo_eid` already set just re-asserts the value.
+    const foreignRef = doc(db, 'stakes', STAKE_ID, 'kindooSites', payload.kindooSiteId);
+    batch.update(foreignRef, {
+      kindoo_eid: payload.siteId,
+      last_modified_at: serverTimestamp(),
+      lastActor: actorRef,
+    });
+  }
 
   for (const row of payload.buildingRules) {
     const buildingRef = doc(db, 'stakes', STAKE_ID, 'buildings', row.buildingId);

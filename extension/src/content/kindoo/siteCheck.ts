@@ -224,3 +224,112 @@ export function checkRequestSite(args: CheckRequestSiteArgs): SiteCheckResult {
   }
   return { ok: false, error: new ProvisionSiteMismatchError(expectedSiteName) };
 }
+
+// ---------------------------------------------------------------------------
+// Active Kindoo site resolver — used by the Phase 5 configure wizard to scope
+// building→rule mapping to the operator's current Kindoo session. The
+// orchestrator-entry guard above resolves an EXPECTED site from a request; this
+// resolves the ACTUAL site the operator is currently authenticated against.
+// ---------------------------------------------------------------------------
+
+/**
+ * Active Kindoo session classified against the stake's configured sites.
+ *
+ *  - `'home'`     — session points at the home site (matched by EID when the
+ *                   stake has a `kindoo_config.site_id`, else by name against
+ *                   `kindoo_expected_site_name || stake_name` for first-run
+ *                   home configuration).
+ *  - `'foreign'`  — session matches a foreign `KindooSite` doc (by `kindoo_eid`
+ *                   when set, else by name against `kindoo_expected_site_name`).
+ *                   `populateEid` is set when the foreign site doc has no
+ *                   `kindoo_eid` yet — caller must persist `session.eid` onto
+ *                   the doc before / alongside its rule-mapping writes.
+ *  - `'unknown'`  — session site name is empty or matches nothing the stake
+ *                   knows about. Wizard refuses in this state.
+ *
+ * `displayName` is what the wizard renders in its header
+ * (`"Configuring: <displayName>"`). For home this is the stake's
+ * `kindoo_expected_site_name || stake_name`; for foreign it's
+ * `KindooSite.display_name`.
+ */
+export type ActiveSiteResolution =
+  | { kind: 'home'; displayName: string }
+  | {
+      kind: 'foreign';
+      siteId: string;
+      displayName: string;
+      /** When the foreign site doc has no `kindoo_eid` yet, the wizard must
+       * persist `session.eid` onto the doc on save. */
+      populateEid?: number;
+    }
+  | { kind: 'unknown'; activeSiteName: string };
+
+export interface ResolveActiveKindooSiteArgs {
+  session: KindooSession;
+  envs: KindooEnvironment[];
+  stake: Stake;
+  kindooSites: KindooSite[];
+}
+
+/**
+ * Classify the active Kindoo session against the stake's configured sites.
+ * Pure — no network. Caller supplies `envs` from `getEnvironments(session)`.
+ *
+ * Resolution order:
+ *   1. Home by EID — `stake.kindoo_config.site_id === session.eid`.
+ *   2. Foreign by EID — `kindooSites.some(s => s.kindoo_eid === session.eid)`.
+ *   3. Home by name — active session's site name matches
+ *      `stake.kindoo_expected_site_name || stake.stake_name`. Covers first-run
+ *      configuration when `kindoo_config` isn't set yet.
+ *   4. Foreign by name — active session's site name matches some
+ *      `KindooSite.kindoo_expected_site_name`. The result carries
+ *      `populateEid: session.eid` so the caller can backfill `kindoo_eid`.
+ *   5. Otherwise unknown.
+ */
+export function resolveActiveKindooSite(args: ResolveActiveKindooSiteArgs): ActiveSiteResolution {
+  const { session, envs, stake, kindooSites } = args;
+  const activeName = activeSiteName(envs, session);
+  const normalisedActive = activeName.length > 0 ? normaliseName(activeName) : '';
+
+  const homeExpectedName = stake.kindoo_expected_site_name?.trim() || stake.stake_name;
+
+  // 1. Home by EID.
+  if (stake.kindoo_config && stake.kindoo_config.site_id === session.eid) {
+    return { kind: 'home', displayName: homeExpectedName };
+  }
+
+  // 2. Foreign by EID.
+  const foreignByEid = kindooSites.find(
+    (s) => s.kindoo_eid !== undefined && s.kindoo_eid !== null && s.kindoo_eid === session.eid,
+  );
+  if (foreignByEid) {
+    return {
+      kind: 'foreign',
+      siteId: foreignByEid.id,
+      displayName: foreignByEid.display_name,
+    };
+  }
+
+  // 3. Home by name (first-run / config-not-yet-set fallback).
+  if (normalisedActive.length > 0 && normalisedActive === normaliseName(homeExpectedName)) {
+    return { kind: 'home', displayName: homeExpectedName };
+  }
+
+  // 4. Foreign by name (auto-populate EID on save).
+  if (normalisedActive.length > 0) {
+    const foreignByName = kindooSites.find(
+      (s) => normaliseName(s.kindoo_expected_site_name) === normalisedActive,
+    );
+    if (foreignByName) {
+      return {
+        kind: 'foreign',
+        siteId: foreignByName.id,
+        displayName: foreignByName.display_name,
+        populateEid: session.eid,
+      };
+    }
+  }
+
+  // 5. Nothing matched.
+  return { kind: 'unknown', activeSiteName: activeName };
+}

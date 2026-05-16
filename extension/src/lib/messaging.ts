@@ -120,7 +120,28 @@ export interface DataWriteKindooConfigRequest {
 }
 
 export interface WriteKindooConfigPayload {
+  /**
+   * Which configured Kindoo site this save applies to:
+   *   - `null` → home site. Writes `stake.kindoo_config` + per-building
+   *     `kindoo_rule` on home-site buildings.
+   *   - `<string>` → foreign `KindooSite` doc id. Writes per-building
+   *     `kindoo_rule` on foreign-site buildings + (when supplied)
+   *     auto-populates `kindoo_eid` on the foreign site doc. Does NOT
+   *     touch `stake.kindoo_config`.
+   *
+   * Phase 5 — the configure wizard scopes to one site per run. See
+   * `extension/docs/v2-design.md` "Per-site configuration".
+   */
+  kindooSiteId: string | null;
+  /** Active Kindoo session's EID. Persisted onto `stake.kindoo_config`
+   * for the home save; persisted onto the foreign `KindooSite` doc as
+   * `kindoo_eid` for a foreign save when the foreign doc doesn't carry
+   * one yet (Phase 3 auto-populate path, run from the wizard). */
   siteId: number;
+  /** Active Kindoo session's site `Name`. Persisted onto
+   * `stake.kindoo_config.site_name` for the home save; foreign saves
+   * carry it for diagnostics but don't write it (foreign sites already
+   * carry `kindoo_expected_site_name` from the Configuration UI). */
   siteName: string;
   buildingRules: Array<{
     buildingId: string;

@@ -187,7 +187,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooConfig',
-      payload: { siteId: 27994, siteName: 'CSN', buildingRules: [] },
+      payload: { kindooSiteId: null, siteId: 27994, siteName: 'CSN', buildingRules: [] },
     });
     expect(writeKindooConfigMock).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -196,14 +196,31 @@ describe('handleRequest', () => {
     });
   });
 
-  it('data.writeKindooConfig forwards the payload + current user to the writer', async () => {
+  it('data.writeKindooConfig forwards the home payload + current user to the writer', async () => {
     const user = { uid: 'u1', email: 'mgr@example.com', displayName: 'Manager' };
     currentUserMock.mockReturnValue(user);
     writeKindooConfigMock.mockResolvedValue(undefined);
     const payload = {
+      kindooSiteId: null,
       siteId: 27994,
       siteName: 'Colorado Springs North Stake',
       buildingRules: [{ buildingId: 'cordera', ruleId: 6248, ruleName: 'Cordera Doors' }],
+    };
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.writeKindooConfig', payload });
+    expect(writeKindooConfigMock).toHaveBeenCalledWith(payload, user);
+    expect(result).toEqual({ ok: true, data: { ok: true } });
+  });
+
+  it('data.writeKindooConfig forwards a foreign-site payload through to the writer', async () => {
+    const user = { uid: 'u1', email: 'mgr@example.com', displayName: 'Manager' };
+    currentUserMock.mockReturnValue(user);
+    writeKindooConfigMock.mockResolvedValue(undefined);
+    const payload = {
+      kindooSiteId: 'east-stake',
+      siteId: 4321,
+      siteName: 'East Stake',
+      buildingRules: [{ buildingId: 'foothills', ruleId: 8001, ruleName: 'Foothills Doors' }],
     };
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.writeKindooConfig', payload });
@@ -223,7 +240,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooConfig',
-      payload: { siteId: 27994, siteName: 'CSN', buildingRules: [] },
+      payload: { kindooSiteId: null, siteId: 27994, siteName: 'CSN', buildingRules: [] },
     });
     expect(result).toEqual({
       ok: false,
