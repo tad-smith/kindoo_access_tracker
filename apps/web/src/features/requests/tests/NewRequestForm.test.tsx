@@ -875,7 +875,7 @@ describe('<NewRequestForm /> — calling typeahead', () => {
   // from `WARD_CALLINGS` (ward scope) or `STAKE_CALLINGS` (stake scope);
   // free-text values outside the lists still submit unchanged.
 
-  it('renders the label as "Calling (or reason)"', () => {
+  it('renders the label as "Calling" when type is add_manual', () => {
     render(
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
@@ -883,7 +883,8 @@ describe('<NewRequestForm /> — calling typeahead', () => {
         wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
       />,
     );
-    expect(screen.getByText(/calling \(or reason\)/i)).toBeInTheDocument();
+    const label = screen.getByText(/^Calling$/);
+    expect(label).toBeInTheDocument();
   });
 
   it('suggests ward callings when the scope is a ward', async () => {
@@ -1024,6 +1025,114 @@ describe('<NewRequestForm /> — calling typeahead', () => {
     expect(submitMock.mock.calls[0]?.[0]).toMatchObject({
       reason: 'Stake Music Coordinator-EQ Quorum Liaison',
     });
+  });
+});
+
+describe('<NewRequestForm /> — reason field is type-conditional', () => {
+  // add_manual → typeahead Combobox + "Calling" label.
+  // add_temp  → plain text input + "Reason" label (no suggestions).
+  // Switching type preserves the typed value.
+
+  it('renders the label as "Reason" when type is add_temp', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
+    expect(screen.getByText(/^Reason$/)).toBeInTheDocument();
+    // The manual-mode label is gone.
+    expect(screen.queryByText(/^Calling$/)).toBeNull();
+  });
+
+  it('renders a plain input (no Combobox popover) when type is add_temp', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
+    const reason = screen.getByTestId('new-request-reason') as HTMLInputElement;
+    await user.click(reason);
+    await user.type(reason, 'Bishop');
+    // No cmdk listbox / suggestion items — even a query that would
+    // match a known calling shows nothing.
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.queryByText('Bishop')).toBeNull();
+    expect(screen.queryByText('Bishopric First Counselor')).toBeNull();
+    // The Combobox empty-state message is also absent.
+    expect(
+      screen.queryByText(/no matching calling\. free-text reason will be saved\./i),
+    ).toBeNull();
+  });
+
+  it('preserves the typed value when switching add_manual → add_temp → add_manual', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    // Mount in manual mode — select a suggestion to seed the field.
+    const reason = screen.getByTestId('new-request-reason') as HTMLInputElement;
+    await user.click(reason);
+    await user.type(reason, 'sunday');
+    const option = await screen.findByText('Sunday School President');
+    await user.click(option);
+    expect(reason.value).toBe('Sunday School President');
+
+    // Switch to add_temp — value survives the swap to plain input.
+    await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
+    const reasonTemp = screen.getByTestId('new-request-reason') as HTMLInputElement;
+    expect(reasonTemp.value).toBe('Sunday School President');
+
+    // Switch back to add_manual — value still there and suggestions
+    // available again. Clear the filter and re-focus so the list shows
+    // the ward callings unfiltered.
+    await user.selectOptions(screen.getByTestId('new-request-type'), 'add_manual');
+    const reasonBack = screen.getByTestId('new-request-reason') as HTMLInputElement;
+    expect(reasonBack.value).toBe('Sunday School President');
+    await user.click(reasonBack);
+    await user.clear(reasonBack);
+    // Typing a letter from the ward list re-opens the popover with
+    // matching suggestions; the typed-and-cleared sequence above proved
+    // the field is editable post-switch.
+    await user.type(reasonBack, 'b');
+    expect(await screen.findByText('Bishop')).toBeInTheDocument();
+  });
+
+  it('scope change does not affect the plain input when type is add_temp', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[
+          { value: 'stake', label: 'Stake' },
+          { value: 'CO', label: 'Ward CO' },
+        ]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
+    const reason = screen.getByTestId('new-request-reason') as HTMLInputElement;
+    await user.type(reason, 'visiting speaker');
+    expect(reason.value).toBe('visiting speaker');
+
+    // Flip scope — no suggestion list, value unchanged.
+    await user.selectOptions(screen.getByTestId('new-request-scope'), 'CO');
+    expect((screen.getByTestId('new-request-reason') as HTMLInputElement).value).toBe(
+      'visiting speaker',
+    );
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.queryByText('Bishop')).toBeNull();
   });
 });
 

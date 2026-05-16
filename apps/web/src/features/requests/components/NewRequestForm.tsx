@@ -313,19 +313,31 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       ) : null}
 
       <label>
-        Calling (or reason)
+        {watchedType === 'add_temp' ? 'Reason' : 'Calling'}
         <Controller
           control={control}
           name="reason"
-          render={({ field }) => (
-            <CallingCombobox
-              value={field.value ?? ''}
-              onChange={field.onChange}
-              scope={watchedScope}
-              name={field.name}
-              data-testid="new-request-reason"
-            />
-          )}
+          render={({ field }) =>
+            watchedType === 'add_temp' ? (
+              <Input
+                type="text"
+                autoComplete="off"
+                value={field.value ?? ''}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                name={field.name}
+                data-testid="new-request-reason"
+              />
+            ) : (
+              <CallingCombobox
+                value={field.value ?? ''}
+                onChange={field.onChange}
+                scope={watchedScope}
+                name={field.name}
+                data-testid="new-request-reason"
+              />
+            )
+          }
         />
       </label>
       {formState.errors.reason ? (
