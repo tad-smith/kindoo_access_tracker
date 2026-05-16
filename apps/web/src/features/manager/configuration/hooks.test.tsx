@@ -252,6 +252,16 @@ vi.mock('../../../lib/docs', async () => {
       path: `stakes/csnorth/buildings/${buildingId}`,
       id: buildingId,
     }),
+    wardCallingTemplateRef: (_db: unknown, _stakeId: string, callingName: string) => ({
+      __sentinel: 'wardCallingTemplateRef',
+      path: `stakes/csnorth/wardCallingTemplates/${callingName}`,
+      id: callingName,
+    }),
+    stakeCallingTemplateRef: (_db: unknown, _stakeId: string, callingName: string) => ({
+      __sentinel: 'stakeCallingTemplateRef',
+      path: `stakes/csnorth/stakeCallingTemplates/${callingName}`,
+      id: callingName,
+    }),
   };
 });
 
@@ -268,6 +278,8 @@ import {
   useDeleteKindooSiteMutation,
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
+  useUpsertStakeCallingTemplateMutation,
+  useUpsertWardCallingTemplateMutation,
   useUpsertWardMutation,
 } from './hooks';
 
@@ -695,6 +707,148 @@ describe('useUpsertBuildingMutation', () => {
         kindoo_site_id: null,
       }),
     ).rejects.toThrow(/Building name is required/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('useUpsertWardCallingTemplateMutation', () => {
+  it('stamps created_at on create', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertWardCallingTemplateMutation(), { wrapper });
+    await result.current.mutateAsync({
+      calling_name: 'Bishop',
+      give_app_access: true,
+      auto_kindoo_access: true,
+      sheet_order: 1,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [ref, body, options] = setDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/wardCallingTemplates/Bishop' });
+    expect(body).toMatchObject({
+      calling_name: 'Bishop',
+      give_app_access: true,
+      auto_kindoo_access: true,
+      sheet_order: 1,
+      created_at: '__server_timestamp__',
+      lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
+    });
+    expect(options).toEqual({ merge: true });
+  });
+
+  it('omits created_at on edit (preserves original timestamp)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertWardCallingTemplateMutation(), { wrapper });
+    await result.current.mutateAsync({
+      calling_name: 'Bishop',
+      give_app_access: false,
+      auto_kindoo_access: true,
+      sheet_order: 3,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body).not.toHaveProperty('created_at');
+    expect(body).toMatchObject({
+      calling_name: 'Bishop',
+      give_app_access: false,
+      auto_kindoo_access: true,
+      sheet_order: 3,
+    });
+  });
+
+  it('wraps the read + write in a runTransaction', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertWardCallingTemplateMutation(), { wrapper });
+    await result.current.mutateAsync({
+      calling_name: 'Bishop',
+      give_app_access: true,
+      auto_kindoo_access: true,
+      sheet_order: 1,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects when the trimmed calling_name is empty', async () => {
+    const { result } = renderHook(() => useUpsertWardCallingTemplateMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        calling_name: '   ',
+        give_app_access: true,
+        auto_kindoo_access: true,
+        sheet_order: 1,
+      }),
+    ).rejects.toThrow(/Calling name is required/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('useUpsertStakeCallingTemplateMutation', () => {
+  it('stamps created_at on create', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertStakeCallingTemplateMutation(), { wrapper });
+    await result.current.mutateAsync({
+      calling_name: 'Stake President',
+      give_app_access: true,
+      auto_kindoo_access: true,
+      sheet_order: 1,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [ref, body, options] = setDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/stakeCallingTemplates/Stake President' });
+    expect(body).toMatchObject({
+      calling_name: 'Stake President',
+      give_app_access: true,
+      auto_kindoo_access: true,
+      sheet_order: 1,
+      created_at: '__server_timestamp__',
+      lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
+    });
+    expect(options).toEqual({ merge: true });
+  });
+
+  it('omits created_at on edit (preserves original timestamp)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertStakeCallingTemplateMutation(), { wrapper });
+    await result.current.mutateAsync({
+      calling_name: 'Stake President',
+      give_app_access: true,
+      auto_kindoo_access: false,
+      sheet_order: 4,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body).not.toHaveProperty('created_at');
+    expect(body).toMatchObject({
+      calling_name: 'Stake President',
+      give_app_access: true,
+      auto_kindoo_access: false,
+      sheet_order: 4,
+    });
+  });
+
+  it('wraps the read + write in a runTransaction', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertStakeCallingTemplateMutation(), { wrapper });
+    await result.current.mutateAsync({
+      calling_name: 'Stake President',
+      give_app_access: true,
+      auto_kindoo_access: true,
+      sheet_order: 1,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects when the trimmed calling_name is empty', async () => {
+    const { result } = renderHook(() => useUpsertStakeCallingTemplateMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        calling_name: '   ',
+        give_app_access: true,
+        auto_kindoo_access: true,
+        sheet_order: 1,
+      }),
+    ).rejects.toThrow(/Calling name is required/i);
     expect(setDocMock).not.toHaveBeenCalled();
   });
 });

@@ -353,18 +353,34 @@ export function useUpsertWardCallingTemplateMutation() {
       const actor = actorOf(principal);
       const name = input.calling_name.trim();
       if (!name) throw new Error('Calling name is required.');
-      await setDoc(
-        wardCallingTemplateRef(db, STAKE_ID, name),
-        {
+      const ref = wardCallingTemplateRef(db, STAKE_ID, name);
+      // Stamp `created_at` only on the create path. `merge: true` would
+      // otherwise re-stamp it on every edit, silently losing the
+      // original creation timestamp. `runTransaction` makes the
+      // existence read + write atomic, so the create/edit branch
+      // decision can't race itself within this transaction.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        const editBody = {
           calling_name: name,
           give_app_access: input.give_app_access,
           auto_kindoo_access: input.auto_kindoo_access,
           sheet_order: input.sheet_order,
-          created_at: serverTimestamp(),
           lastActor: actor,
-        } as unknown as WardCallingTemplate,
-        { merge: true },
-      );
+        };
+        if (existing.exists()) {
+          tx.set(ref, editBody as unknown as WardCallingTemplate, { merge: true });
+        } else {
+          tx.set(
+            ref,
+            {
+              ...editBody,
+              created_at: serverTimestamp(),
+            } as unknown as WardCallingTemplate,
+            { merge: true },
+          );
+        }
+      });
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
@@ -396,18 +412,34 @@ export function useUpsertStakeCallingTemplateMutation() {
       const actor = actorOf(principal);
       const name = input.calling_name.trim();
       if (!name) throw new Error('Calling name is required.');
-      await setDoc(
-        stakeCallingTemplateRef(db, STAKE_ID, name),
-        {
+      const ref = stakeCallingTemplateRef(db, STAKE_ID, name);
+      // Stamp `created_at` only on the create path. `merge: true` would
+      // otherwise re-stamp it on every edit, silently losing the
+      // original creation timestamp. `runTransaction` makes the
+      // existence read + write atomic, so the create/edit branch
+      // decision can't race itself within this transaction.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        const editBody = {
           calling_name: name,
           give_app_access: input.give_app_access,
           auto_kindoo_access: input.auto_kindoo_access,
           sheet_order: input.sheet_order,
-          created_at: serverTimestamp(),
           lastActor: actor,
-        } as unknown as StakeCallingTemplate,
-        { merge: true },
-      );
+        };
+        if (existing.exists()) {
+          tx.set(ref, editBody as unknown as StakeCallingTemplate, { merge: true });
+        } else {
+          tx.set(
+            ref,
+            {
+              ...editBody,
+              created_at: serverTimestamp(),
+            } as unknown as StakeCallingTemplate,
+            { merge: true },
+          );
+        }
+      });
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
