@@ -43,6 +43,7 @@ export const WARD_CALLINGS: readonly string[] = [
   'Primary First Counselor',
   'Primary Second Counselor',
   'Primary Secretary',
+  'Primary Activity Days Leader',
   'Ward Mission Leader',
   'Assistant Ward Mission Leader',
   'Temple and Family History Leader',
