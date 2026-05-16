@@ -29,7 +29,7 @@
 //   - Submit writes a request doc; success → toast + form reset.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { canonicalEmail } from '@kindoo/shared';
 import type { Building, Seat, Ward } from '@kindoo/shared';
@@ -40,6 +40,7 @@ import {
   type NewRequestForm,
 } from '../schemas';
 import { useSubmitRequest, useSeatForMember } from '../hooks';
+import { CallingCombobox } from './CallingCombobox';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { Button } from '../../../components/ui/Button';
@@ -125,7 +126,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       urgent: false,
     },
   });
-  const { register, handleSubmit, reset, watch, setValue, formState } = form;
+  const { register, handleSubmit, reset, watch, setValue, formState, control } = form;
   const watchedType = watch('type');
   const watchedScope = watch('scope');
   const watchedEmail = watch('member_email');
@@ -312,8 +313,20 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       ) : null}
 
       <label>
-        Reason
-        <Input type="text" {...register('reason')} data-testid="new-request-reason" />
+        Calling (or reason)
+        <Controller
+          control={control}
+          name="reason"
+          render={({ field }) => (
+            <CallingCombobox
+              value={field.value ?? ''}
+              onChange={field.onChange}
+              scope={watchedScope}
+              name={field.name}
+              data-testid="new-request-reason"
+            />
+          )}
+        />
       </label>
       {formState.errors.reason ? (
         <p className="kd-form-error" role="alert">
