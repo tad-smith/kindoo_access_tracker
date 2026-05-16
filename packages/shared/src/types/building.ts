@@ -25,6 +25,15 @@ export type Building = {
   /** Optional; absent until v2.1 maps a Kindoo Access Rule for the building. */
   kindoo_rule?: KindooBuildingRule;
 
+  /**
+   * Kindoo site this building is physically governed by. `null` (or
+   * absent) means the home site (the SBA stake's own Kindoo
+   * environment, captured on `stake.kindoo_config`); a string value
+   * points at a doc id under `stakes/{stakeId}/kindooSites/`. Phase 1
+   * stores the value; downstream phases consume it.
+   */
+  kindoo_site_id?: string | null;
+
   created_at: TimestampLike;
   last_modified_at: TimestampLike;
   lastActor: ActorRef;

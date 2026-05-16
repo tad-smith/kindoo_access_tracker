@@ -314,6 +314,33 @@ service cloud.firestore {
         allow delete: if isManager(stakeId) || isBootstrapAdmin(stakeId);
       }
 
+      // ----- KindooSites -----
+      // Multi-site Kindoo management — see `firebase-schema.md`. A
+      // doc here represents a FOREIGN Kindoo site this stake's
+      // kindooManagers can write to (e.g. a building physically
+      // governed by another stake's Kindoo environment). The HOME site
+      // lives on the parent stake doc (no `KindooSite` record); `null`
+      // / missing `kindoo_site_id` on a ward / building means home.
+      //
+      // Read: any stake member (the SPA's bootstrap response surfaces
+      // the site map alongside wards / buildings). Write: managers
+      // only — same gating as `wardCallingTemplates` / `kindooManagers`
+      // because authority over WHICH Kindoo environments this stake
+      // can target is a stake-level configuration concern, not a
+      // ward-level one. Existing csnorth `kindooManagers` allow-list
+      // governs all Kindoo writes regardless of which site they
+      // target; this rule does not introduce a new role.
+      //
+      // Field-level referential integrity (does the `kindoo_site_id`
+      // a ward / building references actually exist?) is the UI's
+      // concern; rules gate WHO can write, not field-level FK checks.
+      match /kindooSites/{kindooSiteId} {
+        allow read: if isAnyMember(stakeId);
+        allow create, update: if isManager(stakeId)
+          && lastActorMatchesAuth(request.resource.data);
+        allow delete: if isManager(stakeId);
+      }
+
       // ----- KindooManagers -----
       // Manager allow-list. Manager-only read so non-managers can't
       // enumerate peers; manager-only write. The bootstrap-admin gate

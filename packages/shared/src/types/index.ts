@@ -27,6 +27,7 @@ export type {
   WardCallingTemplate,
 } from './callingTemplate.js';
 export type { KindooManager } from './kindooManager.js';
+export type { KindooSite } from './kindooSite.js';
 export type { PlatformSuperadmin } from './platformSuperadmin.js';
 export type { AccessRequest, RequestStatus, RequestType } from './request.js';
 export type { DuplicateGrant, Seat, SeatType } from './seat.js';

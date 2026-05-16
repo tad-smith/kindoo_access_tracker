@@ -14,6 +14,15 @@ export type Ward = {
   building_name: string;
   /** Per-ward Kindoo seat cap. */
   seat_cap: number;
+  /**
+   * Kindoo site this ward belongs to. `null` (or absent) means the
+   * home site (the SBA stake's own Kindoo environment, captured on
+   * `stake.kindoo_config`); a string value points at a doc id under
+   * `stakes/{stakeId}/kindooSites/`. Phase 1 stores the value;
+   * downstream phases consume it (form filters, extension
+   * orchestrator, sync filters).
+   */
+  kindoo_site_id?: string | null;
 
   created_at: TimestampLike;
   last_modified_at: TimestampLike;

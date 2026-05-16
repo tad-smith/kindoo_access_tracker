@@ -19,6 +19,7 @@ export {
   wardCallingTemplateSchema,
 } from './callingTemplate.js';
 export { kindooManagerSchema } from './kindooManager.js';
+export { kindooSiteSchema } from './kindooSite.js';
 export { platformSuperadminSchema } from './platformSuperadmin.js';
 export { accessRequestSchema, requestStatusSchema, requestTypeSchema } from './request.js';
 export { duplicateGrantSchema, seatSchema, seatTypeSchema } from './seat.js';
