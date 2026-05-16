@@ -16,3 +16,11 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
     disconnect() {}
   } as unknown as typeof ResizeObserver;
 }
+
+// jsdom does not implement `Element.prototype.scrollIntoView`. `cmdk`
+// calls it on the currently-selected `<CommandItem>` whenever the
+// active item changes (mount, keyboard nav, filter shrink). Stub a
+// no-op so combobox component tests run without crashing.
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}
