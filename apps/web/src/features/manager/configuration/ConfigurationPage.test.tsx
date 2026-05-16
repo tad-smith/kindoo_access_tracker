@@ -200,9 +200,9 @@ describe('<ConfigurationPage />', () => {
     expect(labels).toEqual([
       'Config',
       'Managers',
+      'Kindoo Sites',
       'Wards',
       'Buildings',
-      'Kindoo Sites',
       'Auto Ward Callings',
       'Auto Stake Callings',
     ]);
