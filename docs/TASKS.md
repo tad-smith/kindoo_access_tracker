@@ -663,3 +663,26 @@ gcloud firestore fields ttls update ttl \
 ```
 
 Repeat for production. Decide retention duration before enabling (the in-code default for `auditLog` is 365 days; superadmin records may warrant longer — operator decision). Add a corresponding subsection to `infra/runbooks/provision-firebase-projects.md` next to the existing TTL setup notes.
+
+## [T-42] Multi-scope Kindoo users straddling home + foreign sites
+Status: open
+Owner: @extension-engineer
+Phase: Kindoo Sites — Phase 4 follow-up
+
+Surfaced by PR #122 review (2026-05-16). The Phase 4 sync detector resolves a Kindoo user's site by collapsing the parsed Description down to a single primary segment via `pickPrimarySegment` (auto-matching is the primary tiebreaker). A Description that legitimately straddles home + foreign wards — e.g. `'Cordera Ward (Bishop) | Foothills Ward (Stake Clerk)'` with Cordera on the home site and Foothills on a foreign site — has both segments resolve to real wards on different sites, but `pickPrimarySegment` picks one. The unpicked segment's site loses visibility of the user entirely: that site's sync view never sees them, and on both sides the asymmetry manufactures spurious `sba-only` / `kindoo-only` drift for the same person.
+
+Documented as a known limitation in `docs/spec.md` §15 Phase 4 prose. The current operational consequence is that a person cannot simultaneously surface on both home-site and foreign-site sync views.
+
+**Fix shape (open).** The detector needs to fan a multi-site Description out into per-site classifications instead of collapsing to one primary segment, then run the diff per-site. Likely involves teaching the detector to emit one `KindooUserClassification` per distinct `kindoo_site_id` covered by the parsed segments, and teaching the sync diff to include / exclude Kindoo users per-site based on whether any of their segments lives on the active site. Stake-scope segments stay home-only (per Phase 1 policy).
+
+**Files implicated (high-level).**
+- `extension/src/content/kindoo/sync/detector.ts` — `pickPrimarySegment` callsites at lines ~267, ~301, ~486, ~507; the classifier currently keys off a single primary segment.
+- `extension/src/content/kindoo/sync/activeSite.ts` — the active-site resolver; likely unchanged, but the diff layer that consumes its output needs to gain per-site fan-out.
+- Spec §15 Phase 4 prose — drop the "known limitation" paragraph once the fix lands.
+
+**Acceptance.** Both of the following must hold — a fix scoped only to the ward+ward shape would leave the stake+foreign-ward shape still broken:
+
+1. **Ward + foreign-ward.** A Kindoo user with Description `'Cordera Ward (Bishop) | Foothills Ward (Stake Clerk)'` (Cordera home, Foothills foreign) appears on both the home-site sync view and the foreign-site sync view, each with the site-scoped expectation correctly derived from that site's segment.
+2. **Stake + foreign-ward.** A Kindoo user with Description `'<StakeName> (Stake Clerk) | Foothills Ward (Elders Quorum President)'` (where `<StakeName>` matches the home stake and Foothills is on a foreign Kindoo site) appears on both the home-site sync view (with the stake-segment expectation) and the foreign-Foothills sync view (with the EQP expectation). Today `pickPrimarySegment` prefers stake on tie, so this user disappears from the Foothills view; the fix must surface them on both.
+
+Neither side manufactures `sba-only` / `kindoo-only` drift for the user when SBA's grants match each site's segment-derived expectation.
