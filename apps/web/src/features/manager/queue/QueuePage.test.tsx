@@ -418,6 +418,109 @@ describe('<ManagerQueuePage />', () => {
     expect(screen.queryByTestId('queue-section-future')).toBeNull();
   });
 
+  it('appends the open-request count in parentheses to each section heading', () => {
+    // 2 urgent, 3 outstanding (old non-urgent), 1 future (far-out add_temp).
+    const farIso = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() + 30);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    })();
+    const oldTs = {
+      seconds: Math.floor(new Date('2026-04-20').getTime() / 1000),
+      nanoseconds: 0,
+      toDate: () => new Date('2026-04-20'),
+      toMillis: () => new Date('2026-04-20').getTime(),
+    };
+    const requests = [
+      makeRequest({ request_id: 'u1', type: 'add_manual', urgent: true, requested_at: oldTs }),
+      makeRequest({ request_id: 'u2', type: 'add_manual', urgent: true, requested_at: oldTs }),
+      makeRequest({ request_id: 'o1', type: 'add_manual', requested_at: oldTs }),
+      makeRequest({ request_id: 'o2', type: 'add_manual', requested_at: oldTs }),
+      makeRequest({ request_id: 'o3', type: 'add_manual', requested_at: oldTs }),
+      makeRequest({
+        request_id: 'f1',
+        type: 'add_temp',
+        start_date: farIso,
+        end_date: farIso,
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const urgent = within(screen.getByTestId('queue-section-urgent')).getByRole('heading', {
+      level: 2,
+    });
+    expect(urgent).toHaveTextContent('Urgent Requests (2)');
+    const outstanding = within(screen.getByTestId('queue-section-outstanding')).getByRole(
+      'heading',
+      { level: 2 },
+    );
+    expect(outstanding).toHaveTextContent('Outstanding Requests (3)');
+    const future = within(screen.getByTestId('queue-section-future')).getByRole('heading', {
+      level: 2,
+    });
+    expect(future).toHaveTextContent('Future Requests (1)');
+  });
+
+  it('omits a section heading entirely when its open-request count is zero', () => {
+    // Only an outstanding row — Urgent and Future headings must not
+    // appear anywhere in the DOM.
+    const requests = [
+      makeRequest({
+        request_id: 'o1',
+        type: 'add_manual',
+        requested_at: {
+          seconds: Math.floor(new Date('2026-04-20').getTime() / 1000),
+          nanoseconds: 0,
+          toDate: () => new Date('2026-04-20'),
+          toMillis: () => new Date('2026-04-20').getTime(),
+        },
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    expect(screen.queryByText(/Urgent Requests \(/)).toBeNull();
+    expect(screen.queryByText(/Future Requests \(/)).toBeNull();
+    expect(
+      within(screen.getByTestId('queue-section-outstanding')).getByRole('heading', { level: 2 }),
+    ).toHaveTextContent('Outstanding Requests (1)');
+  });
+
+  it('decrements the section count when the underlying request list shrinks; hides the section at zero', () => {
+    const oldTs = {
+      seconds: Math.floor(new Date('2026-04-20').getTime() / 1000),
+      nanoseconds: 0,
+      toDate: () => new Date('2026-04-20'),
+      toMillis: () => new Date('2026-04-20').getTime(),
+    };
+    const initial = [
+      makeRequest({ request_id: 'o1', type: 'add_manual', requested_at: oldTs }),
+      makeRequest({ request_id: 'o2', type: 'add_manual', requested_at: oldTs }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(initial));
+    const { rerender } = render(<ManagerQueuePage />);
+    expect(
+      within(screen.getByTestId('queue-section-outstanding')).getByRole('heading', { level: 2 }),
+    ).toHaveTextContent('Outstanding Requests (2)');
+
+    // Snapshot updates (e.g., one request marked complete): count goes to 1.
+    usePendingMock.mockReturnValue(
+      liveResult([makeRequest({ request_id: 'o1', type: 'add_manual', requested_at: oldTs })]),
+    );
+    rerender(<ManagerQueuePage />);
+    expect(
+      within(screen.getByTestId('queue-section-outstanding')).getByRole('heading', { level: 2 }),
+    ).toHaveTextContent('Outstanding Requests (1)');
+
+    // Last request completes: section vanishes; page-level empty state appears.
+    usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
+    rerender(<ManagerQueuePage />);
+    expect(screen.queryByTestId('queue-section-outstanding')).toBeNull();
+    expect(screen.getByText(/no pending requests/i)).toBeInTheDocument();
+  });
+
   it('places urgent requests in the Urgent section with a red top-bar marker', () => {
     const requests = [
       makeRequest({
