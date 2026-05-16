@@ -49,7 +49,7 @@ function PrivacyPage() {
           <Section title="1. Who we are">
             <p>
               Stake Building Access is a personal project operated by Tad Smith. It manages door
-              access for stake-owned meetinghouses. Questions about this policy or about data we
+              access at meetinghouses across the stake. Questions about this policy or about data we
               hold can be sent to{' '}
               <a
                 href="mailto:support@stakebuildingaccess.org"
@@ -152,8 +152,8 @@ function PrivacyPage() {
             <p>
               Within a stake, request data is visible to the leaders whose approval is required for
               that request and to the stake&rsquo;s designated Kindoo Manager. Audit records of who
-              did what are retained for accountability purposes, consistent with the retention
-              behaviour described in our public specification.
+              did what are retained for accountability purposes for 365 days, after which they are
+              deleted.
             </p>
           </Section>
 
@@ -192,16 +192,9 @@ function PrivacyPage() {
                   </code>
                 </strong>{' '}
                 — to obtain a Google OAuth access token through Chrome&rsquo;s account picker, so
-                the user can sign in without re-typing a password.
-              </li>
-              <li>
-                <strong>
-                  <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
-                    identity.email
-                  </code>
-                </strong>{' '}
-                — so the signed-in account&rsquo;s email is included in the OAuth response and we
-                can match it to the leader&rsquo;s record in Stake Building Access.
+                the user can sign in without re-typing a password. The signed-in account&rsquo;s
+                email address is included in the OAuth response so we can match it to the
+                leader&rsquo;s record in Stake Building Access.
               </li>
               <li>
                 <strong>
@@ -209,8 +202,35 @@ function PrivacyPage() {
                     storage
                   </code>
                 </strong>{' '}
-                — to persist a slim copy of the signed-in user&rsquo;s id and email plus the
-                slide-over panel&rsquo;s open/closed state across browser restarts.
+                — the extension persists three values in{' '}
+                <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                  chrome.storage.local
+                </code>{' '}
+                on the manager&rsquo;s own device:
+                <ul className="mt-2 list-disc pl-6">
+                  <li>
+                    <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                      sba.googleAccessToken
+                    </code>{' '}
+                    — the Google OAuth access token, so the extension can re-authenticate to the
+                    Stake Building Access backend after the service worker restarts without forcing
+                    a fresh OAuth popup.
+                  </li>
+                  <li>
+                    <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                      sba.principalSnapshot
+                    </code>{' '}
+                    — the signed-in user&rsquo;s uid, email, and display name, cached so the
+                    slide-over panel can show who is signed in without a round trip.
+                  </li>
+                  <li>
+                    <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                      sba.panelOpen
+                    </code>{' '}
+                    — a boolean recording whether the slide-over panel is currently open, so the
+                    open/closed state survives browser restarts.
+                  </li>
+                </ul>
               </li>
               <li>
                 <strong>

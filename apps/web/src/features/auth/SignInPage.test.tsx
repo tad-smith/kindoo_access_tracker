@@ -3,7 +3,8 @@
 //   - The hero "Sign in with Google" button renders (and is the primary CTA).
 //   - Clicking calls `signIn()`.
 //   - A rejection from `signIn()` surfaces in an accessible alert region.
-//   - Footer links to Privacy, the Chrome extension, and a contact target.
+//   - Footer links to Privacy and a contact target; Chrome extension
+//     link stays hidden while the Web Store URL is a placeholder.
 //
 // The Tailwind v4 preflight regression (PR #12) is still covered: the
 // primary hero button must carry the `.btn` chrome from `base.css`.
@@ -142,15 +143,22 @@ describe('SignInPage', () => {
     expect(alert).toHaveTextContent(/popup blocked/i);
   });
 
-  it('renders the footer with Privacy, Chrome extension, and Contact links', () => {
+  it('renders the footer with Privacy and Contact links', () => {
     render(<SignInPage />);
     const privacy = screen.getByRole('link', { name: /Privacy/i });
     expect(privacy).toHaveAttribute('href', '/privacy');
 
-    const ext = screen.getByRole('link', { name: /Chrome extension/i });
-    expect(ext.getAttribute('href')).toMatch(/^https?:\/\//);
-
     const contact = screen.getByRole('link', { name: /Contact/i });
     expect(contact.getAttribute('href')).toMatch(/^mailto:/);
+  });
+
+  it('hides the Chrome extension link while the Web Store URL is the placeholder', () => {
+    // The current `CHROME_WEB_STORE_URL` constant is the generic Web
+    // Store root. Until a real listing URL replaces it the footer
+    // should not link there — visitors would otherwise land on an
+    // unrelated page. When the constant flips, this assertion will
+    // need to flip too (and the link will reappear).
+    render(<SignInPage />);
+    expect(screen.queryByRole('link', { name: /Chrome extension/i })).toBeNull();
   });
 });

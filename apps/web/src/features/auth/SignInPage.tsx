@@ -8,11 +8,12 @@
 //
 // Layout: top bar (brand + secondary Sign-in), hero (headline + primary
 // Sign-in CTA), two short feature bullets, an explanatory paragraph,
-// a thin footer with Privacy / Chrome extension / Contact links. The
-// duplicate Sign-in is intentional — operator complaint was that the
-// previous page had nothing *except* the button, but signed-out flow
-// still needs the CTA prominent and reachable from the topbar after the
-// user has scrolled.
+// a thin footer with Privacy / Contact links (the Chrome extension
+// link is gated on the Web Store URL no longer being the placeholder
+// root). The duplicate Sign-in is intentional — operator complaint was
+// that the previous page had nothing *except* the button, but
+// signed-out flow still needs the CTA prominent and reachable from the
+// topbar after the user has scrolled.
 //
 // Both buttons route through the shadcn `<Button>` primitive so they
 // pick up the `.btn` chrome from `base.css`. Tailwind v4's preflight
@@ -26,7 +27,12 @@ import { Button } from '../../components/ui/Button';
 import { BrandIcon } from '../../components/layout/BrandIcon';
 import { signIn } from './signIn';
 
+// Sentinel: until the extension's Web Store listing is published, this
+// stays pointed at the generic Web Store root. The footer link is
+// hidden in that case so visitors don't land on an unrelated page;
+// when the real listing URL replaces this constant, the link reappears.
 const CHROME_WEB_STORE_URL = 'https://chrome.google.com/webstore';
+const CHROME_WEB_STORE_PLACEHOLDER = 'https://chrome.google.com/webstore';
 const CONTACT_MAILTO = 'mailto:support@stakebuildingaccess.org';
 
 export function SignInPage() {
@@ -170,23 +176,28 @@ function HomeExplainer() {
 }
 
 function HomeFooter() {
+  const showChromeStoreLink = CHROME_WEB_STORE_URL !== CHROME_WEB_STORE_PLACEHOLDER;
   return (
     <footer className="border-t border-[color:var(--kd-chrome-border)] bg-white">
       <div className="mx-auto flex w-full max-w-5xl flex-col items-center justify-center gap-3 px-5 py-5 text-sm text-[color:var(--kd-chrome-fg-muted)] sm:flex-row sm:gap-6">
         <Link to="/privacy" className="text-[color:var(--kd-primary)] hover:underline">
           Privacy
         </Link>
-        <span aria-hidden="true" className="hidden text-[color:var(--kd-border)] sm:inline">
-          ·
-        </span>
-        <a
-          href={CHROME_WEB_STORE_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[color:var(--kd-primary)] hover:underline"
-        >
-          Chrome extension
-        </a>
+        {showChromeStoreLink ? (
+          <>
+            <span aria-hidden="true" className="hidden text-[color:var(--kd-border)] sm:inline">
+              ·
+            </span>
+            <a
+              href={CHROME_WEB_STORE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[color:var(--kd-primary)] hover:underline"
+            >
+              Chrome extension
+            </a>
+          </>
+        ) : null}
         <span aria-hidden="true" className="hidden text-[color:var(--kd-border)] sm:inline">
           ·
         </span>
