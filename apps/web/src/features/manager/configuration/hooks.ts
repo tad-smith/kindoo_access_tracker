@@ -758,12 +758,20 @@ export function useUpsertKindooSiteMutation() {
         last_modified_at: serverTimestamp(),
         lastActor: actor,
       } as unknown as KindooSite;
-      // Create path: wrap the existence check + write in one transaction
-      // so two concurrent creates with the same slug can't both pass the
-      // pre-check and clobber. Edit path: a plain merge-write is fine
-      // since the doc id is the operator's existing site.
+      // Both branches wrap the read + write in one transaction.
+      // Create path: pre-check guards against two concurrent creates
+      // with the same slug both passing and clobbering. Edit path:
+      // pre-check guards against `merge: true` resurrecting a doc
+      // another tab just deleted (which would re-stamp `created_at`
+      // and `lastActor` on a tombstoned site).
       if (input.id) {
-        await setDoc(ref, body, { merge: true });
+        await runTransaction(db, async (tx) => {
+          const existing = await tx.get(ref);
+          if (!existing.exists()) {
+            throw new Error('Kindoo site no longer exists.');
+          }
+          tx.set(ref, body, { merge: true });
+        });
       } else {
         await runTransaction(db, async (tx) => {
           const existing = await tx.get(ref);

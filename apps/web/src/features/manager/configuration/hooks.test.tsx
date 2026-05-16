@@ -302,6 +302,7 @@ describe('useUpsertKindooSiteMutation', () => {
     // display_name would slug to a DIFFERENT value, the mutation must
     // use the existing id so wards / buildings referencing the slug
     // don't dangle.
+    getDocMock.mockResolvedValue({ exists: () => true });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
       id: 'east-stake-foothills',
@@ -318,8 +319,6 @@ describe('useUpsertKindooSiteMutation', () => {
       id: 'east-stake-foothills',
       display_name: 'Other Name',
     });
-    // No collision pre-check on edit — the existing doc IS the target.
-    expect(getDocMock).not.toHaveBeenCalled();
   });
 
   it('refuses to silently overwrite when the derived slug collides on create', async () => {
@@ -341,6 +340,7 @@ describe('useUpsertKindooSiteMutation', () => {
     // payload shape: kindoo_eid is absent from the write AND the
     // mutation passes merge: true so Firestore preserves the existing
     // value.
+    getDocMock.mockResolvedValue({ exists: () => true });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
       id: 'east-stake-foothills',
@@ -392,7 +392,12 @@ describe('useUpsertKindooSiteMutation', () => {
     expect(runTransactionMock).toHaveBeenCalledTimes(1);
   });
 
-  it('edit path skips runTransaction (no existence check; plain merge-write)', async () => {
+  it('wraps the edit-path existence check + set in a single runTransaction', async () => {
+    // Guards against the read-then-write race where another tab
+    // deleted the site between the snapshot delivery and submit.
+    // Without the transaction, `setDoc(..., { merge: true })` would
+    // resurrect a tombstoned doc with a fresh `created_at`.
+    getDocMock.mockResolvedValue({ exists: () => true });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
       id: 'east-stake-foothills',
@@ -400,7 +405,24 @@ describe('useUpsertKindooSiteMutation', () => {
       kindoo_expected_site_name: 'East Stake Foothills CS',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
-    expect(runTransactionMock).not.toHaveBeenCalled();
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to resurrect a tombstoned site on edit when the doc is missing', async () => {
+    // Race: another tab/session deleted the site between the operator
+    // opening the dialog and submitting. With a plain merge-write,
+    // setDoc would re-create the doc with fresh created_at + lastActor.
+    // The existence pre-check in the transaction blocks the resurrection.
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        id: 'east-stake-foothills',
+        display_name: 'East Stake Foothills (renamed)',
+        kindoo_expected_site_name: 'East Stake Foothills CS',
+      }),
+    ).rejects.toThrow(/Kindoo site no longer exists/i);
+    expect(setDocMock).not.toHaveBeenCalled();
   });
 });
 
