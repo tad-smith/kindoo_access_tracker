@@ -3,7 +3,7 @@
 //
 //   - `add_manual` / `add_temp`: member_name is required.
 //   - `add_temp`: start_date + end_date both ISO YYYY-MM-DD; end ≥ start.
-//   - stake-scope add types: at least one building selected.
+//   - add types (every scope): at least one building selected.
 //   - `urgent=true`: comment becomes required.
 //   - ward-scope with at least one building selected outside the ward's
 //     own default-building set: comment becomes required (the
@@ -24,13 +24,19 @@ const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * The default-selected building set for a single submission scope.
- * Stake-scope defaults to every building in the catalogue — stake-scope
- * means "everywhere," so the manager unchecks specific buildings to
- * exclude rather than ticking N every time (B-11). Ward-scope resolves
- * to the single `building_name` on the ward doc, or empty when the ward
- * isn't in the catalogue or has no building bound. The form uses this
- * to seed the buildings widget; the cross-ward predicate uses it for
- * ward scopes only (stake scope short-circuits before this is called).
+ * Stake-scope defaults to every building in the passed catalogue —
+ * stake-scope means "everywhere," so the manager unchecks specific
+ * buildings to exclude rather than ticking N every time (B-11). Ward-
+ * scope resolves to the single `building_name` on the ward doc, or
+ * empty when the ward isn't in the catalogue or has no building bound.
+ *
+ * The form passes its *visible* (site-filtered) catalogue so stake-
+ * scope picks only home buildings (spec §15) — the cross-ward predicate
+ * passes `[]` because it only needs membership tests against the ward's
+ * own home building. The form additionally clamps the ward-scope
+ * default via `clampWardDefaultsToVisible` so a ward whose
+ * `building_name` is hidden by the site filter (legacy mid-migration
+ * state) does not pre-check an invisible building.
  */
 export function defaultBuildingsForScope(
   scope: string,
@@ -42,6 +48,28 @@ export function defaultBuildingsForScope(
   const ward = wards.find((w) => w.ward_code === scope);
   if (!ward || !ward.building_name) return [];
   return [ward.building_name];
+}
+
+/**
+ * Clamp a ward-scope default set to the visible (site-filtered)
+ * catalogue. Stake-scope passes through unchanged — the stake-scope
+ * default already comes from the visible catalogue inside
+ * `defaultBuildingsForScope`. For ward scope, drop any default whose
+ * building name has no matching entry in the visible set so the form
+ * cannot pre-check a building the user cannot see (and therefore
+ * cannot uncheck). Legacy data where `ward.building_name` disagrees
+ * with `ward.kindoo_site_id` collapses to an empty pre-check; the
+ * user can then expand the panel and pick from whatever the site
+ * filter shows.
+ */
+export function clampWardDefaultsToVisible(
+  scope: string,
+  defaults: readonly string[],
+  visibleBuildings: readonly Building[],
+): string[] {
+  if (scope === 'stake' || !scope) return [...defaults];
+  const visibleNames = new Set(visibleBuildings.map((b) => b.building_name));
+  return defaults.filter((n) => visibleNames.has(n));
 }
 
 /**
@@ -112,11 +140,14 @@ export const newRequestSchema = z
         });
       }
     }
-    if (val.scope === 'stake' && val.building_names.length === 0) {
+    if (val.building_names.length === 0) {
       ctx.addIssue({
         code: 'custom',
         path: ['building_names'],
-        message: 'Pick at least one building for a stake-scope request.',
+        message:
+          val.scope === 'stake'
+            ? 'Pick at least one building for a stake-scope request.'
+            : 'Pick at least one building.',
       });
     }
     if (val.urgent && val.comment.trim().length === 0) {

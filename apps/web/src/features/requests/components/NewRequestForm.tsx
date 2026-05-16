@@ -34,6 +34,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { canonicalEmail } from '@kindoo/shared';
 import type { Building, Seat, Ward } from '@kindoo/shared';
 import {
+  clampWardDefaultsToVisible,
   defaultBuildingsForScope,
   isCrossWardSelection,
   makeNewRequestSchema,
@@ -111,9 +112,17 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   // building; if it opens on `stake`, pre-select every building (B-11
   // — stake-scope means "everywhere," manager unchecks to exclude).
   // Stake-scope defaults across the visible (home-site) catalogue per
-  // spec §15.
+  // spec §15. Ward-scope defaults are clamped to the visible set so a
+  // legacy ward whose `building_name` disagrees with `kindoo_site_id`
+  // does not pre-check an invisible (and therefore uncheckable) home
+  // building (Risk 2 / spec §15 Phase 2).
   const initialBuildings = useMemo(
-    () => defaultBuildingsForScope(initialScope, wards, initialVisibleBuildings),
+    () =>
+      clampWardDefaultsToVisible(
+        initialScope,
+        defaultBuildingsForScope(initialScope, wards, initialVisibleBuildings),
+        initialVisibleBuildings,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [], // captured once for `defaultValues`; live updates flow through the scope-driven effect below.
   );
@@ -177,8 +186,14 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   useEffect(() => {
     // Defaults are drawn from the visible (site-filtered) catalogue.
     // Stake-scope → every home-site building; ward-scope → the ward's
-    // home building when it exists in the visible set.
-    const next = defaultBuildingsForScope(watchedScope, wards, visibleBuildings);
+    // home building when it exists in the visible set. Clamp so a
+    // legacy ward whose `building_name` is hidden by the site filter
+    // collapses to no pre-check (Risk 2 / spec §15 Phase 2).
+    const next = clampWardDefaultsToVisible(
+      watchedScope,
+      defaultBuildingsForScope(watchedScope, wards, visibleBuildings),
+      visibleBuildings,
+    );
     setValue('building_names', next, { shouldDirty: false, shouldValidate: false });
     lastScopeForBuildings.current = watchedScope;
   }, [watchedScope, wards, visibleBuildings, setValue]);
@@ -238,11 +253,14 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         comment: '',
         start_date: '',
         end_date: '',
-        building_names: defaultBuildingsForScope(
-          input.scope,
-          wards,
-          filterBuildingsBySite(buildings, siteIdForScope(input.scope, wards)),
-        ),
+        building_names: (() => {
+          const vis = filterBuildingsBySite(buildings, siteIdForScope(input.scope, wards));
+          return clampWardDefaultsToVisible(
+            input.scope,
+            defaultBuildingsForScope(input.scope, wards, vis),
+            vis,
+          );
+        })(),
         urgent: false,
       });
       setBuildingsOpen(input.scope === 'stake');
@@ -487,7 +505,11 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       </div>
 
       <div className="form-actions">
-        <Button type="submit" disabled={submit.isPending} data-testid="new-request-submit">
+        <Button
+          type="submit"
+          disabled={submit.isPending || watchedBuildings.length === 0}
+          data-testid="new-request-submit"
+        >
           {submit.isPending ? 'Submitting…' : 'Submit request'}
         </Button>
       </div>

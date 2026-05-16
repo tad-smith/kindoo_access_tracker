@@ -208,7 +208,7 @@ describe('<NewRequestForm /> — validation', () => {
     expect(submitMock).not.toHaveBeenCalled();
   });
 
-  it('shows the buildings widget for stake scope and requires ≥1 ticked', async () => {
+  it('shows the buildings widget for stake scope and disables submit when ≥1 not ticked', async () => {
     const user = userEvent.setup();
     render(
       <NewRequestForm
@@ -218,17 +218,17 @@ describe('<NewRequestForm /> — validation', () => {
       />,
     );
     expect(screen.getByTestId('new-request-buildings')).toBeInTheDocument();
-    // Stake-scope defaults every building checked (B-11). Untick all
-    // to exercise the schema's "≥1 building" gate.
+    // Stake-scope defaults every building checked (B-11). Untick all so
+    // the submit button becomes disabled — the schema's "≥1 building"
+    // gate is now expressed at the button level (parity across scopes).
     await user.click(screen.getByTestId('new-request-building-cordera'));
     await user.click(screen.getByTestId('new-request-building-genoa'));
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
     await user.type(screen.getByTestId('new-request-name'), 'Bob');
     await user.type(screen.getByTestId('new-request-reason'), 'visit');
-    await user.click(screen.getByTestId('new-request-submit'));
-    expect(
-      await screen.findByText(/pick at least one building for a stake-scope request/i),
-    ).toBeInTheDocument();
+    const submitBtn = screen.getByTestId('new-request-submit');
+    expect(submitBtn).toBeDisabled();
+    await user.click(submitBtn);
     expect(submitMock).not.toHaveBeenCalled();
   });
 
@@ -252,7 +252,10 @@ describe('<NewRequestForm /> — validation', () => {
     });
   });
 
-  it('submits with empty building_names when the ward has no building_name', async () => {
+  it('blocks submit (button disabled) when the ward has no building_name and no building is checked', async () => {
+    // The empty-state element still renders so the user understands
+    // why; submission is gated until they expand the panel and tick at
+    // least one building.
     const user = userEvent.setup();
     render(
       <NewRequestForm
@@ -264,12 +267,10 @@ describe('<NewRequestForm /> — validation', () => {
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
     await user.type(screen.getByTestId('new-request-name'), 'Bob');
     await user.type(screen.getByTestId('new-request-reason'), 'visit');
-    await user.click(screen.getByTestId('new-request-submit'));
-    expect(submitMock).toHaveBeenCalledTimes(1);
-    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({
-      scope: 'CO',
-      building_names: [],
-    });
+    const submitBtn = screen.getByTestId('new-request-submit');
+    expect(submitBtn).toBeDisabled();
+    await user.click(submitBtn);
+    expect(submitMock).not.toHaveBeenCalled();
   });
 
   it('submits the cleaned payload when stake-scope add_manual is valid', async () => {
@@ -1227,6 +1228,53 @@ describe('<NewRequestForm /> — duplicate warning', () => {
   });
 });
 
+describe('<NewRequestForm /> — empty-buildings submit gate', () => {
+  // Parity rule with stake scope: ward-scope submissions also require
+  // ≥1 building. Submit is gated at the button level so the user can't
+  // ship a building_names: [] payload regardless of how they reached
+  // that state (untick the ward default, no ward.building_name in the
+  // catalogue, site filter clamps the default to empty).
+
+  it('disables the submit button on ward scope when the user unticks the ward default', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Cordera Building' }])}
+      />,
+    );
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    await user.click(screen.getByTestId('new-request-building-cordera'));
+    expect(screen.getByTestId('new-request-building-cordera')).not.toBeChecked();
+    const submitBtn = screen.getByTestId('new-request-submit');
+    expect(submitBtn).toBeDisabled();
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(submitBtn);
+    expect(submitMock).not.toHaveBeenCalled();
+  });
+
+  it('re-enables the submit button once a ward submitter ticks at least one building', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: '' }])}
+      />,
+    );
+    // Ward has no building_name → no default ticked, submit disabled.
+    const submitBtn = screen.getByTestId('new-request-submit');
+    expect(submitBtn).toBeDisabled();
+    // Expand the panel and tick a building.
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    await user.click(screen.getByTestId('new-request-building-cordera'));
+    expect(submitBtn).not.toBeDisabled();
+  });
+});
+
 describe('<NewRequestForm /> — Kindoo Sites building filter (spec §15)', () => {
   // Phase 2 narrows the building checklist to the buildings whose
   // `kindoo_site_id` matches the current scope's Kindoo site.
@@ -1326,6 +1374,31 @@ describe('<NewRequestForm /> — Kindoo Sites building filter (spec §15)', () =
         // — it's a different empty-state with different copy.
         expect(screen.queryByTestId('new-request-buildings-empty')).toBeNull();
       });
+  });
+
+  it('drops a ward.building_name that disagrees with ward.kindoo_site_id from the pre-checked defaults', async () => {
+    // Risk 2 (legacy / mid-migration state): ward FN has
+    // kindoo_site_id='foreign-1' but its building_name points at a home
+    // building. The form must NOT pre-check the home building (which is
+    // hidden by the site filter and impossible to uncheck) and must NOT
+    // ship that hidden building back on submit. With no visible building
+    // in the foreign-site set, the form lands with zero pre-checked
+    // buildings and submit stays disabled.
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'FN', label: 'Ward FN' }]}
+        buildings={buildingsWithSites([
+          { id: 'cordera', name: 'Cordera Building', kindoo_site_id: null },
+        ])}
+        wards={wards([
+          { code: 'FN', building_name: 'Cordera Building', kindoo_site_id: 'foreign-1' },
+        ])}
+      />,
+    );
+    // Header summary reflects no selection (the invisible home pre-check
+    // was dropped). Submit is disabled.
+    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(/none selected/i);
+    expect(screen.getByTestId('new-request-submit')).toBeDisabled();
   });
 
   it('switches the visible building set when the scope dropdown moves between home and foreign wards', async () => {
