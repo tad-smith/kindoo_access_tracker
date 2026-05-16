@@ -224,11 +224,13 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
   });
 
-  it('skips buildings comparison for auto seats (direct door grants not in AccessSchedules)', () => {
-    // Auto-imported users receive door access via direct door grants keyed by
-    // VidName, which the bulk listing's AccessSchedules array does not
-    // expose. Even with an empty (or stale) AccessSchedules list, the auto
-    // seat should not emit a buildings-mismatch row.
+  it('skips buildings comparison for auto seats when derivedBuildings is null (Phase 1 fallback)', () => {
+    // Auto-imported users receive door access via direct door grants
+    // (Church Access Automation), which the bulk listing's
+    // AccessSchedules array does not expose. When per-user door-grant
+    // derivation fails or is skipped (`derivedBuildings === null`),
+    // the detector falls back to the original Phase 1 behaviour and
+    // does not emit a buildings-mismatch row.
     const result = detect(
       baseInputs({
         seats: [
@@ -246,6 +248,7 @@ describe('detect', () => {
             username: 'auto-user@example.com',
             description: 'Cordera Ward (Sunday School Teacher)',
             accessSchedules: [],
+            derivedBuildings: null,
           }),
         ],
       }),
@@ -254,12 +257,97 @@ describe('detect', () => {
       (d) => d.canonical === 'auto-user@example.com' && d.code === 'buildings-mismatch',
     );
     expect(buildingsRows).toEqual([]);
-    // The auto path should emit nothing at all for this email — scope and
-    // type both match, and buildings is skipped.
     const allRowsForEmail = result.discrepancies.filter(
       (d) => d.canonical === 'auto-user@example.com',
     );
     expect(allRowsForEmail).toEqual([]);
+  });
+
+  it('emits no row for auto seats whose derivedBuildings matches the SBA seat', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'auto-match@example.com',
+            member_email: 'auto-match@example.com',
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Cordera Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'auto-match@example.com',
+            description: 'Cordera Ward (Sunday School Teacher)',
+            accessSchedules: [],
+            derivedBuildings: ['Cordera Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('emits buildings-mismatch for auto seats whose derivedBuildings differs from the SBA seat', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'auto-diff@example.com',
+            member_email: 'auto-diff@example.com',
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Cordera Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'auto-diff@example.com',
+            description: 'Cordera Ward (Sunday School Teacher)',
+            accessSchedules: [],
+            derivedBuildings: ['Cordera Building', 'Pine Creek Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
+    expect(result.discrepancies[0]?.reason).toContain('Cordera Building, Pine Creek Building');
+    // KindooBlock surfaces derivedBuildings so the fix dispatcher and
+    // the row UI can use it.
+    expect(result.discrepancies[0]?.kindoo?.derivedBuildings).toEqual([
+      'Cordera Building',
+      'Pine Creek Building',
+    ]);
+  });
+
+  it('emits buildings-mismatch for auto seats whose derivedBuildings is empty against a non-empty SBA seat', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'auto-empty@example.com',
+            member_email: 'auto-empty@example.com',
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Cordera Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'auto-empty@example.com',
+            description: 'Cordera Ward (Sunday School Teacher)',
+            accessSchedules: [],
+            derivedBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
   });
 
   it('emits buildings-mismatch for temp seats when rule set differs', () => {

@@ -47,6 +47,7 @@ function discrepancy(over: Partial<Discrepancy> = {}): Discrepancy {
       intendedFreeText: '',
       ruleIds: [6248],
       buildingNames: ['Cordera Building'],
+      derivedBuildings: null,
     },
     ...over,
   };
@@ -120,6 +121,78 @@ describe('buildCallableInput', () => {
     expect(payload.reason).toBeUndefined();
   });
 
+  it('kindoo-only on an auto seat uses derivedBuildings over buildingNames when available', () => {
+    // The bulk-listing AccessSchedules-derived `buildingNames` misses
+    // Church Access Automation direct grants; `derivedBuildings`
+    // (from the door-grant chain) is the truth for auto seats.
+    const input = buildCallableInput(
+      discrepancy({
+        code: 'kindoo-only',
+        kindoo: {
+          description: 'Cordera Ward (Sunday School Teacher)',
+          isTempUser: false,
+          memberName: 'Auto Person',
+          primaryScope: 'CO',
+          intendedType: 'auto',
+          intendedCallings: ['Sunday School Teacher'],
+          intendedFreeText: '',
+          ruleIds: [],
+          buildingNames: [],
+          derivedBuildings: ['Cordera Building', 'Pine Creek Building'],
+        },
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.buildingNames).toEqual(['Cordera Building', 'Pine Creek Building']);
+  });
+
+  it('kindoo-only on an auto seat falls back to buildingNames when derivedBuildings is null', () => {
+    const input = buildCallableInput(
+      discrepancy({
+        code: 'kindoo-only',
+        kindoo: {
+          description: 'Cordera Ward (Sunday School Teacher)',
+          isTempUser: false,
+          memberName: 'Auto Person',
+          primaryScope: 'CO',
+          intendedType: 'auto',
+          intendedCallings: ['Sunday School Teacher'],
+          intendedFreeText: '',
+          ruleIds: [6248],
+          buildingNames: ['Cordera Building'],
+          derivedBuildings: null,
+        },
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.buildingNames).toEqual(['Cordera Building']);
+  });
+
+  it('kindoo-only on a manual seat ignores derivedBuildings (manual path uses AccessSchedules buildingNames)', () => {
+    // Manual seats have authoritative AccessSchedules → buildingNames;
+    // derivedBuildings is only the truth for auto. Even if both are
+    // populated, the manual branch sticks with buildingNames.
+    const input = buildCallableInput(
+      discrepancy({
+        code: 'kindoo-only',
+        kindoo: {
+          description: 'Cordera Ward (Building Greeter)',
+          isTempUser: false,
+          memberName: 'M M',
+          primaryScope: 'CO',
+          intendedType: 'manual',
+          intendedCallings: [],
+          intendedFreeText: 'Building Greeter',
+          ruleIds: [6248],
+          buildingNames: ['Cordera Building'],
+          derivedBuildings: ['Pine Creek Building'],
+        },
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.buildingNames).toEqual(['Cordera Building']);
+  });
+
   it('kindoo-only on a manual seat splits intended free-text into callings + reason', () => {
     const input = buildCallableInput(
       discrepancy({
@@ -134,6 +207,7 @@ describe('buildCallableInput', () => {
           intendedFreeText: 'Building Greeter, Janitor',
           ruleIds: [6248],
           buildingNames: ['Cordera Building'],
+          derivedBuildings: null,
         },
       }),
     );
@@ -157,6 +231,7 @@ describe('buildCallableInput', () => {
           intendedFreeText: 'Visiting speaker',
           ruleIds: [6248],
           buildingNames: ['Cordera Building'],
+          derivedBuildings: null,
           startDate: '2026-05-13',
           endDate: '2026-05-20',
         },
@@ -183,6 +258,7 @@ describe('buildCallableInput', () => {
           intendedFreeText: 'Janitor, Greeter',
           ruleIds: [6248],
           buildingNames: ['Cordera Building'],
+          derivedBuildings: null,
         },
       }),
     );
@@ -206,6 +282,7 @@ describe('buildCallableInput', () => {
           intendedFreeText: '',
           ruleIds: [6248],
           buildingNames: ['Cordera Building'],
+          derivedBuildings: null,
         },
       }),
     );
@@ -228,6 +305,7 @@ describe('buildCallableInput', () => {
           intendedFreeText: 'Visiting speaker',
           ruleIds: [6248],
           buildingNames: ['Cordera Building'],
+          derivedBuildings: null,
           startDate: '2026-05-13',
           endDate: '2026-05-20',
         },
@@ -252,6 +330,7 @@ describe('buildCallableInput', () => {
           intendedFreeText: 'Building Greeter',
           ruleIds: [6249],
           buildingNames: ['Pine Creek Building'],
+          derivedBuildings: null,
         },
       }),
     );

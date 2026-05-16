@@ -59,6 +59,9 @@ extension/
 │   │           ├── parser.ts      # Kindoo Description → resolved scope+calling segments
 │   │           ├── classifier.ts  # segment → intended seat shape (auto/manual/temp)
 │   │           ├── detector.ts    # union(seats, kindoo users) → Discrepancy[]
+│   │           ├── buildingsFromDoors.ts  # door-grant → effective rules → SBA buildings
+│   │           │                  # (true auto-user reconciliation across direct
+│   │           │                  #  + AccessRule grants)
 │   │           └── fix.ts         # Phase 2 — per-row fix dispatcher (callable | orchestrator)
 │   ├── panel/
 │   │   ├── App.tsx                # React root — five-state router

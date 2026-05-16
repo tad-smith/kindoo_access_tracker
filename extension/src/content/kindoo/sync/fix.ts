@@ -155,7 +155,20 @@ export function buildCallableInput(d: Discrepancy): SyncApplyFixInput {
         d.kindoo.intendedType === 'auto'
           ? d.kindoo.intendedCallings
           : splitFreeText(d.kindoo.intendedFreeText);
-      const buildingNames = d.kindoo.buildingNames;
+      // Auto seats: prefer the door-grant-derived building set when
+      // available. The bulk listing's AccessSchedules (the source of
+      // `buildingNames`) misses Church Access Automation's direct
+      // grants; `derivedBuildings` is the strict-subset chain that
+      // covers BOTH grant kinds. Fall back to `buildingNames` if
+      // derivation failed (null) so the seat still gets created with
+      // whatever building data the sync had — the operator can repair
+      // later via Update SBA on a buildings-mismatch row.
+      const buildingNames =
+        d.kindoo.intendedType === 'auto' &&
+        d.kindoo.derivedBuildings !== null &&
+        d.kindoo.derivedBuildings !== undefined
+          ? d.kindoo.derivedBuildings
+          : d.kindoo.buildingNames;
       // intended scope falls back to the parsed primary scope; without
       // either the seat can't be written. Use the raw email canonical as
       // a last-ditch fallback (server validates anyway).

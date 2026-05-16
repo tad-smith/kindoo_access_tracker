@@ -3,14 +3,23 @@
 //
 // State machine: idle → loading → report | error.
 //
-// On "Run Sync" the panel fires two reads in parallel:
+// On "Run Sync" the panel fires reads in parallel:
 //   - getSyncData() (SW → Firestore) — all SBA collections needed for drift.
 //   - listAllEnvironmentUsers() (CS → Kindoo) — every Kindoo env-user, paginated.
+//   - buildRuleDoorMap() (CS → Kindoo) — one call per AccessRule to
+//     learn each rule's door set. Used downstream to derive each
+//     user's effective building access from their per-door grants
+//     (covers BOTH AccessSchedules-derived AND Church Access
+//     Automation direct grants).
 //
-// Once both resolve, `detect()` (in content/kindoo/sync/detector.ts)
-// classifies divergence into one Discrepancy row per email and the
-// panel renders the report. Filter chips narrow to drift-only / review-
-// only. Per-row Fix buttons (Phase 2) dispatch the appropriate action;
+// After the bulk listing returns, the panel walks the users with a
+// small concurrency cap, calling `getUserDoorIds` per user, and stamps
+// `derivedBuildings` onto each one. Progress text updates as users
+// complete. With ~313 users + concurrency=4 and ~100-200ms per Kindoo
+// call this lands at ~10-15s.
+//
+// Once enrichment is done, `detect()` runs and the report renders.
+// Per-row Fix buttons (Phase 2) dispatch the appropriate action;
 // successful applies splice the row out and decrement the matching
 // counter (drift or review) in the summary header — no toast, no
 // confirm, trust-fire per operator decision.
@@ -38,14 +47,23 @@ import {
   type DispatchContext,
   type FixAction,
 } from '../content/kindoo/sync/fix';
+import {
+  buildRuleDoorMap,
+  enrichUsersWithDerivedBuildings,
+} from '../content/kindoo/sync/buildingsFromDoors';
 import type { KindooSession } from '../content/kindoo/auth';
 
 type Step =
   | { kind: 'idle' }
-  | { kind: 'loading' }
+  | { kind: 'loading'; progress: string | null }
   | { kind: 'report'; result: DetectResult; ctx: DispatchContext }
   | { kind: 'error'; message: string }
   | { kind: 'no-kindoo'; error: KindooSessionError };
+
+/** Update the loading progress text every Nth user. With 313 users +
+ * concurrency=4 we'd get 313 React state updates a few hundred ms
+ * apart; throttling to every 10 keeps the reconciler responsive. */
+const PROGRESS_UPDATE_EVERY = 10;
 
 type FilterMode = 'all' | 'drift' | 'review';
 
@@ -74,7 +92,7 @@ export function SyncPanel() {
   const [filter, setFilter] = useState<FilterMode>('all');
 
   const runSync = useCallback(async () => {
-    setStep({ kind: 'loading' });
+    setStep({ kind: 'loading', progress: null });
 
     const sessionResult = readKindooSession();
     if (!sessionResult.ok) {
@@ -84,12 +102,45 @@ export function SyncPanel() {
     const session = sessionResult.session;
 
     try {
+      // Phase A: parallel read of SBA bundle + Kindoo bulk listing +
+      // env metadata. The rule door map depends on the buildings list
+      // (to know which RIDs to fetch), so it kicks off once the
+      // bundle resolves.
       const [bundle, kindooUsers, envs] = await Promise.all([
         getSyncData(),
         listAllEnvironmentUsers(session),
         getEnvironments(session),
       ]);
-      const result = detect({ ...bundle, kindooUsers });
+
+      // Phase B: rule door map. Drives every AccessRule referenced by
+      // an SBA building via `KindooGetEnvRuleWithEntryPointsFormatted`.
+      // csnorth has 4 rules → 4 calls; cheap.
+      const ruleIds = collectRuleIds(bundle);
+      const ruleDoorMap = await buildRuleDoorMap(session, session.eid, ruleIds);
+
+      // Phase C: enrich each user with derivedBuildings. ~313 calls
+      // at concurrency=4; the operator sees "Reading Kindoo user N of
+      // M…" tick along.
+      const enriched = await enrichUsersWithDerivedBuildings(
+        session,
+        session.eid,
+        kindooUsers,
+        ruleDoorMap,
+        bundle.buildings,
+        {
+          concurrency: 4,
+          onProgress: (completed, total) => {
+            if (completed === total || completed === 1 || completed % PROGRESS_UPDATE_EVERY === 0) {
+              setStep({
+                kind: 'loading',
+                progress: `Reading Kindoo user ${completed} of ${total}…`,
+              });
+            }
+          },
+        },
+      );
+
+      const result = detect({ ...bundle, kindooUsers: enriched });
       const ctx = buildDispatchContext(bundle, envs, session);
       setStep({ kind: 'report', result, ctx });
     } catch (err) {
@@ -120,6 +171,18 @@ function buildDispatchContext(
   };
 }
 
+/** Collect distinct RuleIDs referenced by SBA buildings. Used as the
+ * input to `buildRuleDoorMap` — we only fetch door sets for rules an
+ * SBA building actually maps to. */
+function collectRuleIds(bundle: SyncDataBundle): number[] {
+  const out = new Set<number>();
+  for (const b of bundle.buildings) {
+    const rid = b.kindoo_rule?.rule_id;
+    if (typeof rid === 'number') out.add(rid);
+  }
+  return Array.from(out);
+}
+
 interface BodyProps {
   step: Step;
   filter: FilterMode;
@@ -148,9 +211,14 @@ function SyncBody({ step, filter, onRun, onFilter }: BodyProps) {
   }
   if (step.kind === 'loading') {
     return (
-      <p className="sba-muted" data-testid="sba-sync-loading">
-        Reading SBA + Kindoo…
-      </p>
+      <div data-testid="sba-sync-loading">
+        <p className="sba-muted">Reading SBA + Kindoo…</p>
+        {step.progress !== null ? (
+          <p className="sba-muted" data-testid="sba-sync-progress" aria-live="polite">
+            {step.progress}
+          </p>
+        ) : null}
+      </div>
     );
   }
   if (step.kind === 'no-kindoo') {

@@ -8,8 +8,10 @@ import { KindooApiError } from './client';
 import {
   checkUserType,
   editUser,
+  getEnvironmentRuleWithEntryPoints,
   getEnvironments,
   getEnvironmentRules,
+  getUserAccessRulesWithEntryPoints,
   inviteUser,
   listAllEnvironmentUsers,
   lookupUserByEmail,
@@ -668,6 +670,195 @@ describe('revokeUser', () => {
       code: 'http-error',
       status: 500,
     });
+  });
+});
+
+describe('getEnvironmentRuleWithEntryPoints', () => {
+  function door(over: Record<string, unknown> = {}) {
+    return {
+      ID: 12345,
+      Name: 'Cordera - North',
+      Description: 'Meetinghouse - 6700 Cordera Crest Ave',
+      IsSelected: true,
+      ...over,
+    };
+  }
+
+  it('sends RuleID + EID + isClone=false in the form envelope', async () => {
+    const fetchImpl = vi.fn(async () => ok({ ID: 6250, Name: 'Jamboree - Everyday', doors: [] }));
+    await getEnvironmentRuleWithEntryPoints(SESSION, 6250, 27994, fetchImpl);
+    const form = await formFromLastCall(fetchImpl);
+    expect(form.get('RuleID')).toBe('6250');
+    expect(form.get('EID')).toBe('27994');
+    expect(form.get('isClone')).toBe('false');
+  });
+
+  it('returns only the IsSelected doors as selectedDoorIds and the full list as allDoors', async () => {
+    const fetchImpl = vi.fn(async () =>
+      ok({
+        ID: 6250,
+        Name: 'Jamboree - Everyday',
+        doors: [
+          door({ ID: 1001, Name: 'Jamboree - North', IsSelected: true }),
+          door({ ID: 1002, Name: 'Jamboree - South', IsSelected: true }),
+          door({ ID: 1003, Name: 'Jamboree - Cultural', IsSelected: true }),
+          door({ ID: 2001, Name: 'Cordera - North', IsSelected: false }),
+          door({ ID: 2002, Name: 'Cordera - South', IsSelected: false }),
+        ],
+      }),
+    );
+    const result = await getEnvironmentRuleWithEntryPoints(SESSION, 6250, 27994, fetchImpl);
+    expect(result.ruleId).toBe(6250);
+    expect(result.ruleName).toBe('Jamboree - Everyday');
+    expect(result.selectedDoorIds.sort()).toEqual([1001, 1002, 1003]);
+    expect(result.allDoors).toHaveLength(5);
+    expect(result.allDoors[0]).toMatchObject({ doorId: 1001, name: 'Jamboree - North' });
+  });
+
+  it('handles an empty doors array', async () => {
+    const fetchImpl = vi.fn(async () => ok({ ID: 6250, Name: 'Empty', doors: [] }));
+    const result = await getEnvironmentRuleWithEntryPoints(SESSION, 6250, 27994, fetchImpl);
+    expect(result.selectedDoorIds).toEqual([]);
+    expect(result.allDoors).toEqual([]);
+  });
+
+  it('throws unexpected-shape when ID/Name missing', async () => {
+    const fetchImpl = vi.fn(async () => ok({ doors: [] }));
+    await expect(
+      getEnvironmentRuleWithEntryPoints(SESSION, 6250, 27994, fetchImpl),
+    ).rejects.toMatchObject({ code: 'unexpected-shape' });
+  });
+
+  it('unwraps `{ d: ... }` ASP.NET-style envelope', async () => {
+    const fetchImpl = vi.fn(async () =>
+      ok({ d: { ID: 6250, Name: 'Wrapped', doors: [door({ ID: 7001 })] } }),
+    );
+    const result = await getEnvironmentRuleWithEntryPoints(SESSION, 6250, 27994, fetchImpl);
+    expect(result.selectedDoorIds).toEqual([7001]);
+  });
+});
+
+describe('getUserAccessRulesWithEntryPoints', () => {
+  function row(over: Record<string, unknown> = {}) {
+    return {
+      DoorID: 1001,
+      AccessScheduleID: 0,
+      EUID: 'eu1',
+      UserID: 'u1',
+      ...over,
+    };
+  }
+
+  function page(rows: ReturnType<typeof row>[], total: number) {
+    return ok({
+      CurrentNumberOfRows: rows.length,
+      TotalRecordNumber: total,
+      RulesList: rows,
+    });
+  }
+
+  it('sends UID/EID/pagination/source/fillEmptyWeeklyDaysWithOneRow/FetchGrantedByData', async () => {
+    const fetchImpl = vi.fn(async () => page([], 0));
+    await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    const form = await formFromLastCall(fetchImpl);
+    expect(form.get('UID')).toBe('user-1');
+    expect(form.get('EID')).toBe('27994');
+    expect(form.get('start')).toBe('0');
+    expect(form.get('end')).toBe('40');
+    expect(form.get('keyword')).toBe('');
+    expect(form.get('source')).toBe('SiteUserManage:useEffect:fetchUserRules');
+    expect(form.get('fillEmptyWeeklyDaysWithOneRow')).toBe('true');
+    expect(form.get('FetchGrantedByData')).toBe('true');
+  });
+
+  it('returns all unique DoorIDs from a single short page', async () => {
+    const fetchImpl = vi.fn(async () =>
+      page(
+        [
+          row({ DoorID: 1001, AccessScheduleID: 0 }),
+          row({ DoorID: 1002, AccessScheduleID: 0 }),
+          row({ DoorID: 2001, AccessScheduleID: 6248 }),
+        ],
+        3,
+      ),
+    );
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result.map((r) => r.doorId).sort()).toEqual([1001, 1002, 2001]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedupes rows that share a DoorID across rules', async () => {
+    // Same door granted by two rules → emits two rows in the response;
+    // we want one row out, accessScheduleId = first occurrence.
+    const fetchImpl = vi.fn(async () =>
+      page(
+        [
+          row({ DoorID: 1001, AccessScheduleID: 6248 }),
+          row({ DoorID: 1001, AccessScheduleID: 6250 }),
+          row({ DoorID: 1002, AccessScheduleID: 0 }),
+        ],
+        3,
+      ),
+    );
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result).toHaveLength(2);
+    expect(result.map((r) => r.doorId).sort()).toEqual([1001, 1002]);
+  });
+
+  it('pages with start += 40 until a short page terminates', async () => {
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        const rows = Array.from({ length: 40 }, (_, i) =>
+          row({ DoorID: 1000 + i, AccessScheduleID: 0 }),
+        );
+        return page(rows, 50);
+      }
+      // Short page → terminate.
+      const rows = Array.from({ length: 10 }, (_, i) =>
+        row({ DoorID: 1100 + i, AccessScheduleID: 0 }),
+      );
+      return page(rows, 50);
+    });
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result).toHaveLength(50);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const calls = fetchImpl.mock.calls as unknown as Array<[unknown, RequestInit]>;
+    const starts = await Promise.all(
+      calls.map(async ([, init]) => {
+        const form = await new Request('https://test.invalid/', init).formData();
+        return form.get('start');
+      }),
+    );
+    expect(starts).toEqual(['0', '40']);
+  });
+
+  it('stops when start reaches TotalRecordNumber even on a full-size page', async () => {
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      call += 1;
+      const rows = Array.from({ length: 40 }, (_, i) =>
+        row({ DoorID: 1000 + i, AccessScheduleID: 0 }),
+      );
+      return page(rows, 40);
+    });
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result).toHaveLength(40);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to a bare-array response shape', async () => {
+    const fetchImpl = vi.fn(async () => ok([row({ DoorID: 9999 })]));
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.doorId).toBe(9999);
+  });
+
+  it('returns empty when first page is empty', async () => {
+    const fetchImpl = vi.fn(async () => page([], 0));
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result).toEqual([]);
   });
 });
 

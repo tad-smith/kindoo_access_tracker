@@ -12,6 +12,8 @@ const readKindooSessionMock = vi.fn();
 const listAllEnvironmentUsersMock = vi.fn();
 const getEnvironmentsMock = vi.fn();
 const applyFixMock = vi.fn();
+const buildRuleDoorMapMock = vi.fn();
+const enrichUsersWithDerivedBuildingsMock = vi.fn();
 
 vi.mock('../lib/extensionApi', async () => {
   const actual = await vi.importActual<typeof import('../lib/extensionApi')>('../lib/extensionApi');
@@ -43,6 +45,18 @@ vi.mock('../content/kindoo/sync/fix', async () => {
   return {
     ...actual,
     applyFix: (...args: unknown[]) => applyFixMock(...args),
+  };
+});
+
+vi.mock('../content/kindoo/sync/buildingsFromDoors', async () => {
+  const actual = await vi.importActual<typeof import('../content/kindoo/sync/buildingsFromDoors')>(
+    '../content/kindoo/sync/buildingsFromDoors',
+  );
+  return {
+    ...actual,
+    buildRuleDoorMap: (...args: unknown[]) => buildRuleDoorMapMock(...args),
+    enrichUsersWithDerivedBuildings: (...args: unknown[]) =>
+      enrichUsersWithDerivedBuildingsMock(...args),
   };
 });
 
@@ -78,6 +92,8 @@ describe('SyncPanel', () => {
     listAllEnvironmentUsersMock.mockReset();
     getEnvironmentsMock.mockReset();
     applyFixMock.mockReset();
+    buildRuleDoorMapMock.mockReset();
+    enrichUsersWithDerivedBuildingsMock.mockReset();
     readKindooSessionMock.mockReturnValue({
       ok: true,
       session: { token: 'sess', eid: 27994 },
@@ -85,6 +101,11 @@ describe('SyncPanel', () => {
     getEnvironmentsMock.mockResolvedValue([
       { EID: 27994, Name: 'CSN', TimeZone: 'Mountain Standard Time' },
     ]);
+    // Default: rule door map / enrichment pass through (users stay
+    // un-enriched — derivedBuildings undefined → detector skips the
+    // auto buildings check). Tests that care override.
+    buildRuleDoorMapMock.mockResolvedValue(new Map());
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_session, _eid, users) => users);
   });
   afterEach(() => {
     vi.resetModules();
@@ -118,6 +139,44 @@ describe('SyncPanel', () => {
     await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
     expect(screen.getByTestId('sba-sync-summary')).toHaveTextContent(/SBA:\s*0\s*seats/);
     expect(screen.getByTestId('sba-sync-summary')).toHaveTextContent(/Kindoo:\s*0\s*users/);
+  });
+
+  it('updates progress text as the per-user enrichment loop ticks', async () => {
+    const user = userEvent.setup();
+    getSyncDataMock.mockResolvedValue(bundle());
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      {
+        euid: 'e1',
+        userId: 'u1',
+        username: 'a@example.com',
+        description: '',
+        isTempUser: false,
+        accessSchedules: [],
+      },
+      {
+        euid: 'e2',
+        userId: 'u2',
+        username: 'b@example.com',
+        description: '',
+        isTempUser: false,
+        accessSchedules: [],
+      },
+    ]);
+    // Custom enrichment that fires progress synchronously then resolves.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(
+      async (_s, _eid, users, _rm, _b, opts) => {
+        opts.onProgress(1, 2);
+        opts.onProgress(2, 2);
+        return users;
+      },
+    );
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    // Wait for either report or progress to be present; with the
+    // synchronous progress callbacks above the loading state collapses
+    // immediately into report — assert on the report instead.
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+    expect(enrichUsersWithDerivedBuildingsMock).toHaveBeenCalledTimes(1);
   });
 
   it('renders an empty-report message when both sides agree', async () => {
