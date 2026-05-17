@@ -299,7 +299,9 @@ Per-user role-grant doc. Doc exists iff the user has *any* importer or manual ac
 
 ### 4.6 `stakes/{stakeId}/seats/{canonicalEmail}`
 
-Per-user Kindoo seat. One doc per user per stake. The `duplicate_grants[]` field captures rare cross-scope or cross-type collisions for manager review without affecting accounting.
+Per-user Kindoo seat. One doc per user per stake.
+
+Today the `duplicate_grants[]` field captures within-site priority losers only — informational rows that do not count in utilization. The fields below include the T-42 planned shape (`Seat.kindoo_site_id` at top level + per-entry `kindoo_site_id` on duplicates) so that an implementer reads the target schema in one place; the field is not yet populated on any live doc. Once T-42 lands, `duplicate_grants[]` will also capture parallel-site grants distinguished from within-site losers by `kindoo_site_id` inequality with the primary. See spec §15 "Multi-site grants — data model (planned, T-42)".
 
 **Doc ID:** canonical email.
 
@@ -320,12 +322,15 @@ Per-user Kindoo seat. One doc per user per stake. The `duplicate_grants[]` field
   start_date?: string;         // temp only, ISO date (YYYY-MM-DD)
   end_date?: string;           // temp only, ISO date
   building_names: string[];
+  kindoo_site_id?: string | null; // T-42 planned; not yet populated. null / absent ⇒ home site; otherwise doc ID under kindooSites/. Mirrors the ward / building convention. Derived from primary scope + ward → kindoo_site_id lookup; stake-scope ⇒ home. Backfilled via the T-42 one-shot migration.
   sort_order: number | null;   // see "Sort order" below
 
   // Manual/temp linkage
   granted_by_request?: string; // request_id; absent for auto seats
 
-  // Collision flag — informational, never counted in utilization
+  // Today: within-site priority losers (informational; never counted in utilization).
+  // Post-T-42: also parallel-site grants — legitimate independent grants on other Kindoo sites that need their own per-site write.
+  // The two kinds will be distinguished by kindoo_site_id equality with the primary grant above; no separate flag.
   duplicate_grants: Array<{
     scope: string;
     type: 'auto' | 'manual' | 'temp';
@@ -333,6 +338,8 @@ Per-user Kindoo seat. One doc per user per stake. The `duplicate_grants[]` field
     reason?: string;
     start_date?: string;
     end_date?: string;
+    building_names?: string[];      // Within-site importer duplicates may leave this unset and inherit from the primary's ward (today's behavior). Post-T-42, importer-written PARALLEL-SITE duplicates (different kindoo_site_id from the primary) MUST set this — the per-site Kindoo write needs the buildings explicitly. Manual/temp duplicates set this via the request-completion auto-merge.
+    kindoo_site_id?: string | null; // T-42 planned; not yet populated. Same convention as the top-level field. Backfilled via the T-42 one-shot migration.
     detected_at: Timestamp;
   }>;
 
