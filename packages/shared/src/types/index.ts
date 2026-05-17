@@ -29,12 +29,7 @@ export type {
 export type { KindooManager } from './kindooManager.js';
 export type { KindooSite } from './kindooSite.js';
 export type { PlatformSuperadmin } from './platformSuperadmin.js';
-export type {
-  AccessRequest,
-  CompletionStatus,
-  RequestStatus,
-  RequestType,
-} from './request.js';
+export type { AccessRequest, CompletionStatus, RequestStatus, RequestType } from './request.js';
 export type { DuplicateGrant, Seat, SeatType } from './seat.js';
 export type { ImportDay, KindooConfig, OverCapEntry, Stake } from './stake.js';
 export type {
