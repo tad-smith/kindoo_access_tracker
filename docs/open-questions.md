@@ -478,6 +478,19 @@ The block persisted across all of those, indicating that Workspace-owned Apps Sc
 
 ---
 
+## Kindoo Sites
+
+### KS-1 `[RESOLVED 2026-05-17]` Multi-scope Kindoo users straddling home + foreign sites — data model
+
+**Flagged (PR #122 review, 2026-05-16).** Phase 4's sync detector collapsed a Kindoo user's multi-scope Description to one primary segment via `pickPrimarySegment`; the losing segment's site dropped the user, manufacturing spurious `sba-only` / `kindoo-only` drift. Two equivalent data-model shapes were on the table:
+
+- **Option A — extend `duplicate_grants[]` semantics.** Treat the array as "additional grants" (within-site priority losers OR parallel grants on other Kindoo sites), distinguished by per-entry `kindoo_site_id`. The primary stays at top level.
+- **Option B — a new sibling array** dedicated to parallel-site grants, leaving `duplicate_grants[]` semantics untouched.
+
+**Resolved 2026-05-17 — Option A.** Extending `duplicate_grants[]` to record "additional grants" of either kind, distinguished by `kindoo_site_id`, is the smaller surface change: today's within-site priority-loser entries continue to work (they have the same `kindoo_site_id` as the primary), and parallel-site grants slot into the same array under a different `kindoo_site_id`. A new top-level `Seat.kindoo_site_id` records the primary grant's site. The sync detector switches from collapse-to-one-segment to fan-out-per-site; the orchestrator emits one Kindoo write per distinct `kindoo_site_id`. A one-shot migration backfills the field on existing seats. See spec §15 "Multi-site grants — data model" for the full design; T-42 tracks implementation.
+
+---
+
 ## Chunk 10 polish resolutions
 
 These were flagged for Chunk 10 during earlier chunks and are now resolved.

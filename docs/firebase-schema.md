@@ -299,7 +299,7 @@ Per-user role-grant doc. Doc exists iff the user has *any* importer or manual ac
 
 ### 4.6 `stakes/{stakeId}/seats/{canonicalEmail}`
 
-Per-user Kindoo seat. One doc per user per stake. The `duplicate_grants[]` field captures rare cross-scope or cross-type collisions for manager review without affecting accounting.
+Per-user Kindoo seat. One doc per user per stake. The `duplicate_grants[]` field captures "additional grants" — either a within-site priority loser (informational; same `kindoo_site_id` as primary) or a parallel grant on another Kindoo site (legitimate; different `kindoo_site_id`). The two are distinguished by field equality on `kindoo_site_id`; no separate flag.
 
 **Doc ID:** canonical email.
 
@@ -320,12 +320,14 @@ Per-user Kindoo seat. One doc per user per stake. The `duplicate_grants[]` field
   start_date?: string;         // temp only, ISO date (YYYY-MM-DD)
   end_date?: string;           // temp only, ISO date
   building_names: string[];
+  kindoo_site_id?: string | null; // null / absent ⇒ home site; otherwise doc ID under kindooSites/. Mirrors the ward / building convention. Derived from primary scope + ward → kindoo_site_id lookup; stake-scope ⇒ home. Backfill via one-shot migration.
   sort_order: number | null;   // see "Sort order" below
 
   // Manual/temp linkage
   granted_by_request?: string; // request_id; absent for auto seats
 
-  // Collision flag — informational, never counted in utilization
+  // Additional grants — within-site priority losers (informational) and parallel-site grants (legitimate, need their own per-site write).
+  // Distinguished by kindoo_site_id equality with the primary grant above.
   duplicate_grants: Array<{
     scope: string;
     type: 'auto' | 'manual' | 'temp';
@@ -333,6 +335,8 @@ Per-user Kindoo seat. One doc per user per stake. The `duplicate_grants[]` field
     reason?: string;
     start_date?: string;
     end_date?: string;
+    building_names?: string[];
+    kindoo_site_id?: string | null; // same convention as the top-level field. Backfill via one-shot migration.
     detected_at: Timestamp;
   }>;
 

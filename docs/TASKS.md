@@ -669,6 +669,8 @@ Status: open
 Owner: @extension-engineer
 Phase: Kindoo Sites — Phase 4 follow-up
 
+**Spec for the fix is defined in PR #NNN (docs-only); implementation deferred to a separate PR. Acceptance criteria below unchanged. T-42 closes when the implementation PR lands.**
+
 Surfaced by PR #122 review (2026-05-16). The Phase 4 sync detector resolves a Kindoo user's site by collapsing the parsed Description down to a single primary segment via `pickPrimarySegment` (auto-matching is the primary tiebreaker). A Description that legitimately straddles home + foreign wards — e.g. `'Cordera Ward (Bishop) | Foothills Ward (Stake Clerk)'` with Cordera on the home site and Foothills on a foreign site — has both segments resolve to real wards on different sites, but `pickPrimarySegment` picks one. The unpicked segment's site loses visibility of the user entirely: that site's sync view never sees them, and on both sides the asymmetry manufactures spurious `sba-only` / `kindoo-only` drift for the same person.
 
 Documented as a known limitation in `docs/spec.md` §15 Phase 4 prose. The current operational consequence is that a person cannot simultaneously surface on both home-site and foreign-site sync views.
