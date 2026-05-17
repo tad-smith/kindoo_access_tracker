@@ -914,4 +914,68 @@ describe('detect', () => {
     expect(result.discrepancies[0]!.sba?.scope).toBe('FT');
     expect(result.discrepancies[0]!.sba?.buildingNames).toEqual(['Foothills Building']);
   });
+
+  it('T-42: two foreign wards on the same foreign site → projection unions both building_names', () => {
+    // Spec §15 line 373: "Two foreign wards on the same foreign site
+    // produce two `duplicate_grants[]` entries… the sync detector
+    // unions their `building_names` per-site when computing expected
+    // buildings." Fixture: a seat with the home primary on Cordera
+    // plus TWO foreign-site duplicates (Foothills + Mountain View),
+    // both bound to 'east-stake'. The foreign-view projection must
+    // include BOTH foreign buildings, not just one.
+    const wardsTwoForeign: Ward[] = [
+      ward('CO', 'Cordera Ward', 'Cordera Building'),
+      {
+        ...ward('FT', 'Foothills Ward', 'Foothills Building'),
+        kindoo_site_id: 'east-stake',
+      },
+      {
+        ...ward('MV', 'Mountain View Ward', 'Mountain View Building'),
+        kindoo_site_id: 'east-stake',
+      },
+    ];
+    const multiSeat = seat({
+      member_canonical: 'multi@example.com',
+      member_email: 'multi@example.com',
+      scope: 'CO',
+      kindoo_site_id: null,
+      callings: ['Sunday School Teacher'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          building_names: ['Foothills Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+        {
+          scope: 'MV',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          building_names: ['Mountain View Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+      ],
+    });
+    const result = detect({
+      stake: STAKE,
+      wards: wardsTwoForeign,
+      buildings: BUILDINGS,
+      seats: [multiSeat],
+      wardCallingTemplates: WARD_TEMPLATES,
+      stakeCallingTemplates: STAKE_TEMPLATES,
+      kindooUsers: [],
+      activeSite: { kind: 'foreign', siteId: 'east-stake' },
+    });
+    // Foreign view: sba-only with the union of BOTH foreign duplicates'
+    // buildings (Foothills + Mountain View).
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]!.code).toBe('sba-only');
+    expect(result.discrepancies[0]!.sba?.buildingNames.sort()).toEqual(
+      ['Foothills Building', 'Mountain View Building'].sort(),
+    );
+  });
 });

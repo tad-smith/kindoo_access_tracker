@@ -171,9 +171,20 @@ export function planAddMerge(opts: {
     }
     const next = dupes.slice();
     next[matchIdx] = { ...matched, building_names: merged };
-    // Scopes set is unchanged — only `building_names` extended on the
-    // matched entry. No `duplicate_scopes` write needed.
-    return { update: { duplicate_grants: next }, touchedScopes };
+    // T-42 / T-43: although the SCOPE set is unchanged (we only
+    // extended `building_names` on the matched entry), pre-migration
+    // legacy seats may have a missing or stale `duplicate_scopes`
+    // mirror. Unconditionally recompute + include in the update so
+    // every match-branch write also lands the mirror — idempotent,
+    // one extra primitive-string array per write, closes the gap
+    // between Phase A deploy and migration run.
+    return {
+      update: {
+        duplicate_grants: next,
+        duplicate_scopes: next.map((d) => d.scope),
+      },
+      touchedScopes,
+    };
   }
 
   // No (scope, type) match anywhere — append a new DuplicateGrant.

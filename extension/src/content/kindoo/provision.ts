@@ -214,9 +214,19 @@ function currentSeatBuildings(
     const dupBuildings = (seat.duplicate_grants ?? []).flatMap((d) => d.building_names ?? []);
     return uniqueOrdered(seat.building_names ?? [], dupBuildings);
   }
+  // T-42: `wards` is required whenever `requestSiteId` is supplied —
+  // the ward-fallback path needs the catalogue to resolve legacy
+  // (pre-migration) grants. A caller that forgets `wards` would
+  // silently classify every non-stake legacy grant as home, leaking
+  // foreign-site buildings into the per-site write. Fail loudly
+  // instead.
+  if (!wards) {
+    throw new Error(
+      'currentSeatBuildings: `wards` is required when `requestSiteId` is provided (T-42 per-site filter relies on the ward fallback for legacy seats).',
+    );
+  }
   const wardSite = (wardCode: string): string | null => {
     if (wardCode === 'stake') return null;
-    if (!wards) return null;
     const ward = wards.find((w) => w.ward_code === wardCode);
     return ward ? (ward.kindoo_site_id ?? null) : null;
   };
@@ -1009,10 +1019,23 @@ export async function provisionRemove(args: ProvisionRemoveArgs): Promise<Provis
   }
 
   // ---- Reconcile rule set ----
+  // T-42: per-site narrowing also applies to revokes. The remove
+  // orchestrator runs on a single Kindoo session; rule IDs for
+  // buildings on OTHER Kindoo sites do not belong to this session
+  // and must not be touched. Without this filter, the home session
+  // would try to revoke a foreign-site rule from a multi-site seat
+  // (the foreign rule lives in a different Kindoo environment and
+  // the API call would either fail or, worse, hit a same-numbered
+  // rule in the home environment).
+  const activeSiteRuleIds = new Set(
+    args.buildings
+      .filter((b) => (b.kindoo_site_id ?? null) === requestSiteId && b.kindoo_rule)
+      .map((b) => b.kindoo_rule!.rule_id),
+  );
   const currentRIDs = existing.accessSchedules.map((s) => s.ruleId);
   const targetSet = new Set(targetRIDs);
   const currentSet = new Set(currentRIDs);
-  const toRevoke = currentRIDs.filter((id) => !targetSet.has(id));
+  const toRevoke = currentRIDs.filter((id) => !targetSet.has(id) && activeSiteRuleIds.has(id));
   const toAdd = targetRIDs.filter((id) => !currentSet.has(id));
 
   // Drop removed rules first (per-rule revoke — `saveAccessRule` can't

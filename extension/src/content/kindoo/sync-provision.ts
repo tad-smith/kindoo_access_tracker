@@ -393,9 +393,13 @@ function joinBuildings(names: string[]): string {
  * T-42: resolve the site id the active Kindoo session points at.
  * Home (EID matches `stake.kindoo_config.site_id`) → `null`; foreign
  * (EID matches some `KindooSite.kindoo_eid`) → that site's doc id.
- * Falls back to `null` (home) when nothing matches — the operator's
- * site-mismatch check fires earlier and won't reach this point in
- * the orchestrator with a foreign-unknown session.
+ *
+ * Throws when the active EID matches neither — the panel-level gate
+ * (`activeSite.kind === 'unknown'`) fires earlier and surfaces an
+ * empty-state recovery message to the operator, so reaching this
+ * point with an unknown session is a defense-in-depth failure. We
+ * fail loudly rather than silently fall through to `null` (home)
+ * and write to the wrong Kindoo environment.
  */
 function resolveActiveSiteIdFromSession(
   activeEid: number,
@@ -406,5 +410,9 @@ function resolveActiveSiteIdFromSession(
   const foreign = kindooSites.find(
     (s) => typeof s.kindoo_eid === 'number' && s.kindoo_eid === activeEid,
   );
-  return foreign ? foreign.id : null;
+  if (foreign) return foreign.id;
+  throw new Error(
+    `Active Kindoo session EID ${activeEid} matches neither the home site nor any configured foreign KindooSite. ` +
+      `Re-run "Configure Kindoo" or switch sites in Kindoo and reload the panel.`,
+  );
 }

@@ -2358,6 +2358,61 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
     expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
     expect(saveAccessRuleMock).toHaveBeenCalledWith(FOREIGN_SESSION, 'new-uid', [6260], undefined);
   });
+
+  it('T-42 same-site union: primary + within-site duplicate combine their building_names', async () => {
+    // Spec §15 / acceptance #6: the per-site write writes the union
+    // of building_names across the primary (when on-site) and every
+    // SAME-site duplicate_grants[] entry. Without this, a seat whose
+    // primary is on home + a within-site duplicate also on home
+    // would only push the primary's buildings — missing the
+    // duplicate's. Wards CO + PC are both home (no kindoo_site_id);
+    // primary CO with `building_names=['Cordera Building']` plus a
+    // within-site duplicate on PC with
+    // `building_names=['Pine Creek Building']` should write BOTH.
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad Smith',
+      scope: 'CO',
+      type: 'manual',
+      callings: [],
+      reason: 'co-helper',
+      building_names: ['Cordera Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'PC',
+          type: 'manual',
+          building_names: ['Pine Creek Building'],
+          kindoo_site_id: null, // SAME site as primary (home)
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ],
+    } as unknown as Seat;
+
+    lookupUserByEmailMock.mockResolvedValue(null);
+    inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'CO',
+        building_names: ['Cordera Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Union of primary + within-site duplicate: Cordera (6248) +
+    // Pine Creek (6249). Within-site duplicate must NOT be silently
+    // dropped.
+    expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, 'new-uid', [6248, 6249], undefined);
+  });
 });
 
 // ----- T-42 per-site union — provisionRemove -----
@@ -2443,15 +2498,17 @@ describe('provisionRemove — T-42 per-site union', () => {
 
     // Home target buildings = PC only (CO is being removed; FT is on
     // a different site and excluded). Existing rules: 6248 (Cordera),
-    // 6249 (PC), 6260 (Foothills, foreign). toRevoke = currentRIDs \
-    // targetRIDs = {6248, 6260}. The foreign rule 6260 should NOT be
-    // in toRevoke either — the per-site filter on the target plus the
-    // legacy diff would revoke it. BUT this surface only writes
-    // against the active session's site, so the test asserts that
-    // saveAccessRule (the add path) is called with no foreign rules.
-    // The revoke loop is a secondary concern: in practice the home
-    // session can't see / revoke foreign rules. We assert saveAccessRule
-    // is NOT called with 6260, and editUser's description omits FT.
+    // 6249 (PC), 6260 (Foothills, foreign).
+    //
+    // T-42 per-site narrowing of the revoke set: the home session
+    // revokes ONLY 6248 (CO — being removed, home-site). It must NOT
+    // revoke 6260 (foreign-site rule — belongs to a different Kindoo
+    // environment). And saveAccessRule (the add path) must not be
+    // called with the foreign rule either.
+    expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledWith(SESSION, 'e1', 6248, undefined);
+    for (const call of revokeUserFromAccessScheduleMock.mock.calls) {
+      expect(call[2]).not.toBe(6260);
+    }
     for (const call of saveAccessRuleMock.mock.calls) {
       const rids = call[2] as number[];
       expect(rids).not.toContain(6260);

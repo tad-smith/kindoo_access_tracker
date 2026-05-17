@@ -254,9 +254,9 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
     // is written on the primary side. The seat write that does fire
     // backfills the absent `duplicate_scopes` mirror (T-43) — the
     // primary skip is unrelated to the mirror's lifecycle. The
-    // seats_skipped_missing_ward counter is the load-bearing
+    // primary_kindoo_site_id_skipped counter is the load-bearing
     // assertion here.
-    expect(result.seats_skipped_missing_ward).toBe(1);
+    expect(result.primary_kindoo_site_id_skipped).toBe(1);
     expect(result.warnings.some((w) => w.includes('alice@gmail.com') && w.includes('CO'))).toBe(
       true,
     );

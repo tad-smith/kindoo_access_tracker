@@ -47,11 +47,23 @@ export interface BackfillKindooSiteIdOutput {
   ok: true;
   /** Number of seat docs read. */
   seats_total: number;
-  /** Number of seat docs with at least one field updated. */
+  /** Number of seat docs with at least one field updated (kindoo_site_id
+   *  OR duplicate_grants OR duplicate_scopes mirror). Drops to zero on
+   *  re-run when idempotent. */
   seats_updated: number;
-  /** Number of seat docs whose primary `scope` no longer resolves to a
-   *  known ward — `kindoo_site_id` left untouched on those seats. */
-  seats_skipped_missing_ward: number;
+  /**
+   * Number of seat docs whose primary `scope` no longer resolves to a
+   * known ward — the primary `kindoo_site_id` is left untouched on
+   * those seats (uniform skip-with-warning policy). NOTE: the seat
+   * doc may still be written (for the `duplicate_scopes` mirror
+   * backfill or a duplicate-side change) and that write increments
+   * `seats_updated`. This counter increments once per (seat, run)
+   * regardless of whether the seat was otherwise written; on a
+   * re-run with the same data it increments again — operator should
+   * read this as "seats with unresolvable primary scope," not as
+   * "seats that were skipped from any write."
+   */
+  primary_kindoo_site_id_skipped: number;
   /** Number of `duplicate_grants[]` entries updated across all seats. */
   duplicates_updated: number;
   /** Number of `duplicate_grants[]` entries skipped because the entry's
@@ -106,7 +118,7 @@ export async function backfillKindooSiteIdForStake(
     ok: true,
     seats_total: seatsSnap.size,
     seats_updated: 0,
-    seats_skipped_missing_ward: 0,
+    primary_kindoo_site_id_skipped: 0,
     duplicates_updated: 0,
     duplicates_skipped_missing_ward: 0,
     warnings: [],
@@ -135,7 +147,7 @@ export async function backfillKindooSiteIdForStake(
     let primaryDiffers = false;
     let primaryTarget: string | null = primaryCurrent;
     if (primaryDerived === undefined) {
-      out.seats_skipped_missing_ward += 1;
+      out.primary_kindoo_site_id_skipped += 1;
       out.warnings.push(
         `seat ${seatDoc.id}: primary scope '${seat.scope}' does not resolve to a known ward; skipping primary kindoo_site_id (ward-fallback handles classification at read time).`,
       );
