@@ -133,8 +133,16 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
     : ward === 'stake'
       ? 'Stake-scope utilization'
       : `Ward ${ward} utilization`;
+  // Home-stake total: include stake-scope seats + ward seats whose
+  // resolved Kindoo site is home. T-42: prefer `Seat.kindoo_site_id`
+  // when populated (importer / merge / migration); fall back to the
+  // ward-derived `foreignWardCodes` set for legacy pre-migration seats.
   const utilizationTotal = !ward
-    ? allSeats.filter((s) => s.scope === 'stake' || !foreignWardCodes.has(s.scope)).length
+    ? allSeats.filter((s) => {
+        if (s.scope === 'stake') return true;
+        if (s.kindoo_site_id !== undefined) return s.kindoo_site_id == null;
+        return !foreignWardCodes.has(s.scope);
+      }).length
     : allSeats.filter((s) => s.scope === ward).length;
   const utilizationCap: number | null | undefined = !ward
     ? stakeSeatCap

@@ -433,10 +433,22 @@ service cloud.firestore {
           || isStakeMember(stakeId)
           || (resource.data.scope in bishopricWardOf(stakeId));
 
+        // T-42 / T-43: `duplicate_scopes` is a server-maintained
+        // primitive mirror of `duplicate_grants[].scope` (Firestore CEL
+        // can't project `[*].field`). Clients never write it directly.
+        // The create rule below requires `duplicate_scopes.size() == 0`
+        // (consistent with `duplicate_grants.size() == 0` for client-
+        // initiated seat creates); the update rule's `hasOnly` allow-
+        // list does NOT include `duplicate_scopes`, so attempts to
+        // mutate it from the client are rejected. Server writes
+        // (Importer, `markRequestComplete`, `removeSeatOnRequestComplete`,
+        // migration) all use the Admin SDK, which bypasses rules.
         allow create: if isManager(stakeId)
           && memberCanonical == request.resource.data.member_canonical
           && request.resource.data.type in ['manual', 'temp']
           && request.resource.data.duplicate_grants.size() == 0
+          && (!('duplicate_scopes' in request.resource.data)
+              || request.resource.data.duplicate_scopes.size() == 0)
           && request.resource.data.callings.size() == 0
           && lastActorMatchesAuth(request.resource.data)
           && tiedToRequestCompletion(stakeId,

@@ -577,6 +577,190 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         expect(dup.detected_at).toBeDefined();
       });
 
+      // T-42 acceptance #7: `planAddMerge` stamps `kindoo_site_id` on
+      // a newly-appended duplicate so the per-site provision walk
+      // finds the grant under the right site.
+      it('T-42: appends new duplicate stamped with kindoo_site_id from the request ward (foreign-site)', async () => {
+        await seedManager();
+        await seedStake();
+        // Foreign-site ward 'FT' bound to 'east-stake'.
+        await seedWard({ ward_code: 'FT', kindoo_site_id: 'east-stake' });
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+          reason: 'home helper',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'FT',
+          building_names: ['FT Building'],
+          reason: 'foreign-ward helper',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants.length).toBe(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('FT');
+        // Critical: kindoo_site_id mirrors the request ward's site.
+        expect(dup.kindoo_site_id).toBe('east-stake');
+        expect(dup.building_names).toEqual(['FT Building']);
+        // T-42 / T-43: the primitive mirror tracks the new scope.
+        expect(seat.duplicate_scopes).toEqual(['FT']);
+      });
+
+      it('T-42: appends new duplicate with kindoo_site_id=null when request targets home (no ward kindoo_site_id)', async () => {
+        await seedManager();
+        await seedStake();
+        // Home-bound CO ward (no kindoo_site_id).
+        await seedWard({ ward_code: 'CO', kindoo_site_id: null });
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'CO',
+          building_names: ['CO Building'],
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants.length).toBe(1);
+        expect(seat.duplicate_grants[0]!.kindoo_site_id).toBe(null);
+      });
+
+      it('T-42: new seat create stamps top-level kindoo_site_id from the request scope', async () => {
+        await seedManager();
+        await seedStake();
+        // Foreign-site ward 'FT' bound to 'east-stake'.
+        await seedWard({
+          ward_code: 'FT',
+          building_name: 'Foothills Building',
+          kindoo_site_id: 'east-stake',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'FT',
+          building_names: ['Foothills Building'],
+          reason: 'first-time ward grant',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('FT');
+        expect(seat.kindoo_site_id).toBe('east-stake');
+        // T-42 / T-43: new seat carries the empty primitive mirror.
+        expect(seat.duplicate_scopes).toEqual([]);
+      });
+
+      it('T-42: new seat create with unknown-ward scope leaves kindoo_site_id unset (uniform skip-with-warning)', async () => {
+        // The uniform missing-ward policy: when the request's scope
+        // doesn't resolve to a known ward, leave `kindoo_site_id`
+        // unset on the new seat so the downstream ward-fallback
+        // resolver handles classification at read time. A misconfigured
+        // seat must NOT silently become home-categorised.
+        await seedManager();
+        await seedStake();
+        // No ward seeded for 'XX'.
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'XX',
+          building_names: [],
+          reason: 'unknown-ward request',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('XX');
+        // Critical: NOT set to null. Field absent so ward-fallback
+        // handles classification (and the seat surfaces as "unmigrated").
+        expect(seat.kindoo_site_id).toBeUndefined();
+      });
+
+      it('T-42: planAddMerge with unknown-ward scope leaves the new duplicate kindoo_site_id unset', async () => {
+        await seedManager();
+        await seedStake();
+        // No ward seeded for 'XX'.
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'XX',
+          building_names: ['XX Building'],
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants.length).toBe(1);
+        // Field absent on the new duplicate — same skip-with-warning
+        // policy as the new-seat-create path.
+        expect(seat.duplicate_grants[0]!.kindoo_site_id).toBeUndefined();
+      });
+
       it('add_temp primary match: extends primary building_names', async () => {
         await seedManager();
         await seedStake();

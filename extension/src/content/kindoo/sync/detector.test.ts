@@ -746,4 +746,236 @@ describe('detect', () => {
     expect(result.seatCount).toBe(0);
     expect(result.kindooCount).toBe(0);
   });
+
+  // ----- T-42 multi-site fan-out -----
+  //
+  // A Kindoo user whose Description spans home + foreign sites must
+  // surface on both site views (acceptance #1 + #2). The seat doc's
+  // primary lives on the home site, with a `duplicate_grants[]`
+  // entry on the foreign site — each side projects to its own
+  // expected (scope, type, callings, buildings).
+
+  it('T-42: ward+foreign-ward Description appears on both home and foreign sync views with no spurious drift', () => {
+    // Multi-site user: Bishop in Cordera (home) + Sunday School Teacher
+    // in Foothills (foreign). Seat carries the home primary + a foreign
+    // duplicate. Description carries both segments.
+    const multiSeat = seat({
+      member_canonical: 'multi@example.com',
+      member_email: 'multi@example.com',
+      member_name: 'Multi Site',
+      scope: 'CO',
+      type: 'auto',
+      callings: ['Sunday School Teacher'],
+      building_names: ['Cordera Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          building_names: ['Foothills Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+      ],
+    });
+    const multiKuser = kuser({
+      euid: 'e-multi',
+      userId: 'u-multi',
+      username: 'multi@example.com',
+      description: 'Cordera Ward (Sunday School Teacher) | Foothills Ward (Sunday School Teacher)',
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
+
+    // Home view: expects Cordera (rule 6248). The home segment matches
+    // the seat's home primary; no drift.
+    const homeResult = detect(
+      mixedInputs({
+        seats: [multiSeat],
+        kindooUsers: [multiKuser],
+        activeSite: { kind: 'home' },
+      }),
+    );
+    expect(homeResult.discrepancies).toEqual([]);
+    expect(homeResult.seatCount).toBe(1);
+    expect(homeResult.kindooCount).toBe(1);
+
+    // Foreign view: expects Foothills (rule 6249). The foreign segment
+    // matches the seat's foreign duplicate; no drift.
+    const foreignResult = detect(
+      mixedInputs({
+        seats: [multiSeat],
+        kindooUsers: [multiKuser],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(foreignResult.discrepancies).toEqual([]);
+    expect(foreignResult.seatCount).toBe(1);
+    expect(foreignResult.kindooCount).toBe(1);
+  });
+
+  it('T-42: stake+foreign-ward Description appears on both home (stake) and foreign-ward views', () => {
+    // Stake Clerk + Sunday School Teacher in Foothills (foreign). Seat:
+    // stake primary + foreign duplicate. Description carries both. Per
+    // operator-locked decision 2, stake-scope is home-only — so the
+    // home view sees the stake segment, the foreign view sees the
+    // foreign segment, and neither manufactures drift.
+    const multiSeat = seat({
+      member_canonical: 'sc@example.com',
+      member_email: 'sc@example.com',
+      member_name: 'Stake Clerk',
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Stake Clerk'],
+      building_names: ['Cordera Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          building_names: ['Foothills Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+      ],
+    });
+    const multiKuser = kuser({
+      euid: 'e-sc',
+      userId: 'u-sc',
+      username: 'sc@example.com',
+      description:
+        'Colorado Springs North Stake (Stake Clerk) | Foothills Ward (Sunday School Teacher)',
+      accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
+    });
+
+    // Home view: picks the stake segment (resolves to scope='stake')
+    // and matches the seat's stake-scope primary. No drift.
+    const homeResult = detect(
+      mixedInputs({
+        seats: [multiSeat],
+        kindooUsers: [multiKuser],
+        activeSite: { kind: 'home' },
+      }),
+    );
+    expect(homeResult.discrepancies).toEqual([]);
+    expect(homeResult.seatCount).toBe(1);
+    expect(homeResult.kindooCount).toBe(1);
+
+    // Foreign view: picks the Foothills segment and matches the seat's
+    // foreign duplicate. No drift.
+    const foreignResult = detect(
+      mixedInputs({
+        seats: [multiSeat],
+        kindooUsers: [multiKuser],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(foreignResult.discrepancies).toEqual([]);
+    expect(foreignResult.seatCount).toBe(1);
+    expect(foreignResult.kindooCount).toBe(1);
+  });
+
+  it('T-42: foreign-site duplicate makes a home-primary seat visible on the foreign view', () => {
+    // Seat's primary is on the home site but it carries a foreign-site
+    // duplicate (the new T-42 case). The foreign view should now see
+    // this seat — pre-T-42 the active-site filter looked at
+    // `seat.scope` alone and dropped it.
+    const multiSeat = seat({
+      member_canonical: 'multi@example.com',
+      member_email: 'multi@example.com',
+      scope: 'CO',
+      kindoo_site_id: null,
+      callings: ['Sunday School Teacher'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          building_names: ['Foothills Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+      ],
+    });
+    // Foreign-view: no Kindoo user yet → sba-only on the foreign side.
+    const result = detect(
+      mixedInputs({
+        seats: [multiSeat],
+        kindooUsers: [],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(result.discrepancies.map((d) => d.code)).toEqual(['sba-only']);
+    expect(result.discrepancies[0]!.canonical).toBe('multi@example.com');
+    // The projected SBA block reflects the foreign side, not the
+    // home-side primary.
+    expect(result.discrepancies[0]!.sba?.scope).toBe('FT');
+    expect(result.discrepancies[0]!.sba?.buildingNames).toEqual(['Foothills Building']);
+  });
+
+  it('T-42: two foreign wards on the same foreign site → projection unions both building_names', () => {
+    // Spec §15 line 373: "Two foreign wards on the same foreign site
+    // produce two `duplicate_grants[]` entries… the sync detector
+    // unions their `building_names` per-site when computing expected
+    // buildings." Fixture: a seat with the home primary on Cordera
+    // plus TWO foreign-site duplicates (Foothills + Mountain View),
+    // both bound to 'east-stake'. The foreign-view projection must
+    // include BOTH foreign buildings, not just one.
+    const wardsTwoForeign: Ward[] = [
+      ward('CO', 'Cordera Ward', 'Cordera Building'),
+      {
+        ...ward('FT', 'Foothills Ward', 'Foothills Building'),
+        kindoo_site_id: 'east-stake',
+      },
+      {
+        ...ward('MV', 'Mountain View Ward', 'Mountain View Building'),
+        kindoo_site_id: 'east-stake',
+      },
+    ];
+    const multiSeat = seat({
+      member_canonical: 'multi@example.com',
+      member_email: 'multi@example.com',
+      scope: 'CO',
+      kindoo_site_id: null,
+      callings: ['Sunday School Teacher'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          building_names: ['Foothills Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+        {
+          scope: 'MV',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          building_names: ['Mountain View Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+      ],
+    });
+    const result = detect({
+      stake: STAKE,
+      wards: wardsTwoForeign,
+      buildings: BUILDINGS,
+      seats: [multiSeat],
+      wardCallingTemplates: WARD_TEMPLATES,
+      stakeCallingTemplates: STAKE_TEMPLATES,
+      kindooUsers: [],
+      activeSite: { kind: 'foreign', siteId: 'east-stake' },
+    });
+    // Foreign view: sba-only with the union of BOTH foreign duplicates'
+    // buildings (Foothills + Mountain View).
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]!.code).toBe('sba-only');
+    expect(result.discrepancies[0]!.sba?.buildingNames.sort()).toEqual(
+      ['Foothills Building', 'Mountain View Building'].sort(),
+    );
+  });
 });

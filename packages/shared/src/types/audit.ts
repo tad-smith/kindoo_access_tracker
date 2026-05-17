@@ -34,7 +34,9 @@ export type AuditAction =
   | 'import_start'
   | 'import_end'
   | 'over_cap_warning'
-  | 'email_send_failed';
+  | 'email_send_failed'
+  // One-shot migration (T-42)
+  | 'migration_backfill_kindoo_site_id';
 
 /** Entity classes the audit log covers per stake. */
 export type AuditEntityType = 'seat' | 'request' | 'access' | 'kindooManager' | 'stake' | 'system';

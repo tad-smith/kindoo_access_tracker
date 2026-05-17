@@ -33,6 +33,7 @@ import { auditId, canonicalEmail } from '@kindoo/shared';
 import type {
   Access,
   AuditLog,
+  Building,
   CallingTemplate,
   ImportSummary,
   OverCapEntry,
@@ -171,8 +172,23 @@ async function runImporterCore(db: Firestore, stakeId: string): Promise<CoreResu
   for (const w of wards) {
     wardBuildings.set(w.ward_code, w.building_name ? [w.building_name] : []);
   }
+  // T-42: per-scope Kindoo site map. Stake → home (null); wards → their
+  // own `kindoo_site_id`. Drives `Seat.kindoo_site_id` derivation in
+  // the diff planner.
+  const siteByScope = new Map<string, string | null>();
+  siteByScope.set('stake', null);
+  for (const w of wards) {
+    siteByScope.set(w.ward_code, w.kindoo_site_id ?? null);
+  }
   const buildings = await loadBuildings(db, stakeId);
-  const stakeBuildings = buildings;
+  const stakeBuildings = buildings.map((b) => b.building_name);
+  // Stake-scope auto seats grant access to home-site buildings only
+  // (spec §15 Phase 1 policy). Foreign-site buildings live on a
+  // different Kindoo site's pool — the importer must not seed them
+  // onto stake-scope seats.
+  const stakeHomeBuildings = buildings
+    .filter((b) => b.kindoo_site_id == null)
+    .map((b) => b.building_name);
 
   const wardTpls = await loadCallingTemplates(db, stakeId, 'wardCallingTemplates');
   const stakeTpls = await loadCallingTemplates(db, stakeId, 'stakeCallingTemplates');
@@ -224,7 +240,14 @@ async function runImporterCore(db: Firestore, stakeId: string): Promise<CoreResu
     parsedRows: allRows,
     scopesSeen,
     current,
-    scopeMeta: { wardBuildings, stakeBuildings, wardCodes, templateIndexByScope },
+    scopeMeta: {
+      wardBuildings,
+      stakeBuildings,
+      stakeHomeBuildings,
+      wardCodes,
+      siteByScope,
+      templateIndexByScope,
+    },
   });
   const counters = await applyPlan(db, stakeId, current, plan);
 
@@ -246,9 +269,9 @@ async function loadWards(db: Firestore, stakeId: string): Promise<Ward[]> {
   return snap.docs.map((d) => d.data() as Ward);
 }
 
-async function loadBuildings(db: Firestore, stakeId: string): Promise<string[]> {
+async function loadBuildings(db: Firestore, stakeId: string): Promise<Building[]> {
   const snap = await db.collection(`stakes/${stakeId}/buildings`).get();
-  return snap.docs.map((d) => (d.data() as { building_name: string }).building_name);
+  return snap.docs.map((d) => d.data() as Building);
 }
 
 async function loadCallingTemplates(
@@ -390,7 +413,10 @@ async function applyPlan(
           type: 'auto',
           callings: w.seat.callings,
           building_names: w.seat.building_names,
+          kindoo_site_id: w.seat.kindoo_site_id,
           duplicate_grants: dupGrants,
+          // T-42 / T-43: denormalised mirror for Firestore CEL.
+          duplicate_scopes: dupGrants.map((g) => g.scope),
           sort_order: w.seat.sort_order,
           ...(isNew ? { created_at: now } : {}),
           last_modified_at: now,
@@ -416,6 +442,8 @@ async function applyPlan(
       await ref.set(
         {
           duplicate_grants: dupGrants,
+          // T-42 / T-43: keep the primitive mirror in sync.
+          duplicate_scopes: dupGrants.map((g) => g.scope),
           last_modified_at: now,
           last_modified_by: importerActor,
           lastActor: importerActor,

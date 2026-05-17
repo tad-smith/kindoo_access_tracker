@@ -355,6 +355,18 @@ function resolveAction(
     }
   }
 
+  // T-42 one-shot migration: writes stamped by `backfillKindooSiteId`
+  // surface under their own action so the migration's rows are
+  // filterable in the audit history (vs being lost in generic
+  // `update_seat` churn). Detection: `lastActor.canonical === 'Migration'`
+  // on a seat update.
+  if (ctx.entityType === 'seat' && before && after) {
+    const lastActor = after['lastActor'] as { canonical?: unknown } | undefined;
+    if (lastActor?.canonical === 'Migration') {
+      return 'migration_backfill_kindoo_site_id';
+    }
+  }
+
   if (!before) return CREATE_ACTION[ctx.entityType];
   if (!after) return DELETE_ACTION[ctx.entityType];
   return UPDATE_ACTION[ctx.entityType];

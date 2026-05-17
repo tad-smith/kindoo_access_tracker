@@ -44,7 +44,16 @@ const META = {
     ['BR', ['Briargate Building']],
   ]),
   stakeBuildings: ['Cordera Building', 'Briargate Building'],
+  // T-42: required. All buildings home-bound in the default fixture.
+  stakeHomeBuildings: ['Cordera Building', 'Briargate Building'],
   wardCodes: new Set(['CO', 'BR']),
+  // T-42: required. Every scope home in the default fixture.
+  siteByScope: new Map<string, string | null>([
+    ['stake', null],
+    ['CO', null],
+    ['BR', null],
+    ['ZZ', null],
+  ]),
   templateIndexByScope: TEMPLATE_INDEX_BY_SCOPE,
 };
 
@@ -384,6 +393,7 @@ describe('planDiff', () => {
         ...META,
         wardCodes: new Set(['CO', 'BR', 'XX']),
         wardBuildings: new Map([...META.wardBuildings, ['XX', ['XX Building']]]),
+        siteByScope: new Map([...META.siteByScope, ['XX', null] as [string, string | null]]),
         templateIndexByScope: new Map([...TEMPLATE_INDEX_BY_SCOPE, ['XX', buildTemplateIndex([])]]),
       };
       const plan = planDiff({

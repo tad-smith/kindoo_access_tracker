@@ -262,6 +262,9 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.callings).toEqual(['Ward Clerk']);
       expect(seat.building_names).toEqual(['Cordera Building']);
       expect(seat.duplicate_grants).toEqual([]);
+      // T-42 / T-43: server-maintained primitive mirror of
+      // `duplicate_grants[].scope` is always set, even when empty.
+      expect(seat.duplicate_scopes).toEqual([]);
       expect(seat.lastActor).toEqual({
         email: 'SyncActor:kindoo-only',
         canonical: 'SyncActor:kindoo-only',

@@ -190,11 +190,62 @@ function uniqueOrdered(a: string[], b: string[]): string[] {
  * `duplicate_grants[].building_names`. The add path needs the union
  * so the post-completion target rule set covers everything the user
  * is already entitled to, not just the primary grant's buildings.
+ *
+ * T-42: when `requestSiteId` is supplied, only grants whose
+ * `kindoo_site_id` resolves to that site contribute — the per-site
+ * Kindoo write should not pollute the active site with buildings
+ * that belong to a different Kindoo environment. Within-site
+ * duplicates (same site as the primary) contribute; parallel-site
+ * duplicates (different site) are excluded. `null` value or absent
+ * resolves to "home"; falls back to the seat's `scope` → ward
+ * `kindoo_site_id` for legacy seats still in the migration window.
+ *
+ * Returns the union, de-duplicated in insertion order.
  */
-function currentSeatBuildings(seat: Seat | null): string[] {
+function currentSeatBuildings(
+  seat: Seat | null,
+  requestSiteId?: string | null,
+  wards?: Ward[],
+): string[] {
   if (!seat) return [];
-  const dupBuildings = (seat.duplicate_grants ?? []).flatMap((d) => d.building_names ?? []);
-  return uniqueOrdered(seat.building_names ?? [], dupBuildings);
+  if (requestSiteId === undefined) {
+    // Pre-T-42 behaviour: union every grant. Tests that don't supply
+    // a site id rely on this; the spec change is opt-in.
+    const dupBuildings = (seat.duplicate_grants ?? []).flatMap((d) => d.building_names ?? []);
+    return uniqueOrdered(seat.building_names ?? [], dupBuildings);
+  }
+  // T-42: `wards` is required whenever `requestSiteId` is supplied —
+  // the ward-fallback path needs the catalogue to resolve legacy
+  // (pre-migration) grants. A caller that forgets `wards` would
+  // silently classify every non-stake legacy grant as home, leaking
+  // foreign-site buildings into the per-site write. Fail loudly
+  // instead.
+  if (!wards) {
+    throw new Error(
+      'currentSeatBuildings: `wards` is required when `requestSiteId` is provided (T-42 per-site filter relies on the ward fallback for legacy seats).',
+    );
+  }
+  const wardSite = (wardCode: string): string | null => {
+    if (wardCode === 'stake') return null;
+    const ward = wards.find((w) => w.ward_code === wardCode);
+    return ward ? (ward.kindoo_site_id ?? null) : null;
+  };
+  const grantSite = (
+    grantKindooSiteId: string | null | undefined,
+    grantScope: string,
+  ): string | null => {
+    if (grantKindooSiteId !== undefined && grantKindooSiteId !== null) {
+      return grantKindooSiteId;
+    }
+    if (grantKindooSiteId === null) return null;
+    return wardSite(grantScope);
+  };
+  const includePrimary = grantSite(seat.kindoo_site_id, seat.scope) === requestSiteId;
+  const primaryBuildings = includePrimary ? (seat.building_names ?? []) : [];
+  const dupBuildings = (seat.duplicate_grants ?? [])
+    .filter((d) => grantSite(d.kindoo_site_id, d.scope) === requestSiteId)
+    .flatMap((d) => d.building_names ?? []);
+  return uniqueOrdered(primaryBuildings, dupBuildings);
 }
 
 /**
@@ -625,8 +676,17 @@ export async function provisionAddOrChange(
   const fetchImpl = args.deps?.fetchImpl;
 
   // ---- Compute target state ----
+  // T-42: limit the union to grants on the request's target site so
+  // the per-site Kindoo write doesn't pollute the active site with
+  // buildings that belong to another Kindoo environment. Stake-scope
+  // requests target home; ward-scope requests target the ward's
+  // `kindoo_site_id` (home wards resolve to `null`).
+  const requestSiteId: string | null =
+    args.request.scope === 'stake'
+      ? null
+      : (args.wards.find((w) => w.ward_code === args.request.scope)?.kindoo_site_id ?? null);
   const requestBuildings = buildingsForRequest(args.request, args.wards);
-  const seatBuildings = currentSeatBuildings(args.seat);
+  const seatBuildings = currentSeatBuildings(args.seat, requestSiteId, args.wards);
   const targetBuildings = uniqueOrdered(seatBuildings, requestBuildings);
   const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
   const targetDescription = synthesizeDescription(
@@ -833,30 +893,60 @@ export interface ProvisionRemoveArgs {
  *
  * Result is de-duplicated in stable order so downstream consumers
  * (RID mapping, note text) get a predictable list.
+ *
+ * T-42: per-site filtering. The remove orchestrator runs on a single
+ * Kindoo session (the request's target site); the write should only
+ * include grants whose `kindoo_site_id` resolves to that site. Without
+ * this, removing the primary of a multi-site seat would leak the
+ * foreign duplicate's buildings into the active environment.
  */
-function computePostRemovalBuildings(seat: Seat | null, request: AccessRequest): string[] {
+function computePostRemovalBuildings(
+  seat: Seat | null,
+  request: AccessRequest,
+  wards: Ward[],
+  requestSiteId: string | null,
+): string[] {
   if (!seat) return [];
+  const wardSite = (wardCode: string): string | null => {
+    if (wardCode === 'stake') return null;
+    const ward = wards.find((w) => w.ward_code === wardCode);
+    return ward ? (ward.kindoo_site_id ?? null) : null;
+  };
+  const grantSite = (
+    grantKindooSiteId: string | null | undefined,
+    grantScope: string,
+  ): string | null => {
+    if (grantKindooSiteId !== undefined && grantKindooSiteId !== null) {
+      return grantKindooSiteId;
+    }
+    if (grantKindooSiteId === null) return null;
+    return wardSite(grantScope);
+  };
   const primaryBuildings = seat.building_names ?? [];
+  const primaryOnSite = grantSite(seat.kindoo_site_id, seat.scope) === requestSiteId;
+  const filteredDup = (d: DuplicateGrant): string[] =>
+    grantSite(d.kindoo_site_id, d.scope) === requestSiteId ? (d.building_names ?? []) : [];
 
   if (seat.scope === request.scope) {
     const duplicates = seat.duplicate_grants ?? [];
     if (duplicates.length === 0) return [];
     const [promoted, ...rest] = duplicates;
-    return uniqueOrdered(
-      promoted!.building_names ?? [],
-      rest.flatMap((d) => d.building_names ?? []),
-    );
+    // Only contribute the promoted duplicate's buildings when its
+    // site matches; same filter for the remaining duplicates.
+    const promotedBuildings =
+      grantSite(promoted!.kindoo_site_id, promoted!.scope) === requestSiteId
+        ? (promoted!.building_names ?? [])
+        : [];
+    return uniqueOrdered(promotedBuildings, rest.flatMap(filteredDup));
   }
 
   const duplicates = seat.duplicate_grants ?? [];
   const matched = duplicates.some((d) => d.scope === request.scope);
   if (!matched) {
     // Stale request — scope no longer present in the seat. Building
-    // set unchanged.
-    return uniqueOrdered(
-      primaryBuildings,
-      duplicates.flatMap((d) => d.building_names ?? []),
-    );
+    // set unchanged on the active site (primary if on-site +
+    // surviving duplicates on-site).
+    return uniqueOrdered(primaryOnSite ? primaryBuildings : [], duplicates.flatMap(filteredDup));
   }
   let dropped = false;
   const surviving = duplicates.filter((d) => {
@@ -866,10 +956,7 @@ function computePostRemovalBuildings(seat: Seat | null, request: AccessRequest):
     }
     return true;
   });
-  return uniqueOrdered(
-    primaryBuildings,
-    surviving.flatMap((d) => d.building_names ?? []),
-  );
+  return uniqueOrdered(primaryOnSite ? primaryBuildings : [], surviving.flatMap(filteredDup));
 }
 
 /**
@@ -900,7 +987,20 @@ export async function provisionRemove(args: ProvisionRemoveArgs): Promise<Provis
   const fetchImpl = args.deps?.fetchImpl;
 
   // ---- Compute target state ----
-  const targetBuildings = computePostRemovalBuildings(args.seat, args.request);
+  // T-42: derive the request's target site so the per-site write
+  // only includes buildings on that site. Pre-fix this leaked
+  // foreign-site duplicate buildings into the active environment
+  // when removing the primary of a multi-site seat.
+  const requestSiteId: string | null =
+    args.request.scope === 'stake'
+      ? null
+      : (args.wards.find((w) => w.ward_code === args.request.scope)?.kindoo_site_id ?? null);
+  const targetBuildings = computePostRemovalBuildings(
+    args.seat,
+    args.request,
+    args.wards,
+    requestSiteId,
+  );
   const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
 
   const env = findEnvironment(args.envs, args.session);
@@ -919,10 +1019,23 @@ export async function provisionRemove(args: ProvisionRemoveArgs): Promise<Provis
   }
 
   // ---- Reconcile rule set ----
+  // T-42: per-site narrowing also applies to revokes. The remove
+  // orchestrator runs on a single Kindoo session; rule IDs for
+  // buildings on OTHER Kindoo sites do not belong to this session
+  // and must not be touched. Without this filter, the home session
+  // would try to revoke a foreign-site rule from a multi-site seat
+  // (the foreign rule lives in a different Kindoo environment and
+  // the API call would either fail or, worse, hit a same-numbered
+  // rule in the home environment).
+  const activeSiteRuleIds = new Set(
+    args.buildings
+      .filter((b) => (b.kindoo_site_id ?? null) === requestSiteId && b.kindoo_rule)
+      .map((b) => b.kindoo_rule!.rule_id),
+  );
   const currentRIDs = existing.accessSchedules.map((s) => s.ruleId);
   const targetSet = new Set(targetRIDs);
   const currentSet = new Set(currentRIDs);
-  const toRevoke = currentRIDs.filter((id) => !targetSet.has(id));
+  const toRevoke = currentRIDs.filter((id) => !targetSet.has(id) && activeSiteRuleIds.has(id));
   const toAdd = targetRIDs.filter((id) => !currentSet.has(id));
 
   // Drop removed rules first (per-rule revoke — `saveAccessRule` can't
@@ -1103,13 +1216,19 @@ export async function provisionEdit(args: ProvisionEditArgs): Promise<ProvisionR
   const postEditSeat = args.seat
     ? applyEditToSeat(args.seat, req.scope, targetType, editFields)
     : null;
+  // T-42: per-site target. Edit requests target the request's scope's
+  // site; we union only grants whose `kindoo_site_id` matches.
+  const requestSiteId: string | null =
+    req.scope === 'stake'
+      ? null
+      : (args.wards.find((w) => w.ward_code === req.scope)?.kindoo_site_id ?? null);
   // If a slot matched, take the post-edit composite. If no slot
   // matched (stale request, or no seat) fall back to the pre-edit
   // seat ∪ request — the Kindoo write is a benign add and the
   // callable will reject the request authoritatively.
   const targetBuildings = postEditSeat
-    ? currentSeatBuildings(postEditSeat)
-    : uniqueOrdered(currentSeatBuildings(args.seat), requestBuildings);
+    ? currentSeatBuildings(postEditSeat, requestSiteId, args.wards)
+    : uniqueOrdered(currentSeatBuildings(args.seat, requestSiteId, args.wards), requestBuildings);
   const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
 
   const env = findEnvironment(args.envs, args.session);

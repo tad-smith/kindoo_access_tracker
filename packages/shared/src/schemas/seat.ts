@@ -20,6 +20,11 @@ export const duplicateGrantSchema = z.object({
   start_date: isoDateSchema.optional(),
   end_date: isoDateSchema.optional(),
   building_names: z.array(z.string()).optional(),
+  // T-42: `null` / absent means home site; a string is a doc id under
+  // `stakes/{stakeId}/kindooSites/`. Required on parallel-site
+  // duplicates (those whose value differs from the seat's primary);
+  // within-site duplicates may still leave it unset.
+  kindoo_site_id: z.string().nullable().optional(),
   detected_at: timestampLikeSchema,
 });
 
@@ -40,7 +45,16 @@ export const seatSchema = z.object({
 
   sort_order: z.number().nullable().optional(),
 
+  // T-42: same shape as the ward/building convention. `null` / absent
+  // means home site. Top-level reflects the primary grant's site;
+  // duplicates carry their own `kindoo_site_id`.
+  kindoo_site_id: z.string().nullable().optional(),
+
   duplicate_grants: z.array(duplicateGrantSchema),
+  // T-42 / T-43: denormalised mirror of `duplicate_grants[].scope` —
+  // Firestore CEL needs a primitive-string array to use `in` /
+  // `hasAny` predicates. Server-maintained; clients never write it.
+  duplicate_scopes: z.array(z.string()).optional(),
 
   created_at: timestampLikeSchema,
   last_modified_at: timestampLikeSchema,

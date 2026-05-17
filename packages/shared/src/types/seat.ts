@@ -15,10 +15,19 @@ import type { TimestampLike } from './userIndex.js';
 export type SeatType = 'auto' | 'manual' | 'temp';
 
 /**
- * Informational duplicate-grant entry. Captures a cross-scope or
- * cross-type grant that the import / request-completion flow saw but
- * did not promote to primary. Surfaces in the manager UI as a
- * collision badge.
+ * Informational duplicate-grant entry. Captures an additional grant
+ * the import / request-completion flow saw but did not promote to
+ * primary. Two kinds, distinguished by `kindoo_site_id`:
+ *
+ *   - Within-site priority loser — same `kindoo_site_id` as the seat's
+ *     primary grant. Informational; the primary's write already covers
+ *     access on that site.
+ *   - Parallel-site grant — different `kindoo_site_id` from the
+ *     primary. A legitimate independent grant on another Kindoo site
+ *     that needs its own write to that site's Kindoo environment
+ *     (T-42).
+ *
+ * Surfaces in the manager UI as a collision badge.
  */
 export type DuplicateGrant = {
   scope: string;
@@ -30,12 +39,23 @@ export type DuplicateGrant = {
   /** ISO date `YYYY-MM-DD` — temp grants only. */
   end_date?: string;
   /**
-   * Buildings recorded against this duplicate grant. Populated for
-   * manual/temp duplicates that originated from a request-completion
-   * merge (extension v2.2 auto-merge path). Auto duplicates from the
-   * importer don't set this — they inherit buildings from the ward.
+   * Buildings recorded against this duplicate grant. Parallel-site
+   * duplicates (those whose `kindoo_site_id` differs from the seat's
+   * primary) MUST set this — the per-site write to Kindoo needs the
+   * site's own building set. Within-site duplicates (same
+   * `kindoo_site_id` as primary) may still leave it unset and inherit
+   * from the primary's ward — matching the pre-T-42 importer behaviour.
+   * Manual/temp duplicates that originated from a request-completion
+   * merge (extension v2.2 auto-merge path) populate this.
    */
   building_names?: string[];
+  /**
+   * Kindoo site the grant lives on. `null` (or field absent) means the
+   * home site; a string value points at a doc ID under
+   * `stakes/{stakeId}/kindooSites/`. Mirrors the ward / building
+   * convention. T-42.
+   */
+  kindoo_site_id?: string | null;
   detected_at: TimestampLike;
 };
 
@@ -81,8 +101,34 @@ export type Seat = {
    */
   sort_order?: number | null;
 
+  // ----- Kindoo site -----
+  /**
+   * Kindoo site the seat's primary grant lives on. `null` (or field
+   * absent) means the home site; a string value points at a doc ID
+   * under `stakes/{stakeId}/kindooSites/`. Stake-scope primary grants
+   * resolve to home (spec §15 Phase 1 policy); ward-scope primary
+   * grants take the ward's own `kindoo_site_id`. T-42.
+   */
+  kindoo_site_id?: string | null;
+
   // ----- Duplicates (informational) -----
   duplicate_grants: DuplicateGrant[];
+  /**
+   * Denormalised mirror of `duplicate_grants[].scope`. Firestore CEL
+   * rules cannot project `[*].field` over an array of objects — the
+   * Phase B rules read predicates (bishopric / stake reading seats
+   * whose duplicate scopes match their authority) use `scope in
+   * duplicate_scopes` against this primitive array. T-42 / T-43.
+   *
+   * Server-maintained — clients never write this field. Every server
+   * seat writer (importer, `markRequestComplete`,
+   * `removeSeatOnRequestComplete`, migration) keeps it in sync with
+   * `duplicate_grants[]`. Always set, even when empty.
+   *
+   * Optional only for the migration window; missing → `[]` at read
+   * time, and the migration backfills the field on every existing seat.
+   */
+  duplicate_scopes?: string[];
 
   // ----- Bookkeeping -----
   created_at: TimestampLike;

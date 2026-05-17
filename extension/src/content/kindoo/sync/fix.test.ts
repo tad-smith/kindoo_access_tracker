@@ -58,6 +58,7 @@ function ctxWith(overrides: Partial<DispatchContext> = {}): DispatchContext {
     stake: stake(),
     wards: [ward('CO', 'Cordera Ward', 'Cordera Building')],
     buildings: [building('Cordera Building', 6248)],
+    kindooSites: [],
     envs: [env()],
     session: { token: 't', eid: 27994 },
     callSyncApplyFix: vi.fn().mockResolvedValue({ success: true, seatId: 'a@example.com' }),
@@ -434,6 +435,47 @@ describe('applyFix', () => {
     expect(outcome).toEqual({ ok: true });
     expect(ctx.syncProvisionFromSeat).toHaveBeenCalledTimes(1);
     expect(ctx.callSyncApplyFix).not.toHaveBeenCalled();
+  });
+
+  it('T-42: threads kindooSites from the dispatch context through to syncProvisionFromSeat', async () => {
+    // The Kindoo-side fix path must pass `kindooSites` so the
+    // orchestrator's `unionSeatBuildings` per-site filter can resolve
+    // the active session's site and exclude parallel-site duplicate
+    // buildings from the write. Without this, a multi-site seat
+    // surfaced on the Sync drift report would push foreign-site
+    // buildings into the active environment.
+    const kindooSites = [
+      {
+        id: 'east-stake',
+        display_name: 'East Stake',
+        kindoo_expected_site_name: 'East Stake',
+        kindoo_eid: 4321,
+        created_at: { seconds: 0, nanoseconds: 0 },
+        last_modified_at: { seconds: 0, nanoseconds: 0 },
+        lastActor: { email: 'sys', canonical: 'sys' },
+      },
+    ] as unknown as DispatchContext['kindooSites'];
+    const provisionMock = vi.fn().mockResolvedValue({
+      kindoo_uid: 'u1',
+      action: 'invited',
+      note: 'ok',
+    });
+    const ctx = ctxWith({ kindooSites, syncProvisionFromSeat: provisionMock });
+    const d = discrepancy({
+      code: 'sba-only',
+      sba: {
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Sunday School Teacher'],
+        buildingNames: ['Cordera Building'],
+      },
+      kindoo: null,
+    });
+    const action = fixActionsFor(d)[0]!;
+    await applyFix(d, action, ctx);
+    expect(provisionMock).toHaveBeenCalledTimes(1);
+    const callArgs = provisionMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(callArgs['kindooSites']).toBe(kindooSites);
   });
 
   it('Kindoo-side action wraps a thrown orchestrator error as a flat error', async () => {
