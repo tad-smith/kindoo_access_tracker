@@ -53,6 +53,6 @@ jobs:
           claude_args: |
             --model claude-opus-4-7
             --effort max
-            --max-turns 45
+            --max-turns 90
             --allowedTools "Bash,Read,Grep,Glob"
             --disallowedTools "Edit,Write,Bash(git push:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr edit:*),WebSearch"
