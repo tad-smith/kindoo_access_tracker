@@ -903,4 +903,85 @@ describe('SyncPanel', () => {
     expect(screen.queryByTestId('sba-sync-report')).toBeNull();
     expect(screen.queryByTestId('sba-sync-summary')).toBeNull();
   });
+
+  // Multi-site rule-fetch scoping. With multiple SBA buildings spread
+  // across home + foreign sites, `collectRuleIds` must filter by the
+  // active site's `kindoo_site_id` — otherwise the home session issues
+  // foreign rule_ids against the home EID (and vice-versa) and Kindoo
+  // returns HTTP 303 ObjectNotFound, which is the original Sync
+  // failure for multi-site managers.
+  it('only fetches rule door maps for buildings on the active site', async () => {
+    // Foreign session; bundle carries one home building + one foreign
+    // building, each with its own rule_id. The foreign rule must be
+    // fetched; the home rule must NOT be.
+    readKindooSessionMock.mockReturnValue({
+      ok: true,
+      session: { token: 'sess', eid: 30000 },
+    });
+    const b = bundle();
+    (b.kindooSites as unknown[]).push({
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake',
+      kindoo_eid: 30000,
+    } as never);
+    // Home building keeps the default kindoo_site_id (absent → home);
+    // add a foreign building tagged to the east-stake site.
+    (b.buildings as unknown[]).push({
+      building_id: 'foothills',
+      building_name: 'Foothills Building',
+      kindoo_rule: { rule_id: 9999, rule_name: 'Foothills Doors' },
+      kindoo_site_id: 'east-stake',
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+
+    // The single buildRuleDoorMap call carries only the foreign rule_id.
+    expect(buildRuleDoorMapMock).toHaveBeenCalledTimes(1);
+    const ruleIdsArg = buildRuleDoorMapMock.mock.calls[0]![2] as number[];
+    expect(ruleIdsArg).toEqual([9999]);
+    expect(ruleIdsArg).not.toContain(6248);
+
+    // The enrichment receives the foreign-filtered buildings only.
+    expect(enrichUsersWithDerivedBuildingsMock).toHaveBeenCalledTimes(1);
+    const buildingsArg = enrichUsersWithDerivedBuildingsMock.mock.calls[0]![4] as Array<{
+      building_id: string;
+    }>;
+    expect(buildingsArg.map((x) => x.building_id)).toEqual(['foothills']);
+  });
+
+  it('on home session, fetches only home rule_ids (excludes foreign buildings)', async () => {
+    // Inverse of above — default session is home (eid 27994); add a
+    // foreign building that must be excluded from rule-fetch + enrichment.
+    const b = bundle();
+    (b.kindooSites as unknown[]).push({
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake',
+      kindoo_eid: 30000,
+    } as never);
+    (b.buildings as unknown[]).push({
+      building_id: 'foothills',
+      building_name: 'Foothills Building',
+      kindoo_rule: { rule_id: 9999, rule_name: 'Foothills Doors' },
+      kindoo_site_id: 'east-stake',
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+
+    expect(buildRuleDoorMapMock).toHaveBeenCalledTimes(1);
+    const ruleIdsArg = buildRuleDoorMapMock.mock.calls[0]![2] as number[];
+    expect(ruleIdsArg).toEqual([6248]);
+    expect(ruleIdsArg).not.toContain(9999);
+  });
 });

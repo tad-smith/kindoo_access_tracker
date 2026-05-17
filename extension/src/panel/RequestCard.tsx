@@ -77,7 +77,7 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
         message:
           sessionResult.error === 'no-token'
             ? 'Sign into Kindoo first, then retry.'
-            : 'Kindoo session not ready. Refresh web.kindoo.tech and retry.',
+            : "Open a specific Kindoo site (click into one from the My Sites list) and retry. The extension can't tell which site you're working on otherwise.",
       });
       return;
     }

@@ -11,8 +11,9 @@
 //                         an empty diff and the panel surfaces an
 //                         empty-state recovery message.
 //
-// Pure function. The active EID comes from
-// `localStorage.state.sites.ids[0]` via `content/kindoo/auth.ts`.
+// Pure function. The active EID comes from `readActiveEidFromDom`
+// (DOM scrape) via `content/kindoo/auth.ts` — `localStorage` does not
+// reliably carry the active site.
 
 import type { KindooSite, Stake } from '@kindoo/shared';
 
