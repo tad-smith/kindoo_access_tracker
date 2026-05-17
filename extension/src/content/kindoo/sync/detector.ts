@@ -9,6 +9,7 @@
 import { canonicalEmail } from '@kindoo/shared';
 import type {
   Building,
+  DuplicateGrant,
   Seat,
   Stake,
   StakeCallingTemplate,
@@ -16,7 +17,12 @@ import type {
   WardCallingTemplate,
 } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
-import { parseDescription, pickPrimarySegment, type ParsedDescription } from './parser';
+import {
+  parseDescription,
+  pickPrimarySegment,
+  type ParsedDescription,
+  type ParsedSegment,
+} from './parser';
 import {
   buildCallingTemplateSets,
   classifySegment,
@@ -166,6 +172,148 @@ function toSbaBlock(seat: Seat): SbaBlock {
 }
 
 /**
+ * T-42: a seat's "view" onto one Kindoo site. The detector compares
+ * Kindoo's per-site state against this projection, not against the
+ * seat's primary fields directly — a seat whose primary lives on
+ * another site can still own a grant on the active site through a
+ * `duplicate_grants[]` entry.
+ *
+ * Source of truth resolution:
+ *   - The seat's primary contributes when its `kindoo_site_id`
+ *     matches the active site.
+ *   - Every `duplicate_grants[]` entry whose `kindoo_site_id` matches
+ *     contributes too.
+ *   - Across contributing grants, the `scope` is taken from the
+ *     first contributor (primary if it's there, else the first
+ *     same-site duplicate by stable order). `type` comes from the
+ *     same. `building_names` is the union across all contributors.
+ *   - `callings` carries the per-scope callings of the first
+ *     contributor (today's behaviour; segment fan-out at the Kindoo
+ *     side classifies one calling list, so the SBA side mirrors).
+ *
+ * Returns `null` when no grant on the seat targets the active site —
+ * the detector treats that as "this seat doesn't exist on this site"
+ * and the seat won't surface in either an sba-only or a mismatch row
+ * for this view.
+ */
+function projectSeatForSite(
+  seat: Seat,
+  wards: Ward[],
+  activeSite: ActiveSite | undefined,
+): SbaBlock | null {
+  if (!activeSite || activeSite.kind === 'unknown') return null;
+  const wardSite = (wardCode: string): string | null => {
+    if (wardCode === 'stake') return null;
+    const ward = wards.find((w) => w.ward_code === wardCode);
+    return ward ? (ward.kindoo_site_id ?? null) : null;
+  };
+  // Match by seat-level field when present; fall back to scope→ward
+  // lookup so legacy seats (pre-migration) still classify.
+  const grantSite = (
+    grantKindooSiteId: string | null | undefined,
+    grantScope: string,
+  ): string | null => {
+    if (grantKindooSiteId !== undefined && grantKindooSiteId !== null) {
+      return grantKindooSiteId;
+    }
+    if (grantKindooSiteId === null) return null;
+    return wardSite(grantScope);
+  };
+
+  const wantSiteId: string | null = activeSite.kind === 'home' ? null : activeSite.siteId;
+
+  type Contributor = {
+    scope: string;
+    type: Seat['type'];
+    callings: string[];
+    reason: string | undefined;
+    buildings: string[];
+  };
+  const contributors: Contributor[] = [];
+  // Primary first (preserves "primary wins on scope/type" when it
+  // matches the active site).
+  if (grantSite(seat.kindoo_site_id, seat.scope) === wantSiteId) {
+    contributors.push({
+      scope: seat.scope,
+      type: seat.type,
+      callings: seat.callings ?? [],
+      reason: seat.reason,
+      buildings: seat.building_names ?? [],
+    });
+  }
+  for (const dup of seat.duplicate_grants ?? []) {
+    if (grantSite(dup.kindoo_site_id, dup.scope) !== wantSiteId) continue;
+    contributors.push({
+      scope: dup.scope,
+      type: dup.type,
+      callings: dup.callings ?? [],
+      reason: dup.reason,
+      // Within-site duplicates may leave `building_names` unset and
+      // inherit from the ward's `building_name`. Parallel-site
+      // duplicates always carry their own `building_names`.
+      buildings: dup.building_names ?? wardBuildingsForScope(dup.scope, wards),
+    });
+  }
+  if (contributors.length === 0) return null;
+  const first = contributors[0]!;
+  const unioned: string[] = [];
+  const seen = new Set<string>();
+  for (const c of contributors) {
+    for (const b of c.buildings) {
+      if (seen.has(b)) continue;
+      seen.add(b);
+      unioned.push(b);
+    }
+  }
+  return {
+    scope: first.scope,
+    type: first.type,
+    callings: first.callings,
+    reason: first.reason,
+    buildingNames: unioned,
+  };
+}
+
+/** Lookup ward → its declared `building_name` (single string) → array
+ *  for downstream union math. Returns an empty array when the ward
+ *  isn't in the catalogue or carries no building. */
+function wardBuildingsForScope(scope: string, wards: Ward[]): string[] {
+  if (scope === 'stake') return [];
+  const w = wards.find((x) => x.ward_code === scope);
+  if (!w || !w.building_name) return [];
+  return [w.building_name];
+}
+
+/**
+ * T-42: pick the parsed segment whose scope's Kindoo site matches the
+ * active site. Mirrors `pickPrimarySegment`'s `prefer auto > stake >
+ * ward-alpha` tiebreaker but pre-filters by site. Returns `null` when
+ * no segment resolves to the active site.
+ */
+function pickSegmentForSite(
+  parsed: ParsedDescription,
+  sets: CallingTemplateSets,
+  stake: Stake,
+  wards: Ward[],
+  activeSite: ActiveSite | undefined,
+): ParsedSegment | null {
+  if (!activeSite || activeSite.kind === 'unknown') return null;
+  const wantSiteId: string | null = activeSite.kind === 'home' ? null : activeSite.siteId;
+  const segmentSite = (segment: ParsedSegment): string | null | undefined => {
+    if (!segment.resolvedScope || segment.scope === null) return undefined;
+    if (segment.scope === 'stake') return null; // stake-scope is home-only.
+    const w = wards.find((x) => x.ward_code === segment.scope);
+    return w ? (w.kindoo_site_id ?? null) : undefined;
+  };
+  const filtered = parsed.segments.filter((s) => segmentSite(s) === wantSiteId);
+  if (filtered.length === 0) return null;
+  // Reuse `pickPrimarySegment`'s tiebreaker by wrapping the filter in
+  // a ParsedDescription shell (`raw` / `unparseable` aren't used by
+  // the picker).
+  return pickPrimarySegment({ segments: filtered, unparseable: false, raw: parsed.raw }, sets);
+}
+
+/**
  * Map Kindoo rule IDs back to SBA building names via
  * `building.kindoo_rule.rule_id`. Rules with no matching SBA building
  * surface as `'(unknown rule X)'` for the report.
@@ -213,10 +361,17 @@ export function detect(inputs: DetectInputs): DetectResult {
   );
 
   // Active-site filter: scope the union of (seats, kindoo users) to
-  // wards belonging to the active Kindoo site. `unknown` returns an
+  // grants belonging to the active Kindoo site. `unknown` returns an
   // empty diff up front (the panel renders an empty-state recovery
-  // message instead). `home` / `foreign` build a ward_code allow-set
-  // and filter both sides through it.
+  // message instead).
+  //
+  // T-42: per-site fan-out. A seat is visible on the active site when
+  // ANY of (primary, duplicate_grants[]) targets that site; a Kindoo
+  // user is visible on the active site when ANY parsed segment
+  // resolves to a scope on that site. Pre-T-42 the active-site filter
+  // keyed off the seat's primary scope and the parsed primary segment
+  // alone; that collapsed a multi-site Description down to one site
+  // and lost the user's visibility on the other site.
   if (inputs.activeSite && inputs.activeSite.kind === 'unknown') {
     return {
       discrepancies: [],
@@ -224,38 +379,65 @@ export function detect(inputs: DetectInputs): DetectResult {
       kindooCount: 0,
     };
   }
-  const activeWardCodes = computeActiveWardCodes(inputs.wards, inputs.activeSite);
-  const stakeAllowed = !inputs.activeSite || inputs.activeSite.kind === 'home';
-  const filteredSeats = filterSeatsByActiveSite(inputs.seats, activeWardCodes, stakeAllowed);
+
+  // Project each seat onto the active site (primary if its
+  // `kindoo_site_id` matches; else any same-site duplicate). Seats
+  // with no grant on the active site are filtered out — they belong
+  // to a different site's manager view.
+  type ProjectedSeat = { seat: Seat; sbaBlock: SbaBlock };
+  const projectedSeats: ProjectedSeat[] = [];
+  for (const seat of inputs.seats) {
+    if (!inputs.activeSite) {
+      // No active-site context — preserve pre-T-42 behaviour (don't
+      // filter; project against the seat's primary fields directly).
+      projectedSeats.push({ seat, sbaBlock: toSbaBlock(seat) });
+      continue;
+    }
+    const projected = projectSeatForSite(seat, inputs.wards, inputs.activeSite);
+    if (projected) projectedSeats.push({ seat, sbaBlock: projected });
+  }
   const filteredKindooUsers = filterKindooUsersByActiveSite(
     inputs.kindooUsers,
     inputs.stake,
     inputs.wards,
     sets,
-    activeWardCodes,
-    stakeAllowed,
+    inputs.activeSite,
   );
 
-  const seatsByEmail = indexSeats(filteredSeats);
+  const seatsByEmail = new Map<string, ProjectedSeat>();
+  for (const p of projectedSeats) seatsByEmail.set(p.seat.member_canonical, p);
   const kindooByEmail = indexKindooUsers(filteredKindooUsers);
 
   const allCanonical = new Set<string>([...seatsByEmail.keys(), ...kindooByEmail.keys()]);
   const discrepancies: Discrepancy[] = [];
 
+  // T-42: when an active-site is set, primary segment for the Kindoo
+  // side is the one whose scope resolves to that site (not whichever
+  // segment wins the unfiltered `pickPrimarySegment` race). The
+  // SBA-side `sbaBlock` is already projected onto the active site.
+  const pickRelevantSegment = (parsed: ParsedDescription): ParsedSegment | null => {
+    if (inputs.activeSite) {
+      return pickSegmentForSite(parsed, sets, inputs.stake, inputs.wards, inputs.activeSite);
+    }
+    return pickPrimarySegment(parsed, sets);
+  };
+
   for (const canon of allCanonical) {
-    const seat = seatsByEmail.get(canon) ?? null;
+    const projected = seatsByEmail.get(canon) ?? null;
+    const seat = projected?.seat ?? null;
+    const sbaBlock = projected?.sbaBlock ?? null;
     const kuser = kindooByEmail.get(canon) ?? null;
     const displayEmail = kuser?.username ?? seat?.member_email ?? canon;
 
     // 1. sba-only — seat present, no Kindoo user.
-    if (seat && !kuser) {
+    if (seat && sbaBlock && !kuser) {
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'sba-only',
         severity: 'drift',
         reason: 'SBA has a seat for this member, but the user is not present in Kindoo.',
-        sba: toSbaBlock(seat),
+        sba: sbaBlock,
         kindoo: null,
       });
       continue;
@@ -264,7 +446,7 @@ export function detect(inputs: DetectInputs): DetectResult {
     // 2. kindoo-only — Kindoo user present, no SBA seat.
     if (!seat && kuser) {
       const parsed = parseDescription(kuser.description, inputs.stake, inputs.wards);
-      const primary = pickPrimarySegment(parsed, sets);
+      const primary = pickRelevantSegment(parsed);
       const intended = primary ? classifySegment(primary, kuser.isTempUser, sets) : null;
       discrepancies.push({
         canonical: canon,
@@ -279,7 +461,7 @@ export function detect(inputs: DetectInputs): DetectResult {
     }
 
     // From here both sides exist.
-    if (!seat || !kuser) continue;
+    if (!seat || !sbaBlock || !kuser) continue;
 
     const parsed = parseDescription(kuser.description, inputs.stake, inputs.wards);
 
@@ -292,22 +474,23 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'review',
         reason:
           "Kindoo description does not match the 'Scope (Calling)' convention; cannot classify intended seat shape.",
-        sba: toSbaBlock(seat),
+        sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
       });
       continue;
     }
 
-    const primary = pickPrimarySegment(parsed, sets);
+    const primary = pickRelevantSegment(parsed);
     if (!primary) {
-      // Shouldn't be reachable when unparseable=false, but be defensive.
+      // Shouldn't be reachable when unparseable=false and the filter
+      // already kept this user, but be defensive.
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'kindoo-unparseable',
         severity: 'review',
         reason: 'Kindoo description has no resolvable primary segment.',
-        sba: toSbaBlock(seat),
+        sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
       });
       continue;
@@ -321,43 +504,42 @@ export function detect(inputs: DetectInputs): DetectResult {
     // review so the operator can add the extras to the SBA seat.
     if (intended.reviewMixed) {
       const extras = intended.freeText || 'non-auto';
-      const sbaCallings =
-        seat.callings && seat.callings.length > 0 ? seat.callings.join(', ') : '(none)';
+      const sbaCallings = sbaBlock.callings.length > 0 ? sbaBlock.callings.join(', ') : '(none)';
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'extra-kindoo-calling',
         severity: 'review',
         reason: `Kindoo lists additional calling(s) [${extras}] beyond SBA's auto seat callings [${sbaCallings}]; add the extra calling(s) to the SBA seat.`,
-        sba: toSbaBlock(seat),
+        sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
       });
       continue;
     }
 
     // 5. scope-mismatch — parsed primary scope differs from seat.scope.
-    if (intended.scope !== seat.scope) {
+    if (intended.scope !== sbaBlock.scope) {
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'scope-mismatch',
         severity: 'drift',
-        reason: `Primary scope differs: SBA=${seat.scope}, Kindoo=${intended.scope ?? '(unresolved)'}.`,
-        sba: toSbaBlock(seat),
+        reason: `Primary scope differs: SBA=${sbaBlock.scope}, Kindoo=${intended.scope ?? '(unresolved)'}.`,
+        sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
       });
       continue;
     }
 
     // 6. type-mismatch — intended type differs from seat.type.
-    if (intended.type !== seat.type) {
+    if (intended.type !== sbaBlock.type) {
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'type-mismatch',
         severity: 'drift',
-        reason: `Seat type differs: SBA=${seat.type}, Kindoo intends=${intended.type}.`,
-        sba: toSbaBlock(seat),
+        reason: `Seat type differs: SBA=${sbaBlock.type}, Kindoo intends=${intended.type}.`,
+        sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
       });
       continue;
@@ -391,7 +573,7 @@ export function detect(inputs: DetectInputs): DetectResult {
       kindooBuildingsForCompare = kuser.derivedBuildings;
     }
     if (kindooBuildingsForCompare !== null) {
-      const expectedBuildings = seat.building_names ?? [];
+      const expectedBuildings = sbaBlock.buildingNames;
       if (!setsEqual(expectedBuildings, kindooBuildingsForCompare)) {
         discrepancies.push({
           canonical: canon,
@@ -399,7 +581,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           code: 'buildings-mismatch',
           severity: 'drift',
           reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].`,
-          sba: toSbaBlock(seat),
+          sba: sbaBlock,
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
         });
         continue;
@@ -411,91 +593,54 @@ export function detect(inputs: DetectInputs): DetectResult {
   discrepancies.sort(compareDiscrepancies);
   return {
     discrepancies,
-    seatCount: filteredSeats.length,
+    seatCount: projectedSeats.length,
     kindooCount: filteredKindooUsers.length,
   };
 }
 
 /**
- * Build the allow-set of ward codes for the active Kindoo site.
+ * T-42: keep Kindoo users with ANY parsed segment whose scope resolves
+ * to the active Kindoo site. Pre-T-42 the filter looked at the
+ * unfiltered `pickPrimarySegment` result and collapsed a multi-site
+ * Description down to one site; that lost the user's visibility on
+ * the other site.
  *
- *   - `home`            → wards with `kindoo_site_id` null / absent.
- *   - `foreign(siteId)` → wards with `kindoo_site_id === siteId`.
- *   - missing           → every ward (backwards compat for callers that
- *                         pre-date Phase 4 and don't pass an
- *                         `activeSite`).
- */
-function computeActiveWardCodes(
-  wards: Ward[],
-  activeSite: ActiveSite | undefined,
-): Set<string> | null {
-  if (!activeSite) return null;
-  const out = new Set<string>();
-  for (const w of wards) {
-    const homeBound = w.kindoo_site_id === null || w.kindoo_site_id === undefined;
-    if (activeSite.kind === 'home' && homeBound) {
-      out.add(w.ward_code);
-    } else if (activeSite.kind === 'foreign' && w.kindoo_site_id === activeSite.siteId) {
-      out.add(w.ward_code);
-    }
-  }
-  return out;
-}
-
-/**
- * Keep only seats whose scope belongs to the active Kindoo site.
- * Stake-scope seats are home-only (per Phase 1 policy — see
- * `docs/spec.md` §15).
- */
-function filterSeatsByActiveSite(
-  seats: Seat[],
-  activeWardCodes: Set<string> | null,
-  stakeAllowed: boolean,
-): Seat[] {
-  if (activeWardCodes === null) return seats;
-  return seats.filter((s) => {
-    if (s.scope === 'stake') return stakeAllowed;
-    return activeWardCodes.has(s.scope);
-  });
-}
-
-/**
- * Keep only Kindoo users whose parsed Description resolves to a scope
- * (ward or stake) belonging to the active Kindoo site. Users whose
- * Description resolves to OTHER wards belong to another site's manager;
- * they're excluded entirely from the report (no `kindoo-only` drift
- * row). Unparseable Kindoo users on a foreign site are also dropped
- * (not our responsibility to classify).
+ * Unparseable / unresolvable Kindoo users:
+ *   - Home site: keep so the historical `kindoo-only` /
+ *     `kindoo-unparseable` rows still surface.
+ *   - Foreign site: drop — we can't claim the user without a resolved
+ *     scope, and if they belonged to OUR foreign-site wards they'd
+ *     already have a seat (the seat side short-circuits).
  *
- * On the home site, the historical behavior must be preserved exactly
- * — including emitting `kindoo-only` rows for unparseable users with
- * no SBA seat. That's why we bypass the filter when active is home AND
- * the parsed primary is `null` (unparseable / unresolved).
+ * Backwards compat: when no `activeSite` is passed, return every
+ * user. Pre-Phase-4 callers (older tests) rely on this.
  */
 function filterKindooUsersByActiveSite(
   users: KindooEnvironmentUser[],
   stake: Stake,
   wards: Ward[],
   sets: CallingTemplateSets,
-  activeWardCodes: Set<string> | null,
-  stakeAllowed: boolean,
+  activeSite: ActiveSite | undefined,
 ): KindooEnvironmentUser[] {
-  if (activeWardCodes === null) return users;
+  if (!activeSite) return users;
+  if (activeSite.kind === 'unknown') return [];
   return users.filter((u) => {
     const parsed = parseDescription(u.description, stake, wards);
-    const primary = pickPrimarySegment(parsed, sets);
-    if (!primary || primary.scope === null) {
-      // Unparseable / unresolvable. On home, keep so the historical
-      // `kindoo-only` / `kindoo-unparseable` rows still surface. On
-      // foreign, drop — we can't claim the user without a resolved
-      // scope, and if they belong to OUR foreign-site wards they'd
-      // already have a seat (which short-circuits the kindoo-side path).
-      return stakeAllowed;
-    }
-    if (primary.scope === 'stake') return stakeAllowed;
-    return activeWardCodes.has(primary.scope);
+    // Find ANY segment whose scope sits on the active site.
+    const matched = pickSegmentForSite(parsed, sets, stake, wards, activeSite);
+    if (matched) return true;
+    // No matching segment. Preserve historical "show unparseable users
+    // on home" behaviour: if home AND every segment is unresolved,
+    // keep so `kindoo-only` / `kindoo-unparseable` still surfaces.
+    if (activeSite.kind !== 'home') return false;
+    const anyResolved = parsed.segments.some((s) => s.resolvedScope);
+    return !anyResolved;
   });
 }
+
+// Re-export `DuplicateGrant` for callers that import via the detector
+// barrel; surfaces typing parity with `Seat`.
+export type { DuplicateGrant };
 
 function buildKindooBlock(
   kuser: KindooEnvironmentUser,

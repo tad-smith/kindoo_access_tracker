@@ -26,7 +26,7 @@
 // `saveAccessRule` for completeness — it's harmless if Church Access
 // Automation has already covered the door grants (merge semantics).
 
-import type { Building, DuplicateGrant, Seat, Stake, Ward } from '@kindoo/shared';
+import type { Building, DuplicateGrant, KindooSite, Seat, Stake, Ward } from '@kindoo/shared';
 import type { KindooSession } from './auth';
 import type {
   KindooEditUserPayload,
@@ -53,6 +53,15 @@ export interface SyncProvisionArgs {
   stake: Stake;
   wards: Ward[];
   buildings: Building[];
+  /**
+   * Foreign-Kindoo-site directory. T-42: the orchestrator resolves
+   * the active session's EID to a site id (home → `null`, foreign →
+   * doc id) and includes only grants on that site in the per-site
+   * write. Optional for backwards compat with callers that haven't
+   * been updated yet; an undefined value collapses to the legacy
+   * "union every grant" behaviour.
+   */
+  kindooSites?: KindooSite[];
   envs: KindooEnvironment[];
   session: KindooSession;
   deps?: ProvisionDeps;
@@ -72,7 +81,18 @@ export async function syncProvisionFromSeat(args: SyncProvisionArgs): Promise<Pr
   const fetchImpl = args.deps?.fetchImpl;
 
   // ---- Compute target state ----
-  const targetBuildings = unionSeatBuildings(seat);
+  // T-42: the active Kindoo session targets one site (home if its
+  // EID matches `stake.kindoo_config.site_id`; foreign otherwise).
+  // The per-site write should only include grants on that site so we
+  // don't pollute Kindoo with buildings from other environments.
+  // Callers that haven't been updated to pass `kindooSites` get the
+  // pre-T-42 behaviour: every grant contributes.
+  const targetBuildings = args.kindooSites
+    ? unionSeatBuildings(seat, {
+        wantSiteId: resolveActiveSiteIdFromSession(session.eid, stake, args.kindooSites),
+        wards,
+      })
+    : unionSeatBuildings(seat);
   const targetRIDs = ridsForBuildings(targetBuildings, buildings);
   const targetDescription = synthesizeSeatDescription(seat, stake, wards);
 
@@ -177,10 +197,45 @@ function uniqueOrdered(a: string[], b: string[]): string[] {
   return out;
 }
 
-/** Union of `seat.building_names` + every `duplicate_grants[].building_names`. */
-function unionSeatBuildings(seat: Seat): string[] {
-  const dupBuildings = (seat.duplicate_grants ?? []).flatMap((d) => d.building_names ?? []);
-  return uniqueOrdered(seat.building_names ?? [], dupBuildings);
+/**
+ * Union of building names across the seat's grants. T-42: when a
+ * `siteFilter` is supplied, only grants whose `kindoo_site_id`
+ * resolves to that site contribute — the per-site write must not
+ * include buildings that live on another Kindoo environment.
+ *
+ * Site resolution prefers the grant's own `kindoo_site_id`; falls
+ * back to the grant's `scope` → ward `kindoo_site_id` for legacy
+ * grants still in the migration window. Stake-scope is always home.
+ */
+function unionSeatBuildings(
+  seat: Seat,
+  siteFilter?: { wantSiteId: string | null; wards: Ward[] },
+): string[] {
+  if (!siteFilter) {
+    const dupBuildings = (seat.duplicate_grants ?? []).flatMap((d) => d.building_names ?? []);
+    return uniqueOrdered(seat.building_names ?? [], dupBuildings);
+  }
+  const wardSite = (wardCode: string): string | null => {
+    if (wardCode === 'stake') return null;
+    const ward = siteFilter.wards.find((w) => w.ward_code === wardCode);
+    return ward ? (ward.kindoo_site_id ?? null) : null;
+  };
+  const grantSite = (
+    grantKindooSiteId: string | null | undefined,
+    grantScope: string,
+  ): string | null => {
+    if (grantKindooSiteId !== undefined && grantKindooSiteId !== null) {
+      return grantKindooSiteId;
+    }
+    if (grantKindooSiteId === null) return null;
+    return wardSite(grantScope);
+  };
+  const primaryMatches = grantSite(seat.kindoo_site_id, seat.scope) === siteFilter.wantSiteId;
+  const primary = primaryMatches ? (seat.building_names ?? []) : [];
+  const dupBuildings = (seat.duplicate_grants ?? [])
+    .filter((d) => grantSite(d.kindoo_site_id, d.scope) === siteFilter.wantSiteId)
+    .flatMap((d) => d.building_names ?? []);
+  return uniqueOrdered(primary, dupBuildings);
 }
 
 /** Map building names to Kindoo rule IDs, throwing on any unmapped name. */
@@ -332,4 +387,24 @@ function displayName(seat: Seat): string {
 
 function joinBuildings(names: string[]): string {
   return names.length > 0 ? names.join(', ') : '(no buildings)';
+}
+
+/**
+ * T-42: resolve the site id the active Kindoo session points at.
+ * Home (EID matches `stake.kindoo_config.site_id`) → `null`; foreign
+ * (EID matches some `KindooSite.kindoo_eid`) → that site's doc id.
+ * Falls back to `null` (home) when nothing matches — the operator's
+ * site-mismatch check fires earlier and won't reach this point in
+ * the orchestrator with a foreign-unknown session.
+ */
+function resolveActiveSiteIdFromSession(
+  activeEid: number,
+  stake: Stake,
+  kindooSites: KindooSite[],
+): string | null {
+  if (stake.kindoo_config?.site_id === activeEid) return null;
+  const foreign = kindooSites.find(
+    (s) => typeof s.kindoo_eid === 'number' && s.kindoo_eid === activeEid,
+  );
+  return foreign ? foreign.id : null;
 }

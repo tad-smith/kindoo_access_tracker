@@ -323,6 +323,178 @@ describe.skipIf(!hasEmulators())('Importer (integration)', () => {
     }
   });
 
+  // ----- T-42 multi-site importer fan-out -----
+  //
+  // Acceptance #3, #4, #5: per (scope, kindoo_site_id) duplicates,
+  // parallel-site duplicates carry building_names, top-level
+  // kindoo_site_id is written on every importer-produced seat.
+
+  it('T-42: multi-site person → primary stake (home) + parallel foreign duplicate carrying building_names + kindoo_site_id', async () => {
+    await seedStake();
+    const { db } = requireEmulators();
+    // Add a foreign-site ward FT bound to 'east-stake'.
+    await db.doc(`stakes/${STAKE_ID}/wards/FT`).set({
+      ward_code: 'FT',
+      ward_name: 'Foothills',
+      building_name: 'Foothills Building',
+      seat_cap: 20,
+      kindoo_site_id: 'east-stake',
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    });
+    // Add the foreign-site building.
+    await db.doc(`stakes/${STAKE_ID}/buildings/foothills-building`).set({
+      building_id: 'foothills-building',
+      building_name: 'Foothills Building',
+      address: '',
+      kindoo_site_id: 'east-stake',
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    });
+    // Alice: Stake President (home) + Bishop (FT, foreign-site).
+    const restore = fixture([
+      {
+        name: 'Stake',
+        values: [HEADER_ROW, ['Stake', '', 'Stake President', 'Alice Smith', 'alice@gmail.com']],
+      },
+      {
+        name: 'FT',
+        values: [HEADER_ROW, ['FT', '', 'FT Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+    ]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      // Primary: stake-scope (home).
+      expect(seat.scope).toBe('stake');
+      expect(seat.kindoo_site_id).toBe(null);
+      // One duplicate: FT, foreign-site, building_names carries Foothills.
+      expect(seat.duplicate_grants).toHaveLength(1);
+      const dup = seat.duplicate_grants[0]!;
+      expect(dup.scope).toBe('FT');
+      expect(dup.kindoo_site_id).toBe('east-stake');
+      expect(dup.callings).toEqual(['Bishop']);
+      expect(dup.building_names).toEqual(['Foothills Building']);
+    } finally {
+      restore();
+    }
+  });
+
+  it('T-42: ward primary (home) + ward duplicate (same foreign site) → both in fan-out with site stamped', async () => {
+    await seedStake();
+    const { db } = requireEmulators();
+    await db.doc(`stakes/${STAKE_ID}/wards/FT`).set({
+      ward_code: 'FT',
+      ward_name: 'Foothills',
+      building_name: 'Foothills Building',
+      seat_cap: 20,
+      kindoo_site_id: 'east-stake',
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    });
+    await db.doc(`stakes/${STAKE_ID}/buildings/foothills-building`).set({
+      building_id: 'foothills-building',
+      building_name: 'Foothills Building',
+      address: '',
+      kindoo_site_id: 'east-stake',
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    });
+    const restore = fixture([
+      {
+        name: 'CO',
+        values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+      {
+        name: 'FT',
+        values: [HEADER_ROW, ['FT', '', 'FT Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+    ]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      // Primary: alphabetically first ward (BR is seeded but no
+      // calling for Alice there). Among CO, FT → CO wins (alpha).
+      expect(seat.scope).toBe('CO');
+      expect(seat.kindoo_site_id).toBe(null);
+      expect(seat.duplicate_grants).toHaveLength(1);
+      const dup = seat.duplicate_grants[0]!;
+      expect(dup.scope).toBe('FT');
+      expect(dup.kindoo_site_id).toBe('east-stake');
+      // Parallel-site duplicate carries `building_names`.
+      expect(dup.building_names).toEqual(['Foothills Building']);
+    } finally {
+      restore();
+    }
+  });
+
+  it('T-42: within-site duplicate (same site as primary) inherits buildings; carries primary kindoo_site_id', async () => {
+    await seedStake();
+    const restore = fixture([
+      {
+        name: 'CO',
+        values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+      {
+        name: 'BR',
+        values: [HEADER_ROW, ['BR', '', 'BR Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+    ]);
+    try {
+      const { db } = requireEmulators();
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      // Both CO and BR are home (no kindoo_site_id on wards). Primary
+      // is BR (alpha).
+      expect(seat.scope).toBe('BR');
+      expect(seat.kindoo_site_id).toBe(null);
+      expect(seat.duplicate_grants).toHaveLength(1);
+      const dup = seat.duplicate_grants[0]!;
+      expect(dup.scope).toBe('CO');
+      // Same site as primary → kindoo_site_id matches; building_names
+      // unset (within-site duplicates inherit from the ward at runtime).
+      expect(dup.kindoo_site_id).toBe(null);
+      expect(dup.building_names).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  it('T-42: stake-scope seat at home site gets only home buildings (foreign building excluded)', async () => {
+    await seedStake();
+    const { db } = requireEmulators();
+    // Seed a foreign-site building so the stake-buildings list has a
+    // candidate to exclude.
+    await db.doc(`stakes/${STAKE_ID}/buildings/foothills-building`).set({
+      building_id: 'foothills-building',
+      building_name: 'Foothills Building',
+      address: '',
+      kindoo_site_id: 'east-stake',
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    });
+    const restore = fixture([
+      {
+        name: 'Stake',
+        values: [HEADER_ROW, ['Stake', '', 'Stake President', 'Alice Smith', 'alice@gmail.com']],
+      },
+    ]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      // Stake-scope grant should NOT include the foreign building.
+      expect(seat.building_names.sort()).toEqual(['Briargate Building', 'Cordera Building']);
+      expect(seat.building_names).not.toContain('Foothills Building');
+    } finally {
+      restore();
+    }
+  });
+
   it('over-cap: persists snapshot AND emits over_cap_warning audit row', async () => {
     await seedStake({ stakeSeatCap: 1 });
     const rows = [HEADER_ROW];

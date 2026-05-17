@@ -577,6 +577,116 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         expect(dup.detected_at).toBeDefined();
       });
 
+      // T-42 acceptance #7: `planAddMerge` stamps `kindoo_site_id` on
+      // a newly-appended duplicate so the per-site provision walk
+      // finds the grant under the right site.
+      it('T-42: appends new duplicate stamped with kindoo_site_id from the request ward (foreign-site)', async () => {
+        await seedManager();
+        await seedStake();
+        // Foreign-site ward 'FT' bound to 'east-stake'.
+        await seedWard({ ward_code: 'FT', kindoo_site_id: 'east-stake' });
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+          reason: 'home helper',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'FT',
+          building_names: ['FT Building'],
+          reason: 'foreign-ward helper',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants.length).toBe(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('FT');
+        // Critical: kindoo_site_id mirrors the request ward's site.
+        expect(dup.kindoo_site_id).toBe('east-stake');
+        expect(dup.building_names).toEqual(['FT Building']);
+      });
+
+      it('T-42: appends new duplicate with kindoo_site_id=null when request targets home (no ward kindoo_site_id)', async () => {
+        await seedManager();
+        await seedStake();
+        // Home-bound CO ward (no kindoo_site_id).
+        await seedWard({ ward_code: 'CO', kindoo_site_id: null });
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Cordera Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'CO',
+          building_names: ['CO Building'],
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants.length).toBe(1);
+        expect(seat.duplicate_grants[0]!.kindoo_site_id).toBe(null);
+      });
+
+      it('T-42: new seat create stamps top-level kindoo_site_id from the request scope', async () => {
+        await seedManager();
+        await seedStake();
+        // Foreign-site ward 'FT' bound to 'east-stake'.
+        await seedWard({
+          ward_code: 'FT',
+          building_name: 'Foothills Building',
+          kindoo_site_id: 'east-stake',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'FT',
+          building_names: ['Foothills Building'],
+          reason: 'first-time ward grant',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('FT');
+        expect(seat.kindoo_site_id).toBe('east-stake');
+      });
+
       it('add_temp primary match: extends primary building_names', async () => {
         await seedManager();
         await seedStake();

@@ -2209,3 +2209,153 @@ describe('provisionAddOrChange — skip AccessSchedules already covered by direc
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6300], undefined);
   });
 });
+
+// ----- T-42 per-site union -----
+// The provision orchestrator computes the per-site target rule set by
+// unioning only those grants whose `kindoo_site_id` resolves to the
+// request's target site. Parallel-site grants (on a different Kindoo
+// environment) do NOT contribute — they belong to a different Kindoo
+// session's pool.
+
+describe('provisionAddOrChange — T-42 per-site union', () => {
+  it('excludes a parallel-site duplicate from the home-site write target', async () => {
+    // Wards: CO (home), FT (foreign-site 'east-stake').
+    const wards: Ward[] = [
+      ...WARDS,
+      {
+        ward_code: 'FT',
+        ward_name: 'Foothills Ward',
+        building_name: 'Foothills Building',
+        kindoo_site_id: 'east-stake',
+      } as unknown as Ward,
+    ];
+    const buildings: Building[] = [
+      ...BUILDINGS,
+      {
+        building_id: 'foothills',
+        building_name: 'Foothills Building',
+        kindoo_rule: { rule_id: 6260, rule_name: 'Foothills Doors' },
+        kindoo_site_id: 'east-stake',
+      } as unknown as Building,
+    ];
+    // Seat primary = CO (home); duplicate = FT (foreign).
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad Smith',
+      scope: 'CO',
+      type: 'auto',
+      callings: ['Sunday School Teacher'],
+      building_names: ['Cordera Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          building_names: ['Foothills Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ],
+    } as unknown as Seat;
+
+    lookupUserByEmailMock.mockResolvedValue(null);
+    inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'CO',
+        building_names: ['Cordera Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    // Foothills (foreign-site rule 6260) is NOT in the write target.
+    // Only Cordera (rule 6248) — the home-side grant.
+    expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, 'new-uid', [6248], undefined);
+  });
+
+  it('foreign-site request unions only foreign-site duplicate buildings', async () => {
+    // Same fixture as above. This time the request targets the foreign
+    // ward FT — only foreign-site grants should contribute.
+    const wards: Ward[] = [
+      ...WARDS,
+      {
+        ward_code: 'FT',
+        ward_name: 'Foothills Ward',
+        building_name: 'Foothills Building',
+        kindoo_site_id: 'east-stake',
+      } as unknown as Ward,
+    ];
+    const buildings: Building[] = [
+      ...BUILDINGS,
+      {
+        building_id: 'foothills',
+        building_name: 'Foothills Building',
+        kindoo_rule: { rule_id: 6260, rule_name: 'Foothills Doors' },
+        kindoo_site_id: 'east-stake',
+      } as unknown as Building,
+    ];
+    const seat: Seat = {
+      member_canonical: 'tad.e.smith@gmail.com',
+      member_email: 'tad.e.smith@gmail.com',
+      member_name: 'Tad Smith',
+      scope: 'CO',
+      type: 'auto',
+      callings: ['Sunday School Teacher'],
+      building_names: ['Cordera Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          building_names: ['Foothills Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
+        },
+      ],
+    } as unknown as Seat;
+
+    lookupUserByEmailMock.mockResolvedValue(null);
+    inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    // Foreign-site session: EID for east-stake.
+    const FOREIGN_SESSION = { token: 'tok-foreign', eid: 4321 };
+    const FOREIGN_ENVS: KindooEnvironment[] = [
+      {
+        EID: 4321,
+        Name: 'East Stake',
+        TimeZone: 'Mountain Standard Time',
+      } as unknown as KindooEnvironment,
+    ];
+
+    await provisionAddOrChange({
+      request: addManualRequest({
+        scope: 'FT',
+        building_names: ['Foothills Building'],
+      }),
+      seat,
+      stake: STAKE,
+      buildings,
+      wards,
+      envs: FOREIGN_ENVS,
+      session: FOREIGN_SESSION,
+    });
+
+    // Foothills only (rule 6260) — Cordera (rule 6248) is on a
+    // different Kindoo site and does NOT contribute to the foreign
+    // write.
+    expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
+    expect(saveAccessRuleMock).toHaveBeenCalledWith(FOREIGN_SESSION, 'new-uid', [6260], undefined);
+  });
+});

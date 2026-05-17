@@ -665,11 +665,13 @@ gcloud firestore fields ttls update ttl \
 Repeat for production. Decide retention duration before enabling (the in-code default for `auditLog` is 365 days; superadmin records may warrant longer — operator decision). Add a corresponding subsection to `infra/runbooks/provision-firebase-projects.md` next to the existing TTL setup notes.
 
 ## [T-42] Multi-scope Kindoo users straddling home + foreign sites
-Status: open
+Status: done (2026-05-17 — PR #131)
 Owner: @extension-engineer
 Phase: Kindoo Sites — Phase 4 follow-up
 
-**Spec for the fix is defined in PR #130 (docs-only); implementation deferred to a separate PR. Acceptance criteria below unchanged. T-42 closes when the implementation PR lands.**
+**Closed by PR #131 (Phase A implementation).** Phase A data-model + behavioural changes shipped across `packages/shared/`, `functions/`, `extension/`, and `apps/web/`: `Seat.kindoo_site_id` + per-`duplicate_grants[]` field, importer fan-out per (scope, site), `markRequestComplete.planAddMerge` stamps the new duplicate's `kindoo_site_id`, one-shot migration callable `backfillKindooSiteId`, sync detector per-site fan-out (replaces `pickPrimarySegment` collapse), provision orchestrator per-site building union. Spec §15 "Multi-site grants" subsection rewritten in present tense. Migration is operator-invoked once per stake. See `docs/changelog/t-42-multi-site-grants.md`.
+
+**Spec for the fix was defined in PR #130 (docs-only); the implementation PR (#131) landed it across all four workspaces. Acceptance criteria below preserved for history.**
 
 Surfaced by PR #122 review (2026-05-16). The Phase 4 sync detector resolves a Kindoo user's site by collapsing the parsed Description down to a single primary segment via `pickPrimarySegment` (auto-matching is the primary tiebreaker). A Description that legitimately straddles home + foreign wards — e.g. `'Cordera Ward (Bishop) | Foothills Ward (Stake Clerk)'` with Cordera on the home site and Foothills on a foreign site — has both segments resolve to real wards on different sites, but `pickPrimarySegment` picks one. The unpicked segment's site loses visibility of the user entirely: that site's sync view never sees them, and on both sides the asymmetry manufactures spurious `sba-only` / `kindoo-only` drift for the same person.
 
