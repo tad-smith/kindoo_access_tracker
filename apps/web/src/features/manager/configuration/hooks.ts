@@ -121,20 +121,36 @@ export function useUpsertWardMutation() {
       const actor = actorOf(principal);
       const code = input.ward_code.trim().toUpperCase();
       if (!code) throw new Error('Ward code is required.');
-      await setDoc(
-        wardRef(db, STAKE_ID, code),
-        {
+      const ref = wardRef(db, STAKE_ID, code);
+      // Stamp `created_at` only on the create path. `merge: true` would
+      // otherwise re-stamp it on every edit, silently losing the
+      // original creation timestamp. `runTransaction` makes the
+      // existence read + write atomic, so the create/edit branch
+      // decision can't race itself within this transaction.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        const editBody = {
           ward_code: code,
           ward_name: input.ward_name.trim(),
           building_name: input.building_name,
           seat_cap: input.seat_cap,
           kindoo_site_id: input.kindoo_site_id ?? null,
-          created_at: serverTimestamp(),
           last_modified_at: serverTimestamp(),
           lastActor: actor,
-        } as unknown as Ward,
-        { merge: true },
-      );
+        };
+        if (existing.exists()) {
+          tx.set(ref, editBody as unknown as Ward, { merge: true });
+        } else {
+          tx.set(
+            ref,
+            {
+              ...editBody,
+              created_at: serverTimestamp(),
+            } as unknown as Ward,
+            { merge: true },
+          );
+        }
+      });
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
@@ -180,19 +196,35 @@ export function useUpsertBuildingMutation() {
       const actor = actorOf(principal);
       const slug = buildingSlug(input.building_name);
       if (!slug) throw new Error('Building name is required.');
-      await setDoc(
-        buildingRef(db, STAKE_ID, slug),
-        {
+      const ref = buildingRef(db, STAKE_ID, slug);
+      // Stamp `created_at` only on the create path. `merge: true` would
+      // otherwise re-stamp it on every edit, silently losing the
+      // original creation timestamp. `runTransaction` makes the
+      // existence read + write atomic, so the create/edit branch
+      // decision can't race itself within this transaction.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        const editBody = {
           building_id: slug,
           building_name: input.building_name.trim(),
           address: input.address.trim(),
           kindoo_site_id: input.kindoo_site_id ?? null,
-          created_at: serverTimestamp(),
           last_modified_at: serverTimestamp(),
           lastActor: actor,
-        } as unknown as Building,
-        { merge: true },
-      );
+        };
+        if (existing.exists()) {
+          tx.set(ref, editBody as unknown as Building, { merge: true });
+        } else {
+          tx.set(
+            ref,
+            {
+              ...editBody,
+              created_at: serverTimestamp(),
+            } as unknown as Building,
+            { merge: true },
+          );
+        }
+      });
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
@@ -321,18 +353,34 @@ export function useUpsertWardCallingTemplateMutation() {
       const actor = actorOf(principal);
       const name = input.calling_name.trim();
       if (!name) throw new Error('Calling name is required.');
-      await setDoc(
-        wardCallingTemplateRef(db, STAKE_ID, name),
-        {
+      const ref = wardCallingTemplateRef(db, STAKE_ID, name);
+      // Stamp `created_at` only on the create path. `merge: true` would
+      // otherwise re-stamp it on every edit, silently losing the
+      // original creation timestamp. `runTransaction` makes the
+      // existence read + write atomic, so the create/edit branch
+      // decision can't race itself within this transaction.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        const editBody = {
           calling_name: name,
           give_app_access: input.give_app_access,
           auto_kindoo_access: input.auto_kindoo_access,
           sheet_order: input.sheet_order,
-          created_at: serverTimestamp(),
           lastActor: actor,
-        } as unknown as WardCallingTemplate,
-        { merge: true },
-      );
+        };
+        if (existing.exists()) {
+          tx.set(ref, editBody as unknown as WardCallingTemplate, { merge: true });
+        } else {
+          tx.set(
+            ref,
+            {
+              ...editBody,
+              created_at: serverTimestamp(),
+            } as unknown as WardCallingTemplate,
+            { merge: true },
+          );
+        }
+      });
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
@@ -364,18 +412,34 @@ export function useUpsertStakeCallingTemplateMutation() {
       const actor = actorOf(principal);
       const name = input.calling_name.trim();
       if (!name) throw new Error('Calling name is required.');
-      await setDoc(
-        stakeCallingTemplateRef(db, STAKE_ID, name),
-        {
+      const ref = stakeCallingTemplateRef(db, STAKE_ID, name);
+      // Stamp `created_at` only on the create path. `merge: true` would
+      // otherwise re-stamp it on every edit, silently losing the
+      // original creation timestamp. `runTransaction` makes the
+      // existence read + write atomic, so the create/edit branch
+      // decision can't race itself within this transaction.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        const editBody = {
           calling_name: name,
           give_app_access: input.give_app_access,
           auto_kindoo_access: input.auto_kindoo_access,
           sheet_order: input.sheet_order,
-          created_at: serverTimestamp(),
           lastActor: actor,
-        } as unknown as StakeCallingTemplate,
-        { merge: true },
-      );
+        };
+        if (existing.exists()) {
+          tx.set(ref, editBody as unknown as StakeCallingTemplate, { merge: true });
+        } else {
+          tx.set(
+            ref,
+            {
+              ...editBody,
+              created_at: serverTimestamp(),
+            } as unknown as StakeCallingTemplate,
+            { merge: true },
+          );
+        }
+      });
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
@@ -750,14 +814,16 @@ export function useUpsertKindooSiteMutation() {
       const slug = input.id ?? buildingSlug(displayName);
       if (!slug) throw new Error('Display name is required.');
       const ref = kindooSiteRef(db, STAKE_ID, slug);
-      const body = {
+      // `created_at` is stamped only on the create path. `merge: true`
+      // would otherwise re-stamp it on every edit, silently losing the
+      // original creation timestamp.
+      const editBody = {
         id: slug,
         display_name: displayName,
         kindoo_expected_site_name: expectedSiteName,
-        created_at: serverTimestamp(),
         last_modified_at: serverTimestamp(),
         lastActor: actor,
-      } as unknown as KindooSite;
+      };
       // Both branches wrap the read + write in one transaction.
       // Create path: pre-check guards against two concurrent creates
       // with the same slug both passing and clobbering. Edit path:
@@ -770,7 +836,7 @@ export function useUpsertKindooSiteMutation() {
           if (!existing.exists()) {
             throw new Error('Kindoo site no longer exists.');
           }
-          tx.set(ref, body, { merge: true });
+          tx.set(ref, editBody as unknown as KindooSite, { merge: true });
         });
       } else {
         await runTransaction(db, async (tx) => {
@@ -778,7 +844,14 @@ export function useUpsertKindooSiteMutation() {
           if (existing.exists()) {
             throw new Error('A Kindoo site with that display name already exists.');
           }
-          tx.set(ref, body, { merge: true });
+          tx.set(
+            ref,
+            {
+              ...editBody,
+              created_at: serverTimestamp(),
+            } as unknown as KindooSite,
+            { merge: true },
+          );
         });
       }
     },
