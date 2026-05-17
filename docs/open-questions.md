@@ -489,17 +489,17 @@ The block persisted across all of those, indicating that Workspace-owned Apps Sc
 
 **Resolved 2026-05-17 — Option A.** Extending `duplicate_grants[]` to record "additional grants" of either kind, distinguished by `kindoo_site_id`, is the smaller surface change: today's within-site priority-loser entries continue to work (they have the same `kindoo_site_id` as the primary), and parallel-site grants slot into the same array under a different `kindoo_site_id`. A new top-level `Seat.kindoo_site_id` records the primary grant's site. The sync detector switches from collapse-to-one-segment to fan-out-per-site; the orchestrator emits one Kindoo write per distinct `kindoo_site_id`. A one-shot migration backfills the field on existing seats. See spec §15 "Multi-site grants — data model (planned, T-42)" for the full design; T-42 tracks implementation.
 
-### KS-2 `[RESOLVED 2026-05-17 — picked (c) refuse upfront, no partial states]` Multi-site provision orchestrator — partial-failure behaviour
+### KS-2 `[RESOLVED 2026-05-17 — sequential per-site walk via Phase 3 EID check; no new SW registry. Each per-site Kindoo write is atomic; a partially-completed plan is re-runnable from scratch. Operator switches the active Kindoo site between steps.]` Multi-site provision orchestrator — partial-failure behaviour
 
 **Flagged (PR #130 review, 2026-05-17).** With T-42's per-site provisioning, a single Mark Complete may require writes against two different Kindoo sessions (e.g. one home, one foreign). If one of the required sessions is unreachable (no active session for that site, missing `kindoo_eid`, EID mismatch), three failure shapes were on the table: (a) write the reachable sites and report partial success; (b) write the reachable sites and stage the unreachable ones for retry; (c) compute the full plan upfront and refuse the entire write before any site is touched if any site is unreachable.
 
-**Resolved 2026-05-17 — option (c).** Compute the full plan upfront; refuse with a clear error if any required site is unreachable. No partial-provision states. The operator must satisfy all required sessions (switch Kindoo sites, populate the `kindoo_eid` on the foreign-site doc, etc.) and then re-run. Carries the Phase 3 "no silent fallback" philosophy forward into the multi-site case. See spec §15 "Multi-site provision plans — refuse-upfront on missing sessions".
+**Resolved 2026-05-17 — sequential per-site walk.** The orchestrator iterates the distinct `kindoo_site_id` values in stable order. For each step the Phase 3 EID check validates that the active Kindoo session matches the step's site; on mismatch the existing "switch to site X" error fires and the operator switches sites in the Kindoo UI before retrying. Each per-site Kindoo write is atomic at the Kindoo level, so a half-progressed plan (operator completes step 1 then walks away) is recoverable — re-running the request from scratch produces the same end state. The extension can't probe N Kindoo sites' reachability without writing (one Kindoo origin, one `localStorage` state, operator-driven site switch inside Kindoo's own UI), and doesn't need to: the per-step EID check is the gate. No new session-registry or upfront-reachability machinery. Carries the Phase 3 "no silent fallback" philosophy forward into the multi-site case. See spec §15 "Multi-site provision — sequential per-site walk".
 
-### KS-3 `[RESOLVED 2026-05-17 — idempotent, overwrite on re-run]` T-42 migration idempotency
+### KS-3 `[RESOLVED 2026-05-17 — idempotent via skip-if-equal; 0 audit rows on re-run]` T-42 migration idempotency
 
 **Flagged (PR #130 review, 2026-05-17).** Should the one-shot `kindoo_site_id` backfill be safe to re-run?
 
-**Resolved 2026-05-17.** Yes — idempotent. The migration computes the derived value from `scope` → ward → `kindoo_site_id` and writes unconditionally; a re-run yields the same value and produces no behavioural diff. No "skip if already populated" branch needed.
+**Resolved 2026-05-17 — skip-if-equal.** The migration reads the existing `kindoo_site_id` on each seat and each `duplicate_grants[]` entry; it writes only if the derived value differs. First run produces ~500-750 audit rows (one per write). Re-runs over an already-migrated stake produce 0 audit rows. Reconciles with KS-5: an unconditional-write model would re-emit the full burst of audit rows on every re-run because `auditTrigger` fans on every doc write regardless of data diff. Skip-if-equal preserves "second run produces no diffs" (TASKS T-42 acceptance) without the row-churn.
 
 ### KS-4 `[RESOLVED 2026-05-17 — skip with logged warning, no "home" fallback]` T-42 migration — missing-ward fallback
 
@@ -507,11 +507,11 @@ The block persisted across all of those, indicating that Workspace-owned Apps Sc
 
 **Resolved 2026-05-17 — skip with a logged warning.** Erroring the whole run blocks the migration on stale data; falling back to "home" could silently miscategorize a foreign-site grant (an entry on a deleted foreign ward would be mis-attributed to the home site, and the orchestrator would then emit a home-site write for a person whose actual grant is on the foreign site). Skipping the entry preserves correctness — the entry stays without a `kindoo_site_id`, the sync detector / orchestrator treat it as the today-shape, and the operator can investigate the warning out-of-band.
 
-### KS-5 `[RESOLVED 2026-05-17 — dedicated action code, accept the churn]` T-42 migration — audit-row churn
+### KS-5 `[RESOLVED 2026-05-17 — dedicated action code, accept the first-run churn; re-runs emit 0 rows via KS-3 skip-if-equal]` T-42 migration — audit-row churn
 
 **Flagged (PR #130 review, 2026-05-17).** The `auditTrigger` will fan a row per seat write during the migration. ~250 seats × ~1-2 duplicates each → roughly 500-750 rows in a short burst. Should we suppress audit emission for migration writes?
 
-**Resolved 2026-05-17.** No — fan the rows. Use a dedicated `migration_backfill_kindoo_site_id` action code so the burst is filterable post-hoc. Auditability matters more than row count; the churn is one-time, well-bounded, and within the 365-day TTL window. The audit trail is the source of truth for "what touched this seat and when" and a silent migration would leave a gap.
+**Resolved 2026-05-17.** No — fan the rows. Use a dedicated `migration_backfill_kindoo_site_id` action code so the burst is filterable post-hoc. Auditability matters more than row count; the churn is one-time, well-bounded, and within the 365-day TTL window. The audit trail is the source of truth for "what touched this seat and when" and a silent migration would leave a gap. First run: ~500-750 audit rows (one per write). Re-runs: 0 audit rows — the KS-3 skip-if-equal branch means already-migrated docs aren't re-written and `auditTrigger` doesn't fire.
 
 ### KS-6 `[RESOLVED 2026-05-17 — per-stake, takes stakeId parameter]` T-42 migration — scope
 

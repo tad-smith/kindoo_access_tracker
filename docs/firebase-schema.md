@@ -338,7 +338,7 @@ Today the `duplicate_grants[]` field captures within-site priority losers only â
     reason?: string;
     start_date?: string;
     end_date?: string;
-    building_names?: string[];
+    building_names?: string[];      // Within-site importer duplicates may leave this unset and inherit from the primary's ward (today's behavior). Post-T-42, importer-written PARALLEL-SITE duplicates (different kindoo_site_id from the primary) MUST set this â€” the per-site Kindoo write needs the buildings explicitly. Manual/temp duplicates set this via the request-completion auto-merge.
     kindoo_site_id?: string | null; // T-42 planned; not yet populated. Same convention as the top-level field. Backfilled via the T-42 one-shot migration.
     detected_at: Timestamp;
   }>;
