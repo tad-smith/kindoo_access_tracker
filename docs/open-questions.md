@@ -487,7 +487,37 @@ The block persisted across all of those, indicating that Workspace-owned Apps Sc
 - **Option A — extend `duplicate_grants[]` semantics.** Treat the array as "additional grants" (within-site priority losers OR parallel grants on other Kindoo sites), distinguished by per-entry `kindoo_site_id`. The primary stays at top level.
 - **Option B — a new sibling array** dedicated to parallel-site grants, leaving `duplicate_grants[]` semantics untouched.
 
-**Resolved 2026-05-17 — Option A.** Extending `duplicate_grants[]` to record "additional grants" of either kind, distinguished by `kindoo_site_id`, is the smaller surface change: today's within-site priority-loser entries continue to work (they have the same `kindoo_site_id` as the primary), and parallel-site grants slot into the same array under a different `kindoo_site_id`. A new top-level `Seat.kindoo_site_id` records the primary grant's site. The sync detector switches from collapse-to-one-segment to fan-out-per-site; the orchestrator emits one Kindoo write per distinct `kindoo_site_id`. A one-shot migration backfills the field on existing seats. See spec §15 "Multi-site grants — data model" for the full design; T-42 tracks implementation.
+**Resolved 2026-05-17 — Option A.** Extending `duplicate_grants[]` to record "additional grants" of either kind, distinguished by `kindoo_site_id`, is the smaller surface change: today's within-site priority-loser entries continue to work (they have the same `kindoo_site_id` as the primary), and parallel-site grants slot into the same array under a different `kindoo_site_id`. A new top-level `Seat.kindoo_site_id` records the primary grant's site. The sync detector switches from collapse-to-one-segment to fan-out-per-site; the orchestrator emits one Kindoo write per distinct `kindoo_site_id`. A one-shot migration backfills the field on existing seats. See spec §15 "Multi-site grants — data model (planned, T-42)" for the full design; T-42 tracks implementation.
+
+### KS-2 `[RESOLVED 2026-05-17 — picked (c) refuse upfront, no partial states]` Multi-site provision orchestrator — partial-failure behaviour
+
+**Flagged (PR #130 review, 2026-05-17).** With T-42's per-site provisioning, a single Mark Complete may require writes against two different Kindoo sessions (e.g. one home, one foreign). If one of the required sessions is unreachable (no active session for that site, missing `kindoo_eid`, EID mismatch), three failure shapes were on the table: (a) write the reachable sites and report partial success; (b) write the reachable sites and stage the unreachable ones for retry; (c) compute the full plan upfront and refuse the entire write before any site is touched if any site is unreachable.
+
+**Resolved 2026-05-17 — option (c).** Compute the full plan upfront; refuse with a clear error if any required site is unreachable. No partial-provision states. The operator must satisfy all required sessions (switch Kindoo sites, populate the `kindoo_eid` on the foreign-site doc, etc.) and then re-run. Carries the Phase 3 "no silent fallback" philosophy forward into the multi-site case. See spec §15 "Multi-site provision plans — refuse-upfront on missing sessions".
+
+### KS-3 `[RESOLVED 2026-05-17 — idempotent, overwrite on re-run]` T-42 migration idempotency
+
+**Flagged (PR #130 review, 2026-05-17).** Should the one-shot `kindoo_site_id` backfill be safe to re-run?
+
+**Resolved 2026-05-17.** Yes — idempotent. The migration computes the derived value from `scope` → ward → `kindoo_site_id` and writes unconditionally; a re-run yields the same value and produces no behavioural diff. No "skip if already populated" branch needed.
+
+### KS-4 `[RESOLVED 2026-05-17 — skip with logged warning, no "home" fallback]` T-42 migration — missing-ward fallback
+
+**Flagged (PR #130 review, 2026-05-17).** When a `duplicate_grants[]` entry's `scope` points at a ward that has been deleted (or otherwise can't be looked up), what's the right behaviour: error the whole migration, fall back to "home", or skip the entry?
+
+**Resolved 2026-05-17 — skip with a logged warning.** Erroring the whole run blocks the migration on stale data; falling back to "home" could silently miscategorize a foreign-site grant (an entry on a deleted foreign ward would be mis-attributed to the home site, and the orchestrator would then emit a home-site write for a person whose actual grant is on the foreign site). Skipping the entry preserves correctness — the entry stays without a `kindoo_site_id`, the sync detector / orchestrator treat it as the today-shape, and the operator can investigate the warning out-of-band.
+
+### KS-5 `[RESOLVED 2026-05-17 — dedicated action code, accept the churn]` T-42 migration — audit-row churn
+
+**Flagged (PR #130 review, 2026-05-17).** The `auditTrigger` will fan a row per seat write during the migration. ~250 seats × ~1-2 duplicates each → roughly 500-750 rows in a short burst. Should we suppress audit emission for migration writes?
+
+**Resolved 2026-05-17.** No — fan the rows. Use a dedicated `migration_backfill_kindoo_site_id` action code so the burst is filterable post-hoc. Auditability matters more than row count; the churn is one-time, well-bounded, and within the 365-day TTL window. The audit trail is the source of truth for "what touched this seat and when" and a silent migration would leave a gap.
+
+### KS-6 `[RESOLVED 2026-05-17 — per-stake, takes stakeId parameter]` T-42 migration — scope
+
+**Flagged (PR #130 review, 2026-05-17).** Should the migration callable run across every stake at once, or be parameterized per stake?
+
+**Resolved 2026-05-17.** Per-stake. The callable takes a `stakeId` parameter, matching the rest of the architecture's stake-parameterization (F15). The operator runs it once per stake at T-42 implementation time. Currently single-stake; Phase B / multi-stake operators run it per stake when they onboard.
 
 ---
 
