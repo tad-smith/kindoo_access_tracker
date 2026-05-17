@@ -11,35 +11,45 @@
 // T-42: a seat's home/foreign status reads `Seat.kindoo_site_id`
 // directly when populated (importer / `markRequestComplete` / migration
 // stamp it); falls back to the seat's `scope` → ward `kindoo_site_id`
-// otherwise. Externally observable behaviour matches the pre-T-42 path
-// — the field is just a denormalisation.
+// for legacy / pre-migration seats. The uniform missing-ward policy
+// (skip-with-warning everywhere) means a seat that references an
+// unknown ward never gets `kindoo_site_id` written — the ward-fallback
+// here returns `undefined` for that case, and the caller excludes the
+// seat from `homeWardSeatsN`. That preserves the pre-T-42 behaviour
+// where unknown-ward seats didn't count against the home-stake
+// portion-cap (they simply weren't in any ward's seat_cap bucket
+// either).
 //
 // A ward over-caps when `count > seat_cap` and `seat_cap > 0`.
 
 import type { OverCapEntry, Seat, Ward } from '@kindoo/shared';
 
-/** Resolve a seat's `kindoo_site_id`. T-42: prefer the seat's own
- *  field; fall back to ward-lookup. Stake-scope is always home. */
-function seatSiteId(
+/**
+ * Classify a seat's site for the home-stake portion-cap calculation.
+ * Returns one of:
+ *   - `'home'`    — counts toward `homeWardSeatsN`.
+ *   - `'foreign'` — does NOT count toward `homeWardSeatsN` (foreign
+ *                   wards draw against another Kindoo site's pool).
+ *   - `'unknown'` — seat references a ward that's not in the catalogue;
+ *                   excluded from `homeWardSeatsN`. Matches pre-T-42
+ *                   behaviour (an unknown-ward seat was never in any
+ *                   ward's seat_cap bucket and never contributed to
+ *                   home-stake math).
+ *
+ * Stake-scope seats are excluded by the caller before calling this.
+ */
+function seatSiteClassification(
   seat: Seat,
   homeWardCodes: Set<string>,
   foreignWardCodes: Set<string>,
-): string | null {
-  if (seat.kindoo_site_id !== undefined && seat.kindoo_site_id !== null) {
-    return seat.kindoo_site_id;
+): 'home' | 'foreign' | 'unknown' {
+  if (seat.kindoo_site_id !== undefined) {
+    return seat.kindoo_site_id === null ? 'home' : 'foreign';
   }
-  if (seat.kindoo_site_id === null) return null;
   // Field absent — fall back to ward lookup.
-  if (seat.scope === 'stake') return null;
-  if (homeWardCodes.has(seat.scope)) return null;
-  if (foreignWardCodes.has(seat.scope)) {
-    // We can't return the exact id from here without a separate map,
-    // but for the home/foreign question a non-null sentinel suffices.
-    return '__foreign__';
-  }
-  // Unknown ward (legacy / drift) — treat as home so the seat still
-  // counts somewhere; matches the pre-T-42 default behaviour.
-  return null;
+  if (homeWardCodes.has(seat.scope)) return 'home';
+  if (foreignWardCodes.has(seat.scope)) return 'foreign';
+  return 'unknown';
 }
 
 export function computeOverCaps(opts: {
@@ -76,8 +86,8 @@ export function computeOverCaps(opts: {
     let homeWardSeatsN = 0;
     for (const s of seats) {
       if (!s.scope || s.scope === 'stake') continue;
-      const site = seatSiteId(s, homeWardCodes, foreignWardCodes);
-      if (site === null) homeWardSeatsN += 1;
+      const cls = seatSiteClassification(s, homeWardCodes, foreignWardCodes);
+      if (cls === 'home') homeWardSeatsN += 1;
     }
     const portionCap = Math.max(0, stakeSeatCap - homeWardSeatsN);
     if (stakeN > portionCap) {

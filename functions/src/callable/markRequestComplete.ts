@@ -50,6 +50,7 @@
 // `kindooManagers/{canonical}` doc directly.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { logger } from 'firebase-functions/v2';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { canonicalEmail } from '@kindoo/shared';
 import type {
@@ -119,8 +120,13 @@ export function planAddMerge(opts: {
    * from the ward's `kindoo_site_id` (stake-scope ⇒ home ⇒ null). T-42:
    * stamped onto a newly-appended `duplicate_grants[]` entry so per-
    * site provision walks find the new grant under the right site.
+   *
+   * `undefined` signals the caller couldn't resolve the request's
+   * ward (uniform missing-ward skip-with-warning policy); the
+   * resulting duplicate omits the field so the ward-fallback
+   * resolver handles classification at read time.
    */
-  requestSiteId: string | null;
+  requestSiteId: string | null | undefined;
 }): {
   update: {
     building_names?: string[];
@@ -164,13 +170,15 @@ export function planAddMerge(opts: {
   // No (scope, type) match anywhere — append a new DuplicateGrant.
   // T-42: stamp `kindoo_site_id` from the caller-supplied site so the
   // per-site provision walk finds this grant under the right site.
+  // `undefined` (caller couldn't resolve the ward) leaves the field
+  // unset on the new entry.
   const entry: DuplicateGrant = {
     scope: reqScope,
     type: reqType,
     building_names: reqBuildings,
-    kindoo_site_id: requestSiteId,
     detected_at: detectedAt as DuplicateGrant['detected_at'],
   };
+  if (requestSiteId !== undefined) entry.kindoo_site_id = requestSiteId;
   if (request.reason) entry.reason = request.reason;
   if (request.type === 'add_temp') {
     if (request.start_date) entry.start_date = request.start_date;
@@ -380,14 +388,27 @@ export const markRequestComplete = onCall(
               buildingNames = [ward.building_name];
             }
           }
-          // T-42: stamp `kindoo_site_id` on the new seat from the
-          // request's scope. Stake-scope ⇒ home (`null`); ward-scope ⇒
-          // the ward's own `kindoo_site_id` (home wards return `null`,
-          // foreign wards return their doc id).
-          const newSeatSite: string | null =
-            cur.scope === 'stake'
-              ? null
-              : (wards.find((w) => w.ward_code === cur.scope)?.kindoo_site_id ?? null);
+          // T-42: stamp `kindoo_site_id` on the new seat when the
+          // request's scope resolves to a known ward (or stake → home).
+          // Uniform missing-ward skip-with-warning policy: an unknown
+          // ward leaves the field unset so the downstream ward-fallback
+          // resolver handles classification at read time — same shape
+          // as the migration's primary-side skip. A misconfigured
+          // request shouldn't silently become home-categorised.
+          let newSeatSite: string | null | undefined;
+          if (cur.scope === 'stake') {
+            newSeatSite = null;
+          } else {
+            const wardDoc = wards.find((w) => w.ward_code === cur.scope);
+            if (wardDoc) {
+              newSeatSite = wardDoc.kindoo_site_id ?? null;
+            } else {
+              newSeatSite = undefined; // leave the field unset on the seat
+              logger.warn(
+                `markRequestComplete: ward '${cur.scope}' not found while creating seat for ${cur.member_canonical}; leaving kindoo_site_id unset (ward-fallback handles classification at read time)`,
+              );
+            }
+          }
           const body: Record<string, unknown> = {
             member_canonical: cur.member_canonical,
             member_email: cur.member_email,
@@ -396,7 +417,6 @@ export const markRequestComplete = onCall(
             type: seatType,
             callings: [],
             building_names: buildingNames,
-            kindoo_site_id: newSeatSite,
             duplicate_grants: [],
             granted_by_request: cur.request_id,
             created_at: now,
@@ -404,6 +424,7 @@ export const markRequestComplete = onCall(
             last_modified_by: actor,
             lastActor: actor,
           };
+          if (newSeatSite !== undefined) body.kindoo_site_id = newSeatSite;
           if (cur.type === 'add_temp') {
             if (cur.start_date) body.start_date = cur.start_date;
             if (cur.end_date) body.end_date = cur.end_date;
@@ -432,10 +453,24 @@ export const markRequestComplete = onCall(
           // T-42: derive the request's target site so a newly-appended
           // duplicate carries `kindoo_site_id`. Stake-scope ⇒ home;
           // ward-scope ⇒ ward's `kindoo_site_id` (home wards → null).
-          const requestSiteId: string | null =
-            cur.scope === 'stake'
-              ? null
-              : (wards.find((w) => w.ward_code === cur.scope)?.kindoo_site_id ?? null);
+          // Uniform missing-ward skip-with-warning policy: an unknown
+          // ward leaves the new duplicate's `kindoo_site_id` unset so
+          // the downstream ward-fallback resolver handles classification
+          // — same shape as the migration's duplicate-side skip.
+          let requestSiteId: string | null | undefined;
+          if (cur.scope === 'stake') {
+            requestSiteId = null;
+          } else {
+            const wardDoc = wards.find((w) => w.ward_code === cur.scope);
+            if (wardDoc) {
+              requestSiteId = wardDoc.kindoo_site_id ?? null;
+            } else {
+              requestSiteId = undefined; // leave the new duplicate's field unset
+              logger.warn(
+                `markRequestComplete: ward '${cur.scope}' not found while merging into seat for ${cur.member_canonical}; leaving new duplicate's kindoo_site_id unset (ward-fallback handles classification at read time)`,
+              );
+            }
+          }
           const plan = planAddMerge({
             existingSeat,
             request: cur,

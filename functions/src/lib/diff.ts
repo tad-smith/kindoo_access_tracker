@@ -100,18 +100,20 @@ export type ScopeMeta = {
    * the default `building_names` for stake-scope auto seats — stake-
    * scope grants access to home-site buildings only (spec §15 Phase 1
    * policy). `stakeBuildings` is preserved as the unfiltered list for
-   * any caller that needs it.
+   * any caller that needs it. Required (T-42): every production caller
+   * supplies this, and tests must construct it explicitly so a missing
+   * filter on the home buildings list is a compile-time error.
    */
-  stakeHomeBuildings?: string[];
+  stakeHomeBuildings: string[];
   /** Set of recognised ward_codes in stake. */
   wardCodes: ReadonlySet<string>;
   /**
    * Per-scope Kindoo site assignment. `'stake'` → home (`null`); ward
    * codes → that ward's `kindoo_site_id` (`null` for home wards, a
    * doc-id string for foreign-site wards). T-42: importer writes this
-   * onto every seat (top-level + per-duplicate).
+   * onto every seat (top-level + per-duplicate). Required (T-42).
    */
-  siteByScope?: Map<string, string | null>;
+  siteByScope: Map<string, string | null>;
   /**
    * Template indexes by scope, used to resolve `sheet_order` for any
    * calling-name (including preserved-scope callings whose tab wasn't
@@ -411,23 +413,20 @@ export function planDiff(opts: {
   return { accessUpserts, accessDeletes, seatWrites, warnings };
 }
 
-/** Default `building_names` for an auto seat under a scope. */
+/** Default `building_names` for an auto seat under a scope. Stake-scope
+ *  uses the home-only filtered list per spec §15 Phase 1 policy
+ *  (operator decision 2). */
 function defaultBuildings(scope: string, meta: ScopeMeta): string[] {
-  if (scope === 'stake') {
-    // Stake-scope auto seats grant access to home-site buildings only
-    // (spec §15 Phase 1 policy). The importer prefers
-    // `stakeHomeBuildings` when supplied; legacy callers that omit it
-    // fall back to `stakeBuildings` (pre-T-42 behaviour, all buildings).
-    return [...(meta.stakeHomeBuildings ?? meta.stakeBuildings)];
-  }
+  if (scope === 'stake') return [...meta.stakeHomeBuildings];
   return [...(meta.wardBuildings.get(scope) ?? [])];
 }
 
 /** Resolve a scope's Kindoo site id. `'stake'` → home (`null`); ward
- *  codes → that ward's `kindoo_site_id` from `siteByScope`. Defaults
- *  to home when the meta doesn't supply the map (legacy / tests). */
+ *  codes → that ward's `kindoo_site_id` from `siteByScope`. An unknown
+ *  ward (missing from the map) defaults to home; the importer's
+ *  scope-filtering already restricts callers to `scopesSeen`, which
+ *  is constructed from the parsed tabs against the known ward list. */
 function siteForScope(scope: string, meta: ScopeMeta): string | null {
-  if (!meta.siteByScope) return null;
   if (scope === 'stake') return null;
   const v = meta.siteByScope.get(scope);
   return v === undefined ? null : v;

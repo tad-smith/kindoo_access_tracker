@@ -49,14 +49,17 @@ export interface BackfillKindooSiteIdOutput {
   seats_total: number;
   /** Number of seat docs with at least one field updated. */
   seats_updated: number;
+  /** Number of seat docs whose primary `scope` no longer resolves to a
+   *  known ward — `kindoo_site_id` left untouched on those seats. */
+  seats_skipped_missing_ward: number;
   /** Number of `duplicate_grants[]` entries updated across all seats. */
   duplicates_updated: number;
   /** Number of `duplicate_grants[]` entries skipped because the entry's
    *  `scope` no longer resolves to a known ward. Skipping is deliberate
    *  (see file header). */
   duplicates_skipped_missing_ward: number;
-  /** Diagnostic warnings — one entry per skipped duplicate, ordered by
-   *  seat canonical for stable test assertions. */
+  /** Diagnostic warnings — one entry per skipped seat / duplicate,
+   *  ordered by seat canonical for stable test assertions. */
   warnings: string[];
 }
 
@@ -103,6 +106,7 @@ export async function backfillKindooSiteIdForStake(
     ok: true,
     seats_total: seatsSnap.size,
     seats_updated: 0,
+    seats_skipped_missing_ward: 0,
     duplicates_updated: 0,
     duplicates_skipped_missing_ward: 0,
     warnings: [],
@@ -119,17 +123,25 @@ export async function backfillKindooSiteIdForStake(
     // ---- Primary side ----
     // The primary scope must resolve. Stake-scope → home. A ward-scope
     // primary that doesn't resolve to a known ward is a latent data
-    // bug (seat references a deleted ward); we coerce to `null` (home)
-    // rather than skipping so the doc still gets a defined value. The
-    // operator-visible warning surfaces in the output.
+    // bug (seat references a deleted ward). Uniform missing-ward
+    // policy: skip with a logged warning rather than coerce to home —
+    // a misconfigured seat must not silently become home-categorised
+    // (the ward may be foreign-site once the operator restores it).
+    // The seat keeps its (likely absent) `kindoo_site_id` and the
+    // downstream ward-fallback resolver handles classification until
+    // the operator fixes the ward.
     const primaryDerived = resolveExpectedSite(seat.scope, wardsByCode);
-    const primaryTarget: string | null = primaryDerived === undefined ? null : primaryDerived;
     const primaryCurrent = (seat as Seat).kindoo_site_id ?? null;
-    const primaryDiffers = primaryCurrent !== primaryTarget;
+    let primaryDiffers = false;
+    let primaryTarget: string | null = primaryCurrent;
     if (primaryDerived === undefined) {
+      out.seats_skipped_missing_ward += 1;
       out.warnings.push(
-        `seat ${seatDoc.id}: primary scope '${seat.scope}' does not resolve to a known ward; coercing kindoo_site_id to home (null).`,
+        `seat ${seatDoc.id}: primary scope '${seat.scope}' does not resolve to a known ward; skipping primary kindoo_site_id (ward-fallback handles classification at read time).`,
       );
+    } else {
+      primaryTarget = primaryDerived;
+      primaryDiffers = primaryCurrent !== primaryTarget;
     }
 
     // ---- Duplicate side ----
@@ -140,11 +152,10 @@ export async function backfillKindooSiteIdForStake(
     for (const dup of curDupes) {
       const dupDerived = resolveExpectedSite(dup.scope, wardsByCode);
       if (dupDerived === undefined) {
-        // Missing-ward fallback: skip the entry. Do not write
-        // `kindoo_site_id` on it; preserve the entry as-is so the next
-        // importer cycle can correct it (or so it stays informational
-        // until a manager cleans it up). Do not error out the whole
-        // migration.
+        // Same uniform skip-with-warning policy as the primary side.
+        // Preserve the entry as-is so the next importer cycle can
+        // correct it (or so it stays informational until a manager
+        // cleans it up). Do not error out the whole migration.
         out.duplicates_skipped_missing_ward += 1;
         out.warnings.push(
           `seat ${seatDoc.id}: duplicate_grants entry with scope '${dup.scope}' (type '${dup.type}') skipped — ward not found.`,
@@ -165,9 +176,10 @@ export async function backfillKindooSiteIdForStake(
     if (!primaryDiffers && !dupesDiffer) continue;
 
     // Build the write. Only set fields that changed — minimises the
-    // doc diff. `kindoo_site_id` always lands when the primary
-    // differs; `duplicate_grants` is replaced wholesale when any
-    // duplicate changed (mirrors how the importer rewrites the array).
+    // doc diff. `kindoo_site_id` lands only when the primary
+    // resolved AND its target differs; `duplicate_grants` is replaced
+    // wholesale when any duplicate changed (mirrors how the importer
+    // rewrites the array).
     const update: Record<string, unknown> = {
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: { ...MIGRATION_BACKFILL_KINDOO_SITE_ID_ACTOR },
