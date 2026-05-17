@@ -335,8 +335,28 @@ export function resolveActiveKindooSite(args: ResolveActiveKindooSiteArgs): Acti
   }
 
   // 3. Home by name (first-run / config-not-yet-set fallback).
+  //
+  // Symmetric home-collision guard: refuse the home classification when
+  // either the active session's EID is also a known foreign `kindoo_eid`
+  // (defense-in-depth: step 2 should already have classified this as
+  // foreign, but a stale / duplicate record must never fall through to
+  // home), or the active name is ambiguous — i.e. ALSO matches some
+  // foreign `kindoo_expected_site_name`. Without this guard a foreign
+  // KindooSite whose expected name accidentally collides with the home
+  // name (typo, blank-then-copy, Kindoo-side rename) would let a
+  // foreign session resolve as `home` and the wizard's home-save path
+  // would overwrite `stake.kindoo_config.site_id` with FOREIGN_EID,
+  // permanently misconfiguring home.
   if (normalisedActive.length > 0 && normalisedActive === normaliseName(homeExpectedName)) {
-    return { kind: 'home', displayName: homeExpectedName };
+    const sessionEidCollidesForeign = kindooSites.some(
+      (s) => s.kindoo_eid !== undefined && s.kindoo_eid !== null && s.kindoo_eid === session.eid,
+    );
+    const nameCollidesForeign = kindooSites.some(
+      (s) => normaliseName(s.kindoo_expected_site_name) === normalisedActive,
+    );
+    if (!sessionEidCollidesForeign && !nameCollidesForeign) {
+      return { kind: 'home', displayName: homeExpectedName };
+    }
   }
 
   // 4. Foreign by name (auto-populate EID on save).

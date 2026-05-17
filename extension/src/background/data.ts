@@ -193,7 +193,30 @@ export async function writeKindooConfig(
     // The site-check resolver returns `home` purely by EID compare, so
     // a re-configure of a valid home is legitimate even when
     // getEnvironments() doesn't list the active env.
+    //
+    // Symmetric home-collision guard: read foreign kindooSites and
+    // refuse when payload.siteId matches any foreign `kindoo_eid` —
+    // mirror of the orchestrator-entry guard in `siteCheck.ts`. Without
+    // this, a buggy resolver (e.g. ambiguous-name fallthrough) could
+    // persist FOREIGN_EID as the home `kindoo_config.site_id` and
+    // permanently misconfigure home.
+    //
+    // Dotted-path writes on `kindoo_config.*`: a top-level
+    // `kindoo_config: {…}` update would REPLACE the whole map, dropping
+    // any field that exists today but isn't in the literal — and any
+    // field future phases add. Phase 5 runs this writer on every
+    // re-configure, so the partial-merge shape is load-bearing.
     const stakeRef = doc(db, 'stakes', STAKE_ID);
+    const kindooSitesSnap = await getDocs(collection(db, 'stakes', STAKE_ID, 'kindooSites'));
+    const foreignEids = kindooSitesSnap.docs
+      .map((d) => (d.data() as KindooSite).kindoo_eid)
+      .filter((eid): eid is number => eid !== undefined && eid !== null);
+    if (foreignEids.includes(payload.siteId)) {
+      throw new Error(
+        `refusing to write foreign kindoo_eid (${payload.siteId}) as home ` +
+          `kindoo_config.site_id; this would trap FOREIGN_EID on the stake doc`,
+      );
+    }
     let siteName = payload.siteName;
     if (!siteName) {
       const stakeSnap = await getDoc(stakeRef);
@@ -203,12 +226,10 @@ export async function writeKindooConfig(
       siteName = existing;
     }
     batch.update(stakeRef, {
-      kindoo_config: {
-        site_id: payload.siteId,
-        site_name: siteName,
-        configured_at: serverTimestamp(),
-        configured_by: actorRef,
-      },
+      'kindoo_config.site_id': payload.siteId,
+      'kindoo_config.site_name': siteName,
+      'kindoo_config.configured_at': serverTimestamp(),
+      'kindoo_config.configured_by': actorRef,
       last_modified_at: serverTimestamp(),
       lastActor: actorRef,
     });

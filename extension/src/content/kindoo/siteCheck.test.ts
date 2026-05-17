@@ -479,6 +479,108 @@ describe('resolveActiveKindooSite — Phase 5 wizard helper', () => {
     expect(result).toEqual({ kind: 'unknown', activeSiteName: '' });
   });
 
+  it('refuses to classify as home when active name matches home BUT a foreign site shares the same kindoo_expected_site_name', () => {
+    // Symmetric leak the reviewer flagged. Scenario:
+    //   - home configured: stake.kindoo_config.site_id = HOME_EID, name CSNS
+    //   - operator misconfigures a foreign KindooSite whose
+    //     kindoo_expected_site_name is accidentally also CSNS (typo /
+    //     blank-then-copy / Kindoo-side rename)
+    //   - foreign doc has no kindoo_eid yet
+    //   - operator is on the FOREIGN session (eid 4321)
+    // Step 1 home-by-EID fails (HOME_EID != FOREIGN_EID). Step 2 foreign-
+    // by-EID fails (foreign has no kindoo_eid). Step 3 home-by-name
+    // matched before this fix — wizard would call writeKindooConfig with
+    // siteId: FOREIGN_EID and clobber home. Now step 3 must refuse on
+    // name ambiguity; the load-bearing property is `result.kind !==
+    // 'home'`. Step 4 (foreign by name) then catches it and returns
+    // foreign with populateEid — that's a safe outcome: the writer
+    // touches kindooSites/<id>, not stake.kindoo_config.
+    const ambiguousForeign: KindooSite = {
+      id: 'east-stake',
+      display_name: 'East Stake (Foothills Building)',
+      kindoo_expected_site_name: 'Colorado Springs North Stake',
+      // kindoo_eid absent.
+    } as unknown as KindooSite;
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: FOREIGN_EID },
+      envs: [
+        { EID: FOREIGN_EID, Name: 'Colorado Springs North Stake' } as unknown as KindooEnvironment,
+      ],
+      stake: STAKE,
+      kindooSites: [ambiguousForeign],
+    });
+    expect(result.kind).not.toBe('home');
+    // The downstream classification is foreign (step 4 fires) — that
+    // means the wizard's save will go through the foreign branch
+    // (kindooSites/<id>) and the writer-side guard in data.ts will
+    // verify payload.siteId doesn't collide with home.
+    expect(result.kind).toBe('foreign');
+    if (result.kind !== 'foreign') return;
+    expect(result.siteId).toBe('east-stake');
+    expect(result.populateEid).toBe(FOREIGN_EID);
+  });
+
+  it('refuses to classify as home when active EID collides with a known foreign kindoo_eid', () => {
+    // Defense-in-depth: step 2 (foreign-by-EID) should have caught this
+    // already, but if a duplicate / stale name match would otherwise let
+    // step 3 fire on a foreign session, the EID-collision check refuses.
+    // Construct a case where the home expected name and an active env
+    // name both match (so step 3 would otherwise hit) AND the session
+    // EID is recorded on a foreign doc — but force step 2 past it by
+    // having the foreign doc's kindoo_expected_site_name also match
+    // home, which still means step 2 returns first. Use a stake without
+    // kindoo_config so step 1 is skipped, ensuring step 3's predicate is
+    // the load-bearing one. (In practice this is a contrived edge — the
+    // real load-bearing check is the name-ambiguity branch above.)
+    const stakeNoConfig: Stake = {
+      stake_id: 'csnorth',
+      stake_name: 'Colorado Springs North Stake',
+    } as unknown as Stake;
+    // Foreign site whose kindoo_eid happens to match the session AND
+    // whose expected name differs from home — step 2 catches it as
+    // foreign before step 3 ever runs. The guard's role is to be a
+    // belt-and-braces refusal if ordering ever changes.
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: FOREIGN_EID },
+      envs: [
+        { EID: FOREIGN_EID, Name: 'Colorado Springs North Stake' } as unknown as KindooEnvironment,
+      ],
+      stake: stakeNoConfig,
+      kindooSites: [
+        {
+          id: 'east-stake',
+          display_name: 'East Stake (Foothills Building)',
+          kindoo_expected_site_name: 'East Stake',
+          kindoo_eid: FOREIGN_EID,
+        } as unknown as KindooSite,
+      ],
+    });
+    // Step 2 wins: classify as foreign.
+    expect(result.kind).toBe('foreign');
+  });
+
+  it('still classifies as home when only the home name matches and no foreign collides', () => {
+    // Sanity: the new guard must not regress the legitimate first-run
+    // home-by-name path. No foreign sites, name match → still home.
+    const stakeNoConfig: Stake = {
+      stake_id: 'csnorth',
+      stake_name: 'Colorado Springs North Stake',
+    } as unknown as Stake;
+    const result = resolveActiveKindooSite({
+      session: { token: 'tok', eid: HOME_EID },
+      envs: homeEnvs(),
+      stake: stakeNoConfig,
+      kindooSites: [
+        {
+          id: 'east-stake',
+          display_name: 'East Stake (Foothills Building)',
+          kindoo_expected_site_name: 'East Stake',
+        } as unknown as KindooSite,
+      ],
+    });
+    expect(result.kind).toBe('home');
+  });
+
   it('prefers home (EID match) over a foreign site that shares a stale EID record', () => {
     // Defensive: a foreign doc still carrying a stale kindoo_eid that
     // happens to collide with home's site_id shouldn't override the

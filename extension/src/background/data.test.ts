@@ -48,7 +48,11 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     commitMock.mockResolvedValue(undefined);
     writeBatchMock.mockClear();
     getDocMock.mockReset();
+    getDocsMock.mockReset();
+    // Default: no foreign kindooSites — collision guard reads empty.
+    getDocsMock.mockResolvedValue({ docs: [] });
     docMock.mockClear();
+    collectionMock.mockClear();
     serverTimestampMock.mockClear();
   });
   afterEach(() => {
@@ -83,12 +87,11 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
       actor(),
     );
     expect(getDocMock).toHaveBeenCalledTimes(1);
-    // First batch.update call is the stake doc.
-    const stakePayload = updateMock.mock.calls[0]?.[1] as {
-      kindoo_config: { site_id: number; site_name: string };
-    };
-    expect(stakePayload.kindoo_config.site_id).toBe(27994);
-    expect(stakePayload.kindoo_config.site_name).toBe('Cordera Stake');
+    // First batch.update call is the stake doc. Dotted-path keys
+    // preserve unrelated kindoo_config.* subfields on partial-merge.
+    const stakePayload = updateMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(stakePayload['kindoo_config.site_id']).toBe(27994);
+    expect(stakePayload['kindoo_config.site_name']).toBe('Cordera Stake');
   });
 
   it('falls back to empty string when payload.siteName is empty AND stake doc is missing', async () => {
@@ -105,15 +108,16 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
       },
       actor(),
     );
-    const stakePayload = updateMock.mock.calls[0]?.[1] as {
-      kindoo_config: { site_name: string };
-    };
-    expect(stakePayload.kindoo_config.site_name).toBe('');
+    const stakePayload = updateMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(stakePayload['kindoo_config.site_name']).toBe('');
   });
 
-  it('writes the supplied siteName when non-empty (no defensive read needed)', async () => {
-    // Happy path: env was present, panel passed a real name. Writer
-    // should skip the getDoc round-trip.
+  it('writes the supplied siteName when non-empty (no defensive stake read needed)', async () => {
+    // Happy path: env was present, panel passed a real name. The
+    // home-collision guard always reads kindooSites to check for
+    // FOREIGN_EID collision, but the defensive site_name read off the
+    // stake doc is skipped because payload.siteName is already
+    // non-empty.
     const { writeKindooConfig } = await import('./data');
     await writeKindooConfig(
       {
@@ -125,10 +129,9 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
       actor(),
     );
     expect(getDocMock).not.toHaveBeenCalled();
-    const stakePayload = updateMock.mock.calls[0]?.[1] as {
-      kindoo_config: { site_name: string };
-    };
-    expect(stakePayload.kindoo_config.site_name).toBe('Cordera Stake');
+    expect(getDocsMock).toHaveBeenCalledTimes(1);
+    const stakePayload = updateMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(stakePayload['kindoo_config.site_name']).toBe('Cordera Stake');
   });
 
   it('rejects when actor has no email', async () => {
@@ -144,6 +147,81 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
         { email: null } as unknown as User,
       ),
     ).rejects.toThrow(/no email/);
+  });
+
+  it('refuses a home save that would trap foreign kindoo_eid as the home kindoo_config.site_id', async () => {
+    // Symmetric to the foreign-save collision guard. Scenario: a buggy
+    // resolver classifies a foreign session as `home` (ambiguous-name
+    // fallthrough) and the wizard calls writeKindooConfig with
+    // payload.siteId = FOREIGN_EID. Without this guard, home's
+    // site_id would be silently overwritten with FOREIGN_EID and every
+    // home-scope provision check would refuse.
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+      }),
+    });
+    getDocsMock.mockResolvedValue({
+      docs: [
+        {
+          data: () => ({
+            id: 'east-stake',
+            display_name: 'East Stake (Foothills Building)',
+            kindoo_expected_site_name: 'East Stake',
+            kindoo_eid: 4321,
+          }),
+        },
+      ],
+    });
+    const { writeKindooConfig } = await import('./data');
+    await expect(
+      writeKindooConfig(
+        {
+          kindooSiteId: null,
+          siteId: 4321, // collides with foreign kindoo_eid
+          siteName: 'East Stake',
+          buildingRules: [],
+        },
+        actor(),
+      ),
+    ).rejects.toThrow(/FOREIGN_EID|foreign/i);
+    expect(commitMock).not.toHaveBeenCalled();
+  });
+
+  it('uses dotted-path updates on kindoo_config.* so unrelated subfields survive', async () => {
+    // Bug the reviewer flagged: a top-level `kindoo_config: {…}` write
+    // is a REPLACE not a merge. Any field under kindoo_config that the
+    // literal doesn't enumerate gets dropped on every re-configure.
+    // Dotted-path writes must scope to only the named subfields.
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+      }),
+    });
+    getDocsMock.mockResolvedValue({ docs: [] });
+    const { writeKindooConfig } = await import('./data');
+    await writeKindooConfig(
+      {
+        kindooSiteId: null,
+        siteId: 27994,
+        siteName: 'Cordera Stake',
+        buildingRules: [],
+      },
+      actor(),
+    );
+    const stakePayload = updateMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    // Must use dotted-path keys, NOT a nested kindoo_config object.
+    expect(stakePayload['kindoo_config.site_id']).toBe(27994);
+    expect(stakePayload['kindoo_config.site_name']).toBe('Cordera Stake');
+    expect(stakePayload['kindoo_config.configured_at']).toBe('__ts__');
+    expect(stakePayload['kindoo_config.configured_by']).toMatchObject({
+      email: 'mgr@example.com',
+    });
+    // The write must NOT include a top-level kindoo_config key — that
+    // would clobber the whole map.
+    expect(stakePayload['kindoo_config']).toBeUndefined();
   });
 
   it('refuses a foreign save that would trap home kindoo_config.site_id on the foreign doc', async () => {
