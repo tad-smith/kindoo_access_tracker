@@ -108,16 +108,25 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   };
 
   // Contextual utilization: bar tracks the current Scope filter.
-  //   - All       → entire-stake count vs stake_seat_cap (license cap).
+  //   - All       → home-site count vs stake_seat_cap (license cap).
+  //                 Foreign-site ward seats are excluded — they come
+  //                 out of another Kindoo site's pool. (Spec §15, §137.)
   //   - 'stake'   → stake-scope count vs the stake-presidency pool size,
   //                 which is stake_seat_cap minus the sum of every
-  //                 ward's pre-allocated seat_cap (the headroom the
-  //                 presidency owns after wards have taken their slice).
-  //   - <wardCode>→ that ward's count vs ward.seat_cap.
+  //                 home-site ward's pre-allocated seat_cap (the
+  //                 headroom the presidency owns after home-site wards
+  //                 have taken their slice).
+  //   - <wardCode>→ that ward's count vs ward.seat_cap. Per-ward bars
+  //                 are unaffected by site assignment — each ward's
+  //                 seat_cap is what its own Kindoo site allotted it.
   // Cap-unset / zero cap renders the neutral "(cap unset)" variant.
   const allSeats = seats.data ?? [];
   const stakeSeatCap = stake.data?.stake_seat_cap;
   const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wardsList);
+  const foreignWardCodes = useMemo(
+    () => new Set(wardsList.filter((w) => w.kindoo_site_id != null).map((w) => w.ward_code)),
+    [wardsList],
+  );
   const wardDoc = ward && ward !== 'stake' ? wardsList.find((w) => w.ward_code === ward) : null;
   const utilizationLabel = !ward
     ? 'Entire-stake utilization'
@@ -125,7 +134,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
       ? 'Stake-scope utilization'
       : `Ward ${ward} utilization`;
   const utilizationTotal = !ward
-    ? allSeats.length
+    ? allSeats.filter((s) => s.scope === 'stake' || !foreignWardCodes.has(s.scope)).length
     : allSeats.filter((s) => s.scope === ward).length;
   const utilizationCap: number | null | undefined = !ward
     ? stakeSeatCap

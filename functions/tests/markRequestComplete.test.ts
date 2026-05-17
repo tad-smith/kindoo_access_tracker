@@ -128,9 +128,10 @@ async function seedWard(opts: {
   ward_code: string;
   building_name?: string;
   seat_cap?: number;
+  kindoo_site_id?: string | null;
 }): Promise<void> {
   const { db } = requireEmulators();
-  await db.doc(`stakes/${STAKE_ID}/wards/${opts.ward_code}`).set({
+  const doc: Record<string, unknown> = {
     ward_code: opts.ward_code,
     ward_name: `${opts.ward_code} Ward`,
     building_name: opts.building_name ?? `${opts.ward_code} Building`,
@@ -138,7 +139,9 @@ async function seedWard(opts: {
     created_at: Timestamp.now(),
     last_modified_at: Timestamp.now(),
     lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
-  });
+  };
+  if (opts.kindoo_site_id !== undefined) doc.kindoo_site_id = opts.kindoo_site_id;
+  await db.doc(`stakes/${STAKE_ID}/wards/${opts.ward_code}`).set(doc);
 }
 
 function callableReq(opts: { auth?: { email: string } | null; data: unknown }): never {
@@ -1480,6 +1483,48 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       // Seat write applied.
       const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
       expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+    });
+
+    it('foreign-site ward seats do not subtract from the home stake portion-cap', async () => {
+      // stake_seat_cap=2; FN is foreign-site with 5 existing seats;
+      // those seats DO NOT shrink the home stake portion. Adding a
+      // stake-scope seat brings stake count to 1 against portion-cap=2
+      // → under cap, no over-cap entry.
+      await seedManager();
+      await seedStake({ stake_seat_cap: 2 });
+      await seedWard({
+        ward_code: 'FN',
+        building_name: 'Foreign Building',
+        seat_cap: 50,
+        kindoo_site_id: 'east-stake',
+      });
+      for (let i = 0; i < 5; i++) {
+        await seedSeat({
+          canonical: `f${i}@gmail.com`,
+          scope: 'FN',
+          type: 'manual',
+          building_names: ['Foreign Building'],
+        });
+      }
+      await seedRequest({
+        requestId: 'r1',
+        status: 'pending',
+        type: 'add_manual',
+        scope: 'stake',
+        building_names: ['Cordera Building'],
+      });
+
+      const result = await markRequestComplete.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, requestId: 'r1' },
+        }),
+      );
+
+      expect(result.over_caps).toEqual([]);
+      const { db } = requireEmulators();
+      const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+      expect(stake.last_over_caps_json).toEqual([]);
     });
 
     it('remove path does NOT touch last_over_caps_json (responsibility split with seat-delete trigger)', async () => {

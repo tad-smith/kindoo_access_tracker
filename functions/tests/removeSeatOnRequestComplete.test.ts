@@ -90,9 +90,10 @@ async function seedWard(opts: {
   ward_code: string;
   building_name?: string;
   seat_cap?: number;
+  kindoo_site_id?: string | null;
 }): Promise<void> {
   const { db } = requireEmulators();
-  await db.doc(`stakes/${STAKE_ID}/wards/${opts.ward_code}`).set({
+  const doc: Record<string, unknown> = {
     ward_code: opts.ward_code,
     ward_name: `${opts.ward_code} Ward`,
     building_name: opts.building_name ?? `${opts.ward_code} Building`,
@@ -100,7 +101,9 @@ async function seedWard(opts: {
     created_at: Timestamp.now(),
     last_modified_at: Timestamp.now(),
     lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
-  });
+  };
+  if (opts.kindoo_site_id !== undefined) doc.kindoo_site_id = opts.kindoo_site_id;
+  await db.doc(`stakes/${STAKE_ID}/wards/${opts.ward_code}`).set(doc);
 }
 
 function removeEvent(opts: {
@@ -394,6 +397,32 @@ describe.skipIf(!hasEmulators())('removeSeatOnRequestComplete', () => {
       expect(alice.exists).toBe(false);
       const bob = await db.doc(`stakes/${STAKE_ID}/seats/bob@gmail.com`).get();
       expect(bob.exists).toBe(true);
+    });
+
+    it('foreign-site ward seats are excluded from the home stake portion on remove recompute', async () => {
+      // stake_seat_cap=2 with 1 stake-scope seat and 5 foreign FN seats.
+      // Pre-state: portion-cap = 2 (FN excluded); stake count = 1 →
+      // under cap. Removing a foreign seat must NOT inflate the home
+      // portion-cap or otherwise touch the home stake calc.
+      await seedStake({ overCaps: [], stake_seat_cap: 2 });
+      await seedWard({
+        ward_code: 'FN',
+        seat_cap: 50,
+        kindoo_site_id: 'east-stake',
+        building_name: 'Foreign Building',
+      });
+      await seedSeat({ canonical: 'sally@gmail.com', scope: 'stake' });
+      for (let i = 0; i < 5; i++) {
+        await seedSeat({ canonical: `f${i}@gmail.com`, scope: 'FN' });
+      }
+
+      await removeSeatOnRequestComplete.run(removeEvent({ scope: 'FN', member: 'f0@gmail.com' }));
+
+      const { db } = requireEmulators();
+      const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() ?? {};
+      // No over-cap on home stake portion (FN seats excluded from
+      // both sides) and FN at 4 < cap 50 → empty.
+      expect((stake as { last_over_caps_json: OverCapEntry[] }).last_over_caps_json).toEqual([]);
     });
 
     it('shifts pool counts on a primary-promotion remove (PC → MO)', async () => {

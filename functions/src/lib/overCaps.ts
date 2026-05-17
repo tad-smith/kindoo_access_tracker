@@ -1,7 +1,13 @@
 // Pure over-cap detection. Reads counts + caps; returns the array
 // the importer persists to `stake.last_over_caps_json`.
 //
-// Stake portion-cap = `stake_seat_cap - sum(ward seats)`, clamped at 0.
+// Home stake portion-cap = `stake_seat_cap - sum(home-site ward seats)`,
+// clamped at 0. Foreign-site wards (those with `kindoo_site_id` set)
+// don't contribute to either side of the home-stake calculation — their
+// seats come out of a foreign Kindoo site's pool, not ours. Per-ward
+// over-cap is unaffected: each ward's `seat_cap` reflects what its own
+// Kindoo site allotted it.
+//
 // A ward over-caps when `count > seat_cap` and `seat_cap > 0`.
 
 import type { OverCapEntry, Seat, Ward } from '@kindoo/shared';
@@ -30,9 +36,15 @@ export function computeOverCaps(opts: {
   }
 
   if (Number.isFinite(stakeSeatCap) && stakeSeatCap > 0) {
+    const homeWardCodes = new Set(
+      wards.filter((w) => w.kindoo_site_id == null).map((w) => w.ward_code),
+    );
     const stakeN = counts.get('stake') ?? 0;
-    const wardSeatsN = seats.length - stakeN;
-    const portionCap = Math.max(0, stakeSeatCap - wardSeatsN);
+    let homeWardSeatsN = 0;
+    for (const s of seats) {
+      if (s.scope && s.scope !== 'stake' && homeWardCodes.has(s.scope)) homeWardSeatsN += 1;
+    }
+    const portionCap = Math.max(0, stakeSeatCap - homeWardSeatsN);
     if (stakeN > portionCap) {
       out.push({
         pool: 'stake',

@@ -257,6 +257,48 @@ describe('<AllSeatsPage />', () => {
     expect(host).toHaveTextContent(/1 \/ 50 seats used/);
   });
 
+  it('excludes foreign-site ward seats from the entire-stake bar (Scope = "All")', () => {
+    // Home stake utilization is home-site only on both sides: 2 stake
+    // + 1 CO (home) = 3 counted; 2 FN (foreign-site) seats excluded.
+    mockAll({
+      seats: [
+        makeSeat({ scope: 'stake', member_canonical: 's1@x.com', member_email: 's1@x.com' }),
+        makeSeat({ scope: 'stake', member_canonical: 's2@x.com', member_email: 's2@x.com' }),
+        makeSeat({ scope: 'CO', member_canonical: 'co1@x.com', member_email: 'co1@x.com' }),
+        makeSeat({ scope: 'FN', member_canonical: 'fn1@x.com', member_email: 'fn1@x.com' }),
+        makeSeat({ scope: 'FN', member_canonical: 'fn2@x.com', member_email: 'fn2@x.com' }),
+      ],
+      wards: [
+        makeWard({ ward_code: 'CO', seat_cap: 20 }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        makeWard({ ward_code: 'FN', seat_cap: 20, kindoo_site_id: 'east-stake' } as any),
+      ],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const host = screen.getByTestId('allseats-utilization');
+    expect(host).toHaveTextContent(/Entire-stake utilization/);
+    expect(host).toHaveTextContent(/3 \/ 200 seats used/);
+  });
+
+  it('excludes foreign-site ward caps from the Stake-scope pool denominator', () => {
+    // 200 - 50 (CO, home) - 0 (FN, foreign) = 150.
+    mockAll({
+      seats: [makeSeat({ scope: 'stake' })],
+      wards: [
+        makeWard({ ward_code: 'CO', seat_cap: 50 }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        makeWard({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' } as any),
+      ],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage initialWard="stake" />);
+    const host = screen.getByTestId('allseats-utilization');
+    expect(host).toHaveTextContent(/1 \/ 150 seats used/);
+  });
+
   it('renders the contextual utilization bar in cap-unset form when no cap is configured', () => {
     mockAll({
       seats: [makeSeat({ scope: 'CO' })],

@@ -176,6 +176,23 @@ describe('<ManagerDashboardPage />', () => {
     expect(within(util).getByText(/1 \/ 50 seats used/)).toBeInTheDocument();
   });
 
+  it('excludes foreign-site ward caps from the Stake-bar denominator', async () => {
+    // CO is home (50 cap); FN is on a foreign Kindoo site (50 cap,
+    // excluded). Home portion = 200 - 50 = 150.
+    mockAll({
+      seats: [makeSeat({ scope: 'stake', member_canonical: 's1@x.com', member_email: 's1@x.com' })],
+      wards: [
+        makeWard({ ward_code: 'CO', seat_cap: 50 }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        makeWard({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' } as any),
+      ],
+      stake: { stake_seat_cap: 200, last_over_caps_json: [] },
+    });
+    await renderWithRouter();
+    const util = screen.getByTestId('dashboard-card-utilization');
+    expect(within(util).getByText(/1 \/ 150 seats used/)).toBeInTheDocument();
+  });
+
   it('renders the warnings card with one row per over-cap pool', async () => {
     mockAll({
       stake: {
