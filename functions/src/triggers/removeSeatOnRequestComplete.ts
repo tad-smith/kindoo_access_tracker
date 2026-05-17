@@ -103,8 +103,7 @@ export function planRemove(opts: {
 
   const primarySite = seat.kindoo_site_id ?? null;
   const reqSite = requestSiteId ?? null;
-  const primaryMatches =
-    seat.scope === requestScope && (legacy || primarySite === reqSite);
+  const primaryMatches = seat.scope === requestScope && (legacy || primarySite === reqSite);
 
   if (primaryMatches) {
     if (dupes.length === 0) return { kind: 'delete' };

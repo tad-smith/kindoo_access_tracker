@@ -542,7 +542,7 @@ The block persisted across all of those, indicating that Workspace-owned Apps Sc
 
 **Best guess (Option b — per-grant UUID).** Stable, Phase-A-scope, scales cleanly. The Phase A implementation agent should pick before Phase B locks; this is a Phase A scope decision.
 
-### KS-10 `[OPEN]` T-42 Phase B — roster-hook query shape under broadened inclusion
+### KS-10 `[RESOLVED 2026-05-17 — Option (b) two-query union; couples to the duplicate_scopes denormalization Phase A shipped; index auto-created]` T-42 Phase B — roster-hook query shape under broadened inclusion
 
 **Flagged (T-42 Phase B spec PR, third-pass review 2026-05-17).** The three roster hooks (`useBishopricRoster`, `useStakeRoster`, `useWardRosters`) today query Firestore with `where('scope', '==', X)`. Phase B's any-grant-matches semantics aren't expressible as a single equality predicate, so spec §15 Phase B's wording "each hook will fetch a wider seat set and the per-page filter moves client-side" leaves the new query shape unspecified.
 
@@ -551,7 +551,7 @@ The block persisted across all of those, indicating that Workspace-owned Apps Sc
 - **(b) Two-query union.** `where('scope', '==', X)` + `where('duplicate_scopes', 'array-contains', X)`. Client merges. Needs a Firestore single-field index on `duplicate_scopes` (auto-created on first query). Two listens per page.
 - **(c) Server-side fan-out via a callable.** Out of scope for Phase B; Phase 12+ territory.
 
-**Best guess (Option b — two-query union).** Couples directly to the `duplicate_scopes` denormalization already required for the rules-side check, so no incremental schema cost. (a) also fine at this scale; pick (b) for forward-compat with Phase 12 multi-stake scale. Resolves in the Phase B implementation PR.
+**Resolved 2026-05-17 — Option (b) two-query union.** Couples directly to the `duplicate_scopes` denormalization Phase A already ships, so no incremental schema cost. The Firestore single-field index on `duplicate_scopes` is auto-created on first `array-contains` query. Implemented in T-43 via `mergeSeatsByCanonical` in `apps/web/src/features/bishopric/hooks.ts` (deduped by `member_canonical`).
 
 ---
 

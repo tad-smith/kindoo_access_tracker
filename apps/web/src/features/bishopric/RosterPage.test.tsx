@@ -630,6 +630,42 @@ describe('<BishopricRosterPage />', () => {
       expect(screen.getByTestId('edit-seat-dialog-form')).toBeInTheDocument();
     });
   });
+
+  // T-43 Phase B AC #3 — broadened inclusion on Bishopric Roster.
+  describe('Phase B broadened inclusion (T-43 AC #3)', () => {
+    it("AC #3: a seat with primary scope='stake' and a CO duplicate appears on CO's bishopric roster (single row, columns reflect the duplicate)", () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      const NOW = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          type: 'auto',
+          member_canonical: 'cross@x.com',
+          member_email: 'cross@x.com',
+          member_name: 'Cross Person',
+          callings: ['Stake Clerk'],
+          duplicate_grants: [
+            {
+              scope: 'CO',
+              type: 'auto',
+              callings: ['Bishop'],
+              building_names: ['CO Building'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      // Single row.
+      const cards = document.querySelectorAll('[data-seat-id="cross@x.com"]');
+      expect(cards).toHaveLength(1);
+      // Calling text reflects the CO duplicate (Bishop), not the
+      // stake primary (Stake Clerk).
+      expect(screen.getByText(/Bishop/)).toBeInTheDocument();
+      expect(screen.queryByText(/Stake Clerk/)).toBeNull();
+    });
+  });
 });
 
 describe('<BishopricRosterPage /> — Kindoo Sites label (spec §15)', () => {
