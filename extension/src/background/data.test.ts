@@ -254,13 +254,87 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
 
   it('allows a foreign save when payload.siteId does not collide with home', async () => {
     // Happy path: the home-collision guard must not block legitimate
-    // foreign saves where the EIDs are distinct.
+    // foreign saves where the EIDs are distinct. The mock returns the
+    // same doc shape for the stake read AND the foreign-site read; the
+    // foreign-site read sees no `kindoo_eid` in that shape, so the
+    // non-home overwrite guard treats it as a first-populate and passes.
     getDocMock.mockResolvedValue({
       exists: () => true,
       data: () => ({
         kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
       }),
     });
+    const { writeKindooConfig } = await import('./data');
+    await writeKindooConfig(
+      {
+        kindooSiteId: 'east-stake',
+        siteId: 4321,
+        siteName: 'East Stake',
+        buildingRules: [],
+      },
+      actor(),
+    );
+    expect(commitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a foreign save that would overwrite an established kindoo_eid with a different value', async () => {
+    // PR #129 review follow-up: the wizard's foreign-save path was the
+    // higher-volume entry that wasn't covered by the orchestrator-side
+    // overwrite guard. Concrete scenario: foreign doc east-stake carries
+    // kindoo_eid: X; a Kindoo-side rename causes resolveActiveKindooSite
+    // to match by name and return populateEid: Y even though the doc
+    // already has X. Without this guard the wizard would silently
+    // overwrite X with Y and re-route door access for the foreign ward.
+    getDocMock
+      // First read: stake doc (home-collision guard).
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        }),
+      })
+      // Second read: foreign site doc (overwrite guard) — already populated.
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          id: 'east-stake',
+          kindoo_eid: 1234,
+        }),
+      });
+    const { writeKindooConfig } = await import('./data');
+    await expect(
+      writeKindooConfig(
+        {
+          kindooSiteId: 'east-stake',
+          siteId: 5678, // differs from existing kindoo_eid 1234
+          siteName: 'East Stake',
+          buildingRules: [],
+        },
+        actor(),
+      ),
+    ).rejects.toThrow(/overwrite existing kindoo_eid/i);
+    // Batch must not commit on refusal.
+    expect(commitMock).not.toHaveBeenCalled();
+  });
+
+  it('allows a foreign save that re-asserts the same kindoo_eid (idempotent)', async () => {
+    // Wizard re-runs against the same site with the same session EID
+    // must still go through. The non-home overwrite guard only blocks
+    // value changes, never value re-assertions.
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          id: 'east-stake',
+          kindoo_eid: 4321,
+        }),
+      });
     const { writeKindooConfig } = await import('./data');
     await writeKindooConfig(
       {
@@ -403,9 +477,10 @@ describe('writeKindooSiteEid — home-collision guard', () => {
   });
 
   it('allows re-asserting an identical kindoo_eid (idempotent re-write)', async () => {
-    // The wizard's foreign save can re-run against a site whose
-    // kindoo_eid is already set — the new overwrite guard must not
-    // block re-asserting the same value.
+    // A concurrent populate race could call this writer twice with the
+    // same EID — the new overwrite guard must not block re-asserting
+    // the same value. (The wizard's foreign save goes through
+    // writeKindooConfig, not this writer.)
     getDocMock
       .mockResolvedValueOnce({
         exists: () => true,

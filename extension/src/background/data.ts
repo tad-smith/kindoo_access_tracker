@@ -123,13 +123,16 @@ export async function loadStakeConfig(): Promise<StakeConfigBundle> {
  * doc and permanently bypass Phase 3.
  *
  * Non-home overwrite guard: if the target doc already carries a
- * `kindoo_eid` that differs from the incoming value, refuse. The
- * orchestrator-entry path only invokes this writer when the foreign
- * doc's `kindoo_eid` is null / undefined (re-asserting an identical
- * value via the wizard's foreign save is fine), so legitimate callers
- * stay green; this regression-proofs against a buggy / future caller
- * silently rewriting an established foreign-site `kindoo_eid` and
- * re-routing door-access for the foreign ward.
+ * `kindoo_eid` that differs from the incoming value, refuse. The only
+ * caller of this writer is `RequestCard.tsx` after `checkRequestSite`
+ * returns a `populate` instruction; by construction that path only
+ * fires on docs whose `kindoo_eid` is null / undefined, so the
+ * idempotent same-value re-assert is reachable here only via a race
+ * (concurrent populate). The guard regression-proofs against a buggy /
+ * future caller silently rewriting an established foreign-site
+ * `kindoo_eid` and re-routing door-access for the foreign ward. The
+ * symmetric guard for the wizard's foreign-save path lives in
+ * `writeKindooConfig` below.
  */
 export async function writeKindooSiteEid(
   kindooSiteId: string,
@@ -261,6 +264,15 @@ export async function writeKindooConfig(
     // EID equals the home `kindoo_config.site_id`. This belts-and-
     // braces the orchestrator-entry guard in `siteCheck.ts` — even a
     // buggy caller can't smuggle HOME_EID into a foreign doc.
+    //
+    // Non-home overwrite guard (symmetric to writeKindooSiteEid above):
+    // if the target doc already carries a `kindoo_eid` that differs from
+    // the incoming value, refuse. Concrete scenario: foreign doc carries
+    // EID X; a Kindoo-side rename causes `resolveActiveKindooSite` to
+    // match by name and return `populateEid: Y` even though the doc
+    // already has X. Without this guard the wizard's save would silently
+    // overwrite X with Y and re-route door access for that foreign ward.
+    // Re-asserting an identical value is still allowed.
     const stakeRef = doc(db, 'stakes', STAKE_ID);
     const stakeSnap = await getDoc(stakeRef);
     const homeSiteId = stakeSnap.exists()
@@ -273,6 +285,16 @@ export async function writeKindooConfig(
       );
     }
     const foreignRef = doc(db, 'stakes', STAKE_ID, 'kindooSites', payload.kindooSiteId);
+    const foreignSnap = await getDoc(foreignRef);
+    const existingEid = foreignSnap.exists()
+      ? ((foreignSnap.data() as KindooSite).kindoo_eid ?? null)
+      : null;
+    if (existingEid !== null && existingEid !== payload.siteId) {
+      throw new Error(
+        `Refusing to overwrite existing kindoo_eid for site '${payload.kindooSiteId}' ` +
+          `(existing=${existingEid}, incoming=${payload.siteId}).`,
+      );
+    }
     batch.update(foreignRef, {
       kindoo_eid: payload.siteId,
       last_modified_at: serverTimestamp(),
