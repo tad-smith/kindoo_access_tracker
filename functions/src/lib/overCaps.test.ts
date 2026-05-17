@@ -70,4 +70,58 @@ describe('computeOverCaps', () => {
     const out = computeOverCaps({ seats, wards, stakeSeatCap: 20 });
     expect(out).toContainEqual({ pool: 'stake', count: 1, cap: 0, over_by: 1 });
   });
+
+  it('foreign-site ward seats do not subtract from home stake portion', () => {
+    // 5 stake-scope + 5 foreign-ward seats. Home portion should ignore
+    // the foreign-ward seats; portion-cap = stakeSeatCap - 0 = 20; the
+    // 5 stake-scope seats are under it.
+    const seats = [
+      ...Array.from({ length: 5 }, (_, i) => seat({ member_canonical: `s${i}`, scope: 'stake' })),
+      ...Array.from({ length: 5 }, (_, i) => seat({ member_canonical: `f${i}`, scope: 'FN' })),
+    ];
+    const wards = [ward({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' })];
+    expect(computeOverCaps({ seats, wards, stakeSeatCap: 20 })).toEqual([]);
+  });
+
+  it('mixes home and foreign ward seats: only home seats shrink the stake portion', () => {
+    // 5 home-ward seats + 5 foreign-ward seats + 16 stake-scope seats;
+    // stakeSeatCap = 20. Home portion = 20 - 5 = 15; stake-scope (16) >
+    // 15 → over by 1. Foreign-ward seats excluded from both numerator
+    // and denominator of the home stake calc.
+    const seats = [
+      ...Array.from({ length: 5 }, (_, i) => seat({ member_canonical: `h${i}`, scope: 'CO' })),
+      ...Array.from({ length: 5 }, (_, i) => seat({ member_canonical: `f${i}`, scope: 'FN' })),
+      ...Array.from({ length: 16 }, (_, i) => seat({ member_canonical: `s${i}`, scope: 'stake' })),
+    ];
+    const wards = [
+      ward({ ward_code: 'CO', seat_cap: 50 }),
+      ward({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' }),
+    ];
+    const out = computeOverCaps({ seats, wards, stakeSeatCap: 20 });
+    expect(out).toContainEqual({ pool: 'stake', count: 16, cap: 15, over_by: 1 });
+  });
+
+  it('per-ward over-cap still fires for a foreign-site ward (per-ward math unchanged)', () => {
+    // Foreign ward FN with seat_cap=2 and 3 seats → over by 1. Each
+    // ward's seat_cap is what its own Kindoo site allotted it; the bar
+    // reflects that regardless of site assignment.
+    const seats = Array.from({ length: 3 }, (_, i) =>
+      seat({ member_canonical: `f${i}`, scope: 'FN' }),
+    );
+    const wards = [ward({ ward_code: 'FN', seat_cap: 2, kindoo_site_id: 'east-stake' })];
+    const out = computeOverCaps({ seats, wards, stakeSeatCap: 100 });
+    expect(out).toContainEqual({ pool: 'FN', count: 3, cap: 2, over_by: 1 });
+  });
+
+  it('treats kindoo_site_id === undefined as home (back-compat with legacy wards)', () => {
+    // Existing wards stored without the field count as home. 5 ward
+    // seats reduce the portion-cap to 15; 16 stake-scope → over by 1.
+    const seats = [
+      ...Array.from({ length: 5 }, (_, i) => seat({ member_canonical: `h${i}`, scope: 'CO' })),
+      ...Array.from({ length: 16 }, (_, i) => seat({ member_canonical: `s${i}`, scope: 'stake' })),
+    ];
+    const wards = [ward({ ward_code: 'CO', seat_cap: 50 })]; // no kindoo_site_id
+    const out = computeOverCaps({ seats, wards, stakeSeatCap: 20 });
+    expect(out).toContainEqual({ pool: 'stake', count: 16, cap: 15, over_by: 1 });
+  });
 });

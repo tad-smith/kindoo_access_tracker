@@ -210,6 +210,19 @@ describe('<StakeRosterPage />', () => {
     expect(screen.getByText(/1 \/ 50 seats used/)).toBeInTheDocument();
   });
 
+  it('excludes foreign-site ward caps from the stake pool denominator', () => {
+    mockSeats([makeSeat({ scope: 'stake' })]);
+    mockStakeDoc({ stake_seat_cap: 200 });
+    mockWards([
+      makeWard({ ward_code: 'CO', seat_cap: 50 }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      makeWard({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' } as any),
+    ]);
+    render(<StakeRosterPage />);
+    // 200 - 50 (CO, home). FN excluded.
+    expect(screen.getByText(/1 \/ 150 seats used/)).toBeInTheDocument();
+  });
+
   it('renders the computed cap (not the cap-unset variant) when stake doc + wards are loaded', () => {
     // Regression: with `useFirestoreOnce` the stake doc was reliably
     // empty in production and the helper returned null, falling

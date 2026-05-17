@@ -53,4 +53,22 @@ describe('stakeAvailablePoolSize', () => {
       ]),
     ).toBe(-20);
   });
+
+  it('excludes foreign-site ward caps from the reservation sum (their seats come out of another Kindoo pool)', () => {
+    expect(
+      stakeAvailablePoolSize(200, [
+        ward({ ward_code: 'CO', seat_cap: 50 }),
+        ward({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' }),
+      ]),
+    ).toBe(150);
+  });
+
+  it('treats kindoo_site_id === null as home (explicit home-site marker)', () => {
+    expect(
+      stakeAvailablePoolSize(200, [
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ward({ ward_code: 'CO', seat_cap: 50, kindoo_site_id: null as any }),
+      ]),
+    ).toBe(150);
+  });
 });
