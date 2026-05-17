@@ -395,6 +395,61 @@ The distinguishing test will be field equality on `kindoo_site_id`; no new flag 
 
 Run via a one-time admin callable; full call shape specified at implementation time.
 
+### Phase B — roster surfaces for parallel grants (planned)
+
+Phase A (above) makes the data model and the Kindoo-side writes correct per-site, but the Manager-facing roster surfaces still render the primary grant only. A person whose seat carries a parallel-site duplicate is invisible on the foreign side and on every non-primary scope's view. Phase B will close that visibility gap. The work is mostly `apps/web/`, with one tightly-coupled server-side hook for the Remove-from-duplicate-row affordance (see "Server-side surface" below). Operator decisions for Phase B locked in 2026-05-17; the prose below stays in future / conditional tense until the implementation PR lands, at which point that PR will rewrite this subsection to present tense.
+
+**AllSeats — multi-row per seat.** `apps/web/src/features/manager/allSeats/AllSeatsPage.tsx` will render one row per grant: the primary plus one row per `duplicate_grants[]` entry (both within-site priority losers and parallel-site duplicates). Today the rendering keys off the seat's top-level fields (`scope`, `callings`, `type`, `building_names`, plus the foreign-site badge derived from the seat's ward). After Phase B the rendering will key off either the primary (when rendering the primary row) or a single `duplicate_grants[]` entry (when rendering a parallel row); the columns — scope, callings, type, building_names, foreign-site badge, reason / dates for manual / temp — will reflect the grant being rendered, not the seat's primary alone.
+
+**Per-row data shape.** A small helper such as `grantsForDisplay(seat: Seat): GrantView[]` returns one `GrantView` per grant: `{scope, callings, type, building_names, kindoo_site_id, reason?, start_date?, end_date?, isPrimary, isParallelSite}`. The first entry corresponds to the primary; each subsequent entry to a `duplicate_grants[]` entry in array order. `isParallelSite` is `kindoo_site_id !== primary.kindoo_site_id` per the Phase A distinguishing test. The consumer renders a uniform shape regardless of whether the grant came from the seat's top level or from a duplicate entry.
+
+**Bishopric Roster / Stake Roster / Manager Roster — broadened inclusion, single row.** `apps/web/src/features/bishopric/RosterPage.tsx`, `apps/web/src/features/stake/RosterPage.tsx`, and `apps/web/src/features/stake/WardRostersPage.tsx` today filter seats by primary scope only via the `useBishopricRoster` / `useStakeRoster` / `useWardRosters` hooks in their respective `hooks.ts` files. After Phase B the inclusion logic will widen: a seat will appear on a scope's roster page if **any grant** (primary OR any `duplicate_grants[]` entry) matches the page's scope. Still **one row per person** on these pages — the row will render the fields of the grant that matched the scope (calling list, type, building_names, foreign-site badge), not the primary's fields. The Firestore-side narrow `where('scope', '==', X)` query is no longer sufficient; each hook will fetch a wider seat set and the per-page filter moves client-side.
+
+**Manager Dashboard — broadened inclusion on per-scope rollups.** `apps/web/src/features/manager/dashboard/DashboardPage.tsx`'s per-scope summary cards (per-ward bars, stake-scope bar) will similarly widen inclusion. A person counted on Cordera's bar today via primary scope will continue to count; a person whose primary is stake-scope but who carries a Cordera `duplicate_grants[]` entry will newly count on the Cordera bar. The implementation will count once per distinct `(seat.id, scope)` pair across (primary + duplicates) so a seat with same-scope within-site duplicates is not double-counted on the same scope's bar.
+
+**Same-scope priority losers.** Stay invisible on per-scope roster pages (Bishopric Roster, Stake Roster, Manager Roster). AllSeats will render same-scope priority losers as their own rows under the multi-row rule, but they are informational only — no separate Kindoo write happens for within-site losers; the primary's write already covers them (per the Phase A "Within-site union" rule).
+
+**Foreign-site badge — per-row / per-grant.** The existing `siteLabelForSeat` helper in `apps/web/src/lib/kindooSites.ts` (Phase 2) resolves the foreign-site badge by looking up `seat.scope → ward → ward.kindoo_site_id → KindooSite.display_name`. Phase B will extend the badge to apply per-row in the multi-row case and per-grant in the broadened-inclusion case. A Cordera bishopric row showing a stake-primary person whose Cordera duplicate is being rendered will show the badge based on Cordera's site (home → no badge; foreign → that site's display name), not on the seat's primary site. The helper will either gain a new signature accepting a `GrantView`, or a sibling helper will be added; the implementer picks.
+
+**Edit Seat dialog — unchanged.** Phase B does not modify the Edit Seat dialog. Edits continue to operate on the primary grant only. Parallel-site changes require a new request.
+
+**Edit button on duplicate rows in AllSeats — disabled with tooltip.** The Edit button will render on every row to preserve the action-column rhythm but will be disabled on duplicate rows (any row backed by a `duplicate_grants[]` entry, including same-scope within-site losers). Hover tooltip: *"Edit the primary grant to modify this person's seat — parallel-site changes require a new request."* The Edit button on the primary row is unchanged.
+
+**Remove button on duplicate rows in AllSeats — functional, scoped to the duplicate's (scope, kindoo_site_id).** The Remove button on a duplicate row will be functional. Clicking Remove will generate a `remove` request whose `scope` and new `kindoo_site_id` field reflect the duplicate's grant, not the seat's primary. The form prefills both fields from the row's `GrantView`; the submit path goes through the existing remove-request submission with the new field included in the payload. When the resulting request is marked complete, only that `duplicate_grants[]` entry will be removed; the primary and any other duplicates stay intact, and the Kindoo removal write fires against the correct foreign site (the per-site Phase A orchestrator already routes via `kindoo_site_id`).
+
+**Mark Complete dialog — unchanged.** Phase B does not add a callout or hint about parallel-grant creation. The Phase A `markRequestComplete` merge logic already stamps the new duplicate's `kindoo_site_id` correctly.
+
+**Audit Log — unchanged.** Phase A's roughly 2× audit-row volume on multi-site provisions is accepted as-is. Phase B does not group or summarise across rows.
+
+**Sort and filter on AllSeats.** Each row sorts independently by its own grant's fields. There is no grouping by seat — a person's two rows can interleave with other people's rows when sorted by calling, type, or any other column. (Per operator: "if users hit issues, fix then.")
+
+**Server-side surface (Remove-functional expansion).** The functional Remove button on a duplicate row will require a small server-side change beyond `apps/web/`:
+
+- **New optional field on remove requests.** `packages/shared/src/schemas/request.ts` will add `kindoo_site_id?: string | null` to the remove-type request shape (zod schema + TypeScript type). The field is required on requests generated from a duplicate row; absent / null on remove requests generated from a primary row (today's path). For the rare two-foreign-wards-on-same-site case (per Phase A) `scope` alone discriminates the two duplicate entries, but `kindoo_site_id` travels on the payload as an explicit confirmation and a safety check against scope-only matching ambiguity.
+- **`markRequestComplete` remove path** (`functions/src/callable/markRequestComplete.ts`). The remove flow today matches the entry to drop by `scope` alone — the primary if `request.scope === seat.scope`, else the `duplicate_grants[]` entry whose `scope` matches. After Phase B the match keys on **(scope, kindoo_site_id)** for both branches: if the request's `(scope, kindoo_site_id)` matches the primary's, today's primary-removal behaviour is preserved unchanged (remove the seat or null the primary per existing logic); otherwise the matching duplicate entry is removed and the primary plus the remaining duplicates stay intact. Legacy remove requests that predate Phase B carry no `kindoo_site_id` — the path falls back to scope-only matching so the request still completes correctly.
+- **`firestore/firestore.rules` `requests.create` predicate.** The predicate that validates request payloads on create will be updated to accept the new optional `kindoo_site_id` field on remove requests. Other request types are unaffected.
+- **Provision orchestrator — unchanged.** Phase A already routes the remove write to the correct Kindoo site via per-grant `kindoo_site_id`. The orchestrator just needs the field to be present on the request body it receives; no new orchestrator logic.
+
+**Acceptance criteria.**
+
+1. **AllSeats multi-row.** A seat with one primary + two `duplicate_grants[]` entries renders 3 rows. Each row's columns reflect the grant. Verified by RTL test.
+2. **AllSeats — within-site priority loser visible.** A seat with primary `scope='Cordera'` and a duplicate with `scope='Cordera'` renders 2 rows. Verified by RTL test.
+3. **Bishopric Roster — broadened inclusion.** A seat with primary `scope='stake'` and a `duplicate_grants[]` entry with `scope='Cordera'` appears on Cordera's bishopric roster (was invisible pre-Phase-B). Single row. Row's columns reflect the Cordera duplicate.
+4. **Stake Roster — broadened inclusion.** A seat with primary `scope='Cordera'` and a stake-scope duplicate appears on the stake-scope view. Single row.
+5. **Manager Roster / Dashboard rollups — broadened inclusion.** Whichever manager-side per-scope summaries exist similarly widen inclusion.
+6. **Foreign-site badge** renders per-row based on the rendered grant's `kindoo_site_id`, not the seat's primary `kindoo_site_id`.
+7. **Edit Seat dialog unchanged behavior.** Still edits primary only. Edit button on a duplicate row is disabled with the specified tooltip.
+8. **Remove on duplicate row — functional.** Clicking Remove on a duplicate row generates a `remove` request scoped to **that duplicate's (scope, kindoo_site_id)**. When marked complete, only that `duplicate_grants[]` entry is removed; primary + remaining duplicates stay intact; the Kindoo removal write goes to the correct foreign site. Verified by Cloud Functions integration test + RTL test.
+9. **Sort/filter** on AllSeats: each row sorts independently by its own grant's fields (no special grouping by seat). Per operator: "if users hit issues, fix then." No acceptance test needed beyond not breaking today's sort logic.
+
+**Out of scope for Phase B (explicit).**
+
+- Edit Seat multi-grant editing.
+- Mark Complete callout / hint about parallel-grant creation.
+- Dashboard hint that the same person appears on two ward bars.
+- Audit Log grouping across rows.
+- Any layout change to per-scope roster pages beyond inclusion-logic widening.
+
 ### Operator decisions locked in (2026-05-16)
 
 1. **Schema naming: "Kindoo sites".** Collection `kindooSites`, field `kindoo_site_id`. Picks the Kindoo-side noun over the stake-side noun precisely because this is not multi-stake.
