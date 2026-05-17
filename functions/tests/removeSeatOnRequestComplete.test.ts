@@ -116,6 +116,13 @@ function removeEvent(opts: {
    * `(scope, kindoo_site_id)`. Omit → legacy scope-only match.
    */
   kindoo_site_id?: string | null;
+  /**
+   * T-43 follow-up: optional manager-written `completion_note` already
+   * stamped onto the request when the trigger fires. The trigger MUST
+   * preserve this prose on the grant-shifted no-op path rather than
+   * clobbering it with its own system-generated message.
+   */
+  completion_note?: string;
 }): ReturnType<typeof makeEvent> {
   const requestId = opts.requestId ?? 'r1';
   const member = opts.member ?? 'alice@gmail.com';
@@ -131,6 +138,9 @@ function removeEvent(opts: {
   if ('kindoo_site_id' in opts) {
     before.kindoo_site_id = opts.kindoo_site_id;
     after.kindoo_site_id = opts.kindoo_site_id;
+  }
+  if (opts.completion_note !== undefined) {
+    after.completion_note = opts.completion_note;
   }
   return makeEvent({
     params: { stakeId: STAKE_ID, requestId },
@@ -391,6 +401,46 @@ describe.skipIf(!hasEmulators())('removeSeatOnRequestComplete', () => {
       expect(seat.scope).toBe('PC');
       expect(seat.duplicate_grants.map((d) => d.scope)).toEqual(['ST']);
       expect(seat.duplicate_scopes).toEqual(['ST']);
+    });
+
+    // T-43 follow-up: the grant-shifted no-op MUST NOT clobber a
+    // manager-written `completion_note` (prose explaining why the
+    // manager marked the request complete, e.g. "Resolved per ward
+    // council"). The typed `completion_status` discriminator is the
+    // routing key; the audit summariser's labelled prefix surfaces
+    // the no-op kind regardless of who wrote the note.
+    it('grant-shifted no-op preserves manager-written completion_note (no clobber)', async () => {
+      await seedStake();
+      await seedSeat({ scope: 'PC', type: 'manual', duplicate_grants: [] });
+      const { db } = requireEmulators();
+      const reqRef = db.doc(`stakes/${STAKE_ID}/requests/r1`);
+      const managerActor = { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' };
+      const managerNote = 'Resolved per ward council 2026-05-17.';
+      await reqRef.set({
+        request_id: 'r1',
+        type: 'remove',
+        scope: 'MO',
+        status: 'complete',
+        member_canonical: 'alice@gmail.com',
+        seat_member_canonical: 'alice@gmail.com',
+        completer_email: managerActor.email,
+        completer_canonical: managerActor.canonical,
+        completion_note: managerNote,
+        lastActor: managerActor,
+      });
+
+      await removeSeatOnRequestComplete.run(
+        removeEvent({ scope: 'MO', completion_note: managerNote }),
+      );
+
+      const reqSnap = await reqRef.get();
+      const req = reqSnap.data() as Record<string, unknown>;
+      // Discriminator stamped (routing key for the audit summariser).
+      expect(req.completion_status).toBe('noop_grant_shifted');
+      // Manager's prose survives — trigger did NOT overwrite it with
+      // its own system-generated message.
+      expect(req.completion_note).toBe(managerNote);
+      expect(req.lastActor).toEqual(managerActor);
     });
 
     it('stale request mismatch: seat unchanged + completion_status="noop_grant_shifted" + completion_note stamped; no lastActor / last_modified_at overwrite', async () => {
