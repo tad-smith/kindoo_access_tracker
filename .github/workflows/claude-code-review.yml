@@ -29,7 +29,8 @@ jobs:
           # Uses your Max subscription via OAuth — no API billing
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
-            You are an INDEPENDENT reviewer of PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.
+            You are an INDEPENDENT reviewer of PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.  You are a very skilled reviewer detecting the differences between the spec and actual code. You are very good at detecting edge cases, but you also have very good reasoning skills to determine which cases are a concern in practice in which cases are extremely rare and more theoretical in nature. You understand these extremely rare edge cases are nitpicks. You avoid focusing on and commenting on nitpick issues.
+
 
             Title: ${{ github.event.pull_request.title }}
 
@@ -46,13 +47,13 @@ jobs:
                - Silent failures, swallowed exceptions, fallbacks that mask bugs?
                - Tests that call the new code vs. tests that actually exercise its behavior?
                - Auth, input validation, and trust boundaries — any assumptions worth challenging?
-            5. Post inline review comments on specific lines for concrete issues. Be precise about which line and why.
-            6. End with one summary comment containing exactly: spec-compliance verdict, top 3 risks, and a merge recommendation (approve / request changes / needs discussion).
+            5. Post inline review comments on specific lines for concrete issues. Be precise about which line and why.  If it's a trivial concern, indicate in the comment.  Avoid nitpick comments.
+            6. End with one summary comment containing exactly: spec-compliance verdict, up to 5 top risks (these should be real risks not nitpicks or extremely rare edge conditions), and a merge recommendation (approve / request changes / needs discussion).
 
             Tone: terse, no praise, no preamble, no hedging. If the PR is genuinely fine, one line saying so is the right answer. One well-reasoned objection beats five nitpicks. Do NOT comment on style if a linter would catch it.
           claude_args: |
             --model claude-opus-4-7
             --effort max
-            --max-turns 90
+            --max-turns 120
             --allowedTools "Bash,Read,Grep,Glob"
             --disallowedTools "Edit,Write,Bash(git push:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr edit:*),WebSearch"
