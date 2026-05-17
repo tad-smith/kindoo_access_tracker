@@ -694,3 +694,38 @@ Documented as a known limitation in `docs/spec.md` §15 Phase 4 prose. The curre
 8. **One-shot migration.** Running the migration callable over a fixture stake with N seats (mix of home, foreign-only, multi-site) populates `kindoo_site_id` on every seat doc and every `duplicate_grants[]` entry. Idempotent — second run produces no diffs (the migration reads existing `kindoo_site_id` and skips docs where the derived value already matches; first run writes ~500-750 audit rows, re-runs write 0). Missing-ward `duplicate_grants[]` entries are skipped with a logged warning (no error, no "home" fallback). The migration uses a dedicated `migration_backfill_kindoo_site_id` audit action code. The callable takes a `stakeId` parameter.
 
 **`packages/shared/` types deliberately lagging.** The Phase A spec PR updates `docs/firebase-schema.md` to document `Seat.kindoo_site_id` and `DuplicateGrant.kindoo_site_id`, but the matching zod schema (`packages/shared/src/schemas/seat.ts`) and TypeScript type (`packages/shared/src/types/seat.ts`) are intentionally NOT updated in the spec PR. Per `packages/shared/CLAUDE.md`'s "schema doc + zod + type stay in sync" rule, the T-42 implementation PR must add the field to both the zod schema and the TS type alongside the importer / orchestrator / migration code changes.
+
+## [T-43] T-42 Phase B implementation — roster surfaces for parallel grants
+Status: open
+Owner: @web-engineer (coordinate with @backend-engineer on the small `functions/` + `firestore/rules` + `packages/shared/` server-side hook)
+Phase: Kindoo Sites — Phase B (multi-site roster surfaces)
+
+**Spec defined in the T-42 Phase B spec PR (companion to this entry); Phase A data-model spec landed in PR #130. T-43 closes when the Phase B implementation PR lands.** Cross-ref `docs/spec.md` §15 "Phase B — roster surfaces for parallel grants (planned)".
+
+T-42 Phase A made the data model and the Kindoo-side writes correct per-site. T-43 closes Phase A's visibility gap in the Manager UI: today's roster pages render the primary grant only, so a person with parallel-site duplicates is invisible on the foreign side and on every non-primary scope's view.
+
+**Surfaces in scope.**
+- `apps/web/src/features/manager/allSeats/AllSeatsPage.tsx` — multi-row rendering, one row per grant; Edit disabled with tooltip on duplicate rows; Remove functional on duplicate rows.
+- `apps/web/src/features/bishopric/RosterPage.tsx` + `apps/web/src/features/bishopric/hooks.ts` — broadened inclusion (any-grant scope match), single row.
+- `apps/web/src/features/stake/RosterPage.tsx`, `apps/web/src/features/stake/WardRostersPage.tsx`, + `apps/web/src/features/stake/hooks.ts` — same widening.
+- `apps/web/src/features/manager/dashboard/DashboardPage.tsx` — per-scope rollups widen the same way; collapse same-scope duplicates so a seat isn't double-counted on one bar.
+- `apps/web/src/lib/kindooSites.ts` — `siteLabelForSeat` (or a sibling helper) extended to apply per-row / per-grant.
+- `packages/shared/src/schemas/request.ts` — new optional `kindoo_site_id?: string | null` on remove requests (zod + TS type).
+- `functions/src/callable/markRequestComplete.ts` — remove path keys on `(scope, kindoo_site_id)` rather than `scope` alone (scope-only fallback for legacy requests preserved).
+- `firestore/firestore.rules` — `requests.create` predicate accepts the new optional field on remove requests.
+
+**Acceptance** (verbatim from the Phase B spec subsection):
+
+1. **AllSeats multi-row.** A seat with one primary + two `duplicate_grants[]` entries renders 3 rows. Each row's columns reflect the grant. Verified by RTL test.
+2. **AllSeats — within-site priority loser visible.** A seat with primary `scope='Cordera'` and a duplicate with `scope='Cordera'` renders 2 rows. Verified by RTL test.
+3. **Bishopric Roster — broadened inclusion.** A seat with primary `scope='stake'` and a `duplicate_grants[]` entry with `scope='Cordera'` appears on Cordera's bishopric roster (was invisible pre-Phase-B). Single row. Row's columns reflect the Cordera duplicate.
+4. **Stake Roster — broadened inclusion.** A seat with primary `scope='Cordera'` and a stake-scope duplicate appears on the stake-scope view. Single row.
+5. **Manager Roster / Dashboard rollups — broadened inclusion.** Whichever manager-side per-scope summaries exist similarly widen inclusion.
+6. **Foreign-site badge** renders per-row based on the rendered grant's `kindoo_site_id`, not the seat's primary `kindoo_site_id`.
+7. **Edit Seat dialog unchanged behavior.** Still edits primary only. Edit button on a duplicate row is disabled with the specified tooltip.
+8. **Remove on duplicate row — functional.** Clicking Remove on a duplicate row generates a `remove` request scoped to **that duplicate's (scope, kindoo_site_id)**. When marked complete, only that `duplicate_grants[]` entry is removed; primary + remaining duplicates stay intact; the Kindoo removal write goes to the correct foreign site. Verified by Cloud Functions integration test + RTL test.
+9. **Sort/filter** on AllSeats: each row sorts independently by its own grant's fields (no special grouping by seat). Per operator: "if users hit issues, fix then." No acceptance test needed beyond not breaking today's sort logic.
+
+**Out of scope** (explicit, mirrors spec §15 Phase B): Edit Seat multi-grant editing; Mark Complete callout / hint about parallel-grant creation; Dashboard hint that the same person appears on two ward bars; Audit Log grouping; any layout change to per-scope roster pages beyond inclusion-logic widening.
+
+**Sequencing.** T-43 depends on T-42 Phase A's data model landing (PR following on `feat/t-42-phase-a-implementation`). T-43 can ship as a single PR or as a web-side PR followed by a small server-side PR — implementer picks. The Phase B implementation PR rewrites the spec §15 Phase B subsection from future to present tense.

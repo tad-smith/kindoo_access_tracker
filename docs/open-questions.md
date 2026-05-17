@@ -519,6 +519,18 @@ The block persisted across all of those, indicating that Workspace-owned Apps Sc
 
 **Resolved 2026-05-17.** Per-stake. The callable takes a `stakeId` parameter, matching the rest of the architecture's stake-parameterization (F15). The operator runs it once per stake at T-42 implementation time. Currently single-stake; Phase B / multi-stake operators run it per stake when they onboard.
 
+### KS-7 `[RESOLVED 2026-05-17 — disabled with tooltip; primary-only edits remain]` T-42 Phase B — Edit button on AllSeats duplicate rows
+
+**Flagged (T-42 Phase B spec PR, 2026-05-17).** AllSeats today renders Edit and Remove buttons per row. Phase B introduces multi-row rendering (one row per grant). On a **duplicate row** (a row backed by a `duplicate_grants[]` entry, not the seat's primary) the Edit button cannot route to a multi-grant editor — the Edit Seat dialog is primary-only and stays that way for Phase B. Two options were on the table for the Edit button on duplicate rows: (a) disabled with tooltip, or (b) hidden entirely.
+
+**Resolved 2026-05-17.** Option (a): disabled with tooltip. The Edit button renders on every row to preserve the action-column rhythm, but is disabled on duplicate rows. Hover tooltip text: *"Edit the primary grant to modify this person's seat — parallel-site changes require a new request."* Discourages misinterpretation ("the duplicate row has no actions because the data is broken") and points the user at the correct path. The Edit Seat dialog stays primary-only; parallel-site changes require a new request.
+
+### KS-8 `[RESOLVED 2026-05-17 — functional, scoped to the duplicate's (scope, kindoo_site_id); adds optional kindoo_site_id field on remove requests]` T-42 Phase B — Remove button on AllSeats duplicate rows
+
+**Flagged (T-42 Phase B spec PR, 2026-05-17).** Symmetric to KS-7: on a duplicate row, should the Remove button (a) be disabled with a tooltip directing the user to a new request, or (b) be functional, generating a remove request scoped to that duplicate's grant only?
+
+**Resolved 2026-05-17.** Option (b): functional. Clicking Remove on a duplicate row generates a `remove` request whose `scope` and new `kindoo_site_id` field reflect the duplicate's grant, not the seat's primary. When the request is marked complete only that `duplicate_grants[]` entry is removed; the primary and any other duplicates stay intact; the Kindoo removal write fires against the correct foreign site via the Phase A per-site orchestrator. Spec consequences: (i) a new optional `kindoo_site_id?: string | null` field on the `remove` request schema in `packages/shared/src/schemas/request.ts`, (ii) `markRequestComplete`'s remove path keys on `(scope, kindoo_site_id)` rather than `scope` alone — with scope-only fallback for legacy remove requests that predate Phase B, (iii) the `firestore/firestore.rules` `requests.create` predicate accepts the new optional field on remove requests. The provision orchestrator is unchanged (Phase A already routes per-grant by `kindoo_site_id`).
+
 ---
 
 ## Chunk 10 polish resolutions
