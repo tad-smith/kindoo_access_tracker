@@ -704,6 +704,8 @@ Phase: Kindoo Sites — Phase B (multi-site roster surfaces)
 
 T-42 Phase A made the data model and the Kindoo-side writes correct per-site. T-43 closes Phase A's visibility gap in the Manager UI: today's roster pages render the primary grant only, so a person with parallel-site duplicates is invisible on the foreign side and on every non-primary scope's view.
 
+**Prerequisite.** The T-42 Phase A migration callable (`migration_backfill_kindoo_site_id`) must have run on every target stake before T-43 rolls out — Phase B's `isParallelSite` predicate is meaningless on un-migrated seats. Sequence: Phase A implementation PR → migration run → T-43.
+
 **Surfaces in scope.**
 - `apps/web/src/features/manager/allSeats/AllSeatsPage.tsx` — multi-row rendering, one row per grant; Edit disabled with tooltip on duplicate rows; Remove functional on duplicate rows.
 - `apps/web/src/features/bishopric/RosterPage.tsx` + `apps/web/src/features/bishopric/hooks.ts` — broadened inclusion (any-grant scope match), single row.
@@ -711,8 +713,8 @@ T-42 Phase A made the data model and the Kindoo-side writes correct per-site. T-
 - `apps/web/src/features/manager/dashboard/DashboardPage.tsx` — per-scope rollups widen the same way; collapse same-scope duplicates so a seat isn't double-counted on one bar.
 - `apps/web/src/lib/kindooSites.ts` — `siteLabelForSeat` (or a sibling helper) extended to apply per-row / per-grant.
 - `packages/shared/src/schemas/request.ts` — new optional `kindoo_site_id?: string | null` on remove requests (zod + TS type).
-- `functions/src/callable/markRequestComplete.ts` — remove path keys on `(scope, kindoo_site_id)` rather than `scope` alone (scope-only fallback for legacy requests preserved).
-- `firestore/firestore.rules` — `requests.create` predicate accepts the new optional field on remove requests.
+- `functions/src/triggers/removeSeatOnRequestComplete.ts` — `planRemove` (lines 77-94) keys on `(scope, kindoo_site_id)` rather than `scope` alone. Scope-only fallback for legacy remove requests preserved. (Not `markRequestComplete.ts` — the callable's remove branch only reads `seatSnap.exists`; the scope-aware walking of `duplicate_grants[]` lives in this trigger.)
+- `firestore/firestore.rules` — two changes: (i) widen `seats.read` so bishopric / stake-presidency reads cover seats whose `duplicate_grants[]` includes an entry matching the reader's scope, not only primary-scope matches; (ii) `requests.create` predicate accepts the new optional `kindoo_site_id` field on remove requests.
 
 **Acceptance** (verbatim from the Phase B spec subsection):
 
