@@ -24,6 +24,7 @@ export const auditActionSchema = z.enum([
   'import_start',
   'import_end',
   'over_cap_warning',
+  'migration_backfill_kindoo_site_id',
 ]);
 
 export const auditEntityTypeSchema = z.enum([

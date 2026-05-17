@@ -76,3 +76,31 @@ export function siteLabelForSeat(
   if (!site) return null;
   return site.display_name;
 }
+
+/**
+ * Resolve a seat's Kindoo site id. T-42: reads `Seat.kindoo_site_id`
+ * directly when populated (the importer + `markRequestComplete` stamp
+ * it; the migration backfills it on legacy seats); falls back to
+ * resolving the seat's `scope` through the wards catalogue when the
+ * field is absent (legacy / pre-migration data still in flight).
+ * Returns `null` for home; a string id for foreign.
+ *
+ * Externally-visible behaviour matches the pre-T-42 wards-only path —
+ * the field is just a denormalisation. Centralised here so every
+ * caller (utilization filters, roster badges, stake-pool exclusion)
+ * reads the same fallback chain.
+ */
+export function seatSiteId(
+  seat: Pick<Seat, 'scope' | 'kindoo_site_id'>,
+  wards: readonly Ward[],
+): string | null {
+  // Explicit value (including explicit `null` for home) wins — the
+  // seat doc carries the canonical answer once the importer / merge
+  // has run. Empty string is coerced to null defensively.
+  if (seat.kindoo_site_id !== undefined) {
+    return normaliseSiteId(seat.kindoo_site_id);
+  }
+  // Field absent: fall back to the ward-lookup path so legacy seats
+  // (pre-migration) still resolve correctly.
+  return siteIdForScope(seat.scope, wards);
+}

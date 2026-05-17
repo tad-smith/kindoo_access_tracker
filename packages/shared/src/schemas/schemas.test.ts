@@ -516,6 +516,120 @@ describe('seatSchema', () => {
     };
     expect(seatSchema.parse(seed)).toEqual(seed);
   });
+
+  // T-42: top-level `Seat.kindoo_site_id` + per-entry on
+  // `duplicate_grants[]`. `null` / absent means home; a string is a
+  // doc id under `stakes/{stakeId}/kindooSites/`.
+  it('parses a seat with top-level kindoo_site_id explicitly null (home)', () => {
+    const seed = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'stake',
+      type: 'auto' as const,
+      callings: ['Stake Clerk'],
+      building_names: ['Cordera Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(seatSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a seat with foreign kindoo_site_id and a parallel-site duplicate', () => {
+    const seed = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: '01',
+      type: 'auto' as const,
+      callings: ['Bishop'],
+      building_names: ['Cordera Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: '07',
+          type: 'auto' as const,
+          callings: ['Elders Quorum President'],
+          building_names: ['Foothills Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: T,
+        },
+      ],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(seatSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a seat with kindoo_site_id field omitted (legacy / pre-migration shape)', () => {
+    const seed = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'stake',
+      type: 'auto' as const,
+      callings: ['Stake Clerk'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(seatSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('rejects a seat whose kindoo_site_id is a non-string non-null value', () => {
+    const bad = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'stake',
+      type: 'auto' as const,
+      callings: ['Stake Clerk'],
+      building_names: ['Cordera Building'],
+      kindoo_site_id: 42,
+      duplicate_grants: [],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(() => seatSchema.parse(bad)).toThrow();
+  });
+
+  it('rejects a duplicate_grants entry whose kindoo_site_id is a non-string non-null value', () => {
+    const bad = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'stake',
+      type: 'auto' as const,
+      callings: ['Stake Clerk'],
+      building_names: ['Cordera Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: '07',
+          type: 'auto' as const,
+          callings: ['Bishop'],
+          kindoo_site_id: 42,
+          detected_at: T,
+        },
+      ],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(() => seatSchema.parse(bad)).toThrow();
+  });
 });
 
 describe('accessRequestSchema', () => {
@@ -937,5 +1051,25 @@ describe('auditLogSchema', () => {
       ttl: T,
     };
     expect(() => auditLogSchema.parse(bad)).toThrow();
+  });
+
+  // T-42: one-shot migration emits rows under a dedicated action so the
+  // `auditTrigger` fans rows for the migration writes (vs masquerading
+  // as `update_seat`).
+  it('parses a migration_backfill_kindoo_site_id row', () => {
+    const seed = {
+      audit_id: '2026-05-17T10:00:00.000Z_migration_kindoo_site_id_alice@gmail.com',
+      timestamp: T,
+      actor_email: 'Migration',
+      actor_canonical: 'Migration',
+      action: 'migration_backfill_kindoo_site_id' as const,
+      entity_type: 'seat' as const,
+      entity_id: 'alice@gmail.com',
+      member_canonical: 'alice@gmail.com',
+      before: { kindoo_site_id: null },
+      after: { kindoo_site_id: 'east-stake' },
+      ttl: T,
+    };
+    expect(auditLogSchema.parse(seed)).toEqual(seed);
   });
 });

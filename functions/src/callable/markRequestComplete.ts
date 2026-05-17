@@ -114,6 +114,13 @@ export function planAddMerge(opts: {
   existingSeat: Seat;
   request: AccessRequest;
   detectedAt: FirebaseFirestore.Timestamp;
+  /**
+   * Kindoo site the request's scope targets — derived by the caller
+   * from the ward's `kindoo_site_id` (stake-scope ⇒ home ⇒ null). T-42:
+   * stamped onto a newly-appended `duplicate_grants[]` entry so per-
+   * site provision walks find the new grant under the right site.
+   */
+  requestSiteId: string | null;
 }): {
   update: {
     building_names?: string[];
@@ -121,7 +128,7 @@ export function planAddMerge(opts: {
   };
   touchedScopes: Set<string>;
 } {
-  const { existingSeat, request, detectedAt } = opts;
+  const { existingSeat, request, detectedAt, requestSiteId } = opts;
   const reqType: Seat['type'] = request.type === 'add_manual' ? 'manual' : 'temp';
   const reqScope = request.scope;
   const reqBuildings = request.building_names ?? [];
@@ -155,10 +162,13 @@ export function planAddMerge(opts: {
   }
 
   // No (scope, type) match anywhere — append a new DuplicateGrant.
+  // T-42: stamp `kindoo_site_id` from the caller-supplied site so the
+  // per-site provision walk finds this grant under the right site.
   const entry: DuplicateGrant = {
     scope: reqScope,
     type: reqType,
     building_names: reqBuildings,
+    kindoo_site_id: requestSiteId,
     detected_at: detectedAt as DuplicateGrant['detected_at'],
   };
   if (request.reason) entry.reason = request.reason;
@@ -370,6 +380,14 @@ export const markRequestComplete = onCall(
               buildingNames = [ward.building_name];
             }
           }
+          // T-42: stamp `kindoo_site_id` on the new seat from the
+          // request's scope. Stake-scope ⇒ home (`null`); ward-scope ⇒
+          // the ward's own `kindoo_site_id` (home wards return `null`,
+          // foreign wards return their doc id).
+          const newSeatSite: string | null =
+            cur.scope === 'stake'
+              ? null
+              : (wards.find((w) => w.ward_code === cur.scope)?.kindoo_site_id ?? null);
           const body: Record<string, unknown> = {
             member_canonical: cur.member_canonical,
             member_email: cur.member_email,
@@ -378,6 +396,7 @@ export const markRequestComplete = onCall(
             type: seatType,
             callings: [],
             building_names: buildingNames,
+            kindoo_site_id: newSeatSite,
             duplicate_grants: [],
             granted_by_request: cur.request_id,
             created_at: now,
@@ -410,10 +429,18 @@ export const markRequestComplete = onCall(
           // inside arrays. Mirrors the importer's `nowTs` pattern in
           // `Importer.ts`.
           const detectedAt = Timestamp.now();
+          // T-42: derive the request's target site so a newly-appended
+          // duplicate carries `kindoo_site_id`. Stake-scope ⇒ home;
+          // ward-scope ⇒ ward's `kindoo_site_id` (home wards → null).
+          const requestSiteId: string | null =
+            cur.scope === 'stake'
+              ? null
+              : (wards.find((w) => w.ward_code === cur.scope)?.kindoo_site_id ?? null);
           const plan = planAddMerge({
             existingSeat,
             request: cur,
             detectedAt,
+            requestSiteId,
           });
           if (plan.update.building_names || plan.update.duplicate_grants) {
             const seatUpdate: Record<string, unknown> = {

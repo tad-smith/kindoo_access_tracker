@@ -44,6 +44,17 @@ export const OUT_OF_BAND_ACTOR: ActorRef = {
   canonical: 'OutOfBand',
 };
 
+// Stamped on `lastActor` by the one-shot `backfillKindooSiteId`
+// migration callable (T-42). The `auditTrigger` recognises this
+// canonical and substitutes the action code
+// `migration_backfill_kindoo_site_id` for what would otherwise be a
+// generic `update_seat` row, so the migration's writes are filterable
+// in the audit history.
+export const MIGRATION_BACKFILL_KINDOO_SITE_ID_ACTOR: ActorRef = {
+  email: 'Migration',
+  canonical: 'Migration',
+};
+
 /**
  * Build the `ActorRef` stamp for a Sync Phase 2 fix write. The
  * discrepancy `code` rides in the encoded string so the audit row

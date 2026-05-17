@@ -65,6 +65,12 @@ export type SeatAutoNew = {
   type: 'auto';
   callings: string[];
   building_names: string[];
+  /**
+   * Kindoo site the primary grant lives on. T-42: stake-scope → home
+   * (`null`); ward-scope → ward's `kindoo_site_id`. Derived in the
+   * diff planner; the applier writes the field on the seat doc.
+   */
+  kindoo_site_id: string | null;
   duplicate_grants: Seat['duplicate_grants'];
   /**
    * MIN sheet_order across `callings[]` for this seat. `null` when no
@@ -89,8 +95,23 @@ export type ScopeMeta = {
   wardBuildings: Map<string, string[]>;
   /** All buildings in the stake — defaults for stake-scope auto seats. */
   stakeBuildings: string[];
+  /**
+   * Stake-scope buildings restricted to the home Kindoo site. Used as
+   * the default `building_names` for stake-scope auto seats — stake-
+   * scope grants access to home-site buildings only (spec §15 Phase 1
+   * policy). `stakeBuildings` is preserved as the unfiltered list for
+   * any caller that needs it.
+   */
+  stakeHomeBuildings?: string[];
   /** Set of recognised ward_codes in stake. */
   wardCodes: ReadonlySet<string>;
+  /**
+   * Per-scope Kindoo site assignment. `'stake'` → home (`null`); ward
+   * codes → that ward's `kindoo_site_id` (`null` for home wards, a
+   * doc-id string for foreign-site wards). T-42: importer writes this
+   * onto every seat (top-level + per-duplicate).
+   */
+  siteByScope?: Map<string, string | null>;
   /**
    * Template indexes by scope, used to resolve `sheet_order` for any
    * calling-name (including preserved-scope callings whose tab wasn't
@@ -252,19 +273,31 @@ export function planDiff(opts: {
     if (seenScopes.length === 0) continue;
     const primaryScope = pickPrimaryScope(seenScopes);
     const primaryCallings = [...(g.callingsByScope.get(primaryScope) ?? [])].sort();
+    const primarySite = siteForScope(primaryScope, scopeMeta);
     const dupGrants: Seat['duplicate_grants'] = [];
     for (const sc of seenScopes) {
       if (sc === primaryScope) continue;
       const callings = [...(g.callingsByScope.get(sc) ?? [])].sort();
-      if (callings.length > 0) {
-        dupGrants.push({
-          scope: sc,
-          type: 'auto',
-          callings,
-          // detected_at is stamped by the applier (FieldValue.serverTimestamp).
-          detected_at: null as unknown as Seat['duplicate_grants'][0]['detected_at'],
-        });
+      if (callings.length === 0) continue;
+      const dupSite = siteForScope(sc, scopeMeta);
+      // Parallel-site duplicates (those whose Kindoo site differs from
+      // the primary's) MUST carry `building_names` — the per-site write
+      // to Kindoo needs the site's own building set. Within-site
+      // duplicates leave it unset so the runtime inherits from the
+      // ward's `building_name` lookup (matching pre-T-42 behaviour).
+      const isParallel = dupSite !== primarySite;
+      const dup: Seat['duplicate_grants'][0] = {
+        scope: sc,
+        type: 'auto',
+        callings,
+        kindoo_site_id: dupSite,
+        // detected_at is stamped by the applier (FieldValue.serverTimestamp).
+        detected_at: null as unknown as Seat['duplicate_grants'][0]['detected_at'],
+      };
+      if (isParallel) {
+        dup.building_names = defaultBuildings(sc, scopeMeta);
       }
+      dupGrants.push(dup);
     }
     desiredAutoSeats.set(canonical, {
       member_canonical: canonical,
@@ -274,6 +307,7 @@ export function planDiff(opts: {
       type: 'auto',
       callings: primaryCallings,
       building_names: defaultBuildings(primaryScope, scopeMeta),
+      kindoo_site_id: primarySite,
       duplicate_grants: dupGrants,
       sort_order: minSheetOrderForCallings(
         primaryScope,
@@ -327,16 +361,24 @@ export function planDiff(opts: {
       // overwrite the primary; record the auto findings as a duplicate
       // grant on the existing seat. The primary calling field stays as
       // is; only `duplicate_grants[]` is updated.
+      const primarySite = (cur as Seat).kindoo_site_id ?? null;
+      const desiredPrimaryDupSite = desiredAuto.kindoo_site_id;
+      const desiredPrimaryIsParallel = desiredPrimaryDupSite !== primarySite;
+      const promotedPrimary: Seat['duplicate_grants'][0] = {
+        scope: desiredAuto.scope,
+        type: 'auto',
+        callings: desiredAuto.callings,
+        kindoo_site_id: desiredPrimaryDupSite,
+        detected_at: null as unknown as Seat['duplicate_grants'][0]['detected_at'],
+      };
+      if (desiredPrimaryIsParallel) {
+        promotedPrimary.building_names = defaultBuildings(desiredAuto.scope, scopeMeta);
+      }
       const newDupes: Seat['duplicate_grants'] = [
         // Preserve existing non-auto duplicates.
         ...(cur.duplicate_grants ?? []).filter((d) => d.type !== 'auto'),
         // Add an auto duplicate per scope from desired (the auto findings).
-        {
-          scope: desiredAuto.scope,
-          type: 'auto',
-          callings: desiredAuto.callings,
-          detected_at: null as unknown as Seat['duplicate_grants'][0]['detected_at'],
-        },
+        promotedPrimary,
         ...desiredAuto.duplicate_grants,
       ];
       // Compare against existing duplicate_grants (excluding auto-mark
@@ -371,8 +413,24 @@ export function planDiff(opts: {
 
 /** Default `building_names` for an auto seat under a scope. */
 function defaultBuildings(scope: string, meta: ScopeMeta): string[] {
-  if (scope === 'stake') return [...meta.stakeBuildings];
+  if (scope === 'stake') {
+    // Stake-scope auto seats grant access to home-site buildings only
+    // (spec §15 Phase 1 policy). The importer prefers
+    // `stakeHomeBuildings` when supplied; legacy callers that omit it
+    // fall back to `stakeBuildings` (pre-T-42 behaviour, all buildings).
+    return [...(meta.stakeHomeBuildings ?? meta.stakeBuildings)];
+  }
   return [...(meta.wardBuildings.get(scope) ?? [])];
+}
+
+/** Resolve a scope's Kindoo site id. `'stake'` → home (`null`); ward
+ *  codes → that ward's `kindoo_site_id` from `siteByScope`. Defaults
+ *  to home when the meta doesn't supply the map (legacy / tests). */
+function siteForScope(scope: string, meta: ScopeMeta): string | null {
+  if (!meta.siteByScope) return null;
+  if (scope === 'stake') return null;
+  const v = meta.siteByScope.get(scope);
+  return v === undefined ? null : v;
 }
 
 /** stake > ward; among wards, alphabetical ascending. */
@@ -389,6 +447,7 @@ function autoSeatChanged(cur: Seat, desired: SeatAutoNew): boolean {
   if (!arrEq(cur.building_names, desired.building_names)) return true;
   if (duplicateGrantsChanged(cur.duplicate_grants ?? [], desired.duplicate_grants)) return true;
   if ((cur.sort_order ?? null) !== (desired.sort_order ?? null)) return true;
+  if ((cur.kindoo_site_id ?? null) !== (desired.kindoo_site_id ?? null)) return true;
   return false;
 }
 
@@ -440,6 +499,8 @@ function duplicateGrantsChanged(a: Seat['duplicate_grants'], b: Seat['duplicate_
       reason: g.reason ?? '',
       start_date: g.start_date ?? '',
       end_date: g.end_date ?? '',
+      building_names: g.building_names ?? [],
+      kindoo_site_id: g.kindoo_site_id ?? null,
     });
   const aSet = new Set(a.map(norm));
   const bSet = new Set(b.map(norm));
