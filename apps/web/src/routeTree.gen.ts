@@ -27,6 +27,7 @@ import { Route as AuthedManagerAuditRouteImport } from './routes/_authed/manager
 import { Route as AuthedManagerAccessRouteImport } from './routes/_authed/manager/access'
 import { Route as AuthedBishopricRosterRouteImport } from './routes/_authed/bishopric/roster'
 import { Route as AuthedBishopricNewRouteImport } from './routes/_authed/bishopric/new'
+import { Route as AuthedAdminMigrateRouteImport } from './routes/_authed/admin/migrate'
 
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
@@ -118,6 +119,11 @@ const AuthedBishopricNewRoute = AuthedBishopricNewRouteImport.update({
   path: '/bishopric/new',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedAdminMigrateRoute = AuthedAdminMigrateRouteImport.update({
+  id: '/admin/migrate',
+  path: '/admin/migrate',
+  getParentRoute: () => AuthedRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -125,6 +131,7 @@ export interface FileRoutesByFullPath {
   '/my-requests': typeof AuthedMyRequestsRoute
   '/new': typeof AuthedNewRoute
   '/notifications': typeof AuthedNotificationsRoute
+  '/admin/migrate': typeof AuthedAdminMigrateRoute
   '/bishopric/new': typeof AuthedBishopricNewRoute
   '/bishopric/roster': typeof AuthedBishopricRosterRoute
   '/manager/access': typeof AuthedManagerAccessRoute
@@ -144,6 +151,7 @@ export interface FileRoutesByTo {
   '/my-requests': typeof AuthedMyRequestsRoute
   '/new': typeof AuthedNewRoute
   '/notifications': typeof AuthedNotificationsRoute
+  '/admin/migrate': typeof AuthedAdminMigrateRoute
   '/bishopric/new': typeof AuthedBishopricNewRoute
   '/bishopric/roster': typeof AuthedBishopricRosterRoute
   '/manager/access': typeof AuthedManagerAccessRoute
@@ -165,6 +173,7 @@ export interface FileRoutesById {
   '/_authed/my-requests': typeof AuthedMyRequestsRoute
   '/_authed/new': typeof AuthedNewRoute
   '/_authed/notifications': typeof AuthedNotificationsRoute
+  '/_authed/admin/migrate': typeof AuthedAdminMigrateRoute
   '/_authed/bishopric/new': typeof AuthedBishopricNewRoute
   '/_authed/bishopric/roster': typeof AuthedBishopricRosterRoute
   '/_authed/manager/access': typeof AuthedManagerAccessRoute
@@ -186,6 +195,7 @@ export interface FileRouteTypes {
     | '/my-requests'
     | '/new'
     | '/notifications'
+    | '/admin/migrate'
     | '/bishopric/new'
     | '/bishopric/roster'
     | '/manager/access'
@@ -205,6 +215,7 @@ export interface FileRouteTypes {
     | '/my-requests'
     | '/new'
     | '/notifications'
+    | '/admin/migrate'
     | '/bishopric/new'
     | '/bishopric/roster'
     | '/manager/access'
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '/_authed/my-requests'
     | '/_authed/new'
     | '/_authed/notifications'
+    | '/_authed/admin/migrate'
     | '/_authed/bishopric/new'
     | '/_authed/bishopric/roster'
     | '/_authed/manager/access'
@@ -373,6 +385,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedBishopricNewRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/admin/migrate': {
+      id: '/_authed/admin/migrate'
+      path: '/admin/migrate'
+      fullPath: '/admin/migrate'
+      preLoaderRoute: typeof AuthedAdminMigrateRouteImport
+      parentRoute: typeof AuthedRoute
+    }
   }
 }
 
@@ -380,6 +399,7 @@ interface AuthedRouteChildren {
   AuthedMyRequestsRoute: typeof AuthedMyRequestsRoute
   AuthedNewRoute: typeof AuthedNewRoute
   AuthedNotificationsRoute: typeof AuthedNotificationsRoute
+  AuthedAdminMigrateRoute: typeof AuthedAdminMigrateRoute
   AuthedBishopricNewRoute: typeof AuthedBishopricNewRoute
   AuthedBishopricRosterRoute: typeof AuthedBishopricRosterRoute
   AuthedManagerAccessRoute: typeof AuthedManagerAccessRoute
@@ -398,6 +418,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedMyRequestsRoute: AuthedMyRequestsRoute,
   AuthedNewRoute: AuthedNewRoute,
   AuthedNotificationsRoute: AuthedNotificationsRoute,
+  AuthedAdminMigrateRoute: AuthedAdminMigrateRoute,
   AuthedBishopricNewRoute: AuthedBishopricNewRoute,
   AuthedBishopricRosterRoute: AuthedBishopricRosterRoute,
   AuthedManagerAccessRoute: AuthedManagerAccessRoute,
