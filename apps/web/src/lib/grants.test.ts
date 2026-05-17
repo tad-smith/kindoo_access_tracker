@@ -201,9 +201,7 @@ describe('pickGrantForScope', () => {
     const seat = makeSeat({
       scope: 'CO',
       kindoo_site_id: null,
-      duplicate_grants: [
-        { scope: 'CO', type: 'manual', kindoo_site_id: null, detected_at: NOW },
-      ],
+      duplicate_grants: [{ scope: 'CO', type: 'manual', kindoo_site_id: null, detected_at: NOW }],
     });
     const grant = pickGrantForScope(seat, 'CO');
     expect(grant?.isPrimary).toBe(true);

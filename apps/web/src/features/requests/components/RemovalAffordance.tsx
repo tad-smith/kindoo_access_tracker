@@ -1,13 +1,16 @@
 // Per-row "remove" affordance + "removal pending" badge for roster
 // pages. Three independent pieces of state collapse into one render:
 //
-//   1. Auto seats get NO button. Auto seats are LCR-managed; the
+//   1. Auto grants get NO button. Auto grants are LCR-managed; the
 //      next importer run would just re-add the row, so submitting a
-//      remove request against an auto seat would create drift between
+//      remove request against an auto grant would create drift between
 //      the SPA and the LCR sheet. The roster page already filters
-//      this on the `seat.type !== 'auto'` predicate, but we
+//      this on the `grant.type !== 'auto'` predicate, but we
 //      double-check here so the affordance cannot accidentally render
-//      for auto rows even if a caller forgets the outer gate.
+//      for auto rows even if a caller forgets the outer gate. Gates
+//      on `grant.type` (not `seat.type`) so a manual / temp duplicate
+//      sitting under an auto primary stays removable (KS-9 within-site
+//      priority loser).
 //
 //   2. If a pending remove request exists for this row's grant
 //      (`type='remove' AND member_canonical == seat.id AND scope ==
@@ -61,7 +64,11 @@ export function RemovalAffordance({ seat, grant, testIdSuffix }: RemovalAffordan
     (r) => (r.kindoo_site_id ?? null) === grant.kindoo_site_id,
   );
 
-  if (seat.type === 'auto') return null;
+  // Gate on `grant.type` (Phase B) so a manual / temp duplicate under
+  // an auto primary stays removable — the trigger keys on (scope,
+  // kindoo_site_id) and the auto-primary disambiguation in
+  // `planRemove` routes the splice to the duplicate.
+  if (grant.type === 'auto') return null;
 
   const suffix = testIdSuffix ?? seat.member_canonical;
 

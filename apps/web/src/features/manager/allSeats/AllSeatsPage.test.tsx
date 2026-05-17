@@ -737,6 +737,58 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(payload.kindoo_site_id).toBe('foreign-1');
   });
 
+  // T-43 reviewer fix (Fix 3 / KS-9): within-site manual duplicate
+  // under an auto primary. Auto primary row: no Remove button (auto
+  // rows never render Remove). Manual duplicate row at the same
+  // (scope, site): Remove IS shown — the SPA gate now reads
+  // `grant.type`, not `seat.type`. Submitting goes through the trigger,
+  // which keys on (scope, kindoo_site_id) and routes the splice to the
+  // non-auto duplicate.
+  it('Fix 3 / KS-9: within-site manual duplicate under auto primary renders Remove on the duplicate row, not the primary', async () => {
+    const user = userEvent.setup();
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'auto',
+          callings: ['Bishop'],
+          scope: 'CO',
+          kindoo_site_id: null,
+          member_canonical: 'ks9@x.com',
+          member_email: 'ks9@x.com',
+          duplicate_grants: [
+            {
+              scope: 'CO',
+              type: 'manual',
+              kindoo_site_id: null,
+              reason: 'within-site dup',
+              building_names: ['CO Building'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    // Auto primary row: Remove hidden.
+    expect(screen.queryByTestId('remove-btn-ks9@x.com')).toBeNull();
+    // Manual duplicate row: Remove shown.
+    const dupRemove = screen.getByTestId('remove-btn-ks9@x.com-dup-0');
+    expect(dupRemove).toBeInTheDocument();
+    // Submitting from the duplicate row carries (CO, null) — the
+    // trigger disambiguates to the manual duplicate.
+    await user.click(dupRemove);
+    await user.type(screen.getByTestId('removal-reason'), 'no longer needed');
+    await user.click(screen.getByTestId('removal-confirm'));
+    expect(submitMutate).toHaveBeenCalled();
+    const payload = submitMutate.mock.calls[0]![0];
+    expect(payload.type).toBe('remove');
+    expect(payload.scope).toBe('CO');
+    expect(payload.kindoo_site_id).toBeNull();
+  });
+
   // AC #12: Reconcile button + ReconcileDialog removed.
   it("AC #12: Reconcile button doesn't render on duplicate rows", () => {
     mockAll({

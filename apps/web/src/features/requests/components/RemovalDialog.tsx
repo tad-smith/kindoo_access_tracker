@@ -37,6 +37,13 @@ export interface RemovalDialogGrant {
   /** Scope of the grant being removed. */
   scope: string;
   /**
+   * Type of the specific grant (not the seat's primary type). Used by
+   * `RemovalAffordance` to gate the Remove button on a per-grant
+   * basis — a manual / temp duplicate under an auto primary stays
+   * removable.
+   */
+  type: 'auto' | 'manual' | 'temp';
+  /**
    * Kindoo site the grant lives on. `null` for home / legacy. When
    * populated, the submitted remove request carries `kindoo_site_id`
    * so the `removeSeatOnRequestComplete` trigger splices only the

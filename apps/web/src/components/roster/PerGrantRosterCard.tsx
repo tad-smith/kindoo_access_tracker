@@ -121,7 +121,11 @@ export function PerGrantRosterCard({
             {canRemove ? (
               <RemovalAffordance
                 seat={seat}
-                grant={{ scope: grant.scope, kindoo_site_id: grant.kindoo_site_id }}
+                grant={{
+                  scope: grant.scope,
+                  type: grant.type,
+                  kindoo_site_id: grant.kindoo_site_id,
+                }}
               />
             ) : null}
           </span>

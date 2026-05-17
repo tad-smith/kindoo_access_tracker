@@ -362,21 +362,14 @@ function GrantRowCard({ row, wards, sites, principal, onEdit }: GrantRowCardProp
       ? "Edit the primary grant to modify this person's seat — parallel-site changes require a new request."
       : "Edit the primary grant to modify this person's seat — this row is informational and is covered by the primary's write.";
   // Phase B (AC #2): same-scope priority losers render as their own
-  // rows on AllSeats — informational. Remove on a same-scope
-  // within-site row is still functional but currently keys on
-  // `(scope, kindoo_site_id)` alone (KS-9 resolution: per-grant UUID
-  // not needed). For the same-scope same-site case the trigger today
-  // would target the primary on scope match; until that's tightened
-  // we surface the button only on rows whose `(scope, kindoo_site_id)`
-  // discriminator is unique against the primary.
+  // rows on AllSeats. Remove is functional on every non-auto grant —
+  // the trigger keys on `(scope, kindoo_site_id)`, and the
+  // auto-primary disambiguation in `planRemove`
+  // (`functions/src/triggers/removeSeatOnRequestComplete.ts`) routes
+  // a within-site same-`(scope, site)` request to the non-auto
+  // duplicate, so the auto primary stays intact (KS-9).
   const isPrimaryRow = grant.isPrimary;
-  const canRemove =
-    grant.type !== 'auto' &&
-    canRemoveScope &&
-    // Always allow on the primary; on a duplicate, allow when its
-    // (scope, site) differs from the primary so the trigger's
-    // matching is unambiguous.
-    (isPrimaryRow || grant.isParallelSite || grant.scope !== seat.scope);
+  const canRemove = grant.type !== 'auto' && canRemoveScope;
 
   const testIdSuffix = isPrimaryRow
     ? seat.member_canonical
@@ -487,7 +480,11 @@ function GrantRowCard({ row, wards, sites, principal, onEdit }: GrantRowCardProp
           {canRemove ? (
             <RemovalAffordance
               seat={seat}
-              grant={{ scope: grant.scope, kindoo_site_id: grant.kindoo_site_id }}
+              grant={{
+                scope: grant.scope,
+                type: grant.type,
+                kindoo_site_id: grant.kindoo_site_id,
+              }}
               testIdSuffix={testIdSuffix}
             />
           ) : null}

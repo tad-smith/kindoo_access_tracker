@@ -86,4 +86,3 @@ export function useMyRequests(canonical: string | null) {
   }, [canonical]);
   return useFirestoreCollection<AccessRequest>(requestsQuery);
 }
-
