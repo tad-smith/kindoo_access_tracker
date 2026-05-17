@@ -242,16 +242,27 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
         // longer addresses any grant. We do NOT silently remove a
         // different grant — the SPA's intent was anchored on that
         // specific tuple. Log loudly + stamp the typed
-        // `completion_status='noop_grant_shifted'` discriminator plus
-        // a human-readable `completion_note` on the request so the
-        // operator surfaces the race (the request remains complete
-        // since the callable already flipped it; these fields are the
-        // user-visible failure signal). We do NOT overwrite
-        // `lastActor` — that's the manager's completer attribution
-        // from `markRequestComplete` and should not be silently
-        // re-stamped to the trigger SA. `last_modified_at` is not a
-        // declared field on AccessRequest (the doc uses
-        // `requested_at` / `completed_at`); leaving it off.
+        // `completion_status='noop_grant_shifted'` discriminator on
+        // the request so audit summarisers can route on it (the
+        // request remains complete since the callable already flipped
+        // it; the discriminator is the user-visible failure signal).
+        //
+        // T-43 follow-up: preserve any manager-written
+        // `completion_note` already on the request — that field is
+        // human prose and the trigger MUST NOT clobber it. The audit
+        // summariser already routes on `completion_status` alone, so
+        // the labelled "No-op (grant moved before completion)" prefix
+        // surfaces regardless of which side wrote the note. Only when
+        // the manager left the note empty/absent do we stamp the
+        // system-generated explanatory message so the audit row /
+        // email body still carry useful context.
+        //
+        // We do NOT overwrite `lastActor` — that's the manager's
+        // completer attribution from `markRequestComplete` and should
+        // not be silently re-stamped to the trigger SA.
+        // `last_modified_at` is not a declared field on AccessRequest
+        // (the doc uses `requested_at` / `completed_at`); leaving it
+        // off.
         logger.warn('remove request (scope, kindoo_site_id) does not match any grant on seat', {
           stakeId,
           requestId: after.request_id,
@@ -263,20 +274,20 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
           duplicateScopes: (currentSeat.duplicate_grants ?? []).map((d) => d.scope),
         });
         const requestRef = db.doc(`stakes/${stakeId}/requests/${after.request_id}`);
+        const existingNote = typeof after.completion_note === 'string' ? after.completion_note : '';
+        const update: Record<string, unknown> = {
+          completion_status: 'noop_grant_shifted',
+        };
+        if (existingNote.trim().length === 0) {
+          update.completion_note =
+            'Seat removal skipped — the grant addressed by this request was no longer ' +
+            'present at trigger time (concurrent change between submit and completion). ' +
+            'Re-issue if the removal is still needed.';
+        }
         // `set merge` rather than `update` so a missing request doc
         // (theoretical — the trigger fires after the request flipped
         // to complete, so it must exist in production) doesn't throw.
-        tx.set(
-          requestRef,
-          {
-            completion_status: 'noop_grant_shifted',
-            completion_note:
-              'Seat removal skipped — the grant addressed by this request was no longer ' +
-              'present at trigger time (concurrent change between submit and completion). ' +
-              'Re-issue if the removal is still needed.',
-          },
-          { merge: true },
-        );
+        tx.set(requestRef, update, { merge: true });
         return;
       }
 

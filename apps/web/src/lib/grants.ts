@@ -71,11 +71,21 @@ function normalise(value: string | null | undefined): string | null {
  * Expand a seat into one `GrantView` per grant. The primary comes
  * first; each `duplicate_grants[]` entry follows in array order.
  *
- * Building names: a duplicate's `building_names` may be unset
- * (within-site priority losers inherit from the primary's ward — see
- * `DuplicateGrant.building_names` semantics). When unset, fall back
- * to the primary's `building_names` so the row renders something
+ * Building names: a duplicate's `building_names` may be unset on a
+ * within-site priority loser (it inherits from the primary's ward —
+ * see `DuplicateGrant.building_names` semantics). When unset, fall
+ * back to the primary's `building_names` so the row renders something
  * useful rather than an empty buildings chip.
+ *
+ * T-43 follow-up: the fallback applies ONLY to same-site duplicates.
+ * For a parallel-site duplicate (different `kindoo_site_id`), the
+ * primary's `building_names` are on a different Kindoo site, so
+ * rendering them on the foreign-site row would surface wrong data
+ * (home-site buildings on a foreign-site grant). Phase A's per-site
+ * provisioner stamps `building_names` on every parallel-site
+ * duplicate it writes, so this fallback should rarely trigger in
+ * healthy state; the empty-list result is the correct graceful-
+ * degradation shape for legacy / pre-migration seats.
  */
 export function grantsForDisplay(seat: Seat): GrantView[] {
   const primarySite = normalise(seat.kindoo_site_id);
@@ -94,17 +104,23 @@ export function grantsForDisplay(seat: Seat): GrantView[] {
   };
   const dupes = (seat.duplicate_grants ?? []).map((d, i): GrantView => {
     const site = normalise(d.kindoo_site_id);
+    const isParallelSite = site !== primarySite;
+    // T-43 follow-up: only inherit from the primary on same-site
+    // duplicates. Parallel-site duplicates rendering home-site
+    // buildings would be wrong data; an empty list is the correct
+    // graceful-degradation shape.
+    const fallbackBuildings = isParallelSite ? [] : seat.building_names;
     return {
       scope: d.scope,
       type: d.type,
       callings: d.callings ?? [],
-      building_names: d.building_names ?? seat.building_names,
+      building_names: d.building_names ?? fallbackBuildings,
       kindoo_site_id: site,
       ...(d.reason !== undefined ? { reason: d.reason } : {}),
       ...(d.start_date !== undefined ? { start_date: d.start_date } : {}),
       ...(d.end_date !== undefined ? { end_date: d.end_date } : {}),
       isPrimary: false,
-      isParallelSite: site !== primarySite,
+      isParallelSite,
       duplicateIndex: i,
     };
   });

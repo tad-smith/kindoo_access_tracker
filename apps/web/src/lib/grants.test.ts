@@ -81,13 +81,41 @@ describe('grantsForDisplay', () => {
     expect(dup!.isParallelSite).toBe(false);
   });
 
-  it("falls back to primary's building_names when a duplicate omits its own", () => {
+  it("falls back to primary's building_names when a same-site duplicate omits its own", () => {
+    // Same-site (both unset → both home) duplicate inherits the
+    // primary's buildings — within-site priority losers are covered
+    // by the primary's Kindoo write, so the primary's buildings ARE
+    // this grant's buildings.
     const seat = makeSeat({
       building_names: ['Primary Building'],
       duplicate_grants: [{ scope: 'CO', type: 'auto', detected_at: NOW }],
     });
     const [, dup] = grantsForDisplay(seat);
     expect(dup!.building_names).toEqual(['Primary Building']);
+  });
+
+  // T-43 follow-up: a parallel-site duplicate's buildings live on a
+  // different Kindoo site than the primary; rendering the primary's
+  // home-site buildings on a foreign-site row would be wrong data.
+  // The fallback degrades to an empty list instead.
+  it('renders an empty list (NOT the primary buildings) when a parallel-site duplicate omits building_names', () => {
+    const seat = makeSeat({
+      // Primary is home-site with home buildings.
+      kindoo_site_id: null,
+      building_names: ['Home Building'],
+      duplicate_grants: [
+        // Parallel-site duplicate without building_names — legacy /
+        // pre-migration shape. Phase A's per-site provisioner stamps
+        // building_names on every parallel-site duplicate going
+        // forward, so this is the graceful-degradation path.
+        { scope: 'FN', type: 'auto', kindoo_site_id: 'east-stake', detected_at: NOW },
+      ],
+    });
+    const [primary, dup] = grantsForDisplay(seat);
+    expect(primary!.building_names).toEqual(['Home Building']);
+    expect(dup!.isParallelSite).toBe(true);
+    // Home-site buildings must NOT leak onto the foreign-site row.
+    expect(dup!.building_names).toEqual([]);
   });
 
   it("uses the duplicate's own building_names when set", () => {

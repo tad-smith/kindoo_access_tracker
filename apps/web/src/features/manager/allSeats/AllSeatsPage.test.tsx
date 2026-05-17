@@ -630,6 +630,60 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     );
   });
 
+  // T-43 follow-up: a parallel-site duplicate without its own
+  // `building_names` (legacy / pre-migration shape) MUST NOT inherit
+  // the seat's home-site building_names — those are on a different
+  // Kindoo site. Empty list is the correct graceful-degradation shape.
+  it('parallel-site duplicate without building_names does not leak home buildings onto the foreign-site row', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'stake',
+          kindoo_site_id: null,
+          member_canonical: 'leak-canary@x.com',
+          member_email: 'leak-canary@x.com',
+          building_names: ['Home Building'],
+          duplicate_grants: [
+            // Parallel-site duplicate WITHOUT building_names — the
+            // legacy edge case the fix targets.
+            {
+              scope: 'FN',
+              type: 'manual',
+              kindoo_site_id: 'foreign-1',
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      wards: [makeWard({ ward_code: 'FN', kindoo_site_id: 'foreign-1' } as any)],
+      buildings: [],
+      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake' }],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    // Primary (home-site) row carries its home buildings.
+    const primaryRow = document.querySelector(
+      '[data-row-key="leak-canary@x.com/pri"]',
+    ) as HTMLElement;
+    expect(primaryRow).not.toBeNull();
+    expect(primaryRow.textContent).toContain('Home Building');
+    // Foreign-site duplicate row MUST NOT carry the primary's home
+    // buildings — that would be wrong data on the foreign-site row.
+    const dupRow = document.querySelector(
+      '[data-row-key="leak-canary@x.com/dup-0"]',
+    ) as HTMLElement;
+    expect(dupRow).not.toBeNull();
+    expect(dupRow.textContent).not.toContain('Home Building');
+    // The Buildings chip itself should be omitted entirely (empty
+    // list → no chip rendered) so the row degrades gracefully — no
+    // label with "Buildings:" anywhere on the duplicate row.
+    const labels = Array.from(dupRow.querySelectorAll('.roster-card-chip .label')).map(
+      (n) => n.textContent,
+    );
+    expect(labels).not.toContain('Buildings:');
+  });
+
   // AC #7 (AllSeats slice): Edit on a duplicate row is disabled with
   // the spec'd tooltip.
   it('AC #7: Edit button on a parallel-site duplicate row is disabled with the spec tooltip', () => {
