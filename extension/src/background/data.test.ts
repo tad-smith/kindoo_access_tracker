@@ -254,13 +254,87 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
 
   it('allows a foreign save when payload.siteId does not collide with home', async () => {
     // Happy path: the home-collision guard must not block legitimate
-    // foreign saves where the EIDs are distinct.
+    // foreign saves where the EIDs are distinct. The mock returns the
+    // same doc shape for the stake read AND the foreign-site read; the
+    // foreign-site read sees no `kindoo_eid` in that shape, so the
+    // non-home overwrite guard treats it as a first-populate and passes.
     getDocMock.mockResolvedValue({
       exists: () => true,
       data: () => ({
         kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
       }),
     });
+    const { writeKindooConfig } = await import('./data');
+    await writeKindooConfig(
+      {
+        kindooSiteId: 'east-stake',
+        siteId: 4321,
+        siteName: 'East Stake',
+        buildingRules: [],
+      },
+      actor(),
+    );
+    expect(commitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a foreign save that would overwrite an established kindoo_eid with a different value', async () => {
+    // PR #129 review follow-up: the wizard's foreign-save path was the
+    // higher-volume entry that wasn't covered by the orchestrator-side
+    // overwrite guard. Concrete scenario: foreign doc east-stake carries
+    // kindoo_eid: X; a Kindoo-side rename causes resolveActiveKindooSite
+    // to match by name and return populateEid: Y even though the doc
+    // already has X. Without this guard the wizard would silently
+    // overwrite X with Y and re-route door access for the foreign ward.
+    getDocMock
+      // First read: stake doc (home-collision guard).
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        }),
+      })
+      // Second read: foreign site doc (overwrite guard) — already populated.
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          id: 'east-stake',
+          kindoo_eid: 1234,
+        }),
+      });
+    const { writeKindooConfig } = await import('./data');
+    await expect(
+      writeKindooConfig(
+        {
+          kindooSiteId: 'east-stake',
+          siteId: 5678, // differs from existing kindoo_eid 1234
+          siteName: 'East Stake',
+          buildingRules: [],
+        },
+        actor(),
+      ),
+    ).rejects.toThrow(/overwrite existing kindoo_eid/i);
+    // Batch must not commit on refusal.
+    expect(commitMock).not.toHaveBeenCalled();
+  });
+
+  it('allows a foreign save that re-asserts the same kindoo_eid (idempotent)', async () => {
+    // Wizard re-runs against the same site with the same session EID
+    // must still go through. The non-home overwrite guard only blocks
+    // value changes, never value re-assertions.
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          id: 'east-stake',
+          kindoo_eid: 4321,
+        }),
+      });
     const { writeKindooConfig } = await import('./data');
     await writeKindooConfig(
       {
@@ -340,5 +414,89 @@ describe('writeKindooSiteEid — home-collision guard', () => {
     await expect(
       writeKindooSiteEid('east-stake', 4321, { email: null } as unknown as User),
     ).rejects.toThrow(/no email/);
+  });
+
+  it('writes when the existing kindoo_eid is null / undefined (legitimate first-populate)', async () => {
+    // Happy path for the non-home overwrite guard: the foreign doc has
+    // never been populated, so existingEid is null and the write
+    // proceeds. Mirrors the orchestrator-entry path that only calls this
+    // writer when the foreign doc has no EID recorded yet.
+    getDocMock
+      // First read: stake doc (home-collision guard).
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        }),
+      })
+      // Second read: foreign site doc (overwrite guard) — no kindoo_eid yet.
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          id: 'east-stake',
+          display_name: 'East Stake (Foothills Building)',
+          kindoo_expected_site_name: 'East Stake',
+          // kindoo_eid absent.
+        }),
+      });
+    const { writeKindooSiteEid } = await import('./data');
+    await writeKindooSiteEid('east-stake', 4321, actor());
+    expect(updateDocMock).toHaveBeenCalledTimes(1);
+    const payload = updateDocMock.mock.calls[0]?.[1] as { kindoo_eid: number };
+    expect(payload.kindoo_eid).toBe(4321);
+  });
+
+  it('refuses when the existing kindoo_eid differs from the incoming value (non-home overwrite)', async () => {
+    // Defense-in-depth from PR #124 review: a buggy / future caller
+    // could silently rewrite an established foreign-site `kindoo_eid`
+    // and re-route door-access for the foreign ward. Refuse before
+    // updating. The orchestrator-entry path only invokes this writer
+    // when the foreign doc's `kindoo_eid` is null / undefined, so
+    // legitimate callers stay green.
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          id: 'east-stake',
+          display_name: 'East Stake (Foothills Building)',
+          kindoo_expected_site_name: 'East Stake',
+          kindoo_eid: 1234, // already populated with a different EID
+        }),
+      });
+    const { writeKindooSiteEid } = await import('./data');
+    await expect(writeKindooSiteEid('east-stake', 5678, actor())).rejects.toThrow(
+      /overwrite existing kindoo_eid/i,
+    );
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('allows re-asserting an identical kindoo_eid (idempotent re-write)', async () => {
+    // A concurrent populate race could call this writer twice with the
+    // same EID — the new overwrite guard must not block re-asserting
+    // the same value. (The wizard's foreign save goes through
+    // writeKindooConfig, not this writer.)
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          id: 'east-stake',
+          kindoo_eid: 4321,
+        }),
+      });
+    const { writeKindooSiteEid } = await import('./data');
+    await writeKindooSiteEid('east-stake', 4321, actor());
+    expect(updateDocMock).toHaveBeenCalledTimes(1);
   });
 });

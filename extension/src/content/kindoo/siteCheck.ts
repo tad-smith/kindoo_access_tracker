@@ -231,7 +231,16 @@ export function checkRequestSite(args: CheckRequestSiteArgs): SiteCheckResult {
           actual.length > 0 &&
           normaliseName(actual) === normaliseName(wardSite.kindoo_expected_site_name);
         const sessionIsHome = stake.kindoo_config?.site_id === session.eid;
-        if (nameMatches && !sessionIsHome) {
+        // Cross-foreign-EID collision guard (defense-in-depth from PR #124
+        // review). If `session.eid` is already recorded as ANOTHER foreign
+        // site's `kindoo_eid`, refuse — even on a name match. Would
+        // require two foreign `KindooSite` docs colliding on EID (legacy
+        // bad data) to trip, but the guard keeps a buggy populate from
+        // silently re-routing access between foreign sites.
+        const sessionEidCollidesOtherForeign = kindooSites.some(
+          (s) => s.id !== wardSite.id && s.kindoo_eid === session.eid,
+        );
+        if (nameMatches && !sessionIsHome && !sessionEidCollidesOtherForeign) {
           return {
             ok: true,
             populate: { kindooSiteId: wardSite.id, kindooEid: session.eid },
