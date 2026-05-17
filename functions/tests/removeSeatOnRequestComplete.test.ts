@@ -325,6 +325,69 @@ describe.skipIf(!hasEmulators())('removeSeatOnRequestComplete', () => {
       expect(seat.duplicate_grants).toEqual([]);
     });
 
+    it('T-42 / T-43: promote write keeps duplicate_scopes in sync with the post-write duplicate_grants', async () => {
+      await seedStake();
+      await seedSeat({
+        scope: 'PC',
+        type: 'manual',
+        duplicate_grants: [
+          {
+            scope: 'MO',
+            type: 'manual',
+            reason: 'mo-helper',
+            building_names: ['MO Building'],
+            detected_at: Timestamp.now(),
+          },
+          {
+            scope: 'ST',
+            type: 'temp',
+            reason: 'st-helper',
+            building_names: ['ST Building'],
+            detected_at: Timestamp.now(),
+          },
+        ],
+      });
+      await removeSeatOnRequestComplete.run(removeEvent({ scope: 'PC' }));
+
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      // Primary promoted from MO; one duplicate (ST) survives.
+      expect(seat.scope).toBe('MO');
+      expect(seat.duplicate_grants.map((d) => d.scope)).toEqual(['ST']);
+      // Mirror lands on the same value.
+      expect(seat.duplicate_scopes).toEqual(['ST']);
+    });
+
+    it('T-42 / T-43: drop_duplicate write keeps duplicate_scopes in sync', async () => {
+      await seedStake();
+      await seedSeat({
+        scope: 'PC',
+        type: 'manual',
+        duplicate_grants: [
+          {
+            scope: 'MO',
+            type: 'manual',
+            building_names: ['MO Building'],
+            detected_at: Timestamp.now(),
+          },
+          {
+            scope: 'ST',
+            type: 'temp',
+            building_names: ['ST Building'],
+            detected_at: Timestamp.now(),
+          },
+        ],
+      });
+      await removeSeatOnRequestComplete.run(removeEvent({ scope: 'MO' }));
+
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      // Primary still PC; only ST duplicate remains.
+      expect(seat.scope).toBe('PC');
+      expect(seat.duplicate_grants.map((d) => d.scope)).toEqual(['ST']);
+      expect(seat.duplicate_scopes).toEqual(['ST']);
+    });
+
     it('stale request mismatch (scope on neither primary nor any duplicate): seat unchanged', async () => {
       await seedStake();
       await seedSeat({ scope: 'PC', type: 'manual', duplicate_grants: [] });
