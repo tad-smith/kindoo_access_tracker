@@ -168,6 +168,16 @@ function UtilizationCard({ loading, seats, wards, stakeSeatCap }: UtilizationCar
   // distinct `(member_canonical, scope)` pair across the seat's
   // grants so a within-site same-scope duplicate doesn't
   // double-count on the same bar.
+  //
+  // Intentional behaviour change vs pre-Phase B: wardCounts is now
+  // driven off the wards catalogue (one entry per known ward), not
+  // off the seat scopes. Orphan-scope seats (`seat.scope` pointing
+  // at a ward that no longer exists — a misconfiguration / mid-
+  // rename state) used to surface their own dashboard row; they
+  // now drop silently. Operator-accepted: an orphan-scope seat is
+  // an upstream-data problem the Manager Audit Log + AllSeats page
+  // surface; the Dashboard's per-ward bars stay aligned with the
+  // ward catalogue.
   const stakeCount = countSeatsForScope(seats, 'stake');
   const wardCounts = new Map<string, number>();
   for (const w of wards) {

@@ -93,11 +93,9 @@ export function siteLabelForGrant(
   sites: readonly KindooSite[],
 ): string | null {
   if (!grant.scope || grant.scope === 'stake') return null;
-  const siteId = grant.kindoo_site_id !== null ? grant.kindoo_site_id : null;
-  if (siteId) {
-    const site = sites.find((s) => s.id === siteId);
-    if (site) return site.display_name;
-    return null;
+  if (grant.kindoo_site_id) {
+    const site = sites.find((s) => s.id === grant.kindoo_site_id);
+    return site ? site.display_name : null;
   }
   // Legacy / un-migrated fallback: resolve through the ward.
   const ward = wards.find((w) => w.ward_code === grant.scope);
@@ -105,8 +103,7 @@ export function siteLabelForGrant(
   const wardSiteId = normaliseSiteId(ward.kindoo_site_id);
   if (!wardSiteId) return null;
   const site = sites.find((s) => s.id === wardSiteId);
-  if (!site) return null;
-  return site.display_name;
+  return site ? site.display_name : null;
 }
 
 /**

@@ -11,10 +11,8 @@
 //
 //   2. If a pending remove request exists for this row's grant
 //      (`type='remove' AND member_canonical == seat.id AND scope ==
-//      grant.scope`), render a "Removal pending" badge in place of
-//      the button. Phase B: when a `grant` is supplied, the
-//      `kindoo_site_id` is matched too so a pending remove on the
-//      foreign-site row doesn't shadow the home-site row.
+//      grant.scope AND kindoo_site_id == grant.kindoo_site_id`),
+//      render a "Removal pending" badge in place of the button.
 //
 //   3. Otherwise render a Remove button that opens the shared
 //      RemovalDialog.
@@ -22,6 +20,11 @@
 // Live by design: the pending-remove query is a Firestore subscription,
 // so the badge appears immediately after a successful remove submit
 // (no manual refresh).
+//
+// Phase B (T-43): the `grant` prop is required so every render path
+// scopes to a specific grant. Pre-Phase-B callers passed only the
+// seat; that path no longer exists — Bishopric / Stake / AllSeats all
+// build the grant before mounting the affordance.
 
 import { useState } from 'react';
 import type { Seat } from '@kindoo/shared';
@@ -32,13 +35,8 @@ import { RemovalDialog, type RemovalDialogGrant } from './RemovalDialog';
 
 export interface RemovalAffordanceProps {
   seat: Seat;
-  /**
-   * The grant this button removes. Optional — when omitted, defaults
-   * to the seat's primary grant (today's behaviour). Phase B
-   * duplicate rows pass the duplicate's `(scope, kindoo_site_id)` so
-   * the submitted request targets only that grant. T-43.
-   */
-  grant?: RemovalDialogGrant;
+  /** The grant being removed (scope + kindoo_site_id). */
+  grant: RemovalDialogGrant;
   /**
    * Override for the data-testid suffix. Defaults to
    * `seat.member_canonical`. AllSeats multi-row passes a per-row
@@ -52,22 +50,16 @@ export function RemovalAffordance({ seat, grant, testIdSuffix }: RemovalAffordan
   const [open, setOpen] = useState(false);
   // Subscribe per row. At target scale (~12 wards, ~250 seats) the
   // subscription overhead is negligible; the Firestore SDK shares the
-  // websocket and dedupes per query. If we ever need to hoist to a
-  // single roster-level subscription, the lift is trivial.
-  const targetScope = grant?.scope ?? seat.scope;
-  const pending = usePendingRemoveRequests(seat.member_canonical, targetScope);
-  // Phase B: when the row is a duplicate, narrow the pending-match
-  // by kindoo_site_id so a home-site pending remove doesn't dim the
-  // foreign-site row's button (AC #13). Legacy remove requests have
-  // no `kindoo_site_id`; on the primary path we keep the old "any
-  // pending remove against (member, scope)" behaviour to preserve
-  // back-compat.
-  const targetSiteId = grant?.kindoo_site_id ?? null;
-  const isPending = (pending.data ?? []).some((r) => {
-    if (grant === undefined) return true;
-    const reqSiteId = r.kindoo_site_id ?? null;
-    return reqSiteId === targetSiteId;
-  });
+  // websocket and dedupes per query.
+  const pending = usePendingRemoveRequests(seat.member_canonical, grant.scope);
+  // Narrow the pending-match by kindoo_site_id (AC #13) so a
+  // home-site pending remove doesn't dim the foreign-site row's
+  // button. Legacy pending removes carry no `kindoo_site_id`; treat
+  // absent as `null` (home) so legacy home-pending shadows only the
+  // home row.
+  const isPending = (pending.data ?? []).some(
+    (r) => (r.kindoo_site_id ?? null) === grant.kindoo_site_id,
+  );
 
   if (seat.type === 'auto') return null;
 
@@ -94,7 +86,7 @@ export function RemovalAffordance({ seat, grant, testIdSuffix }: RemovalAffordan
       {open ? (
         <RemovalDialog
           seat={seat}
-          {...(grant !== undefined ? { grant } : {})}
+          grant={grant}
           onOpenChange={(next) => {
             if (!next) setOpen(false);
           }}

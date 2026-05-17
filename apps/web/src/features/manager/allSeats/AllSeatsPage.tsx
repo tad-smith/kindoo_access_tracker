@@ -199,10 +199,15 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   };
 
   // Contextual utilization: bar tracks the current Scope filter (see
-  // detailed semantics in the original page docstring; unchanged from
-  // pre-Phase-B behaviour). Note: utilization counts primary seats
-  // only (one seat = one license at the home-stake level); per-grant
-  // expansion is presentation-only.
+  // detailed semantics in the original page docstring; mostly
+  // unchanged from pre-Phase-B). Phase B (T-43 AC #5): the per-ward /
+  // stake-scope counts widen to match the Dashboard's
+  // `countSeatsForScope` semantics — a seat counts when its primary
+  // OR any `duplicate_scopes` entry matches. Same-scope within-site
+  // dupes collapse (one count per `member_canonical`). The
+  // entire-stake bar (no ward filter) stays primary-only — it's
+  // home-stake utilization (license cap), a separate semantic that
+  // Phase B does not redefine.
   const allSeats = seats.data ?? [];
   const stakeSeatCap = stake.data?.stake_seat_cap;
   const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wardsList);
@@ -222,7 +227,15 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
         if (s.kindoo_site_id !== undefined) return s.kindoo_site_id == null;
         return !foreignWardCodes.has(s.scope);
       }).length
-    : allSeats.filter((s) => s.scope === ward).length;
+    : allSeats.filter((s) => {
+        // Phase B AC #5: primary OR any duplicate scope matches the
+        // filter. Mirrors `countSeatsForScope` on the Dashboard;
+        // same-scope dupes collapse implicitly (one seat → one
+        // count regardless of how many of its grants name the
+        // scope).
+        if (s.scope === ward) return true;
+        return (s.duplicate_scopes ?? []).includes(ward);
+      }).length;
   const utilizationCap: number | null | undefined = !ward
     ? stakeSeatCap
     : ward === 'stake'

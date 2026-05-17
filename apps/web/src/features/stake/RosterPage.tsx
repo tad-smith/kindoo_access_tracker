@@ -49,6 +49,11 @@ export function StakeRosterPage() {
     return rows;
   }, [seats.data]);
 
+  // Sort by the matched grant's fields. Auto-band intra-sort still
+  // keys on the seat's top-level `sort_order` — `DuplicateGrant` has
+  // no `sort_order` field, so a duplicate-matched auto row sorts at
+  // the primary's calling rank. See spec §15 Phase B (roster-pages
+  // subsection) for the operator-accepted limitation.
   const sortedRows = useMemo(() => {
     const shims = seatsWithGrant.map(({ seat, grant }) => ({
       ...seat,

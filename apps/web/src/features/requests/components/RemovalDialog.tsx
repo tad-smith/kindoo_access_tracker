@@ -11,11 +11,14 @@
 // importer's "next run replaces it" semantics make the guard
 // belt-and-braces).
 //
-// T-43 Phase B: a Remove button on an AllSeats duplicate row passes
-// the duplicate's `(scope, kindoo_site_id)` via the `grant` prop so
-// the submitted request carries the field. Roster-page primary
-// removes pass `grant` undefined / null and the request omits the
-// field; the trigger preserves today's primary-only behaviour.
+// T-43 Phase B: the `grant` prop is required. Every caller knows the
+// grant being removed (primary or duplicate) — AllSeats per-grant
+// rows pass the matched grant; per-scope roster pages pass the
+// grant they picked via `pickGrantForScope`. The submitted request
+// carries `(scope, kindoo_site_id)` so `removeSeatOnRequestComplete`
+// splices the exact entry; primary-row removes set
+// `kindoo_site_id` to the seat's primary site (or `null` for home),
+// which the trigger reads as "match the primary".
 
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -35,9 +38,9 @@ export interface RemovalDialogGrant {
   scope: string;
   /**
    * Kindoo site the grant lives on. `null` for home / legacy. When
-   * the field is populated, the submitted remove request carries
-   * `kindoo_site_id` so the `removeSeatOnRequestComplete` trigger
-   * splices only the matching duplicate.
+   * populated, the submitted remove request carries `kindoo_site_id`
+   * so the `removeSeatOnRequestComplete` trigger splices only the
+   * matching duplicate.
    */
   kindoo_site_id: string | null;
 }
@@ -47,14 +50,8 @@ export interface RemovalDialogProps {
   seat: Seat | null;
   /** Open / close handle. Closing while pending cancels nothing. */
   onOpenChange: (next: boolean) => void;
-  /**
-   * The grant being removed. When omitted, the dialog targets the
-   * seat's primary grant by scope alone (today's behaviour). When
-   * provided (Phase B duplicate-row remove), the submitted request
-   * scopes to the grant's `(scope, kindoo_site_id)` so the trigger
-   * splices only that entry.
-   */
-  grant?: RemovalDialogGrant;
+  /** The grant being removed (scope + kindoo_site_id). */
+  grant: RemovalDialogGrant;
 }
 
 export function RemovalDialog({ seat, onOpenChange, grant }: RemovalDialogProps) {
@@ -67,23 +64,17 @@ export function RemovalDialog({ seat, onOpenChange, grant }: RemovalDialogProps)
 
   if (!seat) return null;
 
-  const targetScope = grant?.scope ?? seat.scope;
-  const targetSiteId = grant?.kindoo_site_id ?? null;
-
   const onSubmit = handleSubmit(async (input) => {
     try {
       await submit.mutateAsync({
         type: 'remove',
-        scope: targetScope,
+        scope: grant.scope,
         member_email: seat.member_email,
         member_name: seat.member_name,
         reason: input.reason,
         comment: '',
         building_names: [],
-        // Phase B: stamp kindoo_site_id only when removing a
-        // non-primary grant. Omitting on the primary path keeps the
-        // legacy wire shape clean.
-        ...(grant !== undefined ? { kindoo_site_id: targetSiteId } : {}),
+        kindoo_site_id: grant.kindoo_site_id,
       });
       toast('Removal request submitted.', 'success');
       reset({ reason: '' });
