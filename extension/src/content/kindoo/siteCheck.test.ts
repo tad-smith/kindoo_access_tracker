@@ -364,6 +364,37 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     });
   });
 
+  it('refuses to auto-populate when session.eid is already recorded as another foreign site kindoo_eid', () => {
+    // Defense-in-depth from PR #124 review. Scenario: two foreign
+    // KindooSite docs end up colliding on EID — legacy bad data, or a
+    // duplicate slug. Target doc has no kindoo_eid yet and its
+    // expected name matches the active session. Without the cross-
+    // foreign-EID guard the orchestrator would persist session.eid
+    // onto the target doc, silently re-routing the target ward's
+    // door access through whatever site already carries that EID.
+    const otherForeign: KindooSite = {
+      id: 'west-stake',
+      display_name: 'West Stake (Foothills Building)',
+      kindoo_expected_site_name: 'West Stake',
+      kindoo_eid: FOREIGN_EID, // collides with the session EID below
+    } as unknown as KindooSite;
+    const result = checkRequestSite({
+      request: wardRequest('FN'),
+      session: { token: 'tok', eid: FOREIGN_EID },
+      envs: foreignEnvs('East Stake'),
+      stake: STAKE,
+      wards: [FOREIGN_WARD],
+      // Target = FOREIGN_SITE_NO_EID; another foreign doc already
+      // carries the session's EID.
+      kindooSites: [FOREIGN_SITE_NO_EID, otherForeign],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
+    if (!(result.error instanceof ProvisionSiteMismatchError)) return;
+    expect(result.error.expectedSiteName).toBe('East Stake (Foothills Building)');
+  });
+
   it('refuses (using display_name) when active session has no matching env entry (unknown site name)', () => {
     const result = checkRequestSite({
       request: wardRequest('FN'),

@@ -121,6 +121,15 @@ export async function loadStakeConfig(): Promise<StakeConfigBundle> {
  * gates this at the entry; this writer-side check is belts-and-braces
  * so a hypothetical buggy caller can't smuggle HOME_EID into a foreign
  * doc and permanently bypass Phase 3.
+ *
+ * Non-home overwrite guard: if the target doc already carries a
+ * `kindoo_eid` that differs from the incoming value, refuse. The
+ * orchestrator-entry path only invokes this writer when the foreign
+ * doc's `kindoo_eid` is null / undefined (re-asserting an identical
+ * value via the wizard's foreign save is fine), so legitimate callers
+ * stay green; this regression-proofs against a buggy / future caller
+ * silently rewriting an established foreign-site `kindoo_eid` and
+ * re-routing door-access for the foreign ward.
  */
 export async function writeKindooSiteEid(
   kindooSiteId: string,
@@ -147,6 +156,16 @@ export async function writeKindooSiteEid(
     );
   }
   const siteRef = doc(db, 'stakes', STAKE_ID, 'kindooSites', kindooSiteId);
+  const siteSnap = await getDoc(siteRef);
+  const existingEid = siteSnap.exists()
+    ? ((siteSnap.data() as KindooSite).kindoo_eid ?? null)
+    : null;
+  if (existingEid !== null && existingEid !== kindooEid) {
+    throw new Error(
+      `Refusing to overwrite existing kindoo_eid for site '${kindooSiteId}' ` +
+        `(existing=${existingEid}, incoming=${kindooEid}).`,
+    );
+  }
   await updateDoc(siteRef, {
     kindoo_eid: kindooEid,
     last_modified_at: serverTimestamp(),
