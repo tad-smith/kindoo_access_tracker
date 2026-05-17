@@ -237,6 +237,9 @@ async function applyKindooOnly(
       callings: dedupedCallings,
       building_names: dedupePreserveOrder(buildingNames),
       duplicate_grants: [],
+      // T-42 / T-43: server-maintained primitive mirror of
+      // `duplicate_grants[].scope`. Always set, even when empty.
+      duplicate_scopes: [],
       created_at: now,
       last_modified_at: now,
       last_modified_by: actor,

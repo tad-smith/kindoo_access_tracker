@@ -210,6 +210,10 @@ function buildDispatchContext(
     stake: bundle.stake,
     wards: bundle.wards,
     buildings: bundle.buildings,
+    // T-42: thread the foreign-site directory through so the
+    // Kindoo-side fix path can filter `unionSeatBuildings` by the
+    // active session's site.
+    kindooSites: bundle.kindooSites,
     envs,
     session,
   };

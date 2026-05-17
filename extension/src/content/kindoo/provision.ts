@@ -883,30 +883,60 @@ export interface ProvisionRemoveArgs {
  *
  * Result is de-duplicated in stable order so downstream consumers
  * (RID mapping, note text) get a predictable list.
+ *
+ * T-42: per-site filtering. The remove orchestrator runs on a single
+ * Kindoo session (the request's target site); the write should only
+ * include grants whose `kindoo_site_id` resolves to that site. Without
+ * this, removing the primary of a multi-site seat would leak the
+ * foreign duplicate's buildings into the active environment.
  */
-function computePostRemovalBuildings(seat: Seat | null, request: AccessRequest): string[] {
+function computePostRemovalBuildings(
+  seat: Seat | null,
+  request: AccessRequest,
+  wards: Ward[],
+  requestSiteId: string | null,
+): string[] {
   if (!seat) return [];
+  const wardSite = (wardCode: string): string | null => {
+    if (wardCode === 'stake') return null;
+    const ward = wards.find((w) => w.ward_code === wardCode);
+    return ward ? (ward.kindoo_site_id ?? null) : null;
+  };
+  const grantSite = (
+    grantKindooSiteId: string | null | undefined,
+    grantScope: string,
+  ): string | null => {
+    if (grantKindooSiteId !== undefined && grantKindooSiteId !== null) {
+      return grantKindooSiteId;
+    }
+    if (grantKindooSiteId === null) return null;
+    return wardSite(grantScope);
+  };
   const primaryBuildings = seat.building_names ?? [];
+  const primaryOnSite = grantSite(seat.kindoo_site_id, seat.scope) === requestSiteId;
+  const filteredDup = (d: DuplicateGrant): string[] =>
+    grantSite(d.kindoo_site_id, d.scope) === requestSiteId ? (d.building_names ?? []) : [];
 
   if (seat.scope === request.scope) {
     const duplicates = seat.duplicate_grants ?? [];
     if (duplicates.length === 0) return [];
     const [promoted, ...rest] = duplicates;
-    return uniqueOrdered(
-      promoted!.building_names ?? [],
-      rest.flatMap((d) => d.building_names ?? []),
-    );
+    // Only contribute the promoted duplicate's buildings when its
+    // site matches; same filter for the remaining duplicates.
+    const promotedBuildings =
+      grantSite(promoted!.kindoo_site_id, promoted!.scope) === requestSiteId
+        ? (promoted!.building_names ?? [])
+        : [];
+    return uniqueOrdered(promotedBuildings, rest.flatMap(filteredDup));
   }
 
   const duplicates = seat.duplicate_grants ?? [];
   const matched = duplicates.some((d) => d.scope === request.scope);
   if (!matched) {
     // Stale request — scope no longer present in the seat. Building
-    // set unchanged.
-    return uniqueOrdered(
-      primaryBuildings,
-      duplicates.flatMap((d) => d.building_names ?? []),
-    );
+    // set unchanged on the active site (primary if on-site +
+    // surviving duplicates on-site).
+    return uniqueOrdered(primaryOnSite ? primaryBuildings : [], duplicates.flatMap(filteredDup));
   }
   let dropped = false;
   const surviving = duplicates.filter((d) => {
@@ -916,10 +946,7 @@ function computePostRemovalBuildings(seat: Seat | null, request: AccessRequest):
     }
     return true;
   });
-  return uniqueOrdered(
-    primaryBuildings,
-    surviving.flatMap((d) => d.building_names ?? []),
-  );
+  return uniqueOrdered(primaryOnSite ? primaryBuildings : [], surviving.flatMap(filteredDup));
 }
 
 /**
@@ -950,7 +977,20 @@ export async function provisionRemove(args: ProvisionRemoveArgs): Promise<Provis
   const fetchImpl = args.deps?.fetchImpl;
 
   // ---- Compute target state ----
-  const targetBuildings = computePostRemovalBuildings(args.seat, args.request);
+  // T-42: derive the request's target site so the per-site write
+  // only includes buildings on that site. Pre-fix this leaked
+  // foreign-site duplicate buildings into the active environment
+  // when removing the primary of a multi-site seat.
+  const requestSiteId: string | null =
+    args.request.scope === 'stake'
+      ? null
+      : (args.wards.find((w) => w.ward_code === args.request.scope)?.kindoo_site_id ?? null);
+  const targetBuildings = computePostRemovalBuildings(
+    args.seat,
+    args.request,
+    args.wards,
+    requestSiteId,
+  );
   const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);
 
   const env = findEnvironment(args.envs, args.session);

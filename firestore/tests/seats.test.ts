@@ -338,6 +338,76 @@ describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
       });
       await assertFails(batch.commit());
     });
+
+    // T-42 / T-43: `duplicate_scopes` is a server-maintained primitive
+    // mirror of `duplicate_grants[].scope`. Clients may only create a
+    // seat with the field empty (consistent with `duplicate_grants ==
+    // []`). A non-empty client-set value is rejected.
+    it('client-create with empty duplicate_scopes is allowed', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(REQUEST_PATH_MANUAL).set(pendingRequestDoc('add_manual'));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      const batch = db.batch();
+      batch.set(db.doc(SEAT_PATH), manualSeatDoc({ duplicate_scopes: [] }));
+      batch.update(db.doc(REQUEST_PATH_MANUAL), {
+        status: 'complete',
+        completer_email: personas.manager.email,
+        completer_canonical: personas.manager.canonical,
+        completed_at: new Date(),
+        lastActor: lastActorOf(personas.manager),
+      });
+      await assertSucceeds(batch.commit());
+    });
+
+    it('client-create with non-empty duplicate_scopes is rejected (server-maintained field)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(REQUEST_PATH_MANUAL).set(pendingRequestDoc('add_manual'));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      const batch = db.batch();
+      batch.set(db.doc(SEAT_PATH), manualSeatDoc({ duplicate_scopes: ['CO'] }));
+      batch.update(db.doc(REQUEST_PATH_MANUAL), {
+        status: 'complete',
+        completer_email: personas.manager.email,
+        completer_canonical: personas.manager.canonical,
+        completed_at: new Date(),
+        lastActor: lastActorOf(personas.manager),
+      });
+      await assertFails(batch.commit());
+    });
+
+    it('admin SDK seat write with non-empty duplicate_scopes is accepted (server-only path)', async () => {
+      // The Admin SDK bypasses rules entirely; this is a positive
+      // assertion of the contract that server writers populate the
+      // mirror. The rules-tests `seedAsAdmin` helper uses the same
+      // bypass, so the assertion is the operation succeeds with the
+      // field set non-empty.
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(REQUEST_PATH_MANUAL).set(pendingRequestDoc('add_manual'));
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(
+            manualSeatDoc({
+              duplicate_grants: [
+                {
+                  scope: 'CO',
+                  type: 'manual',
+                  callings: [],
+                  building_names: ['Cordera Building'],
+                  detected_at: new Date(),
+                },
+              ],
+              duplicate_scopes: ['CO'],
+            }),
+          );
+      });
+      // No assertFails here — admin writes bypass rules. The test
+      // exists to document the contract and catch a regression where
+      // the rules accidentally start applying to admin writes (which
+      // would be the catastrophic case).
+    });
   });
 
   describe('update', () => {

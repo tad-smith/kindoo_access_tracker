@@ -379,6 +379,77 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     expect(rows[0]!.actor_canonical).toBe('ExpiryTrigger');
   });
 
+  it('T-42 / T-43: seat update with lastActor=Migration emits migration_backfill_kindoo_site_id action', async () => {
+    // The auditTrigger recognises the `Migration` sentinel actor and
+    // substitutes the dedicated migration action code so the rows
+    // produced by the T-42 one-shot backfill are filterable in the
+    // audit history (vs being conflated with generic seat updates).
+    const before = {
+      member_canonical: 's@gmail.com',
+      member_email: 's@gmail.com',
+      member_name: 'Sam',
+      scope: 'GE',
+      type: 'manual',
+      callings: [],
+      building_names: ['Greenwood'],
+      duplicate_grants: [],
+      lastActor: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
+    };
+    const after = {
+      ...before,
+      kindoo_site_id: 'east-stake',
+      duplicate_scopes: [],
+      lastActor: { email: 'Migration', canonical: 'Migration' },
+    };
+    await auditSeatWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, memberCanonical: 's@gmail.com' },
+        before,
+        after,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('migration_backfill_kindoo_site_id');
+    expect(rows[0]!.actor_canonical).toBe('Migration');
+    expect(rows[0]!.entity_type).toBe('seat');
+    expect(rows[0]!.member_canonical).toBe('s@gmail.com');
+  });
+
+  it('T-42 / T-43: seat update with a non-Migration actor still emits a regular update_seat', async () => {
+    // Negative case — make sure the Migration detection doesn't bleed
+    // into ordinary manager writes that happen to mutate
+    // kindoo_site_id (which can't happen via rules today, but the
+    // trigger's branch must remain selective regardless).
+    const before = {
+      member_canonical: 's@gmail.com',
+      member_email: 's@gmail.com',
+      member_name: 'Sam',
+      scope: 'GE',
+      type: 'manual',
+      callings: [],
+      building_names: ['Greenwood'],
+      duplicate_grants: [],
+      lastActor: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
+    };
+    const after = {
+      ...before,
+      building_names: ['Greenwood', 'Pinecrest'],
+      lastActor: lastActor('mgr@gmail.com'),
+    };
+    await auditSeatWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, memberCanonical: 's@gmail.com' },
+        before,
+        after,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('update_seat');
+    expect(rows[0]!.actor_canonical).toBe('mgr@gmail.com');
+  });
+
   it('seat writes map to create/update/delete seat with member_canonical', async () => {
     const after = {
       member_canonical: 's@gmail.com',

@@ -129,6 +129,13 @@ export function useCompleteAddRequest() {
           callings: [],
           building_names,
           duplicate_grants: [],
+          // T-42 / T-43: server-maintained primitive mirror of
+          // `duplicate_grants[].scope`. New manual/temp seats start
+          // with an empty array (no duplicates yet). The rules' create
+          // predicate requires this to be empty (consistent with
+          // `duplicate_grants.size() == 0` for client-initiated
+          // creates).
+          duplicate_scopes: [],
           granted_by_request: request.request_id,
           created_at: serverTimestamp(),
           last_modified_at: serverTimestamp(),

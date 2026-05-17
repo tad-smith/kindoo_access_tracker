@@ -19,6 +19,7 @@
 
 import type {
   Building,
+  KindooSite,
   Seat,
   Stake,
   SyncApplyFixInput,
@@ -85,6 +86,15 @@ export interface DispatchContext {
   stake: Stake;
   wards: Ward[];
   buildings: Building[];
+  /**
+   * T-42: foreign-Kindoo-site directory. The Kindoo-side `Update Kindoo`
+   * fix path threads this to `syncProvisionFromSeat` so the per-site
+   * `unionSeatBuildings` filter excludes parallel-site duplicates from
+   * the active session's write. Without it the orchestrator falls back
+   * to the pre-T-42 "union every grant" path and pushes foreign-site
+   * buildings into the active Kindoo environment.
+   */
+  kindooSites: KindooSite[];
   /** Pre-loaded Kindoo environments for `findEnvironment`. v2.2 fetches
    * via `getEnvironments` on demand; sync resolves it once at run time
    * and reuses it across rows. */
@@ -304,6 +314,11 @@ async function dispatchKindooFix(d: Discrepancy, ctx: DispatchContext): Promise<
     stake: ctx.stake,
     wards: ctx.wards,
     buildings: ctx.buildings,
+    // T-42: pass the foreign-site directory so `unionSeatBuildings`
+    // can resolve the active session's site id and filter the per-site
+    // write target. Without this the synthesised seat's duplicate
+    // grants (parallel-site) leak into the active environment.
+    kindooSites: ctx.kindooSites,
     envs: ctx.envs,
     session: ctx.session,
     ...(ctx.deps !== undefined ? { deps: ctx.deps } : {}),
