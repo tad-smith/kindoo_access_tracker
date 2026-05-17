@@ -9,6 +9,7 @@
 // right action enum, and skips no-op updates.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { Timestamp } from 'firebase-admin/firestore';
 import {
   auditAccessWrites,
   auditBuildingWrites,
@@ -425,6 +426,10 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     // OutOfBand actor heuristic that would otherwise substitute
     // `OutOfBand` when both `lastActor` AND `last_modified_at` were
     // unchanged.
+    // Use Firestore Timestamp objects (not plain Date) so the
+    // `deepEqual` in `isOutOfBandUpdate` can actually compare values —
+    // Date objects have no own properties and would be seen as equal
+    // by the structural deep-equality check.
     const before = {
       member_canonical: 's@gmail.com',
       member_email: 's@gmail.com',
@@ -434,13 +439,13 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
       callings: [],
       building_names: ['Greenwood'],
       duplicate_grants: [],
-      last_modified_at: new Date('2026-05-01T00:00:00Z'),
+      last_modified_at: Timestamp.fromMillis(1_700_000_000_000),
       lastActor: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
     };
     const after = {
       ...before,
       building_names: ['Greenwood', 'Pinecrest'],
-      last_modified_at: new Date('2026-05-02T00:00:00Z'),
+      last_modified_at: Timestamp.fromMillis(1_700_000_001_000),
       lastActor: lastActor('mgr@gmail.com'),
     };
     await auditSeatWrites.run(
