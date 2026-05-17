@@ -15,7 +15,7 @@ import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
 import { kindooSitesCol, seatsCol, wardsCol } from '../../lib/docs';
 import { STAKE_ID } from '../../lib/constants';
-import { mergeSeatsByCanonical, type RosterResult } from '../bishopric/hooks';
+import { mergeSeatsByCanonical, type RosterResult } from '../../lib/rosters';
 
 export function useStakeRoster(): RosterResult {
   const primaryQuery = useMemo(

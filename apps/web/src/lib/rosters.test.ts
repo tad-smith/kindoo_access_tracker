@@ -1,15 +1,15 @@
-// Unit tests for the KS-10 two-query union helper.
+// Unit tests for the broadened-inclusion roster merge helper.
 //
 // `mergeSeatsByCanonical` merges the two subscriptions of the
-// broadened-inclusion roster hook (primary-scope match + duplicate-
+// broadened-inclusion roster hooks (primary-scope match + duplicate-
 // scope match) into a single seat list, deduped by
-// `member_canonical`. Central to Phase B — every broadened roster
-// page routes its reads through it.
+// `member_canonical`. Shared by bishopric/, stake/, and ward-roster
+// pages — every Phase B roster surface routes its reads through it.
 
 import { describe, expect, it } from 'vitest';
 import type { Seat } from '@kindoo/shared';
-import { makeSeat } from '../../../test/fixtures';
-import { mergeSeatsByCanonical, type RosterResult } from './hooks';
+import { makeSeat } from '../../test/fixtures';
+import { mergeSeatsByCanonical, type RosterResult } from './rosters';
 
 function liveOk(data: Seat[]): RosterResult {
   return { data, isLoading: false };

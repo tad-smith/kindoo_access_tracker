@@ -24,11 +24,7 @@ import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
 import { kindooSitesCol, requestsCol, seatsCol, wardsCol } from '../../lib/docs';
 import { STAKE_ID } from '../../lib/constants';
-
-export interface RosterResult {
-  data: readonly Seat[] | undefined;
-  isLoading: boolean;
-}
+import { mergeSeatsByCanonical, type RosterResult } from '../../lib/rosters';
 
 /**
  * Live seats list for one ward — broadened to include any seat
@@ -91,29 +87,3 @@ export function useMyRequests(canonical: string | null) {
   return useFirestoreCollection<AccessRequest>(requestsQuery);
 }
 
-/**
- * Merge two roster subscriptions (primary-scope match + duplicate-
- * scope match) into a single `Seat[]`, deduped by `member_canonical`.
- * Phase B helper (T-43); exported for the stake / ward-roster hooks
- * to share the same shape.
- */
-export function mergeSeatsByCanonical(
-  primary: { data: readonly Seat[] | undefined; isLoading: boolean },
-  duplicate: { data: readonly Seat[] | undefined; isLoading: boolean },
-): RosterResult {
-  // Hook loading semantics: while either subscription is hydrating,
-  // surface `undefined` so the page renders its skeleton / loading
-  // spinner rather than a partial roster.
-  const isLoading = primary.isLoading || duplicate.isLoading;
-  if (primary.data === undefined || duplicate.data === undefined) {
-    return { data: undefined, isLoading };
-  }
-  const byCanonical = new Map<string, Seat>();
-  for (const s of primary.data) byCanonical.set(s.member_canonical, s);
-  for (const s of duplicate.data) {
-    // First write wins — the primary subscription's snapshot is
-    // semantically identical (same doc) so dedupe is safe.
-    if (!byCanonical.has(s.member_canonical)) byCanonical.set(s.member_canonical, s);
-  }
-  return { data: [...byCanonical.values()], isLoading };
-}
