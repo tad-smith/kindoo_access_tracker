@@ -420,7 +420,11 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     // Negative case — make sure the Migration detection doesn't bleed
     // into ordinary manager writes that happen to mutate
     // kindoo_site_id (which can't happen via rules today, but the
-    // trigger's branch must remain selective regardless).
+    // trigger's branch must remain selective regardless). Distinct
+    // `last_modified_at` values across before/after defuse the
+    // OutOfBand actor heuristic that would otherwise substitute
+    // `OutOfBand` when both `lastActor` AND `last_modified_at` were
+    // unchanged.
     const before = {
       member_canonical: 's@gmail.com',
       member_email: 's@gmail.com',
@@ -430,11 +434,13 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
       callings: [],
       building_names: ['Greenwood'],
       duplicate_grants: [],
+      last_modified_at: new Date('2026-05-01T00:00:00Z'),
       lastActor: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
     };
     const after = {
       ...before,
       building_names: ['Greenwood', 'Pinecrest'],
+      last_modified_at: new Date('2026-05-02T00:00:00Z'),
       lastActor: lastActor('mgr@gmail.com'),
     };
     await auditSeatWrites.run(
