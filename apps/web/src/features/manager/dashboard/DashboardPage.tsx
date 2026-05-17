@@ -27,6 +27,38 @@ import { UtilizationBar } from '../../../lib/render/UtilizationBar';
 import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
 import { summariseAuditRow } from '../auditLog/summarise';
 
+/**
+ * Phase B (spec §15 AC #5): a seat counts on a scope's bar when its
+ * primary scope matches OR any duplicate grant's scope matches. Same-
+ * scope within-site duplicates collapse — count one per
+ * `member_canonical` per scope, not one per grant.
+ *
+ * Reads the denormalised `duplicate_scopes` primitive mirror (server-
+ * maintained alongside `duplicate_grants[].scope`; single-field
+ * indexed). The AllSeats utilization bar uses the same predicate; both
+ * sides must read the same field so the two surfaces stay in lockstep.
+ *
+ * INTENTIONAL DIVERGENCE: this widens via `duplicate_scopes` for
+ * visibility, but the server-side over-cap calc
+ * (`functions/src/lib/overCaps.ts`) intentionally stays primary-only —
+ * over-cap warnings represent actual home-stake Kindoo-license-pool
+ * consumption, which the primary represents. A bar can render "over"
+ * visually without firing `over_cap_warning`. If you change one side,
+ * change the other or document why they should continue to diverge.
+ * Spec §15 Phase B.
+ */
+function countSeatsForScope(seats: readonly Seat[], scope: string): number {
+  let n = 0;
+  for (const s of seats) {
+    if (s.scope === scope) {
+      n += 1;
+      continue;
+    }
+    if ((s.duplicate_scopes ?? []).includes(scope)) n += 1;
+  }
+  return n;
+}
+
 export function ManagerDashboardPage() {
   const pending = usePendingRequests();
   const audit = useRecentAuditLog();
@@ -143,11 +175,27 @@ function UtilizationCard({ loading, seats, wards, stakeSeatCap }: UtilizationCar
       </Card>
     );
   }
-  // Per-scope counts.
-  const stakeCount = seats.filter((s) => s.scope === 'stake').length;
+  // Per-scope counts. Phase B (spec §15 AC #5): widen inclusion so a
+  // seat with primary `scope='stake'` and a `duplicate_grants[]`
+  // entry for ward 'CO' counts on the CO bar too. Count once per
+  // distinct `(member_canonical, scope)` pair across the seat's
+  // grants so a within-site same-scope duplicate doesn't
+  // double-count on the same bar.
+  //
+  // Intentional behaviour change vs pre-Phase B: wardCounts is now
+  // driven off the wards catalogue (one entry per known ward), not
+  // off the seat scopes. Orphan-scope seats (`seat.scope` pointing
+  // at a ward that no longer exists — a misconfiguration / mid-
+  // rename state) used to surface their own dashboard row; they
+  // now drop silently. Operator-accepted: an orphan-scope seat is
+  // an upstream-data problem the Manager Audit Log + AllSeats page
+  // surface; the Dashboard's per-ward bars stay aligned with the
+  // ward catalogue.
+  const stakeCount = countSeatsForScope(seats, 'stake');
   const wardCounts = new Map<string, number>();
-  for (const s of seats) {
-    if (s.scope !== 'stake') wardCounts.set(s.scope, (wardCounts.get(s.scope) ?? 0) + 1);
+  for (const w of wards) {
+    if (w.ward_code === 'stake') continue;
+    wardCounts.set(w.ward_code, countSeatsForScope(seats, w.ward_code));
   }
   const sortedWards = [...wards].sort((a, b) => a.ward_code.localeCompare(b.ward_code));
 

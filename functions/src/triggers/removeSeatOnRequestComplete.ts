@@ -72,19 +72,83 @@ type SeatPlan =
 
 /**
  * Decide what to do with the seat for a remove request whose scope is
- * `requestScope`. Pure — returns the plan; the caller applies it.
+ * `requestScope` and (optionally, T-43 Phase B) whose
+ * `kindoo_site_id` matches the grant being removed. Pure — returns
+ * the plan; the caller applies it.
+ *
+ * Matching rules:
+ *   - When the request carries `requestSiteId !== undefined`, the
+ *     match keys on `(scope, kindoo_site_id)`. A Phase B duplicate-
+ *     row Remove sets both fields explicitly so only the matching
+ *     duplicate is spliced; primary + remaining duplicates stay.
+ *   - When `requestSiteId === undefined` (legacy pre-Phase-B remove
+ *     requests, primary-row removes), fall back to scope-only
+ *     matching so today's behaviour is preserved.
+ *
+ * Within the primary branch, the kindoo_site_id check is similarly
+ * gated — a legacy request (no site) matches the primary by scope
+ * alone; a Phase B request whose `(scope, site)` matches the primary
+ * uses the existing delete-or-promote path.
+ *
+ * KS-9 / Phase B disambiguation: an `auto` primary cannot be the
+ * intended target of a user-issued remove request (the SPA hides the
+ * Remove affordance on auto rows — auto seats are LCR-managed). When
+ * the primary nominally matches by `(scope, site)` but is auto, AND a
+ * non-auto duplicate exists at the same `(scope, site)`, splice that
+ * duplicate instead. The within-site priority-loser duplicate is the
+ * removable grant.
  */
-export function planRemove(opts: { seat: Seat; requestScope: string }): SeatPlan {
-  const { seat, requestScope } = opts;
+export function planRemove(opts: {
+  seat: Seat;
+  requestScope: string;
+  requestSiteId?: string | null;
+}): SeatPlan {
+  const { seat, requestScope, requestSiteId } = opts;
   const dupes = seat.duplicate_grants ?? [];
 
-  if (seat.scope === requestScope) {
+  // Legacy path: no site on the request, match by scope alone.
+  const legacy = requestSiteId === undefined;
+
+  const primarySite = seat.kindoo_site_id ?? null;
+  const reqSite = requestSiteId ?? null;
+  const primaryMatches = seat.scope === requestScope && (legacy || primarySite === reqSite);
+
+  // KS-9: auto primaries are never user-removable; if the primary
+  // nominally matches but is auto AND a non-auto duplicate matches the
+  // same `(scope, site)`, the duplicate is the real target. Splice it
+  // and leave the auto primary intact.
+  if (primaryMatches && seat.type === 'auto') {
+    const idx = dupes.findIndex((d) => {
+      if (d.scope !== requestScope) return false;
+      if (d.type === 'auto') return false;
+      if (legacy) return true;
+      const dSite = d.kindoo_site_id ?? null;
+      return dSite === reqSite;
+    });
+    if (idx >= 0) {
+      const remaining = dupes.slice(0, idx).concat(dupes.slice(idx + 1));
+      return { kind: 'drop_duplicate', remaining };
+    }
+    // No non-auto duplicate at this `(scope, site)` — fall through to
+    // the primary path (today's behaviour for the auto-primary,
+    // duplicates-empty case is delete; rare in practice since auto
+    // primaries normally have no Remove affordance).
+  }
+
+  if (primaryMatches) {
     if (dupes.length === 0) return { kind: 'delete' };
     const [promoted, ...remaining] = dupes;
     return { kind: 'promote', promoted: promoted!, remaining };
   }
 
-  const idx = dupes.findIndex((d) => d.scope === requestScope);
+  // Duplicate match: same gating — legacy → scope only; Phase B →
+  // (scope, site).
+  const idx = dupes.findIndex((d) => {
+    if (d.scope !== requestScope) return false;
+    if (legacy) return true;
+    const dSite = d.kindoo_site_id ?? null;
+    return dSite === reqSite;
+  });
   if (idx >= 0) {
     const remaining = dupes.slice(0, idx).concat(dupes.slice(idx + 1));
     return { kind: 'drop_duplicate', remaining };
@@ -154,22 +218,65 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
         return;
       }
       const currentSeat = seatSnap.data() as Seat;
-      const plan = planRemove({ seat: currentSeat, requestScope: after.scope });
+      // T-43 Phase B: thread `kindoo_site_id` through when the
+      // request carries it (duplicate-row remove). Legacy requests
+      // omit the field; `planRemove` falls back to scope-only
+      // matching so today's primary-row removes keep working.
+      const planOpts: Parameters<typeof planRemove>[0] = {
+        seat: currentSeat,
+        requestScope: after.scope,
+      };
+      if ('kindoo_site_id' in after) {
+        const siteId = (after as { kindoo_site_id?: string | null }).kindoo_site_id;
+        // Treat explicit-undefined as "not set" (skip); explicit null
+        // stays null so the trigger keys on home-site.
+        if (siteId !== undefined) planOpts.requestSiteId = siteId;
+      }
+      const plan = planRemove(planOpts);
 
       if (plan.kind === 'no_match') {
-        // The request's scope doesn't correspond to any grant on the
-        // seat. Shouldn't happen in normal flow but possible if the
-        // SBA UI submitted a stale request after concurrent changes.
-        // No-op the seat; request stays complete (already flipped by
-        // the callable).
-        logger.warn('remove request scope does not match any grant on seat', {
+        // T-43 reviewer fix: a stale-snapshot race. The SPA captured
+        // `(scope, kindoo_site_id)` at click time; between submit and
+        // trigger fire, the seat was modified (concurrent
+        // promote / splice / delete) so the snapshotted tuple no
+        // longer addresses any grant. We do NOT silently remove a
+        // different grant — the SPA's intent was anchored on that
+        // specific tuple. Log loudly + stamp the typed
+        // `completion_status='noop_grant_shifted'` discriminator plus
+        // a human-readable `completion_note` on the request so the
+        // operator surfaces the race (the request remains complete
+        // since the callable already flipped it; these fields are the
+        // user-visible failure signal). We do NOT overwrite
+        // `lastActor` — that's the manager's completer attribution
+        // from `markRequestComplete` and should not be silently
+        // re-stamped to the trigger SA. `last_modified_at` is not a
+        // declared field on AccessRequest (the doc uses
+        // `requested_at` / `completed_at`); leaving it off.
+        logger.warn('remove request (scope, kindoo_site_id) does not match any grant on seat', {
           stakeId,
           requestId: after.request_id,
           seatCanonical: memberCanonical,
           requestScope: after.scope,
+          requestSiteId: planOpts.requestSiteId ?? null,
           seatScope: currentSeat.scope,
+          seatSiteId: currentSeat.kindoo_site_id ?? null,
           duplicateScopes: (currentSeat.duplicate_grants ?? []).map((d) => d.scope),
         });
+        const requestRef = db.doc(`stakes/${stakeId}/requests/${after.request_id}`);
+        // `set merge` rather than `update` so a missing request doc
+        // (theoretical — the trigger fires after the request flipped
+        // to complete, so it must exist in production) doesn't throw.
+        tx.set(
+          requestRef,
+          {
+            completion_status: 'noop_grant_shifted',
+            completion_note:
+              'Seat removal skipped — the grant addressed by this request was no longer ' +
+              'present at trigger time (concurrent change between submit and completion). ' +
+              'Re-issue if the removal is still needed.',
+          },
+          { merge: true },
+        );
         return;
       }
 

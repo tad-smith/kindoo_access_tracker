@@ -699,9 +699,11 @@ Documented as a known limitation in `docs/spec.md` §15 Phase 4 prose. The curre
 **`packages/shared/` types deliberately lagging.** The Phase A spec PR updates `docs/firebase-schema.md` to document `Seat.kindoo_site_id` and `DuplicateGrant.kindoo_site_id`, but the matching zod schema (`packages/shared/src/schemas/seat.ts`) and TypeScript type (`packages/shared/src/types/seat.ts`) are intentionally NOT updated in the spec PR. Per `packages/shared/CLAUDE.md`'s "schema doc + zod + type stay in sync" rule, the T-42 implementation PR must add the field to both the zod schema and the TS type alongside the importer / orchestrator / migration code changes.
 
 ## [T-43] T-42 Phase B implementation — roster surfaces for parallel grants
-Status: open
+Status: done (2026-05-17 — PR #134)
 Owner: @web-engineer (coordinate with @backend-engineer on the small `functions/` + `firestore/rules` + `packages/shared/` server-side hook)
 Phase: Kindoo Sites — Phase B (multi-site roster surfaces)
+
+**Resolved 2026-05-17 — PR #134.** Phase B shipped end-to-end: AllSeats multi-row rendering (one row per grant), per-row foreign-site badge, Edit-disabled-with-tooltip + functional Remove on duplicate rows, Reconcile UI removed; broadened inclusion on Bishopric / Stake / Ward Rosters + Manager Dashboard rollups via two-query union (KS-10 Option b); composite `(member_canonical, scope, kindoo_site_id)` pending-removal discriminator; `kindoo_site_id` optional on remove requests + threaded through `planRemove`; bishopric `seats.read` widened against `duplicate_scopes`. KS-10 resolved as Option b. Spec §15 Phase B rewritten to present tense. See [changelog/t-43-phase-b-roster-surfaces.md](changelog/t-43-phase-b-roster-surfaces.md).
 
 **Spec defined in the T-42 Phase B spec PR (companion to this entry); Phase A data-model spec landed in PR #130. T-43 closes when the Phase B implementation PR lands.** Cross-ref `docs/spec.md` §15 "Phase B — roster surfaces for parallel grants (planned)".
 

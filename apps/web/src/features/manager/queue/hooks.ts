@@ -254,6 +254,9 @@ export function useCompleteRemoveRequest() {
         // system tag so the email reader gets both pieces of context.
         const resolved = resolveRemoveCompletionNote(seatSnap.exists(), completion_note);
         if (resolved !== undefined) update.completion_note = resolved;
+        // T-43: typed completion_status discriminator for audit
+        // routing. Mirrors `markRequestComplete` server-side.
+        if (!seatSnap.exists()) update.completion_status = 'noop_already_removed';
         tx.update(reqRef, update);
       });
     },

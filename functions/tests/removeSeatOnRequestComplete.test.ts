@@ -110,27 +110,32 @@ function removeEvent(opts: {
   requestId?: string;
   scope: string;
   member?: string;
+  /**
+   * T-43 Phase B: optional `kindoo_site_id` on the remove request.
+   * When set (string OR explicit null), the trigger keys on
+   * `(scope, kindoo_site_id)`. Omit → legacy scope-only match.
+   */
+  kindoo_site_id?: string | null;
 }): ReturnType<typeof makeEvent> {
   const requestId = opts.requestId ?? 'r1';
   const member = opts.member ?? 'alice@gmail.com';
+  const before: Record<string, unknown> = {
+    status: 'pending',
+    type: 'remove',
+    scope: opts.scope,
+    member_canonical: member,
+    seat_member_canonical: member,
+    request_id: requestId,
+  };
+  const after: Record<string, unknown> = { ...before, status: 'complete' };
+  if ('kindoo_site_id' in opts) {
+    before.kindoo_site_id = opts.kindoo_site_id;
+    after.kindoo_site_id = opts.kindoo_site_id;
+  }
   return makeEvent({
     params: { stakeId: STAKE_ID, requestId },
-    before: {
-      status: 'pending',
-      type: 'remove',
-      scope: opts.scope,
-      member_canonical: member,
-      seat_member_canonical: member,
-      request_id: requestId,
-    },
-    after: {
-      status: 'complete',
-      type: 'remove',
-      scope: opts.scope,
-      member_canonical: member,
-      seat_member_canonical: member,
-      request_id: requestId,
-    },
+    before,
+    after,
   });
 }
 
@@ -388,18 +393,216 @@ describe.skipIf(!hasEmulators())('removeSeatOnRequestComplete', () => {
       expect(seat.duplicate_scopes).toEqual(['ST']);
     });
 
-    it('stale request mismatch (scope on neither primary nor any duplicate): seat unchanged', async () => {
+    it('stale request mismatch: seat unchanged + completion_status="noop_grant_shifted" + completion_note stamped; no lastActor / last_modified_at overwrite', async () => {
       await seedStake();
       await seedSeat({ scope: 'PC', type: 'manual', duplicate_grants: [] });
+      // Seed the request doc so we can assert lastActor isn't
+      // clobbered by the trigger's no_match write.
+      const { db } = requireEmulators();
+      const reqRef = db.doc(`stakes/${STAKE_ID}/requests/r1`);
+      const managerActor = { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' };
+      await reqRef.set({
+        request_id: 'r1',
+        type: 'remove',
+        scope: 'MO',
+        status: 'complete',
+        member_canonical: 'alice@gmail.com',
+        seat_member_canonical: 'alice@gmail.com',
+        completer_email: managerActor.email,
+        completer_canonical: managerActor.canonical,
+        lastActor: managerActor,
+      });
+
       await removeSeatOnRequestComplete.run(removeEvent({ scope: 'MO' }));
+
+      const seatSnap = await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get();
+      expect(seatSnap.exists).toBe(true);
+      const seat = seatSnap.data() as Seat;
+      expect(seat.scope).toBe('PC');
+      // No write happened on the seat — lastActor remains the seed.
+      expect(seat.lastActor).toEqual(managerActor);
+      // T-43 reviewer fixes: typed completion_status discriminator +
+      // human-readable completion_note. Manager's `lastActor`
+      // attribution must NOT be clobbered; `last_modified_at` is not
+      // a declared field on AccessRequest and must NOT be written.
+      const reqSnap = await reqRef.get();
+      expect(reqSnap.exists).toBe(true);
+      const req = reqSnap.data() as Record<string, unknown>;
+      expect(req.completion_status).toBe('noop_grant_shifted');
+      expect(String(req.completion_note)).toContain('Seat removal skipped');
+      expect(req.lastActor).toEqual(managerActor);
+      expect(req.last_modified_at).toBeUndefined();
+    });
+
+    // T-43 Phase B AC #8: a remove request scoped to a foreign-site
+    // duplicate must splice only that duplicate; the primary and any
+    // other duplicates stay intact.
+    it('AC #8: remove on a parallel-site duplicate splices only the matching (scope, kindoo_site_id) entry', async () => {
+      await seedStake();
+      await seedSeat({
+        scope: 'CO',
+        type: 'manual',
+        building_names: ['CO Building'],
+        reason: 'pc-helper',
+        duplicate_grants: [
+          {
+            scope: 'CO',
+            type: 'manual',
+            kindoo_site_id: 'east-stake',
+            reason: 'foreign-east',
+            building_names: ['East CO Building'],
+            detected_at: Timestamp.now(),
+          },
+          {
+            scope: 'ST',
+            type: 'temp',
+            reason: 'st-helper',
+            building_names: ['ST Building'],
+            detected_at: Timestamp.now(),
+          },
+        ],
+      });
+
+      await removeSeatOnRequestComplete.run(
+        removeEvent({ scope: 'CO', kindoo_site_id: 'east-stake' }),
+      );
+
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      // Primary stays put (same scope, different site).
+      expect(seat.scope).toBe('CO');
+      expect(seat.reason).toBe('pc-helper');
+      expect(seat.building_names).toEqual(['CO Building']);
+      // Only the East CO duplicate spliced; ST duplicate remains.
+      expect(seat.duplicate_grants).toHaveLength(1);
+      expect(seat.duplicate_grants[0]!.scope).toBe('ST');
+    });
+
+    // T-43 Phase B: when a remove request omits `kindoo_site_id`, the
+    // trigger falls back to scope-only matching so legacy pre-Phase-B
+    // remove requests still complete correctly against the primary.
+    it('legacy remove (no kindoo_site_id on the request) keys on scope alone — preserves primary-row behaviour', async () => {
+      await seedStake();
+      await seedSeat({
+        scope: 'CO',
+        type: 'manual',
+        building_names: ['CO Building'],
+        duplicate_grants: [
+          {
+            scope: 'CO',
+            type: 'manual',
+            kindoo_site_id: 'east-stake',
+            building_names: ['East CO Building'],
+            detected_at: Timestamp.now(),
+          },
+        ],
+      });
+
+      // No `kindoo_site_id` on the request → legacy fallback. Primary
+      // matches by scope → today's "delete or promote" path applies.
+      await removeSeatOnRequestComplete.run(removeEvent({ scope: 'CO' }));
 
       const { db } = requireEmulators();
       const seatSnap = await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get();
       expect(seatSnap.exists).toBe(true);
       const seat = seatSnap.data() as Seat;
-      expect(seat.scope).toBe('PC');
-      // No write happened — lastActor remains the seed value.
+      // Primary promoted from the East CO duplicate.
+      expect(seat.scope).toBe('CO');
+      // The duplicate's kindoo_site_id rode along on the promote.
+      expect(seat.kindoo_site_id).toBe('east-stake');
+      expect(seat.duplicate_grants).toEqual([]);
+    });
+
+    // T-43 Phase B: Phase B request targeting the primary's
+    // (scope, site) exactly — same delete-or-promote behaviour as
+    // legacy primary remove.
+    it('Phase B remove whose (scope, kindoo_site_id) matches the primary deletes / promotes per today', async () => {
+      await seedStake();
+      await seedSeat({
+        scope: 'CO',
+        type: 'manual',
+        building_names: ['CO Building'],
+        duplicate_grants: [],
+      });
+
+      await removeSeatOnRequestComplete.run(removeEvent({ scope: 'CO', kindoo_site_id: null }));
+
+      const { db } = requireEmulators();
+      const seatSnap = await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get();
+      expect(seatSnap.exists).toBe(false);
+    });
+
+    // T-43 reviewer fix (Fix 6): simulate the SPA-snapshot race —
+    // user clicks Remove on a CO/null grant while the seat carries
+    // that exact grant, but a concurrent op modifies the seat
+    // between submit and trigger fire so the snapshotted (scope,
+    // site) tuple no longer addresses any grant. The trigger must
+    // NOT silently splice / promote a different grant; it must log
+    // and stamp a completion_note.
+    it('Fix 6: race-shifted seat where snapshotted (scope, site) no longer matches → no-op + completion_status', async () => {
+      await seedStake();
+      // Seat state at trigger time: primary moved from CO/null to
+      // stake/null (e.g. a concurrent op already removed the CO
+      // grant). Request was submitted when CO/null was present.
+      await seedSeat({
+        scope: 'stake',
+        type: 'manual',
+        duplicate_grants: [],
+      });
+
+      await removeSeatOnRequestComplete.run(removeEvent({ scope: 'CO', kindoo_site_id: null }));
+
+      const { db } = requireEmulators();
+      const seatSnap = await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get();
+      // Seat untouched — we did not silently delete the unrelated
+      // stake grant.
+      expect(seatSnap.exists).toBe(true);
+      const seat = seatSnap.data() as Seat;
+      expect(seat.scope).toBe('stake');
       expect(seat.lastActor).toEqual({ email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' });
+      // Request stamped with the typed discriminator + the human-
+      // readable note. Trigger must not overwrite lastActor or write
+      // a phantom last_modified_at.
+      const reqSnap = await db.doc(`stakes/${STAKE_ID}/requests/r1`).get();
+      const req = reqSnap.data() as Record<string, unknown>;
+      expect(req.completion_status).toBe('noop_grant_shifted');
+      expect(String(req.completion_note)).toContain('concurrent change');
+      expect(req.last_modified_at).toBeUndefined();
+    });
+
+    // T-43 reviewer fix (Fix 3): KS-9 within-site priority loser.
+    // Primary is auto + a manual duplicate sits at the same (scope,
+    // site). The SPA gate makes the Remove affordance functional on
+    // the duplicate row; the trigger must target the duplicate (the
+    // user-removable grant), not the auto primary.
+    it('Fix 3 / KS-9: auto primary with manual same-(scope,site) duplicate → removes the duplicate, keeps the primary', async () => {
+      await seedStake();
+      await seedSeat({
+        scope: 'CO',
+        type: 'auto',
+        building_names: ['CO Building'],
+        duplicate_grants: [
+          {
+            scope: 'CO',
+            type: 'manual',
+            kindoo_site_id: null,
+            reason: 'within-site dup',
+            building_names: ['CO Building'],
+            detected_at: Timestamp.now(),
+          },
+        ],
+      });
+
+      await removeSeatOnRequestComplete.run(removeEvent({ scope: 'CO', kindoo_site_id: null }));
+
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      // Auto primary stays intact.
+      expect(seat.scope).toBe('CO');
+      expect(seat.type).toBe('auto');
+      // Duplicate spliced out → empty.
+      expect(seat.duplicate_grants).toEqual([]);
+      expect(seat.duplicate_scopes).toEqual([]);
     });
 
     it('type promotion: temp duplicate promotes onto manual primary → seat type becomes temp', async () => {

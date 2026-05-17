@@ -185,6 +185,97 @@ describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
       });
       await assertFails(managerContext(env, STAKE_ID).firestore().doc(otherPath).get());
     });
+
+    // T-43 Phase B AC #10 — bishopric reads widen to cover seats whose
+    // any-grant scope matches their ward via `duplicate_scopes`.
+    it('bishopric reads a seat whose primary is in another scope but duplicate_scopes includes their ward (Phase B)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(
+            manualSeatDoc({
+              scope: 'stake',
+              duplicate_grants: [
+                {
+                  scope: '01',
+                  type: 'manual',
+                  detected_at: new Date(),
+                },
+              ],
+              duplicate_scopes: ['01'],
+            }),
+          );
+      });
+      await assertSucceeds(
+        bishopricContext(env, STAKE_ID, ['01']).firestore().doc(SEAT_PATH).get(),
+      );
+    });
+
+    it('bishopric is denied a seat whose primary AND duplicate_scopes are outside their ward (Phase B negative)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(
+            manualSeatDoc({
+              scope: 'stake',
+              duplicate_grants: [
+                {
+                  scope: '02',
+                  type: 'manual',
+                  detected_at: new Date(),
+                },
+              ],
+              duplicate_scopes: ['02'],
+            }),
+          );
+      });
+      await assertFails(bishopricContext(env, STAKE_ID, ['01']).firestore().doc(SEAT_PATH).get());
+    });
+
+    it("outsider still denied even when duplicate_scopes overlaps the outsider's (non-)wards (Phase B negative)", async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(
+            manualSeatDoc({
+              scope: 'stake',
+              duplicate_grants: [
+                {
+                  scope: '01',
+                  type: 'manual',
+                  detected_at: new Date(),
+                },
+              ],
+              duplicate_scopes: ['01'],
+            }),
+          );
+      });
+      await assertFails(outsiderContext(env, STAKE_ID).firestore().doc(SEAT_PATH).get());
+    });
+
+    it('legacy seats without duplicate_scopes do not break bishopric reads (presence guard)', async () => {
+      // Legacy seat written before the T-42 migration: no
+      // `duplicate_scopes` field. The presence guard
+      // (`'duplicate_scopes' in resource.data`) prevents the
+      // `hasAny(...)` clause from throwing on the missing field.
+      // A bishopric whose ward matches the primary still succeeds;
+      // a bishopric whose ward doesn't match still fails (rather than
+      // erroring out the entire read).
+      await seedAsAdmin(env, async (ctx) => {
+        // Explicit absence of `duplicate_scopes` (the default fixture
+        // includes it; build a doc without it).
+        const doc = manualSeatDoc({ scope: '01' });
+        delete (doc as Record<string, unknown>)['duplicate_scopes'];
+        await ctx.firestore().doc(SEAT_PATH).set(doc);
+      });
+      await assertSucceeds(
+        bishopricContext(env, STAKE_ID, ['01']).firestore().doc(SEAT_PATH).get(),
+      );
+      await assertFails(bishopricContext(env, STAKE_ID, ['02']).firestore().doc(SEAT_PATH).get());
+    });
   });
 
   describe('create — `tiedToRequestCompletion` cross-doc invariant', () => {
@@ -510,6 +601,49 @@ describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
         db.doc(SEAT_PATH).update({
           member_name: 'X',
           lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    // T-43 reviewer fix: a client write that touches
+    // `duplicate_grants` must also touch `duplicate_scopes` so the
+    // server-maintained primitive mirror stays in lockstep. The rule
+    // allows the coordinated pair (server writers do this); rejects
+    // either field alone.
+    it('client update mutating duplicate_grants without duplicate_scopes is denied (mirror coupling)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ duplicate_grants: [], duplicate_scopes: [] }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          duplicate_grants: [
+            { scope: 'CO', type: 'manual', callings: [], detected_at: new Date() },
+          ],
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('client update mutating duplicate_scopes without duplicate_grants is denied (mirror coupling)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ duplicate_grants: [], duplicate_scopes: [] }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          duplicate_scopes: ['CO'],
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
+          lastActor: lastActorOf(personas.manager),
         }),
       );
     });

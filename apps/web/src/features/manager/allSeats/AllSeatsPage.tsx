@@ -4,36 +4,40 @@
 // (entire stake / stake-scope / a specific ward). Per-scope
 // dashboards live on the Manager Dashboard.
 //
-// Mutations:
-//   - Inline-edit dialog on manual / temp rows (auto rows are
-//     importer-owned and have no edit affordance).
-//   - Reconcile dialog on rows where `duplicate_grants.length > 0`.
+// Phase B (T-43, spec §15): multi-row rendering — one row per grant
+// (primary + each `duplicate_grants[]` entry). Each row's columns
+// reflect the grant being rendered, not always the seat's primary.
+// Edit on a duplicate row is disabled with a tooltip; Remove on a
+// duplicate row submits a `remove` request scoped to that grant's
+// `(scope, kindoo_site_id)`. The legacy Reconcile button is gone —
+// the multi-row layout subsumes its surface (AC #12).
 //
-// The shared `<RosterCardList showScope />` primitive renders the
-// seat list — same row-feel density as bishopric / stake rosters with
-// a scope chip on each card.
+// Mutations:
+//   - Inline-edit dialog on manual / temp primary rows (auto rows
+//     are importer-owned and have no edit affordance).
+//   - Remove via the shared <RemovalAffordance>, grant-aware on
+//     duplicate rows.
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import type { DuplicateGrant, Seat } from '@kindoo/shared';
+import type { KindooSite, Seat, Ward } from '@kindoo/shared';
 import {
   useAllSeats,
   useBuildings,
   useInlineSeatEditMutation,
   useKindooSites,
-  useReconcileSeatMutation,
   useWards,
 } from './hooks';
-import { siteLabelForSeat } from '../../../lib/kindooSites';
+import { siteLabelForGrant } from '../../../lib/kindooSites';
+import { grantsForDisplay, type GrantView } from '../../../lib/grants';
 import { useStakeDoc } from '../dashboard/hooks';
-import { RosterCardList } from '../../../components/roster/RosterCardList';
-import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
-import { UtilizationBar } from '../../../lib/render/UtilizationBar';
 import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
+import { UtilizationBar } from '../../../lib/render/UtilizationBar';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
+import { EmptyState } from '../../../lib/render/EmptyState';
 import { Select } from '../../../components/ui/Select';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
@@ -55,36 +59,107 @@ export interface AllSeatsPageProps {
   initialType?: 'auto' | 'manual' | 'temp';
 }
 
+interface GrantRow {
+  seat: Seat;
+  grant: GrantView;
+  /** Stable React key. */
+  rowKey: string;
+}
+
+/** Pure: expand every seat into grant-rows. */
+function expandSeats(seats: readonly Seat[]): GrantRow[] {
+  const rows: GrantRow[] = [];
+  for (const seat of seats) {
+    for (const grant of grantsForDisplay(seat)) {
+      const suffix = grant.isPrimary ? 'pri' : `dup-${grant.duplicateIndex}`;
+      rows.push({ seat, grant, rowKey: `${seat.member_canonical}/${suffix}` });
+    }
+  }
+  return rows;
+}
+
+/** Match seat's type-band rank used by the legacy sort. */
+const TYPE_BAND: Record<Seat['type'], number> = { auto: 0, manual: 1, temp: 2 };
+
+function scopeRank(scope: string): number {
+  return scope === 'stake' ? 0 : 1;
+}
+
+function nameKey(seat: Seat): string {
+  return (seat.member_name || seat.member_email || '').toLowerCase();
+}
+
+/**
+ * Sort grant-rows for AllSeats cross-scope view. Per spec §15 Phase B
+ * AC #9: each row sorts independently by its own grant's fields; no
+ * special grouping by seat. Order:
+ *   1. Stake band first, then ward bands alpha by grant scope.
+ *   2. Within each scope band: auto → manual → temp (type-banded).
+ *   3. Within type band: name alpha; temp by end_date desc.
+ */
+function sortGrantRowsAcrossScopes(rows: readonly GrantRow[]): GrantRow[] {
+  const sorted = [...rows];
+  sorted.sort((a, b) => {
+    const ra = scopeRank(a.grant.scope);
+    const rb = scopeRank(b.grant.scope);
+    if (ra !== rb) return ra - rb;
+    if (a.grant.scope !== b.grant.scope) return a.grant.scope.localeCompare(b.grant.scope);
+    const ba = TYPE_BAND[a.grant.type];
+    const bb = TYPE_BAND[b.grant.type];
+    if (ba !== bb) return ba - bb;
+    if (a.grant.type === 'temp' && b.grant.type === 'temp') {
+      const am = !a.grant.end_date;
+      const bm = !b.grant.end_date;
+      if (am && !bm) return 1;
+      if (!am && bm) return -1;
+      if (!am && !bm) {
+        const cmp = (b.grant.end_date ?? '').localeCompare(a.grant.end_date ?? '');
+        if (cmp !== 0) return cmp;
+      }
+    }
+    return nameKey(a.seat).localeCompare(nameKey(b.seat));
+  });
+  return sorted;
+}
+
+/** Within-scope sort (no scope key; used when the Scope filter pins to a single value). */
+function sortGrantRowsWithinScope(rows: readonly GrantRow[]): GrantRow[] {
+  const sorted = [...rows];
+  sorted.sort((a, b) => {
+    const ba = TYPE_BAND[a.grant.type];
+    const bb = TYPE_BAND[b.grant.type];
+    if (ba !== bb) return ba - bb;
+    if (a.grant.type === 'temp' && b.grant.type === 'temp') {
+      const am = !a.grant.end_date;
+      const bm = !b.grant.end_date;
+      if (am && !bm) return 1;
+      if (!am && bm) return -1;
+      if (!am && !bm) {
+        const cmp = (b.grant.end_date ?? '').localeCompare(a.grant.end_date ?? '');
+        if (cmp !== 0) return cmp;
+      }
+    }
+    return nameKey(a.seat).localeCompare(nameKey(b.seat));
+  });
+  return sorted;
+}
+
 export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllSeatsPageProps) {
   const principal = usePrincipal();
   const seats = useAllSeats();
   const wards = useWards();
   const buildings = useBuildings();
-  // Live Kindoo Sites catalogue — feeds the foreign-site badge on ward
-  // seats (spec §15). Empty when the stake only operates its home site.
+  // Live Kindoo Sites catalogue — feeds the per-grant foreign-site
+  // badge (spec §15 Phase B). Empty when the stake only operates its
+  // home site.
   const kindooSites = useKindooSites();
   const stake = useStakeDoc();
   const navigate = useNavigate();
   const [editingSeat, setEditingSeat] = useState<Seat | null>(null);
-  const [reconcilingSeat, setReconcilingSeat] = useState<Seat | null>(null);
 
   const ward = initialWard ?? '';
   const building = initialBuilding ?? '';
   const type = initialType ?? '';
-
-  const filtered = useMemo<readonly Seat[]>(() => {
-    const all = seats.data ?? [];
-    const matched = all.filter((s) => {
-      if (ward && s.scope !== ward) return false;
-      if (building && !s.building_names.includes(building)) return false;
-      if (type && s.type !== type) return false;
-      return true;
-    });
-    // Single-scope view → within-scope ordering. Cross-scope view →
-    // primary by scope (stake first, wards alpha), secondary by the
-    // same type-banded rules.
-    return ward ? sortSeatsWithinScope(matched) : sortSeatsAcrossScopes(matched);
-  }, [seats.data, ward, building, type]);
 
   const wardsList = useMemo(
     () => [...(wards.data ?? [])].sort((a, b) => a.ward_code.localeCompare(b.ward_code)),
@@ -95,6 +170,22 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
       [...(buildings.data ?? [])].sort((a, b) => a.building_name.localeCompare(b.building_name)),
     [buildings.data],
   );
+  const sitesList = useMemo(() => kindooSites.data ?? [], [kindooSites.data]);
+
+  // Phase B (AC #1 + AC #2): expand every seat into one row per
+  // grant (primary + each duplicate). Filters apply to the grant's
+  // own fields — `ward` matches the grant's scope; `building` matches
+  // the grant's `building_names`; `type` matches the grant's type.
+  const grantRows = useMemo(() => {
+    const all = expandSeats(seats.data ?? []);
+    const matched = all.filter(({ grant }) => {
+      if (ward && grant.scope !== ward) return false;
+      if (building && !grant.building_names.includes(building)) return false;
+      if (type && grant.type !== type) return false;
+      return true;
+    });
+    return ward ? sortGrantRowsWithinScope(matched) : sortGrantRowsAcrossScopes(matched);
+  }, [seats.data, ward, building, type]);
 
   const updateSearch = (next: { ward?: string; building?: string; type?: string }) => {
     const merged: Record<string, string> = {};
@@ -107,19 +198,28 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
     navigate({ to: '/manager/seats', search: merged, replace: true }).catch(() => {});
   };
 
-  // Contextual utilization: bar tracks the current Scope filter.
-  //   - All       → home-site count vs stake_seat_cap (license cap).
-  //                 Foreign-site ward seats are excluded — they come
-  //                 out of another Kindoo site's pool. (Spec §15, §137.)
-  //   - 'stake'   → stake-scope count vs the stake-presidency pool size,
-  //                 which is stake_seat_cap minus the sum of every
-  //                 home-site ward's pre-allocated seat_cap (the
-  //                 headroom the presidency owns after home-site wards
-  //                 have taken their slice).
-  //   - <wardCode>→ that ward's count vs ward.seat_cap. Per-ward bars
-  //                 are unaffected by site assignment — each ward's
-  //                 seat_cap is what its own Kindoo site allotted it.
-  // Cap-unset / zero cap renders the neutral "(cap unset)" variant.
+  // Contextual utilization: bar tracks the current Scope filter (see
+  // detailed semantics in the original page docstring; mostly
+  // unchanged from pre-Phase-B). Phase B (T-43 AC #5): the per-ward /
+  // stake-scope counts widen to match the Dashboard's
+  // `countSeatsForScope` semantics — both sides read the
+  // `duplicate_scopes` primitive mirror (server-maintained, single-
+  // field indexed). A seat counts when its primary OR any
+  // `duplicate_scopes` entry matches; same-scope within-site dupes
+  // collapse (one count per `member_canonical`). Keep the predicate
+  // here byte-equivalent to `Dashboard.countSeatsForScope`. The
+  // entire-stake bar (no ward filter) stays primary-only — it's
+  // home-stake utilization (license cap), a separate semantic that
+  // Phase B does not redefine.
+  //
+  // INTENTIONAL DIVERGENCE: this bar widens via `duplicate_scopes` for
+  // visibility, but the server-side over-cap calc
+  // (`functions/src/lib/overCaps.ts`) intentionally stays primary-only —
+  // over-cap warnings represent actual home-stake Kindoo-license-pool
+  // consumption, which the primary represents. A ward bar can render
+  // "over cap" visually without firing `over_cap_warning`. If you
+  // change one side, change the other or document why they should
+  // continue to diverge. Spec §15 Phase B.
   const allSeats = seats.data ?? [];
   const stakeSeatCap = stake.data?.stake_seat_cap;
   const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wardsList);
@@ -133,17 +233,21 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
     : ward === 'stake'
       ? 'Stake-scope utilization'
       : `Ward ${ward} utilization`;
-  // Home-stake total: include stake-scope seats + ward seats whose
-  // resolved Kindoo site is home. T-42: prefer `Seat.kindoo_site_id`
-  // when populated (importer / merge / migration); fall back to the
-  // ward-derived `foreignWardCodes` set for legacy pre-migration seats.
   const utilizationTotal = !ward
     ? allSeats.filter((s) => {
         if (s.scope === 'stake') return true;
         if (s.kindoo_site_id !== undefined) return s.kindoo_site_id == null;
         return !foreignWardCodes.has(s.scope);
       }).length
-    : allSeats.filter((s) => s.scope === ward).length;
+    : allSeats.filter((s) => {
+        // Phase B AC #5: primary OR any duplicate scope matches the
+        // filter. Mirrors `countSeatsForScope` on the Dashboard;
+        // same-scope dupes collapse implicitly (one seat → one
+        // count regardless of how many of its grants name the
+        // scope).
+        if (s.scope === ward) return true;
+        return (s.duplicate_scopes ?? []).includes(ward);
+      }).length;
   const utilizationCap: number | null | undefined = !ward
     ? stakeSeatCap
     : ward === 'stake'
@@ -191,7 +295,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
           </Select>
         </label>
         <span className="kd-filter-summary">
-          {filtered.length} row{filtered.length === 1 ? '' : 's'}
+          {grantRows.length} row{grantRows.length === 1 ? '' : 's'}
         </span>
       </div>
 
@@ -206,58 +310,21 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
 
       {seats.isLoading || seats.data === undefined ? (
         <LoadingSpinner />
+      ) : grantRows.length === 0 ? (
+        <EmptyState message="No seats match the current filters." />
       ) : (
-        <RosterCardList
-          seats={filtered}
-          showScope
-          emptyMessage="No seats match the current filters."
-          actions={(seat) => (
-            <span style={{ display: 'inline-flex', gap: 8 }}>
-              {seat.type !== 'auto' ? (
-                <Button
-                  variant="secondary"
-                  onClick={() => setEditingSeat(seat)}
-                  data-testid={`seat-edit-${seat.member_canonical}`}
-                >
-                  Edit
-                </Button>
-              ) : null}
-              {seat.duplicate_grants.length > 0 ? (
-                <Button
-                  variant="secondary"
-                  onClick={() => setReconcilingSeat(seat)}
-                  data-testid={`seat-reconcile-${seat.member_canonical}`}
-                >
-                  Reconcile
-                </Button>
-              ) : null}
-              {seat.type !== 'auto' && isScopeAllowed(principal, STAKE_ID, seat.scope) ? (
-                <RemovalAffordance seat={seat} />
-              ) : null}
-            </span>
-          )}
-          extraBadges={(seat) => {
-            const siteLabel = siteLabelForSeat(seat, wardsList, kindooSites.data ?? []);
-            return (
-              <>
-                {seat.duplicate_grants.length > 0 ? (
-                  <Badge
-                    variant="manual"
-                    data-testid={`seat-duplicate-badge-${seat.member_canonical}`}
-                  >
-                    {seat.duplicate_grants.length} duplicate
-                    {seat.duplicate_grants.length === 1 ? '' : 's'}
-                  </Badge>
-                ) : null}
-                {siteLabel ? (
-                  <Badge variant="info" data-testid={`kindoo-site-badge-${seat.member_canonical}`}>
-                    {siteLabel}
-                  </Badge>
-                ) : null}
-              </>
-            );
-          }}
-        />
+        <div className="roster-cards">
+          {grantRows.map((row) => (
+            <GrantRowCard
+              key={row.rowKey}
+              row={row}
+              wards={wardsList}
+              sites={sitesList}
+              principal={principal}
+              onEdit={() => setEditingSeat(row.seat)}
+            />
+          ))}
+        </div>
       )}
 
       <SeatEditDialog
@@ -265,8 +332,191 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
         buildings={buildingsList.map((b) => b.building_name)}
         onClose={() => setEditingSeat(null)}
       />
-      <ReconcileDialog seat={reconcilingSeat} onClose={() => setReconcilingSeat(null)} />
     </section>
+  );
+}
+
+// ---- Per-grant card -------------------------------------------------
+
+interface GrantRowCardProps {
+  row: GrantRow;
+  wards: readonly Ward[];
+  sites: readonly KindooSite[];
+  principal: ReturnType<typeof usePrincipal>;
+  onEdit: () => void;
+}
+
+function GrantRowCard({ row, wards, sites, principal, onEdit }: GrantRowCardProps) {
+  const { seat, grant } = row;
+  const siteLabel = siteLabelForGrant(grant, wards, sites);
+  const canRemoveScope = isScopeAllowed(principal, STAKE_ID, grant.scope);
+  // Edit affordance: shown only on the primary row of manual / temp
+  // seats (auto seats are importer-owned). On every duplicate row
+  // the button renders disabled with a tooltip — preserves the
+  // action-column rhythm and tells the user the primary is the edit
+  // surface (AC #7).
+  const showEdit = grant.type !== 'auto';
+  const editTooltip = grant.isPrimary
+    ? undefined
+    : grant.isParallelSite
+      ? "Edit the primary grant to modify this person's seat — parallel-site changes require a new request."
+      : "Edit the primary grant to modify this person's seat — this row is informational and is covered by the primary's write.";
+  // Phase B (AC #2 + spec §15 §412 / §425): same-scope priority
+  // losers render as their own rows on AllSeats — INFORMATIONAL only.
+  // Remove on a same-`(scope, kindoo_site_id)` non-auto duplicate is
+  // intentionally hidden because the request would carry the same
+  // tuple as the primary; the trigger's `planRemove` keys on
+  // `(scope, kindoo_site_id)` and would target the primary
+  // (delete/promote), silently demoting/removing the wrong grant.
+  // Remove stays functional on:
+  //   - the primary row (manual / temp);
+  //   - parallel-site duplicates (different `kindoo_site_id`);
+  //   - cross-scope duplicates (different scope).
+  //
+  // The auto-primary + non-auto duplicate case at the same
+  // `(scope, site)` IS reachable (rare, but possible via
+  // planAddMerge), and the trigger's KS-9 auto-primary
+  // disambiguation in `planRemove`
+  // (`functions/src/triggers/removeSeatOnRequestComplete.ts`) routes
+  // such requests to the non-auto duplicate — but the SPA still has
+  // to surface the affordance for it to be reachable. We gate that
+  // case here on `seat.type === 'auto'`.
+  const isPrimaryRow = grant.isPrimary;
+  const sameScopeAndSiteAsPrimary =
+    !isPrimaryRow && grant.scope === seat.scope && !grant.isParallelSite;
+  const canRemove =
+    grant.type !== 'auto' &&
+    canRemoveScope &&
+    (isPrimaryRow ||
+      grant.isParallelSite ||
+      grant.scope !== seat.scope ||
+      // KS-9 escape: same-(scope, site) duplicate is only reachable
+      // when the primary is auto, where the trigger routes the splice
+      // to the non-auto duplicate.
+      (sameScopeAndSiteAsPrimary && seat.type === 'auto'));
+
+  const testIdSuffix = isPrimaryRow
+    ? seat.member_canonical
+    : `${seat.member_canonical}-dup-${grant.duplicateIndex}`;
+
+  // Line 2 detail: calling (auto) / reason (manual/temp) + buildings.
+  const callingChip =
+    grant.type === 'auto' && grant.callings.length > 0 ? (
+      <span className="roster-card-chip">
+        <span className="label">Calling:</span>
+        <span className="roster-card-calling">{grant.callings.join(', ')}</span>
+      </span>
+    ) : (grant.type === 'manual' || grant.type === 'temp') && grant.reason ? (
+      <span className="roster-card-chip">
+        <span className="label">Reason:</span>
+        <span className="roster-card-reason">{grant.reason}</span>
+      </span>
+    ) : null;
+
+  const buildingsChip =
+    grant.building_names.length > 0 ? (
+      <span className="roster-card-chip">
+        <span className="label">Buildings:</span>
+        {grant.building_names.join(', ')}
+      </span>
+    ) : null;
+
+  const datesLine =
+    grant.type === 'temp' && (grant.start_date || grant.end_date) ? (
+      <div className="roster-card-line2">
+        <span className="roster-card-chip">
+          <span className="label">Dates:</span>
+          {grant.start_date ?? '?'} → {grant.end_date ?? '?'}
+        </span>
+      </div>
+    ) : null;
+
+  const detailLine =
+    callingChip || buildingsChip ? (
+      <div className="roster-card-line2">
+        {callingChip}
+        {buildingsChip}
+      </div>
+    ) : null;
+
+  const memberInner = seat.member_name ? (
+    <>
+      <span className="roster-card-name">{seat.member_name}</span>{' '}
+      <span>
+        (
+        <span className="roster-email" title={seat.member_email}>
+          {seat.member_email}
+        </span>
+        )
+      </span>
+    </>
+  ) : (
+    <span className="roster-email" title={seat.member_email}>
+      {seat.member_email}
+    </span>
+  );
+
+  return (
+    <div
+      className={`roster-card type-${grant.type}`}
+      data-seat-id={seat.member_canonical}
+      data-row-key={row.rowKey}
+      data-grant-kind={grant.isPrimary ? 'primary' : 'duplicate'}
+    >
+      <div className="roster-card-line1">
+        <span className="roster-card-badges">
+          <Badge variant={grant.type}>{grant.type}</Badge>
+          {grant.isPrimary ? null : (
+            <Badge
+              variant="manual"
+              data-testid={`grant-duplicate-badge-${testIdSuffix}`}
+              title={
+                grant.isParallelSite
+                  ? 'Parallel-site grant — needs its own Kindoo write.'
+                  : 'Within-site priority loser — covered by the primary write.'
+              }
+            >
+              duplicate
+            </Badge>
+          )}
+          {siteLabel ? (
+            <Badge variant="info" data-testid={`kindoo-site-badge-${testIdSuffix}`}>
+              {siteLabel}
+            </Badge>
+          ) : null}
+          <span className="roster-card-chip roster-card-scope">
+            <code>{grant.scope}</code>
+          </span>
+        </span>
+        <span className="roster-card-member">{memberInner}</span>
+        <span className="roster-card-actions" style={{ display: 'inline-flex', gap: 8 }}>
+          {showEdit ? (
+            <Button
+              variant="secondary"
+              onClick={onEdit}
+              disabled={!grant.isPrimary}
+              {...(editTooltip ? { title: editTooltip } : {})}
+              data-testid={`seat-edit-${testIdSuffix}`}
+            >
+              Edit
+            </Button>
+          ) : null}
+          {canRemove ? (
+            <RemovalAffordance
+              seat={seat}
+              grant={{
+                scope: grant.scope,
+                type: grant.type,
+                kindoo_site_id: grant.kindoo_site_id,
+              }}
+              testIdSuffix={testIdSuffix}
+            />
+          ) : null}
+        </span>
+      </div>
+      {datesLine}
+      {detailLine}
+    </div>
   );
 }
 
@@ -418,138 +668,6 @@ function SeatEditDialog({ seat, buildings, onClose }: SeatEditDialogProps) {
           </Button>
         </Dialog.Footer>
       </form>
-    </Dialog>
-  );
-}
-
-// ---- Reconcile dialog ----------------------------------------------
-
-interface ReconcileDialogProps {
-  seat: Seat | null;
-  onClose: () => void;
-}
-
-function ReconcileDialog({ seat, onClose }: ReconcileDialogProps) {
-  const mutation = useReconcileSeatMutation();
-  const [pickIdx, setPickIdx] = useState<number>(0);
-
-  if (!seat) return null;
-  if (seat.duplicate_grants.length === 0) return null;
-
-  // Index 0 = current primary; 1.. = duplicate_grants entries.
-  type Choice = {
-    label: string;
-    scope: string;
-    type: Seat['type'];
-    callings?: string[];
-    reason?: string;
-    start_date?: string;
-    end_date?: string;
-  };
-  const primary: Choice = {
-    label: `current primary (scope ${seat.scope}, ${seat.type})`,
-    scope: seat.scope,
-    type: seat.type,
-    ...(seat.callings.length > 0 ? { callings: [...seat.callings] } : {}),
-    ...(seat.reason ? { reason: seat.reason } : {}),
-    ...(seat.start_date ? { start_date: seat.start_date } : {}),
-    ...(seat.end_date ? { end_date: seat.end_date } : {}),
-  };
-  const choices: Choice[] = [
-    primary,
-    ...seat.duplicate_grants.map((d, i) => ({
-      label: `duplicate #${i + 1} (scope ${d.scope}, ${d.type})`,
-      scope: d.scope,
-      type: d.type,
-      ...(d.callings && d.callings.length > 0 ? { callings: [...d.callings] } : {}),
-      ...(d.reason ? { reason: d.reason } : {}),
-      ...(d.start_date ? { start_date: d.start_date } : {}),
-      ...(d.end_date ? { end_date: d.end_date } : {}),
-    })),
-  ];
-
-  async function confirm() {
-    if (!seat) return;
-    const newPrimary = choices[pickIdx];
-    if (!newPrimary) return;
-    if (newPrimary.scope !== seat.scope || newPrimary.type !== seat.type) {
-      toast(
-        'Reconcile across scope or type requires a backend rule update (see TASKS.md). For now you can only reconcile inside the same scope/type.',
-        'error',
-      );
-      return;
-    }
-    // The new duplicate_grants is the original list minus the chosen
-    // (when a duplicate is picked) plus the displaced primary.
-    let newDuplicateGrants: DuplicateGrant[];
-    if (pickIdx === 0) {
-      newDuplicateGrants = [...seat.duplicate_grants];
-    } else {
-      const displacedPrimary: DuplicateGrant = {
-        scope: seat.scope,
-        type: seat.type,
-        ...(seat.callings.length > 0 ? { callings: [...seat.callings] } : {}),
-        ...(seat.reason ? { reason: seat.reason } : {}),
-        ...(seat.start_date ? { start_date: seat.start_date } : {}),
-        ...(seat.end_date ? { end_date: seat.end_date } : {}),
-        detected_at: seat.last_modified_at,
-      };
-      newDuplicateGrants = seat.duplicate_grants.filter((_, i) => i !== pickIdx - 1);
-      newDuplicateGrants.push(displacedPrimary);
-    }
-    try {
-      await mutation.mutateAsync({
-        member_canonical: seat.member_canonical,
-        newPrimary,
-        newDuplicateGrants:
-          pickIdx === 0 ? [] : newDuplicateGrants.filter((_, i) => i !== pickIdx - 1),
-      });
-      toast('Seat reconciled.', 'success');
-      onClose();
-    } catch (err) {
-      toast(errorMessage(err), 'error');
-    }
-  }
-
-  return (
-    <Dialog
-      open={seat !== null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-      title="Reconcile duplicate grants"
-      description={`This seat (${seat.member_email}) has ${seat.duplicate_grants.length} duplicate grant(s). Pick which grant should be primary.`}
-    >
-      <div className="kd-wizard-form" data-testid="reconcile-dialog">
-        <ul className="kd-config-rows">
-          {choices.map((c, i) => (
-            <li key={i}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input
-                  type="radio"
-                  name="reconcile-pick"
-                  value={i}
-                  checked={pickIdx === i}
-                  onChange={() => setPickIdx(i)}
-                  data-testid={`reconcile-choice-${i}`}
-                />
-                <span>{c.label}</span>
-              </label>
-            </li>
-          ))}
-        </ul>
-        <Dialog.Footer>
-          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
-          <Button
-            variant="success"
-            onClick={confirm}
-            disabled={mutation.isPending}
-            data-testid="reconcile-confirm"
-          >
-            {mutation.isPending ? 'Saving…' : 'Confirm'}
-          </Button>
-        </Dialog.Footer>
-      </div>
     </Dialog>
   );
 }

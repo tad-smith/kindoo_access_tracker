@@ -9,6 +9,7 @@ import { makeRequest, makeSeat, makeWard } from '../../../test/fixtures';
 
 const useStakeRosterMock = vi.fn();
 const useStakeWardsMock = vi.fn();
+const useKindooSitesMock = vi.fn();
 const useFirestoreDocMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
 const usePendingRemoveRequestsMock = vi.fn();
@@ -18,6 +19,7 @@ const usePrincipalMock = vi.fn();
 vi.mock('./hooks', () => ({
   useStakeRoster: () => useStakeRosterMock(),
   useStakeWards: () => useStakeWardsMock(),
+  useKindooSites: () => useKindooSitesMock(),
 }));
 
 vi.mock('../../lib/data', () => ({
@@ -163,6 +165,8 @@ beforeEach(() => {
   // Default: no pending remove requests for any seat (the per-row
   // RemovalAffordance subscription).
   mockNoPendingRemoves();
+  // Default: empty Kindoo Sites catalogue.
+  useKindooSitesMock.mockReturnValue(stakeListResult);
   submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
   // Default principal: stake-scope authority. The stake Roster page
   // is reachable only by users with `stake: true`, so this is the
@@ -521,6 +525,40 @@ describe('<StakeRosterPage />', () => {
       mockStakeDoc({ stake_seat_cap: 200 });
       render(<StakeRosterPage />);
       expect(screen.queryByTestId('edit-btn-manual@x.com')).toBeNull();
+    });
+  });
+
+  // T-43 Phase B AC #4 — broadened inclusion on Stake Roster.
+  describe('Phase B broadened inclusion (T-43 AC #4)', () => {
+    it('AC #4: a seat with primary scope="CO" and a stake-scope duplicate appears on the Stake Roster (single row)', () => {
+      const NOW = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          type: 'auto',
+          member_canonical: 'cross@x.com',
+          member_email: 'cross@x.com',
+          member_name: 'Cross Person',
+          callings: ['Bishop'],
+          duplicate_grants: [
+            {
+              scope: 'stake',
+              type: 'auto',
+              callings: ['Stake Clerk'],
+              building_names: ['Stake Center'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      // Single row for the cross-scope person on the stake page.
+      const cards = document.querySelectorAll('[data-seat-id="cross@x.com"]');
+      expect(cards).toHaveLength(1);
+      // The row's columns reflect the stake duplicate, not the CO
+      // primary — calling list reads "Stake Clerk".
+      expect(screen.getByText(/Stake Clerk/)).toBeInTheDocument();
     });
   });
 });

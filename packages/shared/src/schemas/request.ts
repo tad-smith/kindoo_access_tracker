@@ -61,6 +61,13 @@ export const accessRequestSchema = z
 
     seat_member_canonical: z.string().optional(),
 
+    // T-43 Phase B: optional `kindoo_site_id` on remove requests
+    // generated from a duplicate row. Discriminates the duplicate to
+    // drop when a seat carries parallel-site grants. Legacy remove
+    // requests omit the field; the trigger falls back to scope-only
+    // matching.
+    kindoo_site_id: z.string().nullable().optional(),
+
     lastActor: actorRefSchema,
   })
   // Edit-type requests require a non-empty trimmed `comment` so the

@@ -10,6 +10,15 @@
 // a server-side gate (the request-completion Cloud Function plus the
 // importer's "next run replaces it" semantics make the guard
 // belt-and-braces).
+//
+// T-43 Phase B: the `grant` prop is required. Every caller knows the
+// grant being removed (primary or duplicate) — AllSeats per-grant
+// rows pass the matched grant; per-scope roster pages pass the
+// grant they picked via `pickGrantForScope`. The submitted request
+// carries `(scope, kindoo_site_id)` so `removeSeatOnRequestComplete`
+// splices the exact entry; primary-row removes set
+// `kindoo_site_id` to the seat's primary site (or `null` for home),
+// which the trigger reads as "match the primary".
 
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -24,14 +33,35 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+export interface RemovalDialogGrant {
+  /** Scope of the grant being removed. */
+  scope: string;
+  /**
+   * Type of the specific grant (not the seat's primary type). Used by
+   * `RemovalAffordance` to gate the Remove button on a per-grant
+   * basis — a manual / temp duplicate under an auto primary stays
+   * removable.
+   */
+  type: 'auto' | 'manual' | 'temp';
+  /**
+   * Kindoo site the grant lives on. `null` for home / legacy. When
+   * populated, the submitted remove request carries `kindoo_site_id`
+   * so the `removeSeatOnRequestComplete` trigger splices only the
+   * matching duplicate.
+   */
+  kindoo_site_id: string | null;
+}
+
 export interface RemovalDialogProps {
-  /** Seat being removed. Determines scope + member identity. */
+  /** Seat being removed. Determines member identity. */
   seat: Seat | null;
   /** Open / close handle. Closing while pending cancels nothing. */
   onOpenChange: (next: boolean) => void;
+  /** The grant being removed (scope + kindoo_site_id). */
+  grant: RemovalDialogGrant;
 }
 
-export function RemovalDialog({ seat, onOpenChange }: RemovalDialogProps) {
+export function RemovalDialog({ seat, onOpenChange, grant }: RemovalDialogProps) {
   const submit = useSubmitRequest();
   const form = useForm<RemoveRequestForm>({
     resolver: zodResolver(removeRequestSchema),
@@ -45,12 +75,13 @@ export function RemovalDialog({ seat, onOpenChange }: RemovalDialogProps) {
     try {
       await submit.mutateAsync({
         type: 'remove',
-        scope: seat.scope,
+        scope: grant.scope,
         member_email: seat.member_email,
         member_name: seat.member_name,
         reason: input.reason,
         comment: '',
         building_names: [],
+        kindoo_site_id: grant.kindoo_site_id,
       });
       toast('Removal request submitted.', 'success');
       reset({ reason: '' });

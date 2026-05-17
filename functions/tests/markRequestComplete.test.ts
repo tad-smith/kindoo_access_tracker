@@ -1045,6 +1045,8 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       // No R-1 race — seat existed at completion time, so no system
       // tag. completion_note left absent (no manager prose).
       expect(after.completion_note ?? null).toBeNull();
+      // No completion_status on the happy path either.
+      expect(after.completion_status ?? null).toBeNull();
       // Seat still present here because the trigger is not driven by
       // `.run()` — it fires on the real Firestore write event. The
       // removeSeatOnRequestComplete test file covers the trigger path
@@ -1053,7 +1055,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       expect(seat.exists).toBe(true);
     });
 
-    it('remove: R-1 race stamps the system note when the seat is already gone', async () => {
+    it('remove: R-1 race stamps the system note and completion_status when the seat is already gone', async () => {
       await seedManager();
       await seedRequest({
         requestId: 'r1',
@@ -1073,9 +1075,11 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       const after = (await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()).data() as AccessRequest;
       expect(after.status).toBe('complete');
       expect(after.completion_note).toBe('Seat already removed at completion time (no-op).');
+      // T-43: typed discriminator for audit-side routing.
+      expect(after.completion_status).toBe('noop_already_removed');
     });
 
-    it('remove: R-1 race appends the system tag to manager prose when both are present', async () => {
+    it('remove: R-1 race appends the system tag to manager prose when both are present + stamps completion_status', async () => {
       await seedManager();
       await seedRequest({
         requestId: 'r1',
@@ -1100,6 +1104,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       expect(after.completion_note).toBe(
         'manager handled in person\n\n[System: Seat already removed at completion time (no-op).]',
       );
+      expect(after.completion_status).toBe('noop_already_removed');
     });
 
     // Create-path coverage that didn't fit cleanly into the happy-path

@@ -1,9 +1,13 @@
-// Component tests for the manager All Seats page.
+// Component tests for the manager All Seats page. Phase B (T-43):
+// multi-row rendering — one row per grant (primary + each
+// `duplicate_grants[]` entry). Edit on a duplicate row is disabled
+// with a tooltip; Remove on a duplicate row submits a `remove`
+// request scoped to the grant's `(scope, kindoo_site_id)`.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Building, Seat, Stake, Ward } from '@kindoo/shared';
+import type { Building, DuplicateGrant, Seat, Stake, Ward } from '@kindoo/shared';
 import { makeSeat, makeWard } from '../../../../test/fixtures';
 
 const useAllSeatsMock = vi.fn();
@@ -13,7 +17,7 @@ const useKindooSitesMock = vi.fn();
 const useStakeDocMock = vi.fn();
 const usePrincipalMock = vi.fn();
 const inlineEditMutate = vi.fn().mockResolvedValue(undefined);
-const reconcileMutate = vi.fn().mockResolvedValue(undefined);
+const submitMutate = vi.fn().mockResolvedValue({ id: 'req-new' });
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./hooks', () => ({
@@ -22,7 +26,6 @@ vi.mock('./hooks', () => ({
   useBuildings: () => useBuildingsMock(),
   useKindooSites: () => useKindooSitesMock(),
   useInlineSeatEditMutation: () => ({ mutateAsync: inlineEditMutate, isPending: false }),
-  useReconcileSeatMutation: () => ({ mutateAsync: reconcileMutate, isPending: false }),
 }));
 
 vi.mock('../dashboard/hooks', () => ({
@@ -33,9 +36,6 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 
-// The roster card's RemovalAffordance subscribes via these request
-// hooks; mock them so the component tree renders without a real
-// QueryClient / Firestore listener.
 vi.mock('../../requests/hooks', () => ({
   usePendingRemoveRequests: () => ({
     data: [],
@@ -48,7 +48,7 @@ vi.mock('../../requests/hooks', () => ({
     isFetching: false,
     fetchStatus: 'idle',
   }),
-  useSubmitRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSubmitRequest: () => ({ mutateAsync: submitMutate, isPending: false }),
 }));
 
 vi.mock('../../../lib/principal', () => ({
@@ -126,14 +126,17 @@ function mockAll(opts: {
   });
 }
 
+const NOW: DuplicateGrant['detected_at'] = {
+  seconds: 0,
+  nanoseconds: 0,
+  toDate: () => new Date(),
+  toMillis: () => 0,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   navigateMock.mockResolvedValue(undefined);
-  // Default principal: manager who is also a stake member + bishop of
-  // every ward in the test fixtures (CO, GE, BA). This keeps existing
-  // tests passing under the symmetric-authority gate. Tests that need
-  // a different principal shape override via `usePrincipalMock.mockReturnValue(principal({...}))`.
-  usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO', 'GE', 'BA'] }));
+  usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO', 'GE', 'BA', 'FN'] }));
 });
 
 describe('<AllSeatsPage />', () => {
@@ -143,7 +146,7 @@ describe('<AllSeatsPage />', () => {
     expect(screen.getByText(/no seats match the current filters/i)).toBeInTheDocument();
   });
 
-  it('renders one row per seat with the scope chip', () => {
+  it('renders one row per seat with the scope chip (no duplicates)', () => {
     mockAll({
       seats: [
         makeSeat({ scope: 'stake' }),
@@ -236,30 +239,10 @@ describe('<AllSeatsPage />', () => {
     render(<AllSeatsPage initialWard="stake" />);
     const host = screen.getByTestId('allseats-utilization');
     expect(host).toHaveTextContent(/Stake-scope utilization/);
-    // 200 - 20 (CO) = 180.
     expect(host).toHaveTextContent(/2 \/ 180 seats used/);
   });
 
-  it('subtracts every ward seat_cap from stake_seat_cap for the Stake-scope pool denominator', () => {
-    mockAll({
-      seats: [makeSeat({ scope: 'stake' })],
-      wards: [
-        makeWard({ ward_code: 'CO', seat_cap: 50 }),
-        makeWard({ ward_code: 'GE', seat_cap: 50 }),
-        makeWard({ ward_code: 'PR', seat_cap: 50 }),
-      ],
-      buildings: [],
-      stake: { stake_seat_cap: 200 },
-    });
-    render(<AllSeatsPage initialWard="stake" />);
-    const host = screen.getByTestId('allseats-utilization');
-    // 200 - (50 + 50 + 50) = 50.
-    expect(host).toHaveTextContent(/1 \/ 50 seats used/);
-  });
-
   it('excludes foreign-site ward seats from the entire-stake bar (Scope = "All")', () => {
-    // Home stake utilization is home-site only on both sides: 2 stake
-    // + 1 CO (home) = 3 counted; 2 FN (foreign-site) seats excluded.
     mockAll({
       seats: [
         makeSeat({ scope: 'stake', member_canonical: 's1@x.com', member_email: 's1@x.com' }),
@@ -282,6 +265,66 @@ describe('<AllSeatsPage />', () => {
     expect(host).toHaveTextContent(/3 \/ 200 seats used/);
   });
 
+  it('renders the contextual utilization bar in cap-unset form when no cap is configured', () => {
+    mockAll({
+      seats: [makeSeat({ scope: 'CO' })],
+      wards: [makeWard({ ward_code: 'CO', seat_cap: 0 })],
+      buildings: [],
+      stake: { stake_seat_cap: 0 },
+    });
+    render(<AllSeatsPage initialWard="CO" />);
+    const host = screen.getByTestId('allseats-utilization');
+    expect(host).toHaveTextContent(/cap unset/i);
+  });
+
+  it('hides the Edit affordance on auto seats', () => {
+    mockAll({
+      seats: [makeSeat({ type: 'auto', member_canonical: 'a@x.com' })],
+      wards: [],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('seat-edit-a@x.com')).toBeNull();
+  });
+
+  it('shows the Edit affordance on manual seats (primary row enabled)', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'manual',
+          member_canonical: 'm@x.com',
+          callings: [],
+          reason: 'covering bishop',
+        }),
+      ],
+      wards: [],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const edit = screen.getByTestId('seat-edit-m@x.com');
+    expect(edit).toBeInTheDocument();
+    expect(edit).not.toBeDisabled();
+  });
+
+  it('subtracts every ward seat_cap from stake_seat_cap for the Stake-scope pool denominator', () => {
+    mockAll({
+      seats: [makeSeat({ scope: 'stake' })],
+      wards: [
+        makeWard({ ward_code: 'CO', seat_cap: 50 }),
+        makeWard({ ward_code: 'GE', seat_cap: 50 }),
+        makeWard({ ward_code: 'PR', seat_cap: 50 }),
+      ],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage initialWard="stake" />);
+    const host = screen.getByTestId('allseats-utilization');
+    // 200 - (50 + 50 + 50) = 50.
+    expect(host).toHaveTextContent(/1 \/ 50 seats used/);
+  });
+
   it('excludes foreign-site ward caps from the Stake-scope pool denominator', () => {
     // 200 - 50 (CO, home) - 0 (FN, foreign) = 150.
     mockAll({
@@ -299,19 +342,10 @@ describe('<AllSeatsPage />', () => {
     expect(host).toHaveTextContent(/1 \/ 150 seats used/);
   });
 
-  it('renders the contextual utilization bar in cap-unset form when no cap is configured', () => {
-    mockAll({
-      seats: [makeSeat({ scope: 'CO' })],
-      wards: [makeWard({ ward_code: 'CO', seat_cap: 0 })],
-      buildings: [],
-      stake: { stake_seat_cap: 0 },
-    });
-    render(<AllSeatsPage initialWard="CO" />);
-    const host = screen.getByTestId('allseats-utilization');
-    expect(host).toHaveTextContent(/cap unset/i);
-  });
-
-  it('sorts cross-scope seats: stake first, then wards alpha; type-banded inside each scope', () => {
+  // Cross-scope sort regression for the new Phase B
+  // `sortGrantRowsAcrossScopes` shape: stake band first, then ward
+  // bands alpha; within each band auto → manual → temp.
+  it('sorts cross-scope grant-rows: stake first, then wards alpha; type-banded inside each scope', () => {
     mockAll({
       seats: [
         makeSeat({
@@ -357,21 +391,6 @@ describe('<AllSeatsPage />', () => {
     expect(order).toEqual(['st@x.com', 'co-a@x.com', 'co-m@x.com', 'ge@x.com']);
   });
 
-  it('does not render per-scope summary cards (utilization is on Dashboard)', () => {
-    mockAll({
-      seats: [
-        makeSeat({ scope: 'stake' }),
-        makeSeat({ scope: 'CO', member_canonical: 'a@x.com', member_email: 'a@x.com' }),
-      ],
-      wards: [makeWard({ ward_code: 'CO' })],
-      buildings: [],
-      stake: { stake_seat_cap: 200 },
-    });
-    render(<AllSeatsPage />);
-    expect(document.querySelectorAll('.kd-scope-summary-card')).toHaveLength(0);
-    expect(screen.queryByTestId('scope-summaries')).toBeNull();
-  });
-
   it('updates the URL when a filter changes', async () => {
     const u = userEvent.setup();
     mockAll({
@@ -387,104 +406,12 @@ describe('<AllSeatsPage />', () => {
     );
   });
 
-  it('hides the Edit affordance on auto seats', () => {
-    mockAll({
-      seats: [makeSeat({ type: 'auto', member_canonical: 'a@x.com' })],
-      wards: [],
-      buildings: [],
-      stake: { stake_seat_cap: 200 },
-    });
-    render(<AllSeatsPage />);
-    expect(screen.queryByTestId('seat-edit-a@x.com')).toBeNull();
-  });
-
-  it('shows the Edit affordance on manual seats', () => {
-    mockAll({
-      seats: [
-        makeSeat({
-          type: 'manual',
-          member_canonical: 'm@x.com',
-          callings: [],
-          reason: 'covering bishop',
-        }),
-      ],
-      wards: [],
-      buildings: [],
-      stake: { stake_seat_cap: 200 },
-    });
-    render(<AllSeatsPage />);
-    expect(screen.getByTestId('seat-edit-m@x.com')).toBeInTheDocument();
-  });
-
-  it('shows the duplicate badge + reconcile button when a seat has duplicates', () => {
-    mockAll({
-      seats: [
-        makeSeat({
-          member_canonical: 'd@x.com',
-          duplicate_grants: [
-            {
-              scope: 'CO',
-              type: 'manual',
-              reason: 'extra',
-              detected_at: {
-                seconds: 0,
-                nanoseconds: 0,
-                toMillis: () => 0,
-                toDate: () => new Date(),
-              },
-            },
-          ],
-        }),
-      ],
-      wards: [],
-      buildings: [],
-      stake: { stake_seat_cap: 200 },
-    });
-    render(<AllSeatsPage />);
-    expect(screen.getByTestId('seat-duplicate-badge-d@x.com')).toBeInTheDocument();
-    expect(screen.getByTestId('seat-reconcile-d@x.com')).toBeInTheDocument();
-  });
-
-  it('opens the reconcile dialog with one choice per [primary, ...duplicates]', async () => {
-    const user = userEvent.setup();
-    mockAll({
-      seats: [
-        makeSeat({
-          scope: 'CO',
-          type: 'manual',
-          callings: [],
-          reason: 'primary reason',
-          member_canonical: 'r@x.com',
-          duplicate_grants: [
-            {
-              scope: 'CO',
-              type: 'manual',
-              reason: 'duplicate-1',
-              detected_at: {
-                seconds: 0,
-                nanoseconds: 0,
-                toMillis: () => 0,
-                toDate: () => new Date(),
-              },
-            },
-          ],
-        }),
-      ],
-      wards: [],
-      buildings: [],
-      stake: { stake_seat_cap: 200 },
-    });
-    render(<AllSeatsPage />);
-    await user.click(screen.getByTestId('seat-reconcile-r@x.com'));
-    // Two radio choices visible (primary + 1 duplicate).
-    expect(screen.getByTestId('reconcile-choice-0')).toBeInTheDocument();
-    expect(screen.getByTestId('reconcile-choice-1')).toBeInTheDocument();
-    expect(screen.getByTestId('reconcile-confirm')).toBeInTheDocument();
-  });
-
+  // Per-grant Remove authority gate — symmetric with `isScopeAllowed`.
+  // The button only renders on rows whose grant's scope the principal
+  // has authority for. Same predicate as today; what's new is the
+  // gate keys off the grant (per-row), not the seat's primary.
   describe('per-row Remove affordance — symmetric authority gate', () => {
     it('renders the Remove button on manual / temp rows whose scope the principal has authority for', () => {
-      // Manager who also holds stake + bishopric of CO.
       usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO'] }));
       mockAll({
         seats: [
@@ -513,11 +440,7 @@ describe('<AllSeatsPage />', () => {
       expect(screen.getByTestId('remove-btn-stake-temp@x.com')).toBeInTheDocument();
     });
 
-    it('hides the Remove button on rows whose scope the principal lacks authority for', () => {
-      // Manager who holds bishopric of CO but no stake claim. They
-      // see all seats (manager read), but the symmetric-authority
-      // rule blocks the Remove button on stake-scope and other-ward
-      // rows.
+    it('hides the Remove button on rows whose grant scope the principal lacks authority for', () => {
       usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
       mockAll({
         seats: [
@@ -554,10 +477,6 @@ describe('<AllSeatsPage />', () => {
     });
 
     it('hides the Remove button for a manager-only principal (no stake / no ward claim)', () => {
-      // Pure-manager: read-everywhere, write-nowhere. Per B-3 / T-36
-      // the request-create rule denies a pure-manager submitting any
-      // request, so the SPA must hide the button to keep the affordance
-      // consistent with the rule.
       usePrincipalMock.mockReturnValue(principal({}));
       mockAll({
         seats: [
@@ -576,11 +495,415 @@ describe('<AllSeatsPage />', () => {
       render(<AllSeatsPage />);
       expect(screen.queryByTestId('remove-btn-co-manual@x.com')).toBeNull();
     });
+
+    // Phase B-specific: per-grant gate means the button can appear on
+    // a duplicate row when the principal has authority for the
+    // duplicate's scope even if they lack authority for the seat's
+    // primary scope.
+    it('renders Remove on a duplicate row when the principal has authority for the duplicate scope (not the primary)', () => {
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      const NOW = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+      mockAll({
+        seats: [
+          makeSeat({
+            scope: 'GE',
+            type: 'manual',
+            callings: [],
+            member_canonical: 'cross@x.com',
+            member_email: 'cross@x.com',
+            duplicate_grants: [
+              { scope: 'CO', type: 'manual', kindoo_site_id: null, detected_at: NOW },
+            ],
+          }),
+        ],
+        wards: [makeWard({ ward_code: 'CO' }), makeWard({ ward_code: 'GE' })],
+        buildings: [],
+        stake: { stake_seat_cap: 200 },
+      });
+      render(<AllSeatsPage />);
+      // No Remove on the GE primary row (no authority for GE).
+      expect(screen.queryByTestId('remove-btn-cross@x.com')).toBeNull();
+      // Remove DOES render on the CO duplicate row (authority for CO).
+      expect(screen.getByTestId('remove-btn-cross@x.com-dup-0')).toBeInTheDocument();
+    });
+  });
+});
+
+describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
+  // AC #1: seat with 1 primary + 2 duplicates renders 3 rows.
+  it('AC #1: renders one row per grant (primary + every duplicate)', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'stake',
+          kindoo_site_id: null,
+          member_canonical: 'multi@x.com',
+          member_email: 'multi@x.com',
+          duplicate_grants: [
+            { scope: 'CO', type: 'auto', kindoo_site_id: null, detected_at: NOW },
+            {
+              scope: 'FN',
+              type: 'auto',
+              kindoo_site_id: 'foreign-1',
+              building_names: ['Foreign Building'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      wards: [
+        makeWard({ ward_code: 'CO' }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        makeWard({ ward_code: 'FN', kindoo_site_id: 'foreign-1' } as any),
+      ],
+      buildings: [],
+      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake' }],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const cards = document.querySelectorAll('.roster-card[data-seat-id="multi@x.com"]');
+    expect(cards).toHaveLength(3);
+  });
+
+  // AC #2: same-scope within-site priority loser renders its own row.
+  it('AC #2: within-site priority loser (same scope as primary) renders a duplicate row', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'CO',
+          kindoo_site_id: null,
+          duplicate_grants: [
+            {
+              scope: 'CO',
+              type: 'manual',
+              kindoo_site_id: null,
+              reason: 'extra',
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const cards = document.querySelectorAll(`.roster-card[data-seat-id="${'alice@example.com'}"]`);
+    expect(cards).toHaveLength(2);
+  });
+
+  // AC #6 (AllSeats slice): per-row foreign-site badge keyed to the
+  // rendered grant's site, not the seat's primary.
+  it("AC #6: foreign-site badge renders per-row by the grant's kindoo_site_id", () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'stake', // primary on home
+          kindoo_site_id: null,
+          member_canonical: 'foreign-dup@x.com',
+          member_email: 'foreign-dup@x.com',
+          duplicate_grants: [
+            {
+              scope: 'FN',
+              type: 'manual',
+              kindoo_site_id: 'foreign-1',
+              building_names: ['Foreign Building'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      wards: [
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        makeWard({ ward_code: 'FN', kindoo_site_id: 'foreign-1' } as any),
+      ],
+      buildings: [],
+      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake' }],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    // Primary row carries no foreign-site badge (stake-scope is home).
+    expect(screen.queryByTestId('kindoo-site-badge-foreign-dup@x.com')).toBeNull();
+    // Duplicate row (dup-0) carries the badge.
+    expect(screen.getByTestId('kindoo-site-badge-foreign-dup@x.com-dup-0')).toHaveTextContent(
+      'East Stake',
+    );
+  });
+
+  // AC #7 (AllSeats slice): Edit on a duplicate row is disabled with
+  // the spec'd tooltip.
+  it('AC #7: Edit button on a parallel-site duplicate row is disabled with the spec tooltip', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'manual',
+          callings: [],
+          reason: 'primary',
+          member_canonical: 'r@x.com',
+          member_email: 'r@x.com',
+          kindoo_site_id: null,
+          duplicate_grants: [
+            {
+              scope: 'FN',
+              type: 'manual',
+              reason: 'parallel',
+              kindoo_site_id: 'foreign-1',
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      wards: [makeWard({ ward_code: 'FN', kindoo_site_id: 'foreign-1' } as any)],
+      buildings: [],
+      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake' }],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const dupEdit = screen.getByTestId('seat-edit-r@x.com-dup-0');
+    expect(dupEdit).toBeDisabled();
+    expect(dupEdit.getAttribute('title')).toMatch(/parallel-site changes require a new request/i);
+  });
+
+  it('AC #7: Edit button on a within-site duplicate row carries the within-site tooltip', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'manual',
+          callings: [],
+          reason: 'primary',
+          member_canonical: 'w@x.com',
+          member_email: 'w@x.com',
+          kindoo_site_id: null,
+          duplicate_grants: [
+            {
+              scope: 'CO',
+              type: 'manual',
+              kindoo_site_id: null,
+              reason: 'within',
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const dupEdit = screen.getByTestId('seat-edit-w@x.com-dup-0');
+    expect(dupEdit).toBeDisabled();
+    expect(dupEdit.getAttribute('title')).toMatch(/covered by the primary's write/i);
+  });
+
+  // AC #8 (RTL slice): Remove on a duplicate row submits a request
+  // with the duplicate's (scope, kindoo_site_id).
+  it("AC #8: Remove on a parallel-site duplicate row submits a request with the grant's (scope, kindoo_site_id)", async () => {
+    const user = userEvent.setup();
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'manual',
+          callings: [],
+          reason: 'primary',
+          member_canonical: 'rm@x.com',
+          member_email: 'rm@x.com',
+          kindoo_site_id: null,
+          duplicate_grants: [
+            {
+              scope: 'FN',
+              type: 'manual',
+              kindoo_site_id: 'foreign-1',
+              building_names: ['Foreign Building'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      wards: [makeWard({ ward_code: 'FN', kindoo_site_id: 'foreign-1' } as any)],
+      buildings: [],
+      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake' }],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    await user.click(screen.getByTestId('remove-btn-rm@x.com-dup-0'));
+    await user.type(screen.getByTestId('removal-reason'), 'no longer needed on FN');
+    await user.click(screen.getByTestId('removal-confirm'));
+    expect(submitMutate).toHaveBeenCalled();
+    const payload = submitMutate.mock.calls[0]![0];
+    expect(payload.type).toBe('remove');
+    expect(payload.scope).toBe('FN');
+    expect(payload.kindoo_site_id).toBe('foreign-1');
+  });
+
+  // T-43 reviewer fix (4th pass): same-(scope, kindoo_site_id) non-
+  // auto duplicate under a non-auto primary is INFORMATIONAL ONLY.
+  // The Remove affordance is hidden because submitting would carry
+  // the same tuple as the primary; the trigger would target the
+  // primary (delete/promote), silently demoting/removing the wrong
+  // grant. Spec §15 §412 / §425.
+  it('within-site non-auto duplicate under non-auto primary: Remove hidden on the duplicate (spec §412 informational-only)', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'manual',
+          callings: [],
+          reason: 'pri-reason',
+          scope: 'CO',
+          kindoo_site_id: null,
+          member_canonical: 'inform@x.com',
+          member_email: 'inform@x.com',
+          duplicate_grants: [
+            {
+              scope: 'CO',
+              type: 'temp',
+              kindoo_site_id: null,
+              reason: 'within-site temp dup',
+              building_names: ['CO Building'],
+              start_date: '2026-06-01',
+              end_date: '2026-06-15',
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    // Primary row: Remove shown (non-auto primary).
+    expect(screen.getByTestId('remove-btn-inform@x.com')).toBeInTheDocument();
+    // Duplicate row: Remove hidden (same scope + site, can't
+    // disambiguate from the primary in the trigger).
+    expect(screen.queryByTestId('remove-btn-inform@x.com-dup-0')).toBeNull();
+  });
+
+  // T-43 reviewer fix (Fix 3 / KS-9): within-site manual duplicate
+  // under an auto primary. Auto primary row: no Remove button (auto
+  // rows never render Remove). Manual duplicate row at the same
+  // (scope, site): Remove IS shown — only reachable when the primary
+  // is auto, because the trigger's auto-primary disambiguation in
+  // `planRemove` routes the splice to the non-auto duplicate.
+  it('Fix 3 / KS-9: within-site manual duplicate under auto primary renders Remove on the duplicate row, not the primary', async () => {
+    const user = userEvent.setup();
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'auto',
+          callings: ['Bishop'],
+          scope: 'CO',
+          kindoo_site_id: null,
+          member_canonical: 'ks9@x.com',
+          member_email: 'ks9@x.com',
+          duplicate_grants: [
+            {
+              scope: 'CO',
+              type: 'manual',
+              kindoo_site_id: null,
+              reason: 'within-site dup',
+              building_names: ['CO Building'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    // Auto primary row: Remove hidden.
+    expect(screen.queryByTestId('remove-btn-ks9@x.com')).toBeNull();
+    // Manual duplicate row: Remove shown.
+    const dupRemove = screen.getByTestId('remove-btn-ks9@x.com-dup-0');
+    expect(dupRemove).toBeInTheDocument();
+    // Submitting from the duplicate row carries (CO, null) — the
+    // trigger disambiguates to the manual duplicate.
+    await user.click(dupRemove);
+    await user.type(screen.getByTestId('removal-reason'), 'no longer needed');
+    await user.click(screen.getByTestId('removal-confirm'));
+    expect(submitMutate).toHaveBeenCalled();
+    const payload = submitMutate.mock.calls[0]![0];
+    expect(payload.type).toBe('remove');
+    expect(payload.scope).toBe('CO');
+    expect(payload.kindoo_site_id).toBeNull();
+  });
+
+  // AC #12: Reconcile button + ReconcileDialog removed.
+  it("AC #12: Reconcile button doesn't render on duplicate rows", () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          member_canonical: 'd@x.com',
+          duplicate_grants: [{ scope: 'CO', type: 'manual', reason: 'extra', detected_at: NOW }],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('seat-reconcile-d@x.com')).toBeNull();
+    expect(screen.queryByTestId('reconcile-dialog')).toBeNull();
+  });
+
+  // AC #13 — per-row pending-removal badge keyed to the grant.
+  // Tested via the rosterPending unit tests (the partitioner is the
+  // source of truth); here we just confirm AllSeats doesn't render a
+  // stale shared badge.
+
+  // AC #5 (AllSeats slice): the per-ward / stake-scope utilization
+  // bar widens to count seats whose primary OR any duplicate_scopes
+  // entry matches the filter — same predicate as Dashboard
+  // `countSeatsForScope`.
+  it('AC #5: utilization counts a stake-primary seat whose duplicate is CO on the CO bar', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'cross@x.com',
+          member_email: 'cross@x.com',
+          duplicate_grants: [{ scope: 'CO', type: 'auto', detected_at: NOW }],
+          // Phase A maintains duplicate_scopes; the widened count
+          // reads it directly.
+          duplicate_scopes: ['CO'],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO', seat_cap: 20 })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage initialWard="CO" />);
+    const host = screen.getByTestId('allseats-utilization');
+    // CO bar: 1 (from the duplicate match), not 0.
+    expect(host).toHaveTextContent(/1 \/ 20 seats used/);
+  });
+
+  it("AC #5: same-scope within-site duplicate doesn't double-count on the same ward bar", () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'within@x.com',
+          member_email: 'within@x.com',
+          duplicate_grants: [{ scope: 'CO', type: 'manual', detected_at: NOW }],
+          duplicate_scopes: ['CO'],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO', seat_cap: 20 })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage initialWard="CO" />);
+    const host = screen.getByTestId('allseats-utilization');
+    expect(host).toHaveTextContent(/1 \/ 20 seats used/);
   });
 });
 
 describe('<AllSeatsPage /> — Kindoo Sites label (spec §15)', () => {
-  it('renders the foreign-site badge on ward seats whose ward sits on a foreign Kindoo site', () => {
+  it('renders the foreign-site badge on home-stake ward seats whose ward sits on a foreign Kindoo site (primary row)', () => {
     usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['FN'] }));
     mockAll({
       seats: [
@@ -591,6 +914,7 @@ describe('<AllSeatsPage /> — Kindoo Sites label (spec §15)', () => {
           member_name: 'Foreign Person',
           type: 'manual',
           callings: [],
+          kindoo_site_id: 'foreign-1',
         }),
       ],
       wards: [

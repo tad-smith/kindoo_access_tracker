@@ -236,4 +236,53 @@ describe('<ManagerDashboardPage />', () => {
     // At least one skeleton element is rendered while loading.
     expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
   });
+
+  // T-43 Phase B AC #5 — per-scope rollups widen inclusion to count
+  // seats whose primary OR any duplicate scope matches the bar.
+  // Same-scope dupes don't double-count.
+  describe('Phase B broadened-inclusion rollups (T-43 AC #5)', () => {
+    const NOW = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+
+    it('AC #5: counts a stake-primary seat whose duplicate is CO on the CO bar', async () => {
+      mockAll({
+        seats: [
+          makeSeat({
+            scope: 'stake',
+            member_canonical: 'cross@x.com',
+            member_email: 'cross@x.com',
+            duplicate_grants: [{ scope: 'CO', type: 'auto', detected_at: NOW }],
+            // Phase A maintains `duplicate_scopes`; the widened
+            // rollup reads it directly.
+            duplicate_scopes: ['CO'],
+          }),
+        ],
+        wards: [makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })],
+        stake: { stake_seat_cap: 200, last_over_caps_json: [] },
+      });
+      await renderWithRouter();
+      const util = screen.getByTestId('dashboard-card-utilization');
+      // Stake bar shows 1 (the primary). CO bar shows 1 (the duplicate).
+      expect(within(util).getByText(/1 \/ 20 seats used/)).toBeInTheDocument();
+    });
+
+    it("AC #5: same-scope within-site duplicate doesn't double-count on the same bar", async () => {
+      mockAll({
+        seats: [
+          makeSeat({
+            scope: 'CO',
+            member_canonical: 'within@x.com',
+            member_email: 'within@x.com',
+            duplicate_grants: [{ scope: 'CO', type: 'manual', detected_at: NOW }],
+            duplicate_scopes: ['CO'],
+          }),
+        ],
+        wards: [makeWard({ ward_code: 'CO', seat_cap: 20 })],
+        stake: { stake_seat_cap: 200, last_over_caps_json: [] },
+      });
+      await renderWithRouter();
+      const util = screen.getByTestId('dashboard-card-utilization');
+      // CO bar shows 1, not 2 — the same-scope dup collapses.
+      expect(within(util).getByText(/1 \/ 20 seats used/)).toBeInTheDocument();
+    });
+  });
 });

@@ -1,14 +1,21 @@
 // Bishopric data hooks. Live subscriptions to the seats + requests
 // collections, scoped per spec.md §5.1 to the principal's own ward.
 //
-// `useBishopricRoster(wardCode)` — every seat with `scope == wardCode`.
+// `useBishopricRoster(wardCode)` — every seat where ANY grant
+// (primary OR a `duplicate_grants[]` entry) matches the ward (spec
+// §15 Phase B). Implementation per KS-10 Option (b): two
+// `useFirestoreCollection` subscriptions — `where('scope', '==', X)`
+// + `where('duplicate_scopes', 'array-contains', X)` — merged client-
+// side by `member_canonical`. The `duplicate_scopes` field is the
+// denormalised primitive-array mirror written by every seat writer
+// (T-42 Phase A).
+//
 // `useBishopricMyRequests(canonical)` — every request the signed-in
 // bishopric submitted (across types and scopes).
 //
 // Per architecture D11 (DIY hooks): we wrap the SDK
 // `useFirestoreCollection` from `lib/data/` rather than calling
-// `getDocs`/`onSnapshot` directly. The wrapper memoizes the underlying
-// `Query` so the listener doesn't churn on every render.
+// `getDocs`/`onSnapshot` directly.
 
 import { query, where, orderBy } from 'firebase/firestore';
 import { useMemo } from 'react';
@@ -17,17 +24,29 @@ import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
 import { kindooSitesCol, requestsCol, seatsCol, wardsCol } from '../../lib/docs';
 import { STAKE_ID } from '../../lib/constants';
+import { mergeSeatsByCanonical, type RosterResult } from '../../lib/rosters';
 
 /**
- * Live seats list for one ward. Pass `null` to disable the subscription
- * (e.g. when the principal has no bishopric ward yet selected).
+ * Live seats list for one ward — broadened to include any seat
+ * whose primary scope OR any duplicate scope matches the ward
+ * (Phase B). Two-query union (KS-10 Option b); the merge is keyed by
+ * `member_canonical` so a seat that lands in both subscriptions (e.g.
+ * primary matches AND a same-scope duplicate exists) renders once.
+ *
+ * Pass `null` to disable both subscriptions.
  */
-export function useBishopricRoster(wardCode: string | null) {
-  const seatsQuery = useMemo(() => {
+export function useBishopricRoster(wardCode: string | null): RosterResult {
+  const primaryQuery = useMemo(() => {
     if (!wardCode) return null;
     return query(seatsCol(db, STAKE_ID), where('scope', '==', wardCode));
   }, [wardCode]);
-  return useFirestoreCollection<Seat>(seatsQuery);
+  const duplicateQuery = useMemo(() => {
+    if (!wardCode) return null;
+    return query(seatsCol(db, STAKE_ID), where('duplicate_scopes', 'array-contains', wardCode));
+  }, [wardCode]);
+  const primary = useFirestoreCollection<Seat>(primaryQuery);
+  const dupe = useFirestoreCollection<Seat>(duplicateQuery);
+  return useMemo(() => mergeSeatsByCanonical(primary, dupe), [primary, dupe]);
 }
 
 /**

@@ -31,6 +31,7 @@ export type {
   Building,
   BuildingsMismatchPayload,
   CallingTemplate,
+  CompletionStatus,
   CustomClaims,
   DuplicateGrant,
   ExtraKindooCallingPayload,

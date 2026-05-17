@@ -605,6 +605,10 @@ export const markRequestComplete = onCall(
       if (cur.type === 'remove') {
         const resolved = resolveRemoveCompletionNote(seatExists, trimmedNote);
         if (resolved !== undefined) update.completion_note = resolved;
+        // T-43: typed discriminator for the R-1 race so audit
+        // summarisers can route on it. Stamped only when the seat is
+        // absent at completion time (the non-happy path).
+        if (!seatExists) update.completion_status = 'noop_already_removed';
       } else if (trimmedNote.length > 0) {
         update.completion_note = trimmedNote;
       }

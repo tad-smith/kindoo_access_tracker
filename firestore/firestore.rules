@@ -429,9 +429,23 @@ service cloud.firestore {
       // Cloud Function (Admin SDK bypass) instead, since client
       // delete rules can't read request.resource.data.
       match /seats/{memberCanonical} {
+        // T-43 Phase B: bishopric reads widen to cover seats whose
+        // any-grant scope matches the bishopric's ward(s). The
+        // `duplicate_scopes` primitive-array mirror (server-maintained
+        // — see Seat doc comment) is what we read here because CEL
+        // can't project `[*].field` across an array of objects. The
+        // `'duplicate_scopes' in resource.data` presence guard is
+        // defense-in-depth: if any seat-write path lands a doc without
+        // the field, `hasAny(...)` on an absent field throws and the
+        // bishopric read explodes; the presence check degrades that
+        // case to "no duplicate matches" rather than a hard rule error.
+        // Stake-presidency reads need no widening — `isStakeMember`
+        // already grants unrestricted seat reads.
         allow read: if isManager(stakeId)
           || isStakeMember(stakeId)
-          || (resource.data.scope in bishopricWardOf(stakeId));
+          || (resource.data.scope in bishopricWardOf(stakeId))
+          || ('duplicate_scopes' in resource.data
+              && resource.data.duplicate_scopes.hasAny(bishopricWardOf(stakeId)));
 
         // T-42 / T-43: `duplicate_scopes` is a server-maintained
         // primitive mirror of `duplicate_grants[].scope` (Firestore CEL
@@ -457,6 +471,16 @@ service cloud.firestore {
                                      memberCanonical,
                                      request.resource.data.type);
 
+        // `duplicate_scopes` joins the allowlist alongside
+        // `duplicate_grants` so a coordinated mirror update is
+        // permitted, but the two are also coupled: if either is in
+        // the diff, the other must be too. That prevents a client
+        // from mutating `duplicate_grants` alone and leaving the
+        // primitive mirror stale (which would silently break
+        // bishopric reads + Phase B utilization counts). Server
+        // writers (Importer, `markRequestComplete`,
+        // `removeSeatOnRequestComplete`) update both together; the
+        // rule tightens the gate against any future client write.
         allow update: if isManager(stakeId)
           && resource.data.type in ['manual', 'temp']
           && request.resource.data.member_canonical == resource.data.member_canonical
@@ -465,7 +489,16 @@ service cloud.firestore {
           && lastActorMatchesAuth(request.resource.data)
           && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['member_name', 'reason', 'building_names', 'start_date', 'end_date',
-                       'duplicate_grants', 'last_modified_by', 'last_modified_at', 'lastActor']);
+                       'duplicate_grants', 'duplicate_scopes',
+                       'last_modified_by', 'last_modified_at', 'lastActor'])
+          && (
+            !('duplicate_grants' in request.resource.data.diff(resource.data).affectedKeys())
+            || 'duplicate_scopes' in request.resource.data.diff(resource.data).affectedKeys()
+          )
+          && (
+            !('duplicate_scopes' in request.resource.data.diff(resource.data).affectedKeys())
+            || 'duplicate_grants' in request.resource.data.diff(resource.data).affectedKeys()
+          );
 
         allow delete: if isManager(stakeId)
           && resource.data.type in ['manual', 'temp']
@@ -651,7 +684,7 @@ service cloud.firestore {
              && validKindooProvisioning(request.resource.data)
              && request.resource.data.diff(resource.data).affectedKeys()
                 .hasOnly(['status', 'completer_email', 'completer_canonical',
-                          'completed_at', 'completion_note',
+                          'completed_at', 'completion_note', 'completion_status',
                           'kindoo_uid', 'provisioning_note', 'lastActor']))
             ||
             // Reject — only managers, with non-empty reason

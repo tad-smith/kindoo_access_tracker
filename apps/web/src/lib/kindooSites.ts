@@ -78,6 +78,35 @@ export function siteLabelForSeat(
 }
 
 /**
+ * Foreign-site label for a single grant view (Phase B). Resolves the
+ * grant's own `kindoo_site_id` (already populated by the per-grant
+ * view layer) against the sites catalogue, falling back to the
+ * ward-lookup path on un-migrated legacy data (where the grant's
+ * `kindoo_site_id` is null).
+ *
+ * Stake-scope grants resolve to home (`null`) per Phase 1 policy.
+ * T-43.
+ */
+export function siteLabelForGrant(
+  grant: { scope: string; kindoo_site_id: string | null },
+  wards: readonly Ward[],
+  sites: readonly KindooSite[],
+): string | null {
+  if (!grant.scope || grant.scope === 'stake') return null;
+  if (grant.kindoo_site_id) {
+    const site = sites.find((s) => s.id === grant.kindoo_site_id);
+    return site ? site.display_name : null;
+  }
+  // Legacy / un-migrated fallback: resolve through the ward.
+  const ward = wards.find((w) => w.ward_code === grant.scope);
+  if (!ward) return null;
+  const wardSiteId = normaliseSiteId(ward.kindoo_site_id);
+  if (!wardSiteId) return null;
+  const site = sites.find((s) => s.id === wardSiteId);
+  return site ? site.display_name : null;
+}
+
+/**
  * Resolve a seat's Kindoo site id. T-42: reads `Seat.kindoo_site_id`
  * directly when populated (the importer + `markRequestComplete` stamp
  * it; the migration backfills it on legacy seats); falls back to
