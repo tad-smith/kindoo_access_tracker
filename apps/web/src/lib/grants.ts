@@ -112,16 +112,41 @@ export function grantsForDisplay(seat: Seat): GrantView[] {
 }
 
 /**
- * Pick the single `GrantView` that matches a roster page's scope —
- * primary if it matches, else the first duplicate whose scope matches.
- * Returns `null` when no grant matches (the caller filters the seat
- * out of the roster page).
- *
+ * Pick the single `GrantView` that matches a roster page's scope.
  * Used by per-scope roster pages (Bishopric Roster, Stake Roster,
  * Ward Rosters) for the broadened-inclusion render: one row per
  * person, columns reflect the matching grant.
+ *
+ * A person can legitimately hold multiple grants at the same scope —
+ * a stake-primary plus two CO duplicates (one home-site, one
+ * foreign-site) all coexist after Phase A multi-site grants. The
+ * roster surface renders only one row per person, so we need a
+ * deterministic pick:
+ *
+ *   1. Primary if its scope matches (always wins — it's the row's
+ *      home record).
+ *   2. Else home-site duplicate (`kindoo_site_id === null`) — the
+ *      grant tied to this stake's own Kindoo site, which is the most
+ *      meaningful for a roster page on this stake.
+ *   3. Else the lowest-`kindoo_site_id` foreign-site duplicate (stable
+ *      lexicographic order). Ties are vanishingly rare at single-stake
+ *      scale; lowest-id is just a tie-breaker so two re-renders return
+ *      the same grant.
+ *
+ * Returns `null` when no grant matches (the caller filters the seat
+ * out of the roster page).
  */
 export function pickGrantForScope(seat: Seat, scope: string): GrantView | null {
-  const views = grantsForDisplay(seat);
-  return views.find((g) => g.scope === scope) ?? null;
+  const matches = grantsForDisplay(seat).filter((g) => g.scope === scope);
+  if (matches.length === 0) return null;
+  // Primary always wins (it's a row's home record by definition).
+  const primary = matches.find((g) => g.isPrimary);
+  if (primary) return primary;
+  // Among duplicates: prefer home-site (`kindoo_site_id === null`),
+  // else lowest-`kindoo_site_id` for stability.
+  const homeSite = matches.find((g) => g.kindoo_site_id === null);
+  if (homeSite) return homeSite;
+  return [...matches].sort((a, b) =>
+    (a.kindoo_site_id ?? '').localeCompare(b.kindoo_site_id ?? ''),
+  )[0]!;
 }

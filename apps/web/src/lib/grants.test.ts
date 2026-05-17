@@ -159,4 +159,53 @@ describe('pickGrantForScope', () => {
     const seat = makeSeat({ scope: 'CO', duplicate_grants: [] });
     expect(pickGrantForScope(seat, 'GE')).toBeNull();
   });
+
+  // T-43 reviewer fix: with multiple grants at the same scope (a stake
+  // primary + a home-site CO duplicate + a foreign-site CO duplicate),
+  // the per-scope roster picks ONE row per person deterministically.
+  it('prefers a home-site duplicate over a foreign-site duplicate when primary does not match', () => {
+    const seat = makeSeat({
+      scope: 'stake',
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'CO',
+          type: 'auto',
+          kindoo_site_id: 'east-stake',
+          detected_at: NOW,
+        },
+        { scope: 'CO', type: 'auto', kindoo_site_id: null, detected_at: NOW },
+      ],
+    });
+    const grant = pickGrantForScope(seat, 'CO');
+    expect(grant?.kindoo_site_id).toBeNull();
+    expect(grant?.duplicateIndex).toBe(1);
+  });
+
+  it('falls back to lowest-`kindoo_site_id` when only foreign-site duplicates match', () => {
+    const seat = makeSeat({
+      scope: 'stake',
+      kindoo_site_id: null,
+      duplicate_grants: [
+        { scope: 'CO', type: 'auto', kindoo_site_id: 'west-stake', detected_at: NOW },
+        { scope: 'CO', type: 'auto', kindoo_site_id: 'east-stake', detected_at: NOW },
+      ],
+    });
+    const grant = pickGrantForScope(seat, 'CO');
+    expect(grant?.kindoo_site_id).toBe('east-stake');
+  });
+
+  it('primary wins even when same-scope duplicates also match', () => {
+    // Same-scope dupes are rare but legal (priority loser); the
+    // primary is still the row's home record.
+    const seat = makeSeat({
+      scope: 'CO',
+      kindoo_site_id: null,
+      duplicate_grants: [
+        { scope: 'CO', type: 'manual', kindoo_site_id: null, detected_at: NOW },
+      ],
+    });
+    const grant = pickGrantForScope(seat, 'CO');
+    expect(grant?.isPrimary).toBe(true);
+  });
 });
