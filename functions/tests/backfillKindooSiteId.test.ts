@@ -251,14 +251,19 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
 
     const result = await backfillKindooSiteIdForStake(db, STAKE_ID);
     // Uniform missing-ward skip-with-warning policy: no kindoo_site_id
-    // written on the primary side, no seat update fires, downstream
-    // ward-fallback handles classification at read time.
-    expect(result.seats_updated).toBe(0);
+    // is written on the primary side. The seat write that does fire
+    // backfills the absent `duplicate_scopes` mirror (T-43) — the
+    // primary skip is unrelated to the mirror's lifecycle. The
+    // seats_skipped_missing_ward counter is the load-bearing
+    // assertion here.
     expect(result.seats_skipped_missing_ward).toBe(1);
     expect(result.warnings.some((w) => w.includes('alice@gmail.com') && w.includes('CO'))).toBe(
       true,
     );
     const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+    // Critical: kindoo_site_id remains absent. NOT coerced to null.
     expect(alice.kindoo_site_id).toBeUndefined();
+    // The mirror backfilled to empty (no duplicates on the seat).
+    expect(alice.duplicate_scopes).toEqual([]);
   });
 });
