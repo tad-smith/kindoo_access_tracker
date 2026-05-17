@@ -444,6 +444,7 @@ Phase A (above) makes the data model and the Kindoo-side writes correct per-site
 7. **Edit Seat dialog unchanged behavior.** Still edits primary only. Edit button on a duplicate row is disabled with the specified tooltip.
 8. **Remove on duplicate row — functional.** Clicking Remove on a duplicate row generates a `remove` request scoped to **that duplicate's (scope, kindoo_site_id)**. When marked complete, only that `duplicate_grants[]` entry is removed; primary + remaining duplicates stay intact; the Kindoo removal write goes to the correct foreign site. Verified by Cloud Functions integration test + RTL test.
 9. **Sort/filter** on AllSeats: each row sorts independently by its own grant's fields (no special grouping by seat). Per operator: "if users hit issues, fix then." No acceptance test needed beyond not breaking today's sort logic.
+10. **`seats.read` rule widened for any-grant scope match.** A bishopric member of ward X can read a seat whose primary is `scope='stake'` (or some other ward) and whose `duplicate_grants[]` includes an entry with `scope='X'`. Symmetric widening for stake-presidency reads against seats with stake-scope duplicates whose primary is a ward. Verified by `firestore/tests/` rules unit tests covering both bishopric-via-duplicate and presidency-via-duplicate read paths, plus a negative test that a non-matching reader is still denied.
 
 **Out of scope for Phase B (explicit).**
 
