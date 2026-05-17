@@ -415,6 +415,8 @@ async function applyPlan(
           building_names: w.seat.building_names,
           kindoo_site_id: w.seat.kindoo_site_id,
           duplicate_grants: dupGrants,
+          // T-42 / T-43: denormalised mirror for Firestore CEL.
+          duplicate_scopes: dupGrants.map((g) => g.scope),
           sort_order: w.seat.sort_order,
           ...(isNew ? { created_at: now } : {}),
           last_modified_at: now,
@@ -440,6 +442,8 @@ async function applyPlan(
       await ref.set(
         {
           duplicate_grants: dupGrants,
+          // T-42 / T-43: keep the primitive mirror in sync.
+          duplicate_scopes: dupGrants.map((g) => g.scope),
           last_modified_at: now,
           last_modified_by: importerActor,
           lastActor: importerActor,

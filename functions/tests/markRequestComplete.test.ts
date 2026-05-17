@@ -618,6 +618,8 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         // Critical: kindoo_site_id mirrors the request ward's site.
         expect(dup.kindoo_site_id).toBe('east-stake');
         expect(dup.building_names).toEqual(['FT Building']);
+        // T-42 / T-43: the primitive mirror tracks the new scope.
+        expect(seat.duplicate_scopes).toEqual(['FT']);
       });
 
       it('T-42: appends new duplicate with kindoo_site_id=null when request targets home (no ward kindoo_site_id)', async () => {
@@ -685,6 +687,8 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         ).data() as Seat;
         expect(seat.scope).toBe('FT');
         expect(seat.kindoo_site_id).toBe('east-stake');
+        // T-42 / T-43: new seat carries the empty primitive mirror.
+        expect(seat.duplicate_scopes).toEqual([]);
       });
 
       it('T-42: new seat create with unknown-ward scope leaves kindoo_site_id unset (uniform skip-with-warning)', async () => {

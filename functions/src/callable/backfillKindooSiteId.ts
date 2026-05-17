@@ -173,7 +173,20 @@ export async function backfillKindooSiteIdForStake(
       dupesUpdatedThisSeat += 1;
     }
 
-    if (!primaryDiffers && !dupesDiffer) continue;
+    // T-42 / T-43: keep the primitive `duplicate_scopes` mirror in
+    // sync with `duplicate_grants[].scope`. Backfill if the stored
+    // value differs from the derived (or is absent). Skip-if-equal
+    // applies independently from the kindoo_site_id diffs so an
+    // already-migrated seat's only-mirror-changed case still triggers
+    // exactly one write per dirty seat.
+    const derivedScopes = nextDupes.map((d) => d.scope);
+    const storedScopes = seat.duplicate_scopes;
+    const scopesDiffer =
+      storedScopes === undefined ||
+      storedScopes.length !== derivedScopes.length ||
+      storedScopes.some((v, i) => v !== derivedScopes[i]);
+
+    if (!primaryDiffers && !dupesDiffer && !scopesDiffer) continue;
 
     // Build the write. Only set fields that changed — minimises the
     // doc diff. `kindoo_site_id` lands only when the primary
@@ -187,6 +200,7 @@ export async function backfillKindooSiteIdForStake(
     };
     if (primaryDiffers) update.kindoo_site_id = primaryTarget;
     if (dupesDiffer) update.duplicate_grants = nextDupes;
+    if (dupesDiffer || scopesDiffer) update.duplicate_scopes = derivedScopes;
 
     await seatDoc.ref.set(update, { merge: true });
     out.seats_updated += 1;

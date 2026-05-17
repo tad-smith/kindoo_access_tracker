@@ -196,7 +196,17 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
           type: promoted.type,
           callings: promoted.callings ?? [],
           building_names: promoted.building_names ?? [],
+          // T-42: promoting a duplicate to primary moves the site
+          // along with it. The new primary's `kindoo_site_id` is the
+          // promoted duplicate's site. Clear when unset (legacy
+          // duplicates) so the seat reads as un-migrated and the
+          // ward-fallback handles classification.
+          kindoo_site_id:
+            promoted.kindoo_site_id !== undefined ? promoted.kindoo_site_id : FieldValue.delete(),
           duplicate_grants: remaining,
+          // T-42 / T-43: keep the primitive mirror in sync with the
+          // remaining duplicates.
+          duplicate_scopes: remaining.map((d) => d.scope),
           // `granted_by_request` on the seat denotes the request that
           // justifies the *current primary*. The original primary is
           // being removed; the duplicate's originating request isn't
@@ -219,6 +229,8 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
         // drop_duplicate
         tx.update(seatRef, {
           duplicate_grants: plan.remaining,
+          // T-42 / T-43: keep the primitive mirror in sync.
+          duplicate_scopes: plan.remaining.map((d) => d.scope),
           last_modified_at: FieldValue.serverTimestamp(),
           last_modified_by: { ...REMOVE_TRIGGER_ACTOR },
           lastActor: { ...REMOVE_TRIGGER_ACTOR },

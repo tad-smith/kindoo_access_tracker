@@ -113,6 +113,22 @@ export type Seat = {
 
   // ----- Duplicates (informational) -----
   duplicate_grants: DuplicateGrant[];
+  /**
+   * Denormalised mirror of `duplicate_grants[].scope`. Firestore CEL
+   * rules cannot project `[*].field` over an array of objects — the
+   * Phase B rules read predicates (bishopric / stake reading seats
+   * whose duplicate scopes match their authority) use `scope in
+   * duplicate_scopes` against this primitive array. T-42 / T-43.
+   *
+   * Server-maintained — clients never write this field. Every server
+   * seat writer (importer, `markRequestComplete`,
+   * `removeSeatOnRequestComplete`, migration) keeps it in sync with
+   * `duplicate_grants[]`. Always set, even when empty.
+   *
+   * Optional only for the migration window; missing → `[]` at read
+   * time, and the migration backfills the field on every existing seat.
+   */
+  duplicate_scopes?: string[];
 
   // ----- Bookkeeping -----
   created_at: TimestampLike;

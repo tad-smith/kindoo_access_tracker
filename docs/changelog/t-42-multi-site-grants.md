@@ -14,8 +14,9 @@ The Phase 4 sync detector resolved a Kindoo user's site by collapsing the parsed
 ## packages/shared
 
 - `Seat.kindoo_site_id?: string | null` and `DuplicateGrant.kindoo_site_id?: string | null` added to `src/types/seat.ts` and mirrored in `src/schemas/seat.ts`. Same convention as ward / building: `null` (or field absent) means home; a string is a doc id under `stakes/{stakeId}/kindooSites/`.
+- `Seat.duplicate_scopes?: string[]` added — server-maintained primitive mirror of `duplicate_grants[].scope` so Firestore CEL rules can use `scope in duplicate_scopes` predicates (CEL has no `[*].field` projection). T-43 (Phase B) blocks on this field's presence.
 - `AuditAction` enum gains `'migration_backfill_kindoo_site_id'` (audit-action + zod schema).
-- New schema tests cover top-level + per-duplicate field shapes (null / string / absent), reject non-string non-null values, and round-trip a migration audit row.
+- New schema tests cover top-level + per-duplicate field shapes (null / string / absent), reject non-string non-null values, round-trip the `duplicate_scopes` mirror in non-empty / empty / non-string cases, and round-trip a migration audit row.
 
 ## functions
 

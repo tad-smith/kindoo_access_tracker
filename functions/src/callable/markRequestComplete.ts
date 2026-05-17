@@ -131,6 +131,13 @@ export function planAddMerge(opts: {
   update: {
     building_names?: string[];
     duplicate_grants?: DuplicateGrant[];
+    /**
+     * T-42 / T-43: denormalised mirror of `duplicate_grants[].scope`.
+     * Returned alongside `duplicate_grants` so the caller can apply
+     * both in one transaction. Absent when `duplicate_grants` is
+     * unchanged.
+     */
+    duplicate_scopes?: string[];
   };
   touchedScopes: Set<string>;
 } {
@@ -164,6 +171,8 @@ export function planAddMerge(opts: {
     }
     const next = dupes.slice();
     next[matchIdx] = { ...matched, building_names: merged };
+    // Scopes set is unchanged — only `building_names` extended on the
+    // matched entry. No `duplicate_scopes` write needed.
     return { update: { duplicate_grants: next }, touchedScopes };
   }
 
@@ -184,8 +193,14 @@ export function planAddMerge(opts: {
     if (request.start_date) entry.start_date = request.start_date;
     if (request.end_date) entry.end_date = request.end_date;
   }
+  const nextDupes = [...dupes, entry];
   return {
-    update: { duplicate_grants: [...dupes, entry] },
+    update: {
+      duplicate_grants: nextDupes,
+      // T-42 / T-43: keep the primitive mirror in sync. Append-only
+      // here, but rebuild from the array to keep one source of truth.
+      duplicate_scopes: nextDupes.map((d) => d.scope),
+    },
     touchedScopes,
   };
 }
@@ -418,6 +433,9 @@ export const markRequestComplete = onCall(
             callings: [],
             building_names: buildingNames,
             duplicate_grants: [],
+            // T-42 / T-43: server-maintained primitive mirror; always
+            // set, even when empty.
+            duplicate_scopes: [],
             granted_by_request: cur.request_id,
             created_at: now,
             last_modified_at: now,

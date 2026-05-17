@@ -630,6 +630,76 @@ describe('seatSchema', () => {
     };
     expect(() => seatSchema.parse(bad)).toThrow();
   });
+
+  // T-42 / T-43: `duplicate_scopes: string[]` is a server-maintained
+  // primitive mirror of `duplicate_grants[].scope`, required for
+  // Firestore CEL `in` predicates.
+  it('parses a seat with duplicate_scopes mirror set to non-empty', () => {
+    const seed = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'CO',
+      type: 'auto' as const,
+      callings: ['Bishop'],
+      building_names: ['Cordera Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto' as const,
+          callings: ['Bishop'],
+          building_names: ['Foothills Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: T,
+        },
+      ],
+      duplicate_scopes: ['FT'],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(seatSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a seat with empty duplicate_scopes mirror', () => {
+    const seed = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'stake',
+      type: 'auto' as const,
+      callings: ['Stake Clerk'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [],
+      duplicate_scopes: [],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(seatSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('rejects a duplicate_scopes whose entries are not strings', () => {
+    const bad = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'stake',
+      type: 'auto' as const,
+      callings: ['Stake Clerk'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [],
+      duplicate_scopes: [42],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(() => seatSchema.parse(bad)).toThrow();
+  });
 });
 
 describe('accessRequestSchema', () => {

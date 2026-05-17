@@ -329,6 +329,56 @@ describe.skipIf(!hasEmulators())('Importer (integration)', () => {
   // parallel-site duplicates carry building_names, top-level
   // kindoo_site_id is written on every importer-produced seat.
 
+  it('T-42 / T-43: every importer-produced seat carries duplicate_scopes mirroring duplicate_grants[].scope', async () => {
+    await seedStake();
+    const { db } = requireEmulators();
+    await db.doc(`stakes/${STAKE_ID}/wards/FT`).set({
+      ward_code: 'FT',
+      ward_name: 'Foothills',
+      building_name: 'Foothills Building',
+      seat_cap: 20,
+      kindoo_site_id: 'east-stake',
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    });
+    await db.doc(`stakes/${STAKE_ID}/buildings/foothills-building`).set({
+      building_id: 'foothills-building',
+      building_name: 'Foothills Building',
+      address: '',
+      kindoo_site_id: 'east-stake',
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    });
+    const restore = fixture([
+      {
+        name: 'CO',
+        values: [HEADER_ROW, ['CO', '', 'CO Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+      {
+        name: 'FT',
+        values: [HEADER_ROW, ['FT', '', 'FT Bishop', 'Alice Smith', 'alice@gmail.com']],
+      },
+      {
+        name: 'BR',
+        values: [HEADER_ROW, ['BR', '', 'BR Bishop', 'Bob Jones', 'bob@gmail.com']],
+      },
+    ]);
+    try {
+      await runImporterForStake({ stakeId: STAKE_ID, triggeredBy: 'test' });
+      // alice has primary CO + one duplicate FT.
+      const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+      expect(alice.duplicate_scopes).toEqual(alice.duplicate_grants.map((d) => d.scope));
+      expect(alice.duplicate_scopes!.sort()).toEqual(['FT']);
+      // bob has no duplicates → empty mirror.
+      const bob = (await db.doc(`stakes/${STAKE_ID}/seats/bob@gmail.com`).get()).data() as Seat;
+      expect(bob.duplicate_scopes).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
   it('T-42: multi-site person → primary stake (home) + parallel foreign duplicate carrying building_names + kindoo_site_id', async () => {
     await seedStake();
     const { db } = requireEmulators();

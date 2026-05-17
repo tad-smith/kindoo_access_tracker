@@ -51,6 +51,10 @@ export const seatSchema = z.object({
   kindoo_site_id: z.string().nullable().optional(),
 
   duplicate_grants: z.array(duplicateGrantSchema),
+  // T-42 / T-43: denormalised mirror of `duplicate_grants[].scope` —
+  // Firestore CEL needs a primitive-string array to use `in` /
+  // `hasAny` predicates. Server-maintained; clients never write it.
+  duplicate_scopes: z.array(z.string()).optional(),
 
   created_at: timestampLikeSchema,
   last_modified_at: timestampLikeSchema,

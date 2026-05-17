@@ -105,12 +105,38 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
 
     const result = await backfillKindooSiteIdForStake(db, STAKE_ID);
     expect(result.seats_total).toBe(2);
-    expect(result.seats_updated).toBe(1); // alice (for dup); bob skipped
+    // T-42 / T-43: bob's `duplicate_scopes` mirror is absent in the
+    // seed → migration writes `[]` onto it (and alice for kindoo_site_id
+    // on the dup + the mirror).
+    expect(result.seats_updated).toBe(2);
     expect(result.duplicates_updated).toBe(1);
     expect(result.duplicates_skipped_missing_ward).toBe(0);
 
     const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
     expect(alice.duplicate_grants[0]!.kindoo_site_id).toBe('east-stake');
+    // T-42 / T-43: migration backfills the primitive mirror.
+    expect(alice.duplicate_scopes).toEqual(['FT']);
+    const bob = (await db.doc(`stakes/${STAKE_ID}/seats/bob@gmail.com`).get()).data() as Seat;
+    expect(bob.duplicate_scopes).toEqual([]);
+  });
+
+  it('T-42 / T-43: migration backfills duplicate_scopes even when no duplicate_grants exist', async () => {
+    const { db } = requireEmulators();
+    await seedWard({ ward_code: 'CO', kindoo_site_id: null });
+    await seedSeat({
+      canonical: 'alice@gmail.com',
+      scope: 'CO',
+      // duplicate_grants default to []; duplicate_scopes field absent.
+    });
+
+    const result = await backfillKindooSiteIdForStake(db, STAKE_ID);
+    // Primary (CO → home → null) doesn't diff (current absent → null).
+    // duplicate_scopes is absent → derived [] → scopesDiffer → seat
+    // write fires to land the empty mirror.
+    expect(result.seats_updated).toBe(1);
+
+    const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+    expect(alice.duplicate_scopes).toEqual([]);
   });
 
   it('updates the primary when stored kindoo_site_id explicitly differs from derived (e.g. operator-typed stale value)', async () => {
@@ -178,9 +204,12 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
 
     const result = await backfillKindooSiteIdForStake(db, STAKE_ID);
     // Primary's stored kindoo_site_id is absent (treated as null) and
-    // target is null → no primary diff, no seat write. Duplicate is
-    // skipped because ward 'FT' doesn't resolve.
-    expect(result.seats_updated).toBe(0);
+    // target is null → no primary diff. Duplicate is skipped because
+    // ward 'FT' doesn't resolve, so dupesDiffer stays false. But the
+    // duplicate_scopes mirror is absent in the seed → migration
+    // backfills it with the surviving (un-changed) duplicate scopes,
+    // so one seat write fires.
+    expect(result.seats_updated).toBe(1);
     expect(result.duplicates_updated).toBe(0);
     expect(result.duplicates_skipped_missing_ward).toBe(1);
     expect(result.warnings.some((w) => w.includes('alice@gmail.com') && w.includes('FT'))).toBe(
@@ -188,21 +217,22 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
     );
 
     // The duplicate entry survives unchanged (no kindoo_site_id was
-    // written onto it).
+    // written onto it). The mirror reflects the preserved scope.
     const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
     expect(alice.duplicate_grants[0]!.kindoo_site_id).toBeUndefined();
+    expect(alice.duplicate_scopes).toEqual(['FT']);
   });
 
   it('migration writes stamp lastActor=Migration (so auditTrigger fans the dedicated action)', async () => {
     const { db } = requireEmulators();
     await seedWard({ ward_code: 'CO', kindoo_site_id: null });
-    // Seed with a STALE `kindoo_site_id` so the skip-if-equal check
-    // doesn't short-circuit and a real seat write fires (the test's
-    // job is to verify the actor stamp on that write).
+    // Seat seeded with no kindoo_site_id and no duplicate_scopes
+    // (legacy shape). Primary current=null === target=null, but the
+    // duplicate_scopes mirror is absent → migration writes `[]` to
+    // backfill, and the write stamps `lastActor='Migration'`.
     await seedSeat({
       canonical: 'alice@gmail.com',
       scope: 'CO',
-      kindoo_site_id: 'stale-site-id',
     });
 
     await backfillKindooSiteIdForStake(db, STAKE_ID);

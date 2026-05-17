@@ -365,6 +365,8 @@ The distinguishing test is field equality on `kindoo_site_id`; no separate flag.
 
 **`Seat.kindoo_site_id` field.** Mirrors the ward / building convention: `null` (or field absent) means the home site; a string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. The top-level value reflects the primary grant only; each `duplicate_grants[]` entry carries its own `kindoo_site_id`. Stake-scope primary grants resolve to home (per Phase 1 policy, decision 2). Ward-scope primary grants take the ward's own `kindoo_site_id`.
 
+**`Seat.duplicate_scopes: string[]` field.** Denormalised mirror of `duplicate_grants[].scope` — Firestore CEL has no `[*].field` projection over an array of objects, so rules that need to ask "does this seat carry a duplicate grant under this scope" use `scope in duplicate_scopes` against the primitive-string array. Server-maintained on every seat writer (importer, `markRequestComplete`, `removeSeatOnRequestComplete`, migration); rules reject client writes. T-42 / T-43.
+
 **Importer behaviour.** When an LCR import seeds an auto-seat for a person whose callings span multiple Kindoo sites:
 
 - Primary selected by `stake > ward (alphabetical)` per `firebase-schema.md` §4.6 Invariants. Multi-calling within a scope continues to collapse into `callings[]` (with `sort_order` as MIN of `sheet_order` across the array). The importer writes `scope`, `building_names`, and the derived `kindoo_site_id` at top level.
