@@ -114,6 +114,13 @@ export async function loadStakeConfig(): Promise<StakeConfigBundle> {
  * (`kindooSites/{id}` write rule gates on `isManager(stakeId)`); the
  * extension's caller is already a manager — the runtime check is just
  * defense in depth. See spec §15.
+ *
+ * Home-collision guard: read the stake doc first and refuse if the
+ * caller is trying to persist the home `kindoo_config.site_id` onto a
+ * foreign-site doc. The orchestrator's `checkRequestSite` already
+ * gates this at the entry; this writer-side check is belts-and-braces
+ * so a hypothetical buggy caller can't smuggle HOME_EID into a foreign
+ * doc and permanently bypass Phase 3.
  */
 export async function writeKindooSiteEid(
   kindooSiteId: string,
@@ -128,6 +135,17 @@ export async function writeKindooSiteEid(
     canonical: canonicalEmail(actor.email),
   };
   const db = firestore();
+  const stakeRef = doc(db, 'stakes', STAKE_ID);
+  const stakeSnap = await getDoc(stakeRef);
+  const homeSiteId = stakeSnap.exists()
+    ? ((stakeSnap.data() as Stake).kindoo_config?.site_id ?? null)
+    : null;
+  if (homeSiteId !== null && homeSiteId === kindooEid) {
+    throw new Error(
+      `refusing to write home kindoo_config.site_id (${kindooEid}) onto foreign ` +
+        `KindooSite '${kindooSiteId}'; this would trap HOME_EID on the foreign doc`,
+    );
+  }
   const siteRef = doc(db, 'stakes', STAKE_ID, 'kindooSites', kindooSiteId);
   await updateDoc(siteRef, {
     kindoo_eid: kindooEid,
@@ -198,6 +216,22 @@ export async function writeKindooConfig(
     // Foreign save — write the discovered EID onto the foreign site
     // doc. Idempotent: re-running the wizard against the same site
     // with `kindoo_eid` already set just re-asserts the value.
+    //
+    // Home-collision guard: refuse if the about-to-be-written foreign
+    // EID equals the home `kindoo_config.site_id`. This belts-and-
+    // braces the orchestrator-entry guard in `siteCheck.ts` — even a
+    // buggy caller can't smuggle HOME_EID into a foreign doc.
+    const stakeRef = doc(db, 'stakes', STAKE_ID);
+    const stakeSnap = await getDoc(stakeRef);
+    const homeSiteId = stakeSnap.exists()
+      ? ((stakeSnap.data() as Stake).kindoo_config?.site_id ?? null)
+      : null;
+    if (homeSiteId !== null && homeSiteId === payload.siteId) {
+      throw new Error(
+        `refusing to write home kindoo_config.site_id (${payload.siteId}) onto foreign ` +
+          `KindooSite '${payload.kindooSiteId}'; this would trap HOME_EID on the foreign doc`,
+      );
+    }
     const foreignRef = doc(db, 'stakes', STAKE_ID, 'kindooSites', payload.kindooSiteId);
     batch.update(foreignRef, {
       kindoo_eid: payload.siteId,

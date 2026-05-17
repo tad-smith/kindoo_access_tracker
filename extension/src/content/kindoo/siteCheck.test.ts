@@ -316,6 +316,54 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     expect(result.error.message).not.toContain('Switch Kindoo sites');
   });
 
+  it('refuses to auto-populate when foreign expected name collides with home and active session is on home', () => {
+    // Footgun the reviewer flagged: a foreign KindooSite doc whose
+    // `kindoo_expected_site_name` matches the home stake name (typo,
+    // blank-then-copy, Kindoo-side rename). Operator is on a home
+    // session. Without the home-collision guard the orchestrator would
+    // return populate: { kindooEid: HOME_EID } and trap HOME_EID on the
+    // foreign doc, permanently bypassing Phase 3.
+    const collidingForeign: KindooSite = {
+      id: 'east-stake',
+      display_name: 'East Stake (Foothills Building)',
+      // Whatever bug got us here, the foreign doc's expected name now
+      // equals the home stake's name.
+      kindoo_expected_site_name: 'Colorado Springs North Stake',
+      // kindoo_eid absent — auto-populate path.
+    } as unknown as KindooSite;
+    const result = checkRequestSite({
+      request: wardRequest('FN'),
+      session: { token: 'tok', eid: HOME_EID },
+      envs: homeEnvs('Colorado Springs North Stake'),
+      stake: STAKE,
+      wards: [FOREIGN_WARD],
+      kindooSites: [collidingForeign],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
+    if (!(result.error instanceof ProvisionSiteMismatchError)) return;
+    expect(result.error.expectedSiteName).toBe('East Stake (Foothills Building)');
+  });
+
+  it('still auto-populates on name match when the active EID is not the home site_id', () => {
+    // Sanity: the home-collision guard must not regress the legitimate
+    // auto-populate path. Foreign session, foreign name match, foreign
+    // EID — still returns populate.
+    const result = checkRequestSite({
+      request: wardRequest('FN'),
+      session: { token: 'tok', eid: FOREIGN_EID },
+      envs: foreignEnvs('East Stake'),
+      stake: STAKE,
+      wards: [FOREIGN_WARD],
+      kindooSites: [FOREIGN_SITE_NO_EID],
+    });
+    expect(result).toEqual({
+      ok: true,
+      populate: { kindooSiteId: 'east-stake', kindooEid: FOREIGN_EID },
+    });
+  });
+
   it('refuses (using display_name) when active session has no matching env entry (unknown site name)', () => {
     const result = checkRequestSite({
       request: wardRequest('FN'),

@@ -146,19 +146,121 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     ).rejects.toThrow(/no email/);
   });
 
-  it('does not consult the stake doc on a foreign-site save', async () => {
-    // Foreign save never touches stake.kindoo_config — the defensive
-    // read is home-only.
+  it('refuses a foreign save that would trap home kindoo_config.site_id on the foreign doc', async () => {
+    // Footgun the reviewer flagged: a foreign-save with payload.siteId
+    // equal to the home `kindoo_config.site_id` would persist HOME_EID
+    // onto the foreign doc and let every subsequent foreign-ward
+    // provision on a home session silently target home. Refuse before
+    // committing the batch.
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+      }),
+    });
+    const { writeKindooConfig } = await import('./data');
+    await expect(
+      writeKindooConfig(
+        {
+          kindooSiteId: 'east-stake',
+          siteId: 27994, // collides with home's site_id
+          siteName: 'East Stake',
+          buildingRules: [],
+        },
+        actor(),
+      ),
+    ).rejects.toThrow(/HOME_EID|home/i);
+    // Batch must not commit on refusal.
+    expect(commitMock).not.toHaveBeenCalled();
+  });
+
+  it('allows a foreign save when payload.siteId does not collide with home', async () => {
+    // Happy path: the home-collision guard must not block legitimate
+    // foreign saves where the EIDs are distinct.
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+      }),
+    });
     const { writeKindooConfig } = await import('./data');
     await writeKindooConfig(
       {
         kindooSiteId: 'east-stake',
         siteId: 4321,
-        siteName: '',
+        siteName: 'East Stake',
         buildingRules: [],
       },
       actor(),
     );
-    expect(getDocMock).not.toHaveBeenCalled();
+    expect(commitMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('writeKindooSiteEid — home-collision guard', () => {
+  beforeEach(() => {
+    updateMock.mockReset();
+    commitMock.mockReset();
+    commitMock.mockResolvedValue(undefined);
+    writeBatchMock.mockClear();
+    getDocMock.mockReset();
+    updateDocMock.mockReset();
+    updateDocMock.mockResolvedValue(undefined);
+    docMock.mockClear();
+    serverTimestampMock.mockClear();
+  });
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it('refuses when the supplied EID equals the home kindoo_config.site_id', async () => {
+    // Reviewer-flagged footgun: a buggy caller passes HOME_EID for a
+    // foreign-site populate. Refuse before persisting — otherwise the
+    // foreign doc would carry HOME_EID forever and Phase 3's
+    // EID-match check would silently approve foreign-ward provisions
+    // on home sessions.
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+      }),
+    });
+    const { writeKindooSiteEid } = await import('./data');
+    await expect(writeKindooSiteEid('east-stake', 27994, actor())).rejects.toThrow(
+      /HOME_EID|home/i,
+    );
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('writes when the supplied EID is distinct from the home site_id', async () => {
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+      }),
+    });
+    const { writeKindooSiteEid } = await import('./data');
+    await writeKindooSiteEid('east-stake', 4321, actor());
+    expect(updateDocMock).toHaveBeenCalledTimes(1);
+    const payload = updateDocMock.mock.calls[0]?.[1] as { kindoo_eid: number };
+    expect(payload.kindoo_eid).toBe(4321);
+  });
+
+  it('writes when the stake has no kindoo_config (no home EID to collide with)', async () => {
+    // Pre-Phase-5: stake.kindoo_config is unset. There's no home EID to
+    // collide with, so the write proceeds. Phase 5 will set
+    // kindoo_config before any foreign-site activity in practice, but
+    // the guard must not block legitimate setups while it's unset.
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({}) });
+    const { writeKindooSiteEid } = await import('./data');
+    await writeKindooSiteEid('east-stake', 4321, actor());
+    expect(updateDocMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects when actor has no email', async () => {
+    const { writeKindooSiteEid } = await import('./data');
+    await expect(
+      writeKindooSiteEid('east-stake', 4321, { email: null } as unknown as User),
+    ).rejects.toThrow(/no email/);
   });
 });

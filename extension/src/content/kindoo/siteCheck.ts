@@ -31,6 +31,16 @@
 // instruction so the caller persists the discovered EID and proceeds.
 // Mismatch → refuse.
 //
+// Home-collision guard: refuse to auto-populate when the active
+// session's EID is the home `kindoo_config.site_id`, even if the
+// active site name matches the foreign doc's
+// `kindoo_expected_site_name`. Otherwise a misconfigured foreign doc
+// (typo / blank-then-copy / Kindoo-side rename that ends up matching
+// the home name) would let a home session persist HOME_EID onto the
+// foreign doc, and every subsequent foreign-ward provision on a home
+// session would silently target home — exactly the failure mode
+// Phase 3 was built to prevent.
+//
 // Returns a discriminated result:
 //   - { ok: true }                        proceed
 //   - { ok: true, populate: { kindooSiteId, kindooEid } }
@@ -209,11 +219,19 @@ export function checkRequestSite(args: CheckRequestSiteArgs): SiteCheckResult {
         // Compare the active session's site name (matched against the
         // internal `kindoo_expected_site_name`); on match, the caller
         // persists `kindoo_eid = session.eid` and proceeds.
+        //
+        // Home-collision guard: if the active session's EID is the
+        // home `kindoo_config.site_id`, refuse — even on a name match
+        // — so a foreign doc whose `kindoo_expected_site_name` collides
+        // with the home name can never trap HOME_EID onto the foreign
+        // doc. The Phase 5 resolver applies the equivalent ordering;
+        // this is the orchestrator-entry equivalent.
         const actual = activeSiteName(envs, session);
-        if (
+        const nameMatches =
           actual.length > 0 &&
-          normaliseName(actual) === normaliseName(wardSite.kindoo_expected_site_name)
-        ) {
+          normaliseName(actual) === normaliseName(wardSite.kindoo_expected_site_name);
+        const sessionIsHome = stake.kindoo_config?.site_id === session.eid;
+        if (nameMatches && !sessionIsHome) {
           return {
             ok: true,
             populate: { kindooSiteId: wardSite.id, kindooEid: session.eid },
