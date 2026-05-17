@@ -429,9 +429,23 @@ service cloud.firestore {
       // Cloud Function (Admin SDK bypass) instead, since client
       // delete rules can't read request.resource.data.
       match /seats/{memberCanonical} {
+        // T-43 Phase B: bishopric reads widen to cover seats whose
+        // any-grant scope matches the bishopric's ward(s). The
+        // `duplicate_scopes` primitive-array mirror (server-maintained
+        // — see Seat doc comment) is what we read here because CEL
+        // can't project `[*].field` across an array of objects. The
+        // `'duplicate_scopes' in resource.data` presence guard is
+        // defense-in-depth: if any seat-write path lands a doc without
+        // the field, `hasAny(...)` on an absent field throws and the
+        // bishopric read explodes; the presence check degrades that
+        // case to "no duplicate matches" rather than a hard rule error.
+        // Stake-presidency reads need no widening — `isStakeMember`
+        // already grants unrestricted seat reads.
         allow read: if isManager(stakeId)
           || isStakeMember(stakeId)
-          || (resource.data.scope in bishopricWardOf(stakeId));
+          || (resource.data.scope in bishopricWardOf(stakeId))
+          || ('duplicate_scopes' in resource.data
+              && resource.data.duplicate_scopes.hasAny(bishopricWardOf(stakeId)));
 
         // T-42 / T-43: `duplicate_scopes` is a server-maintained
         // primitive mirror of `duplicate_grants[].scope` (Firestore CEL

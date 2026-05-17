@@ -105,5 +105,18 @@ export type AccessRequest = {
    */
   seat_member_canonical?: string;
 
+  /**
+   * For `type='remove'`, the Kindoo site the grant being removed
+   * lives on. Optional: present on remove requests generated from a
+   * duplicate row (Phase B), absent / null on remove requests
+   * generated from a primary row (legacy / today's behaviour, which
+   * targets the seat's primary by scope alone). The
+   * `removeSeatOnRequestComplete` trigger matches the
+   * `duplicate_grants[]` entry to drop by `(scope, kindoo_site_id)`
+   * when populated; legacy scope-only requests fall back to the
+   * pre-Phase-B match. T-43.
+   */
+  kindoo_site_id?: string | null;
+
   lastActor: ActorRef;
 };

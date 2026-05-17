@@ -1,39 +1,35 @@
 // Stake Presidency Ward Rosters page (live). Cross-ward browse over
-// any ward in the stake. Picking a ward switches the live subscription
-// to that ward's seats; URL `?ward=` deep-links pre-select.
+// any ward in the stake. Picking a ward switches the live
+// subscription to that ward's seats; URL `?ward=` deep-links
+// pre-select.
+//
+// Phase B (T-43): broadened inclusion — `useWardSeats` returns any
+// seat whose primary scope OR a duplicate scope matches the picked
+// ward. Each row's columns reflect the matching grant.
 //
 // Manual + temp rows carry a per-row Remove button via
 // `<RemovalAffordance>`, gated by `isScopeAllowed(principal, ...)` so
 // the button only appears on rows the viewer has authority for. The
 // rule is symmetric with `allowedScopesFor` — if a user can ADD for a
-// scope, they can also REMOVE for it; if they cannot ADD, they cannot
-// REMOVE. Practical effect on this page:
-//   - bishopric of CO viewing CO   → buttons render on manual / temp.
-//   - bishopric of CO viewing GE   → no buttons (out of authority).
-//   - stake user viewing any ward  → no buttons (stake authority does
-//                                    not extend to ward-scope seats).
-//   - manager-only (no stake / no  → no buttons (manager status alone
-//     ward claim)                    does not grant authority over a
-//                                    scope; B-3 / T-36).
+// scope, they can also REMOVE for it.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
+import type { Seat } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { STAKE_ID } from '../../lib/constants';
 import { useKindooSites, useStakeWards, useWardSeats } from './hooks';
-import { RosterCardList } from '../../components/roster/RosterCardList';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
+import { EmptyState } from '../../lib/render/EmptyState';
 import { Select } from '../../components/ui/Select';
-import { RemovalAffordance } from '../requests/components/RemovalAffordance';
-import { EditSeatAffordance } from '../requests/components/EditSeatAffordance';
+import { PerGrantRosterCard } from '../../components/roster/PerGrantRosterCard';
 import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
 import { usePendingRequestsForScope } from '../requests/hooks';
-import { partitionPendingForRoster } from '../requests/rosterPending';
+import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterPending';
 import { canEditSeat, isScopeAllowed } from '../requests/scopeOptions';
-import { Badge } from '../../components/ui/Badge';
-import { siteLabelForSeat } from '../../lib/kindooSites';
+import { pickGrantForScope, type GrantView } from '../../lib/grants';
 
 export interface WardRostersPageProps {
   /** Pre-selected ward code from `?ward=...`. */
@@ -43,8 +39,6 @@ export interface WardRostersPageProps {
 export function WardRostersPage({ initialWard }: WardRostersPageProps) {
   const principal = usePrincipal();
   const wards = useStakeWards();
-  // Live Kindoo Sites catalogue for the foreign-site badge on ward
-  // seats (spec §15). Empty for stakes with only their home site.
   const kindooSites = useKindooSites();
   const navigate = useNavigate();
   const [selected, setSelected] = useState<string | null>(initialWard ?? null);
@@ -69,13 +63,37 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
     () => (selected ? wardsList.find((w) => w.ward_code === selected) : undefined),
     [selected, wardsList],
   );
-  const sortedSeats = useMemo(() => sortSeatsWithinScope(seats.data ?? []), [seats.data]);
-  const seatCount = seats.data?.length ?? 0;
 
-  // Pending requests for the selected ward — drives the "Outstanding
-  // Requests" section + the per-row "Pending Removal" badge.
+  // Pair every seat with the grant that matched the picked ward.
+  const seatsWithGrant = useMemo(() => {
+    const rows: Array<{ seat: Seat; grant: GrantView }> = [];
+    if (!selected) return rows;
+    for (const s of seats.data ?? []) {
+      const grant = pickGrantForScope(s, selected);
+      if (grant) rows.push({ seat: s, grant });
+    }
+    return rows;
+  }, [seats.data, selected]);
+
+  const sortedRows = useMemo(() => {
+    const shims = seatsWithGrant.map(({ seat, grant }) => ({
+      ...seat,
+      type: grant.type,
+      ...(grant.start_date !== undefined ? { start_date: grant.start_date } : {}),
+      ...(grant.end_date !== undefined ? { end_date: grant.end_date } : {}),
+    }));
+    const sorted = sortSeatsWithinScope(shims);
+    const byCanonical = new Map(seatsWithGrant.map((r) => [r.seat.member_canonical, r]));
+    return sorted
+      .map((s) => byCanonical.get(s.member_canonical))
+      .filter((r): r is { seat: Seat; grant: GrantView } => r !== undefined);
+  }, [seatsWithGrant]);
+
+  const seatCount = sortedRows.length;
+
+  // Pending requests for the selected ward.
   const pendingRequests = usePendingRequestsForScope(selected);
-  const { pendingAdds, pendingRemovesByCanonical } = useMemo(
+  const { pendingAdds, pendingRemovesByKey } = useMemo(
     () => partitionPendingForRoster(pendingRequests.data ?? [], selected ?? ''),
     [pendingRequests.data, selected],
   );
@@ -87,9 +105,7 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
       to: '/stake/wards',
       search: value ? { ward: value } : {},
       replace: true,
-    }).catch(() => {
-      // best-effort URL sync
-    });
+    }).catch(() => {});
   };
 
   return (
@@ -120,7 +136,7 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
               committedTotal={seatCount}
               cap={wardDoc?.seat_cap ?? null}
               pendingAdds={pendingAdds.length}
-              pendingRemoves={pendingRemovesByCanonical.size}
+              pendingRemoves={pendingRemovesByKey.size}
               committedOverCap={wardDoc !== undefined && seatCount > wardDoc.seat_cap}
             />
           </div>
@@ -128,50 +144,32 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
             <LoadingSpinner />
           ) : (
             <>
-              <RosterCardList
-                seats={sortedSeats}
-                emptyMessage={`No seats in ${wardDoc?.ward_name ?? selected} yet.`}
-                actions={(seat) => {
-                  const canEdit = canEditSeat(principal, STAKE_ID, seat);
-                  const canRemove =
-                    seat.type !== 'auto' && isScopeAllowed(principal, STAKE_ID, seat.scope);
-                  if (!canEdit && !canRemove) return null;
-                  return (
-                    <span style={{ display: 'inline-flex', gap: 8 }}>
-                      {canEdit ? <EditSeatAffordance seat={seat} /> : null}
-                      {canRemove ? <RemovalAffordance seat={seat} /> : null}
-                    </span>
-                  );
-                }}
-                extraBadges={(seat) => {
-                  const siteLabel = siteLabelForSeat(seat, wardsList, kindooSites.data ?? []);
-                  return (
-                    <>
-                      {pendingRemovesByCanonical.has(seat.member_canonical) ? (
-                        <Badge
-                          variant="danger"
-                          data-testid={`pending-removal-badge-${seat.member_canonical}`}
-                        >
-                          Pending Removal
-                        </Badge>
-                      ) : null}
-                      {siteLabel ? (
-                        <Badge
-                          variant="info"
-                          data-testid={`kindoo-site-badge-${seat.member_canonical}`}
-                        >
-                          {siteLabel}
-                        </Badge>
-                      ) : null}
-                    </>
-                  );
-                }}
-                rowClass={(seat) =>
-                  pendingRemovesByCanonical.has(seat.member_canonical)
-                    ? 'has-removal-pending'
-                    : undefined
-                }
-              />
+              {sortedRows.length === 0 ? (
+                <EmptyState message={`No seats in ${wardDoc?.ward_name ?? selected} yet.`} />
+              ) : (
+                <div className="roster-cards">
+                  {sortedRows.map(({ seat, grant }) => {
+                    const canEdit = grant.isPrimary && canEditSeat(principal, STAKE_ID, seat);
+                    const canRemove =
+                      grant.type !== 'auto' && isScopeAllowed(principal, STAKE_ID, grant.scope);
+                    const isPendingRemoval = pendingRemovesByKey.has(
+                      pendingRemoveKey(seat.member_canonical, grant.scope, grant.kindoo_site_id),
+                    );
+                    return (
+                      <PerGrantRosterCard
+                        key={seat.member_canonical}
+                        seat={seat}
+                        grant={grant}
+                        canEdit={canEdit}
+                        canRemove={canRemove}
+                        isPendingRemoval={isPendingRemoval}
+                        wards={wardsList}
+                        sites={kindooSites.data ?? []}
+                      />
+                    );
+                  })}
+                </div>
+              )}
               <PendingAddRequestsSection pendingAdds={pendingAdds} />
             </>
           )}

@@ -129,6 +129,14 @@ export interface SubmitRequestInput {
   building_names: string[];
   /** Defaults to false on the wire; missing → false on read. */
   urgent?: boolean;
+  /**
+   * For `type='remove'` generated from an AllSeats duplicate row
+   * (T-43 Phase B). Carries the duplicate grant's `kindoo_site_id`
+   * so the `removeSeatOnRequestComplete` trigger splices only that
+   * entry. Absent / null on the legacy primary-remove path; the
+   * trigger falls back to scope-only matching.
+   */
+  kindoo_site_id?: string | null;
 }
 
 /**
@@ -207,6 +215,14 @@ export function useSubmitRequest() {
         // the seat doc without a query (Firestore client transactions
         // don't support queries).
         body.seat_member_canonical = memberCanonical;
+        // T-43 Phase B: stamp `kindoo_site_id` only when the caller
+        // passed it (duplicate-row remove). Primary-row removes omit
+        // the field entirely; the trigger preserves today's
+        // scope-only fallback so legacy + primary requests keep
+        // working.
+        if (input.kindoo_site_id !== undefined) {
+          body.kindoo_site_id = input.kindoo_site_id;
+        }
       }
       if (input.urgent === true) {
         // Stamp only when truthy; missing field reads as false. Keeps

@@ -72,19 +72,54 @@ type SeatPlan =
 
 /**
  * Decide what to do with the seat for a remove request whose scope is
- * `requestScope`. Pure — returns the plan; the caller applies it.
+ * `requestScope` and (optionally, T-43 Phase B) whose
+ * `kindoo_site_id` matches the grant being removed. Pure — returns
+ * the plan; the caller applies it.
+ *
+ * Matching rules:
+ *   - When the request carries `requestSiteId !== undefined`, the
+ *     match keys on `(scope, kindoo_site_id)`. A Phase B duplicate-
+ *     row Remove sets both fields explicitly so only the matching
+ *     duplicate is spliced; primary + remaining duplicates stay.
+ *   - When `requestSiteId === undefined` (legacy pre-Phase-B remove
+ *     requests, primary-row removes), fall back to scope-only
+ *     matching so today's behaviour is preserved.
+ *
+ * Within the primary branch, the kindoo_site_id check is similarly
+ * gated — a legacy request (no site) matches the primary by scope
+ * alone; a Phase B request whose `(scope, site)` matches the primary
+ * uses the existing delete-or-promote path.
  */
-export function planRemove(opts: { seat: Seat; requestScope: string }): SeatPlan {
-  const { seat, requestScope } = opts;
+export function planRemove(opts: {
+  seat: Seat;
+  requestScope: string;
+  requestSiteId?: string | null;
+}): SeatPlan {
+  const { seat, requestScope, requestSiteId } = opts;
   const dupes = seat.duplicate_grants ?? [];
 
-  if (seat.scope === requestScope) {
+  // Legacy path: no site on the request, match by scope alone.
+  const legacy = requestSiteId === undefined;
+
+  const primarySite = seat.kindoo_site_id ?? null;
+  const reqSite = requestSiteId ?? null;
+  const primaryMatches =
+    seat.scope === requestScope && (legacy || primarySite === reqSite);
+
+  if (primaryMatches) {
     if (dupes.length === 0) return { kind: 'delete' };
     const [promoted, ...remaining] = dupes;
     return { kind: 'promote', promoted: promoted!, remaining };
   }
 
-  const idx = dupes.findIndex((d) => d.scope === requestScope);
+  // Duplicate match: same gating — legacy → scope only; Phase B →
+  // (scope, site).
+  const idx = dupes.findIndex((d) => {
+    if (d.scope !== requestScope) return false;
+    if (legacy) return true;
+    const dSite = d.kindoo_site_id ?? null;
+    return dSite === reqSite;
+  });
   if (idx >= 0) {
     const remaining = dupes.slice(0, idx).concat(dupes.slice(idx + 1));
     return { kind: 'drop_duplicate', remaining };
@@ -154,7 +189,21 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
         return;
       }
       const currentSeat = seatSnap.data() as Seat;
-      const plan = planRemove({ seat: currentSeat, requestScope: after.scope });
+      // T-43 Phase B: thread `kindoo_site_id` through when the
+      // request carries it (duplicate-row remove). Legacy requests
+      // omit the field; `planRemove` falls back to scope-only
+      // matching so today's primary-row removes keep working.
+      const planOpts: Parameters<typeof planRemove>[0] = {
+        seat: currentSeat,
+        requestScope: after.scope,
+      };
+      if ('kindoo_site_id' in after) {
+        const siteId = (after as { kindoo_site_id?: string | null }).kindoo_site_id;
+        // Treat explicit-undefined as "not set" (skip); explicit null
+        // stays null so the trigger keys on home-site.
+        if (siteId !== undefined) planOpts.requestSiteId = siteId;
+      }
+      const plan = planRemove(planOpts);
 
       if (plan.kind === 'no_match') {
         // The request's scope doesn't correspond to any grant on the

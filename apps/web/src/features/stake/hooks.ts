@@ -1,9 +1,10 @@
 // Stake-presidency data hooks.
 //
-// `useStakeRoster()` — every seat with `scope == 'stake'` (the stake-
-// scope pool the presidency owns).
-// `useWardSeats(wardCode)` — every seat in one ward (Ward Rosters
-// browse view; reuses bishopric's filter shape).
+// `useStakeRoster()` — every seat where the primary scope is `'stake'`
+// OR any duplicate scope is `'stake'` (Phase B broadened inclusion).
+// Two-query union per KS-10 Option (b); see `mergeSeatsByCanonical`.
+// `useWardSeats(wardCode)` — same shape, keyed on a ward (Ward
+// Rosters browse view).
 // `useStakeWards()` — the stake's full ward list (for the Ward Rosters
 // dropdown). Live so newly-added wards show up without a reload.
 
@@ -14,21 +15,34 @@ import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
 import { kindooSitesCol, seatsCol, wardsCol } from '../../lib/docs';
 import { STAKE_ID } from '../../lib/constants';
+import { mergeSeatsByCanonical, type RosterResult } from '../bishopric/hooks';
 
-export function useStakeRoster() {
-  const stakeQuery = useMemo(
+export function useStakeRoster(): RosterResult {
+  const primaryQuery = useMemo(
     () => query(seatsCol(db, STAKE_ID), where('scope', '==', 'stake')),
     [],
   );
-  return useFirestoreCollection<Seat>(stakeQuery);
+  const duplicateQuery = useMemo(
+    () => query(seatsCol(db, STAKE_ID), where('duplicate_scopes', 'array-contains', 'stake')),
+    [],
+  );
+  const primary = useFirestoreCollection<Seat>(primaryQuery);
+  const dupe = useFirestoreCollection<Seat>(duplicateQuery);
+  return useMemo(() => mergeSeatsByCanonical(primary, dupe), [primary, dupe]);
 }
 
-export function useWardSeats(wardCode: string | null) {
-  const wardQuery = useMemo(() => {
+export function useWardSeats(wardCode: string | null): RosterResult {
+  const primaryQuery = useMemo(() => {
     if (!wardCode) return null;
     return query(seatsCol(db, STAKE_ID), where('scope', '==', wardCode));
   }, [wardCode]);
-  return useFirestoreCollection<Seat>(wardQuery);
+  const duplicateQuery = useMemo(() => {
+    if (!wardCode) return null;
+    return query(seatsCol(db, STAKE_ID), where('duplicate_scopes', 'array-contains', wardCode));
+  }, [wardCode]);
+  const primary = useFirestoreCollection<Seat>(primaryQuery);
+  const dupe = useFirestoreCollection<Seat>(duplicateQuery);
+  return useMemo(() => mergeSeatsByCanonical(primary, dupe), [primary, dupe]);
 }
 
 export function useStakeWards() {

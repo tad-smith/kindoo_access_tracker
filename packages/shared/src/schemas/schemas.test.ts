@@ -1010,6 +1010,77 @@ describe('accessRequestSchema', () => {
     };
     expect(accessRequestSchema.parse(seed)).toEqual(seed);
   });
+
+  // T-43 Phase B — optional `kindoo_site_id` on remove requests
+  // generated from a duplicate row. The trigger uses the field to
+  // discriminate the duplicate to drop; legacy remove requests omit
+  // the field and fall back to scope-only matching.
+  it('parses a remove request with kindoo_site_id pointing at a foreign site (Phase B duplicate-row remove)', () => {
+    const seed = {
+      request_id: 'req-rm-dup-1',
+      type: 'remove' as const,
+      scope: 'CO',
+      member_email: 'Dup@gmail.com',
+      member_canonical: 'dup@gmail.com',
+      member_name: 'Dup Person',
+      reason: 'No longer needed on the foreign site',
+      comment: '',
+      building_names: [],
+      status: 'pending' as const,
+      requester_email: 'Mgr@gmail.com',
+      requester_canonical: 'mgr@gmail.com',
+      requested_at: T,
+      seat_member_canonical: 'dup@gmail.com',
+      kindoo_site_id: 'east-stake',
+      lastActor: ACTOR,
+    };
+    expect(accessRequestSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a remove request with kindoo_site_id explicitly null (home-site duplicate)', () => {
+    const seed = {
+      request_id: 'req-rm-dup-2',
+      type: 'remove' as const,
+      scope: 'CO',
+      member_email: 'Dup@gmail.com',
+      member_canonical: 'dup@gmail.com',
+      member_name: 'Dup Person',
+      reason: 'Within-site priority-loser cleanup',
+      comment: '',
+      building_names: [],
+      status: 'pending' as const,
+      requester_email: 'Mgr@gmail.com',
+      requester_canonical: 'mgr@gmail.com',
+      requested_at: T,
+      seat_member_canonical: 'dup@gmail.com',
+      kindoo_site_id: null,
+      lastActor: ACTOR,
+    };
+    expect(accessRequestSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('rejects a non-string non-null kindoo_site_id on a remove request', () => {
+    const seed = {
+      request_id: 'req-rm-bad',
+      type: 'remove' as const,
+      scope: 'CO',
+      member_email: 'Dup@gmail.com',
+      member_canonical: 'dup@gmail.com',
+      member_name: 'Dup Person',
+      reason: 'No longer needed',
+      comment: '',
+      building_names: [],
+      status: 'pending' as const,
+      requester_email: 'Mgr@gmail.com',
+      requester_canonical: 'mgr@gmail.com',
+      requested_at: T,
+      seat_member_canonical: 'dup@gmail.com',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      kindoo_site_id: 42 as any,
+      lastActor: ACTOR,
+    };
+    expect(accessRequestSchema.safeParse(seed).success).toBe(false);
+  });
 });
 
 describe('callingTemplateSchema', () => {

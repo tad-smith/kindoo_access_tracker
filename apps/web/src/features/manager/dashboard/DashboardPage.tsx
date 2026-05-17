@@ -27,6 +27,25 @@ import { UtilizationBar } from '../../../lib/render/UtilizationBar';
 import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
 import { summariseAuditRow } from '../auditLog/summarise';
 
+/**
+ * Phase B (spec §15 AC #5): a seat counts on a scope's bar when its
+ * primary scope matches OR any `duplicate_grants[]` entry's scope
+ * matches. Same-scope within-site duplicates collapse — count one
+ * per `member_canonical` per scope, not one per grant.
+ */
+function countSeatsForScope(seats: readonly Seat[], scope: string): number {
+  let n = 0;
+  for (const s of seats) {
+    if (s.scope === scope) {
+      n += 1;
+      continue;
+    }
+    const dupes = s.duplicate_grants ?? [];
+    if (dupes.some((d) => d.scope === scope)) n += 1;
+  }
+  return n;
+}
+
 export function ManagerDashboardPage() {
   const pending = usePendingRequests();
   const audit = useRecentAuditLog();
@@ -143,11 +162,17 @@ function UtilizationCard({ loading, seats, wards, stakeSeatCap }: UtilizationCar
       </Card>
     );
   }
-  // Per-scope counts.
-  const stakeCount = seats.filter((s) => s.scope === 'stake').length;
+  // Per-scope counts. Phase B (spec §15 AC #5): widen inclusion so a
+  // seat with primary `scope='stake'` and a `duplicate_grants[]`
+  // entry for ward 'CO' counts on the CO bar too. Count once per
+  // distinct `(member_canonical, scope)` pair across the seat's
+  // grants so a within-site same-scope duplicate doesn't
+  // double-count on the same bar.
+  const stakeCount = countSeatsForScope(seats, 'stake');
   const wardCounts = new Map<string, number>();
-  for (const s of seats) {
-    if (s.scope !== 'stake') wardCounts.set(s.scope, (wardCounts.get(s.scope) ?? 0) + 1);
+  for (const w of wards) {
+    if (w.ward_code === 'stake') continue;
+    wardCounts.set(w.ward_code, countSeatsForScope(seats, w.ward_code));
   }
   const sortedWards = [...wards].sort((a, b) => a.ward_code.localeCompare(b.ward_code));
 

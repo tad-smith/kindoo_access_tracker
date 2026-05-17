@@ -9,6 +9,7 @@ import { makeRequest, makeSeat, makeWard } from '../../../test/fixtures';
 
 const useStakeRosterMock = vi.fn();
 const useStakeWardsMock = vi.fn();
+const useKindooSitesMock = vi.fn();
 const useFirestoreDocMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
 const usePendingRemoveRequestsMock = vi.fn();
@@ -18,6 +19,7 @@ const usePrincipalMock = vi.fn();
 vi.mock('./hooks', () => ({
   useStakeRoster: () => useStakeRosterMock(),
   useStakeWards: () => useStakeWardsMock(),
+  useKindooSites: () => useKindooSitesMock(),
 }));
 
 vi.mock('../../lib/data', () => ({
@@ -163,6 +165,8 @@ beforeEach(() => {
   // Default: no pending remove requests for any seat (the per-row
   // RemovalAffordance subscription).
   mockNoPendingRemoves();
+  // Default: empty Kindoo Sites catalogue.
+  useKindooSitesMock.mockReturnValue(stakeListResult);
   submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
   // Default principal: stake-scope authority. The stake Roster page
   // is reachable only by users with `stake: true`, so this is the

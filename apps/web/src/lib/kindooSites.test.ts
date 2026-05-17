@@ -2,7 +2,12 @@
 
 import { describe, expect, it } from 'vitest';
 import type { Building, KindooSite, Ward } from '@kindoo/shared';
-import { filterBuildingsBySite, siteIdForScope, siteLabelForSeat } from './kindooSites';
+import {
+  filterBuildingsBySite,
+  siteIdForScope,
+  siteLabelForGrant,
+  siteLabelForSeat,
+} from './kindooSites';
 
 const stamp = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
 const actor = { email: 'a@b.c', canonical: 'a@b.c' };
@@ -116,5 +121,60 @@ describe('siteLabelForSeat', () => {
 
   it('returns null when the foreign-site doc has not loaded yet', () => {
     expect(siteLabelForSeat({ scope: 'FN' }, [ward('FN', 'foreign-1')], [])).toBeNull();
+  });
+});
+
+describe('siteLabelForGrant', () => {
+  it('returns null for stake-scope grants (home-only per Phase 1)', () => {
+    expect(siteLabelForGrant({ scope: 'stake', kindoo_site_id: null }, [], [])).toBeNull();
+  });
+
+  it("returns the foreign site's display_name when the grant carries its own kindoo_site_id", () => {
+    expect(
+      siteLabelForGrant(
+        { scope: 'CO', kindoo_site_id: 'foreign-1' },
+        [],
+        [site('foreign-1', 'East')],
+      ),
+    ).toBe('East');
+  });
+
+  it('returns null for a home grant (kindoo_site_id null) with no ward fallback', () => {
+    expect(siteLabelForGrant({ scope: 'CO', kindoo_site_id: null }, [], [])).toBeNull();
+  });
+
+  it('falls back to ward lookup when the grant has no kindoo_site_id (legacy)', () => {
+    expect(
+      siteLabelForGrant(
+        { scope: 'FN', kindoo_site_id: null },
+        [ward('FN', 'foreign-1')],
+        [site('foreign-1', 'East')],
+      ),
+    ).toBe('East');
+  });
+
+  // Phase B fallback: a grant with `kindoo_site_id: null` falls
+  // through the ward lookup so legacy / pre-migration data still
+  // resolves the foreign badge correctly (the spec accepts this
+  // ambiguity — the migration is a hard prerequisite, and after it
+  // runs every grant carries a non-null site for foreign scopes).
+  it("falls back to ward lookup when the grant's kindoo_site_id is null (legacy / pre-migration)", () => {
+    expect(
+      siteLabelForGrant(
+        { scope: 'CO', kindoo_site_id: null },
+        [ward('CO', 'foreign-1')],
+        [site('foreign-1', 'East')],
+      ),
+    ).toBe('East');
+  });
+
+  it("returns the grant's own foreign label even when the ward is on a different site", () => {
+    expect(
+      siteLabelForGrant(
+        { scope: 'CO', kindoo_site_id: 'foreign-2' },
+        [ward('CO', 'foreign-1')],
+        [site('foreign-1', 'East'), site('foreign-2', 'West')],
+      ),
+    ).toBe('West');
   });
 });
