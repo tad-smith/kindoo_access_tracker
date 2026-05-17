@@ -35,6 +35,8 @@ import type {
   DataSyncApplyFixResponse,
   DataWriteKindooConfigRequest,
   DataWriteKindooConfigResponse,
+  DataWriteKindooSiteEidRequest,
+  DataWriteKindooSiteEidResponse,
   ExtensionRequest,
   ResponseFor,
   SyncDataBundle,
@@ -236,4 +238,20 @@ export async function syncApplyFix(input: SyncApplyFixInput): Promise<SyncApplyF
   const req: DataSyncApplyFixRequest = { type: 'data.syncApplyFix', payload: input };
   const res: DataSyncApplyFixResponse = await sendMessage(req);
   return unwrap(res);
+}
+
+/**
+ * Persist the active Kindoo session's EID onto a foreign `KindooSite`
+ * doc. Kindoo Sites Phase 3 — see `siteCheck.ts`. Throws
+ * `ExtensionApiError` on auth / rule failure; callers run after the
+ * UI has already determined the operator is a manager so the only
+ * realistic failures are transient.
+ */
+export async function writeKindooSiteEid(kindooSiteId: string, kindooEid: number): Promise<void> {
+  const req: DataWriteKindooSiteEidRequest = {
+    type: 'data.writeKindooSiteEid',
+    payload: { kindooSiteId, kindooEid },
+  };
+  const res: DataWriteKindooSiteEidResponse = await sendMessage(req);
+  unwrap(res);
 }

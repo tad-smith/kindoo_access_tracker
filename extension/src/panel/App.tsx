@@ -43,9 +43,16 @@ type ConfigStatus =
   | { kind: 'error'; message: string };
 
 function decideConfigStatus(bundle: StakeConfigBundle): ConfigStatus {
+  // First-run gate: until home identity is captured we force the
+  // wizard takeover. Foreign-site rule mappings happen on a later
+  // wizard run while the operator's Kindoo session is on that foreign
+  // site — checking foreign buildings here would loop the wizard
+  // forever for any home session.
   if (!bundle.stake.kindoo_config) return { kind: 'needs-config' };
-  const someBuildingMissingRule = bundle.buildings.some((b) => !b.kindoo_rule);
-  if (someBuildingMissingRule) return { kind: 'needs-config' };
+  const someHomeBuildingMissingRule = bundle.buildings.some(
+    (b) => (b.kindoo_site_id === null || b.kindoo_site_id === undefined) && !b.kindoo_rule,
+  );
+  if (someHomeBuildingMissingRule) return { kind: 'needs-config' };
   return { kind: 'configured', bundle };
 }
 

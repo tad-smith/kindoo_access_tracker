@@ -14,10 +14,12 @@ import userEvent from '@testing-library/user-event';
 
 const provisionAddOrChangeMock = vi.fn();
 const provisionRemoveMock = vi.fn();
+const provisionEditMock = vi.fn();
 const getEnvironmentsMock = vi.fn();
 const readKindooSessionMock = vi.fn();
 const markRequestCompleteMock = vi.fn();
 const getSeatByEmailMock = vi.fn();
+const writeKindooSiteEidMock = vi.fn();
 
 vi.mock('../content/kindoo/provision', async () => {
   const actual = await vi.importActual<typeof import('../content/kindoo/provision')>(
@@ -27,6 +29,7 @@ vi.mock('../content/kindoo/provision', async () => {
     ...actual,
     provisionAddOrChange: (...args: unknown[]) => provisionAddOrChangeMock(...args),
     provisionRemove: (...args: unknown[]) => provisionRemoveMock(...args),
+    provisionEdit: (...args: unknown[]) => provisionEditMock(...args),
   };
 });
 
@@ -50,6 +53,7 @@ vi.mock('../lib/extensionApi', async () => {
     ...actual,
     markRequestComplete: (...args: unknown[]) => markRequestCompleteMock(...args),
     getSeatByEmail: (...args: unknown[]) => getSeatByEmailMock(...args),
+    writeKindooSiteEid: (...args: unknown[]) => writeKindooSiteEidMock(...args),
   };
 });
 
@@ -61,6 +65,13 @@ function bundle(): StakeConfigBundle {
     stake: {
       stake_id: 'csnorth',
       stake_name: 'Colorado Springs North Stake',
+      // Home-site EID — site check runs first on every provision and
+      // demands `kindoo_config.site_id` for stake-scope / home-ward
+      // resolution.
+      kindoo_config: {
+        site_id: 27994,
+        site_name: 'Colorado Springs North Stake',
+      },
     } as unknown as StakeConfigBundle['stake'],
     buildings: [
       {
@@ -70,6 +81,7 @@ function bundle(): StakeConfigBundle {
       },
     ] as unknown as StakeConfigBundle['buildings'],
     wards: [],
+    kindooSites: [],
   };
 }
 
@@ -114,10 +126,12 @@ describe('RequestCard', () => {
   beforeEach(() => {
     provisionAddOrChangeMock.mockReset();
     provisionRemoveMock.mockReset();
+    provisionEditMock.mockReset();
     getEnvironmentsMock.mockReset();
     readKindooSessionMock.mockReset();
     markRequestCompleteMock.mockReset();
     getSeatByEmailMock.mockReset();
+    writeKindooSiteEidMock.mockReset();
     readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 'tok', eid: 27994 } });
     getEnvironmentsMock.mockResolvedValue([
       { EID: 27994, Name: 'Colorado Springs North Stake', TimeZone: 'Mountain Standard Time' },
@@ -315,6 +329,210 @@ describe('RequestCard', () => {
     await waitFor(() => expect(screen.getByTestId('sba-result-dialog')).toBeInTheDocument());
     const warning = screen.getByTestId('sba-result-overcap');
     expect(warning).toHaveTextContent(/Stake-wide: 351 \/ 350 \(\+1\)/);
+  });
+
+  // ---- Kindoo Sites Phase 3 — orchestrator-entry EID enforcement ----
+
+  /**
+   * Helper: build a bundle with a foreign Kindoo site + a ward
+   * pointing at it. The `kindooSites` entry may carry a recorded EID
+   * or leave it absent (auto-populate path).
+   */
+  function bundleWithForeignWard(opts: { withEid: boolean }): StakeConfigBundle {
+    const base = bundle();
+    return {
+      ...base,
+      wards: [
+        {
+          ward_code: 'FN',
+          ward_name: 'Foreign Ward',
+          building_name: 'Foothills Building',
+          kindoo_site_id: 'east-stake',
+        } as unknown as StakeConfigBundle['wards'][number],
+      ],
+      kindooSites: [
+        {
+          id: 'east-stake',
+          display_name: 'East Stake (Foothills)',
+          kindoo_expected_site_name: 'East Stake',
+          ...(opts.withEid ? { kindoo_eid: 4321 } : {}),
+        } as unknown as StakeConfigBundle['kindooSites'][number],
+      ],
+    };
+  }
+
+  async function renderCardWithBundle(request: AccessRequest, customBundle: StakeConfigBundle) {
+    const { RequestCard } = await import('./RequestCard');
+    return render(<RequestCard request={request} bundle={customBundle} onDismissed={vi.fn()} />);
+  }
+
+  it('refuses with the foreign site display_name before any Kindoo write on EID mismatch (add path)', async () => {
+    // Active session = home (27994); request = foreign ward; foreign
+    // site has a recorded EID (4321). Refuse must fire before
+    // provisionAddOrChange touches anything.
+    const user = userEvent.setup();
+    await renderCardWithBundle(
+      addRequest({ scope: 'FN' }),
+      bundleWithForeignWard({ withEid: true }),
+    );
+    await user.click(screen.getByTestId('sba-add-r1'));
+
+    await waitFor(() =>
+      // Operator-facing message uses display_name ("East Stake (Foothills)"),
+      // not the slug ("east-stake") or the internal matching key ("East Stake").
+      expect(screen.getByTestId('sba-provision-error-r1')).toHaveTextContent(
+        "'East Stake (Foothills)'",
+      ),
+    );
+    expect(screen.getByTestId('sba-provision-error-r1')).toHaveTextContent(
+      /Switch Kindoo sites and try again/,
+    );
+    expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
+    expect(provisionRemoveMock).not.toHaveBeenCalled();
+    expect(provisionEditMock).not.toHaveBeenCalled();
+    expect(writeKindooSiteEidMock).not.toHaveBeenCalled();
+    expect(markRequestCompleteMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses on EID mismatch on the edit path too (shared site-check entry guard)', async () => {
+    // Mirror the add-path foreign-mismatch scenario but with an
+    // edit_manual request type. The site check sits in front of all
+    // three provision dispatches (add / edit / remove) at a single
+    // shared call site in RequestCard.provision — this test proves the
+    // gate runs on the edit path so the shared call site isn't
+    // covered only by inspection.
+    const user = userEvent.setup();
+    await renderCardWithBundle(
+      addRequest({ request_id: 'r-edit', type: 'edit_manual', scope: 'FN' }),
+      bundleWithForeignWard({ withEid: true }),
+    );
+    await user.click(screen.getByTestId('sba-edit-r-edit'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sba-provision-error-r-edit')).toHaveTextContent(
+        "'East Stake (Foothills)'",
+      ),
+    );
+    expect(screen.getByTestId('sba-provision-error-r-edit')).toHaveTextContent(
+      /Switch Kindoo sites and try again/,
+    );
+    // No orchestrator side effects fire on a refused site check.
+    expect(provisionEditMock).not.toHaveBeenCalled();
+    expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
+    expect(provisionRemoveMock).not.toHaveBeenCalled();
+    expect(writeKindooSiteEidMock).not.toHaveBeenCalled();
+    expect(markRequestCompleteMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses on EID mismatch on the remove path too (shared site-check entry guard)', async () => {
+    // Mirror the add-path foreign-mismatch scenario but with a remove
+    // request type. The site check sits in front of all three provision
+    // dispatches (add / edit / remove) at a single shared call site in
+    // RequestCard.provision — this test proves the gate runs on the
+    // remove path so the shared call site isn't covered only by
+    // inspection.
+    const user = userEvent.setup();
+    await renderCardWithBundle(
+      removeReq({ request_id: 'r-remove', scope: 'FN' }),
+      bundleWithForeignWard({ withEid: true }),
+    );
+    await user.click(screen.getByTestId('sba-remove-r-remove'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sba-provision-error-r-remove')).toHaveTextContent(
+        "'East Stake (Foothills)'",
+      ),
+    );
+    expect(screen.getByTestId('sba-provision-error-r-remove')).toHaveTextContent(
+      /Switch Kindoo sites and try again/,
+    );
+    // No orchestrator side effects fire on a refused site check.
+    expect(provisionRemoveMock).not.toHaveBeenCalled();
+    expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
+    expect(provisionEditMock).not.toHaveBeenCalled();
+    expect(writeKindooSiteEidMock).not.toHaveBeenCalled();
+    expect(markRequestCompleteMock).not.toHaveBeenCalled();
+  });
+
+  it('auto-populates kindoo_eid then proceeds when foreign site has no EID and session name matches', async () => {
+    // Active session is on the FOREIGN env (EID 4321), name "East Stake".
+    // Foreign site has no recorded kindoo_eid. The site check populates
+    // the EID via writeKindooSiteEid, THEN the orchestrator runs.
+    readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 'tok', eid: 4321 } });
+    getEnvironmentsMock.mockResolvedValue([
+      { EID: 4321, Name: 'East Stake', TimeZone: 'Mountain Standard Time' },
+    ]);
+    writeKindooSiteEidMock.mockResolvedValue(undefined);
+    provisionAddOrChangeMock.mockResolvedValue({
+      kindoo_uid: 'new-uid',
+      action: 'invited',
+      note: 'Invited Tad Smith.',
+    });
+    markRequestCompleteMock.mockResolvedValue({ ok: true });
+
+    const user = userEvent.setup();
+    await renderCardWithBundle(
+      addRequest({ scope: 'FN' }),
+      bundleWithForeignWard({ withEid: false }),
+    );
+    await user.click(screen.getByTestId('sba-add-r1'));
+
+    await waitFor(() => expect(writeKindooSiteEidMock).toHaveBeenCalledTimes(1));
+    expect(writeKindooSiteEidMock).toHaveBeenCalledWith('east-stake', 4321);
+
+    // Persist must complete BEFORE the orchestrator runs — verify by
+    // call order via `mock.invocationCallOrder`.
+    await waitFor(() => expect(provisionAddOrChangeMock).toHaveBeenCalledTimes(1));
+    const writeOrder = writeKindooSiteEidMock.mock.invocationCallOrder[0]!;
+    const provisionOrder = provisionAddOrChangeMock.mock.invocationCallOrder[0]!;
+    expect(writeOrder).toBeLessThan(provisionOrder);
+  });
+
+  it('refuses when foreign site has no EID and active session name does not match', async () => {
+    // Active session is on HOME (27994), name "Colorado Springs North
+    // Stake". Foreign site expects "East Stake" — name mismatch ⇒
+    // refuse, no auto-populate, no Kindoo writes.
+    const user = userEvent.setup();
+    await renderCardWithBundle(
+      addRequest({ scope: 'FN' }),
+      bundleWithForeignWard({ withEid: false }),
+    );
+    await user.click(screen.getByTestId('sba-add-r1'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sba-provision-error-r1')).toHaveTextContent(/East Stake/),
+    );
+    expect(writeKindooSiteEidMock).not.toHaveBeenCalled();
+    expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
+  });
+
+  it('proceeds without populate when ward has no kindoo_site_id and session is on home', async () => {
+    // Ward-scope request on a home-site ward (kindoo_site_id absent) —
+    // active session is home → check returns ok=true, no populate.
+    const base = bundle();
+    const customBundle: StakeConfigBundle = {
+      ...base,
+      wards: [
+        {
+          ward_code: 'CO',
+          ward_name: 'Cordera Ward',
+          building_name: 'Cordera Building',
+        } as unknown as StakeConfigBundle['wards'][number],
+      ],
+    };
+    provisionAddOrChangeMock.mockResolvedValue({
+      kindoo_uid: 'new-uid',
+      action: 'invited',
+      note: 'Invited.',
+    });
+    markRequestCompleteMock.mockResolvedValue({ ok: true });
+
+    const user = userEvent.setup();
+    await renderCardWithBundle(addRequest({ scope: 'CO' }), customBundle);
+    await user.click(screen.getByTestId('sba-add-r1'));
+
+    await waitFor(() => expect(provisionAddOrChangeMock).toHaveBeenCalledTimes(1));
+    expect(writeKindooSiteEidMock).not.toHaveBeenCalled();
   });
 
   it('dismiss calls onDismissed with the request id', async () => {

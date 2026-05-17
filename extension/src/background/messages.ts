@@ -10,7 +10,13 @@
 
 import { signIn, signOut, currentUser, waitForAuthHydrated, AuthError } from '../lib/auth';
 import { getMyPendingRequests, markRequestComplete, syncApplyFix } from '../lib/api';
-import { loadSeatByEmail, loadStakeConfig, loadSyncData, writeKindooConfig } from './data';
+import {
+  loadSeatByEmail,
+  loadStakeConfig,
+  loadSyncData,
+  writeKindooConfig,
+  writeKindooSiteEid,
+} from './data';
 import type {
   AuthSnapshot,
   ExtensionRequest,
@@ -146,6 +152,21 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
       try {
         const data = await syncApplyFix(req.payload);
         return { ok: true, data };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.writeKindooSiteEid': {
+      try {
+        const user = currentUser();
+        if (!user) {
+          return {
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before writing site eid' },
+          };
+        }
+        await writeKindooSiteEid(req.payload.kindooSiteId, req.payload.kindooEid, user);
+        return { ok: true, data: { ok: true } };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }

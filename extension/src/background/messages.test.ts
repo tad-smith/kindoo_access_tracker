@@ -34,11 +34,13 @@ const loadStakeConfigMock = vi.fn();
 const writeKindooConfigMock = vi.fn();
 const loadSeatByEmailMock = vi.fn();
 const loadSyncDataMock = vi.fn();
+const writeKindooSiteEidMock = vi.fn();
 vi.mock('./data', () => ({
   loadStakeConfig: (...args: unknown[]) => loadStakeConfigMock(...args),
   writeKindooConfig: (...args: unknown[]) => writeKindooConfigMock(...args),
   loadSeatByEmail: (...args: unknown[]) => loadSeatByEmailMock(...args),
   loadSyncData: (...args: unknown[]) => loadSyncDataMock(...args),
+  writeKindooSiteEid: (...args: unknown[]) => writeKindooSiteEidMock(...args),
 }));
 
 describe('handleRequest', () => {
@@ -55,6 +57,7 @@ describe('handleRequest', () => {
     writeKindooConfigMock.mockReset();
     loadSeatByEmailMock.mockReset();
     loadSyncDataMock.mockReset();
+    writeKindooSiteEidMock.mockReset();
   });
   afterEach(() => {
     vi.resetModules();
@@ -184,7 +187,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooConfig',
-      payload: { siteId: 27994, siteName: 'CSN', buildingRules: [] },
+      payload: { kindooSiteId: null, siteId: 27994, siteName: 'CSN', buildingRules: [] },
     });
     expect(writeKindooConfigMock).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -193,14 +196,31 @@ describe('handleRequest', () => {
     });
   });
 
-  it('data.writeKindooConfig forwards the payload + current user to the writer', async () => {
+  it('data.writeKindooConfig forwards the home payload + current user to the writer', async () => {
     const user = { uid: 'u1', email: 'mgr@example.com', displayName: 'Manager' };
     currentUserMock.mockReturnValue(user);
     writeKindooConfigMock.mockResolvedValue(undefined);
     const payload = {
+      kindooSiteId: null,
       siteId: 27994,
       siteName: 'Colorado Springs North Stake',
       buildingRules: [{ buildingId: 'cordera', ruleId: 6248, ruleName: 'Cordera Doors' }],
+    };
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.writeKindooConfig', payload });
+    expect(writeKindooConfigMock).toHaveBeenCalledWith(payload, user);
+    expect(result).toEqual({ ok: true, data: { ok: true } });
+  });
+
+  it('data.writeKindooConfig forwards a foreign-site payload through to the writer', async () => {
+    const user = { uid: 'u1', email: 'mgr@example.com', displayName: 'Manager' };
+    currentUserMock.mockReturnValue(user);
+    writeKindooConfigMock.mockResolvedValue(undefined);
+    const payload = {
+      kindooSiteId: 'east-stake',
+      siteId: 4321,
+      siteName: 'East Stake',
+      buildingRules: [{ buildingId: 'foothills', ruleId: 8001, ruleName: 'Foothills Doors' }],
     };
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.writeKindooConfig', payload });
@@ -220,12 +240,39 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooConfig',
-      payload: { siteId: 27994, siteName: 'CSN', buildingRules: [] },
+      payload: { kindooSiteId: null, siteId: 27994, siteName: 'CSN', buildingRules: [] },
     });
     expect(result).toEqual({
       ok: false,
       error: { code: 'permission-denied', message: 'rules denied write' },
     });
+  });
+
+  it('data.writeKindooSiteEid rejects with unauthenticated when no user is signed in', async () => {
+    currentUserMock.mockReturnValue(null);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.writeKindooSiteEid',
+      payload: { kindooSiteId: 'east-stake', kindooEid: 4321 },
+    });
+    expect(writeKindooSiteEidMock).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'unauthenticated', message: 'sign in before writing site eid' },
+    });
+  });
+
+  it('data.writeKindooSiteEid forwards the payload + current user to the writer', async () => {
+    const user = { uid: 'u1', email: 'mgr@example.com', displayName: 'Manager' };
+    currentUserMock.mockReturnValue(user);
+    writeKindooSiteEidMock.mockResolvedValue(undefined);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.writeKindooSiteEid',
+      payload: { kindooSiteId: 'east-stake', kindooEid: 4321 },
+    });
+    expect(writeKindooSiteEidMock).toHaveBeenCalledWith('east-stake', 4321, user);
+    expect(result).toEqual({ ok: true, data: { ok: true } });
   });
 
   it('data.getSeatByEmail forwards the canonical and returns the seat doc', async () => {

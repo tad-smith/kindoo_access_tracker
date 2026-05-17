@@ -117,13 +117,24 @@ Top of the Queue panel: a small "⚙ Configure Kindoo" link visible at all times
 - Operator created additional Kindoo Access Rules and wants to remap.
 - Site identity changed (rare; expected to require reconfigure).
 
+### Per-site configuration (Kindoo Sites Phase 5)
+
+When the SBA stake operates more than one Kindoo site (home plus N foreign), each foreign site's buildings need their own `kindoo_rule` mappings — those `RID`s come from the foreign site's Access Rule list, not home's. The wizard ships re-runnable per Kindoo site:
+
+- **One wizard run = one Kindoo site.** Which site is determined by `resolveActiveKindooSite(...)` in `siteCheck.ts` (the same active-session detector the orchestrator entry guard uses for the request's expected site). The operator switches sites via Kindoo's own UI and reopens the SBA panel; no "switch sites" button lives in SBA.
+- **Header label:** `"Configuring: <displayName>"` — `stake.kindoo_expected_site_name || stake.stake_name` for home, `KindooSite.display_name` for a foreign site.
+- **Building filter:** the wizard renders only buildings whose `kindoo_site_id` matches the active site (`null` / absent for home; a foreign doc id for foreign). A home wizard never prompts for foreign buildings; a foreign wizard never prompts for home buildings.
+- **Save scope:** the `data.writeKindooConfig` payload carries `kindooSiteId: string | null`. `null` → write `stake.kindoo_config` + per-building `kindoo_rule` on home buildings. `<string>` → auto-populate `kindoo_eid` on the foreign `KindooSite` doc (idempotent — re-asserts the value on subsequent runs) + per-building `kindoo_rule` on foreign buildings. The stake doc's `kindoo_config` is NEVER touched on a foreign run.
+- **Unknown active site:** if the active session's site name matches neither home nor any configured foreign site, the wizard refuses with `"This Kindoo site (<active site name>) isn't configured in SBA. Add it in Configuration → Kindoo Sites first."`. The operator adds the site to SBA via the manager web app's Configuration → Kindoo Sites surface (Phase 1) and reopens the panel.
+- **First-run gate.** `App.tsx`'s `decideConfigStatus()` routes to the wizard takeover until `stake.kindoo_config` exists AND every HOME building has `kindoo_rule`. Foreign-building rule mappings happen on a subsequent wizard run while the operator is signed into that foreign site — checking foreign buildings in the gate would loop the wizard forever for any home session.
+
 ### Wire-protocol additions (SW ↔ CS)
 
 v2.1 is content-script-side for everything Kindoo-related (per locked-in CS decision in v1). Firestore reads of `stakes/{stakeId}` + buildings happen from the SW via the existing `extensionApi.ts` boundary; the CS asks the SW for principal + stake + buildings data.
 
 New message types (TBD names, in `lib/messaging.ts`):
-- `data.getStakeConfig` → response: `{ stake: Stake, buildings: Building[] }`
-- `data.writeKindooConfig` → input: `{ siteId, siteName, buildingRules: Record<buildingId, { ruleId, ruleName }> }` → response: success/error
+- `data.getStakeConfig` → response: `{ stake: Stake, buildings: Building[], wards: Ward[], kindooSites: KindooSite[] }`
+- `data.writeKindooConfig` → input: `{ kindooSiteId: string | null, siteId, siteName, buildingRules: [{ buildingId, ruleId, ruleName }] }` → response: success/error. Phase 5 — `kindooSiteId === null` discriminates a home save (writes `stake.kindoo_config`) from a foreign save (writes `kindooSites/<id>.kindoo_eid`).
 
 Firestore writes are done by the SW (it owns the Firebase Auth session) in a single batched write.
 
@@ -213,6 +224,16 @@ provisionRemove(req, seat, stake, buildings, wards, envs, session): Promise<Prov
 ```
 
 `seat` is the SBA `Seat` doc for the request's subject pre-completion (or `null` if it doesn't exist yet — only possible on a first-ever add for that member, or on a remove that lost an R-1 race). Both paths compute the post-completion seat shape and reconcile Kindoo to it.
+
+#### Kindoo Sites Phase 3 — entry guard (`siteCheck.ts`)
+
+Every orchestrator entry (`provisionAddOrChange`, `provisionRemove`, `provisionEdit`) is gated on `checkRequestSite(...)` in `RequestCard.tsx` — see spec §15 Phase 3. The check runs after `getEnvironments` (which yields the active session's `Name`) and BEFORE any Kindoo write:
+
+- Stake-scope / home-ward requests: expected EID is `stake.kindoo_config.site_id`.
+- Foreign-ward requests (`ward.kindoo_site_id` set): expected EID is `kindooSites/<id>.kindoo_eid`.
+- Foreign site with no recorded `kindoo_eid`: compare the active session's site name against the doc's `kindoo_expected_site_name` (trim + lowercase). Match → `writeKindooSiteEid(...)` populates the EID, then the orchestrator runs. Mismatch → refuse with `ProvisionSiteMismatchError` ("This request needs to be provisioned on '<expected>'. Switch Kindoo sites and try again.").
+
+`checkRequestSite` is a pure function; it takes `{ request, session, envs, stake, wards, kindooSites }` and returns a discriminated `{ ok: true }` / `{ ok: true, populate }` / `{ ok: false, error }` result. The `kindooSites` array reaches the orchestrator through the `data.getStakeConfig` callable response — extended in Phase 3 to also fetch `stakes/{STAKE_ID}/kindooSites/*`.
 
 Result:
 

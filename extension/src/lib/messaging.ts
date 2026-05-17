@@ -100,6 +100,13 @@ export interface DataGetStakeConfigPayload {
    * Kindoo Description field). Empty for stakes with no wards yet.
    */
   wards: Ward[];
+  /**
+   * Foreign Kindoo sites configured for the stake — see Kindoo Sites
+   * (spec §15). Empty for stakes operating only their home site.
+   * Phase 3 reads this on the provision flow to validate the active
+   * Kindoo session's EID matches the request's target site.
+   */
+  kindooSites: KindooSite[];
 }
 
 /**
@@ -113,7 +120,28 @@ export interface DataWriteKindooConfigRequest {
 }
 
 export interface WriteKindooConfigPayload {
+  /**
+   * Which configured Kindoo site this save applies to:
+   *   - `null` → home site. Writes `stake.kindoo_config` + per-building
+   *     `kindoo_rule` on home-site buildings.
+   *   - `<string>` → foreign `KindooSite` doc id. Writes per-building
+   *     `kindoo_rule` on foreign-site buildings + (when supplied)
+   *     auto-populates `kindoo_eid` on the foreign site doc. Does NOT
+   *     touch `stake.kindoo_config`.
+   *
+   * Phase 5 — the configure wizard scopes to one site per run. See
+   * `extension/docs/v2-design.md` "Per-site configuration".
+   */
+  kindooSiteId: string | null;
+  /** Active Kindoo session's EID. Persisted onto `stake.kindoo_config`
+   * for the home save; persisted onto the foreign `KindooSite` doc as
+   * `kindoo_eid` for a foreign save when the foreign doc doesn't carry
+   * one yet (Phase 3 auto-populate path, run from the wizard). */
   siteId: number;
+  /** Active Kindoo session's site `Name`. Persisted onto
+   * `stake.kindoo_config.site_name` for the home save; foreign saves
+   * carry it for diagnostics but don't write it (foreign sites already
+   * carry `kindoo_expected_site_name` from the Configuration UI). */
   siteName: string;
   buildingRules: Array<{
     buildingId: string;
@@ -133,6 +161,24 @@ export interface DataGetSeatByEmailRequest {
   type: 'data.getSeatByEmail';
   /** Canonical email — caller has already run `canonicalEmail()`. */
   canonical: string;
+}
+
+/**
+ * Persist a discovered Kindoo environment ID onto a foreign
+ * `KindooSite` doc. Kindoo Sites Phase 3 — the manager UI captures
+ * only display name + expected site name; the extension auto-
+ * populates `kindoo_eid` the first time the operator runs a provision
+ * on a session whose site name matches the foreign site. One doc-id
+ * + eid pair per call; rules already gate the write manager-only.
+ */
+export interface DataWriteKindooSiteEidRequest {
+  type: 'data.writeKindooSiteEid';
+  payload: {
+    /** Foreign `KindooSite` doc id under `stakes/{stakeId}/kindooSites/`. */
+    kindooSiteId: string;
+    /** EID discovered on the active Kindoo session. */
+    kindooEid: number;
+  };
 }
 
 /**
@@ -183,7 +229,8 @@ export type ExtensionRequest =
   | DataWriteKindooConfigRequest
   | DataGetSeatByEmailRequest
   | DataGetSyncDataRequest
-  | DataSyncApplyFixRequest;
+  | DataSyncApplyFixRequest
+  | DataWriteKindooSiteEidRequest;
 
 // ---- Response envelopes ------------------------------------------------
 
@@ -199,6 +246,7 @@ export type DataWriteKindooConfigResponse = Result<{ ok: true }>;
 export type DataGetSeatByEmailResponse = Result<Seat | null>;
 export type DataGetSyncDataResponse = Result<SyncDataBundle>;
 export type DataSyncApplyFixResponse = Result<SyncApplyFixResult>;
+export type DataWriteKindooSiteEidResponse = Result<{ ok: true }>;
 
 /** Lookup from a request `type` to its response shape. */
 export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequest
@@ -221,7 +269,9 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
                   ? DataGetSyncDataResponse
                   : R extends DataSyncApplyFixRequest
                     ? DataSyncApplyFixResponse
-                    : never;
+                    : R extends DataWriteKindooSiteEidRequest
+                      ? DataWriteKindooSiteEidResponse
+                      : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 
