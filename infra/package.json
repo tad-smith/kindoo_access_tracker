@@ -1,0 +1,14 @@
+{
+  "name": "@kindoo/infra",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Operator-run one-off scripts for the Stake Building Access Firebase deployment (backfills, ad-hoc maintenance, etc.). Deploy scripts and runbooks live alongside but don't depend on these packages.",
+  "//module-type": "Intentionally NOT \"type\": \"module\" — sibling `ensure-version-gen.js` is CommonJS (uses `require`). Our ESM scripts use the `.mjs` extension to opt into ESM per-file.",
+  "scripts": {
+    "lint": "prettier --check scripts/run-backfill-kindoo-site-id.mjs"
+  },
+  "dependencies": {
+    "firebase": "^12.12.1",
+    "firebase-admin": "^13.8.0"
+  }
+}
