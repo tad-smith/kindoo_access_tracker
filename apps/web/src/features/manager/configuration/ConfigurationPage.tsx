@@ -457,6 +457,12 @@ function BuildingsTab() {
     [buildings.data],
   );
 
+  // Gate Delete on the wards snapshot arriving. Deep-linking into
+  // ?tab=buildings can land the Delete button before wards.data is
+  // defined; without this gate the FK ref-guard runs against [] and
+  // deletes a building that real wards still reference.
+  const deleteReady = wards.data !== undefined;
+
   return (
     <div className="kd-config-section">
       <SectionHeader
@@ -482,7 +488,10 @@ function BuildingsTab() {
               </Button>
               <Button
                 variant="danger"
-                onClick={() =>
+                disabled={!deleteReady}
+                title={deleteReady ? undefined : 'Loading…'}
+                onClick={() => {
+                  if (!deleteReady) return;
                   del
                     .mutateAsync({
                       buildingId: b.building_id,
@@ -490,11 +499,11 @@ function BuildingsTab() {
                       wards: wards.data ?? [],
                     })
                     .then(() => toast('Building deleted.', 'success'))
-                    .catch((err) => toast(errorMessage(err), 'error'))
-                }
+                    .catch((err) => toast(errorMessage(err), 'error'));
+                }}
                 data-testid={`config-building-delete-${b.building_id}`}
               >
-                Delete
+                {deleteReady ? 'Delete' : 'Loading…'}
               </Button>
             </span>
           </li>
@@ -639,6 +648,13 @@ function KindooSitesTab() {
     [sites.data],
   );
 
+  // Gate Delete on both FK snapshots arriving. Deep-linking into
+  // ?tab=kindoo-sites can land the Delete button before wards.data /
+  // buildings.data are defined; without this gate the FK ref-guard
+  // runs against [] and deletes a site that real wards / buildings
+  // still reference.
+  const deleteReady = wards.data !== undefined && buildings.data !== undefined;
+
   return (
     <div className="kd-config-section">
       <SectionHeader
@@ -675,7 +691,10 @@ function KindooSitesTab() {
                 </Button>
                 <Button
                   variant="danger"
-                  onClick={() =>
+                  disabled={!deleteReady}
+                  title={deleteReady ? undefined : 'Loading…'}
+                  onClick={() => {
+                    if (!deleteReady) return;
                     del
                       .mutateAsync({
                         kindooSiteId: s.id,
@@ -683,11 +702,11 @@ function KindooSitesTab() {
                         buildings: buildings.data ?? [],
                       })
                       .then(() => toast('Kindoo site deleted.', 'success'))
-                      .catch((err) => toast(errorMessage(err), 'error'))
-                  }
+                      .catch((err) => toast(errorMessage(err), 'error'));
+                  }}
                   data-testid={`config-kindoo-site-delete-${s.id}`}
                 >
-                  Delete
+                  {deleteReady ? 'Delete' : 'Loading…'}
                 </Button>
               </span>
             </li>

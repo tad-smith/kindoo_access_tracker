@@ -100,6 +100,22 @@ function liveResult<T>(data: T[]) {
   };
 }
 
+// Pending state for a live hook: snapshot hasn't yet arrived. Mirrors
+// the shape `useFirestoreCollection` exposes during its initial load.
+function loadingResult() {
+  return {
+    data: undefined,
+    error: null,
+    status: 'pending',
+    isPending: true,
+    isLoading: true,
+    isSuccess: false,
+    isError: false,
+    isFetching: true,
+    fetchStatus: 'fetching',
+  };
+}
+
 function Wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
@@ -788,5 +804,107 @@ describe('Building dialog Kindoo Site field', () => {
     expect(upsertBuildingMock).toHaveBeenCalledWith(
       expect.objectContaining({ building_name: 'Cordera Building', kindoo_site_id: null }),
     );
+  });
+});
+
+// ---- Delete buttons gated on FK snapshots arriving ------------------
+//
+// Deep-linking into a Configuration tab can land the Delete buttons
+// on rows before the foreign-key snapshots (wards / buildings) have
+// arrived. Without a gate, the FK ref-guard runs against `[]` and
+// silently deletes a doc with dangling references. Every tab whose
+// delete depends on a sibling collection must disable its Delete
+// button until the dependencies are loaded.
+
+describe('Configuration Delete buttons gated on FK snapshots', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mkSite = (overrides: Partial<KindooSite> = {}): KindooSite => ({
+    id: 'east-stake',
+    display_name: 'East Stake',
+    kindoo_expected_site_name: 'East Stake CS',
+    kindoo_eid: 42,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ...(overrides as any),
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mkBuilding = (overrides: Partial<Building> = {}): Building =>
+    ({
+      building_id: 'cordera-building',
+      building_name: 'Cordera Building',
+      address: '123 Main',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(overrides as any),
+    }) as Building;
+
+  describe('KindooSitesTab', () => {
+    it('disables Delete while wards snapshot is loading', () => {
+      useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
+      useWardsMock.mockReturnValue(loadingResult());
+      useBuildingsMock.mockReturnValue(liveResult<Building>([]));
+      render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
+      const btn = screen.getByTestId('config-kindoo-site-delete-east-stake');
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute('title', 'Loading…');
+    });
+
+    it('disables Delete while buildings snapshot is loading', () => {
+      useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
+      useWardsMock.mockReturnValue(liveResult<Ward>([]));
+      useBuildingsMock.mockReturnValue(loadingResult());
+      render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
+      const btn = screen.getByTestId('config-kindoo-site-delete-east-stake');
+      expect(btn).toBeDisabled();
+    });
+
+    it('does NOT call the delete mutation when clicked while loading', async () => {
+      const user = userEvent.setup();
+      useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
+      useWardsMock.mockReturnValue(loadingResult());
+      useBuildingsMock.mockReturnValue(liveResult<Building>([]));
+      render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
+      await user.click(screen.getByTestId('config-kindoo-site-delete-east-stake'));
+      expect(deleteKindooSiteMock).not.toHaveBeenCalled();
+    });
+
+    it('enables Delete once both FK snapshots are loaded (even when empty)', () => {
+      useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
+      useWardsMock.mockReturnValue(liveResult<Ward>([]));
+      useBuildingsMock.mockReturnValue(liveResult<Building>([]));
+      render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
+      const btn = screen.getByTestId('config-kindoo-site-delete-east-stake');
+      expect(btn).not.toBeDisabled();
+    });
+  });
+
+  describe('BuildingsTab', () => {
+    it('disables Delete while wards snapshot is loading', () => {
+      useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+      useWardsMock.mockReturnValue(loadingResult());
+      render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+      const btn = screen.getByTestId('config-building-delete-cordera-building');
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute('title', 'Loading…');
+    });
+
+    it('clicking the disabled Delete button is a no-op while loading', async () => {
+      const user = userEvent.setup();
+      useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+      useWardsMock.mockReturnValue(loadingResult());
+      render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+      const btn = screen.getByTestId('config-building-delete-cordera-building');
+      await user.click(btn);
+      // Button stays disabled; userEvent honours the disabled state by
+      // not firing onClick, so the row is intact and no error surfaces.
+      expect(btn).toBeDisabled();
+    });
+
+    it('enables Delete once wards snapshot is loaded (even when empty)', () => {
+      useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+      useWardsMock.mockReturnValue(liveResult<Ward>([]));
+      render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+      const btn = screen.getByTestId('config-building-delete-cordera-building');
+      expect(btn).not.toBeDisabled();
+    });
   });
 });
