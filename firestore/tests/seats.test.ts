@@ -604,6 +604,49 @@ describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
         }),
       );
     });
+
+    // T-43 reviewer fix: a client write that touches
+    // `duplicate_grants` must also touch `duplicate_scopes` so the
+    // server-maintained primitive mirror stays in lockstep. The rule
+    // allows the coordinated pair (server writers do this); rejects
+    // either field alone.
+    it('client update mutating duplicate_grants without duplicate_scopes is denied (mirror coupling)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ duplicate_grants: [], duplicate_scopes: [] }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          duplicate_grants: [
+            { scope: 'CO', type: 'manual', callings: [], detected_at: new Date() },
+          ],
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('client update mutating duplicate_scopes without duplicate_grants is denied (mirror coupling)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ duplicate_grants: [], duplicate_scopes: [] }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          duplicate_scopes: ['CO'],
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
   });
 
   describe('delete', () => {
