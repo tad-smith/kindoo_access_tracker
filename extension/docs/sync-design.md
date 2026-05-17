@@ -29,11 +29,12 @@ Run in parallel during a single spinner state on `SyncPanel`:
 
 **From SBA (Firestore, via new SW message `data.getSyncData`):**
 - All seats under `stakes/{STAKE_ID}/seats/*`.
-- All wards under `stakes/{STAKE_ID}/wards/*` (for ward-name → ward_code resolution).
+- All wards under `stakes/{STAKE_ID}/wards/*` (for ward-name → ward_code resolution; and for Kindoo Sites Phase 4, the optional `kindoo_site_id` on each ward).
 - All buildings under `stakes/{STAKE_ID}/buildings/*` (for Kindoo-rule → building-name resolution via the v2.1 config).
 - All ward calling templates under `stakes/{STAKE_ID}/wardCallingTemplates/*` (auto-calling sets per ward).
 - All stake calling templates under `stakes/{STAKE_ID}/stakeCallingTemplates/*` (auto-calling set for stake scope).
-- The stake doc itself (for `stake_name`, `kindoo_expected_site_name`, etc).
+- All Kindoo Sites under `stakes/{STAKE_ID}/kindooSites/*` (foreign-site directory — see `docs/spec.md` §15). Used by the Phase 4 active-site filter to map the live EID to home / `foreign(siteId)` / unknown.
+- The stake doc itself (for `stake_name`, `kindoo_expected_site_name`, `kindoo_config.site_id` (Phase 4 home-EID match), etc).
 
 **From Kindoo (content script, paginated):**
 - Loop `KindooGetEnvironmentUsersLightWithTotalNumberOfRecords` with `start = 0, 50, 100, …` until `EUList.length < 50` (or `TotalRecordNumber` reached). Standard envelope.
@@ -138,6 +139,14 @@ The detector's `buildings-mismatch` rule then:
 Wall-time estimate: ~313 per-user calls at concurrency 4 and ~150 ms median latency → ~12 s. The summary header still surfaces seat / user counts; the operator sees the per-user progress while the loop runs.
 
 **`kindoo-only` rows with `intended.type === 'auto'` are NOT filtered.** Even when the Kindoo user's description classifies as auto, the absence of an SBA seat is still drift — these users need to be imported into SBA. The drift row stays.
+
+**Active-site filter (Kindoo Sites Phase 4 — see `docs/spec.md` §15).** The detector takes an optional `activeSite: ActiveSite` input resolved by `content/kindoo/sync/activeSite.ts` from the live EID (`localStorage.state.sites.ids[0]`), `stake.kindoo_config.site_id`, and each `KindooSite.kindoo_eid`. The filter scopes both sides of the diff to seats / users belonging to the active Kindoo site so a session pointed at the home site does not flag foreign-site grants as drift (and vice versa):
+
+- `home` — Include seats whose `scope === 'stake'` (Phase 1 policy: stake-scope seats are home-only) and seats whose scope is a ward with `kindoo_site_id` null / absent. Include Kindoo users whose parsed primary segment resolves to one of those wards or to the stake; on home, unparseable / unresolvable Kindoo users are also kept so the historical `kindoo-only` / `kindoo-unparseable` rows still surface.
+- `foreign(siteId)` — Include only seats whose scope is a ward with `kindoo_site_id === siteId`. Stake-scope seats and unparseable Kindoo users are excluded. Include only Kindoo users whose parsed primary segment resolves to one of those wards — home-ward users and other-foreign-ward users belong to a different manager's queue and are dropped entirely (no `kindoo-only` drift row).
+- `unknown` — Active EID matches neither home nor any configured `KindooSite`. The detector returns an empty diff; the panel renders an empty-state recovery message and skips the report entirely (and the door-grant enrichment loop is short-circuited up front in `SyncPanel`).
+
+The summary counters surface the FILTERED seat / user totals so the operator sees the comparison scope, not the raw collection sizes.
 
 ### UI (`SyncPanel.tsx`)
 

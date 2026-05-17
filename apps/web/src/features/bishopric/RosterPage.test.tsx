@@ -20,24 +20,14 @@ const useBishopricRosterMock = vi.fn();
 const useFirestoreOnceMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
 const usePendingRemoveRequestsMock = vi.fn();
+const useStakeWardsMock = vi.fn();
+const useKindooSitesMock = vi.fn();
 const submitMutateAsyncMock = vi.fn();
 // Real navigate returns a Promise; the page calls `.catch(...)` on it.
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
-}));
-
-vi.mock('./hooks', () => ({
-  useBishopricRoster: (ward: string | null) => useBishopricRosterMock(ward),
-}));
-
-vi.mock('../../lib/data', () => ({
-  useFirestoreOnce: (ref: unknown) => useFirestoreOnceMock(ref),
-}));
-
-vi.mock('@tanstack/react-router', () => ({
-  useNavigate: () => navigateMock,
 }));
 
 // RemovalAffordance subscribes via the requests hooks; mock so we
@@ -57,6 +47,20 @@ const stakeListResult = {
   isFetching: false,
   fetchStatus: 'idle' as const,
 };
+
+vi.mock('./hooks', () => ({
+  useBishopricRoster: (ward: string | null) => useBishopricRosterMock(ward),
+  useStakeWards: () => useStakeWardsMock(),
+  useKindooSites: () => useKindooSitesMock(),
+}));
+
+vi.mock('../../lib/data', () => ({
+  useFirestoreOnce: (ref: unknown) => useFirestoreOnceMock(ref),
+}));
+
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => navigateMock,
+}));
 
 vi.mock('../requests/hooks', () => ({
   usePendingRemoveRequests: (canonical: string | null, scope: string | null) =>
@@ -163,6 +167,10 @@ beforeEach(() => {
   // Default: no pending remove requests for any seat (the per-row
   // RemovalAffordance subscription).
   mockNoPendingRemoves();
+  // Default: empty wards / Kindoo Sites catalogues. The Kindoo-site
+  // badge tests override via mockStakeWards / mockKindooSites.
+  useStakeWardsMock.mockReturnValue(stakeListResult);
+  useKindooSitesMock.mockReturnValue(stakeListResult);
   submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
 });
 
@@ -621,5 +629,93 @@ describe('<BishopricRosterPage />', () => {
       await user.click(screen.getByTestId('edit-btn-manual@x.com'));
       expect(screen.getByTestId('edit-seat-dialog-form')).toBeInTheDocument();
     });
+  });
+});
+
+describe('<BishopricRosterPage /> — Kindoo Sites label (spec §15)', () => {
+  // Ward seats render a small foreign-site badge near the seat-type
+  // badge when the ward's `kindoo_site_id` points at a non-home site.
+  // Home / stake / unknown-ward → no badge.
+
+  function mockStakeWards(wardDocs: Ward[]) {
+    useStakeWardsMock.mockReturnValue({
+      data: wardDocs,
+      error: null,
+      status: 'success',
+      isPending: false,
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      isFetching: false,
+      fetchStatus: 'idle',
+    });
+  }
+
+  function mockKindooSites(sites: Array<{ id: string; display_name: string }>) {
+    useKindooSitesMock.mockReturnValue({
+      data: sites.map((s) => ({
+        id: s.id,
+        display_name: s.display_name,
+        kindoo_expected_site_name: '',
+        created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+        last_modified_at: {
+          seconds: 0,
+          nanoseconds: 0,
+          toDate: () => new Date(),
+          toMillis: () => 0,
+        },
+        lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+      })),
+      error: null,
+      status: 'success',
+      isPending: false,
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      isFetching: false,
+      fetchStatus: 'idle',
+    });
+  }
+
+  it('renders the foreign-site badge on a ward seat whose ward.kindoo_site_id points at a foreign site', () => {
+    usePrincipalMock.mockReturnValue(principal(['FN']));
+    mockSeats([
+      makeSeat({
+        member_canonical: 'a@x.com',
+        member_email: 'a@x.com',
+        member_name: 'Alpha',
+        scope: 'FN',
+      }),
+    ]);
+    mockWardDoc(makeWard({ ward_code: 'FN', ward_name: 'Foothills', seat_cap: 20 }));
+    mockStakeWards([
+      makeWard({
+        ward_code: 'FN',
+        ward_name: 'Foothills',
+        kindoo_site_id: 'foreign-1',
+      } as Partial<Ward>),
+    ]);
+    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }]);
+    render(<BishopricRosterPage initialWard="FN" />);
+    expect(screen.getByTestId('kindoo-site-badge-a@x.com')).toHaveTextContent(
+      'East Stake (Foothills)',
+    );
+  });
+
+  it('omits the foreign-site badge when the ward is on the home site (kindoo_site_id null)', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([
+      makeSeat({
+        member_canonical: 'a@x.com',
+        member_email: 'a@x.com',
+        member_name: 'Alpha',
+        scope: 'CO',
+      }),
+    ]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    mockStakeWards([makeWard({ ward_code: 'CO' } as Partial<Ward>)]);
+    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }]);
+    render(<BishopricRosterPage initialWard="CO" />);
+    expect(screen.queryByTestId('kindoo-site-badge-a@x.com')).toBeNull();
   });
 });

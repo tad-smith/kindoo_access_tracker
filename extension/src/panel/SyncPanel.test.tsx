@@ -70,6 +70,14 @@ function bundle() {
     stake: {
       stake_id: 'csnorth',
       stake_name: 'Colorado Springs North Stake',
+      // Phase 4: stake.kindoo_config.site_id is the home EID. Tests
+      // default to active=home; the readKindooSession mock returns
+      // eid=27994, so the home site matches and the active-site filter
+      // becomes a no-op against the existing fixtures.
+      kindoo_config: {
+        site_id: 27994,
+        site_name: 'CSN',
+      },
     },
     wards: [{ ward_code: 'CO', ward_name: 'Cordera Ward', building_name: 'Cordera Building' }],
     buildings: [
@@ -82,6 +90,7 @@ function bundle() {
     seats: [],
     wardCallingTemplates: [],
     stakeCallingTemplates: [],
+    kindooSites: [],
   };
 }
 
@@ -833,5 +842,65 @@ describe('SyncPanel', () => {
     expect(applyFixMock).toHaveBeenCalledTimes(2);
     // Second call uses the same action object — assert the side stays 'sba'.
     expect((applyFixMock.mock.calls[1]![1] as { side: string }).side).toBe('sba');
+  });
+
+  // --------------------------------------------------------------------
+  // Phase 4 — active Kindoo site label + unknown-site empty state.
+  // See `docs/spec.md` §15 and `content/kindoo/sync/activeSite.ts`.
+  // --------------------------------------------------------------------
+
+  it('renders the active-site label "Home" when the live EID matches stake.kindoo_config.site_id', async () => {
+    getSyncDataMock.mockResolvedValue(bundle());
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-sync-active-site')).toHaveTextContent('Reading from: Home');
+  });
+
+  it('renders the foreign-site display_name in the active-site label', async () => {
+    // Session is on foreign EID 30000; the bundle exposes that EID as
+    // `east-stake` with display_name "East Stake".
+    readKindooSessionMock.mockReturnValue({
+      ok: true,
+      session: { token: 'sess', eid: 30000 },
+    });
+    const b = bundle();
+    (b.kindooSites as unknown[]).push({
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake Building',
+      kindoo_eid: 30000,
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-sync-active-site')).toHaveTextContent(
+      'Reading from: East Stake',
+    );
+  });
+
+  it('renders the unknown-site empty state with the exact recovery message and suppresses the report', async () => {
+    // EID 99999 matches neither home nor any KindooSite in the bundle.
+    readKindooSessionMock.mockReturnValue({
+      ok: true,
+      session: { token: 'sess', eid: 99999 },
+    });
+    getSyncDataMock.mockResolvedValue(bundle());
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-unknown-site')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-sync-unknown-site-message')).toHaveTextContent(
+      'This Kindoo site is not configured in SBA. Add it in Configuration → Kindoo Sites or switch to a known site.',
+    );
+    // Report rendering is suppressed entirely.
+    expect(screen.queryByTestId('sba-sync-report')).toBeNull();
+    expect(screen.queryByTestId('sba-sync-summary')).toBeNull();
   });
 });

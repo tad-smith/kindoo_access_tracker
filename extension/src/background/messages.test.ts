@@ -329,6 +329,7 @@ describe('handleRequest', () => {
       seats: [{ member_canonical: 'a@x.com' }],
       wardCallingTemplates: [{ calling_name: 'X' }],
       stakeCallingTemplates: [],
+      kindooSites: [],
     };
     loadSyncDataMock.mockResolvedValue(bundle);
     const { handleRequest } = await import('./messages');

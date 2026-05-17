@@ -23,9 +23,11 @@ import {
   useAllSeats,
   useBuildings,
   useInlineSeatEditMutation,
+  useKindooSites,
   useReconcileSeatMutation,
   useWards,
 } from './hooks';
+import { siteLabelForSeat } from '../../../lib/kindooSites';
 import { useStakeDoc } from '../dashboard/hooks';
 import { RosterCardList } from '../../../components/roster/RosterCardList';
 import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
@@ -58,6 +60,9 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   const seats = useAllSeats();
   const wards = useWards();
   const buildings = useBuildings();
+  // Live Kindoo Sites catalogue — feeds the foreign-site badge on ward
+  // seats (spec §15). Empty when the stake only operates its home site.
+  const kindooSites = useKindooSites();
   const stake = useStakeDoc();
   const navigate = useNavigate();
   const [editingSeat, setEditingSeat] = useState<Seat | null>(null);
@@ -214,14 +219,27 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
               ) : null}
             </span>
           )}
-          extraBadges={(seat) =>
-            seat.duplicate_grants.length > 0 ? (
-              <Badge variant="manual" data-testid={`seat-duplicate-badge-${seat.member_canonical}`}>
-                {seat.duplicate_grants.length} duplicate
-                {seat.duplicate_grants.length === 1 ? '' : 's'}
-              </Badge>
-            ) : null
-          }
+          extraBadges={(seat) => {
+            const siteLabel = siteLabelForSeat(seat, wardsList, kindooSites.data ?? []);
+            return (
+              <>
+                {seat.duplicate_grants.length > 0 ? (
+                  <Badge
+                    variant="manual"
+                    data-testid={`seat-duplicate-badge-${seat.member_canonical}`}
+                  >
+                    {seat.duplicate_grants.length} duplicate
+                    {seat.duplicate_grants.length === 1 ? '' : 's'}
+                  </Badge>
+                ) : null}
+                {siteLabel ? (
+                  <Badge variant="info" data-testid={`kindoo-site-badge-${seat.member_canonical}`}>
+                    {siteLabel}
+                  </Badge>
+                ) : null}
+              </>
+            );
+          }}
         />
       )}
 

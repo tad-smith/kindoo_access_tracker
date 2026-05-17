@@ -52,14 +52,21 @@ import {
   buildRuleDoorMap,
   enrichUsersWithDerivedBuildings,
 } from '../content/kindoo/sync/buildingsFromDoors';
+import { identifyActiveSite, type ActiveSite } from '../content/kindoo/sync/activeSite';
 import type { KindooSession } from '../content/kindoo/auth';
 
 type Step =
   | { kind: 'idle' }
   | { kind: 'loading'; progress: string | null }
-  | { kind: 'report'; result: DetectResult; ctx: DispatchContext }
+  | {
+      kind: 'report';
+      result: DetectResult;
+      ctx: DispatchContext;
+      activeSiteLabel: string;
+    }
   | { kind: 'error'; message: string }
-  | { kind: 'no-kindoo'; error: KindooSessionError };
+  | { kind: 'no-kindoo'; error: KindooSessionError }
+  | { kind: 'unknown-site' };
 
 /** Update the loading progress text every Nth user. With 313 users +
  * concurrency=4 we'd get 313 React state updates a few hundred ms
@@ -132,6 +139,15 @@ export function SyncPanel() {
         getEnvironments(session),
       ]);
 
+      // Phase A.5: identify which Kindoo site the active session is
+      // pointed at. On `unknown` we short-circuit before the expensive
+      // door-grant enrichment loop — there's nothing useful to compare.
+      const activeSite = identifyActiveSite(session.eid, bundle.stake, bundle.kindooSites);
+      if (activeSite.kind === 'unknown') {
+        setStep({ kind: 'unknown-site' });
+        return;
+      }
+
       // Phase B: rule door map. Drives every AccessRule referenced by
       // an SBA building via `KindooGetEnvRuleWithEntryPointsFormatted`.
       // csnorth has 4 rules → 4 calls; cheap.
@@ -160,9 +176,10 @@ export function SyncPanel() {
         },
       );
 
-      const result = detect({ ...bundle, kindooUsers: enriched });
+      const result = detect({ ...bundle, kindooUsers: enriched, activeSite });
       const ctx = buildDispatchContext(bundle, envs, session);
-      setStep({ kind: 'report', result, ctx });
+      const activeSiteLabel = describeActiveSite(activeSite, bundle);
+      setStep({ kind: 'report', result, ctx, activeSiteLabel });
     } catch (err) {
       const message =
         err instanceof KindooApiError ? describeKindooError(err) : describeExtensionError(err);
@@ -196,6 +213,20 @@ function buildDispatchContext(
     envs,
     session,
   };
+}
+
+/**
+ * Human-readable label for the active Kindoo site, surfaced in the
+ * report header so the operator knows which site's drift they're
+ * looking at.
+ */
+function describeActiveSite(activeSite: ActiveSite, bundle: SyncDataBundle): string {
+  if (activeSite.kind === 'home') return 'Home';
+  if (activeSite.kind === 'foreign') {
+    const site = bundle.kindooSites.find((s) => s.id === activeSite.siteId);
+    return site?.display_name ?? activeSite.siteId;
+  }
+  return '(unknown — not configured in SBA)';
 }
 
 /** Collect distinct RuleIDs referenced by SBA buildings. Used as the
@@ -274,10 +305,24 @@ function SyncBody({ step, filter, codeFilter, onRun, onFilter, onCodeFilter }: B
       </div>
     );
   }
+  if (step.kind === 'unknown-site') {
+    return (
+      <div data-testid="sba-sync-unknown-site">
+        <p className="sba-error" data-testid="sba-sync-unknown-site-message">
+          This Kindoo site is not configured in SBA. Add it in Configuration → Kindoo Sites or
+          switch to a known site.
+        </p>
+        <button type="button" className="sba-btn" onClick={onRun} data-testid="sba-sync-retry">
+          Retry
+        </button>
+      </div>
+    );
+  }
   return (
     <ReportView
       result={step.result}
       ctx={step.ctx}
+      activeSiteLabel={step.activeSiteLabel}
       filter={filter}
       codeFilter={codeFilter}
       onFilter={onFilter}
@@ -289,13 +334,22 @@ function SyncBody({ step, filter, codeFilter, onRun, onFilter, onCodeFilter }: B
 interface ReportProps {
   result: DetectResult;
   ctx: DispatchContext;
+  activeSiteLabel: string;
   filter: FilterMode;
   codeFilter: CodeFilter;
   onFilter: (f: FilterMode) => void;
   onCodeFilter: (c: CodeFilter) => void;
 }
 
-function ReportView({ result, ctx, filter, codeFilter, onFilter, onCodeFilter }: ReportProps) {
+function ReportView({
+  result,
+  ctx,
+  activeSiteLabel,
+  filter,
+  codeFilter,
+  onFilter,
+  onCodeFilter,
+}: ReportProps) {
   // Splice-on-success: once a fix applies, drop the row from the
   // rendered list. The detector is not re-run; the operator triggers
   // a fresh sync to get a clean state.
@@ -355,6 +409,9 @@ function ReportView({ result, ctx, filter, codeFilter, onFilter, onCodeFilter }:
 
   return (
     <div data-testid="sba-sync-report">
+      <p className="sba-sync-active-site" data-testid="sba-sync-active-site">
+        Reading from: <strong>{activeSiteLabel}</strong>
+      </p>
       <p className="sba-sync-summary" data-testid="sba-sync-summary">
         Found <strong>{driftCount}</strong> drift item{driftCount === 1 ? '' : 's'},{' '}
         <strong>{reviewCount}</strong> need review. SBA: <strong>{result.seatCount}</strong> seats.

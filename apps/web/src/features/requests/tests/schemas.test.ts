@@ -15,7 +15,23 @@ import {
 } from '../schemas';
 
 describe('newRequestSchema', () => {
-  it('accepts a valid add_manual ward-scope submission', () => {
+  it('accepts a valid add_manual ward-scope submission with at least one building', () => {
+    const result = newRequestSchema.safeParse({
+      type: 'add_manual',
+      scope: 'CO',
+      member_email: 'bob@example.com',
+      member_name: 'Bob',
+      reason: 'sub teacher',
+      comment: '',
+      start_date: '',
+      end_date: '',
+      building_names: ['Cordera Building'],
+      urgent: false,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a ward-scope submission with zero buildings (parity with stake scope)', () => {
     const result = newRequestSchema.safeParse({
       type: 'add_manual',
       scope: 'CO',
@@ -28,7 +44,11 @@ describe('newRequestSchema', () => {
       building_names: [],
       urgent: false,
     });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join('.'));
+      expect(paths).toContain('building_names');
+    }
   });
 
   it('rejects an empty member_name on add types', () => {
@@ -73,7 +93,7 @@ describe('newRequestSchema', () => {
       comment: '',
       start_date: '2026-05-01',
       end_date: '2026-05-08',
-      building_names: [],
+      building_names: ['Cordera Building'],
       urgent: false,
     });
     expect(result.success).toBe(true);
@@ -121,7 +141,7 @@ describe('newRequestSchema', () => {
       comment: 'why this is urgent',
       start_date: '',
       end_date: '',
-      building_names: [],
+      building_names: ['Cordera Building'],
       urgent: true,
     });
     expect(result.success).toBe(true);
