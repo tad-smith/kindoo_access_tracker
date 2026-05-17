@@ -251,6 +251,9 @@ describe('<ManagerDashboardPage />', () => {
             member_canonical: 'cross@x.com',
             member_email: 'cross@x.com',
             duplicate_grants: [{ scope: 'CO', type: 'auto', detected_at: NOW }],
+            // Phase A maintains `duplicate_scopes`; the widened
+            // rollup reads it directly.
+            duplicate_scopes: ['CO'],
           }),
         ],
         wards: [makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })],
@@ -270,6 +273,7 @@ describe('<ManagerDashboardPage />', () => {
             member_canonical: 'within@x.com',
             member_email: 'within@x.com',
             duplicate_grants: [{ scope: 'CO', type: 'manual', detected_at: NOW }],
+            duplicate_scopes: ['CO'],
           }),
         ],
         wards: [makeWard({ ward_code: 'CO', seat_cap: 20 })],

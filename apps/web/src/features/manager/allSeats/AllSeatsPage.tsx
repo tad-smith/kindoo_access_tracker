@@ -202,9 +202,12 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   // detailed semantics in the original page docstring; mostly
   // unchanged from pre-Phase-B). Phase B (T-43 AC #5): the per-ward /
   // stake-scope counts widen to match the Dashboard's
-  // `countSeatsForScope` semantics — a seat counts when its primary
-  // OR any `duplicate_scopes` entry matches. Same-scope within-site
-  // dupes collapse (one count per `member_canonical`). The
+  // `countSeatsForScope` semantics — both sides read the
+  // `duplicate_scopes` primitive mirror (server-maintained, single-
+  // field indexed). A seat counts when its primary OR any
+  // `duplicate_scopes` entry matches; same-scope within-site dupes
+  // collapse (one count per `member_canonical`). Keep the predicate
+  // here byte-equivalent to `Dashboard.countSeatsForScope`. The
   // entire-stake bar (no ward filter) stays primary-only — it's
   // home-stake utilization (license cap), a separate semantic that
   // Phase B does not redefine.

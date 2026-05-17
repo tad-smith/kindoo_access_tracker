@@ -29,11 +29,16 @@ import { summariseAuditRow } from '../auditLog/summarise';
 
 /**
  * Phase B (spec §15 AC #5): a seat counts on a scope's bar when its
- * primary scope matches OR any `duplicate_grants[]` entry's scope
- * matches. Same-scope within-site duplicates collapse — count one
- * per `member_canonical` per scope, not one per grant.
+ * primary scope matches OR any duplicate grant's scope matches. Same-
+ * scope within-site duplicates collapse — count one per
+ * `member_canonical` per scope, not one per grant.
  *
- * INTENTIONAL DIVERGENCE: this widens via `duplicate_grants` for
+ * Reads the denormalised `duplicate_scopes` primitive mirror (server-
+ * maintained alongside `duplicate_grants[].scope`; single-field
+ * indexed). The AllSeats utilization bar uses the same predicate; both
+ * sides must read the same field so the two surfaces stay in lockstep.
+ *
+ * INTENTIONAL DIVERGENCE: this widens via `duplicate_scopes` for
  * visibility, but the server-side over-cap calc
  * (`functions/src/lib/overCaps.ts`) intentionally stays primary-only —
  * over-cap warnings represent actual home-stake Kindoo-license-pool
@@ -49,8 +54,7 @@ function countSeatsForScope(seats: readonly Seat[], scope: string): number {
       n += 1;
       continue;
     }
-    const dupes = s.duplicate_grants ?? [];
-    if (dupes.some((d) => d.scope === scope)) n += 1;
+    if ((s.duplicate_scopes ?? []).includes(scope)) n += 1;
   }
   return n;
 }
