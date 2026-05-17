@@ -116,22 +116,42 @@ export function readActiveEidFromDom(doc: Document = document): number | null {
 }
 
 /**
- * Visibility check via ancestor-chain `display: none` walk. Works
- * under both jsdom (no layout, so `offsetParent` is unreliable) and
- * real browsers. Detached nodes (no parent in `doc`) are treated as
- * hidden.
+ * Visibility check via ancestor-chain walk. Works under both jsdom
+ * (no layout, so `offsetParent` is unreliable) and real browsers.
+ * Detached nodes (no parent in `doc`) are treated as hidden.
+ *
+ * Treats an element as hidden when ANY ancestor (including the
+ * element itself) has any of:
+ *   - `display: none`
+ *   - `visibility: hidden`
+ *   - `opacity: 0`
+ *   - `aria-hidden="true"`
+ *
+ * These are the common ways React/MUI/Headless-UI / Kindoo's own UI
+ * hide drawers, dropdowns, and inactive headers. Without these checks
+ * an inactive site's name rendered behind a closed drawer leaks into
+ * the visible match set and the resolver lands on "ambiguous → no-eid"
+ * even when the operator is cleanly inside one site.
  */
 function isVisible(el: HTMLElement, doc: Document): boolean {
   const root = doc.documentElement;
+  const view = doc.defaultView;
   let cur: HTMLElement | null = el;
   while (cur && cur !== root) {
-    const style = doc.defaultView?.getComputedStyle(cur);
-    if (style && style.display === 'none') return false;
+    if (cur.getAttribute('aria-hidden') === 'true') return false;
+    const style = view?.getComputedStyle(cur);
+    if (style) {
+      if (style.display === 'none') return false;
+      if (style.visibility === 'hidden') return false;
+      // `opacity` is a string like `'0'` / `'0.5'`. Parse defensively.
+      const opacity = Number(style.opacity);
+      if (Number.isFinite(opacity) && opacity === 0) return false;
+    }
     cur = cur.parentElement;
   }
-  // Reached documentElement without hitting display: none. If we never
-  // started inside the tree (parentElement chain didn't include root),
-  // treat as hidden.
+  // Reached documentElement without hitting any hidden ancestor. If we
+  // never started inside the tree (parentElement chain didn't include
+  // root), treat as hidden.
   return cur === root;
 }
 

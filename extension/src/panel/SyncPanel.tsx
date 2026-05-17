@@ -325,7 +325,7 @@ function SyncBody({ step, filter, codeFilter, onRun, onFilter, onCodeFilter }: B
         <p className="sba-error">
           {step.error === 'no-token'
             ? 'Sign into Kindoo first.'
-            : 'Kindoo session not ready. Refresh web.kindoo.tech and retry.'}
+            : "Open a specific Kindoo site (click into one from the My Sites list) and try again. Sync can't tell which site you're working on otherwise."}
         </p>
         <button type="button" className="sba-btn" onClick={onRun}>
           Retry

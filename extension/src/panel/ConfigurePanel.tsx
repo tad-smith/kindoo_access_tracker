@@ -306,7 +306,7 @@ function ConfigureBody({ step, onRetry, onAssign, onSave }: BodyProps) {
         <p className="sba-error">
           {step.error === 'no-token'
             ? 'Sign into Kindoo first.'
-            : 'Kindoo session not ready. Refresh web.kindoo.tech and retry.'}
+            : "Open a specific Kindoo site (click into one from the My Sites list) and try again. The wizard can't tell which site you're configuring otherwise."}
         </p>
         <button type="button" className="sba-btn" onClick={onRetry}>
           Retry
