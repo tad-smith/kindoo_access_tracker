@@ -130,11 +130,15 @@ export interface SubmitRequestInput {
   /** Defaults to false on the wire; missing → false on read. */
   urgent?: boolean;
   /**
-   * For `type='remove'` generated from an AllSeats duplicate row
-   * (T-43 Phase B). Carries the duplicate grant's `kindoo_site_id`
-   * so the `removeSeatOnRequestComplete` trigger splices only that
-   * entry. Absent / null on the legacy primary-remove path; the
-   * trigger falls back to scope-only matching.
+   * For `type='remove'` (T-43 Phase B): always set by the Phase B
+   * SPA. For a primary-row remove, equals the seat's top-level
+   * `kindoo_site_id`; for a duplicate-row remove, equals that
+   * duplicate's `kindoo_site_id`. `removeSeatOnRequestComplete`
+   * keys on the `(scope, kindoo_site_id)` pair to splice the right
+   * grant. Field is typed optional only so legacy pre-Phase-B
+   * `remove` requests on disk (with no `kindoo_site_id`) still
+   * round-trip — the trigger falls back to scope-only matching in
+   * that case.
    */
   kindoo_site_id?: string | null;
 }
@@ -215,11 +219,13 @@ export function useSubmitRequest() {
         // the seat doc without a query (Firestore client transactions
         // don't support queries).
         body.seat_member_canonical = memberCanonical;
-        // T-43 Phase B: stamp `kindoo_site_id` only when the caller
-        // passed it (duplicate-row remove). Primary-row removes omit
-        // the field entirely; the trigger preserves today's
-        // scope-only fallback so legacy + primary requests keep
-        // working.
+        // T-43 Phase B: stamp `kindoo_site_id` on every remove
+        // request. The Phase B SPA always passes it (primary row →
+        // seat's top-level site; duplicate row → that duplicate's).
+        // The optional `!== undefined` guard is defense-in-depth for
+        // a hypothetical legacy caller path; the trigger's scope-only
+        // fallback covers pre-Phase-B requests on disk that lack the
+        // field.
         if (input.kindoo_site_id !== undefined) {
           body.kindoo_site_id = input.kindoo_site_id;
         }

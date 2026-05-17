@@ -59,6 +59,16 @@ export function computeOverCaps(opts: {
 }): OverCapEntry[] {
   const { seats, wards, stakeSeatCap } = opts;
 
+  // INTENTIONAL DIVERGENCE FROM UI BARS: over-cap warnings count
+  // primary scope only (`s.scope`). The UI's per-ward bars
+  // (`AllSeatsPage.utilizationTotal`, `DashboardPage.countSeatsForScope`)
+  // widen via `duplicate_scopes` for visibility, so a ward bar can
+  // render "over cap" without firing `over_cap_warning`. The warning
+  // represents actual home-stake Kindoo-license-pool consumption,
+  // which the primary represents — a within-site duplicate doesn't
+  // consume a second license. If you change one side, change the
+  // other or document why they should continue to diverge. Spec §15
+  // Phase B.
   const counts = new Map<string, number>();
   for (const s of seats) {
     if (!s.scope) continue;

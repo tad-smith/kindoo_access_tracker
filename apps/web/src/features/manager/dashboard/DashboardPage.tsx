@@ -32,6 +32,15 @@ import { summariseAuditRow } from '../auditLog/summarise';
  * primary scope matches OR any `duplicate_grants[]` entry's scope
  * matches. Same-scope within-site duplicates collapse — count one
  * per `member_canonical` per scope, not one per grant.
+ *
+ * INTENTIONAL DIVERGENCE: this widens via `duplicate_grants` for
+ * visibility, but the server-side over-cap calc
+ * (`functions/src/lib/overCaps.ts`) intentionally stays primary-only —
+ * over-cap warnings represent actual home-stake Kindoo-license-pool
+ * consumption, which the primary represents. A bar can render "over"
+ * visually without firing `over_cap_warning`. If you change one side,
+ * change the other or document why they should continue to diverge.
+ * Spec §15 Phase B.
  */
 function countSeatsForScope(seats: readonly Seat[], scope: string): number {
   let n = 0;

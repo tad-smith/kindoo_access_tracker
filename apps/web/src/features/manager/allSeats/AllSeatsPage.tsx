@@ -208,6 +208,15 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   // entire-stake bar (no ward filter) stays primary-only — it's
   // home-stake utilization (license cap), a separate semantic that
   // Phase B does not redefine.
+  //
+  // INTENTIONAL DIVERGENCE: this bar widens via `duplicate_scopes` for
+  // visibility, but the server-side over-cap calc
+  // (`functions/src/lib/overCaps.ts`) intentionally stays primary-only —
+  // over-cap warnings represent actual home-stake Kindoo-license-pool
+  // consumption, which the primary represents. A ward bar can render
+  // "over cap" visually without firing `over_cap_warning`. If you
+  // change one side, change the other or document why they should
+  // continue to diverge. Spec §15 Phase B.
   const allSeats = seats.data ?? [];
   const stakeSeatCap = stake.data?.stake_seat_cap;
   const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wardsList);
