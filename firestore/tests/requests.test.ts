@@ -997,6 +997,30 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       );
     });
 
+    // T-43 reviewer fix: typed `completion_status` discriminator is
+    // in the manager complete-request allowlist so the SPA's
+    // `useCompleteRemoveRequest` can stamp it on the R-1 race path.
+    it('manager completes with completion_status="noop_already_removed" → ok', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(pendingAddManualByStakeMember({ type: 'remove' }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).update({
+          status: 'complete',
+          completer_email: personas.manager.email,
+          completer_canonical: personas.manager.canonical,
+          completed_at: new Date(),
+          completion_note: 'Seat already removed at completion time (no-op).',
+          completion_status: 'noop_already_removed',
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
     it('completer_canonical does not match auth → denied', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx.firestore().doc(PATH).set(pendingAddManualByStakeMember());

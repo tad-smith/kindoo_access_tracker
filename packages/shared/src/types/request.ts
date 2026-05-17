@@ -15,6 +15,23 @@ export type RequestType =
   | 'edit_temp';
 export type RequestStatus = 'pending' | 'complete' | 'rejected' | 'cancelled';
 
+/**
+ * Discriminator for `status='complete'` requests whose completion was
+ * not a normal apply-the-change path. Absent on the happy path.
+ *
+ * - `'noop_already_removed'`: R-1 race — a manager completed a
+ *   `remove` whose target seat was already gone at completion time.
+ *   Stamped by `markRequestComplete`.
+ * - `'noop_grant_shifted'`: T-43 reviewer-flagged race — a
+ *   `remove`'s snapshotted `(scope, kindoo_site_id)` did not address
+ *   any grant on the seat at trigger time. Stamped by
+ *   `removeSeatOnRequestComplete`.
+ *
+ * Audit summarisers route on this field. `completion_note` carries
+ * the human-readable detail; this is the routing key.
+ */
+export type CompletionStatus = 'noop_already_removed' | 'noop_grant_shifted';
+
 export type AccessRequest = {
   /** `= doc.id`. UUID. */
   request_id: string;
@@ -75,12 +92,17 @@ export type AccessRequest = {
   /** Required for `status='rejected'`; rules enforce non-empty. */
   rejection_reason?: string;
   /**
-   * R-1 race annotation: "Seat already removed at completion time
-   * (no-op)." See `firebase-migration.md` invariant 8 — a manager
-   * completing a `remove` whose seat is gone records the no-op rather
-   * than failing the transaction.
+   * Human-readable annotation set alongside `completion_status` when
+   * the completion path took a non-happy-path branch (R-1 race, or
+   * the Phase B grant-shifted race). Routing key is
+   * `completion_status`; this field carries the user-visible detail.
    */
   completion_note?: string;
+  /**
+   * Typed discriminator for non-happy-path completions; see
+   * `CompletionStatus`. Absent on normal completes.
+   */
+  completion_status?: CompletionStatus;
 
   /**
    * Extension v2.2 — Kindoo internal user id captured at provision

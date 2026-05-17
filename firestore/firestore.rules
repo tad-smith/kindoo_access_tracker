@@ -684,7 +684,7 @@ service cloud.firestore {
              && validKindooProvisioning(request.resource.data)
              && request.resource.data.diff(resource.data).affectedKeys()
                 .hasOnly(['status', 'completer_email', 'completer_canonical',
-                          'completed_at', 'completion_note',
+                          'completed_at', 'completion_note', 'completion_status',
                           'kindoo_uid', 'provisioning_note', 'lastActor']))
             ||
             // Reject — only managers, with non-empty reason

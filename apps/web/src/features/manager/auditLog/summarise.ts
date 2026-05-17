@@ -3,28 +3,45 @@
 //
 // Special cases for the rows whose surface form is more readable as
 // custom prose than as a key/value dump:
-//   - complete_request with a completion_note (the R-1 race) surfaces
-//     the note directly so a manager can spot the no-op at a glance.
+//   - complete_request with a typed `completion_status` discriminator
+//     (R-1 race or T-43 grant-shifted race) renders a case-specific
+//     prefix so a manager can spot the no-op kind at a glance. Pre-
+//     T-43 rows with only `completion_note` (no discriminator) fall
+//     back to the generic "Completed with note" surface.
 //   - import_end summarises the inserted/deleted/updated counts.
 //   - over_cap_warning lists the affected pools.
 //
 // Generic fallback: insert / delete / update against the before+after
 // payloads.
 
-import type { AuditLog } from '@kindoo/shared';
+import type { AuditLog, CompletionStatus } from '@kindoo/shared';
 import { BOOKKEEPING_FIELDS } from '@kindoo/shared';
 import { formatDateTimeInStakeTz } from '../../../lib/datetime';
 
+function completionStatusLabel(status: CompletionStatus): string {
+  if (status === 'noop_already_removed') return 'No-op (seat already removed)';
+  if (status === 'noop_grant_shifted') return 'No-op (grant moved before completion)';
+  // Exhaustive on the union; fall-through preserves compile-time
+  // safety if a future CompletionStatus value is added.
+  return status;
+}
+
 export function summariseAuditRow(row: AuditLog): string {
   const { action, before, after } = row;
-  if (
-    action === 'complete_request' &&
-    after &&
-    typeof after === 'object' &&
-    'completion_note' in after &&
-    typeof (after as Record<string, unknown>).completion_note === 'string'
-  ) {
-    return `Completed with note: "${(after as Record<string, unknown>).completion_note}"`;
+  if (action === 'complete_request' && after && typeof after === 'object') {
+    const a = after as Record<string, unknown>;
+    const note = typeof a.completion_note === 'string' ? a.completion_note : null;
+    const status =
+      a.completion_status === 'noop_already_removed' || a.completion_status === 'noop_grant_shifted'
+        ? (a.completion_status as CompletionStatus)
+        : null;
+    if (status !== null) {
+      const label = completionStatusLabel(status);
+      return note ? `${label}: "${note}"` : label;
+    }
+    if (note !== null) {
+      return `Completed with note: "${note}"`;
+    }
   }
   if (action === 'over_cap_warning' && after && typeof after === 'object' && 'pools' in after) {
     const pools = (after as { pools?: Array<{ pool: string; count: number; cap: number }> }).pools;

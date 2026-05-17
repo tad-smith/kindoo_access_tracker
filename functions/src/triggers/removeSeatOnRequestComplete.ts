@@ -241,10 +241,17 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
         // promote / splice / delete) so the snapshotted tuple no
         // longer addresses any grant. We do NOT silently remove a
         // different grant — the SPA's intent was anchored on that
-        // specific tuple. Log loudly + stamp a `completion_note` on
-        // the request so the operator surfaces the race (the request
-        // remains complete since the callable already flipped it; the
-        // note is the user-visible failure signal).
+        // specific tuple. Log loudly + stamp the typed
+        // `completion_status='noop_grant_shifted'` discriminator plus
+        // a human-readable `completion_note` on the request so the
+        // operator surfaces the race (the request remains complete
+        // since the callable already flipped it; these fields are the
+        // user-visible failure signal). We do NOT overwrite
+        // `lastActor` — that's the manager's completer attribution
+        // from `markRequestComplete` and should not be silently
+        // re-stamped to the trigger SA. `last_modified_at` is not a
+        // declared field on AccessRequest (the doc uses
+        // `requested_at` / `completed_at`); leaving it off.
         logger.warn('remove request (scope, kindoo_site_id) does not match any grant on seat', {
           stakeId,
           requestId: after.request_id,
@@ -262,12 +269,11 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
         tx.set(
           requestRef,
           {
+            completion_status: 'noop_grant_shifted',
             completion_note:
               'Seat removal skipped — the grant addressed by this request was no longer ' +
               'present at trigger time (concurrent change between submit and completion). ' +
               'Re-issue if the removal is still needed.',
-            last_modified_at: FieldValue.serverTimestamp(),
-            lastActor: { ...REMOVE_TRIGGER_ACTOR },
           },
           { merge: true },
         );

@@ -393,26 +393,45 @@ describe.skipIf(!hasEmulators())('removeSeatOnRequestComplete', () => {
       expect(seat.duplicate_scopes).toEqual(['ST']);
     });
 
-    it('stale request mismatch (scope on neither primary nor any duplicate): seat unchanged + completion_note stamped', async () => {
+    it('stale request mismatch: seat unchanged + completion_status="noop_grant_shifted" + completion_note stamped; no lastActor / last_modified_at overwrite', async () => {
       await seedStake();
       await seedSeat({ scope: 'PC', type: 'manual', duplicate_grants: [] });
+      // Seed the request doc so we can assert lastActor isn't
+      // clobbered by the trigger's no_match write.
+      const { db } = requireEmulators();
+      const reqRef = db.doc(`stakes/${STAKE_ID}/requests/r1`);
+      const managerActor = { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' };
+      await reqRef.set({
+        request_id: 'r1',
+        type: 'remove',
+        scope: 'MO',
+        status: 'complete',
+        member_canonical: 'alice@gmail.com',
+        seat_member_canonical: 'alice@gmail.com',
+        completer_email: managerActor.email,
+        completer_canonical: managerActor.canonical,
+        lastActor: managerActor,
+      });
+
       await removeSeatOnRequestComplete.run(removeEvent({ scope: 'MO' }));
 
-      const { db } = requireEmulators();
       const seatSnap = await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get();
       expect(seatSnap.exists).toBe(true);
       const seat = seatSnap.data() as Seat;
       expect(seat.scope).toBe('PC');
-      // No write happened on the seat — lastActor remains the seed
-      // value.
-      expect(seat.lastActor).toEqual({ email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' });
-      // T-43 reviewer fix: the no_match path now stamps a
-      // completion_note on the request so the operator sees the
-      // skipped removal rather than a silently-complete request.
-      const reqSnap = await db.doc(`stakes/${STAKE_ID}/requests/r1`).get();
+      // No write happened on the seat — lastActor remains the seed.
+      expect(seat.lastActor).toEqual(managerActor);
+      // T-43 reviewer fixes: typed completion_status discriminator +
+      // human-readable completion_note. Manager's `lastActor`
+      // attribution must NOT be clobbered; `last_modified_at` is not
+      // a declared field on AccessRequest and must NOT be written.
+      const reqSnap = await reqRef.get();
       expect(reqSnap.exists).toBe(true);
       const req = reqSnap.data() as Record<string, unknown>;
+      expect(req.completion_status).toBe('noop_grant_shifted');
       expect(String(req.completion_note)).toContain('Seat removal skipped');
+      expect(req.lastActor).toEqual(managerActor);
+      expect(req.last_modified_at).toBeUndefined();
     });
 
     // T-43 Phase B AC #8: a remove request scoped to a foreign-site
@@ -520,7 +539,7 @@ describe.skipIf(!hasEmulators())('removeSeatOnRequestComplete', () => {
     // site) tuple no longer addresses any grant. The trigger must
     // NOT silently splice / promote a different grant; it must log
     // and stamp a completion_note.
-    it('Fix 6: race-shifted seat where snapshotted (scope, site) no longer matches → no-op + completion_note', async () => {
+    it('Fix 6: race-shifted seat where snapshotted (scope, site) no longer matches → no-op + completion_status', async () => {
       await seedStake();
       // Seat state at trigger time: primary moved from CO/null to
       // stake/null (e.g. a concurrent op already removed the CO
@@ -541,10 +560,14 @@ describe.skipIf(!hasEmulators())('removeSeatOnRequestComplete', () => {
       const seat = seatSnap.data() as Seat;
       expect(seat.scope).toBe('stake');
       expect(seat.lastActor).toEqual({ email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' });
-      // Request stamped with the race annotation.
+      // Request stamped with the typed discriminator + the human-
+      // readable note. Trigger must not overwrite lastActor or write
+      // a phantom last_modified_at.
       const reqSnap = await db.doc(`stakes/${STAKE_ID}/requests/r1`).get();
       const req = reqSnap.data() as Record<string, unknown>;
+      expect(req.completion_status).toBe('noop_grant_shifted');
       expect(String(req.completion_note)).toContain('concurrent change');
+      expect(req.last_modified_at).toBeUndefined();
     });
 
     // T-43 reviewer fix (Fix 3): KS-9 within-site priority loser.

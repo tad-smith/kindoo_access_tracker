@@ -12,13 +12,41 @@ import {
 import { makeAuditLog } from '../../../../test/fixtures';
 
 describe('summariseAuditRow', () => {
-  it('surfaces completion_note prose on R-1 complete_request rows', () => {
+  it('surfaces completion_note prose on legacy R-1 complete_request rows (no completion_status field)', () => {
+    // Backward-compat path: pre-T-43 R-1 rows only carry
+    // `completion_note`. The summariser falls back to the generic
+    // "Completed with note" prose.
     const row = makeAuditLog({
       action: 'complete_request',
       after: { completion_note: 'Seat already gone (no-op).' },
     });
     expect(summariseAuditRow(row)).toMatch(/completed with note/i);
     expect(summariseAuditRow(row)).toContain('Seat already gone (no-op).');
+  });
+
+  it('routes on completion_status="noop_already_removed" with a labelled prefix', () => {
+    const row = makeAuditLog({
+      action: 'complete_request',
+      after: {
+        completion_status: 'noop_already_removed',
+        completion_note: 'Seat already removed at completion time (no-op).',
+      },
+    });
+    const summary = summariseAuditRow(row);
+    expect(summary).toContain('No-op (seat already removed)');
+    expect(summary).toContain('Seat already removed at completion time (no-op).');
+  });
+
+  it('routes on completion_status="noop_grant_shifted" with a distinct prefix', () => {
+    const row = makeAuditLog({
+      action: 'complete_request',
+      after: {
+        completion_status: 'noop_grant_shifted',
+        completion_note: 'Seat removal skipped — concurrent change.',
+      },
+    });
+    const summary = summariseAuditRow(row);
+    expect(summary).toContain('No-op (grant moved before completion)');
   });
 
   it('emits "(no field changes)" when before and after are deeply equal', () => {
