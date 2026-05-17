@@ -72,7 +72,16 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
     await clearEmulators();
   });
 
-  it('writes kindoo_site_id on every seat + every duplicate_grants entry', async () => {
+  it('writes kindoo_site_id on every duplicate that needs it; primary skip-if-equal treats absent as null', async () => {
+    // alice: CO primary (home) + FT duplicate (foreign). Primary
+    // current is `null` (field absent → coerces to null in skip-if-
+    // equal). Target is also `null`. No primary write fires. But the
+    // duplicate's current (`null`) differs from the derived
+    // `'east-stake'`, so the seat write fires to update
+    // `duplicate_grants`. seats_updated counts the seat doc once.
+    //
+    // bob: stake primary, no duplicates. Current null, target null.
+    // Skip-if-equal → no write.
     const { db } = requireEmulators();
     await seedWard({ ward_code: 'CO', kindoo_site_id: null });
     await seedWard({ ward_code: 'FT', kindoo_site_id: 'east-stake' });
@@ -96,15 +105,29 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
 
     const result = await backfillKindooSiteIdForStake(db, STAKE_ID);
     expect(result.seats_total).toBe(2);
-    expect(result.seats_updated).toBe(2);
+    expect(result.seats_updated).toBe(1); // alice (for dup); bob skipped
     expect(result.duplicates_updated).toBe(1);
     expect(result.duplicates_skipped_missing_ward).toBe(0);
 
     const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
-    expect(alice.kindoo_site_id).toBe(null);
     expect(alice.duplicate_grants[0]!.kindoo_site_id).toBe('east-stake');
-    const bob = (await db.doc(`stakes/${STAKE_ID}/seats/bob@gmail.com`).get()).data() as Seat;
-    expect(bob.kindoo_site_id).toBe(null);
+  });
+
+  it('updates the primary when stored kindoo_site_id explicitly differs from derived (e.g. operator-typed stale value)', async () => {
+    const { db } = requireEmulators();
+    await seedWard({ ward_code: 'CO', kindoo_site_id: null });
+    // Seat pre-stored with stale `kindoo_site_id='east-stake'` while
+    // ward CO is home. Skip-if-equal triggers a write.
+    await seedSeat({
+      canonical: 'alice@gmail.com',
+      scope: 'CO',
+      kindoo_site_id: 'east-stake',
+    });
+
+    const result = await backfillKindooSiteIdForStake(db, STAKE_ID);
+    expect(result.seats_updated).toBe(1);
+    const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+    expect(alice.kindoo_site_id).toBe(null);
   });
 
   it('skip-if-equal idempotence: second run writes zero seats', async () => {
@@ -154,10 +177,11 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
     });
 
     const result = await backfillKindooSiteIdForStake(db, STAKE_ID);
-    // Primary still updates (CO → home (null)).
-    expect(result.seats_updated).toBe(1);
+    // Primary's stored kindoo_site_id is absent (treated as null) and
+    // target is null → no primary diff, no seat write. Duplicate is
+    // skipped because ward 'FT' doesn't resolve.
+    expect(result.seats_updated).toBe(0);
     expect(result.duplicates_updated).toBe(0);
-    // Missing-ward duplicate was skipped with a warning.
     expect(result.duplicates_skipped_missing_ward).toBe(1);
     expect(result.warnings.some((w) => w.includes('alice@gmail.com') && w.includes('FT'))).toBe(
       true,
@@ -172,7 +196,14 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
   it('migration writes stamp lastActor=Migration (so auditTrigger fans the dedicated action)', async () => {
     const { db } = requireEmulators();
     await seedWard({ ward_code: 'CO', kindoo_site_id: null });
-    await seedSeat({ canonical: 'alice@gmail.com', scope: 'CO' });
+    // Seed with a STALE `kindoo_site_id` so the skip-if-equal check
+    // doesn't short-circuit and a real seat write fires (the test's
+    // job is to verify the actor stamp on that write).
+    await seedSeat({
+      canonical: 'alice@gmail.com',
+      scope: 'CO',
+      kindoo_site_id: 'stale-site-id',
+    });
 
     await backfillKindooSiteIdForStake(db, STAKE_ID);
 
