@@ -361,15 +361,39 @@ function GrantRowCard({ row, wards, sites, principal, onEdit }: GrantRowCardProp
     : grant.isParallelSite
       ? "Edit the primary grant to modify this person's seat — parallel-site changes require a new request."
       : "Edit the primary grant to modify this person's seat — this row is informational and is covered by the primary's write.";
-  // Phase B (AC #2): same-scope priority losers render as their own
-  // rows on AllSeats. Remove is functional on every non-auto grant —
-  // the trigger keys on `(scope, kindoo_site_id)`, and the
-  // auto-primary disambiguation in `planRemove`
+  // Phase B (AC #2 + spec §15 §412 / §425): same-scope priority
+  // losers render as their own rows on AllSeats — INFORMATIONAL only.
+  // Remove on a same-`(scope, kindoo_site_id)` non-auto duplicate is
+  // intentionally hidden because the request would carry the same
+  // tuple as the primary; the trigger's `planRemove` keys on
+  // `(scope, kindoo_site_id)` and would target the primary
+  // (delete/promote), silently demoting/removing the wrong grant.
+  // Remove stays functional on:
+  //   - the primary row (manual / temp);
+  //   - parallel-site duplicates (different `kindoo_site_id`);
+  //   - cross-scope duplicates (different scope).
+  //
+  // The auto-primary + non-auto duplicate case at the same
+  // `(scope, site)` IS reachable (rare, but possible via
+  // planAddMerge), and the trigger's KS-9 auto-primary
+  // disambiguation in `planRemove`
   // (`functions/src/triggers/removeSeatOnRequestComplete.ts`) routes
-  // a within-site same-`(scope, site)` request to the non-auto
-  // duplicate, so the auto primary stays intact (KS-9).
+  // such requests to the non-auto duplicate — but the SPA still has
+  // to surface the affordance for it to be reachable. We gate that
+  // case here on `seat.type === 'auto'`.
   const isPrimaryRow = grant.isPrimary;
-  const canRemove = grant.type !== 'auto' && canRemoveScope;
+  const sameScopeAndSiteAsPrimary =
+    !isPrimaryRow && grant.scope === seat.scope && !grant.isParallelSite;
+  const canRemove =
+    grant.type !== 'auto' &&
+    canRemoveScope &&
+    (isPrimaryRow ||
+      grant.isParallelSite ||
+      grant.scope !== seat.scope ||
+      // KS-9 escape: same-(scope, site) duplicate is only reachable
+      // when the primary is auto, where the trigger routes the splice
+      // to the non-auto duplicate.
+      (sameScopeAndSiteAsPrimary && seat.type === 'auto'));
 
   const testIdSuffix = isPrimaryRow
     ? seat.member_canonical

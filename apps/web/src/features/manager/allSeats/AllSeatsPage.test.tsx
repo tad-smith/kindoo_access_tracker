@@ -737,13 +737,55 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(payload.kindoo_site_id).toBe('foreign-1');
   });
 
+  // T-43 reviewer fix (4th pass): same-(scope, kindoo_site_id) non-
+  // auto duplicate under a non-auto primary is INFORMATIONAL ONLY.
+  // The Remove affordance is hidden because submitting would carry
+  // the same tuple as the primary; the trigger would target the
+  // primary (delete/promote), silently demoting/removing the wrong
+  // grant. Spec §15 §412 / §425.
+  it('within-site non-auto duplicate under non-auto primary: Remove hidden on the duplicate (spec §412 informational-only)', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'manual',
+          callings: [],
+          reason: 'pri-reason',
+          scope: 'CO',
+          kindoo_site_id: null,
+          member_canonical: 'inform@x.com',
+          member_email: 'inform@x.com',
+          duplicate_grants: [
+            {
+              scope: 'CO',
+              type: 'temp',
+              kindoo_site_id: null,
+              reason: 'within-site temp dup',
+              building_names: ['CO Building'],
+              start_date: '2026-06-01',
+              end_date: '2026-06-15',
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    // Primary row: Remove shown (non-auto primary).
+    expect(screen.getByTestId('remove-btn-inform@x.com')).toBeInTheDocument();
+    // Duplicate row: Remove hidden (same scope + site, can't
+    // disambiguate from the primary in the trigger).
+    expect(screen.queryByTestId('remove-btn-inform@x.com-dup-0')).toBeNull();
+  });
+
   // T-43 reviewer fix (Fix 3 / KS-9): within-site manual duplicate
   // under an auto primary. Auto primary row: no Remove button (auto
   // rows never render Remove). Manual duplicate row at the same
-  // (scope, site): Remove IS shown — the SPA gate now reads
-  // `grant.type`, not `seat.type`. Submitting goes through the trigger,
-  // which keys on (scope, kindoo_site_id) and routes the splice to the
-  // non-auto duplicate.
+  // (scope, site): Remove IS shown — only reachable when the primary
+  // is auto, because the trigger's auto-primary disambiguation in
+  // `planRemove` routes the splice to the non-auto duplicate.
   it('Fix 3 / KS-9: within-site manual duplicate under auto primary renders Remove on the duplicate row, not the primary', async () => {
     const user = userEvent.setup();
     mockAll({
