@@ -29,7 +29,9 @@ import { postKindoo, KindooApiError } from './client';
 import type { KindooSession } from './auth';
 
 export interface KindooEnvironment {
-  /** Kindoo's site / environment id. Matches localStorage.state.sites.ids[0]. */
+  /** Kindoo's site / environment id. Matches a key under
+   * `localStorage.state.sites.entities` and is recovered for the
+   * active session via `readActiveEidFromDom` in `auth.ts`. */
   EID: number;
   /** Display name (e.g. `"Colorado Springs North Stake"`). */
   Name: string;

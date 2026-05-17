@@ -98,7 +98,9 @@ extension/
 ## Don't
 
 - **Don't talk directly to Firestore from the extension.** Go through the callables.
-- **Don't reach into Kindoo's DOM.** The slide-over is a self-contained panel; it does not read or modify Kindoo page state. Kindoo writes (v2.2 Provision & Complete) go through the typed wrappers in `content/kindoo/endpoints.ts`, never via DOM scraping. See `extension/docs/v2-design.md`.
+- **Don't reach into Kindoo's DOM** (one sanctioned exception, below). The slide-over is a self-contained panel; it does not read or modify Kindoo page state. Kindoo writes (v2.2 Provision & Complete) go through the typed wrappers in `content/kindoo/endpoints.ts`, never via DOM scraping. See `extension/docs/v2-design.md`.
+
+  **Exception — `readActiveEidFromDom` in `content/kindoo/auth.ts`.** Active-site identification is the one place we scrape Kindoo's DOM. The active Kindoo site (EID) is not in `localStorage` (`state.sites.ids[0]` is the access-list head, not the active site; `user.object.EnvironmentID` is always `null`), not in the URL, and not on any DOM data attribute — Kindoo tracks it only in React in-memory state. The visible header text rendered as `[dir="auto"]` is the only observable signal, and we match it against `state.sites.entities[<eid>].EnvironmentName` to recover the active EID. Single visible match → the active EID; zero or multiple matches → `null` (`readKindooSession` collapses to `{ ok: false, error: 'no-eid' }`). This is brittle by construction — a Kindoo redesign that drops `[dir="auto"]` or changes the header markup will break detection. All other DOM access stays prohibited.
 - **Don't read Kindoo's `localStorage` outside the documented `kindoo/auth.ts` helper.** The keys are documented in the Kindoo runtime state section; readers route through that helper so we have one place to handle missing/expired state.
 - **Don't bundle production credentials.** Firebase web SDK config is public; the Google OAuth client ID is public-by-design; nothing else ships in the bundle.
 - **Don't depend on `apps/web/` code.** Share types via `@kindoo/shared`. The extension is its own consumer.
@@ -109,11 +111,7 @@ extension/
 Kindoo stores everything in `localStorage` on `web.kindoo.tech`. `sessionStorage` is empty. v2.1 reads these to call the Kindoo API; v2.2 builds on the same session to drive provision writes.
 
 - **`SessionTokenID`** — `localStorage.kindoo_token`. UUID string (e.g. `5e94a57a-3f08-4681-a01a-...`). The bearer token Kindoo's admin UI uses to authenticate against the ASMX API on `service89.kindoo.tech`.
-- **`EID`** (environment / site id) — `localStorage.state`. A JSON blob with the shape:
-  ```json
-  { "sites": { "ids": [27994], "entities": { "27994": { ... } } }, ... }
-  ```
-  The first id is the active site; `EID = JSON.parse(localStorage.state).sites.ids[0]`.
+- **`EID`** (environment / site id) — recovered by **DOM scrape**, not `localStorage`. Kindoo tracks the active site only in React in-memory state — `localStorage.state.sites.ids[0]` is the access-list head (not the active site), `user.object.EnvironmentID` is always `null`, the URL carries no site discriminator. `readActiveEidFromDom` (in `content/kindoo/auth.ts`) matches the visible site name rendered as `[dir="auto"]` against `state.sites.entities[<eid>].EnvironmentName` to recover the active EID. `localStorage.state` provides the name → EID lookup table; the DOM provides the active-site selection signal. Operator must be inside a specific Kindoo site (not the "My Sites" listing page, which renders multiple names at once and resolves ambiguous → `no-eid`).
 
 All reads route through `content/kindoo/auth.ts`. Do not access these keys from anywhere else — one place to handle missing / expired state.
 

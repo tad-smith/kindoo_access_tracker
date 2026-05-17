@@ -151,7 +151,17 @@ export function SyncPanel() {
       // Phase B: rule door map. Drives every AccessRule referenced by
       // an SBA building via `KindooGetEnvRuleWithEntryPointsFormatted`.
       // csnorth has 4 rules → 4 calls; cheap.
-      const ruleIds = collectRuleIds(bundle);
+      //
+      // Multi-site: scope the rule fetch to buildings owned by the
+      // active site. Issuing a foreign rule_id against the home EID
+      // (or vice-versa) hits `KindooGetEnvRuleWithEntryPointsFormatted`
+      // with a rule that doesn't exist on that env → HTTP 303
+      // ObjectNotFound. The downstream `derivedBuildings` enrichment
+      // needs the same filter for the same reason: a user on the home
+      // site would otherwise pick up foreign buildings via stale
+      // rule_id collisions.
+      const siteBuildings = filterBuildingsForActiveSite(bundle.buildings, activeSite);
+      const ruleIds = collectRuleIds(siteBuildings);
       const ruleDoorMap = await buildRuleDoorMap(session, session.eid, ruleIds);
 
       // Phase C: enrich each user with derivedBuildings. ~313 calls
@@ -162,7 +172,7 @@ export function SyncPanel() {
         session.eid,
         kindooUsers,
         ruleDoorMap,
-        bundle.buildings,
+        siteBuildings,
         {
           concurrency: 4,
           onProgress: (completed, total) => {
@@ -233,12 +243,36 @@ function describeActiveSite(activeSite: ActiveSite, bundle: SyncDataBundle): str
   return '(unknown — not configured in SBA)';
 }
 
-/** Collect distinct RuleIDs referenced by SBA buildings. Used as the
- * input to `buildRuleDoorMap` — we only fetch door sets for rules an
- * SBA building actually maps to. */
-function collectRuleIds(bundle: SyncDataBundle): number[] {
+/** Filter buildings to those owned by the active Kindoo site. Home
+ * active → buildings whose `kindoo_site_id` is null / absent; foreign
+ * active → buildings whose `kindoo_site_id === activeSite.siteId`.
+ *
+ * Without this filter the `collectRuleIds` step below issues foreign
+ * rule_ids against the home EID (or home rule_ids against a foreign
+ * EID) and Kindoo returns HTTP 303 ObjectNotFound — exactly the bug
+ * that made Sync unreachable for multi-site managers. */
+function filterBuildingsForActiveSite(
+  buildings: SyncDataBundle['buildings'],
+  activeSite: ActiveSite,
+): SyncDataBundle['buildings'] {
+  if (activeSite.kind === 'home') {
+    return buildings.filter((b) => b.kindoo_site_id === null || b.kindoo_site_id === undefined);
+  }
+  if (activeSite.kind === 'foreign') {
+    return buildings.filter((b) => b.kindoo_site_id === activeSite.siteId);
+  }
+  // 'unknown' is short-circuited upstream — defensive empty.
+  return [];
+}
+
+/** Collect distinct RuleIDs referenced by the given buildings. Used as
+ * the input to `buildRuleDoorMap` — we only fetch door sets for rules
+ * an SBA building actually maps to. Caller passes in the
+ * already-site-filtered subset; this function does no site filtering
+ * of its own. */
+function collectRuleIds(buildings: SyncDataBundle['buildings']): number[] {
   const out = new Set<number>();
-  for (const b of bundle.buildings) {
+  for (const b of buildings) {
     const rid = b.kindoo_rule?.rule_id;
     if (typeof rid === 'number') out.add(rid);
   }
