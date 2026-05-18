@@ -70,6 +70,5 @@ A door-access tracker that manages Kindoo seat assignments across the wards of a
 **Open follow-ups:**
 
 - B-1 — iPhone PWA notification deep-link.
-- B-2 (not yet filed) — bootstrap setupGate `??` → `||` fallback.
 - T-26 — finish Phase 11 SA hardening (pin remaining functions to `kindoo-app@`, audit IAM, revoke project-default `roles/editor`).
 - Phase 10.6 (push expansion), Phase 12 (multi-stake) — operator-deferred.
