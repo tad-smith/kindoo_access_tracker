@@ -22,6 +22,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { FirebaseError } from 'firebase/app';
 
 const sendMagicLinkMock = vi.fn();
 const clearStashedEmailMock = vi.fn();
@@ -123,6 +124,41 @@ describe('SignInPage — both providers', () => {
     expect(alert).toHaveTextContent(/popup blocked/i);
     // The magic-link form remains on screen so the user can fall back.
     expect(screen.getByRole('button', { name: /Send me a sign-in link/i })).toBeInTheDocument();
+  });
+
+  // User-initiated popup dismissal is a normal flow, not a failure.
+  // Silently swallow the SDK rejection — no alert, no red text.
+  it('does not surface an alert when the Google popup is closed by the user', async () => {
+    signInWithGoogleMock.mockRejectedValueOnce(
+      new FirebaseError(
+        'auth/popup-closed-by-user',
+        'Firebase: Error (auth/popup-closed-by-user).',
+      ),
+    );
+    render(<SignInPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Continue with Google/i }));
+    // Re-enable check: button is no longer in the pending state.
+    expect(await screen.findByRole('button', { name: /Continue with Google/i })).not.toBeDisabled();
+    // No alert region rendered for this code path.
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  // A second popup invocation races the first. The SDK rejects the
+  // first with `auth/cancelled-popup-request`; same treatment as
+  // user-closed.
+  it('does not surface an alert when a second popup races the first', async () => {
+    signInWithGoogleMock.mockRejectedValueOnce(
+      new FirebaseError(
+        'auth/cancelled-popup-request',
+        'Firebase: Error (auth/cancelled-popup-request).',
+      ),
+    );
+    render(<SignInPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Continue with Google/i }));
+    expect(await screen.findByRole('button', { name: /Continue with Google/i })).not.toBeDisabled();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('renders a separate "Sign in" topbar button', () => {

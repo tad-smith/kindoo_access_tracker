@@ -32,11 +32,20 @@ import { Link } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { FirebaseError } from 'firebase/app';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { BrandIcon } from '../../components/layout/BrandIcon';
 import { signInEmailSchema, type SignInEmailForm } from './schemas';
 import { clearStashedEmail, sendMagicLink, signInWithGoogle } from './signIn';
+
+// Normal user cancellations from `signInWithPopup` — the popup was
+// dismissed or raced by a second invocation. These are not failures
+// and must not surface as red alerts.
+const SILENT_GOOGLE_ERROR_CODES: ReadonlySet<string> = new Set([
+  'auth/popup-closed-by-user',
+  'auth/cancelled-popup-request',
+]);
 
 // Sentinel: until the extension's Web Store listing is published, this
 // stays pointed at the generic Web Store root. The footer link is
@@ -93,9 +102,15 @@ export function SignInPage() {
     try {
       await signInWithGoogle();
     } catch (err) {
+      // User-initiated cancellations are not failures — silently
+      // swallow them so the alert region stays empty when the user
+      // closes the popup or a second popup raced.
+      if (err instanceof FirebaseError && SILENT_GOOGLE_ERROR_CODES.has(err.code)) {
+        return;
+      }
       // `signInWithPopup` rejects with `FirebaseError` for popup-blocked,
-      // user-cancelled, network failure, etc. Surface the message
-      // verbatim so the operator can debug without opening devtools.
+      // network failure, etc. Surface the message verbatim so the
+      // operator can debug without opening devtools.
       const message = err instanceof Error ? err.message : String(err);
       setGoogleError(message);
     } finally {
