@@ -143,13 +143,15 @@ Domain `stakebuildingaccess.org` chosen 2026-04-27 (per F17). Resend chosen as t
 Closed 2026-05-02: domain `mail.stakebuildingaccess.org` registered and Resend confirmed verification (DKIM CNAME + DMARC TXT records propagated). Phase 9 (email triggers via Resend) is unblocked.
 
 ## [T-05] Operator setup B4 — LCR Sheet sharing protocol for importer
-Status: done (2026-04-28)
+Status: done (2026-04-28) — **[DEPRECATED 2026-05-18 — T-45 removed the importer; sheet sharing no longer needed]**
 Owner: @tad
 Phase: 1 → due before Phase 8
 
 Grant view access on the LCR callings sheet to the importer service account that lands with Phase 8. Doesn't block earlier phases. Spec: `docs/firebase-migration.md` B4.
 
 Closed 2026-04-28: the importer service account that lands with Phase 8 will have view access to the LCR callings sheet.
+
+Deprecated 2026-05-18: T-45 removed the LCR Sheet importer (`runImporter` / `runImportNow` / `Importer.ts` deleted; `googleapis` dropped from `functions/package.json`). The csnorth LCR sheet no longer needs to be shared with `kindoo-app@`; operator may revoke the existing grant as optional cleanup. See `docs/architecture.md` D14 and `infra/runbooks/granting-importer-sheet-access.md` (also deprecated).
 
 ## [T-06] Restart Claude Code so named engineering agents become dispatchable
 Status: done (2026-04-28)
@@ -793,7 +795,7 @@ Replace the SPA's Google sign-in button with an email magic link flow. Spec defi
 Cross-ref: spec §4.1 (sign-in providers), §5.0 (sign-in page layout), §2 (stack — identity).
 
 ## [T-45] Remove LCR Sheet importer — Sync subsumes auto-seat ingestion
-Status: open
+Status: **[COMPLETE 2026-05-18 — PR #144 squashed as f8c8923; deployed to staging + prod]**
 Owner: @backend-engineer + @web-engineer (cross-workspace)
 Phase: cross-cutting (post-T-44)
 

@@ -52,7 +52,7 @@ Cloud Build's `npm install` does not understand pnpm's `workspace:*` protocol, s
 
 **Shape on disk.** `functions/scripts/build.mjs` is the single producer of the deploy tree:
 
-- esbuild bundles `functions/src/index.ts` to `functions/lib/index.js` (ESM, `node22`), inlining `@kindoo/shared`. Runtime deps (`firebase-admin`, `firebase-functions`, `googleapis`, `resend`) stay external — Cloud Build installs them via the generated manifest.
+- esbuild bundles `functions/src/index.ts` to `functions/lib/index.js` (ESM, `node22`), inlining `@kindoo/shared`. Runtime deps (`firebase-admin`, `firebase-functions`, `resend`) stay external — Cloud Build installs them via the generated manifest.
 - The script writes `functions/lib/package.json` containing only `name`, `version`, `private`, `type: "module"`, `main: "index.js"`, `engines`, and the runtime deps copied verbatim from `functions/package.json`. No `@kindoo/shared` entry. No devDeps.
 - The script symlinks `functions/lib/node_modules` to `../node_modules` so the local Functions emulator can resolve `firebase-admin` / `firebase-functions` against the workspace install. `firebase.json`'s `ignore: ["node_modules", ...]` excludes the symlink from the upload tarball, so Cloud Build sees an empty tree and runs `npm install` cleanly against `lib/package.json`.
 - The script also copies any `functions/.env.*` files to `functions/lib/.env.*` unconditionally. Firebase CLI's `defineString` parameter resolution reads from the `source` directory (which is `functions/lib`), so source-of-truth env values must be propagated each build — overwrite is intentional, to avoid stale empty placeholders the CLI's interactive prompt may have written into `lib/`.
