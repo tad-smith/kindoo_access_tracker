@@ -71,6 +71,21 @@ describe('<TimezoneCombobox />', () => {
     expect(await screen.findByTestId('tz-option-legacy')).toBeInTheDocument();
   });
 
+  it('pins the cmdk highlight to the current selection so a reflexive Enter is a no-op', async () => {
+    const user = userEvent.setup();
+    render(<Harness initial="America/Denver" />);
+    await user.click(screen.getByTestId('tz'));
+    // The picker's highlighted row is the current value, not the
+    // alphabetically-first option (which would be America/Adak).
+    const denver = await screen.findByTestId('tz-option-America/Denver');
+    expect(denver).toHaveAttribute('data-selected', 'true');
+    const adak = screen.getByTestId('tz-option-America/Adak');
+    expect(adak).not.toHaveAttribute('data-selected', 'true');
+    // Hit Enter immediately — value must NOT change.
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('value')).toHaveTextContent('America/Denver');
+  });
+
   it('preserves a legacy value until the user explicitly picks something else', async () => {
     const user = userEvent.setup();
     render(<Harness initial="Etc/UTC" />);

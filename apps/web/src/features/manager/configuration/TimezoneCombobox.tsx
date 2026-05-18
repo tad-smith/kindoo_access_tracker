@@ -4,8 +4,9 @@
 // `usTimezones.ts`. Behaviour:
 //
 //   - Click the trigger button to open the popover and reveal the list.
-//   - Type-to-filter on either the IANA name or the display string,
-//     case-insensitive substring (cmdk's default scorer covers this).
+//   - Type-to-filter on either the IANA name or the display string
+//     (cmdk's default fuzzy `command-score` scorer covers both fields
+//     since each CommandItem's `value` concatenates the two).
 //   - Up/Down/Enter selects; Esc closes.
 //   - The component is controlled (`value` / `onChange`) so it slots
 //     into react-hook-form via `Controller`.
@@ -83,6 +84,16 @@ export function TimezoneCombobox({
     return `${value} (legacy)`;
   })();
 
+  // Pin cmdk's highlight to the current selection on open. Without this
+  // cmdk auto-highlights the first list row, so a reflexive Enter would
+  // silently replace the existing value with Eastern Time. The string
+  // must match the `value` we hand each `CommandItem` below.
+  const cmdkSelected = (() => {
+    if (selectedOption) return `${selectedOption.iana} ${selectedOption.display}`;
+    if (isLegacy) return `${value} legacy`;
+    return '';
+  })();
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
@@ -113,7 +124,7 @@ export function TimezoneCombobox({
         sideOffset={4}
         className="w-[var(--radix-popover-trigger-width)] p-0"
       >
-        <Command shouldFilter>
+        <Command shouldFilter value={cmdkSelected}>
           <CommandInput
             value={query}
             onValueChange={setQuery}
