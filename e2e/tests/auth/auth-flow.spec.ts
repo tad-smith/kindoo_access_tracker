@@ -1,19 +1,24 @@
 // Phase 2 + Phase 5 end-to-end auth-flow specs. Covers the four proofs
 // from the Phase-2 acceptance criteria, refreshed for the Phase-5 page
 // set:
-//   1. Anonymous visit → SignInPage renders.
+//   1. Anonymous visit → SignInPage renders (email magic link form,
+//      per spec §4.1 / T-44).
 //   2. Sign in via Auth emulator (no claims yet) → NotAuthorizedPage.
 //   3. Sign in with role claims pre-seeded → manager Dashboard
 //      renders within the persistent shell (Phase-4 hello placeholder
 //      retired in Phase 5).
 //   4. Sign-out from the Dashboard → returns to SignInPage.
 //
-// Custom claims are set directly on the emulator user (proof of "claims
-// reach the SDK + decode correctly") rather than going through the full
-// `onAuthUserCreate` trigger — that trigger lives in `functions/` and
-// is the backend-engineer's territory; their integration tests cover
-// trigger correctness. The web's contract is "given claims on the
-// token, render the right page", which is what this spec proves.
+// The SignInPage's user-visible affordance is the email magic link form
+// (T-44). The full magic-link round-trip is not exercisable in CI (no
+// real email delivery), so for backend-claim assertions we drive the
+// Auth-emulator-only `signInWithEmailAndPassword` hatch exposed by
+// `apps/web/src/lib/firebase.ts` — same `User` shape, same custom-
+// claims flow as production. Custom claims are set directly on the
+// emulator user (proof of "claims reach the SDK + decode correctly")
+// rather than going through the full `onAuthUserCreate` trigger —
+// that trigger lives in `functions/` and is the backend-engineer's
+// territory; their integration tests cover trigger correctness.
 
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -31,8 +36,9 @@ const TEST_PASSWORD = 'test-password-12345';
  * The hatch is exposed by `apps/web/src/lib/firebase.ts` only when
  * `VITE_USE_AUTH_EMULATOR=true` is set (the playwright webServer config
  * sets it). Calling `signInWithEmailAndPassword` against the Auth
- * emulator with a synthetic user is the test analogue of the real
- * Google popup — same `User` shape, same custom-claims flow.
+ * emulator with a synthetic user is the test analogue of clicking
+ * through a real magic-link round-trip — same `User` shape, same
+ * custom-claims flow.
  */
 async function signInViaTestHatch(page: Page, email: string, password: string): Promise<void> {
   await page.waitForFunction(() =>
@@ -63,12 +69,17 @@ test.describe('auth-flow', () => {
     await clearFirestore();
   });
 
-  test('anonymous visit shows the SignInPage', async ({ page }) => {
+  test('anonymous visit shows the SignInPage magic-link form', async ({ page }) => {
     await page.goto('/');
     await expect(
       page.getByRole('heading', { name: /Building access for your stake/i }),
     ).toBeVisible();
-    await expect(page.getByRole('button', { name: /Sign in with Google/i })).toBeVisible();
+    // Email magic link sign-in (T-44): email input + "Send me a sign-in
+    // link" CTA. No Google button, no password field.
+    await expect(page.getByLabel(/Email address/i)).toBeVisible();
+    await expect(page.getByRole('button', { name: /Send me a sign-in link/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Sign in with Google/i })).toHaveCount(0);
+    await expect(page.locator('input[type="password"]')).toHaveCount(0);
   });
 
   test('signed-in user with no role claims sees NotAuthorizedPage', async ({ page }) => {
@@ -151,6 +162,8 @@ test.describe('auth-flow', () => {
       .first()
       .click();
 
-    await expect(page.getByRole('button', { name: /Sign in with Google/i })).toBeVisible();
+    // Back on the SignInPage — the magic-link form is the canonical
+    // landing affordance.
+    await expect(page.getByRole('button', { name: /Send me a sign-in link/i })).toBeVisible();
   });
 });
