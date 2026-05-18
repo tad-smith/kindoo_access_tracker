@@ -161,7 +161,7 @@ describe('/auth/email-link', () => {
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true }));
   });
 
-  it('cross-device branch — refuses to submit an empty email', async () => {
+  it('cross-device branch — refuses to submit an empty email and keeps the prompt visible', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
     isSignInWithEmailLinkMock.mockReturnValue(true);
     peekStashedEmailMock.mockReturnValue(null);
@@ -171,8 +171,121 @@ describe('/auth/email-link', () => {
     await screen.findByLabelText(/Email address/i);
     await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
 
-    expect(await screen.findByText(/Enter the email/i)).toBeInTheDocument();
+    const inline = await screen.findByTestId('email-link-prompt-error');
+    expect(inline).toHaveTextContent(/Enter the email/i);
     expect(completeSignInWithEmailLinkMock).not.toHaveBeenCalled();
+    // Prompt is still visible — user can retype + retry.
+    expect(screen.getByRole('button', { name: /Confirm and sign in/i })).toBeInTheDocument();
+  });
+
+  // Regression — PR #140 reviewer Fix 6. The cross-device prompt must
+  // apply the same client-side email-format check the initial sign-in
+  // form applies. Without it, a user typing "alice" (no `@`) would
+  // burn a (still-valid) `oobCode` redemption attempt against the
+  // SDK and surface an indistinguishable `auth/invalid-email`.
+  it('cross-device branch — rejects a malformed email client-side without calling the SDK', async () => {
+    setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue(null);
+
+    render(<EmailLinkRoute />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/Email address/i), 'alice');
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    const inline = await screen.findByTestId('email-link-prompt-error');
+    expect(inline).toHaveTextContent(/valid email/i);
+    expect(completeSignInWithEmailLinkMock).not.toHaveBeenCalled();
+    // Prompt still visible — link is still good, user just needs to fix
+    // the typo and retry.
+    expect(screen.getByRole('button', { name: /Confirm and sign in/i })).toBeInTheDocument();
+  });
+
+  // Regression — PR #140 reviewer Fix 5. When the user is in the
+  // cross-device prompt branch and the SDK rejects with a
+  // typed-email-class error (`auth/invalid-email` /
+  // `auth/argument-error`), the link itself is still valid (Firebase
+  // only consumes the `oobCode` on a *successful* redemption). Keep
+  // the prompt visible with an inline error so the user can fix the
+  // typo and resubmit without burning the link. Verifies a retry
+  // with the corrected email then completes sign-in.
+  it('cross-device branch — auth/invalid-email rejection keeps the prompt visible for retry', async () => {
+    setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue(null);
+    // First attempt rejects (wrong typed email); second attempt
+    // resolves (corrected email).
+    completeSignInWithEmailLinkMock
+      .mockRejectedValueOnce(new Error('Firebase: Error (auth/invalid-email).'))
+      .mockResolvedValueOnce({ uid: 'u1' });
+
+    render(<EmailLinkRoute />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/Email address/i), 'wrong@example.com');
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    // Inline error inside the still-visible prompt — NOT the full
+    // ErrorCard with the "Send a new link" affordance.
+    const inline = await screen.findByTestId('email-link-prompt-error');
+    expect(inline).toHaveTextContent(/invalid-email/i);
+    expect(screen.queryByTestId('email-link-error')).toBeNull();
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    // User fixes the typo and resubmits → sign-in completes. Re-query
+    // the input since the inline-error render may have given React a
+    // chance to swap nodes; focus state is not guaranteed.
+    const retryInput = screen.getByLabelText(/Email address/i) as HTMLInputElement;
+    await user.clear(retryInput);
+    await user.type(retryInput, 'right@example.com');
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    await waitFor(() =>
+      expect(completeSignInWithEmailLinkMock).toHaveBeenLastCalledWith(
+        'right@example.com',
+        'https://example.com/auth/email-link?apiKey=abc&oobCode=xyz',
+      ),
+    );
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true }));
+  });
+
+  // Companion to Fix 5 — auth/argument-error from the prompt is the
+  // same "typed-email is wrong" class; the prompt stays visible.
+  it('cross-device branch — auth/argument-error rejection keeps the prompt visible', async () => {
+    setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue(null);
+    completeSignInWithEmailLinkMock.mockRejectedValueOnce(
+      new Error('Firebase: Error (auth/argument-error).'),
+    );
+
+    render(<EmailLinkRoute />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/Email address/i), 'still@example.com');
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    const inline = await screen.findByTestId('email-link-prompt-error');
+    expect(inline).toHaveTextContent(/argument-error/i);
+    expect(screen.queryByTestId('email-link-error')).toBeNull();
+  });
+
+  // Other (non-typed-email) errors from the prompt still swap to the
+  // full ErrorCard with the re-send affordance — the link is unusable.
+  it('cross-device branch — expired-link rejection swaps to the full ErrorCard', async () => {
+    setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue(null);
+    completeSignInWithEmailLinkMock.mockRejectedValueOnce(
+      new Error('Firebase: Error (auth/invalid-action-code).'),
+    );
+
+    render(<EmailLinkRoute />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/Email address/i), 'zach@example.com');
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    const errorCard = await screen.findByTestId('email-link-error');
+    expect(errorCard).toHaveTextContent(/invalid-action-code/i);
+    expect(screen.queryByTestId('email-link-prompt-error')).toBeNull();
   });
 
   it('error branch — expired link surfaces the SDK error and renders the re-send link', async () => {
@@ -254,20 +367,27 @@ describe('/auth/email-link', () => {
     expect(input.value).toBe('zach@example.com');
   });
 
-  // Regression — PR #140 reviewer Fix 1. Under React 18 StrictMode the
-  // effect double-mounts in dev. The previous implementation destructive-
-  // read localStorage in the effect, so mount 2 saw an empty stash and
-  // slipped into the cross-device prompt while mount 1's
-  // `completeSignInWithEmailLink` was still resolving. The fix uses
-  // `peekStashedEmail` (non-destructive) + clears on success/failure so
-  // the effect is idempotent: both mounts see the same stash, both
-  // dispatch `completeSignInWithEmailLink` (the SDK happily handles a
-  // duplicate redemption), and the prompt does NOT render.
-  it('does not render the cross-device prompt when the effect double-mounts under StrictMode', async () => {
+  // Regression — PR #140 reviewer Fix 1 (actually-correct take). Under
+  // React 18 StrictMode the effect double-mounts in dev. Firebase
+  // consumes the `oobCode` on the FIRST `signInWithEmailLink` call;
+  // the second call rejects with `auth/invalid-action-code`. If the
+  // effect dispatches sign-in twice, the second rejection runs AFTER
+  // the first succeeded, flipping state to the ErrorCard even though
+  // sign-in actually worked.
+  //
+  // This mock matches real Firebase semantics: first call resolves,
+  // every subsequent call rejects with `auth/invalid-action-code`.
+  // Under a `useRef` started-this-render guard the second mount bails
+  // before dispatching a second call, so navigate fires and the user
+  // never sees ErrorCard. Without the guard this test fails because
+  // state ends on ErrorCard.
+  it('does not surface a spurious invalid-action-code under StrictMode double-mount', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
     isSignInWithEmailLinkMock.mockReturnValue(true);
     peekStashedEmailMock.mockReturnValue('zach@example.com');
-    completeSignInWithEmailLinkMock.mockResolvedValue({ uid: 'u1' });
+    completeSignInWithEmailLinkMock
+      .mockResolvedValueOnce({ uid: 'u1' })
+      .mockRejectedValue(new Error('Firebase: Error (auth/invalid-action-code).'));
 
     render(
       <StrictMode>
@@ -277,12 +397,16 @@ describe('/auth/email-link', () => {
 
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true }));
 
-    // Both mounts triggered the sign-in path with the SAME email;
-    // neither slipped into the cross-device prompt.
-    expect(screen.queryByText(/Confirm your email/i)).toBeNull();
+    // Only ONE sign-in call dispatched in total — the second mount
+    // saw the started-ref and bailed.
+    expect(completeSignInWithEmailLinkMock).toHaveBeenCalledTimes(1);
     expect(completeSignInWithEmailLinkMock).toHaveBeenCalledWith(
       'zach@example.com',
       'https://example.com/auth/email-link?apiKey=abc&oobCode=xyz',
     );
+    // ErrorCard never rendered.
+    expect(screen.queryByTestId('email-link-error')).toBeNull();
+    // Cross-device prompt never rendered either.
+    expect(screen.queryByText(/Confirm your email/i)).toBeNull();
   });
 });
