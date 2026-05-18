@@ -134,8 +134,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   created_at: Timestamp;
   created_by: string;                  // superadmin canonical email
 
-  // Importer source
-  callings_sheet_id: string;           // Google Sheet ID
+  // Identity / setup
   bootstrap_admin_email: string;       // typed form
   setup_complete: boolean;
 
@@ -144,26 +143,36 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 
   // Schedules
   expiry_hour: number;                 // 0–23, local stake time
-  import_day: 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY' | 'SUNDAY';
-  import_hour: number;                 // 0–23
   timezone: string;                    // IANA tz, e.g. 'America/Denver'
+
+  // Deprecated (LCR Sheet importer removed — see `architecture.md` D-17,
+  // `spec.md` §8). New stake docs do not set these fields; existing
+  // csnorth values may persist as vestigial state until manually cleared.
+  // The implementation PR for the removal strips them from the zod
+  // schema; this comment block is the canonical reference for what they
+  // meant.
+  callings_sheet_id?: string;          // deprecated: Google Sheet ID
+  import_day?: 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY' | 'SUNDAY';  // deprecated
+  import_hour?: number;                // deprecated: 0–23
 
   // Notifications
   notifications_enabled: boolean;
   notifications_reply_to?: string;     // optional reply-to address; when unset, EmailService omits the Reply-To header
 
-  // Operational state (written by importer/expiry, read by manager UI)
+  // Operational state (written by expiry / sync-driven over-cap recomputes; read by manager UI)
   last_over_caps_json: Array<{
     pool: 'stake' | string;            // string = ward_code
     count: number;
     cap: number;
     over_by: number;
   }>;
-  last_import_at?: Timestamp;
-  last_import_summary?: string;
-  last_import_triggered_by?: 'manual' | 'weekly';   // stamped by importer per run; read by notifyOnOverCap for subject attribution; absent on pre-Phase-9 docs (treated as 'manual')
   last_expiry_at?: Timestamp;
   last_expiry_summary?: string;
+
+  // Deprecated (LCR Sheet importer removed — see notes above)
+  last_import_at?: Timestamp;          // deprecated
+  last_import_summary?: string;        // deprecated
+  last_import_triggered_by?: 'manual' | 'weekly';  // deprecated
 
   // Bookkeeping
   last_modified_at: Timestamp;

@@ -791,3 +791,53 @@ Replace the SPA's Google sign-in button with an email magic link flow. Spec defi
 **Out of scope** (mirrors spec §4.1): email/password (the password sub-toggle stays off); other OAuth providers; self-service authorization or onboarding; changes to the extension's Google-only auth path; backend changes to `onAuthUserCreate` / claim-sync triggers.
 
 Cross-ref: spec §4.1 (sign-in providers), §5.0 (sign-in page layout), §2 (stack — identity).
+
+## [T-45] Remove LCR Sheet importer — Sync subsumes auto-seat ingestion
+Status: open
+Owner: @backend-engineer + @web-engineer (cross-workspace)
+Phase: cross-cutting (post-T-44)
+
+Decision recorded as `architecture.md` D14; spec rewritten in this PR. The extension's Sync feature (`fix.ts` `kindoo-only` path + `classifier.ts`) already creates auto seats from Kindoo-side data via the `syncApplyFix` callable. Kindoo itself ingests LCR via Church Access Automation, so the LCR Sheet importer was duplicating an upstream path. Only `csnorth` has a sheet wired up; removal unblocks multi-stake.
+
+**Surfaces to remove (code):**
+
+- `functions/src/services/Importer.ts`
+- `functions/src/scheduled/runImporter.ts`
+- `functions/src/callable/runImportNow.ts`
+- The Sheets-client wrapper in `functions/src/lib/` (verify path during implementation)
+- Tests for all of the above
+- `googleapis` dep from `functions/package.json` (it's only used by the importer)
+- `apps/web/src/features/manager/import/` (entire feature folder) + colocated tests
+- `e2e/` specs that exercise the Import page
+- Nav entries pointing to `/manager/import`
+- Bootstrap wizard sheet-ID step (in `apps/web/src/features/bootstrap/`) + the corresponding zod schema field on the wizard form
+- `packages/shared/` — remove the 4 deprecated Stake fields from the zod schema + type (`callings_sheet_id`, `import_day`, `import_hour`, `last_import_at`, `last_import_summary`, `last_import_triggered_by`)
+
+**Surfaces to keep:**
+
+- `wardCallingTemplates` + `stakeCallingTemplates` collections — still used by Sync's classifier
+- `give_app_access` + `sheet_order` fields — still used (Sync auto-seat gate + roster sort priority)
+- The Configuration tab's Auto Ward/Stake Callings management UI
+
+**Infra (operator-side):**
+
+- Delete the Cloud Scheduler job for `runImporter` on each project (gcloud)
+- Revoke the importer's service-account access to the csnorth LCR Sheet (optional cleanup)
+- Mark `infra/runbooks/granting-importer-sheet-access.md` (or whichever runbook covers the sheet-sharing protocol) deprecated; cross-reference this T-task
+- T-05 (LCR sharing) — mark deprecated, point at T-45
+
+**Acceptance criteria:**
+
+1. `ripgrep` for `runImporter`, `runImportNow`, `callings_sheet_id`, `import_day`, `import_hour`, `last_import_at`, `last_import_triggered_by`, `Importer` (capital-I literal actor string in fresh code paths) returns zero hits outside historical changelog entries and audit-log row data.
+2. `googleapis` is gone from `functions/package.json` and lockfile.
+3. The bootstrap wizard's step 1 no longer collects a sheet ID; tests assert the field is absent from the form.
+4. The manager Import page route no longer exists; nav doesn't link to it; the route file is deleted; tests asserting "Import" in the nav are removed.
+5. Sync continues to create / update / remove auto seats per existing AC; no regression in `extension/src/content/kindoo/sync/` tests.
+6. The 4 deprecated Stake fields are removed from the zod schema; existing csnorth doc values may persist as vestigial keys on the Firestore doc (operator may manually clear post-merge).
+7. CI green; lint + typecheck clean.
+
+**Sequencing.** Spec PR (this one) lands first. Implementation PR follows; operator runs the Cloud Scheduler delete + service-account-access revoke after the implementation PR merges and the new code is deployed.
+
+**Out of scope:** Renaming `access.importer_callings` (the field name is historical post-removal — see `spec.md` §3 reference). Phase 12 multi-stake bootstrap UX. Changes to Sync's classifier or fix paths.
+
+Cross-ref: `spec.md` §8 (rewritten), `architecture.md` D14, `firebase-schema.md` §3 Stake doc.
