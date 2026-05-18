@@ -42,10 +42,9 @@ You do NOT:
 
 ## Observability
 
-- Log-based metrics in `infra/monitoring/metrics/`: `audit_trigger_failures`, `claim_sync_failures`, `firestore_rules_denied_count`, `importer_duration`, `expiry_duration`.
+- Log-based metrics in `infra/monitoring/metrics/`: `audit_trigger_failures`, `claim_sync_failures`, `firestore_rules_denied_count`, `expiry_duration`.
 - Alert policies in `infra/monitoring/alerts/`, all to Tad's email:
   - Alert on any function 5xx > 1/minute for 5 minutes.
-  - Alert if importer didn't complete within 10 minutes of fire.
   - Alert if expiry didn't complete within 5 minutes of fire.
 - Google Cloud Error Reporting enabled (zero config).
 

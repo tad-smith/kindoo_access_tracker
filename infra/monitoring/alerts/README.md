@@ -14,7 +14,6 @@ When the team grows, additional channels (Slack, PagerDuty) get added here and r
 |---|---|---|
 | `5xx-rate.yaml` | 1 | Any Cloud Function 5xx > 1/minute sustained for 5 minutes. Catches regressions in the rare HTTPS callable / Functions exception cases. |
 | `auth-verification-failures.yaml` | 4 | Auth verification failures > 5/hour. Phase 4 onward. (Not in this directory yet.) |
-| `importer-not-completed.yaml` | 8 | Importer didn't complete within 10 minutes of scheduler fire. (Not in this directory yet.) |
 | `expiry-not-completed.yaml` | 8 | Expiry didn't complete within 5 minutes of fire. (Not in this directory yet.) |
 
 (Phase 4+ alerts aren't created in Phase 1 — listed here as a forward reference.)

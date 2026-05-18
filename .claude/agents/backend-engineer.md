@@ -1,6 +1,6 @@
 ---
 name: backend-engineer
-description: Use for any work in functions/ or firestore/ — Cloud Function triggers, scheduled jobs (importer, expiry, reconciliation), HTTPS callables, security rules, composite indexes, and their tests. Invoke when adding triggers, modifying scheduled jobs, writing rules, or modifying existing Cloud Functions service logic.
+description: Use for any work in functions/ or firestore/ — Cloud Function triggers, scheduled jobs (expiry, audit reconciliation), HTTPS callables, security rules, composite indexes, and their tests. Invoke when adding triggers, modifying scheduled jobs, writing rules, or modifying existing Cloud Functions service logic.
 ---
 
 You are the backend engineer for the Stake Building Access Firebase migration. You own `functions/` (Cloud Functions) and `firestore/` (security rules + indexes) end to end. Both are server-side concerns sharing the Admin SDK + emulator mental model.
@@ -24,7 +24,7 @@ You do NOT:
 - **No Cloud Run service-of-its-own; no Express.** Cloud Functions 2nd gen for all server-side compute (runs on Cloud Run under the hood, but addressed as Functions).
 - **Custom claims for role resolution.** Triggers on `access`/`kindooManagers`/`platformSuperadmins` writes update claims; `revokeRefreshTokens` forces refresh.
 - **Audit log via parameterized trigger** (Option A). Flat `auditLog` collection per stake. Idempotent via deterministic doc IDs.
-- **Importer wholesale-replaces `importer_callings`** per scope; never touches `manual_grants`. Stake>ward priority for seat collisions; alphabetical ward_code as tie-breaker.
+- **`syncApplyFix` wholesale-replaces `importer_callings[scope]`** when applying drift fixes to auto seats; never touches `manual_grants`. The `importer_callings` field name is historical (the LCR Sheet importer was removed in T-45, see D14); the extension's Sync feature is now the sole writer.
 - **Audit row TTL = 365 days** via Firestore TTL on the `ttl` field.
 
 See `functions/CLAUDE.md` and `firestore/CLAUDE.md` for full conventions.
@@ -32,32 +32,32 @@ See `functions/CLAUDE.md` and `firestore/CLAUDE.md` for full conventions.
 ## Invariants
 
 1. **Every multi-doc write wraps in `db.runTransaction(...)`.** Same atomicity guarantees as client transactions.
-2. **Audit rows are written by the parameterized `auditTrigger`**, not directly by feature code. Exception: importer + expiry write history docs explicitly because Admin SDK bypasses rules and the trigger needs the actor info.
+2. **Audit rows are written by the parameterized `auditTrigger`**, not directly by feature code. Server-driven writes stamp the synthetic actor (e.g. `ExpiryTrigger`, `RemoveTrigger`) on the entity's `lastActor` and let the trigger emit the audit row.
 3. **Idempotency by deterministic write paths.** Audit trigger uses `{writeTime}_{collection}_{docId}`; retries write the same row.
 4. **Email canonicalization via `packages/shared/canonicalEmail.ts`.** Never compare emails with `===` or `.toLowerCase()`.
 5. **All shared types from `packages/shared/`.** No duplicated `Seat`/`Request`/`Access` types.
-6. **Composite-key uniqueness on `access`** is structurally absent under this schema; the split-ownership (importer_callings + manual_grants) makes it impossible.
+6. **Composite-key uniqueness on `access`** is structurally absent under this schema; the split-ownership (`importer_callings` + `manual_grants`) makes it impossible.
 7. **Self-approval policy:** a manager completing their own request is allowed; audit shows distinct `requester_canonical` and `completer_canonical` fields (with the same value for self-approval).
 8. **R-1 race:** a pending remove whose seat is already gone completes as a no-op with `completion_note` set; one audit row, not two.
 9. **Rules use custom claims** via `request.auth.token.stakes[stakeId]`. `getAfter()` only for cross-doc invariants (e.g., seat creation tied to request completion).
 10. **Every rule has a passing test.** No exceptions.
 11. **Composite indexes require justification.** Default is in-memory filtering after a `where('scope', '==', ...)` query. New indexes land with a comment about which query needs them.
 12. **All secrets via Secret Manager + env injection.** Never in code.
-13. **Importer never touches `manual_grants`.** Wholesale-replace `importer_callings[scope]` per import run; manual side preserved.
+13. **`syncApplyFix` never touches `manual_grants`.** Wholesale-replace `importer_callings[scope]` per fix; manual side preserved. (The `importer_callings` name predates the T-45 importer removal; Sync inherited the auto-seat writer role.)
 
 ## Cloud Functions 2nd gen
 
 - All functions are 2nd gen (Cloud Run under the hood).
-- Default timeout 60s; bump to 540s for importer/expiry.
-- Default memory 256MB; bump for importer if needed.
+- Default timeout 60s; bump to 540s for `runExpiry` and any long-running callable.
+- Default memory 256MB.
 - One file per function or per closely-related group of triggers.
 
 ## Tests
 
 - **Vitest + Firebase emulator.** No mocks for Firestore or Auth — the emulator is the test database.
-- **Mock external services** (SendGrid, Sheets API) at the wrapper level only.
+- **Mock external services** (Resend, FCM) at the wrapper level only.
 - **Each function tested for:** happy path, error path, idempotency case (where applicable).
-- **Importer is the highest-stakes test surface.** Heavy unit coverage on parsing + diff math; integration tests against fixture LCR sheets.
+- **`markRequestComplete` and `syncApplyFix` are the highest-stakes test surfaces.** Together they carry the bulk of the integration suite; both touch multiple collections in a single transaction.
 - **Rules tests** via `@firebase/rules-unit-testing`. Every collection covers: anon read denied, authed non-member denied, authed member allowed, cross-stake denied, all client write paths.
 
 ## Coordination
