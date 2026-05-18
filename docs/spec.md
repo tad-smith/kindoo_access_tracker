@@ -22,7 +22,7 @@ Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for
 
 ## 2. Stack
 
-- **Identity:** Firebase Authentication, Google sign-in only. The auth token (refreshed automatically by the Firebase JS SDK) carries custom claims that drive role resolution; see §4.
+- **Identity:** Firebase Authentication. The auth token (refreshed automatically by the Firebase JS SDK) carries custom claims that drive role resolution; see §4. Two providers are enabled at the Firebase Console level — Google and Email-link (passwordless) — and the SPA UI surfaces only email magic link while the Chrome extension uses only Google; see §4.1.
 - **Authorization:** Firestore Security Rules consult `request.auth.token.stakes[stakeId]` for role checks. Custom claims are the only authoritative role source — there are no per-request Firestore lookups for role resolution from rules. See `firebase-schema.md` §6.
 - **Database:** Firestore in Native mode (`us-central1`), single-stake project at `kindoo-prod`. All collections are parameterized under `stakes/{stakeId}/...` with three top-level collections (`userIndex`, `platformSuperadmins`, `platformAuditLog`) for cross-stake plumbing. Schema authoritative in `firebase-schema.md`.
 - **Client:** React 19 + TypeScript + Vite SPA, served from Firebase Hosting. Reads Firestore directly through the JS SDK; writes go through Firestore transactions or `setDoc`/`updateDoc` with rules enforcing field-level invariants. TanStack Router for routing, TanStack Query as the cache substrate, with a small DIY hooks layer at `apps/web/src/lib/data/` (per architecture D11) that pushes `onSnapshot` results into the query cache.
@@ -101,6 +101,47 @@ The web app reads the principal via `usePrincipal()` from `apps/web/src/lib/prin
 
 **Bishopric lag.** A newly-called bishopric member can't sign in until the next weekly import populates `access.importer_callings`. Accepted for v1, same as the legacy spec.
 
+### 4.1 Sign-in providers
+
+Firebase Auth identifies the user; it does not authorize them. Authorization is keyed by canonical email and resolved exclusively from custom claims (§4). The provider that minted the Firebase user is irrelevant to authorization — Google and magic-link sign-ins for the same email resolve to the same `userIndex/{canonical}` doc and the same claim set.
+
+**Surfaces.**
+
+- **SPA (`apps/web/`):** Email magic link only. The sign-in page renders no Google button and no password field.
+- **Chrome extension:** Google only, via `chrome.identity.getAuthToken` → Firebase credential exchange. Unchanged.
+
+**Firebase Console provider config.** Both Google and Email/Password (with the Email-link sub-toggle on, password sub-toggle off) are enabled at the project level. The Google provider stays enabled because the extension depends on it; the SPA UI simply does not surface it. Provider availability at the Console level is therefore decoupled from provider visibility in the SPA UI — disabling Google in Console would break the extension.
+
+**Magic link round-trip.**
+
+1. User visits `/` while signed out. Enters their email and clicks "Send me a sign-in link."
+2. SPA calls `sendSignInLinkToEmail(auth, email, actionCodeSettings)` and stashes the typed email in `localStorage` for the return trip.
+3. SPA renders a "Check your email" confirmation state on the same page.
+4. User opens the email and clicks the link. The link lands on the SPA's action-handler route (path chosen by the implementer; the route is unauthed since the user is not yet signed in).
+5. The handler route:
+   - Reads the email from `localStorage`.
+   - If absent (cross-device — link opened on a different device than where it was requested): prompts the user to enter the email address the link was sent to.
+   - Calls `signInWithEmailLink(auth, email, window.location.href)`.
+   - On success: clears the stashed email and redirects to `/`, where `gateDecision()` runs as it does today.
+   - On error (expired link, malformed URL, email mismatch, network failure): renders a clear error message and offers a re-send affordance back to the sign-in flow.
+
+**`actionCodeSettings`.** `url` is the full SPA action-handler URL (must include the host) and the host must be on Firebase Auth's Authorized Domains list (Console → Authentication → Settings → Authorized domains). **This is a separate Console-level list from the Firebase Hosting custom-domain config referenced in §12** — a host showing up under Hosting does NOT imply it's on the Auth Authorized Domains list. Adding a new authorized SPA host (or verifying an existing one is present) is a deployment prerequisite, not a runtime concern; a missing entry surfaces at runtime as `auth/unauthorized-continue-uri` on the `sendSignInLinkToEmail` call. `handleCodeInApp: true`. Verify before T-44 ships that the Auth Authorized Domains list contains `stakebuildingaccess.org`, `kindoo.csnorth.org`, and the project's default `kindoo-prod.firebaseapp.com` auth-domain entry.
+
+**Authorization gate (unchanged).** A successful magic-link sign-in produces a Firebase user but does not by itself grant any role. A signed-in user with no `access` / `kindooManagers` / `superadmins` doc keyed to their canonical email lands on the existing `NotAuthorized` page exactly as a Google sign-in would. The sign-in page surfaces a short explanatory sentence so new users understand that creating an account does not immediately grant access — e.g., "New sign-ins land in pending authorization until a stake manager adds your email. Contact your stake manager if you can't reach the next screen."
+
+**`userIndex` + claims sync (unchanged).** The `onAuthUserCreate` trigger writes a `userIndex/{canonical}` doc on first sign-in regardless of provider. Claim-sync triggers on `access` / `kindooManagers` / `superadmins` are keyed by canonical email, not by provider or uid. No backend changes ship with the SPA UI provider switch.
+
+**Provider auto-linking — LOAD-BEARING ASSUMPTION.** Firebase Auth's project setting **"one account per email address"** (Console → Authentication → Settings → User account linking) auto-links the Google and Email-link providers for the same email under a single Firebase UID. **This is the Console default; verify it is still ON before T-44 ships.** An existing Google-signed-in user (e.g., the operator) who signs in via magic link to the same address keeps their UID, their `userIndex/{canonical}` doc, and every canonical-email-keyed role doc unchanged. If this setting were flipped to "multiple accounts per email," the same address would mint a second Firebase user the first time it signed in via magic link, breaking every UID-keyed assumption in the system. Future code must not branch on `firebase.auth().currentUser.providerData[0].providerId`.
+
+**Deployment prerequisites** (must hold before T-44 ships):
+
+- The Firebase Auth Authorized Domains list contains `stakebuildingaccess.org`, `kindoo.csnorth.org`, and `kindoo-prod.firebaseapp.com` (Console → Authentication → Settings → Authorized domains — separate from Hosting custom-domain config, see §12).
+- The Firebase Auth user-account-linking setting is **"one account per email address"** (Console → Authentication → Settings → User account linking).
+- The Email/Password provider is enabled at the Firebase Console level with the Email-link sub-toggle ON and the password sub-toggle OFF (Console → Authentication → Sign-in method).
+- The Google provider remains enabled at the Firebase Console level (the Chrome extension depends on it).
+
+**Out of scope.** Email/password (password sub-toggle stays off). Other OAuth providers (Apple, Microsoft, LDS Church Account). Self-service authorization or onboarding flows. Changes to the extension's Google-only auth path.
+
 ## 5. Page map
 
 The SPA is built on TanStack Router with file-based routes under `apps/web/src/routes/`. Page components live under `apps/web/src/features/{feature}/pages/`. Navigation is the Phase-10.1 left-rail + sectioned-nav design (hamburger drawer on phone, icon-only rail on tablet, full rail on desktop); components live under `apps/web/src/components/layout/`. Spec in [`navigation-redesign.md`](navigation-redesign.md).
@@ -113,7 +154,7 @@ The SPA is built on TanStack Router with file-based routes under `apps/web/src/r
 
 Two routes render without an auth gate; neither participates in role resolution or `gateDecision()`.
 
-- **`/` (signed-out homepage)** — rendered by `apps/web/src/features/auth/SignInPage.tsx` whenever no Firebase Auth user is present. Audience is ward and stake leadership (bishopric, stake presidency, executive secretaries, clerks) — not Kindoo Managers, who are a downstream role. Layout: a sticky top bar (brand + secondary "Sign in" button), a centred hero (headline + sub-line + primary "Sign in with Google" button), two short feature bullets (request access, auto-expiring temporary grants), a one-paragraph explainer, and a footer linking to `/privacy`, the Chrome Web Store listing, and a contact `mailto:`. Both sign-in buttons call the same `signIn()` flow; the duplicated CTA is intentional (topbar remains reachable after scroll). Once authenticated the route re-renders and falls through to the existing `gateDecision()` in `apps/web/src/routes/index.tsx`, unchanged.
+- **`/` (signed-out homepage)** — rendered by `apps/web/src/features/auth/SignInPage.tsx` whenever no Firebase Auth user is present. Audience is ward and stake leadership (bishopric, stake presidency, executive secretaries, clerks) — not Kindoo Managers, who are a downstream role. Layout: a sticky top bar (brand + secondary "Sign in" affordance), a centred hero (headline + sub-line + the magic-link sign-in form: an email input + a "Send me a sign-in link" primary button), two short feature bullets (request access, auto-expiring temporary grants), a one-paragraph explainer, a short note that new sign-ins land in pending authorization until a stake manager adds the email (§4.1), and a footer linking to `/privacy`, the Chrome Web Store listing, and a contact `mailto:`. The topbar affordance scrolls / focuses the hero form; both surfaces drive the same `sendSignInLinkToEmail()` flow. After submit the hero swaps to a "Check your email" confirmation state. The action-handler route (the page the emailed link lands on) lives under the same app and runs `signInWithEmailLink()`; on success the SPA redirects to `/` and `gateDecision()` in `apps/web/src/routes/index.tsx` runs unchanged. Cross-device case is handled by re-prompting for the email when `localStorage` is empty (§4.1).
 - **`/privacy`** — TanStack Router file route at `apps/web/src/routes/privacy.tsx`. Public; no auth gate; renders identically for reviewers, signed-out visitors, and signed-in users. Hosts the privacy policy for both the web app and the companion "Stake Building Access — Kindoo Helper" Chrome MV3 extension, and is the privacy URL declared on the Chrome Web Store listing. Sections cover: operator identity, what the extension does, data accessed and why, storage and processing (Firestore + Cloud Functions, US region), authentication via `chrome.identity` + Firebase, per-permission justifications for the extension's MV3 manifest, user rights, and a change log keyed on `LAST_UPDATED`. When the extension manifest changes (permissions, host_permissions, OAuth scopes) the corresponding section is updated in the same commit.
 
 `/privacy` carries zero `[PLACEHOLDER]` tokens. The homepage carries one remaining placeholder: `CHROME_WEB_STORE_URL` points at the Web Store root pending the actual extension listing. `CONTACT_MAILTO` is `mailto:support@stakebuildingaccess.org`. See §13.
