@@ -311,7 +311,7 @@ Now configure authorized domains:
 
 ### 1.8 Create the runtime service account `kindoo-app`
 
-This is the service account pinned by the Cloud Functions whose Firestore-trigger consumption or push-send capability requires non-default identity (e.g. `notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`). It also runs the weekly Firestore export Cloud Scheduler job in Phase 3. It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
+This is the service account pinned by the nine Cloud Functions that need a non-default runtime identity — all three notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`), both scheduled jobs (`runExpiry`, `reconcileAuditGaps`), and four callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`). It also runs the weekly Firestore export Cloud Scheduler job in Phase 3. It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
 
 ```bash
 gcloud iam service-accounts create kindoo-app \
@@ -358,7 +358,7 @@ This trips people up the first time. Cloud Functions 2nd-gen runs on Cloud Run, 
 
 For staging, substituting your project number from step 1.2, that's e.g., `123456789012-compute@developer.gserviceaccount.com`.
 
-`kindoo-app` is the SA pinned by the Cloud Functions whose Firestore-trigger or push-send paths require a non-default identity (see step 1.8). Functions that don't pin an SA fall back to the compute SA.
+`kindoo-app` is the SA pinned by the nine Cloud Functions enumerated in step 1.8 (notification triggers, scheduled jobs, and callables that need a non-default identity). Functions that don't pin an SA fall back to the compute SA.
 
 In Phase 1 the function we deploy (`hello`) needs no special permissions — it's a pure callable returning `{version, builtAt, env}`. From Phase 2 onward, when `auth.user().onCreate` writes to Firestore, the compute SA must have `roles/datastore.user` and the Functions deploy will fail without it. Add it now while you're already in IAM:
 
