@@ -47,9 +47,9 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     const rosters = sections.find((s) => s.key === 'rosters')?.items.map((i) => i.label);
     expect(rosters).toEqual(['Ward Roster', 'Stake Roster', 'All Seats']);
     const settings = sections.find((s) => s.key === 'settings')?.items.map((i) => i.label);
-    expect(settings).toEqual(['Notifications', 'Configuration', 'App Access', 'Audit Log']);
+    expect(settings).toEqual(['Configuration', 'App Access', 'Audit Log']);
     const account = sections.find((s) => s.key === 'account')?.items.map((i) => i.label);
-    expect(account).toEqual(['Logout']);
+    expect(account).toEqual(['Notifications', 'Logout']);
   });
 
   it('bishopric-only: shows Quick Links + Rosters + Account; hides Settings entirely', () => {
@@ -89,21 +89,21 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
   });
 
   it('Account section visible to every authorized user (manager / stake / bishopric)', () => {
-    const cases: Array<Partial<Principal>> = [
-      { managerStakes: ['csnorth'] },
-      { stakeMemberStakes: ['csnorth'] },
-      { bishopricWards: { csnorth: ['CO'] } },
+    const cases: Array<{ overrides: Partial<Principal>; expected: string[] }> = [
+      { overrides: { managerStakes: ['csnorth'] }, expected: ['Notifications', 'Logout'] },
+      { overrides: { stakeMemberStakes: ['csnorth'] }, expected: ['Logout'] },
+      { overrides: { bishopricWards: { csnorth: ['CO'] } }, expected: ['Logout'] },
     ];
-    for (const overrides of cases) {
+    for (const { overrides, expected } of cases) {
       const sections = navSectionsForPrincipal(makePrincipal(overrides));
       const account = sections.find((s) => s.key === 'account');
-      expect(account?.items.map((i) => i.label)).toEqual(['Logout']);
+      expect(account?.items.map((i) => i.label)).toEqual(expected);
     }
   });
 
   it('Logout is an action item, not a link', () => {
     const sections = navSectionsForPrincipal(makePrincipal({ managerStakes: ['csnorth'] }));
-    const logout = sections.find((s) => s.key === 'account')?.items[0];
+    const logout = sections.find((s) => s.key === 'account')?.items.find((i) => i.key === 'logout');
     expect(logout?.kind).toBe('action');
     if (logout?.kind === 'action') {
       expect(logout.action).toBe('sign-out');

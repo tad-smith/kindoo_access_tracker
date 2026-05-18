@@ -158,20 +158,8 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
 
   const settings: NavItem[] = [];
   if (manager) {
-    // Operator-specified order: Notifications, Configuration,
-    // App Access, Audit Log. Notifications leads because it is the
-    // first per-user setting most operators reach for after landing;
+    // Operator-specified order: Configuration, App Access, Audit Log.
     // Audit Log stays at the bottom as a less-frequent path.
-    // Manager-only for-now on Notifications; future expansion to
-    // bishopric/stake users is planned when push for
-    // completed/rejected/cancelled requests ships.
-    settings.push({
-      kind: 'link',
-      key: 'notifications',
-      label: 'Notifications',
-      to: '/notifications',
-      icon: Bell,
-    });
     settings.push({
       kind: 'link',
       key: 'configuration',
@@ -195,10 +183,21 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
     });
   }
 
-  // Account section: visible to every authorized user (anyone reaching
-  // the nav at all). One item today (Logout); future-proofed for things
-  // like Profile / Notification preferences.
+  // Account section: visible to every authorized user. Notifications
+  // is manager-only for-now (matching the route gate at
+  // routes/_authed/notifications.tsx); future expansion to
+  // bishopric/stake when push for completed/rejected/cancelled
+  // ships.
   const account: NavItem[] = [];
+  if (manager) {
+    account.push({
+      kind: 'link',
+      key: 'notifications',
+      label: 'Notifications',
+      to: '/notifications',
+      icon: Bell,
+    });
+  }
   if (anyRole) {
     account.push({
       kind: 'action',

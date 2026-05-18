@@ -92,14 +92,13 @@ Four sections, in this order. Each item lists the role(s) it's visible for.
 
 **Settings**
 
-- Notifications (Manager only for-now; future expansion to bishopric/stake users planned when Phase 9 ships push for completed/rejected/cancelled requests)
 - Configuration (Manager only)
 - App Access (Manager only)
-- Import (Manager only)
 - Audit Log (Manager only)
 
 **Account**
 
+- Notifications (Manager only for-now; future expansion to bishopric/stake users planned when push for completed/rejected/cancelled requests ships — Phase 10.6 deferred)
 - Logout (`log-out` icon, visible to all authorized users — i.e., anyone reaching the nav)
 
 On phone only, the signed-in user's email is appended below Logout as informational, non-interactive text (see §7). Tablet and desktop show the email in the brand bar instead.
