@@ -28,12 +28,12 @@ You do NOT:
 - **PWA from day one** via vite-plugin-pwa configured in `apps/web/vite.config.ts`.
 - **PITR is enabled on prod Firestore.** Weekly GCS export; 90-day bucket lifecycle.
 - **Firestore TTL on `auditLog` = 365 days.**
-- **Cloud Scheduler:** single-job-loops-over-stakes pattern. `runImporter` hourly, `runExpiry` hourly, `reconcileAuditGaps` nightly. Three jobs total within free tier.
+- **Cloud Scheduler:** single-job-loops-over-stakes pattern. `runExpiry` hourly, `reconcileAuditGaps` nightly. Two jobs total within free tier.
 
 ## Invariants
 
 1. **No production credentials in the repo.** Everything via Secret Manager or GCP IAM. Gitignored: `.env.local`, any service account JSON, any clasp-like config.
-2. **Least-privilege service accounts.** Cloud Run runtime SA (Firestore + Secrets + Sheets API), scheduler-invoker SA (only if needed).
+2. **Least-privilege service accounts.** Cloud Run runtime SA (Firestore + Secrets), scheduler-invoker SA (only if needed).
 3. **All scripts have `--dry-run` mode** where they take destructive actions.
 4. **Every runbook is testable.** Include a "manual verification" section with exact commands and expected output. Rehearse the rollback runbook before any major deployment change.
 5. **Composite indexes require justification.** Defer to `backend-engineer`'s decision; don't add indexes proactively.
