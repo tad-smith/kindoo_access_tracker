@@ -34,6 +34,25 @@ Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for
 - **PWA:** `vite-plugin-pwa` configures the service worker (cache-first for static assets, network-first for `index.html`, never cache Firestore traffic) and manifest. App is installable on iOS, Android, and desktop.
 - **Local dev:** Firebase emulator suite (Firestore, Auth, Functions, Hosting). `pnpm dev` runs emulators + Vite + Functions in parallel.
 
+### 2.1 Active stake
+
+A user can hold roles on more than one stake simultaneously (per F18 / `architecture.md` D15). The SPA carries an **active-stake selector** that picks which stake's data the current tab is reading and writing. The selector's behaviour is fully specified here because it spans URL, per-tab session, and cross-tab sticky storage; the implementation lives in `apps/web/src/lib/activeStake.ts` (or equivalent, established in Phase B's B.4 PR).
+
+**Resolution priority on first render**, top wins:
+
+1. URL `?stake=X` — read once on first render, then `history.replaceState` strips the param so the URL bar stays clean from then on. Used by push-notification deep links (`click_action: https://<host>/<path>?stake=X`) and operator-shared URLs that need to target a specific stake.
+2. `sessionStorage['kindoo.activeStake']` — per-tab. Switching the active stake in tab A does not retarget tab B.
+3. `localStorage['kindoo.activeStake']` — sticky default. Fresh tabs that have no `sessionStorage` entry fall through to the last stake the user switched to in any tab.
+4. Principal-derived first stake — deterministic sort across the union of `managerStakes ∪ stakeMemberStakes ∪ Object.keys(bishopricWards)`. The "first stake" tiebreaker is alphabetical on the stake's doc ID. This branch fires for a user's first-ever sign-in (no `localStorage` entry yet) and for a fresh tab whose `localStorage` was cleared.
+
+**Switcher click handler** writes both `sessionStorage` AND `localStorage` and invalidates TanStack Query's per-stake reads so the SPA refetches against the newly-selected stake. The URL does not change.
+
+**Stake switcher dropdown** in the brand bar surfaces a drop-down next to the current stake name when the user has any role on ≥ 2 stakes. Hidden entirely when the user has access to only one stake. Visible to all role types — managers, stake-presidency members, bishopric — anyone who holds a role on more than one stake.
+
+**Middle-click / new-tab caveat.** A tab opened via middle-click on an in-SPA link starts with an empty `sessionStorage` and falls through to `localStorage`. That's acceptable: `localStorage` is almost always the right stake, and there is no `?stake=X` stamping on `<Link>` `href`s — the URL stays clean. If the user opens a new tab into a stake they weren't last on, they switch with the dropdown.
+
+**No URL pollution.** Path-prefixed (`/{stakeId}/...`) URLs and on-every-link `?stake=X` query params were both considered and rejected. The query param is an entry-boundary signal only — push deep links and operator-shared URLs carry it; the SPA reads it once, persists it, and strips it.
+
 ## 3. Data model
 
 The authoritative schema reference is [`firebase-schema.md`](firebase-schema.md). This section names the collections and gives the role-resolution invariants; field-by-field shapes live in the schema doc.
@@ -41,8 +60,8 @@ The authoritative schema reference is [`firebase-schema.md`](firebase-schema.md)
 ### 3.1 Top-level collections
 
 - **`userIndex/{canonicalEmail}`** — bridge between canonical-email-keyed role data and Firebase Auth's uid. Carries the FCM device-token map and per-category notification preferences. Written by `onAuthUserCreate` and by the user themselves (subscribing to push); claim-sync triggers translate canonical email → uid through this. See `firebase-schema.md` §3.1.
-- **`platformSuperadmins/{canonicalEmail}`** — empty in single-stake v1; populates if/when a platform-superadmin role becomes meaningful.
-- **`platformAuditLog/{auditId}`** — empty in single-stake v1; reserved for cross-stake operations.
+- **`platformSuperadmins/{canonicalEmail}`** — active source of truth for the platform-superadmin role (Phase B). The `syncSuperadminClaims` trigger reads writes here and mints / revokes the `isPlatformSuperadmin: true` claim. Writes are console-only — there is no in-app management UI.
+- **`platformAuditLog/{auditId}`** — cross-stake audit trail. The Phase B `createStake` callable writes `action='create_stake'` rows here; future cross-stake actions (e.g. superadmin add/remove triggers) append the same way.
 
 ### 3.2 Per-stake collections
 
@@ -91,9 +110,10 @@ Roles per stake:
 - `stakes[stakeId].manager === true` → **Kindoo Manager** for that stake.
 - `stakes[stakeId].stake === true` → **Stake Presidency** (or other stake-scope grant).
 - A non-empty `stakes[stakeId].wards` → **Bishopric** for each listed ward.
+- `isPlatformSuperadmin === true` → **Platform Superadmin** (cross-stake). Sourced from the `platformSuperadmins/{canonical}` allow-list via the `syncSuperadminClaims` trigger. Carries the Superadmin nav section in the SPA (see §5.4). Console-only management — no in-app UI for adding/removing superadmins.
 - None of the above and not a superadmin → "not authorized".
 
-A user can hold multiple roles per stake; the UI shows the union.
+A user can hold multiple roles per stake; the UI shows the union. A user can hold roles on multiple stakes simultaneously; the active stake (per §2.1) picks which stake the SPA is reading and writing against, and `usePrincipal()` (web) / `request.auth.token.stakes[stakeId]` (rules) consult that stake's claim sub-object.
 
 The web app reads the principal via `usePrincipal()` from `apps/web/src/lib/principal.ts`, which derives the principal shape from the Firebase Auth token's custom claims. Rules read the same claims via `request.auth.token.stakes[stakeId]`. There is no second source of truth.
 
@@ -175,6 +195,8 @@ Same three pages as Bishopric, scoped to the stake pool — uses the same shared
 
 ### 5.3 Kindoo Manager
 
+Every manager page renders against the **active stake** (§2.1). A manager who holds the role on two stakes sees the same five pages below in each stake's scope; the stake-switcher dropdown in the brand bar swaps which stake the queries target. Reads are scoped via `stakes/{activeStakeId}/...` in every collection path.
+
 - **Dashboard** — manager default landing. Five cards: pending request counts grouped by type (deep-link to Requests Queue), recent activity (last 10 audit rows, deep-link to Audit Log filtered by `entity_id`), utilization per scope (one bar per ward + stake; colour-coded ok / warn ≥ 90% / over; deep-link to All Seats filtered by ward), warnings (over-cap pools from `stake.last_over_caps_json` with a deep-link per pool), and last operations (last expiry, triggers reinstall). The stake bar is home-site only — foreign-site wards do not contribute on either side of the calculation (§15, §244). Per-ward bars are unchanged regardless of site. Reads are per-card live subscriptions through the DIY Firestore hooks.
 - **Requests Queue** — sectioned (Phase 10.3) into Urgent / Outstanding / Future by computed `comparison_date` (start_date for `add_temp`, requested_at otherwise) with a today+7 cutoff at user-local midnight. Each section heading shows the open-request count in parentheses, e.g., `Outstanding Requests (9)`. Sections with zero open requests are hidden. Filter by state (Pending / Complete) — the "Complete" view groups complete, rejected, and cancelled. Filter by ward and type. Pending sorts oldest-first (FIFO); Complete sorts newest-first. Pending cards render metadata + a duplicate-warning block when the member already has a seat in the scope, plus Mark Complete / Reject actions. **Mark Complete opens a confirmation dialog** with a Buildings checkbox group pre-ticked from the request's own `building_names` (every new request carries at least one — see §5.1 / §6). **At least one building must be ticked** — enforced both client-side and rule-side. The manager adjusts the selection if needed, clicks Confirm, and the resulting seat doc carries that `building_names` selection exactly. Self-approval policy: a manager who is also a bishopric/stake member may complete or reject requests they themselves submitted; the audit trail records both who submitted and who completed.
 - **All Seats** — full roster across every scope; filter by scope/building/type. When the scope filter is "All" and `stake.stake_seat_cap` is set, a full-width "Seat utilization" bar renders between the filters and the per-scope summary cards (Phase 10.3 — contextual `<UtilizationBar>` follows the current scope filter). The "All" and Stake-scope bars are home-site only — foreign-site ward seats / caps are excluded from both sides (§15, §244). Per-ward bars are unchanged. Inline edit (Edit button on manual/temp rows only — auto rows are Sync-owned) of `member_name`, `reason`, `building_names`, plus `start_date` / `end_date` on temp rows. `scope`, `type`, `member_email`, and the canonical-email doc-ID are immutable; rules enforce.
@@ -182,6 +204,14 @@ Same three pages as Bishopric, scoped to the stake pool — uses the same shared
 - **App Access** — view over the `access/{canonical}` collection. Server-managed grants (`importer_callings`, written by Sync via `syncApplyFix`) are read-only; the manager cannot edit them because the next Sync run would just recreate them. Manual grants (`manual_grants`) have a themed Delete confirmation, and an "Add manual access" modal lets the manager grant app access to someone whose calling isn't in a template. On desktop the page renders a table; at narrow viewports it swaps to a card stack. The card view sorts by the doc-level `sort_order` (Phase 10.4); the table view's per-row sort is T-29 (open).
 - **Audit Log** — filterable view over the `auditLog` subcollection (Phase 8 / Phase 10.3). Cursor-paginated against Firestore; max 100 rows per page. Filters combine as AND: `actor_canonical` (canonical-email compare; literal match against `"ExpiryTrigger"` and the legacy `"Importer"` value for pre-removal rows), `action` (exact match from the `firebase-schema.md` §4.10 enum), `entity_type` (enum), `entity_id` (exact, case-sensitive), `member_canonical` (cross-collection per-user view), `date_from` / `date_to` (ISO dates, inclusive on both ends in stake timezone). Default window when neither date is supplied is the last 7 days. Deep-linkable via search params. Per-row rendering: a coloured action badge, a one-line summary (with `complete_request.completion_note` surfaced inline for the R-1 no-op case), and a `<details>` block that expands to a Field / Before / After diff table sourced from `computeFieldDiff(before, after)` (T-21).
 - **Notifications** (under Account) — push-subscription panel. Five render branches keyed by device state (`push-unsupported`, `push-requires-install`, `push-vapid-missing`, `push-denied`, `push-enable-button`, `push-subscribed-with-toggle`). Per-device subscription via stable `crypto.randomUUID()` persisted in localStorage; subscribe writes the deviceId-keyed token slot to `userIndex/{canonical}.fcmTokens`. Disable on one device leaves other devices' tokens intact. Manager-only for now; the route gate widens for bishopric/stake users in Phase 10.6 (deferred).
+
+### 5.4 Platform Superadmin
+
+Visible iff `principal.isPlatformSuperadmin === true`. A new "Superadmin" section in the app shell's nav (see `navigation-redesign.md` §8) carries one entry:
+
+- **Stake List** (`/superadmin/stakes`) — lists every stake in the platform: `stake_name`, doc ID slug, `created_at`, `setup_complete` flag, and a deep-link to each stake's normal landing page (e.g. the manager Dashboard scoped to that stake). A **Create Stake** form (inline or modal — implementer's call in B.3) takes `stake_name` and `bootstrap_admin_email`. Submit calls the `createStake` Cloud Function callable (superadmin-gated server-side; the web-side render gate is defense-in-depth), which slugs the stake name into a doc ID, validates collision, canonicalizes the bootstrap email, writes the `stakes/{slug}` parent doc with `setup_complete=false`, and emits a `platformAuditLog` `create_stake` row. The named bootstrap admin must then sign in for the bootstrap wizard (§10) to run — superadmin's only act is creating the parent doc.
+
+The `platformSuperadmins/{canonical}` allow-list itself is **not** managed from the web. Adding or removing a superadmin is a Firestore console write; the `syncSuperadminClaims` trigger picks up the write and mints / revokes the `isPlatformSuperadmin: true` claim. No in-app UI exists for it.
 
 ## 6. Request lifecycle
 
@@ -331,7 +361,8 @@ The Resend `mail.stakebuildingaccess.org` subdomain is verified and in active us
 
 ## 13. Out of scope for v1
 
-- Multi-tenant (other stakes) — Phase 12 / Phase B work.
+- Per-stake "From" address or verified email subdomain (the Phase A shared envelope continues under Phase B) — see `firebase-migration.md` Phase B "Out of scope".
+- Web UI for `platformSuperadmins` management — console-only by operator decision (`firebase-migration.md` Phase B / `firebase-schema.md` §3.2).
 - Kindoo API integration (they don't have one).
 - Native mobile app (the PWA is enough; installable on iOS, Android, desktop).
 - Building permissions UI on bishopric requests (the `building_names` defaulting + manager pre-tick on the complete dialog covers it; the comment field handles exceptions).
@@ -341,13 +372,13 @@ The Resend `mail.stakebuildingaccess.org` subdomain is verified and in active us
 
 ## 14. Build history
 
-The Apps Script implementation shipped in 11 chunks (chunks 1-11 in `docs/changelog/chunk-N-*.md`). The Firebase migration shipped in phases 1-11 plus four interleaved sub-phases (10.2 / 10.3 / 10.4 / 10.5); see `docs/changelog/phase-N-*.md`. Phase 11 cutover (2026-05-03) closed Phase A. Phase 12 (multi-stake) is deferred.
+The Apps Script implementation shipped in 11 chunks (chunks 1-11 in `docs/changelog/chunk-N-*.md`). The Firebase migration shipped in phases 1-11 plus four interleaved sub-phases (10.2 / 10.3 / 10.4 / 10.5); see `docs/changelog/phase-N-*.md`. Phase 11 cutover (2026-05-03) closed Phase A. Phase B (multi-stake) was promoted from deferred to active on 2026-05-18 and ships as five sub-deliverables (B.1 → B.5); see `docs/firebase-migration.md` Phase B.
 
 ## 15. Kindoo Sites (multi-site Kindoo management)
 
 The operator manages a single SBA stake (`csnorth`) but is a Kindoo Manager on multiple Kindoo sites — two wards in csnorth live in buildings whose access doors are physically governed by a different stake's Kindoo environment than the SBA stake's own home site. "Kindoo Sites" tracks those N Kindoo environments the operator's managers can write to (home + 0..N foreign), so the SPA, the companion Chrome extension, and the weekly sync can route Kindoo-side operations to the correct environment without misprovisioning.
 
-This is **not** multi-stake on the SBA side. The SBA stake remains a single SBA stake; only the Kindoo-side cardinality changes. The existing `kindooManagers` allow-list governs all Kindoo writes regardless of which Kindoo site they target — Kindoo Sites does NOT introduce a new role or principal shape. Phase B (multi-stake) is unaffected by this work.
+This is **not** multi-stake on the SBA side. Kindoo Sites is local per stake — the existing `kindooManagers` allow-list governs all Kindoo writes regardless of which Kindoo site they target, and Kindoo Sites does NOT introduce a new role or principal shape. **Phase B (multi-stake) interaction.** The data layer is unaffected: each stake's `kindooSites/{kindooSiteId}` sub-collection is local to that stake, and a foreign Kindoo site configured under stake A is not visible from stake B. The extension gains one Phase-B-specific behaviour: when a single Kindoo EID resolves to configurations under more than one SBA stake the operator manages (rare, but reachable when a foreign-site grant from stake A and a home grant from stake B both target the same Kindoo environment), the slide-over panel surfaces a stake picker; the choice is remembered per-EID in `chrome.storage.local`. See `firebase-migration.md` Phase B sub-deliverable B.5.
 
 ### Data model
 

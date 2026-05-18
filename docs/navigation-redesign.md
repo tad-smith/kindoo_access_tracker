@@ -75,7 +75,7 @@ Dismissal: tap a nav item, tap the backdrop, tap the hamburger again, swipe the 
 
 ## 8. Sectioned navigation
 
-Four sections, in this order. Each item lists the role(s) it's visible for.
+Five sections, in this order. The fifth (Superadmin) is Phase B and visible only to platform superadmins. Each item lists the role(s) it's visible for.
 
 **Quick Links**
 
@@ -103,7 +103,11 @@ Four sections, in this order. Each item lists the role(s) it's visible for.
 
 On phone only, the signed-in user's email is appended below Logout as informational, non-interactive text (see §7). Tablet and desktop show the email in the brand bar instead.
 
-**Conditional section visibility.** If a user has access to zero items in a section, the section header AND the section entirely do not render. A bishopric-only user sees "Quick Links" (My Requests, New Request) and "Rosters" (Ward Roster); the "Settings" header doesn't appear. A stake-only user sees "Quick Links" + "Rosters" with no Settings. The Account section always renders because Logout is always visible.
+**Superadmin** (Phase B)
+
+- Stake List (Superadmin only — `/superadmin/stakes`; lists existing stakes and offers a Create Stake form per `spec.md` §5.4)
+
+**Conditional section visibility.** If a user has access to zero items in a section, the section header AND the section entirely do not render. A bishopric-only user sees "Quick Links" (My Requests, New Request) and "Rosters" (Ward Roster); the "Settings" header doesn't appear. A stake-only user sees "Quick Links" + "Rosters" with no Settings. The Account section always renders because Logout is always visible. **The Superadmin section disappears entirely for non-superadmin users** — `principal.isPlatformSuperadmin === true` is the only gate that makes the section render.
 
 ## 9. Ward Roster routing logic
 
