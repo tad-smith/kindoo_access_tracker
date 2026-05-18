@@ -753,3 +753,31 @@ T-42 Phase A made the data model and the Kindoo-side writes correct per-site. T-
 - **KS-10** (open-questions.md) — roster-hook query shape under broadened inclusion. Pick: drop the `where` and full-scan vs. two-query union (`scope == X` ∪ `duplicate_scopes array-contains X`). Resolves at Phase B implementation time.
 
 T-43 can ship as a single PR or as a web-side PR followed by a small server-side PR — implementer picks. The Phase B implementation PR rewrites the spec §15 Phase B subsection from future to present tense.
+
+## [T-44] SPA email magic link sign-in
+Status: open
+Owner: @web-engineer
+Phase: cross-cutting (post-Phase-11)
+
+Replace the SPA's Google sign-in button with an email magic link flow. Spec defined in `docs/spec.md` §4.1 "Sign-in providers" (companion to this entry — PR that lands T-44 reads from §4.1 and §5.0). No backend changes; the Firebase Auth Email/Password provider with the Email-link sub-toggle is already enabled at the Console level alongside the existing Google provider (which the Chrome extension still uses and must keep using).
+
+**Surfaces in scope.**
+- `apps/web/src/features/auth/SignInPage.tsx` — remove the Google button + `signInWithPopup` wiring; render an email input + "Send me a sign-in link" primary CTA in the hero. Topbar CTA scrolls/focuses the hero form. Add a short note explaining that new sign-ins land in pending authorization until a stake manager adds their email (verbatim suggestion in §4.1; refine if a more natural phrasing is found in copy review). Swap to a "Check your email" confirmation state after submit.
+- `apps/web/src/features/auth/signIn.ts` — replace `signInWithPopup(GoogleAuthProvider)` with `sendSignInLinkToEmail(auth, email, actionCodeSettings)` + the matching `signInWithEmailLink` call on the action-handler route. Stash the typed email in `localStorage` between the two halves of the round-trip; clear it on success.
+- New action-handler route — unauthed (the user isn't signed in yet at the time the link is opened). Path is implementer's choice (suggestion: `/auth/email-link` or `/auth/action`). Reads `localStorage`; if absent (cross-device), prompts the user for the email the link was sent to. Calls `signInWithEmailLink`. On success, redirects to `/`. On error (expired / malformed / mismatch / network), renders a clear error message + a "re-send" affordance back to the sign-in flow.
+- `actionCodeSettings`: `url` = full URL of the action-handler route on the host that issued the link; `handleCodeInApp: true`. Both `stakebuildingaccess.org` and `kindoo.csnorth.org` are already on Firebase's Authorized Domains per §12 — no deploy-side prerequisite for v1.
+- Tests: at minimum, RTL coverage of (i) the sign-in page form + post-submit confirmation state, (ii) the action-handler route happy path with `localStorage` populated, (iii) the cross-device branch where `localStorage` is empty and the route prompts, and (iv) the error branches. E2E in `e2e/tests/auth/` updated — the existing `sign-in-button-renders.spec.ts` no longer applies as-written and needs a rewrite around the new form.
+
+**Acceptance** (mirrored from spec §4.1):
+1. SPA sign-in page renders no Google button and no password field — only an email input + "Send me a sign-in link" button + the new-user explanatory sentence.
+2. Submitting a valid email calls `sendSignInLinkToEmail(auth, email, actionCodeSettings)`, stashes the email in `localStorage`, and swaps the hero to a "Check your email" confirmation state.
+3. Clicking the emailed link on the same device → handler reads `localStorage`, calls `signInWithEmailLink`, redirects to `/`, `gateDecision()` runs unchanged.
+4. Clicking the emailed link on a different device → handler prompts for the email and then completes sign-in.
+5. Error cases (expired / malformed / mismatch / network) render a clear error + offer re-send.
+6. A signed-in user with no `access` / `kindooManagers` / `superadmins` doc still lands on the existing `NotAuthorized` page (unchanged authorization path).
+7. The Chrome extension's Google auth continues to work unchanged (sanity-test on staging — no code change required, just verify the Firebase Console-level Google provider stays enabled).
+8. Existing Google-signed-in users (operator `tad.e.smith@gmail.com`, etc.) can sign in via magic link to the same address and keep their UID, `userIndex/{canonical}`, and every role doc — verified by Firebase Auth's "one account per email address" Console setting (default on; verify before ship).
+
+**Out of scope** (mirrors spec §4.1): email/password (the password sub-toggle stays off); other OAuth providers; self-service authorization or onboarding; changes to the extension's Google-only auth path; backend changes to `onAuthUserCreate` / claim-sync triggers.
+
+Cross-ref: spec §4.1 (sign-in providers), §5.0 (sign-in page layout), §2 (stack — identity).
