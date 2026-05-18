@@ -7,20 +7,49 @@
 // E2E spec only asserted role + accessible name (which preflight doesn't
 // change).
 //
-// T-44 swapped the Google sign-in popup CTA out for the email magic
-// link form (spec §4.1). The regression contract is unchanged: the
-// primary "Send me a sign-in link" submit button must render with a
+// The SignInPage surfaces both providers (spec §4.1): a "Continue with
+// Google" CTA above the email magic-link form. The regression contract
+// is unchanged for either primary button: it must render with a
 // NON-transparent background colour and a NON-zero padding box. That's
 // the cheapest real-DOM check that the styled `.btn` class is in play.
 //
-// Also asserts both the hero CTA ("Send me a sign-in link") and the
-// secondary topbar CTA ("Sign in") resolve unambiguously under
-// Playwright's strict-mode `getByRole` — distinct accessible names so
-// the topbar and hero are not confused with each other.
+// Also asserts the three sign-in affordances ("Continue with Google",
+// "Send me a sign-in link", and the topbar "Sign in") resolve
+// unambiguously under Playwright's strict-mode `getByRole` — distinct
+// accessible names so they are not confused with each other.
 
 import { expect, test } from '@playwright/test';
 
 test.describe('SignInPage form renders as styled, clickable controls', () => {
+  test('"Continue with Google" has visible chrome (background, padding)', async ({ page }) => {
+    await page.goto('/');
+
+    const google = page.getByRole('button', { name: /Continue with Google/i });
+    await expect(google).toBeVisible();
+
+    const box = await google.boundingBox();
+    expect(box, 'button must have a layout box').not.toBeNull();
+    if (!box) return;
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.height).toBeGreaterThan(0);
+
+    const styles = await google.evaluate((el) => {
+      const cs = window.getComputedStyle(el);
+      return {
+        backgroundColor: cs.backgroundColor,
+        paddingTop: cs.paddingTop,
+        paddingLeft: cs.paddingLeft,
+        cursor: cs.cursor,
+      };
+    });
+
+    expect(styles.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(styles.backgroundColor).not.toBe('transparent');
+    expect(parseFloat(styles.paddingTop)).toBeGreaterThan(0);
+    expect(parseFloat(styles.paddingLeft)).toBeGreaterThan(0);
+    expect(styles.cursor).toBe('pointer');
+  });
+
   test('"Send me a sign-in link" has visible chrome (background, padding)', async ({ page }) => {
     await page.goto('/');
 
@@ -58,16 +87,22 @@ test.describe('SignInPage form renders as styled, clickable controls', () => {
     expect(styles.cursor).toBe('pointer');
   });
 
-  test('hero and topbar Sign in affordances resolve unambiguously', async ({ page }) => {
+  test('Google, magic-link, and topbar Sign in affordances resolve unambiguously', async ({
+    page,
+  }) => {
     await page.goto('/');
 
-    // Hero CTA — primary submit. Distinct name keeps Playwright's
-    // strict-mode getByRole happy.
+    // Google CTA — sits above the magic-link form per spec §4.1.
+    const google = page.getByRole('button', { name: /Continue with Google/i });
+    await expect(google).toBeVisible();
+
+    // Hero magic-link CTA — primary submit. Distinct name keeps
+    // Playwright's strict-mode getByRole happy.
     const hero = page.getByRole('button', { name: /Send me a sign-in link/i });
     await expect(hero).toBeVisible();
 
     // Topbar "Sign in" — secondary affordance, distinct accessible
-    // name (`^Sign in$` matches the topbar but not the hero submit).
+    // name (`^Sign in$` matches the topbar but not the hero submits).
     const topbar = page.getByRole('button', { name: /^Sign in$/ });
     await expect(topbar).toBeVisible();
   });

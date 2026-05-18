@@ -1,5 +1,7 @@
-// Unit tests for the email magic link helpers in `signIn.ts`. The
-// Firebase SDK is mocked at the module boundary so we exercise:
+// Unit tests for the sign-in helpers in `signIn.ts`. The Firebase SDK
+// is mocked at the module boundary so we exercise:
+//   - `signInWithGoogle` drives `signInWithPopup` with a
+//     `GoogleAuthProvider` and runs the bounded-poll claim refresh.
 //   - `sendMagicLink` calls `sendSignInLinkToEmail` with the right
 //     `actionCodeSettings` (origin-derived URL + handleCodeInApp: true).
 //   - `sendMagicLink` stashes the typed email in localStorage on
@@ -9,13 +11,14 @@
 //     interact with localStorage correctly.
 //   - `completeSignInWithEmailLink` calls `signInWithEmailLink`,
 //     force-refreshes the token, and runs the bounded-poll
-//     claim-refresh from the legacy Google flow (B-4 mitigation).
+//     claim-refresh (B-4 mitigation shared with Google).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sendSignInLinkToEmailMock = vi.fn();
 const signInWithEmailLinkMock = vi.fn();
 const isSignInWithEmailLinkMock = vi.fn();
+const signInWithPopupMock = vi.fn();
 const getIdTokenMock = vi.fn();
 const getIdTokenResultMock = vi.fn();
 
@@ -23,9 +26,11 @@ vi.mock('firebase/auth', async () => {
   const actual = await vi.importActual<typeof import('firebase/auth')>('firebase/auth');
   return {
     ...actual,
+    GoogleAuthProvider: actual.GoogleAuthProvider,
     sendSignInLinkToEmail: (...args: unknown[]) => sendSignInLinkToEmailMock(...args),
     signInWithEmailLink: (...args: unknown[]) => signInWithEmailLinkMock(...args),
     isSignInWithEmailLink: (...args: unknown[]) => isSignInWithEmailLinkMock(...args),
+    signInWithPopup: (...args: unknown[]) => signInWithPopupMock(...args),
   };
 });
 
@@ -43,12 +48,14 @@ import {
   peekStashedEmail,
   readAndClearStashedEmail,
   sendMagicLink,
+  signInWithGoogle,
 } from './signIn';
 
 beforeEach(() => {
   sendSignInLinkToEmailMock.mockReset();
   signInWithEmailLinkMock.mockReset();
   isSignInWithEmailLinkMock.mockReset();
+  signInWithPopupMock.mockReset();
   getIdTokenMock.mockReset();
   getIdTokenResultMock.mockReset();
   getIdTokenMock.mockResolvedValue('id-token');
@@ -182,6 +189,80 @@ describe('localStorage helpers', () => {
     window.localStorage.setItem(EMAIL_FOR_LINK_STORAGE_KEY, 'zach@example.com');
     clearStashedEmail();
     expect(window.localStorage.getItem(EMAIL_FOR_LINK_STORAGE_KEY)).toBeNull();
+  });
+});
+
+describe('signInWithGoogle — bounded poll for canonical claim (B-4)', () => {
+  it('drives signInWithPopup with a GoogleAuthProvider against the auth singleton', async () => {
+    const user = makeUser();
+    signInWithPopupMock.mockResolvedValueOnce({ user });
+    getIdTokenResultMock.mockResolvedValueOnce({ claims: { canonical: 'z@example.com' } });
+
+    const returned = await signInWithGoogle();
+    expect(returned).toBe(user);
+    expect(signInWithPopupMock).toHaveBeenCalledTimes(1);
+    const [authArg, providerArg] = signInWithPopupMock.mock.calls[0]!;
+    expect(authArg).toEqual({ __mockAuth: true });
+    // The provider arg is a GoogleAuthProvider instance — the SDK's
+    // own check, not ours, but assert provider-id to catch regressions
+    // where someone swaps the provider class.
+    expect((providerArg as { providerId: string }).providerId).toBe('google.com');
+  });
+
+  it('returns immediately after the first refresh when claims are already present', async () => {
+    const user = makeUser();
+    signInWithPopupMock.mockResolvedValueOnce({ user });
+    getIdTokenResultMock.mockResolvedValueOnce({
+      claims: { canonical: 'zachqmortensen@gmail.com' },
+    });
+
+    const returned = await signInWithGoogle();
+
+    expect(returned).toBe(user);
+    expect(getIdTokenMock).toHaveBeenCalledTimes(1);
+    expect(getIdTokenMock).toHaveBeenCalledWith(true);
+    expect(getIdTokenResultMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls until the canonical claim arrives and stops at the first iteration that sees it', async () => {
+    vi.useFakeTimers();
+    const user = makeUser();
+    signInWithPopupMock.mockResolvedValueOnce({ user });
+    getIdTokenResultMock
+      .mockResolvedValueOnce({ claims: {} })
+      .mockResolvedValueOnce({ claims: {} })
+      .mockResolvedValueOnce({ claims: {} })
+      .mockResolvedValueOnce({ claims: { canonical: 'zachqmortensen@gmail.com' } });
+
+    const promise = signInWithGoogle();
+    await vi.runAllTimersAsync();
+    const returned = await promise;
+
+    expect(returned).toBe(user);
+    expect(getIdTokenMock).toHaveBeenCalledTimes(4);
+    expect(getIdTokenResultMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('resolves without throwing when claims never arrive within the 10-iteration ceiling', async () => {
+    vi.useFakeTimers();
+    const user = makeUser();
+    signInWithPopupMock.mockResolvedValueOnce({ user });
+    getIdTokenResultMock.mockResolvedValue({ claims: {} });
+
+    const promise = signInWithGoogle();
+    await vi.runAllTimersAsync();
+    const returned = await promise;
+
+    expect(returned).toBe(user);
+    expect(getIdTokenResultMock).toHaveBeenCalledTimes(10);
+    expect(getIdTokenMock).toHaveBeenCalledTimes(11);
+  });
+
+  it('propagates a rejection from signInWithPopup', async () => {
+    signInWithPopupMock.mockRejectedValueOnce(new Error('popup blocked'));
+    await expect(signInWithGoogle()).rejects.toThrow(/popup blocked/);
+    expect(getIdTokenMock).not.toHaveBeenCalled();
+    expect(getIdTokenResultMock).not.toHaveBeenCalled();
   });
 });
 

@@ -1,15 +1,24 @@
-// Email magic link sign-in helpers (spec §4.1).
+// Sign-in helpers — both providers the SPA exposes (spec §4.1).
 //
-// The SPA's only sign-in surface is the Firebase Auth email-link
-// (passwordless) flow. The user types an email; we call
-// `sendSignInLinkToEmail` and stash the typed email in localStorage. The
-// emailed link lands on the action-handler route under `/auth/email-link`
-// (see `apps/web/src/routes/auth/email-link.tsx`), which reads the
-// stashed email back and calls `signInWithEmailLink` to complete the
-// round-trip. Cross-device handling lives in the action-handler route.
+// Two surfaces share a single Firebase Auth instance and a single
+// `userIndex/{canonical}` doc:
 //
-// CRITICAL — token-refresh sequencing. After `signInWithEmailLink`
-// resolves, the `onAuthUserCreate` Cloud Function trigger writes
+//   1. Google popup — `signInWithGoogle()` drives `signInWithPopup` with
+//      `GoogleAuthProvider`. Used by the "Continue with Google" CTA on
+//      the SignInPage.
+//   2. Email magic link — `sendMagicLink()` calls
+//      `sendSignInLinkToEmail` and stashes the typed email in
+//      localStorage; the emailed link lands on the action-handler route
+//      under `/auth/email-link`, which calls `completeSignInWithEmailLink`
+//      to finish the round-trip.
+//
+// With Firebase Auth's "one account per email address" project setting
+// (Console → Authentication → Settings → User account linking) both
+// providers end at the same Firebase UID for the same email, so the
+// downstream `userIndex` / claim-sync triggers are provider-agnostic.
+//
+// CRITICAL — token-refresh sequencing. After either flow resolves,
+// the `onAuthUserCreate` Cloud Function trigger writes
 // `userIndex/{canonical}` AND seeds custom claims from any pre-existing
 // `kindooManagers/access` rows. That trigger is async — it runs in
 // parallel with the client's first token refresh. If our refresh lands
@@ -24,12 +33,15 @@
 // caps the wait at 5s. If claims never arrive (trigger crashed, network
 // stall, etc.), we still resolve with whatever the last token had —
 // the gate downstream handles "no claims → NotAuthorized" the same way
-// it always has.
+// it always has. Both `signInWithGoogle` and `completeSignInWithEmailLink`
+// share the same bounded-poll implementation.
 
 import {
+  GoogleAuthProvider,
   isSignInWithEmailLink as fbIsSignInWithEmailLink,
   sendSignInLinkToEmail,
   signInWithEmailLink,
+  signInWithPopup,
   type ActionCodeSettings,
   type User,
 } from 'firebase/auth';
@@ -142,6 +154,40 @@ export function clearStashedEmail(): void {
 }
 
 /**
+ * Bounded poll-and-refresh for the `canonical` custom claim. See module
+ * comment for the B-4 race-window mitigation. Shared by both sign-in
+ * surfaces (`signInWithGoogle` + `completeSignInWithEmailLink`).
+ */
+async function pollForCanonicalClaim(user: User): Promise<void> {
+  await user.getIdToken(true);
+  for (let i = 0; i < POLL_ITERATIONS; i++) {
+    const { claims } = await user.getIdTokenResult();
+    if (claims.canonical) break;
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    await user.getIdToken(true);
+  }
+}
+
+/**
+ * Sign in via the Google OAuth popup. Surfaces the "Continue with
+ * Google" CTA on the SignInPage; pairs with the magic-link form below
+ * it. Firebase Auth's "one account per email address" project setting
+ * means both surfaces resolve to the same UID for the same email.
+ *
+ * Throws (via the SDK) on:
+ *   - `auth/popup-closed-by-user` — user dismissed the popup.
+ *   - `auth/popup-blocked` — browser-level popup blocker.
+ *   - `auth/network-request-failed` — transient.
+ *   - `auth/cancelled-popup-request` — second popup raced.
+ */
+export async function signInWithGoogle(): Promise<User> {
+  const provider = new GoogleAuthProvider();
+  const result = await signInWithPopup(auth, provider);
+  await pollForCanonicalClaim(result.user);
+  return result.user;
+}
+
+/**
  * Complete the email-link round-trip. Caller is responsible for already
  * having confirmed via `isSignInWithEmailLink(href)` that `href` is a
  * valid sign-in link.
@@ -154,18 +200,10 @@ export function clearStashedEmail(): void {
  * mismatch surfaces as `auth/invalid-email` from the SDK.
  *
  * After the SDK call we run the same bounded-poll claim-refresh as the
- * legacy Google flow used (see module comment).
+ * Google flow (see module comment).
  */
 export async function completeSignInWithEmailLink(email: string, href: string): Promise<User> {
   const result = await signInWithEmailLink(auth, email, href);
-  await result.user.getIdToken(true);
-
-  for (let i = 0; i < POLL_ITERATIONS; i++) {
-    const { claims } = await result.user.getIdTokenResult();
-    if (claims.canonical) break;
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-    await result.user.getIdToken(true);
-  }
-
+  await pollForCanonicalClaim(result.user);
   return result.user;
 }
