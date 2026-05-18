@@ -183,11 +183,11 @@ describe('<ManagerQueuePage />', () => {
     expect(card.textContent).toMatch(/Tad Smith \(tad\.e\.smith@gmail\.com\)/);
   });
 
-  it('falls back to bare email on the Give Access To row when member_name is empty', () => {
+  it('falls back to bare email on the Give Access To row when member_name is empty (add)', () => {
     const requests = [
       makeRequest({
         request_id: 'r1',
-        type: 'remove',
+        type: 'add_manual',
         scope: 'CO',
         member_email: 'a@x.com',
         member_canonical: 'a@x.com',
@@ -201,7 +201,26 @@ describe('<ManagerQueuePage />', () => {
     expect(card.textContent).toMatch(/Give Access To:\s*a@x\.com/);
   });
 
-  it('labels the reason field "Calling" on the queue card (not "Reason")', () => {
+  it('uses "Remove Access For:" — not "Give Access To:" — on remove requests', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'remove',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+        member_name: 'Alice Example',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(within(card).getByText(/Remove Access For:/)).toBeInTheDocument();
+    expect(within(card).queryByText(/Give Access To:/)).toBeNull();
+    expect(card.textContent).toMatch(/Remove Access For:\s*Alice Example/);
+  });
+
+  it('labels the reason field "Calling" on add/edit queue cards (not "Reason")', () => {
     const requests = [
       makeRequest({
         request_id: 'r1',
@@ -217,6 +236,26 @@ describe('<ManagerQueuePage />', () => {
     expect(within(card).getByText(/Calling:/)).toBeInTheDocument();
     expect(within(card).getByText(/Primary President/)).toBeInTheDocument();
     expect(within(card).queryByText(/^Reason:$/)).toBeNull();
+    expect(within(card).queryByText(/Removal reason:/)).toBeNull();
+  });
+
+  it('labels the reason field "Removal reason:" on remove queue cards', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'remove',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+        reason: 'moved out of ward',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(within(card).getByText(/Removal reason:/)).toBeInTheDocument();
+    expect(card.textContent).toMatch(/Removal reason:\s*moved out of ward/);
+    expect(within(card).queryByText(/^Calling:$/)).toBeNull();
   });
 
   it('places the Submitted date on the top row, right-justified next to the badges', () => {

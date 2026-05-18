@@ -250,7 +250,7 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
       </div>
       <div className="kd-queue-card-meta">
         <span>
-          <strong>Give Access To:</strong>{' '}
+          <strong>{request.type === 'remove' ? 'Remove Access For:' : 'Give Access To:'}</strong>{' '}
           {request.member_name ? (
             <>
               {request.member_name} <span className="roster-email">({request.member_email})</span>
@@ -263,7 +263,8 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
       {request.reason ? (
         <div className="kd-queue-card-meta">
           <span>
-            <strong>Calling:</strong> {request.reason}
+            <strong>{request.type === 'remove' ? 'Removal reason:' : 'Calling:'}</strong>{' '}
+            {request.reason}
           </span>
         </div>
       ) : null}
