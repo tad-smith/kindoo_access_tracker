@@ -755,7 +755,7 @@ T-42 Phase A made the data model and the Kindoo-side writes correct per-site. T-
 T-43 can ship as a single PR or as a web-side PR followed by a small server-side PR — implementer picks. The Phase B implementation PR rewrites the spec §15 Phase B subsection from future to present tense.
 
 ## [T-44] SPA email magic link sign-in
-Status: open
+Status: done (2026-05-18 — PR #140)
 Owner: @web-engineer
 Phase: cross-cutting (post-Phase-11)
 
