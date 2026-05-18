@@ -259,11 +259,7 @@ function HomeHero(props: HeroProps) {
                   Sign-in failed: {googleError}
                 </div>
               ) : null}
-              <div
-                role="separator"
-                aria-label="or"
-                className="my-1 flex items-center gap-3"
-              >
+              <div role="separator" aria-label="or" className="my-1 flex items-center gap-3">
                 <div className="h-px flex-1 bg-[color:var(--kd-border-soft)]"></div>
                 <span className="text-xs uppercase tracking-wide text-[color:var(--kd-fg-3)]">
                   or
