@@ -811,7 +811,8 @@ Decision recorded as `architecture.md` D14; spec rewritten in this PR. The exten
 - `e2e/` specs that exercise the Import page
 - Nav entries pointing to `/manager/import`
 - Bootstrap wizard sheet-ID step (in `apps/web/src/features/bootstrap/`) + the corresponding zod schema field on the wizard form
-- `packages/shared/` — remove the 4 deprecated Stake fields from the zod schema + type (`callings_sheet_id`, `import_day`, `import_hour`, `last_import_at`, `last_import_summary`, `last_import_triggered_by`)
+- `packages/shared/` — remove the six deprecated Stake fields from the zod schema + type (`callings_sheet_id`, `import_day`, `import_hour`, `last_import_at`, `last_import_summary`, `last_import_triggered_by`)
+- `functions/src/services/EmailService.ts` — `buildOverCapSubject` currently reads `last_import_triggered_by` to format the over-cap email subject (per the pre-removal §9 wording `[Kindoo Access] Over-cap warning after <manual|weekly> import`). Update to produce the post-removal subject `[Kindoo Access] Over-cap warning` (per spec §9) and drop the `last_import_triggered_by` read.
 
 **Surfaces to keep:**
 
@@ -831,12 +832,12 @@ Decision recorded as `architecture.md` D14; spec rewritten in this PR. The exten
 1. **Code-side grep — three scoped checks** all return zero hits:
    - `rg 'runImporter|runImportNow' functions/ apps/web/ packages/shared/ extension/ firestore/ e2e/ infra/` — function-name and file-path references.
    - `rg "'Importer'" functions/src/ apps/web/src/` — literal actor-string writes (the quoted single-quote form matches what the audit-trigger / Cloud Function code writes when it stamps a fresh row).
-   - The actor enum / type in `packages/shared/` no longer includes `'Importer'` as a value; it's a closed union of the remaining automated actors (`'ExpiryTrigger'`, `'Migration'`) plus the canonical-email string variant. (The six deprecated `stake.*` field names ARE expected to remain visible in `docs/firebase-schema.md` §3 as deprecated-block comments until a future cleanup pass; do not gate this AC on stripping them from the doc.)
+   - The actor enum / type in `packages/shared/` no longer includes `'Importer'` as a value; the remaining automated actors (`'ExpiryTrigger'`, `'RemoveTrigger'`, `'OutOfBand'`, `'Migration'`, and the `'SyncActor:<code>'` prefix-matched string variant) are preserved, plus the canonical-email string variant for human actors. **Do not drop `RemoveTrigger`, `OutOfBand`, or `SyncActor:*` — those are unrelated to the importer.** (The six deprecated `stake.*` field names ARE expected to remain visible in `docs/firebase-schema.md` §3 as deprecated-block comments until a future cleanup pass; do not gate this AC on stripping them from the doc.)
 2. `googleapis` is gone from `functions/package.json` and lockfile.
 3. The bootstrap wizard's step 1 no longer collects a sheet ID; tests assert the field is absent from the form.
 4. The manager Import page route no longer exists; nav doesn't link to it; the route file is deleted; tests asserting "Import" in the nav are removed.
 5. Sync continues to create / update / remove auto seats per existing AC; no regression in `extension/src/content/kindoo/sync/` tests.
-6. The 4 deprecated Stake fields are removed from the zod schema; existing csnorth doc values may persist as vestigial keys on the Firestore doc (operator may manually clear post-merge).
+6. The six deprecated Stake fields are removed from the zod schema; existing csnorth doc values may persist as vestigial keys on the Firestore doc (operator may manually clear post-merge).
 7. `DashboardPage.tsx` no longer reads `stake.last_import_at` (spec §5.3 dropped the "last Sync run if surfaced" Dashboard hedge; the "Last Operations" card surfaces last expiry + triggers reinstall only).
 8. CI green; lint + typecheck clean.
 

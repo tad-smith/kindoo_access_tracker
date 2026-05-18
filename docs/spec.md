@@ -64,7 +64,7 @@ All under `stakes/{stakeId}/`. Schema authoritative in `firebase-schema.md` §4.
 
 - **Canonical email** is `lowercase + Gmail dot/+suffix strip + googlemail.com → gmail.com`. Computed in `packages/shared/canonicalEmail.ts` and applied at every input boundary. The canonical form is the doc-ID for `userIndex`, `kindooManagers`, `access`, and `seats` — there is no separate canonical column.
 - **Typed-form email** (preserve case, dots, `+suffix`) is stored alongside in `member_email` / `typedEmail` for display and any future mail surface. The audit log carries both `actor_email` (typed) and `actor_canonical`.
-- **Automated actors** use literal strings: `"ExpiryTrigger"` for the daily temp-seat expiry job, plus `"Migration"` for one-shot backfills. These are written into both `actor_email` and `actor_canonical` on audit rows. (Legacy `"Importer"` rows remain in the audit log from the pre-Sync era.)
+- **Automated actors** use literal strings as the audit `actor_email` / `actor_canonical`: `"ExpiryTrigger"` (daily temp-seat expiry), `"RemoveTrigger"` (request-completion seat-side trigger fan-out), `"OutOfBand"` (writes not attributed to a specific trigger — see `auditTrigger` actor-resolution), `"Migration"` (one-shot backfills), and `"SyncActor:<code>"` (Sync's `syncApplyFix` writes, where `<code>` is the fix code that produced the row). Legacy `"Importer"` rows remain in the audit log from the pre-Sync era.
 - **Building** doc IDs are slugs of `building_name`; the display name is preserved in the `building_name` field. Cross-collection references (e.g. `seats.building_names: string[]`) carry the slug.
 - **Ward** doc IDs are the 2-letter `ward_code`; also the value used in `seats.scope`, `access.importer_callings` keys, and `requests.scope`.
 
