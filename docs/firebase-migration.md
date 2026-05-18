@@ -13,7 +13,7 @@ The companion `docs/firebase-schema.md` is the authoritative description of the 
 - **Identity:** Firebase Authentication (Google sign-in only).
 - **Authorization:** Custom claims on the auth token, set by Cloud Function triggers on role-data writes.
 - **Data path (reads + writes):** Client uses Firestore JS SDK directly; rules enforce access. No Cloud Run, no Express, no per-request server-side code.
-- **Server compute:** Cloud Functions for: weekly importer (Sheets API), daily temp-seat expiry, email send (SendGrid), audit-log fan-in, custom-claims sync, nightly reconciliation.
+- **Server compute:** Cloud Functions for: hourly temp-seat expiry, email send (Resend), audit-log fan-in, custom-claims sync, nightly reconciliation, FCM push, extension Sync auto-seat applier.
 - **Hosting:** Firebase Hosting serves the static SPA build with auto-provisioned HTTPS.
 - **Real-time:** `onSnapshot` listeners on shared-attention pages (Queue, Roster, MyRequests, Dashboard); request-response everywhere else.
 
