@@ -86,13 +86,11 @@ export function PerGrantRosterCard({
       </div>
     ) : null;
 
-  const detailLine =
-    callingChip || buildingsChip ? (
-      <div className="roster-card-line2">
-        {callingChip}
-        {buildingsChip}
-      </div>
-    ) : null;
+  const callingLine = callingChip ? <div className="roster-card-line2">{callingChip}</div> : null;
+
+  const buildingsLine = buildingsChip ? (
+    <div className="roster-card-line2">{buildingsChip}</div>
+  ) : null;
 
   return (
     <div
@@ -131,8 +129,9 @@ export function PerGrantRosterCard({
           </span>
         ) : null}
       </div>
+      {callingLine}
+      {buildingsLine}
       {datesLine}
-      {detailLine}
     </div>
   );
 }

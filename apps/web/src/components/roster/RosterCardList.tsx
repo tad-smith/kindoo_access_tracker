@@ -4,8 +4,9 @@
 //
 // Card shape:
 //   Line 1:  badges · scope-chip (optional) · member · actions
-//   Line 2:  Calling / Reason · Buildings  (when populated)
-//   Line 3:  Dates: <start> → <end>          (temp seats only)
+//   Line 2:  Calling / Reason                (when populated)
+//   Line 3:  Buildings                       (when populated)
+//   Line 4:  Dates: <start> → <end>          (temp seats only)
 //   Lines collapse silently when the underlying data is empty.
 //
 // Per-row `actions`, `extraBadges`, and `rowClass` slots let callers
@@ -110,7 +111,8 @@ function RosterCard({ seat, showScope, actions, extraBadges, rowClass }: RosterC
     </span>
   );
 
-  // Line 2: calling (auto) / reason (manual/temp) chip + buildings chip.
+  // Line 2: calling (auto) / reason (manual/temp) chip.
+  // Line 3: buildings chip on its own row below.
   // Each chip renders only when the underlying field has data.
   const callingChip =
     seat.type === 'auto' && seat.callings.length > 0 ? (
@@ -143,13 +145,11 @@ function RosterCard({ seat, showScope, actions, extraBadges, rowClass }: RosterC
       </div>
     ) : null;
 
-  const detailLine =
-    callingChip || buildingsChip ? (
-      <div className="roster-card-line2">
-        {callingChip}
-        {buildingsChip}
-      </div>
-    ) : null;
+  const callingLine = callingChip ? <div className="roster-card-line2">{callingChip}</div> : null;
+
+  const buildingsLine = buildingsChip ? (
+    <div className="roster-card-line2">{buildingsChip}</div>
+  ) : null;
 
   const actionNode = actions?.(seat) ?? null;
   const extraBadgeNodes = extraBadges?.(seat) ?? null;
@@ -172,8 +172,9 @@ function RosterCard({ seat, showScope, actions, extraBadges, rowClass }: RosterC
         <span className="roster-card-member">{memberInner}</span>
         {actionNode ? <span className="roster-card-actions">{actionNode}</span> : null}
       </div>
+      {callingLine}
+      {buildingsLine}
       {datesLine}
-      {detailLine}
     </div>
   );
 }

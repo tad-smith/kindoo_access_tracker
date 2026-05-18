@@ -235,36 +235,36 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
       data-request-type={request.type}
       data-urgent={isUrgent ? 'true' : 'false'}
     >
-      <div className="kd-queue-card-line1">
-        <Badge variant={badgeVariantForType(request.type)}>{labelForType(request.type)}</Badge>
-        <span className="roster-card-chip roster-card-scope">
-          <code>{request.scope}</code>
+      <div className="kd-queue-card-line1 kd-queue-card-meta-row">
+        <span className="kd-queue-card-badges">
+          <Badge variant={badgeVariantForType(request.type)}>{labelForType(request.type)}</Badge>
+          <span className="roster-card-chip roster-card-scope">
+            <code>{request.scope}</code>
+          </span>
         </span>
-        <span className="roster-card-member">
+        {reqDate ? (
+          <span className="kd-queue-card-meta kd-queue-card-submitted">
+            <strong>Submitted:</strong> {reqDate}
+          </span>
+        ) : null}
+      </div>
+      <div className="kd-queue-card-meta">
+        <span>
+          <strong>{request.type === 'remove' ? 'Remove Access For:' : 'Give Access To:'}</strong>{' '}
           {request.member_name ? (
             <>
-              <strong>{request.member_name}</strong>{' '}
-              <span className="roster-email">({request.member_email})</span>
+              {request.member_name} <span className="roster-email">({request.member_email})</span>
             </>
           ) : (
             <span className="roster-email">{request.member_email}</span>
           )}
         </span>
       </div>
-      <div className="kd-queue-card-meta kd-queue-card-meta-row">
-        <span>
-          <strong>Requester:</strong> {request.requester_email}
-        </span>
-        {reqDate ? (
-          <span className="kd-queue-card-submitted">
-            <strong>Submitted:</strong> {reqDate}
-          </span>
-        ) : null}
-      </div>
       {request.reason ? (
         <div className="kd-queue-card-meta">
           <span>
-            <strong>Reason:</strong> {request.reason}
+            <strong>{request.type === 'remove' ? 'Removal reason:' : 'Calling:'}</strong>{' '}
+            {request.reason}
           </span>
         </div>
       ) : null}
@@ -297,6 +297,15 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
           </span>
         </div>
       ) : null}
+      <div className="kd-queue-card-meta">
+        <span>
+          {/* TODO: requester_name is not stored on the request; show
+              "Name (email)" once it's captured at submit time (would
+              need a userIndex display_name lookup or a denormed field
+              on AccessRequest). For now we fall back to email-only. */}
+          <strong>Requester:</strong> {request.requester_email}
+        </span>
+      </div>
       {request.type !== 'remove' && dup.data ? (
         <div
           className="kd-queue-card-warning"
