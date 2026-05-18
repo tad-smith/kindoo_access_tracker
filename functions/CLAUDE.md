@@ -77,7 +77,7 @@ No Sheets-client wrapper, no importer service, no `runImporter` / `runImportNow`
 - **Vitest + Firebase emulator.** No mocks for Firestore or Auth — emulator is the test database.
 - **Mock external services** (Resend, FCM) at the wrapper level only.
 - **Each trigger / scheduled / callable function has at least:** happy path, error path, idempotency case (where applicable).
-- **`markRequestComplete` and `syncApplyFix` are the highest-stakes test surfaces** — together they carry the bulk of the integration suite (the two largest files in `tests/`). Both touch multiple collections in a single transaction: `markRequestComplete` writes seat / request / access docs and triggers the audit fan-in; `syncApplyFix` is the auto-seat applier the extension calls (every drift-row shape — `kindoo-only`, `extra-kindoo-calling`, `type-mismatch` in both directions, `scope-mismatch`, `buildings-mismatch` — has its own path with its own seat / access bookkeeping). When changing either, expect to update the matching test file in lockstep.
+- **`markRequestComplete` and `syncApplyFix` are the highest-stakes test surfaces** — together they carry the bulk of the integration suite (the two largest files in `tests/`). Both touch multiple collections in a single transaction: `markRequestComplete` writes seat / request / access docs and triggers the audit fan-in; `syncApplyFix` is the auto-seat applier the extension calls (every kindoo-to-sba drift-row shape — `kindoo-only`, `extra-kindoo-calling`, `type-mismatch`, `scope-mismatch`, `buildings-mismatch` — has its own path with its own seat / access bookkeeping; sba-to-kindoo variants are extension-side and never reach the backend). When changing either, expect to update the matching test file in lockstep.
 
 ## Deploy
 
