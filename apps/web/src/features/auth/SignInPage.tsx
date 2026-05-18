@@ -23,10 +23,13 @@
 // guarded by `e2e/tests/auth/sign-in-button-renders.spec.ts`).
 
 import { Link } from '@tanstack/react-router';
-import { useRef, useState, type FormEvent } from 'react';
+import { useRef, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { BrandIcon } from '../../components/layout/BrandIcon';
+import { signInEmailSchema, type SignInEmailForm } from './schemas';
 import { clearStashedEmail, sendMagicLink } from './signIn';
 
 // Sentinel: until the extension's Web Store listing is published, this
@@ -41,50 +44,40 @@ const CONTACT_MAILTO = 'mailto:support@stakebuildingaccess.org';
 const PENDING_AUTH_COPY =
   'New sign-ins land in pending authorization until a stake manager adds your email. Contact your stake manager if you can’t reach the next screen.';
 
-// HTML5-style email format check. The Firebase SDK does its own
-// validation server-side; we only need to catch the empty / obviously
-// malformed cases client-side so the user gets immediate feedback.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 export function SignInPage() {
-  const [email, setEmail] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  // Form-level zod-resolver covers required + format. `submitError`
+  // captures the post-submit SDK rejection (network /
+  // unauthorized-continue-uri / etc.) so the field-level error spot
+  // can render either source.
+  const form = useForm<SignInEmailForm>({
+    resolver: zodResolver(signInEmailSchema),
+    defaultValues: { email: '' },
+  });
+  const { register, handleSubmit, formState, reset } = form;
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const emailInputRef = useRef<HTMLInputElement>(null);
+  const { ref: rhfEmailRef, ...rhfEmailRest } = register('email');
 
   function focusHeroForm() {
     emailInputRef.current?.focus();
     emailInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setError(null);
-    const trimmed = email.trim();
-    if (!trimmed) {
-      setError('Enter your email address.');
-      return;
-    }
-    if (!EMAIL_RE.test(trimmed)) {
-      setError('That does not look like a valid email address.');
-      return;
-    }
-    setPending(true);
+  const onSubmit = handleSubmit(async (input) => {
+    setSubmitError(null);
     try {
-      await sendMagicLink(trimmed);
-      setSentTo(trimmed);
+      await sendMagicLink(input.email);
+      setSentTo(input.email);
     } catch (err) {
       // `sendSignInLinkToEmail` rejects with `FirebaseError` for
       // `auth/invalid-email`, `auth/unauthorized-continue-uri`,
       // network failures, etc. Surface the message verbatim so the
       // operator can debug without opening devtools.
       const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-    } finally {
-      setPending(false);
+      setSubmitError(message);
     }
-  }
+  });
 
   function handleUseDifferentEmail() {
     // Clear the previously stashed email so a still-in-flight first
@@ -95,11 +88,14 @@ export function SignInPage() {
     // into a hard error.
     clearStashedEmail();
     setSentTo(null);
-    setError(null);
-    setEmail('');
+    setSubmitError(null);
+    reset({ email: '' });
     // Focus runs after the next paint, when the form is back on screen.
     queueMicrotask(focusHeroForm);
   }
+
+  const fieldError = formState.errors.email?.message ?? submitError ?? null;
+  const pending = formState.isSubmitting;
 
   return (
     <div className="flex min-h-screen flex-col bg-[#f7f8fb] text-[color:var(--kd-fg-1)]">
@@ -110,14 +106,16 @@ export function SignInPage() {
       <HomeTopBar onSignIn={focusHeroForm} hidden={sentTo !== null} />
       <main className="flex-1">
         <HomeHero
-          email={email}
-          onEmailChange={setEmail}
-          onSubmit={handleSubmit}
+          onSubmit={onSubmit}
           pending={pending}
-          error={error}
+          error={fieldError}
           sentTo={sentTo}
           onUseDifferentEmail={handleUseDifferentEmail}
-          emailInputRef={emailInputRef}
+          inputRef={(node) => {
+            rhfEmailRef(node);
+            emailInputRef.current = node;
+          }}
+          inputProps={rhfEmailRest}
         />
         <HomeFeatures />
         <HomeExplainer />
@@ -155,27 +153,20 @@ function HomeTopBar({ onSignIn, hidden }: TopBarProps) {
 }
 
 interface HeroProps {
-  email: string;
-  onEmailChange: (value: string) => void;
-  onSubmit: (e: FormEvent<HTMLFormElement>) => void;
+  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
   pending: boolean;
   error: string | null;
   sentTo: string | null;
   onUseDifferentEmail: () => void;
-  emailInputRef: React.RefObject<HTMLInputElement | null>;
+  inputRef: (node: HTMLInputElement | null) => void;
+  // Spread these onto the input (`name`, `onChange`, `onBlur`) — the
+  // value is owned by react-hook-form internally; the field stays
+  // uncontrolled at the DOM level which is what RHF expects.
+  inputProps: Omit<React.ComponentPropsWithoutRef<typeof Input>, 'ref'>;
 }
 
 function HomeHero(props: HeroProps) {
-  const {
-    email,
-    onEmailChange,
-    onSubmit,
-    pending,
-    error,
-    sentTo,
-    onUseDifferentEmail,
-    emailInputRef,
-  } = props;
+  const { onSubmit, pending, error, sentTo, onUseDifferentEmail, inputRef, inputProps } = props;
   return (
     <section className="border-b border-[color:var(--kd-border-soft)]">
       <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-5 py-14 text-center sm:py-20">
@@ -200,17 +191,16 @@ function HomeHero(props: HeroProps) {
               </label>
               <Input
                 id="signin-email"
-                ref={emailInputRef}
+                ref={inputRef}
                 type="email"
                 autoComplete="email"
                 inputMode="email"
                 spellCheck={false}
-                value={email}
-                onChange={(e) => onEmailChange(e.target.value)}
                 disabled={pending}
                 placeholder="you@example.com"
                 aria-invalid={error ? true : undefined}
                 aria-describedby={error ? 'signin-email-error' : undefined}
+                {...inputProps}
               />
               <Button type="submit" disabled={pending} className="text-[0.95rem]">
                 {pending ? 'Sending…' : 'Send me a sign-in link'}

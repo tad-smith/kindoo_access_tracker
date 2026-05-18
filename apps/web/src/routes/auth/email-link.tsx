@@ -18,12 +18,23 @@
 //      rejection is treated as a recoverable typo on the user's typed
 //      email — the prompt stays visible with an inline error so the
 //      user can retry without burning the (still-valid) link.
+//
+// Forms use react-hook-form + zod resolver per `apps/web/CLAUDE.md`
+// convention. The cross-device prompt's email value is owned by RHF
+// state at the parent level, so the `prompt → signing-in-from-prompt →
+// prompt` transition on a typed-email rejection does NOT wipe the
+// user's typed input — the form instance survives the state change
+// because it is not unmounted (we keep the same component tree
+// mounted across the in-flight transition).
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useForm, type UseFormReturn } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { BrandIcon } from '../../components/layout/BrandIcon';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { signInEmailSchema, type SignInEmailForm } from '../../features/auth/schemas';
 import {
   clearStashedEmail,
   completeSignInWithEmailLink,
@@ -34,12 +45,6 @@ import {
 export const Route = createFileRoute('/auth/email-link')({
   component: EmailLinkActionPage,
 });
-
-// Same HTML5-style email format check as the sign-in page applies.
-// The Firebase SDK does its own validation server-side; the client
-// regex catches the empty / obviously malformed cases without burning
-// a (still-valid) `oobCode` redemption attempt.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // SDK error codes that map to "the user's typed email is wrong, the
 // link is still good" — keep the prompt visible with an inline error
@@ -56,6 +61,7 @@ function isTypedEmailError(message: string): boolean {
 type State =
   | { kind: 'verifying' }
   | { kind: 'prompt'; inlineError: string | null }
+  | { kind: 'signing-in-from-prompt' }
   | { kind: 'signing-in' }
   | { kind: 'error'; message: string }
   | { kind: 'not-a-link' };
@@ -63,24 +69,25 @@ type State =
 function EmailLinkActionPage() {
   const navigate = useNavigate();
   const [state, setState] = useState<State>({ kind: 'verifying' });
-  // StrictMode dev double-mounts the effect. The previous "peek + clear
-  // on success" mitigation was not actually sufficient: Firebase
-  // consumes the `oobCode` on the FIRST `signInWithEmailLink` call, so
-  // the second mount's call rejects with `auth/invalid-action-code` and
-  // flips state to error AFTER the first mount has succeeded. Net dev
-  // UX: sign-in actually worked but the screen shows an error card.
-  // The fix is a started-this-render ref that bails the second mount
-  // before it dispatches a second sign-in call.
+  // StrictMode dev double-mounts the effect. Firebase consumes the
+  // `oobCode` on the FIRST `signInWithEmailLink` call, so the second
+  // dispatch under StrictMode rejects with `auth/invalid-action-code`
+  // and would flip state to ErrorCard even though sign-in succeeded.
+  // The `useRef` "started-this-render" guard ensures only the first
+  // effect run dispatches sign-in.
   const startedRef = useRef(false);
 
+  // Cross-device prompt form. Lives at the parent level (not inside
+  // `CrossDevicePrompt`) so the `prompt → signing-in-from-prompt →
+  // prompt` transition on a typed-email rejection does NOT wipe the
+  // user's typed input. `defaultValues` reads the stashed email at
+  // mount in case the link was clicked twice from the same device.
+  const promptForm = useForm<SignInEmailForm>({
+    resolver: zodResolver(signInEmailSchema),
+    defaultValues: { email: peekStashedEmail() ?? '' },
+  });
+
   useEffect(() => {
-    // The `useRef` guard is the *whole* mitigation: only the first
-    // effect run dispatches sign-in; the second StrictMode mount's
-    // effect bails before doing anything observable. We do NOT use a
-    // local `cancelled` flag — the first mount's cleanup would set
-    // it to true, suppressing the navigate that should fire when
-    // sign-in resolves. React 18 silently no-ops setState on
-    // unmounted functional components, so the rest is safe.
     if (startedRef.current) return;
     startedRef.current = true;
 
@@ -121,25 +128,12 @@ function EmailLinkActionPage() {
     run();
   }, [navigate]);
 
-  async function handlePromptSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const data = new FormData(form);
-    const typed = String(data.get('email') ?? '').trim();
-    if (!typed) {
-      setState({ kind: 'prompt', inlineError: 'Enter the email address the link was sent to.' });
-      return;
-    }
-    // Same EMAIL_RE check the initial sign-in form applies. Catching
-    // a malformed entry here avoids burning a redemption attempt and
-    // keeps the prompt visible so the user can correct + resubmit.
-    if (!EMAIL_RE.test(typed)) {
-      setState({ kind: 'prompt', inlineError: 'Enter a valid email address.' });
-      return;
-    }
-    setState({ kind: 'signing-in' });
+  const onPromptSubmit = promptForm.handleSubmit(async (input) => {
+    // Zod has already validated `required` + `email format`. Burn the
+    // SDK call only on a well-formed entry.
+    setState({ kind: 'signing-in-from-prompt' });
     try {
-      await completeSignInWithEmailLink(typed, window.location.href);
+      await completeSignInWithEmailLink(input.email, window.location.href);
       // Defensive — `peekStashedEmail` may have left a value if the
       // user opened the link both on this device and another; ensure
       // we don't carry it forward.
@@ -149,16 +143,27 @@ function EmailLinkActionPage() {
       const message = err instanceof Error ? err.message : String(err);
       // Email-typo class errors: the link is still good, the user
       // just typed the wrong address. Keep the prompt visible with an
-      // inline error so they can fix the typo and resubmit. The link
-      // is still good because Firebase only consumes the `oobCode` on
-      // a *successful* redemption.
+      // inline error so they can fix the typo and resubmit. The
+      // `prompt → signing-in-from-prompt → prompt` transition keeps
+      // the CrossDevicePrompt mounted (see `showPrompt` below) so RHF
+      // state is preserved.
       if (isTypedEmailError(message)) {
         setState({ kind: 'prompt', inlineError: message });
         return;
       }
       setState({ kind: 'error', message });
     }
-  }
+  });
+
+  const showPrompt =
+    state.kind === 'prompt' ||
+    // Keep the prompt mounted during `signing-in-from-prompt` so RHF
+    // state survives a bounce back to `prompt` on a typed-email
+    // rejection. The form disables the submit button and swaps the
+    // label to "Signing in…" to communicate pending state.
+    state.kind === 'signing-in-from-prompt';
+  const inlineError = state.kind === 'prompt' ? state.inlineError : null;
+  const submittingFromPrompt = state.kind === 'signing-in-from-prompt';
 
   return (
     <div className="flex min-h-screen flex-col bg-[#f7f8fb] text-[color:var(--kd-fg-1)]">
@@ -184,8 +189,13 @@ function EmailLinkActionPage() {
             />
           ) : null}
 
-          {state.kind === 'prompt' ? (
-            <CrossDevicePrompt onSubmit={handlePromptSubmit} inlineError={state.inlineError} />
+          {showPrompt ? (
+            <CrossDevicePrompt
+              form={promptForm}
+              onSubmit={onPromptSubmit}
+              inlineError={inlineError}
+              submitting={submittingFromPrompt}
+            />
           ) : null}
 
           {state.kind === 'error' ? <ErrorCard message={state.message} /> : null}
@@ -218,15 +228,18 @@ function StatusCard({ title, body, role = 'status' }: StatusCardProps) {
 }
 
 interface CrossDevicePromptProps {
-  onSubmit: (e: FormEvent<HTMLFormElement>) => void;
+  form: UseFormReturn<SignInEmailForm>;
+  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
   inlineError: string | null;
+  submitting: boolean;
 }
 
-function CrossDevicePrompt({ onSubmit, inlineError }: CrossDevicePromptProps) {
-  // If the localStorage entry is somehow still present (e.g. user opened
-  // the link twice from the same device in quick succession) prefill the
-  // field so they don't have to retype.
-  const stashed = peekStashedEmail();
+function CrossDevicePrompt({ form, onSubmit, inlineError, submitting }: CrossDevicePromptProps) {
+  const { register, formState } = form;
+  // Field-level zod errors win over the parent-supplied SDK error
+  // (zod runs client-side before the SDK is called; SDK rejection
+  // surfaces only after a well-formed submit).
+  const errorMessage = formState.errors.email?.message ?? inlineError ?? null;
   return (
     <form
       onSubmit={onSubmit}
@@ -244,25 +257,26 @@ function CrossDevicePrompt({ onSubmit, inlineError }: CrossDevicePromptProps) {
       </label>
       <Input
         id="email-link-confirm-email"
-        name="email"
         type="email"
         autoComplete="email"
         inputMode="email"
-        defaultValue={stashed ?? ''}
         placeholder="you@example.com"
-        required
-        aria-invalid={inlineError ? true : undefined}
-        aria-describedby={inlineError ? 'email-link-confirm-error' : undefined}
+        disabled={submitting}
+        aria-invalid={errorMessage ? true : undefined}
+        aria-describedby={errorMessage ? 'email-link-confirm-error' : undefined}
+        {...register('email')}
       />
-      <Button type="submit">Confirm and sign in</Button>
-      {inlineError ? (
+      <Button type="submit" disabled={submitting}>
+        {submitting ? 'Signing in…' : 'Confirm and sign in'}
+      </Button>
+      {errorMessage ? (
         <div
           role="alert"
           id="email-link-confirm-error"
           data-testid="email-link-prompt-error"
           className="text-sm text-[color:var(--kd-danger-fg)]"
         >
-          {inlineError}
+          {errorMessage}
         </div>
       ) : null}
     </form>

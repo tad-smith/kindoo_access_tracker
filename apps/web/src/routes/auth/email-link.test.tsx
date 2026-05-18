@@ -171,8 +171,11 @@ describe('/auth/email-link', () => {
     await screen.findByLabelText(/Email address/i);
     await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
 
+    // Zod resolver surfaces "Enter your email address." for the empty
+    // case (see features/auth/schemas.ts). Field-level error renders
+    // inside the still-visible prompt.
     const inline = await screen.findByTestId('email-link-prompt-error');
-    expect(inline).toHaveTextContent(/Enter the email/i);
+    expect(inline).toHaveTextContent(/Enter your email/i);
     expect(completeSignInWithEmailLinkMock).not.toHaveBeenCalled();
     // Prompt is still visible — user can retype + retry.
     expect(screen.getByRole('button', { name: /Confirm and sign in/i })).toBeInTheDocument();
@@ -193,6 +196,8 @@ describe('/auth/email-link', () => {
     await user.type(await screen.findByLabelText(/Email address/i), 'alice');
     await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
 
+    // Zod resolver surfaces "Enter a valid email address." for the
+    // format-fail case (see features/auth/schemas.ts).
     const inline = await screen.findByTestId('email-link-prompt-error');
     expect(inline).toHaveTextContent(/valid email/i);
     expect(completeSignInWithEmailLinkMock).not.toHaveBeenCalled();
@@ -350,21 +355,52 @@ describe('/auth/email-link', () => {
     expect(errorCard).toHaveTextContent(/network-request-failed/i);
   });
 
-  it('cross-device prompt prefills the email field from peekStashedEmail when present', async () => {
+  // Regression — PR #140 reviewer Fix 7. The cross-device prompt's
+  // typed email must survive the `prompt → signing-in-from-prompt →
+  // prompt` transition that fires on a typed-email rejection. The
+  // previous implementation used an uncontrolled `<input
+  // defaultValue=…>` inside a subcomponent that unmounted on the
+  // signing-in branch; the re-mount on rejection wiped the user's
+  // input. The fix lifts the form to RHF state at the parent level
+  // and keeps the form mounted across the in-flight transition.
+  it('preserves the typed email across a typed-email rejection', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
     isSignInWithEmailLinkMock.mockReturnValue(true);
-    // For the prompt to render we need the effect's peek call to
-    // return null. The CrossDevicePrompt subcomponent then calls peek
-    // again to populate `defaultValue`. The two calls run in sequence
-    // and we want the second one to return the stash, so wire that
-    // sequence with mockReturnValueOnce.
-    peekStashedEmailMock.mockReturnValueOnce(null);
-    peekStashedEmailMock.mockReturnValueOnce('zach@example.com');
+    peekStashedEmailMock.mockReturnValue(null);
+    // First attempt rejects with the email-typo class; second resolves.
+    completeSignInWithEmailLinkMock
+      .mockRejectedValueOnce(new Error('Firebase: Error (auth/invalid-email).'))
+      .mockResolvedValueOnce({ uid: 'u1' });
 
     render(<EmailLinkRoute />);
-
+    const user = userEvent.setup();
     const input = (await screen.findByLabelText(/Email address/i)) as HTMLInputElement;
-    expect(input.value).toBe('zach@example.com');
+    // Use a distinctive long-ish string so a wipe is obvious.
+    await user.type(input, 'verylongname.with.dots@example.com');
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    // Inline error rendered — the SDK rejected the first attempt.
+    const inline = await screen.findByTestId('email-link-prompt-error');
+    expect(inline).toHaveTextContent(/invalid-email/i);
+
+    // CRITICAL: the user's typed value is STILL in the field after the
+    // bounce. Re-query because RHF may swap React identities; the
+    // input behind the same label is what the user sees.
+    const inputAfter = screen.getByLabelText(/Email address/i) as HTMLInputElement;
+    expect(inputAfter.value).toBe('verylongname.with.dots@example.com');
+
+    // User fixes the typo and resubmits.
+    await user.clear(inputAfter);
+    await user.type(inputAfter, 'correct@example.com');
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    await waitFor(() =>
+      expect(completeSignInWithEmailLinkMock).toHaveBeenLastCalledWith(
+        'correct@example.com',
+        'https://example.com/auth/email-link?apiKey=abc&oobCode=xyz',
+      ),
+    );
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true }));
   });
 
   // Regression — PR #140 reviewer Fix 1 (actually-correct take). Under
