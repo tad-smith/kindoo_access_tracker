@@ -649,11 +649,15 @@ Surfaced by the 2026-05-14 callable-permission security review: none of the five
 Add App Check enforcement so calls without a valid App Check token are rejected at the Functions runtime. Defense-in-depth against bot / scripted / MITM invocation — does not replace the per-callable manager auth check. Web app (Firebase Hosting) registers via reCAPTCHA Enterprise; Chrome extension needs a separate App Check provider (custom debug provider during development; production attestation TBD — operator decision).
 
 ## [T-41] Enable Firestore TTL on `platformAuditLog`
-Status: open
+Status: deferred to Phase 12 (2026-05-18 — no production writers today)
 Owner: @infra-engineer (operator runs gcloud) + @tad
 Phase: cross-cutting
 
-T-15 closed 2026-04-29 by enabling Firestore TTL on the `auditLog` collection-group. The sibling `platformAuditLog` collection (superadmin records — see Q20) was deferred at operator's discretion and remains unbounded. Enable TTL on the same `ttl` field shape so superadmin audit rows auto-expire.
+T-15 closed 2026-04-29 by enabling Firestore TTL on the `auditLog` collection-group. The sibling `platformAuditLog` collection (superadmin records — see Q20) was originally deferred at operator's discretion.
+
+**Closed 2026-05-18: no production code writes to `platformAuditLog` today.** The type, zod schema, doc-ref helpers (`platformAuditLogRef` / `platformAuditLogCol` in `apps/web/src/lib/docs.ts`), and Firestore rules all exist as Phase-12 scaffolding, but no caller invokes them — `grep -rn 'platformAuditLogRef\|platformAuditLogCol'` returns only the definitions. The collection is empty in production; enabling TTL now would expire zero rows. Re-open when Phase 12 superadmin callables (`createStake`, etc.) start emitting platformAuditLog rows.
+
+When Phase 12 lands, the work needed:
 
 ```
 gcloud firestore fields ttls update ttl \
