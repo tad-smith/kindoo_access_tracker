@@ -253,10 +253,19 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
           <strong>{request.type === 'remove' ? 'Remove Access For:' : 'Give Access To:'}</strong>{' '}
           {request.member_name ? (
             <>
-              {request.member_name} <span className="roster-email">({request.member_email})</span>
+              <span className="roster-card-name">{request.member_name}</span>{' '}
+              <span>
+                (
+                <span className="roster-email" title={request.member_email}>
+                  {request.member_email}
+                </span>
+                )
+              </span>
             </>
           ) : (
-            <span className="roster-email">{request.member_email}</span>
+            <span className="roster-email" title={request.member_email}>
+              {request.member_email}
+            </span>
           )}
         </span>
       </div>
