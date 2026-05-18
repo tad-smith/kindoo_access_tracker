@@ -76,6 +76,7 @@ import {
 import { CallingTemplateFormDialog } from './CallingTemplateFormDialog';
 import type { CallingTemplateDialogMode } from './CallingTemplateFormDialog';
 import { CallingTemplatesTable } from './CallingTemplatesTable';
+import { TimezoneCombobox } from './TimezoneCombobox';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
@@ -1176,9 +1177,20 @@ function ConfigKeysTab() {
           {...register('expiry_hour', { valueAsNumber: true })}
         />
       </label>
-      <label>
+      <label htmlFor="config-timezone">
         Timezone (IANA, e.g. America/Denver)
-        <Input {...register('timezone')} />
+        <Controller
+          name="timezone"
+          control={control}
+          render={({ field }) => (
+            <TimezoneCombobox
+              id="config-timezone"
+              value={field.value}
+              onChange={field.onChange}
+              data-testid="config-timezone"
+            />
+          )}
+        />
       </label>
       <label className="kd-switch-label" htmlFor="config-notifications-enabled">
         <Controller
