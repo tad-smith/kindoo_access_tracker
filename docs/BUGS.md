@@ -6,6 +6,41 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-13] mount.test.tsx flakes CI with "ReferenceError: window is not defined" unhandled errors
+Status: closed (fixed in PR — branch `fix/b-13-mount-test-unhandled-error`)
+Owner: @extension-engineer
+Phase: post v2.2
+Severity: low (CI-only; no runtime impact)
+
+CI's `test` job, "Unit tests" step, finishes vitest with every extension test file green — `mount.test.tsx`'s 6 tests included — then vitest reports 1-3 unhandled errors and exits 1. The workflow's "Verify all checks passed" gate flips to failure. Three T-45 PR-chain CI runs in 24h were bitten; locally on macOS the same suite passes cleanly.
+
+**Symptom:**
+
+```
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+Vitest caught N unhandled errors during the test run.
+ReferenceError: window is not defined
+This error originated in "src/content/mount.test.tsx" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+```
+
+**Stack trace (CI):**
+
+```
+❯ performWorkOnRootViaSchedulerTask  react-dom-client.development.js:18936:7
+❯ Immediate.performWorkUntilDeadline scheduler.development.js:45:48
+❯ processImmediate                   node:internal/timers:484:21
+```
+
+**Root cause:** `src/content/mount.tsx`'s `mountPanel` calls `createRoot(reactRoot).render(<App />)` but never holds onto the `Root` and never unmounts it. The tests didn't unmount either — they cleared `document.body.innerHTML` in `afterEach`, which detaches the host element but does NOT tear down the React fiber tree. React 19's reconciler schedules work via `scheduler`'s `Immediate.performWorkUntilDeadline`, which on Node lands on `processImmediate`. The deferred immediate fires AFTER the test file completes; when vitest's next test file tears down jsdom and the immediate runs in the worker, the scheduler closes over a `window` that no longer exists, throwing `ReferenceError: window is not defined`. The non-deterministic 1-3 error count tracks how many separate scheduler ticks were still pending at teardown. macOS local runs happened to drain the scheduler before the next file's jsdom teardown; Ubuntu CI's different timing exposes the race.
+
+**Repro:** none reliable locally (timing-sensitive). CI reproduces opportunistically; the error originates from `mount.test.tsx` per vitest's "originated in" attribution.
+
+**Fix:** `mountPanel` now stores the `Root` from `createRoot` and exposes an `unmount()` method on `PanelHandles` that calls `root.unmount()`, removes the runtime listener (extracted into a named handler so removal is symmetric), and removes the host element from the DOM. The test suite calls `unmount()` in `afterEach` on every test's returned handles, draining React's scheduler before vitest tears jsdom down. Two `await Promise.resolve()` ticks in `afterEach` drain the mocked `chrome.storage.local.get` `.then` chain that `mountPanel` kicks off. A new test (`unmount tears down the React root, the host, and the runtime listener`) locks the teardown contract. The production caller (`content-script.ts`) doesn't invoke `unmount()` — the panel lives for the lifetime of the page — but the surface is now available for an SPA-navigation tear-down hook in the future.
+
+**Branch / PR:** `fix/b-13-mount-test-unhandled-error`.
+
+---
+
 ## [B-12] Manager cannot delete a calling template — "missing or insufficient permissions"
 Status: closed (fixed in PR — branch `fix/b-12-calling-template-delete-rule`)
 Owner: @backend-engineer
