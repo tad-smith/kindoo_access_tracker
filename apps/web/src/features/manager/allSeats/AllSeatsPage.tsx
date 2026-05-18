@@ -399,7 +399,8 @@ function GrantRowCard({ row, wards, sites, principal, onEdit }: GrantRowCardProp
     ? seat.member_canonical
     : `${seat.member_canonical}-dup-${grant.duplicateIndex}`;
 
-  // Line 2 detail: calling (auto) / reason (manual/temp) + buildings.
+  // Line 2: calling (auto) / reason (manual/temp). Line 3: buildings on
+  // its own row below.
   const callingChip =
     grant.type === 'auto' && grant.callings.length > 0 ? (
       <span className="roster-card-chip">
@@ -431,13 +432,11 @@ function GrantRowCard({ row, wards, sites, principal, onEdit }: GrantRowCardProp
       </div>
     ) : null;
 
-  const detailLine =
-    callingChip || buildingsChip ? (
-      <div className="roster-card-line2">
-        {callingChip}
-        {buildingsChip}
-      </div>
-    ) : null;
+  const callingLine = callingChip ? <div className="roster-card-line2">{callingChip}</div> : null;
+
+  const buildingsLine = buildingsChip ? (
+    <div className="roster-card-line2">{buildingsChip}</div>
+  ) : null;
 
   const memberInner = seat.member_name ? (
     <>
@@ -514,8 +513,9 @@ function GrantRowCard({ row, wards, sites, principal, onEdit }: GrantRowCardProp
           ) : null}
         </span>
       </div>
+      {callingLine}
+      {buildingsLine}
       {datesLine}
-      {detailLine}
     </div>
   );
 }

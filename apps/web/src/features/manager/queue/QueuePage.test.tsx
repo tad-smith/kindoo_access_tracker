@@ -166,6 +166,103 @@ describe('<ManagerQueuePage />', () => {
     expect(screen.getByTestId('queue-reject-r1')).toBeInTheDocument();
   });
 
+  it('renders the member on a "Give Access To" row with name + (email) format', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'tad.e.smith@gmail.com',
+        member_name: 'Tad Smith',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(within(card).getByText(/Give Access To:/)).toBeInTheDocument();
+    expect(card.textContent).toMatch(/Tad Smith \(tad\.e\.smith@gmail\.com\)/);
+  });
+
+  it('falls back to bare email on the Give Access To row when member_name is empty', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'remove',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+        member_name: '',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(within(card).getByText(/Give Access To:/)).toBeInTheDocument();
+    expect(card.textContent).toMatch(/Give Access To:\s*a@x\.com/);
+  });
+
+  it('labels the reason field "Calling" on the queue card (not "Reason")', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        reason: 'Primary President',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(within(card).getByText(/Calling:/)).toBeInTheDocument();
+    expect(within(card).getByText(/Primary President/)).toBeInTheDocument();
+    expect(within(card).queryByText(/^Reason:$/)).toBeNull();
+  });
+
+  it('places the Submitted date on the top row, right-justified next to the badges', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        requested_at: {
+          seconds: Math.floor(new Date('2026-04-20T14:30:00Z').getTime() / 1000),
+          nanoseconds: 0,
+          toDate: () => new Date('2026-04-20T14:30:00Z'),
+          toMillis: () => new Date('2026-04-20T14:30:00Z').getTime(),
+        },
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    const topRow = card.querySelector('.kd-queue-card-line1');
+    expect(topRow).not.toBeNull();
+    // Submitted lives inside the top row (was previously on the meta row).
+    expect(topRow?.textContent).toMatch(/Submitted:/);
+    // The right-justified slot still carries the marker class for layout.
+    expect(card.querySelector('.kd-queue-card-submitted')).not.toBeNull();
+  });
+
+  it('shows the requester email on its own row (falls back to email-only until requester_name lands)', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        requester_email: 'bishop@example.com',
+        requester_canonical: 'bishop@example.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(within(card).getByText(/Requester:/)).toBeInTheDocument();
+    expect(card.textContent).toMatch(/Requester:\s*bishop@example\.com/);
+  });
+
   it('shows buildings on a dedicated card row as a comma-delimited list', () => {
     const requests = [
       makeRequest({

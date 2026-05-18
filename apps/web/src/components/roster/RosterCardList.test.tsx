@@ -42,6 +42,29 @@ describe('RosterCardList', () => {
     expect(screen.queryByText(/calling:/i)).toBeNull();
   });
 
+  it('renders the buildings chip on its own row below the calling/reason row', () => {
+    const seat = makeSeat({
+      member_name: 'Alice Example',
+      callings: ['Bishop'],
+      type: 'auto',
+      building_names: ['Cordera Building', 'Genoa Building'],
+    });
+    render(<RosterCardList seats={[seat]} />);
+    const card = document.querySelector('.roster-card');
+    const detailRows = card?.querySelectorAll('.roster-card-line2') ?? [];
+    // One row for the calling chip, one row for the buildings chip.
+    expect(detailRows.length).toBeGreaterThanOrEqual(2);
+    // Calling lands on the row before buildings.
+    const callingIndex = Array.from(detailRows).findIndex((row) =>
+      /calling:/i.test(row.textContent ?? ''),
+    );
+    const buildingsIndex = Array.from(detailRows).findIndex((row) =>
+      /buildings:/i.test(row.textContent ?? ''),
+    );
+    expect(callingIndex).toBeGreaterThanOrEqual(0);
+    expect(buildingsIndex).toBeGreaterThan(callingIndex);
+  });
+
   it('renders the dates line on a temp seat and not on auto/manual', () => {
     const tempSeat = makeSeat({
       member_canonical: 'temp@example.com',

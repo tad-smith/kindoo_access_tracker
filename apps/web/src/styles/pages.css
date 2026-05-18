@@ -210,6 +210,13 @@
   gap: 10px;
 }
 
+.kd-queue-card-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .kd-queue-card-meta {
   color: var(--kd-fg-2);
   font-size: 0.92em;
