@@ -19,6 +19,16 @@ import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { FirebaseError } from 'firebase/app';
+
+// Helper — produce a real `FirebaseError` instance with the right
+// `code`. Mocks that previously used `new Error('… auth/foo …')` no
+// longer trigger the recoverable-error branch (Fix 14 switched to
+// `instanceof FirebaseError` + `err.code` matching, NOT
+// `err.message.includes(…)`).
+function fbError(code: string, message = `Firebase: Error (${code}).`): FirebaseError {
+  return new FirebaseError(code, message);
+}
 
 const isSignInWithEmailLinkMock = vi.fn();
 const peekStashedEmailMock = vi.fn<() => string | null>();
@@ -221,7 +231,7 @@ describe('/auth/email-link', () => {
     // First attempt rejects (wrong typed email); second attempt
     // resolves (corrected email).
     completeSignInWithEmailLinkMock
-      .mockRejectedValueOnce(new Error('Firebase: Error (auth/invalid-email).'))
+      .mockRejectedValueOnce(fbError('auth/invalid-email'))
       .mockResolvedValueOnce({ uid: 'u1' });
 
     render(<EmailLinkRoute />);
@@ -259,9 +269,7 @@ describe('/auth/email-link', () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
     isSignInWithEmailLinkMock.mockReturnValue(true);
     peekStashedEmailMock.mockReturnValue(null);
-    completeSignInWithEmailLinkMock.mockRejectedValueOnce(
-      new Error('Firebase: Error (auth/argument-error).'),
-    );
+    completeSignInWithEmailLinkMock.mockRejectedValueOnce(fbError('auth/argument-error'));
 
     render(<EmailLinkRoute />);
     const user = userEvent.setup();
@@ -285,7 +293,7 @@ describe('/auth/email-link', () => {
     peekStashedEmailMock.mockReturnValue(null);
     // First attempt fails on transient network; second resolves.
     completeSignInWithEmailLinkMock
-      .mockRejectedValueOnce(new Error('Firebase: Error (auth/network-request-failed).'))
+      .mockRejectedValueOnce(fbError('auth/network-request-failed'))
       .mockResolvedValueOnce({ uid: 'u1' });
 
     render(<EmailLinkRoute />);
@@ -313,9 +321,7 @@ describe('/auth/email-link', () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
     isSignInWithEmailLinkMock.mockReturnValue(true);
     peekStashedEmailMock.mockReturnValue(null);
-    completeSignInWithEmailLinkMock.mockRejectedValueOnce(
-      new Error('Firebase: Error (auth/invalid-action-code).'),
-    );
+    completeSignInWithEmailLinkMock.mockRejectedValueOnce(fbError('auth/invalid-action-code'));
 
     render(<EmailLinkRoute />);
     const user = userEvent.setup();
@@ -331,9 +337,7 @@ describe('/auth/email-link', () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
     isSignInWithEmailLinkMock.mockReturnValue(true);
     peekStashedEmailMock.mockReturnValue('zach@example.com');
-    completeSignInWithEmailLinkMock.mockRejectedValue(
-      new Error('Firebase: Error (auth/invalid-action-code).'),
-    );
+    completeSignInWithEmailLinkMock.mockRejectedValue(fbError('auth/invalid-action-code'));
 
     render(<EmailLinkRoute />);
 
@@ -351,9 +355,7 @@ describe('/auth/email-link', () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
     isSignInWithEmailLinkMock.mockReturnValue(true);
     peekStashedEmailMock.mockReturnValue('zach@example.com');
-    completeSignInWithEmailLinkMock.mockRejectedValue(
-      new Error('Firebase: Error (auth/argument-error).'),
-    );
+    completeSignInWithEmailLinkMock.mockRejectedValue(fbError('auth/argument-error'));
 
     render(<EmailLinkRoute />);
 
@@ -365,9 +367,7 @@ describe('/auth/email-link', () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
     isSignInWithEmailLinkMock.mockReturnValue(true);
     peekStashedEmailMock.mockReturnValue('zach@example.com');
-    completeSignInWithEmailLinkMock.mockRejectedValue(
-      new Error('Firebase: Error (auth/invalid-email).'),
-    );
+    completeSignInWithEmailLinkMock.mockRejectedValue(fbError('auth/invalid-email'));
 
     render(<EmailLinkRoute />);
 
@@ -375,18 +375,108 @@ describe('/auth/email-link', () => {
     expect(errorCard).toHaveTextContent(/invalid-email/i);
   });
 
-  it('error branch — network failure surfaces the SDK error', async () => {
+  // Regression — PR #140 reviewer Fix 13. Auto-signin path on a
+  // transient network failure keeps the stash intact and renders a
+  // "Retry sign-in" affordance against the same still-valid link,
+  // symmetric with the cross-device prompt path's handling. A
+  // subsequent retry that resolves completes the sign-in.
+  it('auto-signin path — network failure keeps the stash and offers Retry sign-in', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
     isSignInWithEmailLinkMock.mockReturnValue(true);
     peekStashedEmailMock.mockReturnValue('zach@example.com');
-    completeSignInWithEmailLinkMock.mockRejectedValue(
-      new Error('Firebase: Error (auth/network-request-failed).'),
-    );
+    // First attempt fails on transient network; second resolves.
+    completeSignInWithEmailLinkMock
+      .mockRejectedValueOnce(fbError('auth/network-request-failed'))
+      .mockResolvedValueOnce({ uid: 'u1' });
+
+    render(<EmailLinkRoute />);
+
+    // RetryCard renders — NOT the unrecoverable ErrorCard.
+    const retryCard = await screen.findByTestId('email-link-retry');
+    expect(retryCard).toHaveTextContent(/network-request-failed/i);
+    expect(screen.queryByTestId('email-link-error')).toBeNull();
+    // Stash NOT cleared — link is still valid.
+    expect(clearStashedEmailMock).not.toHaveBeenCalled();
+
+    // User clicks Retry sign-in → second call resolves, navigate fires.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Retry sign-in/i }));
+
+    await waitFor(() => expect(completeSignInWithEmailLinkMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true }));
+    // After success, stash IS cleared.
+    expect(clearStashedEmailMock).toHaveBeenCalled();
+  });
+
+  // Same auto-signin path with a non-recoverable error code: the link
+  // IS unusable, so the stash is cleared and the unrecoverable
+  // ErrorCard renders with the "Send a new link" affordance.
+  it('auto-signin path — non-recoverable rejection clears the stash and shows ErrorCard', async () => {
+    setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue('zach@example.com');
+    completeSignInWithEmailLinkMock.mockRejectedValue(fbError('auth/invalid-action-code'));
 
     render(<EmailLinkRoute />);
 
     const errorCard = await screen.findByTestId('email-link-error');
-    expect(errorCard).toHaveTextContent(/network-request-failed/i);
+    expect(errorCard).toHaveTextContent(/invalid-action-code/i);
+    expect(screen.queryByTestId('email-link-retry')).toBeNull();
+    await waitFor(() => expect(clearStashedEmailMock).toHaveBeenCalled());
+  });
+
+  // Regression — PR #140 reviewer Fix 14. The recoverable check
+  // matches on `FirebaseError.code` (the SDK's stable contract), not
+  // on `err.message`. A FirebaseError whose message text omits the
+  // code (e.g. a future SDK version reformats the message) must
+  // still trigger the recoverable branch.
+  it('cross-device branch — FirebaseError with a generic message still hits the recoverable branch via .code', async () => {
+    setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue(null);
+    // Generic message that does NOT embed the code string. The old
+    // `err.message.includes('auth/network-request-failed')` check
+    // would have missed this.
+    completeSignInWithEmailLinkMock.mockRejectedValueOnce(
+      fbError('auth/network-request-failed', 'Network unreachable.'),
+    );
+
+    render(<EmailLinkRoute />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/Email address/i), 'zach@example.com');
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    const inline = await screen.findByTestId('email-link-prompt-error');
+    // The displayed message is whatever the SDK gave us (generic in
+    // this case) — the recoverable decision was made on `.code`.
+    expect(inline).toHaveTextContent(/Network unreachable/i);
+    expect(screen.queryByTestId('email-link-error')).toBeNull();
+  });
+
+  // Regression — PR #140 reviewer Fix 14. Error-code matching uses
+  // `FirebaseError.code`, NOT `err.message.includes(code)`. A plain
+  // `Error` whose message happens to contain "auth/invalid-email"
+  // is NOT a Firebase SDK error and must fall through to the
+  // non-recoverable ErrorCard.
+  it('cross-device branch — non-FirebaseError rejection falls through to ErrorCard even if message contains the code', async () => {
+    setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue(null);
+    completeSignInWithEmailLinkMock.mockRejectedValueOnce(
+      new Error('upstream proxy returned auth/invalid-email'),
+    );
+
+    render(<EmailLinkRoute />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/Email address/i), 'zach@example.com');
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    // The `instanceof FirebaseError` check filtered this out of the
+    // recoverable bucket, so the prompt's typed-email error UI is NOT
+    // shown — the full ErrorCard is.
+    const errorCard = await screen.findByTestId('email-link-error');
+    expect(errorCard).toHaveTextContent(/auth\/invalid-email/i);
+    expect(screen.queryByTestId('email-link-prompt-error')).toBeNull();
   });
 
   // Regression — PR #140 reviewer Fix 7. The cross-device prompt's
@@ -403,7 +493,7 @@ describe('/auth/email-link', () => {
     peekStashedEmailMock.mockReturnValue(null);
     // First attempt rejects with the email-typo class; second resolves.
     completeSignInWithEmailLinkMock
-      .mockRejectedValueOnce(new Error('Firebase: Error (auth/invalid-email).'))
+      .mockRejectedValueOnce(fbError('auth/invalid-email'))
       .mockResolvedValueOnce({ uid: 'u1' });
 
     render(<EmailLinkRoute />);
@@ -457,7 +547,7 @@ describe('/auth/email-link', () => {
     peekStashedEmailMock.mockReturnValue('zach@example.com');
     completeSignInWithEmailLinkMock
       .mockResolvedValueOnce({ uid: 'u1' })
-      .mockRejectedValue(new Error('Firebase: Error (auth/invalid-action-code).'));
+      .mockRejectedValue(fbError('auth/invalid-action-code'));
 
     render(
       <StrictMode>

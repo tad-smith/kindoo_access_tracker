@@ -27,10 +27,11 @@
 // because it is not unmounted (we keep the same component tree
 // mounted across the in-flight transition).
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useForm, type UseFormReturn } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
+import { FirebaseError } from 'firebase/app';
 import { BrandIcon } from '../../components/layout/BrandIcon';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -59,14 +60,29 @@ export const Route = createFileRoute('/auth/email-link')({
 //
 // Other codes (`auth/invalid-action-code` / `auth/expired-action-code`)
 // mean the link itself is unusable; those still swap to ErrorCard.
-const RECOVERABLE_ERROR_CODES = [
+//
+// `Set` membership for O(1) lookup. Codes are matched against
+// `FirebaseError.code` rather than `err.message.includes(code)` —
+// the SDK could reformat the message text between versions without
+// changing `code`, so the code property is the stable contract.
+const RECOVERABLE_ERROR_CODES: ReadonlySet<string> = new Set([
   'auth/invalid-email',
   'auth/argument-error',
   'auth/network-request-failed',
-];
+]);
 
-function isRecoverableError(message: string): boolean {
-  return RECOVERABLE_ERROR_CODES.some((code) => message.includes(code));
+function isRecoverableError(err: unknown): boolean {
+  return err instanceof FirebaseError && RECOVERABLE_ERROR_CODES.has(err.code);
+}
+
+// Subset of `RECOVERABLE_ERROR_CODES` whose semantics are "the user
+// has nothing to retype, just retry the same call." Currently only
+// the transient network code — the email-typo codes are filtered
+// out because the auto-signin path has no typed-email field to fix
+// (the stash drove the call). This is what gates the auto-retry
+// affordance on the auto-signin path.
+function isTransientNetworkError(err: unknown): boolean {
+  return err instanceof FirebaseError && err.code === 'auth/network-request-failed';
 }
 
 type State =
@@ -74,6 +90,13 @@ type State =
   | { kind: 'prompt'; inlineError: string | null }
   | { kind: 'signing-in-from-prompt' }
   | { kind: 'signing-in' }
+  // Auto-signin path hit a transient network error. The link is
+  // still valid (Firebase only consumes the oobCode on a successful
+  // redemption) and the stash is intact, so render a "Retry sign-in"
+  // affordance against the same link instead of forcing a fresh
+  // send. `email` is the stashed email so the retry handler doesn't
+  // need to read localStorage again.
+  | { kind: 'auto-retry'; email: string; message: string }
   | { kind: 'error'; message: string }
   | { kind: 'not-a-link' };
 
@@ -100,6 +123,47 @@ function EmailLinkActionPage() {
     defaultValues: { email: '' },
   });
 
+  // Auto-signin dispatch: shared between the initial effect and the
+  // "Retry sign-in" affordance the auto-retry state renders. Reading
+  // `window.location.href` inside the callback (not capturing it in a
+  // closure) is intentional — between mount and the user's retry
+  // click, the URL must not have changed, but we re-read it for
+  // safety.
+  const runAutoSignIn = useCallback(
+    async (email: string) => {
+      setState({ kind: 'signing-in' });
+      const href = window.location.href;
+      try {
+        await completeSignInWithEmailLink(email, href);
+        // Success path — clear the stash now that the link has been
+        // redeemed. Idempotent.
+        clearStashedEmail();
+        navigate({ to: '/', replace: true }).catch(() => {
+          // Same swallow as the gate in routes/index.tsx — the
+          // user lands back on the sign-in page if navigation
+          // fails for any reason.
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // Transient-network class: link is still valid (oobCode only
+        // consumed on a successful redemption) and the stash is
+        // intact. Render a retry affordance against the SAME link so
+        // the user isn't forced into a fresh send for a connectivity
+        // blip. Symmetric with the cross-device prompt path's
+        // recoverable-error handling.
+        if (isTransientNetworkError(err)) {
+          setState({ kind: 'auto-retry', email, message });
+          return;
+        }
+        // Non-recoverable — link is unusable. Clear the stash so a
+        // future re-send doesn't carry the spent value forward.
+        clearStashedEmail();
+        setState({ kind: 'error', message });
+      }
+    },
+    [navigate],
+  );
+
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
@@ -118,28 +182,11 @@ function EmailLinkActionPage() {
         setState({ kind: 'prompt', inlineError: null });
         return;
       }
-      setState({ kind: 'signing-in' });
-      try {
-        await completeSignInWithEmailLink(stashed, href);
-        // Success path — clear the stash now that the link has been
-        // redeemed. Idempotent.
-        clearStashedEmail();
-        navigate({ to: '/', replace: true }).catch(() => {
-          // Same swallow as the gate in routes/index.tsx — the
-          // user lands back on the sign-in page if navigation
-          // fails for any reason.
-        });
-      } catch (err) {
-        // Failure path — clear the stash so a retry / re-send flow
-        // doesn't carry the spent value forward.
-        clearStashedEmail();
-        const message = err instanceof Error ? err.message : String(err);
-        setState({ kind: 'error', message });
-      }
+      await runAutoSignIn(stashed);
     }
 
     run();
-  }, [navigate]);
+  }, [runAutoSignIn]);
 
   const onPromptSubmit = promptForm.handleSubmit(async (input) => {
     // Zod has already validated `required` + `email format`. Burn the
@@ -162,7 +209,7 @@ function EmailLinkActionPage() {
       // requesting a fresh link. The `prompt → signing-in-from-prompt
       // → prompt` transition keeps the CrossDevicePrompt mounted (see
       // `showPrompt` below) so RHF state is preserved.
-      if (isRecoverableError(message)) {
+      if (isRecoverableError(err)) {
         setState({ kind: 'prompt', inlineError: message });
         return;
       }
@@ -214,6 +261,10 @@ function EmailLinkActionPage() {
           ) : null}
 
           {state.kind === 'error' ? <ErrorCard message={state.message} /> : null}
+
+          {state.kind === 'auto-retry' ? (
+            <RetryCard message={state.message} onRetry={() => runAutoSignIn(state.email)} />
+          ) : null}
 
           {state.kind === 'not-a-link' ? (
             <ErrorCard message="This link is not a valid sign-in link. Open the most recent email we sent and click that link, or request a new one." />
@@ -295,6 +346,37 @@ function CrossDevicePrompt({ form, onSubmit, inlineError, submitting }: CrossDev
         </div>
       ) : null}
     </form>
+  );
+}
+
+interface RetryCardProps {
+  message: string;
+  onRetry: () => void;
+}
+
+// Auto-signin transient-network branch. Same surface shape as
+// ErrorCard but the primary affordance is "Retry sign-in" (re-dispatch
+// against the same still-valid link) instead of "Send a new link."
+// The stash is preserved across this state, so the retry handler has
+// the email it needs.
+function RetryCard({ message, onRetry }: RetryCardProps) {
+  return (
+    <div
+      role="alert"
+      className="flex flex-col gap-3 rounded border border-[color:var(--kd-danger-tint)] bg-white p-6"
+      data-testid="email-link-retry"
+    >
+      <h1 className="m-0 text-[1.1rem] font-semibold text-[color:var(--kd-danger-fg)]">
+        We couldn’t reach the sign-in service.
+      </h1>
+      <p className="m-0 text-sm leading-relaxed text-[color:var(--kd-fg-2)]">{message}</p>
+      <p className="m-0 text-sm leading-relaxed text-[color:var(--kd-fg-2)]">
+        Your sign-in link is still valid. Check your connection and try again.
+      </p>
+      <Button type="button" onClick={onRetry} className="self-start">
+        Retry sign-in
+      </Button>
+    </div>
   );
 }
 
