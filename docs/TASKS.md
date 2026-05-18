@@ -828,7 +828,7 @@ Decision recorded as `architecture.md` D14; spec rewritten in this PR. The exten
 
 **Acceptance criteria:**
 
-1. `ripgrep` for `runImporter`, `runImportNow`, `callings_sheet_id`, `import_day`, `import_hour`, `last_import_at`, `last_import_triggered_by`, `Importer` (capital-I literal actor string in fresh code paths) returns zero hits outside historical changelog entries and audit-log row data.
+1. **Code-side grep** for `runImporter`, `runImportNow`, and `Importer` (capital-I literal actor string written by fresh code paths) returns zero hits across `functions/`, `apps/web/`, `packages/shared/`, `extension/`, `firestore/`, `e2e/`, and `infra/` — excluding test fixtures that simulate historical audit rows. (The six deprecated `stake.*` field names ARE expected to remain visible in `docs/firebase-schema.md` §3 as deprecated-block comments until a future cleanup pass; do not gate this AC on stripping them from the doc.)
 2. `googleapis` is gone from `functions/package.json` and lockfile.
 3. The bootstrap wizard's step 1 no longer collects a sheet ID; tests assert the field is absent from the form.
 4. The manager Import page route no longer exists; nav doesn't link to it; the route file is deleted; tests asserting "Import" in the nav are removed.

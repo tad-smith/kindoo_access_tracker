@@ -145,7 +145,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   expiry_hour: number;                 // 0–23, local stake time
   timezone: string;                    // IANA tz, e.g. 'America/Denver'
 
-  // Deprecated (LCR Sheet importer removed — see `architecture.md` D-17,
+  // Deprecated (LCR Sheet importer removed — see `architecture.md` D14,
   // `spec.md` §8). New stake docs do not set these fields; existing
   // csnorth values may persist as vestigial state until manually cleared.
   // The implementation PR for the removal strips them from the zod
@@ -181,7 +181,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 }
 ```
 
-**Written by:** Bootstrap wizard (initial); manager via Configuration page; importer (last_* and last_over_caps_json); expiry (last_expiry_*).
+**Written by:** Bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` / expiry trigger (`last_over_caps_json` after over-cap recompute); expiry (`last_expiry_*`).
 
 **Read by:** every page (stake metadata is in the bootstrap response).
 
@@ -205,7 +205,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 ```
 
 **Written by:** Bootstrap wizard; manager via Configuration page.
-**Read by:** Roster pages (utilization), importer (scope resolution).
+**Read by:** Roster pages (utilization); Sync's `syncApplyFix` (scope resolution).
 
 **`kindoo_site_id`** identifies which Kindoo site (per §4.11) governs this ward. `null` or absent means the home site (the SBA stake's own Kindoo environment, captured on the parent stake doc). A string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. Phase 1 of the Kindoo Sites feature stores the value only; downstream phases (request-form filters, extension orchestrator enforcement, sync filtering) consume it.
 
@@ -296,7 +296,7 @@ Per-user role-grant doc. Doc exists iff the user has *any* importer or manual ac
 }
 ```
 
-**Written by:** Importer Cloud Function (replaces `importer_callings` wholesale each run); manager Access page (`manual_grants` only).
+**Written by:** Sync's `syncApplyFix` callable (writes / updates `importer_callings` entries per classifier match — Admin SDK, bypasses rules); manager Access page (`manual_grants` only).
 
 **Read by:** `syncAccessClaims` trigger; manager Access page.
 
@@ -366,7 +366,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
 }
 ```
 
-**Written by:** Importer (auto seats); manager via request completion (manual/temp); expiry trigger (deletes expired temp seats); manager via inline edit.
+**Written by:** Sync's `syncApplyFix` callable (auto seats — Admin SDK, bypasses rules); manager via request completion (manual/temp); expiry trigger (deletes expired temp seats); manager via inline edit.
 
 **Read by:** All roster pages (bishopric, stake, all-seats), manager dashboard, manager queue (for duplicate-warning), audit log entity-history view.
 
@@ -868,7 +868,7 @@ service cloud.firestore {
 
 - **`getAfter()` use is bounded** — only on the `seats.create` rule's cross-doc check against requests. Every other rule is local to its document.
 - **`lastActorMatchesAuth` is the integrity check** — every client write must carry a `lastActor` field whose `email` matches the auth token's typed email AND whose `canonical` matches the token's canonical claim. This is what gives the audit trigger a trustworthy `actor_email` to write.
-- **No client writes to auto seats** — auto seats are written only by the Importer Cloud Function via Admin SDK, which bypasses rules. The rules' `seats.create` only allows `type in ['manual', 'temp']`.
+- **No client writes to auto seats** — auto seats are written only by the `syncApplyFix` callable via Admin SDK, which bypasses rules. The rules' `seats.create` only allows `type in ['manual', 'temp']`.
 - **No client writes to importer_callings** — same pattern. `access.update` rules verify it's unchanged on every client write.
 - **Cross-stake denial is automatic** — `isAnyMember(stakeId)` returns false when the user has no claims for that stakeId, so reads are denied at the stake-doc level and inherit through.
 - **Admin SDK writes bypass everything** — the Cloud Functions (importer, expiry, audit triggers, claim sync) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
