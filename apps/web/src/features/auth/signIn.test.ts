@@ -113,6 +113,41 @@ describe('sendMagicLink', () => {
       setItemSpy.mockRestore();
     }
   });
+
+  // Regression — PR #140 reviewer Fix 9. Every typed-email input must
+  // pass through `canonicalEmail()` before any boundary use (spec §2 /
+  // root CLAUDE.md). For Gmail-class addresses, variant entries
+  // (`Zach.Mortensen+Stake@Gmail.com`, `zachmortensen@gmail.com`)
+  // collapse to one canonical form; without this normalisation the SDK
+  // would mint two Firebase UIDs that both resolve via
+  // `onAuthUserCreate` to the same `userIndex/{canonical}` doc and
+  // overwrite each other's UID mapping.
+  it('canonicalises a Gmail address before calling sendSignInLinkToEmail', async () => {
+    sendSignInLinkToEmailMock.mockResolvedValueOnce(undefined);
+    await sendMagicLink('Zach.Mortensen+Stake@Gmail.com');
+    const [, emailArg] = sendSignInLinkToEmailMock.mock.calls[0]!;
+    expect(emailArg).toBe('zachmortensen@gmail.com');
+  });
+
+  it('stashes the canonicalised form (not the typed form)', async () => {
+    sendSignInLinkToEmailMock.mockResolvedValueOnce(undefined);
+    await sendMagicLink('Zach.Mortensen+Stake@Gmail.com');
+    expect(window.localStorage.getItem(EMAIL_FOR_LINK_STORAGE_KEY)).toBe('zachmortensen@gmail.com');
+  });
+
+  it('canonicalises a googlemail.com address (case + host collapse)', async () => {
+    sendSignInLinkToEmailMock.mockResolvedValueOnce(undefined);
+    await sendMagicLink('Alice@GoogleMail.com');
+    const [, emailArg] = sendSignInLinkToEmailMock.mock.calls[0]!;
+    expect(emailArg).toBe('alice@gmail.com');
+  });
+
+  it('lowercases a non-Gmail address (no dot/+suffix stripping)', async () => {
+    sendSignInLinkToEmailMock.mockResolvedValueOnce(undefined);
+    await sendMagicLink('Bob.Smith@Example.com');
+    const [, emailArg] = sendSignInLinkToEmailMock.mock.calls[0]!;
+    expect(emailArg).toBe('bob.smith@example.com');
+  });
 });
 
 describe('isSignInWithEmailLink', () => {
@@ -164,6 +199,27 @@ describe('completeSignInWithEmailLink — bounded poll for canonical claim (B-4)
       { __mockAuth: true },
       'zach@example.com',
       'https://e.com/x',
+    );
+  });
+
+  // Regression — PR #140 reviewer Fix 9. The cross-device prompt
+  // hands a freshly-typed email through. That value must be
+  // canonicalised before the SDK call so the user identity matches
+  // the one Firebase minted from the same-device `sendMagicLink`
+  // (also canonicalised).
+  it('canonicalises a Gmail variant before calling signInWithEmailLink', async () => {
+    const user = makeUser();
+    signInWithEmailLinkMock.mockResolvedValueOnce({ user });
+    getIdTokenResultMock.mockResolvedValueOnce({ claims: { canonical: 'z@example.com' } });
+
+    await completeSignInWithEmailLink(
+      'Zach.Mortensen+Stake@Gmail.com',
+      'https://example.com/auth/email-link?apiKey=abc&oobCode=xyz',
+    );
+    expect(signInWithEmailLinkMock).toHaveBeenCalledWith(
+      { __mockAuth: true },
+      'zachmortensen@gmail.com',
+      'https://example.com/auth/email-link?apiKey=abc&oobCode=xyz',
     );
   });
 

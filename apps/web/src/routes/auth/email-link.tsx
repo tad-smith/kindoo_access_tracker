@@ -46,16 +46,27 @@ export const Route = createFileRoute('/auth/email-link')({
   component: EmailLinkActionPage,
 });
 
-// SDK error codes that map to "the user's typed email is wrong, the
-// link is still good" — keep the prompt visible with an inline error
-// so the user can retry without re-requesting a link. Other codes
-// (`auth/invalid-action-code` / `auth/expired-action-code` /
-// `auth/network-request-failed`) mean the link itself is unusable;
-// those still swap to the full ErrorCard.
-const TYPED_EMAIL_ERROR_CODES = ['auth/invalid-email', 'auth/argument-error'];
+// SDK error codes that leave the link still usable — keep the prompt
+// visible with an inline error so the user can retry without burning
+// a fresh round-trip. Three sources:
+//
+//   - `auth/invalid-email`, `auth/argument-error`: typed email is
+//     malformed or doesn't match the link's intended recipient.
+//   - `auth/network-request-failed`: transient connectivity blip; the
+//     `oobCode` was never consumed (Firebase only consumes it on a
+//     *successful* redemption), so the user can re-click submit
+//     against the same link.
+//
+// Other codes (`auth/invalid-action-code` / `auth/expired-action-code`)
+// mean the link itself is unusable; those still swap to ErrorCard.
+const RECOVERABLE_ERROR_CODES = [
+  'auth/invalid-email',
+  'auth/argument-error',
+  'auth/network-request-failed',
+];
 
-function isTypedEmailError(message: string): boolean {
-  return TYPED_EMAIL_ERROR_CODES.some((code) => message.includes(code));
+function isRecoverableError(message: string): boolean {
+  return RECOVERABLE_ERROR_CODES.some((code) => message.includes(code));
 }
 
 type State =
@@ -141,13 +152,15 @@ function EmailLinkActionPage() {
       navigate({ to: '/', replace: true }).catch(() => {});
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // Email-typo class errors: the link is still good, the user
-      // just typed the wrong address. Keep the prompt visible with an
-      // inline error so they can fix the typo and resubmit. The
-      // `prompt → signing-in-from-prompt → prompt` transition keeps
-      // the CrossDevicePrompt mounted (see `showPrompt` below) so RHF
-      // state is preserved.
-      if (isTypedEmailError(message)) {
+      // Recoverable errors (typed-email mismatch / malformed /
+      // transient network failure): the link is still good because
+      // Firebase only consumes the `oobCode` on a successful
+      // redemption. Keep the prompt visible with an inline error so
+      // the user can fix the typo or retry the network call without
+      // requesting a fresh link. The `prompt → signing-in-from-prompt
+      // → prompt` transition keeps the CrossDevicePrompt mounted (see
+      // `showPrompt` below) so RHF state is preserved.
+      if (isRecoverableError(message)) {
         setState({ kind: 'prompt', inlineError: message });
         return;
       }

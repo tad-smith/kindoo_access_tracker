@@ -273,7 +273,41 @@ describe('/auth/email-link', () => {
     expect(screen.queryByTestId('email-link-error')).toBeNull();
   });
 
-  // Other (non-typed-email) errors from the prompt still swap to the
+  // Regression — PR #140 reviewer Fix 10. A network blip during the
+  // SDK call never consumes the `oobCode` (Firebase only consumes it
+  // on a *successful* redemption). Keep the prompt visible with an
+  // inline error so the user can re-click submit against the same
+  // (still-valid) link instead of being forced to request a fresh
+  // one. Verifies a retry then completes sign-in.
+  it('cross-device branch — auth/network-request-failed keeps the prompt visible for retry', async () => {
+    setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue(null);
+    // First attempt fails on transient network; second resolves.
+    completeSignInWithEmailLinkMock
+      .mockRejectedValueOnce(new Error('Firebase: Error (auth/network-request-failed).'))
+      .mockResolvedValueOnce({ uid: 'u1' });
+
+    render(<EmailLinkRoute />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/Email address/i), 'zach@example.com');
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    // Inline error on the still-visible prompt; ErrorCard NOT rendered.
+    const inline = await screen.findByTestId('email-link-prompt-error');
+    expect(inline).toHaveTextContent(/network-request-failed/i);
+    expect(screen.queryByTestId('email-link-error')).toBeNull();
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    // User re-clicks submit (no input changes needed — the typed
+    // value survives the bounce per Fix 7).
+    await user.click(screen.getByRole('button', { name: /Confirm and sign in/i }));
+
+    await waitFor(() => expect(completeSignInWithEmailLinkMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true }));
+  });
+
+  // Other (non-recoverable) errors from the prompt still swap to the
   // full ErrorCard with the re-send affordance — the link is unusable.
   it('cross-device branch — expired-link rejection swaps to the full ErrorCard', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');

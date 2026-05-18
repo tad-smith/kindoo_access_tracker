@@ -33,6 +33,7 @@ import {
   type ActionCodeSettings,
   type User,
 } from 'firebase/auth';
+import { canonicalEmail } from '@kindoo/shared';
 import { auth } from '../../lib/firebase';
 
 const POLL_ITERATIONS = 10;
@@ -67,16 +68,31 @@ export function buildActionCodeSettings(): ActionCodeSettings {
  * localStorage so the action-handler route can complete the round-trip
  * without re-prompting on the same device.
  *
+ * The typed email is canonicalised before every boundary use (spec §2 /
+ * root CLAUDE.md "Canonicalise every email"). For Gmail addresses,
+ * `Zach.Mortensen+Stake@Gmail.com` and `zachmortensen@gmail.com`
+ * collapse to the same canonical form; without this normalisation the
+ * two variants would mint distinct Firebase UIDs that both resolve via
+ * `onAuthUserCreate` to the same `userIndex/{canonical}` doc, with the
+ * second sign-in overwriting the first's UID mapping. Canonicalising at
+ * the input boundary keeps the Firebase user identity consistent across
+ * variant entries.
+ *
+ * The stashed localStorage value is also the canonical form so the
+ * `signInWithEmailLink` call on the return trip receives the same
+ * string Firebase used to mint the user.
+ *
  * Throws (via the SDK) on:
  *   - `auth/invalid-email` — malformed address.
  *   - `auth/unauthorized-continue-uri` — origin not on Authorized Domains.
  *   - `auth/network-request-failed` — transient.
  */
 export async function sendMagicLink(email: string): Promise<void> {
+  const canonical = canonicalEmail(email);
   const settings = buildActionCodeSettings();
-  await sendSignInLinkToEmail(auth, email, settings);
+  await sendSignInLinkToEmail(auth, canonical, settings);
   try {
-    window.localStorage.setItem(EMAIL_FOR_LINK_STORAGE_KEY, email);
+    window.localStorage.setItem(EMAIL_FOR_LINK_STORAGE_KEY, canonical);
   } catch {
     // Quota / SecurityError from localStorage is non-fatal — the
     // user just falls through to the cross-device prompt on the
@@ -129,11 +145,18 @@ export function clearStashedEmail(): void {
  * having confirmed via `isSignInWithEmailLink(href)` that `href` is a
  * valid sign-in link.
  *
+ * `email` is canonicalised before the SDK call (spec §2). The same-
+ * device path passes the already-canonicalised stash; the cross-device
+ * prompt path passes a freshly-typed value. Canonicalising in both
+ * paths is idempotent and guards against the cross-device case where
+ * the user types a variant of the address the link was sent to.
+ *
  * After the SDK call we run the same bounded-poll claim-refresh as the
  * legacy Google flow used (see module comment).
  */
 export async function completeSignInWithEmailLink(email: string, href: string): Promise<User> {
-  const result = await signInWithEmailLink(auth, email, href);
+  const canonical = canonicalEmail(email);
+  const result = await signInWithEmailLink(auth, canonical, href);
   await result.user.getIdToken(true);
 
   for (let i = 0; i < POLL_ITERATIONS; i++) {
