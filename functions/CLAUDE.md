@@ -21,7 +21,7 @@ Authoritative export list: `src/index.ts`. Current surface:
 ```
 src/
 ├── triggers/
-│   ├── onAuthUserCreate.ts            # seeds claims on first sign-in
+│   ├── onAuthUserCreate.ts            # writes userIndex/{canonical}; seeds claims on first sign-in
 │   ├── syncAccessClaims.ts            # access doc → custom claims
 │   ├── syncManagersClaims.ts          # kindooManagers doc → custom claims
 │   ├── syncSuperadminClaims.ts        # platformSuperadmins → custom claims
@@ -34,7 +34,7 @@ src/
 │   ├── runExpiry.ts                   # hourly fire; loops over stakes per expiry_hour
 │   └── reconcileAuditGaps.ts          # nightly; alerts on audit-log gaps
 ├── callable/
-│   ├── installScheduledJobs.ts        # superadmin-only; idempotent Scheduler-job provisioning
+│   ├── installScheduledJobs.ts        # manager-only; no-op verifier — single-loop scheduler pattern means there's nothing per-stake to install
 │   ├── getMyPendingRequests.ts        # signed-in caller's pending requests across roles
 │   ├── markRequestComplete.ts         # manager-invoked; completes a request + writes seats
 │   ├── syncApplyFix.ts                # extension Sync per-row fix applier (auto + manual + temp paths)
@@ -59,7 +59,7 @@ No Sheets-client wrapper, no importer service, no `runImporter` / `runImportNow`
 
 ## Don't
 
-- **Don't write audit rows directly from non-audit functions.** The parameterized `auditTrigger` handles it. Exception: `runExpiry` writes a history doc explicitly because Admin SDK bypasses rules and the trigger needs the actor info.
+- **Don't write audit rows directly from non-audit functions.** The parameterized `auditTrigger` handles it. Server-driven writes stamp the synthetic actor (e.g. `ExpiryTrigger`, `RemoveTrigger`) on the entity's `lastActor` and let the trigger emit the audit row.
 - **Don't reach into Firestore from outside `src/services/` helpers.** Keeps test boundaries clean and audit traceable.
 - **Don't store secrets in code.** Use Secret Manager + env vars.
 - **Don't bypass `packages/shared/` types.** Define new types there.
