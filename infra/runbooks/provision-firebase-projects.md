@@ -875,7 +875,6 @@ Both should succeed. The pipeline middle-steps are blocked until later phases.
 
 - **Custom domain (B2 / F17)** — `stakebuildingaccess.org` chosen 2026-04-27; registration + DNS records land separately in B2 alongside Resend domain verification. Lands at the Firebase Hosting layer in Phase 11.
 - **Resend domain verification (B2 / F16)** — Phase 9.
-- **Real Firestore data** — Phase 11 cutover via `infra/scripts/migrate-sheet-to-firestore.ts`.
 - **CI deploy automation** — operator-triggered through the migration period; CI deploys land post-Phase-11.
 - **Monitoring alert policies + log-based metrics** — separately documented in `infra/runbooks/observability.md` and applied by gcloud commands once B1 lands. They're orthogonal to project provisioning.
 - **The actual deploy of the React app + Cloud Functions** — has its own concerns (esbuild bundling for the workspace:* deploy issue, the Hosting predeploy hook in `firebase.json`, etc.) that land in the Phase 2+ engineering work and are documented in `docs/changelog/phase-2-auth-and-claims.md`.
