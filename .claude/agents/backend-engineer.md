@@ -48,7 +48,7 @@ See `functions/CLAUDE.md` and `firestore/CLAUDE.md` for full conventions.
 ## Cloud Functions 2nd gen
 
 - All functions are 2nd gen (Cloud Run under the hood).
-- Default timeout 60s; bump to 540s for long-running scheduled / callable functions (`runExpiry`, `reconcileAuditGaps`).
+- Default timeout 60s; bump to 540s for long-running scheduled / callable functions (e.g. `runExpiry`, `reconcileAuditGaps`, `backfillKindooSiteId`).
 - Default memory 256MB.
 - One file per function or per closely-related group of triggers.
 

@@ -311,7 +311,7 @@ Now configure authorized domains:
 
 ### 1.8 Create the runtime service account `kindoo-app`
 
-This is the service account pinned by the nine Cloud Functions that need a non-default runtime identity — all three notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`), both scheduled jobs (`runExpiry`, `reconcileAuditGaps`), and four callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`). It also runs the weekly Firestore export Cloud Scheduler job in Phase 3. It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
+This is the service account pinned by the nine Cloud Functions that need a non-default runtime identity — all three notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`), both scheduled jobs (`runExpiry`, `reconcileAuditGaps`), and four callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`). It also runs the weekly Firestore export Cloud Scheduler job (created in §3.4 below). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
 
 ```bash
 gcloud iam service-accounts create kindoo-app \
