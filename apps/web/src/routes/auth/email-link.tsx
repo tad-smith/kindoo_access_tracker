@@ -91,11 +91,13 @@ function EmailLinkActionPage() {
   // Cross-device prompt form. Lives at the parent level (not inside
   // `CrossDevicePrompt`) so the `prompt → signing-in-from-prompt →
   // prompt` transition on a typed-email rejection does NOT wipe the
-  // user's typed input. `defaultValues` reads the stashed email at
-  // mount in case the link was clicked twice from the same device.
+  // user's typed input. No `defaultValues` prefill — the prompt only
+  // renders when the effect's `peekStashedEmail()` returned `null`
+  // (else we'd be on the auto-signin path), so any prefill would
+  // always resolve to `''`.
   const promptForm = useForm<SignInEmailForm>({
     resolver: zodResolver(signInEmailSchema),
-    defaultValues: { email: peekStashedEmail() ?? '' },
+    defaultValues: { email: '' },
   });
 
   useEffect(() => {

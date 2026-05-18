@@ -114,39 +114,37 @@ describe('sendMagicLink', () => {
     }
   });
 
-  // Regression — PR #140 reviewer Fix 9. Every typed-email input must
-  // pass through `canonicalEmail()` before any boundary use (spec §2 /
-  // root CLAUDE.md). For Gmail-class addresses, variant entries
-  // (`Zach.Mortensen+Stake@Gmail.com`, `zachmortensen@gmail.com`)
-  // collapse to one canonical form; without this normalisation the SDK
-  // would mint two Firebase UIDs that both resolve via
-  // `onAuthUserCreate` to the same `userIndex/{canonical}` doc and
-  // overwrite each other's UID mapping.
-  it('canonicalises a Gmail address before calling sendSignInLinkToEmail', async () => {
+  // Regression — PR #140 reviewer Fix 11. The Firebase Auth API
+  // boundary is NOT a Firestore-keyed input; root CLAUDE.md's
+  // "canonicalise every email" rule applies to userIndex / access /
+  // kindooManagers (Firestore-keyed) but not here. Firebase Auth
+  // treats stored emails as case-insensitive opaque strings and only
+  // auto-links byte-equal stored values under "one account per email
+  // address." Canonicalising would mint a fresh UID for any user
+  // whose existing Google sign-in stored a dot/+suffix variant,
+  // breaking AC #8 (existing Google users keep their UID under a
+  // magic-link sign-in to the same address).
+  //
+  // The typed email (post form-level trim + zod) is passed through
+  // verbatim. Spec §4.1 step 2 also explicitly says the *typed* email
+  // is what's stashed.
+  it('passes the typed Gmail variant through verbatim to sendSignInLinkToEmail', async () => {
     sendSignInLinkToEmailMock.mockResolvedValueOnce(undefined);
-    await sendMagicLink('Zach.Mortensen+Stake@Gmail.com');
+    await sendMagicLink('Tad.E.Smith@Gmail.com');
     const [, emailArg] = sendSignInLinkToEmailMock.mock.calls[0]!;
-    expect(emailArg).toBe('zachmortensen@gmail.com');
+    // Dots and case preserved — Firebase needs the same byte string
+    // it stored under the operator's existing Google UID.
+    expect(emailArg).toBe('Tad.E.Smith@Gmail.com');
+    // NOT canonicalised to `tadesmith@gmail.com`.
+    expect(emailArg).not.toBe('tadesmith@gmail.com');
   });
 
-  it('stashes the canonicalised form (not the typed form)', async () => {
+  it('stashes the typed form (not a canonicalised form)', async () => {
     sendSignInLinkToEmailMock.mockResolvedValueOnce(undefined);
-    await sendMagicLink('Zach.Mortensen+Stake@Gmail.com');
-    expect(window.localStorage.getItem(EMAIL_FOR_LINK_STORAGE_KEY)).toBe('zachmortensen@gmail.com');
-  });
-
-  it('canonicalises a googlemail.com address (case + host collapse)', async () => {
-    sendSignInLinkToEmailMock.mockResolvedValueOnce(undefined);
-    await sendMagicLink('Alice@GoogleMail.com');
-    const [, emailArg] = sendSignInLinkToEmailMock.mock.calls[0]!;
-    expect(emailArg).toBe('alice@gmail.com');
-  });
-
-  it('lowercases a non-Gmail address (no dot/+suffix stripping)', async () => {
-    sendSignInLinkToEmailMock.mockResolvedValueOnce(undefined);
-    await sendMagicLink('Bob.Smith@Example.com');
-    const [, emailArg] = sendSignInLinkToEmailMock.mock.calls[0]!;
-    expect(emailArg).toBe('bob.smith@example.com');
+    await sendMagicLink('Tad.E.Smith+Stake@Gmail.com');
+    expect(window.localStorage.getItem(EMAIL_FOR_LINK_STORAGE_KEY)).toBe(
+      'Tad.E.Smith+Stake@Gmail.com',
+    );
   });
 });
 
@@ -202,23 +200,23 @@ describe('completeSignInWithEmailLink — bounded poll for canonical claim (B-4)
     );
   });
 
-  // Regression — PR #140 reviewer Fix 9. The cross-device prompt
-  // hands a freshly-typed email through. That value must be
-  // canonicalised before the SDK call so the user identity matches
-  // the one Firebase minted from the same-device `sendMagicLink`
-  // (also canonicalised).
-  it('canonicalises a Gmail variant before calling signInWithEmailLink', async () => {
+  // Regression — PR #140 reviewer Fix 11. The Firebase Auth API
+  // boundary is NOT canonicalised (see sendMagicLink test above).
+  // The typed email — same-device stash or cross-device prompt — is
+  // passed verbatim to signInWithEmailLink. Firebase needs the same
+  // byte string it received at sendSignInLinkToEmail time.
+  it('passes the typed email through verbatim to signInWithEmailLink', async () => {
     const user = makeUser();
     signInWithEmailLinkMock.mockResolvedValueOnce({ user });
     getIdTokenResultMock.mockResolvedValueOnce({ claims: { canonical: 'z@example.com' } });
 
     await completeSignInWithEmailLink(
-      'Zach.Mortensen+Stake@Gmail.com',
+      'Tad.E.Smith@Gmail.com',
       'https://example.com/auth/email-link?apiKey=abc&oobCode=xyz',
     );
     expect(signInWithEmailLinkMock).toHaveBeenCalledWith(
       { __mockAuth: true },
-      'zachmortensen@gmail.com',
+      'Tad.E.Smith@Gmail.com',
       'https://example.com/auth/email-link?apiKey=abc&oobCode=xyz',
     );
   });
