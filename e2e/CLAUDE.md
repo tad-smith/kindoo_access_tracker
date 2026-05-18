@@ -38,7 +38,7 @@ e2e/
 ## Don't
 
 - **Don't write E2E tests for things unit/component tests cover.** E2E is the slowest layer; reserve it for true workflows.
-- **Don't depend on real external services.** No real SendGrid (mocked in functions/), no real Sheets API (mocked), no real FCM.
+- **Don't depend on real external services.** No real Resend (mocked in functions/), no real FCM.
 - **Don't share state across tests.** Test order should not matter; verify with `playwright --shuffle`.
 - **Don't write tests against staging/prod.** E2E tests run against emulators only; staging smoke tests are a separate (manual) operator pass.
 
