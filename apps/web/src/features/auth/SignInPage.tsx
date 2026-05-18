@@ -239,23 +239,37 @@ function HomeHero(props: HeroProps) {
             <ConfirmationState sentTo={sentTo} onUseDifferentEmail={onUseDifferentEmail} />
           ) : (
             <div className="flex flex-col gap-3 text-left">
-              {/* Google CTA — primary affordance, full-width to match
-                  the magic-link submit below. With Firebase Auth's
-                  "one account per email address" project setting
-                  both providers resolve to the same UID. */}
-              <Button
-                type="button"
-                onClick={onGoogleSignIn}
-                disabled={googlePending || pending}
-                className="w-full text-[0.95rem]"
-              >
-                {googlePending ? 'Signing in…' : 'Continue with Google'}
-              </Button>
+              {/* Google CTA — primary affordance, auto-width so it
+                  doesn't visually merge with the magic-link submit
+                  below. With Firebase Auth's "one account per email
+                  address" project setting both providers resolve to
+                  the same UID. */}
+              <div className="flex justify-center">
+                <Button
+                  type="button"
+                  onClick={onGoogleSignIn}
+                  disabled={googlePending || pending}
+                  className="text-[0.95rem]"
+                >
+                  {googlePending ? 'Signing in…' : 'Continue with Google'}
+                </Button>
+              </div>
               {googleError ? (
                 <div role="alert" className="text-sm text-[color:var(--kd-danger-fg)]">
                   Sign-in failed: {googleError}
                 </div>
               ) : null}
+              <div
+                role="separator"
+                aria-label="or"
+                className="my-1 flex items-center gap-3"
+              >
+                <div className="h-px flex-1 bg-[color:var(--kd-border-soft)]"></div>
+                <span className="text-xs uppercase tracking-wide text-[color:var(--kd-fg-3)]">
+                  or
+                </span>
+                <div className="h-px flex-1 bg-[color:var(--kd-border-soft)]"></div>
+              </div>
               <form onSubmit={onSubmit} className="flex flex-col gap-3" noValidate>
                 <label
                   htmlFor="signin-email"
