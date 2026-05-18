@@ -17,7 +17,7 @@
 // Kindoo Manager's Kindoo page.
 
 import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
+import { createRoot, type Root } from 'react-dom/client';
 import { App } from '../panel/App';
 import { STORAGE_KEYS } from '../lib/messaging';
 import panelCss from '../panel/panel.css?inline';
@@ -25,10 +25,20 @@ import containerCss from './container.css?inline';
 
 const HOST_ELEMENT_ID = 'sba-extension-root';
 
-interface PanelHandles {
+export interface PanelHandles {
   host: HTMLElement;
   setOpen: (next: boolean) => void;
   isOpen: () => boolean;
+  /**
+   * Teardown: unmounts the React root, removes the runtime listener,
+   * and removes the host element from the DOM. Production callers
+   * (`content-script.ts`) do not invoke this — the panel lives for
+   * the lifetime of the page. Tests call it in `afterEach` to drain
+   * React's scheduler before jsdom is torn down (B-13: deferred
+   * `performWorkOnRootViaSchedulerTask` after teardown surfaces as
+   * "window is not defined" unhandled errors).
+   */
+  unmount: () => void;
 }
 
 export function mountPanel(): PanelHandles | null {
@@ -69,11 +79,20 @@ export function mountPanel(): PanelHandles | null {
   reactRoot.className = 'sba-slideover-root';
   panelContainer.appendChild(reactRoot);
 
-  createRoot(reactRoot).render(
+  const root: Root = createRoot(reactRoot);
+  root.render(
     <StrictMode>
       <App />
     </StrictMode>,
   );
+
+  const messageListener = (msg: unknown) => {
+    if (typeof msg !== 'object' || msg === null) return;
+    const m = msg as { type?: unknown };
+    if (m.type === 'panel.togglePushedFromSw') {
+      handles.setOpen(!handles.isOpen());
+    }
+  };
 
   const handles: PanelHandles = {
     host,
@@ -83,6 +102,11 @@ export function mountPanel(): PanelHandles | null {
     },
     isOpen() {
       return host.getAttribute('data-sba-open') === 'true';
+    },
+    unmount() {
+      chrome.runtime?.onMessage?.removeListener(messageListener);
+      root.unmount();
+      host.remove();
     },
   };
 
@@ -99,13 +123,7 @@ export function mountPanel(): PanelHandles | null {
 
   // Toolbar-action toggle: the SW posts this when the user clicks
   // the extension icon. Flip the slide-over open / closed.
-  chrome.runtime?.onMessage?.addListener((msg: unknown) => {
-    if (typeof msg !== 'object' || msg === null) return;
-    const m = msg as { type?: unknown };
-    if (m.type === 'panel.togglePushedFromSw') {
-      handles.setOpen(!handles.isOpen());
-    }
-  });
+  chrome.runtime?.onMessage?.addListener(messageListener);
 
   return handles;
 }
