@@ -26,17 +26,12 @@
 //     `{ success: false, error }` so the extension can surface a clean
 //     inline message without trapping a thrown error.
 //
-// PARITY: the seat + access write logic in `applyKindooOnly` /
-// `applyExtraKindooCalling` / `applyTypeMismatch` mirrors the LCR Sheet
-// importer's behavior in `functions/src/services/Importer.ts` (+
-// `functions/src/lib/diff.ts` for sort_order derivation). When you
-// change one side's bookkeeping (sort_order stamping, access-doc
-// creation/deletion driven by `give_app_access` templates, etc.),
-// update the other side in the same PR. Drift here is invisible to
-// type-check but breaks roster sort + app-access grants for
-// sync-created seats. `applyScopeMismatch` / `applyBuildingsMismatch`
-// don't touch type or callings, so the parity bookkeeping doesn't
-// apply to them.
+// Auto-seat bookkeeping: `applyKindooOnly` / `applyExtraKindooCalling`
+// / `applyTypeMismatch` stamp `sort_order` from the matched template's
+// `sheet_order` (via `functions/src/lib/diff.ts:minSheetOrderForCallings`)
+// and upsert the corresponding access doc with `give_app_access` from
+// the template. `applyScopeMismatch` / `applyBuildingsMismatch` don't
+// touch type or callings, so that bookkeeping doesn't apply to them.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
@@ -408,14 +403,12 @@ async function applyTypeMismatch(
       lastActor: actor,
     };
 
-    // PARITY (Importer): auto seats carry a template-driven `sort_order`
-    // and drive `access` doc creation for `give_app_access` templates.
+    // Auto seats carry a template-driven `sort_order` and drive
+    // `access` doc creation for `give_app_access` templates.
     // - manual / temp → auto: stamp sort_order, write access doc(s).
     // - auto → manual / temp: clear sort_order, drop importer_callings
-    //   for the seat's scope (the importer's diff for this canonical
-    //   under this scope would be empty on a fresh run; if both
-    //   importer_callings and manual_grants end up empty, the doc is
-    //   deleted, matching `planDiff`'s `accessDeletes` path).
+    //   for the seat's scope; if both importer_callings and
+    //   manual_grants end up empty, the access doc is deleted.
     if (newType === 'auto' && seat.type !== 'auto') {
       const idx = await loadTemplateIndex(db, tx, stakeId, seat.scope);
       const newSortOrder = minSheetOrder(idx, seat.callings ?? []);
@@ -486,19 +479,17 @@ async function applyBuildingsMismatch(
 }
 
 // ---------------------------------------------------------------------------
-// Importer-parity helpers. The seat-create / access-create logic here
-// mirrors `functions/src/services/Importer.ts:applyPlan` (and
-// `functions/src/lib/diff.ts:minSheetOrderForCallings`) so a manager-
-// invoked sync fix on an auto seat leaves Firestore in the same state
-// the next scheduled importer run would produce. See the file-header
-// PARITY note.
+// Auto-seat helpers: template-index loading, sort_order derivation
+// from `wardCallingTemplates` / `stakeCallingTemplates`, and the
+// access-doc upsert that backs every auto-seat write (`give_app_access`
+// → access doc; `sort_order` → roster sort key).
 // ---------------------------------------------------------------------------
 
 /**
  * Load the calling-template collection for a scope and build the
  * matcher index. `'stake'` reads `stakeCallingTemplates`; any other
  * scope reads `wardCallingTemplates` (templates are stake-wide; every
- * ward shares the ward-template index — same shape the importer uses).
+ * ward shares the ward-template index).
  *
  * Firestore transactions require all reads to precede any write — pass
  * the `tx` so the template reads count as transaction reads.
@@ -526,8 +517,8 @@ async function loadTemplateIndex(
 
 /**
  * MIN(`sheet_order`) across the matched templates for `callings`.
- * Returns `null` if no calling matches — matches the importer's
- * "orphaned auto seat" behaviour (see `diff.ts:minSheetOrderForCallings`).
+ * Returns `null` if no calling matches an "orphaned auto seat" — see
+ * `diff.ts:minSheetOrderForCallings`.
  */
 function minSheetOrder(idx: TemplateIndex, callings: string[]): number | null {
   let min: number | null = null;
@@ -551,18 +542,13 @@ function filterByGiveAppAccess(idx: TemplateIndex, callings: string[]): string[]
 }
 
 /**
- * Write an `access` doc for a sync-created/extended auto seat. Mirrors
- * the importer's `applyPlan` access-upsert branch
- * (`Importer.ts:307-353`):
+ * Write an `access` doc for a sync-created/extended auto seat:
  *   - merges with any existing doc (preserves `manual_grants` and other
  *     scopes' `importer_callings`)
  *   - replaces `importer_callings[scope]` wholesale with `callings`
- *     (sorted, deduped) — same wholesale-per-scope semantics
+ *     (sorted, deduped)
  *   - stamps `sort_order` from the caller (computed once at the
- *     `minSheetOrder` call site for this scope's callings). Mixed-scope
- *     users with `give_app_access` callings under another scope
- *     reconcile on the next weekly importer run, which recomputes MIN
- *     across the whole map.
+ *     `minSheetOrder` call site for this scope's callings).
  */
 function writeAccessForAutoScope(
   tx: Transaction,
@@ -593,9 +579,8 @@ function writeAccessForAutoScope(
   finalImporter[scope] = sortedCallings;
 
   // sort_order: if the prior doc had a smaller value (from another
-  // scope's callings the importer stamped), keep it. Otherwise use this
-  // scope's MIN. The next weekly importer run reconciles across all
-  // scopes anyway.
+  // scope's callings stamped earlier), keep it. Otherwise use this
+  // scope's MIN.
   const priorSort = typeof priorAccess?.sort_order === 'number' ? priorAccess.sort_order : null;
   const finalSort = pickMin(priorSort, sortOrder);
 
@@ -639,10 +624,9 @@ function pickMin(a: number | null, b: number | null): number | null {
 
 /**
  * Clear `importer_callings[scope]` for an access doc when its
- * corresponding auto seat flips away from auto. Mirrors the importer's
- * planDiff path where a canonical with no callings under any seen scope
- * either drops the access doc (no manual grants left) or just clears
- * the relevant `importer_callings[scope]` entry.
+ * corresponding auto seat flips away from auto. If the final
+ * `importer_callings` is empty AND `manual_grants` is empty, the
+ * access doc is deleted; otherwise it is updated in place.
  */
 function clearImporterCallingsForScope(
   tx: Transaction,

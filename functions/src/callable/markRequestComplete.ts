@@ -46,7 +46,7 @@
 // resulting write; `notifyOnRequestWrite` fires the requester email
 // from the same write. No extra wiring here.
 //
-// Auth: same authority check as `runImportNow` — read the
+// Auth: same authority check as `installScheduledJobs` — read the
 // `kindooManagers/{canonical}` doc directly.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
@@ -476,8 +476,7 @@ export const markRequestComplete = onCall(
           const existingSeat = seatSnap.data() as Seat;
           // Per-array timestamps must be client-side `Timestamp` values;
           // Firestore rejects `FieldValue.serverTimestamp()` sentinels
-          // inside arrays. Mirrors the importer's `nowTs` pattern in
-          // `Importer.ts`.
+          // inside arrays.
           const detectedAt = Timestamp.now();
           // T-42: derive the request's target site so a newly-appended
           // duplicate carries `kindoo_site_id`. Stake-scope ⇒ home;

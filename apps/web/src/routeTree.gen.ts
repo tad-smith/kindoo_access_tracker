@@ -21,7 +21,6 @@ import { Route as AuthedStakeRosterRouteImport } from './routes/_authed/stake/ro
 import { Route as AuthedStakeNewRouteImport } from './routes/_authed/stake/new'
 import { Route as AuthedManagerSeatsRouteImport } from './routes/_authed/manager/seats'
 import { Route as AuthedManagerQueueRouteImport } from './routes/_authed/manager/queue'
-import { Route as AuthedManagerImportRouteImport } from './routes/_authed/manager/import'
 import { Route as AuthedManagerDashboardRouteImport } from './routes/_authed/manager/dashboard'
 import { Route as AuthedManagerConfigurationRouteImport } from './routes/_authed/manager/configuration'
 import { Route as AuthedManagerAuditRouteImport } from './routes/_authed/manager/audit'
@@ -89,11 +88,6 @@ const AuthedManagerQueueRoute = AuthedManagerQueueRouteImport.update({
   path: '/manager/queue',
   getParentRoute: () => AuthedRoute,
 } as any)
-const AuthedManagerImportRoute = AuthedManagerImportRouteImport.update({
-  id: '/manager/import',
-  path: '/manager/import',
-  getParentRoute: () => AuthedRoute,
-} as any)
 const AuthedManagerDashboardRoute = AuthedManagerDashboardRouteImport.update({
   id: '/manager/dashboard',
   path: '/manager/dashboard',
@@ -145,7 +139,6 @@ export interface FileRoutesByFullPath {
   '/manager/audit': typeof AuthedManagerAuditRoute
   '/manager/configuration': typeof AuthedManagerConfigurationRoute
   '/manager/dashboard': typeof AuthedManagerDashboardRoute
-  '/manager/import': typeof AuthedManagerImportRoute
   '/manager/queue': typeof AuthedManagerQueueRoute
   '/manager/seats': typeof AuthedManagerSeatsRoute
   '/stake/new': typeof AuthedStakeNewRoute
@@ -166,7 +159,6 @@ export interface FileRoutesByTo {
   '/manager/audit': typeof AuthedManagerAuditRoute
   '/manager/configuration': typeof AuthedManagerConfigurationRoute
   '/manager/dashboard': typeof AuthedManagerDashboardRoute
-  '/manager/import': typeof AuthedManagerImportRoute
   '/manager/queue': typeof AuthedManagerQueueRoute
   '/manager/seats': typeof AuthedManagerSeatsRoute
   '/stake/new': typeof AuthedStakeNewRoute
@@ -189,7 +181,6 @@ export interface FileRoutesById {
   '/_authed/manager/audit': typeof AuthedManagerAuditRoute
   '/_authed/manager/configuration': typeof AuthedManagerConfigurationRoute
   '/_authed/manager/dashboard': typeof AuthedManagerDashboardRoute
-  '/_authed/manager/import': typeof AuthedManagerImportRoute
   '/_authed/manager/queue': typeof AuthedManagerQueueRoute
   '/_authed/manager/seats': typeof AuthedManagerSeatsRoute
   '/_authed/stake/new': typeof AuthedStakeNewRoute
@@ -212,7 +203,6 @@ export interface FileRouteTypes {
     | '/manager/audit'
     | '/manager/configuration'
     | '/manager/dashboard'
-    | '/manager/import'
     | '/manager/queue'
     | '/manager/seats'
     | '/stake/new'
@@ -233,7 +223,6 @@ export interface FileRouteTypes {
     | '/manager/audit'
     | '/manager/configuration'
     | '/manager/dashboard'
-    | '/manager/import'
     | '/manager/queue'
     | '/manager/seats'
     | '/stake/new'
@@ -255,7 +244,6 @@ export interface FileRouteTypes {
     | '/_authed/manager/audit'
     | '/_authed/manager/configuration'
     | '/_authed/manager/dashboard'
-    | '/_authed/manager/import'
     | '/_authed/manager/queue'
     | '/_authed/manager/seats'
     | '/_authed/stake/new'
@@ -356,13 +344,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedManagerQueueRouteImport
       parentRoute: typeof AuthedRoute
     }
-    '/_authed/manager/import': {
-      id: '/_authed/manager/import'
-      path: '/manager/import'
-      fullPath: '/manager/import'
-      preLoaderRoute: typeof AuthedManagerImportRouteImport
-      parentRoute: typeof AuthedRoute
-    }
     '/_authed/manager/dashboard': {
       id: '/_authed/manager/dashboard'
       path: '/manager/dashboard'
@@ -426,7 +407,6 @@ interface AuthedRouteChildren {
   AuthedManagerAuditRoute: typeof AuthedManagerAuditRoute
   AuthedManagerConfigurationRoute: typeof AuthedManagerConfigurationRoute
   AuthedManagerDashboardRoute: typeof AuthedManagerDashboardRoute
-  AuthedManagerImportRoute: typeof AuthedManagerImportRoute
   AuthedManagerQueueRoute: typeof AuthedManagerQueueRoute
   AuthedManagerSeatsRoute: typeof AuthedManagerSeatsRoute
   AuthedStakeNewRoute: typeof AuthedStakeNewRoute
@@ -445,7 +425,6 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedManagerAuditRoute: AuthedManagerAuditRoute,
   AuthedManagerConfigurationRoute: AuthedManagerConfigurationRoute,
   AuthedManagerDashboardRoute: AuthedManagerDashboardRoute,
-  AuthedManagerImportRoute: AuthedManagerImportRoute,
   AuthedManagerQueueRoute: AuthedManagerQueueRoute,
   AuthedManagerSeatsRoute: AuthedManagerSeatsRoute,
   AuthedStakeNewRoute: AuthedStakeNewRoute,

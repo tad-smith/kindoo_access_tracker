@@ -5,7 +5,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { AuditLog } from '@kindoo/shared';
+import { LEGACY_IMPORTER_ACTOR_NAME, type AuditLog } from '@kindoo/shared';
 import { makeAuditLog } from '../../../../test/fixtures';
 
 const useAuditLogInfiniteMock = vi.fn();
@@ -268,10 +268,10 @@ describe('<AuditLogPage />', () => {
   });
 
   describe('automated-actor chip', () => {
-    it('paints the Importer actor with the actor-automated chip styling', () => {
+    it('paints the legacy Importer actor with the actor-automated chip styling', () => {
       useAuditLogInfiniteMock.mockReturnValue(
         infiniteResult({
-          pages: [[makeAuditLog({ audit_id: 'a1', actor_email: 'Importer' })]],
+          pages: [[makeAuditLog({ audit_id: 'a1', actor_email: LEGACY_IMPORTER_ACTOR_NAME })]],
         }),
       );
       render(<AuditLogPage />);

@@ -1,5 +1,11 @@
 # Runbook: Grant the importer service account Viewer on the LCR sheet
 
+> **DEPRECATED (T-45, 2026-05-16).** The LCR Sheet importer was removed
+> in favor of the Chrome extension's Sync feature; see
+> `docs/architecture.md` D14 and `docs/spec.md` §8. This runbook is
+> preserved as historical reference for the pre-T-45 onboarding flow.
+> No new stake needs to follow these steps.
+
 The weekly importer Cloud Function (`runImporter`) reads each stake's LCR
 callings sheet via the function's runtime service account. Before the
 first import can succeed, the operator (or stake bootstrap admin) must

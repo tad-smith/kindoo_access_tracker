@@ -143,9 +143,9 @@ service cloud.firestore {
     //
     // The disclosure surface is small: the parent stake doc carries
     // `stake_name`, `bootstrap_admin_email` (already the operator's
-    // typed email), config knobs (`callings_sheet_id`, schedule
-    // hours, `stake_seat_cap`), and bookkeeping fields. None of these
-    // are sensitive — `bootstrap_admin_email` is what the SetupInProgress
+    // typed email), config knobs (`expiry_hour`, `timezone`,
+    // `stake_seat_cap`), and bookkeeping fields. None of these are
+    // sensitive — `bootstrap_admin_email` is what the SetupInProgress
     // page renders to the non-admin so they know who to contact.
     function isSetupInProgressReadable(stakeId) {
       let stakePath = /databases/$(database)/documents/stakes/$(stakeId);
@@ -157,7 +157,8 @@ service cloud.firestore {
     // The `lastActor` integrity check — every client write must
     // declare `lastActor.{email, canonical}` matching the auth token.
     // Server-side (Admin SDK) writes use synthetic actors
-    // (`'Importer'` / `'ExpiryTrigger'`) and bypass this check by
+    // (`'ExpiryTrigger'`, `'RemoveTrigger'`, `'OutOfBand'`,
+    // `'Migration'`, `'SyncActor:<code>'`) and bypass this check by
     // bypassing rules entirely.
     function lastActorMatchesAuth(data) {
       return data.lastActor.canonical == authedCanonical()

@@ -22,11 +22,9 @@ export {
   auditWardWrites,
 } from './triggers/auditTrigger.js';
 
-export { runImporter } from './scheduled/runImporter.js';
 export { runExpiry } from './scheduled/runExpiry.js';
 export { reconcileAuditGaps } from './scheduled/reconcileAuditGaps.js';
 
-export { runImportNow } from './callable/runImportNow.js';
 export { installScheduledJobs } from './callable/installScheduledJobs.js';
 export { getMyPendingRequests } from './callable/getMyPendingRequests.js';
 export { markRequestComplete } from './callable/markRequestComplete.js';

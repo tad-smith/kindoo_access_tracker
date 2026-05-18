@@ -4,11 +4,11 @@
 //   - Warnings (over-cap pools from stake.last_over_caps_json)
 //   - Recent Activity (last 10 audit rows; deep-links to audit log
 //     filtered by entity_id)
-//   - Last Operations (last_import_at / last_expiry_at)
+//   - Last Operations (last_expiry_at; triggers reinstall)
 //
 // Each card subscribes via its own `useFirestoreCollection` so the
 // dashboard is fully reactive — pending counts tick up live as a
-// bishopric submits, utilization bars patch as the importer runs,
+// bishopric submits, utilization bars patch as auto-seats change,
 // audit rows stream in real time.
 
 import { Link } from '@tanstack/react-router';
@@ -390,10 +390,6 @@ function LastOpsCard({ loading, stake }: LastOpsCardProps) {
       </CardHeader>
       <CardContent>
         <ul className="kd-dashboard-list">
-          <li>
-            <span>Last import</span>
-            <span>{fmt(stake?.last_import_at)}</span>
-          </li>
           <li>
             <span>Last expiry</span>
             <span>{fmt(stake?.last_expiry_at)}</span>

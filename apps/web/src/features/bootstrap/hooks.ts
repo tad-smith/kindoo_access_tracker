@@ -66,19 +66,15 @@ function actorOf(principal: Principal): { email: string; canonical: string } {
 
 export interface Step1Input {
   stake_name: string;
-  // Optional — operators may complete bootstrap without an LCR sheet
-  // configured and fill it in later from Configuration.
-  callings_sheet_id?: string | undefined;
   stake_seat_cap: number;
 }
 
 /**
  * Step 1 — write stake-level config fields. The stake doc is created
  * by the platform superadmin via `createStake` callable; the wizard
- * only updates it. Defaults for `expiry_hour` / `import_day` /
- * `import_hour` / `timezone` / `notifications_enabled` are seeded by
- * `createStake` (or assumed already present); we only touch what the
- * wizard exposes.
+ * only updates it. Defaults for `expiry_hour` / `timezone` /
+ * `notifications_enabled` are seeded by `createStake` (or assumed
+ * already present); we only touch what the wizard exposes.
  */
 export function useStep1Mutation() {
   const principal = usePrincipal();
@@ -88,7 +84,6 @@ export function useStep1Mutation() {
       const actor = actorOf(principal);
       await updateDoc(stakeRef(db, STAKE_ID), {
         stake_name: input.stake_name,
-        callings_sheet_id: input.callings_sheet_id ?? '',
         stake_seat_cap: input.stake_seat_cap,
         last_modified_at: serverTimestamp(),
         last_modified_by: actor,

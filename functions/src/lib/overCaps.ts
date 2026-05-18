@@ -1,5 +1,6 @@
 // Pure over-cap detection. Reads counts + caps; returns the array
-// the importer persists to `stake.last_over_caps_json`.
+// persisted to `stake.last_over_caps_json` by `markRequestComplete`
+// and `removeSeatOnRequestComplete` (spec §8).
 //
 // Home stake portion-cap = `stake_seat_cap - sum(home-site ward seats)`,
 // clamped at 0. Foreign-site wards (those with `kindoo_site_id` set)

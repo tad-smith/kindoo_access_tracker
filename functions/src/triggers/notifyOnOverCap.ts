@@ -1,12 +1,14 @@
 // Fires on `stakes/{stakeId}` writes when `last_over_caps_json`
-// transitions from empty to non-empty. The importer persists this
-// field on every run AFTER its main lock releases; this trigger fires
-// per the schema-driven event and emails managers per `spec.md` §9.
+// transitions from empty to non-empty. The over-cap recompute path
+// (`markRequestComplete`, `removeSeatOnRequestComplete` — see
+// `spec.md` §8) persists this field after the underlying entity
+// write; this trigger fans the schema-driven event out as an email
+// to active managers per `spec.md` §9.
 //
 // "Continuing-overcap" (`[A] -> [A, B]`) and "resolving-overcap"
 // (`[A] -> []`) deliberately do not fire — operators should be
 // notified once when a pool tips over, not on every subsequent
-// importer run that confirms the same condition.
+// recompute that confirms the same condition.
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
@@ -37,13 +39,11 @@ export const notifyOnOverCap = onDocumentWritten(
     if (!isEmptyToNonEmptyTransition(beforePools, afterPools)) return;
 
     const { stakeId } = event.params as { stakeId: string };
-    const source: 'manual' | 'weekly' = after.last_import_triggered_by ?? 'manual';
     const db = getDb();
     const managers = await activeManagerEmails(db, stakeId);
     logger.info('notifyOnOverCap: firing', {
       stakeId,
       pools: afterPools.length,
-      source,
       managers: managers.length,
     });
     await notifyManagersOverCap({
@@ -51,7 +51,6 @@ export const notifyOnOverCap = onDocumentWritten(
       stakeId,
       stake: after,
       pools: afterPools,
-      source,
       managerEmails: managers,
     });
   },

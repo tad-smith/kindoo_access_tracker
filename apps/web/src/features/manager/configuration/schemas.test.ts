@@ -142,24 +142,18 @@ describe('configuration configSchema', () => {
   it('accepts a fully populated config', () => {
     const r = configSchema.safeParse({
       stake_name: 'My Stake',
-      callings_sheet_id: 'sheet1',
       stake_seat_cap: 200,
       expiry_hour: 4,
-      import_day: 'MONDAY',
-      import_hour: 6,
       timezone: 'America/Denver',
       notifications_enabled: true,
     });
     expect(r.success).toBe(true);
   });
-  it('rejects out-of-range hours', () => {
+  it('rejects out-of-range expiry_hour', () => {
     const r = configSchema.safeParse({
       stake_name: 'X',
-      callings_sheet_id: 'X',
       stake_seat_cap: 0,
       expiry_hour: 25,
-      import_day: 'MONDAY',
-      import_hour: 0,
       timezone: 'X',
       notifications_enabled: false,
     });

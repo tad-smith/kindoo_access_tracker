@@ -159,7 +159,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   notifications_enabled: boolean;
   notifications_reply_to?: string;     // optional reply-to address; when unset, EmailService omits the Reply-To header
 
-  // Operational state (written by expiry / sync-driven over-cap recomputes; read by manager UI)
+  // Operational state (`last_over_caps_json` written by request-completion over-cap recomputes; `last_expiry_*` by the daily expiry trigger; read by manager UI)
   last_over_caps_json: Array<{
     pool: 'stake' | string;            // string = ward_code
     count: number;
@@ -181,7 +181,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 }
 ```
 
-**Written by:** Bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` / expiry trigger (`last_over_caps_json` after over-cap recompute); expiry (`last_expiry_*`).
+**Written by:** Bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); expiry trigger (`last_expiry_*`).
 
 **Read by:** every page (stake metadata is in the bootstrap response).
 

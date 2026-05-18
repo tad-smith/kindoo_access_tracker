@@ -195,13 +195,8 @@ describe('EmailService — pure builders', () => {
 
   // ---- over-cap ------------------------------------------------------------
 
-  it('over-cap subject names the import source', () => {
-    expect(buildOverCapSubject('manual')).toBe(
-      '[Stake Building Access] Over-cap warning after manual import',
-    );
-    expect(buildOverCapSubject('weekly')).toBe(
-      '[Stake Building Access] Over-cap warning after weekly import',
-    );
+  it('over-cap subject is a plain top-line warning (no import-source suffix)', () => {
+    expect(buildOverCapSubject()).toBe('[Stake Building Access] Over-cap warning');
   });
 
   it('over-cap body lists every pool with count / cap / over-by', () => {

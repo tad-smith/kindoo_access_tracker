@@ -76,7 +76,6 @@ async function seedBaseStake(): Promise<void> {
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: true,
     stake_seat_cap: 200,
-    callings_sheet_id: 'sheet1',
   });
   await writeDoc('stakes/csnorth/buildings/cordera-building', {
     building_id: 'cordera-building',
