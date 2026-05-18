@@ -208,7 +208,7 @@ function FilterRow({ filters, onApply, onReset }: FilterRowProps) {
           type="text"
           value={draft.actor_canonical ?? ''}
           onChange={(e) => update({ actor_canonical: e.target.value || undefined })}
-          placeholder="email or 'Importer'"
+          placeholder="email or ExpiryTrigger"
         />
       </label>
       <label>
@@ -310,8 +310,9 @@ function pickMemberEmail(payload: unknown): string | null {
 }
 
 /** Convert user-typed actor / member emails to canonical form for the
- *  Firestore query. Literal automated actors (`Importer`,
- *  `ExpiryTrigger`, `OutOfBand`) pass through unchanged because they're
+ *  Firestore query. Literal automated actors (ExpiryTrigger,
+ *  RemoveTrigger, OutOfBand, Migration, SyncActor:* — plus the legacy
+ *  pre-T-45 Importer literal) pass through unchanged because they're
  *  not real emails. */
 function canonicalizeFilters(filters: AuditLogFilters): AuditLogFilters {
   const out: AuditLogFilters = { ...filters };

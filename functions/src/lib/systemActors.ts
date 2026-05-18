@@ -1,22 +1,17 @@
 // Synthetic actor refs for system-driven writes. Stamped on `lastActor`
-// (importer + daily expiry) or substituted by the audit trigger
-// (out-of-band) so the audit log picks them up via the same path real
-// users take.
+// (daily expiry, remove-trigger, migration backfills, Sync fixes) or
+// substituted by the audit trigger (out-of-band) so the audit log
+// picks them up via the same path real users take.
 //
 // `canonical` matches `email` for the synthetic actors — they aren't
 // real email addresses, but the doc shape requires both. The web
 // renderer treats these literals as automated actors and paints them
-// with the `actor-automated` chip; keep all three in sync with
+// with the `actor-automated` chip; keep them in sync with
 // `apps/web/src/features/manager/auditLog/AuditLogPage.tsx`
 // (`isAutomatedActor`) and the dashboard's equivalent check.
 
 import { syncActorName, type SyncDiscrepancyCode } from '@kindoo/shared';
 import type { ActorRef } from '@kindoo/shared';
-
-export const IMPORTER_ACTOR: ActorRef = {
-  email: 'Importer',
-  canonical: 'Importer',
-};
 
 export const EXPIRY_ACTOR: ActorRef = {
   email: 'ExpiryTrigger',

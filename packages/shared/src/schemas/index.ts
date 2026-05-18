@@ -23,7 +23,7 @@ export { kindooSiteSchema } from './kindooSite.js';
 export { platformSuperadminSchema } from './platformSuperadmin.js';
 export { accessRequestSchema, requestStatusSchema, requestTypeSchema } from './request.js';
 export { duplicateGrantSchema, seatSchema, seatTypeSchema } from './seat.js';
-export { importDaySchema, overCapEntrySchema, stakeSchema } from './stake.js';
+export { overCapEntrySchema, stakeSchema } from './stake.js';
 export { timestampLikeSchema } from './timestampLike.js';
 export { notificationPrefsSchema, userIndexEntrySchema } from './userIndex.js';
 export { wardSchema } from './ward.js';

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AUTOMATED_ACTOR_NAMES,
+  LEGACY_IMPORTER_ACTOR_NAME,
   SYNC_ACTOR_PREFIX,
   SYNC_DISCREPANCY_CODES,
   isAutomatedActor,
@@ -15,11 +16,21 @@ describe('isAutomatedActor', () => {
     }
   });
 
-  it('matches the four known synthetic actors (regression guard for B-5)', () => {
-    expect(isAutomatedActor('Importer')).toBe(true);
+  it('matches the post-T-45 synthetic actors (regression guard for B-5)', () => {
     expect(isAutomatedActor('ExpiryTrigger')).toBe(true);
     expect(isAutomatedActor('RemoveTrigger')).toBe(true);
     expect(isAutomatedActor('OutOfBand')).toBe(true);
+    expect(isAutomatedActor('Migration')).toBe(true);
+  });
+
+  it('matches the legacy Importer actor so pre-T-45 audit rows keep their chip', () => {
+    expect(isAutomatedActor(LEGACY_IMPORTER_ACTOR_NAME)).toBe(true);
+  });
+
+  it('does NOT include the legacy Importer name in the canonical enum', () => {
+    expect((AUTOMATED_ACTOR_NAMES as readonly string[]).includes(LEGACY_IMPORTER_ACTOR_NAME)).toBe(
+      false,
+    );
   });
 
   it('matches every SyncActor:<code> stamp', () => {
@@ -55,7 +66,7 @@ describe('syncActorName + parseSyncActorCode', () => {
   });
 
   it('returns null for strings without the SyncActor prefix', () => {
-    expect(parseSyncActorCode('Importer')).toBeNull();
+    expect(parseSyncActorCode(LEGACY_IMPORTER_ACTOR_NAME)).toBeNull();
     expect(parseSyncActorCode('alice@gmail.com')).toBeNull();
     expect(parseSyncActorCode('')).toBeNull();
   });

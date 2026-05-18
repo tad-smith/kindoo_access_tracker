@@ -1,16 +1,12 @@
-// Cloud Function callable wrappers used by the bootstrap wizard and
-// the manager Import page:
+// Cloud Function callable wrappers used by the bootstrap wizard.
 //   - `installScheduledJobs` — bootstrap-wizard "Complete Setup" calls
-//     this to install Cloud Scheduler jobs for the importer + expiry
-//     triggers; idempotent (Cloud Scheduler jobs are platform-managed).
-//   - `runImportNow` — manager-invoked one-shot importer run. Returns
-//     the typed `ImportSummary` from `@kindoo/shared`.
+//     this to install Cloud Scheduler jobs for the expiry trigger;
+//     idempotent (Cloud Scheduler jobs are platform-managed).
 //
-// Both wrappers `httpsCallable` the function and surface a friendly
+// The wrapper `httpsCallable`s the function and surfaces a friendly
 // error message when the function isn't deployed yet ("not-found").
 
 import { httpsCallable, type HttpsCallableResult } from 'firebase/functions';
-import type { ImportSummary } from '@kindoo/shared';
 import { functions } from '../../lib/firebase';
 
 export interface InstallScheduledJobsResult {
@@ -39,25 +35,6 @@ export async function invokeInstallScheduledJobs(
     const message = err instanceof Error ? err.message : String(err);
     if (/not[- ]?found/i.test(message)) {
       throw new Error('Scheduled jobs are not available in this environment yet.');
-    }
-    throw err;
-  }
-}
-
-/**
- * Invoke `runImportNow` for the named stake. Returns the full
- * `ImportSummary` (insert / update / delete counts, duration, errors,
- * over-cap pools) — the SPA renders this inline on the Import page.
- */
-export async function invokeRunImportNow(stakeId: string): Promise<ImportSummary> {
-  const fn = httpsCallable<{ stakeId: string }, ImportSummary>(functions, 'runImportNow');
-  try {
-    const res: HttpsCallableResult<ImportSummary> = await fn({ stakeId });
-    return res.data;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (/not[- ]?found/i.test(message)) {
-      throw new Error('Import is not available in this environment yet.');
     }
     throw err;
   }

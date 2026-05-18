@@ -8,7 +8,6 @@
 // values from its local module, and apps/web imports `isAutomatedActor`
 // from here to decide whether to paint the `actor-automated` chip.
 //
-//   - `Importer` — stamped by the LCR-sheet importer service.
 //   - `ExpiryTrigger` — stamped by the daily seat-expiry scheduled job.
 //   - `RemoveTrigger` — stamped by `removeSeatOnRequestComplete` when
 //     it edits or deletes a seat in response to a completed remove
@@ -18,6 +17,9 @@
 //     changed tracked fields without touching `lastActor` (Firestore
 //     Console edits, ad-hoc `gcloud firestore` tweaks, Admin-SDK
 //     scripts that forgot to stamp it). See B-5 in docs/BUGS.md.
+//   - `Migration` — stamped by one-shot Admin-SDK migration callables
+//     (e.g. T-42's `backfillKindooSiteId`). Recognised so the audit
+//     row's chip styling matches the other automated actors.
 //   - `SyncActor:<code>` — stamped by the `syncApplyFix` callable when
 //     a Kindoo Manager clicks a per-row Fix button in the extension's
 //     Sync Phase 2 drift report. The discrepancy `code` rides in the
@@ -25,12 +27,17 @@
 //     the write. Recognised via the `SYNC_ACTOR_PREFIX` literal rather
 //     than enumerated in `AUTOMATED_ACTOR_NAMES` because the `<code>`
 //     suffix is open-ended.
+//
+// Legacy note: pre-T-45 audit rows stamped with `"Importer"` still
+// exist in the audit log; the renderer matches that literal via its
+// own historical fallback (see AuditLogPage `isLegacyImporterActor`)
+// rather than via this enum.
 
 export const AUTOMATED_ACTOR_NAMES = [
-  'Importer',
   'ExpiryTrigger',
   'RemoveTrigger',
   'OutOfBand',
+  'Migration',
 ] as const;
 
 export type AutomatedActorName = (typeof AUTOMATED_ACTOR_NAMES)[number];
@@ -65,10 +72,17 @@ export function parseSyncActorCode(s: string): SyncDiscrepancyCode | null {
     : null;
 }
 
+/** Legacy literal — pre-T-45 audit rows still carry this actor name.
+ *  The renderer matches it so historical rows paint with the automated
+ *  chip; new writes never produce it. */
+export const LEGACY_IMPORTER_ACTOR_NAME = 'Importer';
+
 /** True iff the given actor identifier matches a synthetic system actor.
- * Recognises both the static names in `AUTOMATED_ACTOR_NAMES` and the
- * `SyncActor:<code>` prefix. */
+ * Recognises the static names in `AUTOMATED_ACTOR_NAMES`, the legacy
+ * `Importer` actor for pre-T-45 audit rows, and the `SyncActor:<code>`
+ * prefix. */
 export function isAutomatedActor(s: string): boolean {
   if ((AUTOMATED_ACTOR_NAMES as readonly string[]).includes(s)) return true;
+  if (s === LEGACY_IMPORTER_ACTOR_NAME) return true;
   return parseSyncActorCode(s) !== null;
 }

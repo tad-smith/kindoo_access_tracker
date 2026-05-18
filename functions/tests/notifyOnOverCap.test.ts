@@ -44,19 +44,16 @@ function buildStake(overrides: Partial<Stake> = {}): Stake {
     stake_name: 'CSNorth Stake',
     created_at: Timestamp.now(),
     created_by: 'admin@example.com',
-    callings_sheet_id: 'sheet-id',
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: true,
     stake_seat_cap: 200,
     expiry_hour: 3,
-    import_day: 'SUNDAY',
-    import_hour: 4,
     timezone: 'America/Denver',
     notifications_enabled: true,
     last_over_caps_json: [],
     last_modified_at: Timestamp.now(),
-    last_modified_by: { email: 'Importer', canonical: 'Importer' },
-    lastActor: { email: 'Importer', canonical: 'Importer' },
+    last_modified_by: { email: 'ExpiryTrigger', canonical: 'ExpiryTrigger' },
+    lastActor: { email: 'ExpiryTrigger', canonical: 'ExpiryTrigger' },
     ...overrides,
   };
 }
@@ -113,34 +110,15 @@ describe.skipIf(!hasEmulators())('notifyOnOverCap', () => {
     restoreSender = _setResendSender(sender);
 
     const before = buildStake({ last_over_caps_json: [] });
-    const after = buildStake({
-      last_over_caps_json: [overCapPool],
-      last_import_triggered_by: 'manual',
-    });
+    const after = buildStake({ last_over_caps_json: [overCapPool] });
     await notifyOnOverCap.run(makeEvent({ before, after }));
 
     expect(calls).toHaveLength(1);
     const c = calls[0]!;
     expect(c.to).toEqual(['alice@gmail.com']);
-    expect(c.subject).toContain('Over-cap warning after manual import');
+    expect(c.subject).toBe('[Stake Building Access] Over-cap warning');
     expect(c.text).toContain('GE: 25 of 20 (over by 5)');
     expect(c.text).toContain('https://stakebuildingaccess.org/manager/seats');
-  });
-
-  it('uses the weekly source label when the importer was triggered weekly', async () => {
-    await seedManager('alice@gmail.com', true);
-    const { sender, calls } = mockSender([{ ok: true, id: 'mid-w' }]);
-    restoreSender = _setResendSender(sender);
-
-    const before = buildStake({ last_over_caps_json: [] });
-    const after = buildStake({
-      last_over_caps_json: [overCapPool],
-      last_import_triggered_by: 'weekly',
-    });
-    await notifyOnOverCap.run(makeEvent({ before, after }));
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.subject).toContain('Over-cap warning after weekly import');
   });
 
   it('continuing-overcap (non-empty → non-empty) does NOT fire', async () => {
@@ -174,10 +152,7 @@ describe.skipIf(!hasEmulators())('notifyOnOverCap', () => {
     const { sender, calls } = mockSender([{ ok: true, id: 'mid-create' }]);
     restoreSender = _setResendSender(sender);
 
-    const after = buildStake({
-      last_over_caps_json: [overCapPool],
-      last_import_triggered_by: 'manual',
-    });
+    const after = buildStake({ last_over_caps_json: [overCapPool] });
     await notifyOnOverCap.run(makeEvent({ before: null, after }));
 
     expect(calls).toHaveLength(1);
@@ -196,20 +171,5 @@ describe.skipIf(!hasEmulators())('notifyOnOverCap', () => {
     await notifyOnOverCap.run(makeEvent({ before, after }));
 
     expect(calls).toHaveLength(0);
-  });
-
-  it('defaults source to manual when last_import_triggered_by is absent', async () => {
-    await seedManager('alice@gmail.com', true);
-    const { sender, calls } = mockSender([{ ok: true, id: 'mid-default' }]);
-    restoreSender = _setResendSender(sender);
-
-    const before = buildStake({ last_over_caps_json: [] });
-    const after = buildStake({ last_over_caps_json: [overCapPool] });
-    delete (after as { last_import_triggered_by?: 'manual' | 'weekly' }).last_import_triggered_by;
-
-    await notifyOnOverCap.run(makeEvent({ before, after }));
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.subject).toContain('after manual import');
   });
 });

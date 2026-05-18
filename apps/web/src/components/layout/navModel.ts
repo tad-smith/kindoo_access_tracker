@@ -18,7 +18,6 @@ import {
   Bell,
   Building2,
   ClipboardList,
-  Download,
   Inbox,
   KeyRound,
   LayoutDashboard,
@@ -160,9 +159,9 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
   const settings: NavItem[] = [];
   if (manager) {
     // Operator-specified order: Notifications, Configuration,
-    // App Access, Import, Audit Log. Notifications leads because it
-    // is the first per-user setting most operators reach for after
-    // landing; Audit Log stays at the bottom as a less-frequent path.
+    // App Access, Audit Log. Notifications leads because it is the
+    // first per-user setting most operators reach for after landing;
+    // Audit Log stays at the bottom as a less-frequent path.
     // Manager-only for-now on Notifications; future expansion to
     // bishopric/stake users is planned when push for
     // completed/rejected/cancelled requests ships.
@@ -186,13 +185,6 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
       label: 'App Access',
       to: '/manager/access',
       icon: KeyRound,
-    });
-    settings.push({
-      kind: 'link',
-      key: 'import',
-      label: 'Import',
-      to: '/manager/import',
-      icon: Download,
     });
     settings.push({
       kind: 'link',

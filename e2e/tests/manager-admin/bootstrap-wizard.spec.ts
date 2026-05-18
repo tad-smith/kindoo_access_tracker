@@ -53,7 +53,6 @@ test.describe('Bootstrap wizard gate', () => {
       stake_name: 'Test Stake',
       bootstrap_admin_email: adminEmail,
       setup_complete: false,
-      callings_sheet_id: '',
       stake_seat_cap: 0,
     });
 

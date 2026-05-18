@@ -172,8 +172,8 @@ export function buildCancelledBody(req: AccessRequest, link: string): string {
   return lines.join('\n');
 }
 
-export function buildOverCapSubject(source: 'manual' | 'weekly'): string {
-  return `[Stake Building Access] Over-cap warning after ${source} import`;
+export function buildOverCapSubject(): string {
+  return `[Stake Building Access] Over-cap warning`;
 }
 
 export function buildOverCapBody(pools: OverCapEntry[], link: string): string {
@@ -284,15 +284,14 @@ export async function notifyManagersCancelled(
   });
 }
 
-/** Manager-bound: importer flagged at least one pool as over cap. */
+/** Manager-bound: an over-cap recompute flagged at least one pool over cap. */
 export async function notifyManagersOverCap(
   deps: BaseDeps & {
     pools: OverCapEntry[];
-    source: 'manual' | 'weekly';
     managerEmails: string[];
   },
 ): Promise<void> {
-  const { stake, pools, source, managerEmails } = deps;
+  const { stake, pools, managerEmails } = deps;
   if (!emailsEnabled(stake, deps.stakeId, 'overCap')) return;
   if (managerEmails.length === 0) {
     logger.info('email skipped — no active managers', { stakeId: deps.stakeId, type: 'overCap' });
@@ -304,10 +303,10 @@ export async function notifyManagersOverCap(
     payload: buildPayload({
       stake,
       to: managerEmails,
-      subject: buildOverCapSubject(source),
+      subject: buildOverCapSubject(),
       text: buildOverCapBody(pools, link),
     }),
-    context: { type: 'overCap', source },
+    context: { type: 'overCap' },
   });
 }
 

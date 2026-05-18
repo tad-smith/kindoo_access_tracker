@@ -11,6 +11,7 @@ export { canonicalEmail, emailsEqual } from './canonicalEmail.js';
 export { principalFromClaims } from './principal.js';
 export {
   AUTOMATED_ACTOR_NAMES,
+  LEGACY_IMPORTER_ACTOR_NAME,
   SYNC_ACTOR_PREFIX,
   SYNC_DISCREPANCY_CODES,
   isAutomatedActor,
@@ -37,8 +38,6 @@ export type {
   ExtraKindooCallingPayload,
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
-  ImportDay,
-  ImportSummary,
   KindooManager,
   KindooOnlyPayload,
   KindooSite,
@@ -78,7 +77,6 @@ export {
   buildingSchema,
   callingTemplateSchema,
   duplicateGrantSchema,
-  importDaySchema,
   kindooManagerSchema,
   kindooSiteSchema,
   manualGrantSchema,

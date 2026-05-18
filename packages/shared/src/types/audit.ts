@@ -30,7 +30,10 @@ export type AuditAction =
   // Stake parent
   | 'update_stake'
   | 'setup_complete'
-  // System (importer / over-cap / email; no underlying entity write)
+  // System (over-cap recompute / email failure; no underlying entity
+  // write). `import_start` and `import_end` are legacy: pre-T-45 audit
+  // rows still carry them. The renderer keeps the literals in its
+  // filter palette for historical lookup; no fresh writes produce them.
   | 'import_start'
   | 'import_end'
   | 'over_cap_warning'
@@ -46,7 +49,9 @@ export type AuditLog = {
   /** `= doc.id`. `<ISO-timestamp>_<uuid-suffix>`. */
   audit_id: string;
   timestamp: TimestampLike;
-  /** `'Importer'`, `'ExpiryTrigger'`, or a typed user email. */
+  /** `'ExpiryTrigger'`, `'RemoveTrigger'`, `'OutOfBand'`, `'Migration'`,
+   * a `'SyncActor:<code>'` stamp, or a typed user email. Legacy
+   * `'Importer'` survives on pre-T-45 rows. */
   actor_email: string;
   /** Canonical form of `actor_email`. Same string for the synthetic actors. */
   actor_canonical: string;

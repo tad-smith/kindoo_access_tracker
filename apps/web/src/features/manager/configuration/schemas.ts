@@ -67,28 +67,13 @@ export const callingTemplateSchema = z.object({
 });
 export type CallingTemplateForm = z.infer<typeof callingTemplateSchema>;
 
-export const importDaySchema = z.enum([
-  'MONDAY',
-  'TUESDAY',
-  'WEDNESDAY',
-  'THURSDAY',
-  'FRIDAY',
-  'SATURDAY',
-  'SUNDAY',
-]);
-
 export const configSchema = z.object({
   stake_name: z.string().trim().min(1, 'Stake name is required.'),
-  // Optional: operators can postpone the LCR-sheet wiring until after
-  // bootstrap. Mirrors `bootstrap.schemas.step1Schema`.
-  callings_sheet_id: z.string().trim().optional(),
   stake_seat_cap: z
     .number({ message: 'Seat cap must be a number.' })
     .int()
     .min(0, 'Seat cap must be 0 or greater.'),
   expiry_hour: z.number().int().min(0).max(23),
-  import_day: importDaySchema,
-  import_hour: z.number().int().min(0).max(23),
   timezone: z.string().trim().min(1, 'Timezone is required.'),
   notifications_enabled: z.boolean(),
 });

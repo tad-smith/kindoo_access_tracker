@@ -20,7 +20,6 @@ export type {
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
 } from './extensionCallables.js';
-export type { ImportSummary } from './import.js';
 export type {
   CallingTemplate,
   StakeCallingTemplate,
@@ -31,7 +30,7 @@ export type { KindooSite } from './kindooSite.js';
 export type { PlatformSuperadmin } from './platformSuperadmin.js';
 export type { AccessRequest, CompletionStatus, RequestStatus, RequestType } from './request.js';
 export type { DuplicateGrant, Seat, SeatType } from './seat.js';
-export type { ImportDay, KindooConfig, OverCapEntry, Stake } from './stake.js';
+export type { KindooConfig, OverCapEntry, Stake } from './stake.js';
 export type {
   BuildingsMismatchPayload,
   ExtraKindooCallingPayload,

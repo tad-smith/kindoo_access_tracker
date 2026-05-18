@@ -10,10 +10,10 @@
 // The callable's idempotency comes from its design: per
 // `functions/src/callable/installScheduledJobs.ts`, there are no
 // per-stake jobs to install (the single-loop scheduler hooks the
-// importer / expiry / reconcile triggers off platform-managed Cloud
-// Scheduler jobs). The callable only verifies the caller is an active
-// manager and the stake's schedule fields are populated. Calling it N
-// times after a successful setup must produce N identical successes.
+// expiry / reconcile triggers off platform-managed Cloud Scheduler
+// jobs). The callable only verifies the caller is an active manager
+// and the stake's schedule fields are populated. Calling it N times
+// after a successful setup must produce N identical successes.
 
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -80,22 +80,18 @@ test.describe('Bootstrap wizard install-scheduled-jobs (live Functions emulator)
     const adminEmail = 'admin@example.com';
 
     // Pre-seed a stake doc with `setup_complete=false` plus the
-    // schedule fields the callable's defensive checks require. The
-    // wizard normally fills in `import_hour` etc. via Step 1, but Step
-    // 1's form only collects `stake_name + callings_sheet_id +
-    // stake_seat_cap` — the rest are seeded by `createStake` (Phase
-    // 12). Mirror that here so the callable's `failed-precondition`
-    // checks pass after Complete Setup flips setup_complete.
+    // schedule fields the callable's defensive checks require. Step 1
+    // of the wizard only collects `stake_name + stake_seat_cap`; the
+    // rest are seeded by `createStake` (Phase 12). Mirror that here so
+    // the callable's `failed-precondition` checks pass after Complete
+    // Setup flips setup_complete.
     await writeDoc(`stakes/${STAKE_ID}`, {
       stake_id: STAKE_ID,
       stake_name: '',
       bootstrap_admin_email: adminEmail,
       setup_complete: false,
       stake_seat_cap: 0,
-      callings_sheet_id: '',
       expiry_hour: 3,
-      import_day: 'MONDAY',
-      import_hour: 4,
       timezone: 'America/Denver',
       notifications_enabled: true,
     });

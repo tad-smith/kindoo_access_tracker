@@ -3,7 +3,7 @@
 // extension's side-panel surfaces this list while the manager works the
 // Kindoo UI in the host tab.
 //
-// Auth: same authority check as `runImportNow` — read the
+// Auth: same authority check as `installScheduledJobs` — read the
 // `kindooManagers/{canonical}` doc directly. Custom claims can be ~1h
 // stale on idle sessions per `firebase-schema.md` §2, so the doc is
 // the source of truth at call time.

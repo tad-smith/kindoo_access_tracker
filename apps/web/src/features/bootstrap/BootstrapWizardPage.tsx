@@ -9,8 +9,7 @@
 //
 // Four-step layout:
 //
-//   Step 1 — Stake fields (name + stake_seat_cap required;
-//            callings_sheet_id optional).
+//   Step 1 — Stake fields (name + stake_seat_cap).
 //   Step 2 — ≥1 Building.
 //   Step 3 — ≥1 Ward.
 //   Step 4 — Additional Kindoo Managers (optional). Bootstrap admin
@@ -112,8 +111,8 @@ export function BootstrapWizardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminEmail, principalEmail, managers.data]);
 
-  // callings_sheet_id is optional — only stake_name + stake_seat_cap
-  // gate Step 1 completion.
+  // stake_name + stake_seat_cap are the only Step 1 inputs; both gate
+  // completion.
   const step1Done = useMemo(() => {
     const s = stake.data;
     return Boolean(
@@ -295,14 +294,12 @@ function Step1Form() {
     resolver: zodResolver(step1Schema),
     defaultValues: {
       stake_name: stake.data?.stake_name ?? '',
-      callings_sheet_id: stake.data?.callings_sheet_id ?? '',
       stake_seat_cap: stake.data?.stake_seat_cap ?? 0,
     },
     ...(stake.data
       ? {
           values: {
             stake_name: stake.data.stake_name ?? '',
-            callings_sheet_id: stake.data.callings_sheet_id ?? '',
             stake_seat_cap: stake.data.stake_seat_cap ?? 0,
           },
         }
@@ -331,10 +328,6 @@ function Step1Form() {
           {formState.errors.stake_name.message}
         </p>
       ) : null}
-      <label>
-        Callings-sheet ID <span className="kd-form-hint">(optional)</span>
-        <Input {...register('callings_sheet_id')} placeholder="1A2B3C..." />
-      </label>
       <label>
         Stake seat cap
         <Input type="number" min={0} {...register('stake_seat_cap', { valueAsNumber: true })} />

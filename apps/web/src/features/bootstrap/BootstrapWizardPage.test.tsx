@@ -74,7 +74,6 @@ vi.mock('@tanstack/react-router', () => ({
 }));
 vi.mock('./callables', () => ({
   invokeInstallScheduledJobs: vi.fn().mockResolvedValue({ ok: true }),
-  invokeRunImportNow: vi.fn(),
 }));
 
 import { BootstrapWizardPage } from './BootstrapWizardPage';
@@ -111,7 +110,6 @@ function makeStake(overrides: Partial<Stake> = {}): Partial<Stake> {
   return {
     stake_id: 'csnorth',
     stake_name: '',
-    callings_sheet_id: '',
     stake_seat_cap: 0,
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: false,
@@ -150,6 +148,14 @@ describe('<BootstrapWizardPage />', () => {
     expect(screen.getByRole('heading', { name: /Stake settings/i })).toBeInTheDocument();
   });
 
+  it('step 1 does NOT collect a callings-sheet ID (T-45)', () => {
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    const step = screen.getByTestId('wizard-step-1');
+    // No "Callings" / "sheet" label, no input bound to the field.
+    expect(within(step).queryByLabelText(/callings/i)).not.toBeInTheDocument();
+    expect(within(step).queryByLabelText(/sheet/i)).not.toBeInTheDocument();
+  });
+
   it('disables Complete Setup until steps 1–3 are valid', () => {
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     expect(screen.getByTestId('bootstrap-complete-setup')).toBeDisabled();
@@ -160,7 +166,6 @@ describe('<BootstrapWizardPage />', () => {
       stakeResult(
         makeStake({
           stake_name: 'My Stake',
-          callings_sheet_id: 'sheet1',
           stake_seat_cap: 200,
         }),
       ),
@@ -205,7 +210,6 @@ describe('<BootstrapWizardPage />', () => {
       stakeResult(
         makeStake({
           stake_name: '',
-          callings_sheet_id: '',
           stake_seat_cap: 0,
         }),
       ),
@@ -230,7 +234,6 @@ describe('<BootstrapWizardPage />', () => {
       stakeResult(
         makeStake({
           stake_name: 'My Stake',
-          callings_sheet_id: 'sheet1',
           stake_seat_cap: 200,
         }),
       ),
@@ -252,7 +255,6 @@ describe('<BootstrapWizardPage />', () => {
       stakeResult(
         makeStake({
           stake_name: 'My Stake',
-          callings_sheet_id: 'sheet1',
           stake_seat_cap: 200,
         }),
       ),
@@ -276,7 +278,6 @@ describe('<BootstrapWizardPage />', () => {
       stakeResult(
         makeStake({
           stake_name: 'My Stake',
-          callings_sheet_id: 'sheet1',
           stake_seat_cap: 200,
         }),
       ),

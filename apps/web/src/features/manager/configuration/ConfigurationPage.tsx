@@ -1130,11 +1130,8 @@ function ConfigKeysTab() {
     const s = stake.data;
     return {
       stake_name: s?.stake_name ?? '',
-      callings_sheet_id: s?.callings_sheet_id ?? '',
       stake_seat_cap: s?.stake_seat_cap ?? 0,
       expiry_hour: s?.expiry_hour ?? 4,
-      import_day: s?.import_day ?? 'MONDAY',
-      import_hour: s?.import_hour ?? 6,
       timezone: s?.timezone ?? 'America/Denver',
       notifications_enabled: s?.notifications_enabled ?? true,
     };
@@ -1167,10 +1164,6 @@ function ConfigKeysTab() {
         <Input {...register('stake_name')} />
       </label>
       <label>
-        Callings sheet ID
-        <Input {...register('callings_sheet_id')} />
-      </label>
-      <label>
         Stake seat cap
         <Input type="number" min={0} {...register('stake_seat_cap', { valueAsNumber: true })} />
       </label>
@@ -1181,27 +1174,6 @@ function ConfigKeysTab() {
           min={0}
           max={23}
           {...register('expiry_hour', { valueAsNumber: true })}
-        />
-      </label>
-      <label>
-        Import day
-        <Select {...register('import_day')}>
-          {(
-            ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'] as const
-          ).map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </Select>
-      </label>
-      <label>
-        Import hour (0–23)
-        <Input
-          type="number"
-          min={0}
-          max={23}
-          {...register('import_hour', { valueAsNumber: true })}
         />
       </label>
       <label>

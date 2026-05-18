@@ -115,7 +115,7 @@ jobs:
         # `functions/lib/`. Without this step the emulator logs
         # "Could not detect runtime for functions at .../functions/lib"
         # and registers zero callables / triggers — every E2E spec that
-        # invokes `runImportNow` or `installScheduledJobs` then hits a
+        # invokes `installScheduledJobs` (or any other callable) then hits a
         # not-found path. Predeploy hooks in firebase.json only fire on
         # `firebase deploy`, not on `emulators:exec`, so we run the
         # build explicitly here.

@@ -46,7 +46,7 @@
 // resulting write; `notifyOnRequestWrite` fires the requester email
 // from the same write. No extra wiring here.
 //
-// Auth: same authority check as `runImportNow` — read the
+// Auth: same authority check as `installScheduledJobs` — read the
 // `kindooManagers/{canonical}` doc directly.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';

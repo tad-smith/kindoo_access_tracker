@@ -9,7 +9,6 @@ describe('step1Schema', () => {
   it('accepts a valid stake setup', () => {
     const out = step1Schema.parse({
       stake_name: 'My Stake',
-      callings_sheet_id: 'abc123',
       stake_seat_cap: 200,
     });
     expect(out.stake_name).toBe('My Stake');
@@ -18,7 +17,6 @@ describe('step1Schema', () => {
   it('rejects a blank stake name', () => {
     const r = step1Schema.safeParse({
       stake_name: '   ',
-      callings_sheet_id: 'abc',
       stake_seat_cap: 0,
     });
     expect(r.success).toBe(false);
@@ -27,10 +25,21 @@ describe('step1Schema', () => {
   it('rejects a negative seat cap', () => {
     const r = step1Schema.safeParse({
       stake_name: 'X',
-      callings_sheet_id: 'abc',
       stake_seat_cap: -1,
     });
     expect(r.success).toBe(false);
+  });
+
+  it('does not accept a callings_sheet_id field (T-45 removed)', () => {
+    // Step 1 no longer collects a sheet ID; the schema must not surface
+    // it as a known key, so an unknown key surfaces a parse failure
+    // under strict mode. The zod object schema above is not strict by
+    // default, so we just assert the parsed output omits the field.
+    const r = step1Schema.parse({
+      stake_name: 'My Stake',
+      stake_seat_cap: 200,
+    });
+    expect('callings_sheet_id' in r).toBe(false);
   });
 });
 

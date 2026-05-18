@@ -126,11 +126,8 @@ beforeEach(() => {
   useStakeDocMock.mockReturnValue({
     data: {
       stake_name: 'My Stake',
-      callings_sheet_id: 'sheet1',
       stake_seat_cap: 200,
       expiry_hour: 4,
-      import_day: 'MONDAY',
-      import_hour: 6,
       timezone: 'America/Denver',
       notifications_enabled: true,
     } satisfies Partial<Stake>,

@@ -43,7 +43,6 @@ async function signInAsManager(page: Page, email: string): Promise<void> {
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: true,
     stake_seat_cap: 200,
-    callings_sheet_id: 'sheet1',
   });
   const { uid } = await createAuthUser({ email });
   await setCustomClaims(uid, {

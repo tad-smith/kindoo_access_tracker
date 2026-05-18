@@ -192,27 +192,6 @@ export async function waitForServerStakeClaim(
   }
 }
 
-/**
- * Seed a sheet fixture for the importer's emulator-only sheet fetcher.
- * Mirrors the in-process `_setSheetFetcher` hook used by the
- * `functions/tests/Importer.test.ts` integration suite, but writes the
- * fixture to Firestore so the live `runImportNow` callable running in
- * the Functions emulator can read it. The fetcher reads
- * `_e2eFixtures/sheets__{encodedSheetId}` — keep the encoding in sync
- * with `functions/src/lib/sheets.ts:emulatorFixturePath`.
- *
- * Encoding note: Firestore arrays cannot directly contain other arrays
- * (the REST API rejects with `INVALID_ARGUMENT: Property array
- * contains an invalid nested entity`). We stringify the tab payload
- * into a single string field; the importer-side fetcher parses it
- * back.
- */
-export type SheetFixtureTab = { name: string; values: string[][] };
-export async function seedSheetFixture(sheetId: string, tabs: SheetFixtureTab[]): Promise<void> {
-  const docId = `sheets__${encodeURIComponent(sheetId)}`;
-  await writeDoc(`_e2eFixtures/${docId}`, { tabsJson: JSON.stringify(tabs) });
-}
-
 function toFirestoreValue(v: unknown): object {
   if (v === null) return { nullValue: null };
   if (typeof v === 'string') return { stringValue: v };
