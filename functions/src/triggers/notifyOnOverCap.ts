@@ -1,9 +1,9 @@
 // Fires on `stakes/{stakeId}` writes when `last_over_caps_json`
 // transitions from empty to non-empty. The over-cap recompute path
-// (`markRequestComplete`, `removeSeatOnRequestComplete`, the daily
-// expiry trigger — see `spec.md` §8) persists this field after the
-// underlying entity write; this trigger fans the schema-driven event
-// out as an email to active managers per `spec.md` §9.
+// (`markRequestComplete`, `removeSeatOnRequestComplete` — see
+// `spec.md` §8) persists this field after the underlying entity
+// write; this trigger fans the schema-driven event out as an email
+// to active managers per `spec.md` §9.
 //
 // "Continuing-overcap" (`[A] -> [A, B]`) and "resolving-overcap"
 // (`[A] -> []`) deliberately do not fire — operators should be

@@ -655,13 +655,10 @@ Without this seed, the bootstrap admin's first wizard write is denied — chicke
    | `stake_name` | string | (whatever — the wizard Step 1 will overwrite this) |
    | `created_at` | timestamp | now |
    | `created_by` | string | the operator's canonical email |
-   | `callings_sheet_id` | string | (empty string is fine — Step 1 sets this) |
    | `bootstrap_admin_email` | string | the **typed-form** email of the person who'll run the wizard, e.g. `Tad.E.Smith@gmail.com` |
    | `setup_complete` | boolean | `false` |
    | `stake_seat_cap` | number | `0` (Step 1 will overwrite) |
    | `expiry_hour` | number | `4` |
-   | `import_day` | string | `MONDAY` |
-   | `import_hour` | number | `6` |
    | `timezone` | string | `America/Denver` (or whichever IANA tz the stake uses) |
    | `notifications_enabled` | boolean | `true` |
    | `last_over_caps_json` | array | `[]` |

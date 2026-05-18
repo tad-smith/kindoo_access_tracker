@@ -29,9 +29,10 @@
 //     suffix is open-ended.
 //
 // Legacy note: pre-T-45 audit rows stamped with `"Importer"` still
-// exist in the audit log; the renderer matches that literal via its
-// own historical fallback (see AuditLogPage `isLegacyImporterActor`)
-// rather than via this enum.
+// exist in the audit log; `isAutomatedActor` below matches that
+// literal via the `LEGACY_IMPORTER_ACTOR_NAME` fallback rather than
+// via this enum (the `<code>` suffix on `SyncActor:*` and the
+// open-ended legacy stamp make a flat enum a poor fit).
 
 export const AUTOMATED_ACTOR_NAMES = [
   'ExpiryTrigger',

@@ -30,10 +30,11 @@ export type AuditAction =
   // Stake parent
   | 'update_stake'
   | 'setup_complete'
-  // System (over-cap recompute / email failure; no underlying entity
-  // write). `import_start` and `import_end` are legacy: pre-T-45 audit
-  // rows still carry them. The renderer keeps the literals in its
-  // filter palette for historical lookup; no fresh writes produce them.
+  // System (email failure; no underlying entity write).
+  // `import_start`, `import_end`, and `over_cap_warning` are legacy:
+  // pre-T-45 audit rows still carry them. The renderer keeps the
+  // literals in its filter palette for historical lookup; no fresh
+  // writes produce them.
   | 'import_start'
   | 'import_end'
   | 'over_cap_warning'
