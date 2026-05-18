@@ -1,9 +1,9 @@
-// Smoke test for the Phase 7 manager admin pages: Configuration +
-// Import. Confirms the nav links appear, the routes load, and the
-// per-tab CRUD UI renders. Mutation behaviour is tested at the
-// component layer (apps/web/src/features/manager/configuration/*.test.tsx)
-// against mocked hooks; this proves the route exists and the page
-// renders with a real bundle.
+// Smoke test for the Phase 7 manager Configuration page. Confirms the
+// nav link appears, the route loads, and the per-tab CRUD UI renders.
+// Mutation behaviour is tested at the component layer
+// (apps/web/src/features/manager/configuration/*.test.tsx) against
+// mocked hooks; this proves the route exists and the page renders
+// with a real bundle.
 
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -61,11 +61,10 @@ test.describe('Manager admin pages (Phase 7)', () => {
     await clearFirestore();
   });
 
-  test('manager nav exposes Configuration + Import', async ({ page }) => {
+  test('manager nav exposes Configuration', async ({ page }) => {
     await signInAsManager(page, 'mgr@example.com');
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
     await expect(page.getByRole('link', { name: /^Configuration$/ })).toBeVisible();
-    await expect(page.getByRole('link', { name: /^Import$/ })).toBeVisible();
   });
 
   test('Configuration route renders the Wards tab by default', async ({ page }) => {
@@ -80,14 +79,6 @@ test.describe('Manager admin pages (Phase 7)', () => {
     await signInAsManager(page, 'mgr-cfg2@example.com');
     await page.goto('/manager/configuration?tab=managers');
     await expect(page.getByRole('heading', { name: /Kindoo Managers/i })).toBeVisible();
-  });
-
-  test('Import route renders the Import Now button + status block', async ({ page }) => {
-    await signInAsManager(page, 'mgr-import@example.com');
-    await page.getByRole('link', { name: /^Import$/ }).click();
-    await expect(page.getByRole('heading', { name: /^Import$/ })).toBeVisible();
-    await expect(page.getByTestId('import-now-button')).toBeVisible();
-    await expect(page.getByTestId('import-callings-sheet-id')).toHaveText('sheet1');
   });
 
   test('Auto Ward Callings tab renders the table + Add modal with both flag checkboxes', async ({

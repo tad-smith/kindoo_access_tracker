@@ -30,14 +30,17 @@ describe('step1Schema', () => {
     expect(r.success).toBe(false);
   });
 
-  it('does not accept a callings_sheet_id field (T-45 removed)', () => {
-    // Step 1 no longer collects a sheet ID; the schema must not surface
-    // it as a known key, so an unknown key surfaces a parse failure
-    // under strict mode. The zod object schema above is not strict by
-    // default, so we just assert the parsed output omits the field.
+  it('strips an unknown callings_sheet_id field from the parsed output (T-45 removed)', () => {
+    // Step 1 no longer collects a sheet ID. zod object schemas without
+    // `.strict()` silently drop unknown keys, so feeding the legacy
+    // field in must yield a parsed output that does not carry it.
     const r = step1Schema.parse({
       stake_name: 'My Stake',
       stake_seat_cap: 200,
+      callings_sheet_id: 'leftover-from-pre-t-45',
+    } as unknown as {
+      stake_name: string;
+      stake_seat_cap: number;
     });
     expect('callings_sheet_id' in r).toBe(false);
   });
