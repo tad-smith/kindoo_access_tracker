@@ -1,7 +1,9 @@
-// Component tests for SignInPage. The magic-link helper is mocked at
+// Component tests for SignInPage. Both sign-in helpers are mocked at
 // the module boundary (`./signIn`) so we exercise the UI contract:
-//   - The hero renders the email input + "Send me a sign-in link"
-//     primary CTA (no Google button, no password field anywhere).
+//   - The hero renders the "Continue with Google" CTA above the email
+//     input + "Send me a sign-in link" submit. No password field.
+//   - Clicking the Google CTA calls `signInWithGoogle`.
+//   - A rejection from `signInWithGoogle` surfaces in an accessible alert.
 //   - The topbar carries a secondary "Sign in" button (focuses the form).
 //   - The new-user explanatory sentence renders verbatim from spec §4.1.
 //   - Submitting a valid email calls `sendMagicLink`; the hero swaps
@@ -12,9 +14,9 @@
 //   - Footer links to Privacy and a contact target; Chrome extension
 //     link stays hidden while the Web Store URL is a placeholder.
 //
-// The Tailwind v4 preflight regression (PR #12) is still covered: the
-// submit button must carry the `.btn` chrome from `base.css`. The
-// deeper visual check lives in
+// The Tailwind v4 preflight regression (PR #12) is still covered: both
+// primary CTAs must carry the `.btn` chrome from `base.css`. The deeper
+// visual check lives in
 // `e2e/tests/auth/sign-in-button-renders.spec.ts`.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -23,10 +25,12 @@ import userEvent from '@testing-library/user-event';
 
 const sendMagicLinkMock = vi.fn();
 const clearStashedEmailMock = vi.fn();
+const signInWithGoogleMock = vi.fn();
 
 vi.mock('./signIn', () => ({
   sendMagicLink: (email: string) => sendMagicLinkMock(email),
   clearStashedEmail: () => clearStashedEmailMock(),
+  signInWithGoogle: () => signInWithGoogleMock(),
 }));
 
 // `<Link>` from TanStack Router needs a router context. The homepage
@@ -58,19 +62,66 @@ import { SignInPage } from './SignInPage';
 beforeEach(() => {
   sendMagicLinkMock.mockReset();
   clearStashedEmailMock.mockReset();
+  signInWithGoogleMock.mockReset();
   window.localStorage.clear();
 });
 
-describe('SignInPage — email magic link', () => {
-  it('renders no Google button and no password field', () => {
+describe('SignInPage — both providers', () => {
+  it('renders no password field', () => {
     render(<SignInPage />);
-    expect(screen.queryByRole('button', { name: /Google/i })).toBeNull();
     expect(document.querySelector('input[type="password"]')).toBeNull();
+  });
+
+  it('renders the "Continue with Google" CTA above the magic-link form', () => {
+    render(<SignInPage />);
+    const google = screen.getByRole('button', { name: /Continue with Google/i });
+    const submit = screen.getByRole('button', { name: /Send me a sign-in link/i });
+    expect(google).toBeInTheDocument();
+    expect(submit).toBeInTheDocument();
+    // DOM order: Google CTA appears before the magic-link submit.
+    expect(google.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('renders the email input and the "Send me a sign-in link" CTA', () => {
     render(<SignInPage />);
     expect(screen.getByLabelText(/Email address/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Send me a sign-in link/i })).toBeInTheDocument();
+  });
+
+  it('calls signInWithGoogle when the "Continue with Google" button is clicked', async () => {
+    signInWithGoogleMock.mockResolvedValueOnce({ uid: 'u1' });
+    render(<SignInPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Continue with Google/i }));
+    expect(signInWithGoogleMock).toHaveBeenCalledTimes(1);
+    // Magic-link helper is not touched by the Google click.
+    expect(sendMagicLinkMock).not.toHaveBeenCalled();
+  });
+
+  it('disables both primary CTAs while the Google popup is pending', async () => {
+    let resolveGoogle: ((value: { uid: string }) => void) | null = null;
+    signInWithGoogleMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGoogle = resolve;
+        }),
+    );
+    render(<SignInPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Continue with Google/i }));
+    expect(screen.getByRole('button', { name: /Signing in…/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Send me a sign-in link/i })).toBeDisabled();
+    resolveGoogle!({ uid: 'u1' });
+  });
+
+  it('surfaces a Google sign-in failure in an accessible alert region', async () => {
+    signInWithGoogleMock.mockRejectedValueOnce(new Error('popup blocked'));
+    render(<SignInPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Continue with Google/i }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/popup blocked/i);
+    // The magic-link form remains on screen so the user can fall back.
     expect(screen.getByRole('button', { name: /Send me a sign-in link/i })).toBeInTheDocument();
   });
 
@@ -108,12 +159,14 @@ describe('SignInPage — email magic link', () => {
   });
 
   // Regression guard: Tailwind v4 preflight strips chrome from bare
-  // `<button>`s. The submit button must route through the shadcn
+  // `<button>`s. All three CTAs must route through the shadcn
   // `<Button>` primitive (which adds `.btn` from `base.css`).
-  it('routes the primary CTA through the styled Button primitive', () => {
+  it('routes all CTAs through the styled Button primitive', () => {
     render(<SignInPage />);
+    const google = screen.getByRole('button', { name: /Continue with Google/i });
     const hero = screen.getByRole('button', { name: /Send me a sign-in link/i });
     const topbar = screen.getByRole('button', { name: /^Sign in$/i });
+    expect(google).toHaveClass('btn');
     expect(hero).toHaveClass('btn');
     expect(topbar).toHaveClass('btn');
   });

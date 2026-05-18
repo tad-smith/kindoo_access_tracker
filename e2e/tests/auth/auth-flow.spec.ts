@@ -69,16 +69,16 @@ test.describe('auth-flow', () => {
     await clearFirestore();
   });
 
-  test('anonymous visit shows the SignInPage magic-link form', async ({ page }) => {
+  test('anonymous visit shows both sign-in providers', async ({ page }) => {
     await page.goto('/');
     await expect(
       page.getByRole('heading', { name: /Building access for your stake/i }),
     ).toBeVisible();
-    // Email magic link sign-in (T-44): email input + "Send me a sign-in
-    // link" CTA. No Google button, no password field.
+    // Both providers visible per spec §4.1: "Continue with Google"
+    // above the email magic-link form. No password field.
+    await expect(page.getByRole('button', { name: /Continue with Google/i })).toBeVisible();
     await expect(page.getByLabel(/Email address/i)).toBeVisible();
     await expect(page.getByRole('button', { name: /Send me a sign-in link/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Sign in with Google/i })).toHaveCount(0);
     await expect(page.locator('input[type="password"]')).toHaveCount(0);
   });
 

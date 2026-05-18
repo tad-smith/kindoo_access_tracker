@@ -6,17 +6,23 @@
 // building access. Kindoo provisioning lives downstream in the Chrome
 // extension; the homepage acknowledges it but does not pitch it.
 //
-// Sign-in surface (per spec §4.1 / §5.0): email magic link only. The
-// hero hosts the canonical form (email input + "Send me a sign-in link"
-// primary button). The topbar carries a secondary "Sign in" affordance
-// that scrolls + focuses the hero form so the CTA remains reachable
-// after the user has scrolled.
+// Sign-in surface (per spec §4.1 / §5.0): both providers visible on
+// the SPA. The hero hosts a primary "Continue with Google" button
+// directly above the email magic-link form (email input + "Send me a
+// sign-in link" primary button). With Firebase Auth's "one account
+// per email address" project setting enabled both providers resolve
+// to the same Firebase UID for the same email.
 //
-// After a successful submit the hero swaps to a "Check your email"
-// confirmation state with a "Use a different email" link that resets to
-// the form. The action-handler route at `/auth/email-link` consumes the
-// link the user clicks in their inbox; on success the SPA redirects to
-// `/` and the gate decision in `routes/index.tsx` runs unchanged.
+// The topbar carries a secondary "Sign in" affordance that scrolls +
+// focuses the hero form so the CTA remains reachable after the user
+// has scrolled.
+//
+// After a successful magic-link submit the hero swaps to a "Check your
+// email" confirmation state with a "Use a different email" link that
+// resets to the form. The action-handler route at `/auth/email-link`
+// consumes the link the user clicks in their inbox; on success the SPA
+// redirects to `/` and the gate decision in `routes/index.tsx` runs
+// unchanged.
 //
 // Buttons route through the shadcn `<Button>` primitive so they pick up
 // the `.btn` chrome from `base.css` (Tailwind v4 preflight regression
@@ -30,7 +36,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { BrandIcon } from '../../components/layout/BrandIcon';
 import { signInEmailSchema, type SignInEmailForm } from './schemas';
-import { clearStashedEmail, sendMagicLink } from './signIn';
+import { clearStashedEmail, sendMagicLink, signInWithGoogle } from './signIn';
 
 // Sentinel: until the extension's Web Store listing is published, this
 // stays pointed at the generic Web Store root. The footer link is
@@ -56,6 +62,8 @@ export function SignInPage() {
   const { register, handleSubmit, formState, reset } = form;
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const [googlePending, setGooglePending] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
   const emailInputRef = useRef<HTMLInputElement>(null);
   const { ref: rhfEmailRef, ...rhfEmailRest } = register('email');
 
@@ -78,6 +86,22 @@ export function SignInPage() {
       setSubmitError(message);
     }
   });
+
+  async function handleGoogleSignIn() {
+    setGoogleError(null);
+    setGooglePending(true);
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      // `signInWithPopup` rejects with `FirebaseError` for popup-blocked,
+      // user-cancelled, network failure, etc. Surface the message
+      // verbatim so the operator can debug without opening devtools.
+      const message = err instanceof Error ? err.message : String(err);
+      setGoogleError(message);
+    } finally {
+      setGooglePending(false);
+    }
+  }
 
   function handleUseDifferentEmail() {
     // Clear the previously stashed email so a still-in-flight first
@@ -116,6 +140,9 @@ export function SignInPage() {
             emailInputRef.current = node;
           }}
           inputProps={rhfEmailRest}
+          onGoogleSignIn={handleGoogleSignIn}
+          googlePending={googlePending}
+          googleError={googleError}
         />
         <HomeFeatures />
         <HomeExplainer />
@@ -163,10 +190,24 @@ interface HeroProps {
   // value is owned by react-hook-form internally; the field stays
   // uncontrolled at the DOM level which is what RHF expects.
   inputProps: Omit<React.ComponentPropsWithoutRef<typeof Input>, 'ref'>;
+  onGoogleSignIn: () => void;
+  googlePending: boolean;
+  googleError: string | null;
 }
 
 function HomeHero(props: HeroProps) {
-  const { onSubmit, pending, error, sentTo, onUseDifferentEmail, inputRef, inputProps } = props;
+  const {
+    onSubmit,
+    pending,
+    error,
+    sentTo,
+    onUseDifferentEmail,
+    inputRef,
+    inputProps,
+    onGoogleSignIn,
+    googlePending,
+    googleError,
+  } = props;
   return (
     <section className="border-b border-[color:var(--kd-border-soft)]">
       <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-5 py-14 text-center sm:py-20">
@@ -182,39 +223,62 @@ function HomeHero(props: HeroProps) {
           {sentTo ? (
             <ConfirmationState sentTo={sentTo} onUseDifferentEmail={onUseDifferentEmail} />
           ) : (
-            <form onSubmit={onSubmit} className="flex flex-col gap-3 text-left" noValidate>
-              <label
-                htmlFor="signin-email"
-                className="text-sm font-medium text-[color:var(--kd-fg-1)]"
+            <div className="flex flex-col gap-3 text-left">
+              {/* Google CTA — primary affordance, full-width to match
+                  the magic-link submit below. With Firebase Auth's
+                  "one account per email address" project setting
+                  both providers resolve to the same UID. */}
+              <Button
+                type="button"
+                onClick={onGoogleSignIn}
+                disabled={googlePending || pending}
+                className="w-full text-[0.95rem]"
               >
-                Email address
-              </label>
-              <Input
-                id="signin-email"
-                ref={inputRef}
-                type="email"
-                autoComplete="email"
-                inputMode="email"
-                spellCheck={false}
-                disabled={pending}
-                placeholder="you@example.com"
-                aria-invalid={error ? true : undefined}
-                aria-describedby={error ? 'signin-email-error' : undefined}
-                {...inputProps}
-              />
-              <Button type="submit" disabled={pending} className="text-[0.95rem]">
-                {pending ? 'Sending…' : 'Send me a sign-in link'}
+                {googlePending ? 'Signing in…' : 'Continue with Google'}
               </Button>
-              {error ? (
-                <div
-                  role="alert"
-                  id="signin-email-error"
-                  className="text-sm text-[color:var(--kd-danger-fg)]"
-                >
-                  {error}
+              {googleError ? (
+                <div role="alert" className="text-sm text-[color:var(--kd-danger-fg)]">
+                  Sign-in failed: {googleError}
                 </div>
               ) : null}
-            </form>
+              <form onSubmit={onSubmit} className="flex flex-col gap-3" noValidate>
+                <label
+                  htmlFor="signin-email"
+                  className="text-sm font-medium text-[color:var(--kd-fg-1)]"
+                >
+                  Email address
+                </label>
+                <Input
+                  id="signin-email"
+                  ref={inputRef}
+                  type="email"
+                  autoComplete="email"
+                  inputMode="email"
+                  spellCheck={false}
+                  disabled={pending || googlePending}
+                  placeholder="you@example.com"
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? 'signin-email-error' : undefined}
+                  {...inputProps}
+                />
+                <Button
+                  type="submit"
+                  disabled={pending || googlePending}
+                  className="w-full text-[0.95rem]"
+                >
+                  {pending ? 'Sending…' : 'Send me a sign-in link'}
+                </Button>
+                {error ? (
+                  <div
+                    role="alert"
+                    id="signin-email-error"
+                    className="text-sm text-[color:var(--kd-danger-fg)]"
+                  >
+                    {error}
+                  </div>
+                ) : null}
+              </form>
+            </div>
           )}
         </div>
 
