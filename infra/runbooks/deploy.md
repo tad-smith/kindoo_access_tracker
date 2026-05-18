@@ -171,4 +171,4 @@ Browser cache. Hard-refresh (Cmd-Shift-R on macOS). The `version.gen.ts` payload
 - **Cloud Scheduler job management** — managed by the `installScheduledJobs` callable; see `functions/src/callable/installScheduledJobs.ts` and `docs/firebase-migration.md` Phase 8.
 - **Secret Manager updates** — see `infra/runbooks/resend-api-key-setup.md` for the Resend key; add a similar runbook when a new secret is introduced.
 - **Custom-domain / DNS setup** — `infra/runbooks/custom-domain.md`.
-- **Runtime SA grants on the roster Sheet** — `infra/runbooks/granting-importer-sheet-access.md`.
+- **Runtime SA grants on the roster Sheet** — `infra/runbooks/granting-importer-sheet-access.md` (deprecated; T-45 removed the importer).

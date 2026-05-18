@@ -16,7 +16,6 @@ What is monitored, where the data lives, what fires when, and how to add to it. 
 These were sketched in the migration plan but the alert/metric YAML files do not exist yet. Add them when the operational need is concrete.
 
 - Auth verification failures > 5/hour. Catches misconfigured client builds or attempted forgery.
-- Importer did not complete within 10 minutes of scheduler fire.
 - Expiry did not complete within 5 minutes of scheduler fire.
 
 ## Where to find data
