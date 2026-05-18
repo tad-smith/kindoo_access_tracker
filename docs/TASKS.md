@@ -828,13 +828,17 @@ Decision recorded as `architecture.md` D14; spec rewritten in this PR. The exten
 
 **Acceptance criteria:**
 
-1. **Code-side grep** for `runImporter`, `runImportNow`, and `Importer` (capital-I literal actor string written by fresh code paths) returns zero hits across `functions/`, `apps/web/`, `packages/shared/`, `extension/`, `firestore/`, `e2e/`, and `infra/` — excluding test fixtures that simulate historical audit rows. (The six deprecated `stake.*` field names ARE expected to remain visible in `docs/firebase-schema.md` §3 as deprecated-block comments until a future cleanup pass; do not gate this AC on stripping them from the doc.)
+1. **Code-side grep — three scoped checks** all return zero hits:
+   - `rg 'runImporter|runImportNow' functions/ apps/web/ packages/shared/ extension/ firestore/ e2e/ infra/` — function-name and file-path references.
+   - `rg "'Importer'" functions/src/ apps/web/src/` — literal actor-string writes (the quoted single-quote form matches what the audit-trigger / Cloud Function code writes when it stamps a fresh row).
+   - The actor enum / type in `packages/shared/` no longer includes `'Importer'` as a value; it's a closed union of the remaining automated actors (`'ExpiryTrigger'`, `'Migration'`) plus the canonical-email string variant. (The six deprecated `stake.*` field names ARE expected to remain visible in `docs/firebase-schema.md` §3 as deprecated-block comments until a future cleanup pass; do not gate this AC on stripping them from the doc.)
 2. `googleapis` is gone from `functions/package.json` and lockfile.
 3. The bootstrap wizard's step 1 no longer collects a sheet ID; tests assert the field is absent from the form.
 4. The manager Import page route no longer exists; nav doesn't link to it; the route file is deleted; tests asserting "Import" in the nav are removed.
 5. Sync continues to create / update / remove auto seats per existing AC; no regression in `extension/src/content/kindoo/sync/` tests.
 6. The 4 deprecated Stake fields are removed from the zod schema; existing csnorth doc values may persist as vestigial keys on the Firestore doc (operator may manually clear post-merge).
-7. CI green; lint + typecheck clean.
+7. `DashboardPage.tsx` no longer reads `stake.last_import_at` (spec §5.3 dropped the "last Sync run if surfaced" Dashboard hedge; the "Last Operations" card surfaces last expiry + triggers reinstall only).
+8. CI green; lint + typecheck clean.
 
 **Sequencing.** Spec PR (this one) lands first. Implementation PR follows; operator runs the Cloud Scheduler delete + service-account-access revoke after the implementation PR merges and the new code is deployed.
 

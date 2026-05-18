@@ -8,7 +8,7 @@
 - **Authorization:** Custom claims on the auth token, set by Cloud Function triggers on role-data writes.
 - **Data path (reads):** Client uses Firestore JS SDK directly. Firestore Security Rules enforce per-document access using claims from the auth token.
 - **Data path (writes):** Same — client writes via Firestore SDK; rules enforce field-level invariants and cross-doc invariants via `getAfter()`.
-- **Server-side compute:** Cloud Functions only, for: weekly importer (Sheets API), daily temp-seat expiry, email send (SendGrid), audit-log fan-in, custom-claims sync.
+- **Server-side compute:** Cloud Functions only, for: daily temp-seat expiry, email send (Resend), audit-log fan-in, custom-claims sync, FCM push fanout, callable wrappers (request-completion, `syncApplyFix`), and a nightly audit-gap reconciliation. Mirror inventory in §7. Auto-seat ingestion runs through the Chrome extension's Sync feature (see `spec.md` §8), not a server-side importer.
 - **Hosting:** Firebase Hosting serves the static SPA build.
 
 No Cloud Run. No Express. No persistent server-side process for the request path.
@@ -257,7 +257,7 @@ Manager allow-list. Doc existence + `active=true` defines the manager set.
 
 ### 4.5 `stakes/{stakeId}/access/{canonicalEmail}`
 
-Per-user role-grant doc. Doc exists iff the user has *any* importer or manual access. The split between `importer_callings` and `manual_grants` is the field-level split-ownership boundary that rules enforce.
+Per-user role-grant doc. Doc exists iff the user has *any* Sync-managed or manual access. The split between `importer_callings` and `manual_grants` is the field-level split-ownership boundary that rules enforce. The `importer_callings` field name is historical (predates the LCR Sheet importer removal — see `architecture.md` D14, `spec.md` §3); rename is out of scope.
 
 **Doc ID:** canonical email.
 
@@ -269,8 +269,9 @@ Per-user role-grant doc. Doc exists iff the user has *any* importer or manual ac
   member_email: string;        // typed form
   member_name: string;
 
-  // Importer-managed. Keys = scope ('stake' or ward_code). Values = list of callings
-  // in that scope whose template row has give_app_access=true.
+  // Sync-managed (Admin SDK via `syncApplyFix`; field name is historical — see
+  // `architecture.md` D14). Keys = scope ('stake' or ward_code). Values = list of
+  // callings in that scope whose template row has give_app_access=true.
   importer_callings: {
     [scope: string]: string[];
   };
@@ -301,10 +302,10 @@ Per-user role-grant doc. Doc exists iff the user has *any* importer or manual ac
 **Read by:** `syncAccessClaims` trigger; manager Access page.
 
 **Invariants:**
-- Importer never mutates `manual_grants` (rules enforce on client side; importer code enforces on Admin SDK side).
+- Sync's `syncApplyFix` never mutates `manual_grants` (rules enforce on client side; the callable enforces on Admin SDK side).
 - Manager never mutates `importer_callings` (rules enforce).
 - Doc deletion only when both maps are empty.
-- Composite-key uniqueness on (canonical_email, scope, calling) is *structurally absent* — importer's scope is `importer_callings[scope]: string[]`; manual's scope is `manual_grants[scope]: Array`. No path for them to collide.
+- Composite-key uniqueness on (canonical_email, scope, calling) is *structurally absent* — the Sync-managed side's scope is `importer_callings[scope]: string[]`; the manual side's scope is `manual_grants[scope]: Array`. No path for them to collide.
 
 ### 4.6 `stakes/{stakeId}/seats/{canonicalEmail}`
 
@@ -312,7 +313,7 @@ Per-user Kindoo seat. One doc per user per stake.
 
 The `duplicate_grants[]` field captures both within-site priority losers (informational; not counted in utilization) and parallel-site grants — legitimate independent grants on other Kindoo sites that need their own per-site write. The two kinds are distinguished by `kindoo_site_id` equality with the primary grant: same site → within-site; different site → parallel-site. See spec §15 "Multi-site grants — data model" for the full semantics.
 
-`duplicate_scopes: string[]` is a server-maintained primitive mirror of `duplicate_grants[].scope` — Firestore CEL has no `[*].field` projection over an array of objects, so rules that need to ask "is this scope in the seat's duplicate set" use `scope in duplicate_scopes`. Clients never write this field; every server-side seat writer (importer, `markRequestComplete`, `removeSeatOnRequestComplete`, migration) keeps it in sync with `duplicate_grants[]`. T-42 / T-43.
+`duplicate_scopes: string[]` is a server-maintained primitive mirror of `duplicate_grants[].scope` — Firestore CEL has no `[*].field` projection over an array of objects, so rules that need to ask "is this scope in the seat's duplicate set" use `scope in duplicate_scopes`. Clients never write this field; every server-side seat writer (Sync's `syncApplyFix`, `markRequestComplete`, `removeSeatOnRequestComplete`, migration) keeps it in sync with `duplicate_grants[]`. T-42 / T-43.
 
 **Doc ID:** canonical email.
 
@@ -350,7 +351,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
     reason?: string;
     start_date?: string;
     end_date?: string;
-    building_names?: string[];      // Within-site importer duplicates may leave this unset and inherit from the primary's ward. Importer-written PARALLEL-SITE duplicates (different kindoo_site_id from the primary) MUST set this — the per-site Kindoo write needs the buildings explicitly. Manual/temp duplicates set this via the request-completion auto-merge.
+    building_names?: string[];      // Within-site Sync-written duplicates may leave this unset and inherit from the primary's ward. Sync-written PARALLEL-SITE duplicates (different kindoo_site_id from the primary) MUST set this — the per-site Kindoo write needs the buildings explicitly. Manual/temp duplicates set this via the request-completion auto-merge.
     kindoo_site_id?: string | null; // T-42. Same convention as the top-level field.
     detected_at: Timestamp;
   }>;
@@ -372,14 +373,14 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
 
 **Invariants:**
 - Doc ID = `member_canonical`.
-- Importer applies priority `stake > ward (alphabetical)` deterministically; first-seen wins among manager-driven writes.
+- Sync applies priority `stake > ward (alphabetical)` deterministically; first-seen wins among manager-driven writes.
 - `scopes_with_access` is **not** stored — `scope` (singular) is what utilization reads.
-- Auto seats have `callings.length >= 1` and `type='auto'`. Removing the last calling deletes the seat (or promotes a manual/temp duplicate to primary, see importer logic).
+- Auto seats have `callings.length >= 1` and `type='auto'`. Removing the last calling deletes the seat (or promotes a manual/temp duplicate to primary, see Sync's `syncApplyFix` logic).
 - Manual/temp seats have `granted_by_request` set; auto seats do not.
 
 **Sort order:**
-- **Auto seats:** denormalized at importer run as the **MIN** of `sheet_order` across the seat's `callings[]` (the matched calling templates' `sheet_order` values). Multi-calling collapsed seats get the lowest-priority template's order.
-- **Manual / temp seats:** always `null`. These seats are created by request completion, never the importer.
+- **Auto seats:** denormalized at `syncApplyFix` write time as the **MIN** of `sheet_order` across the seat's `callings[]` (the matched calling templates' `sheet_order` values). Multi-calling collapsed seats get the lowest-priority template's order.
+- **Manual / temp seats:** always `null`. These seats are created by request completion, never by Sync.
 - **Orphaned auto seats** (calling no longer matches any template): `null`.
 
 ### 4.7 `stakes/{stakeId}/requests/{requestId}`
@@ -456,7 +457,7 @@ Per-ward calling → seat mapping. Wildcards (`*`) preserved verbatim.
 ```
 
 **Written by:** Manager via Configuration page.
-**Read by:** Importer (matches against ward-tab `Position` values).
+**Read by:** Sync's classifier (matches each Kindoo user's Description string against the calling-name templates); `syncApplyFix` (scope resolution).
 
 ### 4.9 `stakes/{stakeId}/stakeCallingTemplates/{callingName}`
 
@@ -474,7 +475,9 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
 {
   audit_id: string;            // = doc.id
   timestamp: Timestamp;
-  actor_email: string;         // 'Importer', 'ExpiryTrigger', or canonical email
+  actor_email: string;         // 'ExpiryTrigger' (canonical automated actor) or canonical email.
+                               // Legacy 'Importer' rows remain in the audit log from the pre-removal era
+                               // (see `architecture.md` D14); no fresh code path writes that value.
   actor_canonical: string;     // canonical form of actor_email; same value for automated actors
   action:
     | 'create_seat' | 'update_seat' | 'delete_seat' | 'auto_expire'
@@ -871,7 +874,7 @@ service cloud.firestore {
 - **No client writes to auto seats** — auto seats are written only by the `syncApplyFix` callable via Admin SDK, which bypasses rules. The rules' `seats.create` only allows `type in ['manual', 'temp']`.
 - **No client writes to importer_callings** — same pattern. `access.update` rules verify it's unchanged on every client write.
 - **Cross-stake denial is automatic** — `isAnyMember(stakeId)` returns false when the user has no claims for that stakeId, so reads are denied at the stake-doc level and inherit through.
-- **Admin SDK writes bypass everything** — the Cloud Functions (importer, expiry, audit triggers, claim sync) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
+- **Admin SDK writes bypass everything** — the Cloud Functions (expiry, audit triggers, claim sync, request-completion callables) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
 - **Requests-create role-for-scope gate (B-3 / T-36)** — the submit predicate requires the caller hold the role matching the scope being written: `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. Manager status alone does NOT grant creation rights — a pure-manager user with no stake / no ward claim has no submit surface. A manager who also holds `stake: true` or a bishopric ward inherits creation rights through those branches. The SPA's `allowedScopesFor` filter (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer.
 
 #### Bootstrap-admin gate
@@ -909,10 +912,12 @@ The other wizard-adjacent collections (access, seats, requests, calling template
 | `syncManagersClaims` | Firestore write on `stakes/{sid}/kindooManagers/{memberCanonical}` | Recomputes `stakes[sid].manager` claim; revokes |
 | `syncSuperadminClaims` | Firestore write on `platformSuperadmins/{canonicalEmail}` | Toggles `isPlatformSuperadmin` claim |
 | `auditTrigger` | Firestore write on `stakes/{sid}/{collection}/{docId}` for audited collections | Writes deterministic audit row to `stakes/{sid}/auditLog` |
-| `runImporter` | Cloud Scheduler hourly + manager callable | Reads LCR Sheet, applies diff against access + seats per stake whose schedule matches |
 | `runExpiry` | Cloud Scheduler hourly + manager callable | Scans seats with type='temp' and end_date<today, deletes |
-| `notifyOnRequestWrite` | Firestore write on `stakes/{sid}/requests/{rid}` | Sends SendGrid email per spec.md §9 (submit, complete, reject, cancel) |
+| `markRequestComplete` | Callable (manager-invoked) | Resolves seat slot, writes the add/edit, flips the request to `complete` in one transaction |
+| `syncApplyFix` | Callable (operator-invoked from the extension's Sync panel) | Applies one classifier-derived fix to `access` + `seats` via Admin SDK; sole auto-seat writer |
+| `notifyOnRequestWrite` | Firestore write on `stakes/{sid}/requests/{rid}` | Sends Resend email per spec.md §9 (submit, complete, reject, cancel) |
 | `notifyOnOverCap` | Firestore write on `stakes/{sid}` (`last_over_caps_json` change) | Sends over-cap warning email when the array goes from empty to non-empty |
+| `pushOnRequestSubmit` | Firestore write on `stakes/{sid}/requests/{rid}` (status=`pending` on create) | Fans FCM Web Push to active managers' subscribed devices |
 | `removeSeatOnRequestComplete` | Firestore write on `stakes/{sid}/requests/{rid}` (status flips to complete and type='remove') | Deletes the matching seat doc + writes audit (Admin SDK bypass for the deletion) |
 | `reconcileAuditGaps` | Cloud Scheduler nightly | Diffs entity collections vs auditLog; pages on gaps |
 
@@ -970,14 +975,14 @@ Q2 (duplicate manual/temp blocking), Q3 (multi-calling collapse + utilization re
 
 **Q21. `reconcileAuditGaps` cadence** — defaulted nightly. First signal of false positives may push to hourly.
 
-**Q22. Importer ward-vs-ward priority** — defaulted to alphabetical `ward_code`. Document or override.
+**Q22. Sync ward-vs-ward priority** — defaulted to alphabetical `ward_code`. Document or override.
 
 ### 8.6 What's effectively decided (not open)
 
 For completeness, here's what was actively considered and resolved during the conversation, so future readers don't reopen them by mistake:
 
 - **Q1 — Migration commitment (2026-04-27):** User committed to the Firebase migration on 2026-04-27. `docs/firebase-migration.md` is the active plan (rewritten from the prior Cloud Run + Express architecture to direct-to-Firestore + custom claims; the rewrite superseded the prior plan in the same file path).
-- **Audit-log strategy:** Option A (trigger-written audit, flat `auditLog` collection per stake) chosen over Option B (embedded `history` subcollections with `getAfter()` rules). Reasoning: B's atomicity advantage applies only to client writes; Admin SDK writes (importer, expiry) bypass rules either way. Option D (best-effort + nightly reconciliation) kept as fallback.
+- **Audit-log strategy:** Option A (trigger-written audit, flat `auditLog` collection per stake) chosen over Option B (embedded `history` subcollections with `getAfter()` rules). Reasoning: B's atomicity advantage applies only to client writes; Admin SDK writes (Sync's `syncApplyFix`, expiry, request-completion callables) bypass rules either way. Option D (best-effort + nightly reconciliation) kept as fallback.
 - **Seat ID format:** canonical email. Not `{type}__{scope}__{canonical}`, not UUIDs.
 - **Access ID format:** canonical email. Not composite key.
 - **Source-row hash:** dropped. Doc ID is the natural key.
