@@ -25,7 +25,6 @@ import {
   completeSignInWithEmailLink,
   isSignInWithEmailLink,
   peekStashedEmail,
-  readAndClearStashedEmail,
 } from '../../features/auth/signIn';
 
 export const Route = createFileRoute('/auth/email-link')({
@@ -52,7 +51,15 @@ function EmailLinkActionPage() {
         if (!cancelled) setState({ kind: 'not-a-link' });
         return;
       }
-      const stashed = readAndClearStashedEmail();
+      // Peek (do NOT clear) — under React 18 StrictMode this effect
+      // double-mounts in dev. A destructive read on the first mount
+      // would race the second mount into the cross-device prompt
+      // branch even though sign-in was already in flight from the
+      // first mount; the prompt's eventual submit would then call
+      // `signInWithEmailLink` against a spent `oobCode`. Clearing
+      // only on the resolved success / error paths makes the effect
+      // idempotent.
+      const stashed = peekStashedEmail();
       if (!stashed) {
         // Cross-device — user typed the email on one device, opened
         // the link on another. Prompt for it; the user resolves the
@@ -63,6 +70,10 @@ function EmailLinkActionPage() {
       if (!cancelled) setState({ kind: 'signing-in' });
       try {
         await completeSignInWithEmailLink(stashed, href);
+        // Success path — clear the stash now that the link has been
+        // redeemed. Safe to call even if a parallel mount already
+        // cleared it (localStorage.removeItem is idempotent).
+        clearStashedEmail();
         if (!cancelled) {
           navigate({ to: '/', replace: true }).catch(() => {
             // Same swallow as the gate in routes/index.tsx — the
@@ -71,6 +82,9 @@ function EmailLinkActionPage() {
           });
         }
       } catch (err) {
+        // Failure path — clear the stash so a retry / re-send flow
+        // doesn't carry the spent value forward.
+        clearStashedEmail();
         const message = err instanceof Error ? err.message : String(err);
         if (!cancelled) setState({ kind: 'error', message });
       }

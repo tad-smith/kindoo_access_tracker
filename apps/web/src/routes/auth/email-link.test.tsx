@@ -10,20 +10,23 @@
 //     branch.
 //   - completeSignInWithEmailLink rejections (expired / malformed /
 //     mismatch / network) → error branch with a "Send a new link" link.
+//   - StrictMode double-mount idempotency (PR #140 reviewer Fix 1):
+//     the effect's stash read does not consume the value, so the
+//     second mount does not slip into the cross-device prompt while
+//     the first mount's `completeSignInWithEmailLink` is still in flight.
 
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const isSignInWithEmailLinkMock = vi.fn();
-const readAndClearStashedEmailMock = vi.fn<() => string | null>();
 const peekStashedEmailMock = vi.fn<() => string | null>();
 const clearStashedEmailMock = vi.fn();
 const completeSignInWithEmailLinkMock = vi.fn();
 
 vi.mock('../../features/auth/signIn', () => ({
   isSignInWithEmailLink: (href: string) => isSignInWithEmailLinkMock(href),
-  readAndClearStashedEmail: () => readAndClearStashedEmailMock(),
   peekStashedEmail: () => peekStashedEmailMock(),
   clearStashedEmail: () => clearStashedEmailMock(),
   completeSignInWithEmailLink: (email: string, href: string) =>
@@ -75,13 +78,11 @@ function setHref(href: string) {
 
 beforeEach(() => {
   isSignInWithEmailLinkMock.mockReset();
-  readAndClearStashedEmailMock.mockReset();
   peekStashedEmailMock.mockReset();
   clearStashedEmailMock.mockReset();
   completeSignInWithEmailLinkMock.mockReset();
   navigateMock.mockClear();
   navigateMock.mockResolvedValue(undefined);
-  readAndClearStashedEmailMock.mockReturnValue(null);
   peekStashedEmailMock.mockReturnValue(null);
 });
 
@@ -108,9 +109,9 @@ describe('/auth/email-link', () => {
 
   it('happy path — stashed email present → calls completeSignInWithEmailLink and navigates to /', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
-    isSignInWithEmailLinkMock.mockReturnValueOnce(true);
-    readAndClearStashedEmailMock.mockReturnValueOnce('zach@example.com');
-    completeSignInWithEmailLinkMock.mockResolvedValueOnce({ uid: 'u1' });
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue('zach@example.com');
+    completeSignInWithEmailLinkMock.mockResolvedValue({ uid: 'u1' });
 
     render(<EmailLinkRoute />);
 
@@ -121,12 +122,15 @@ describe('/auth/email-link', () => {
       ),
     );
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true }));
+    // Clear happens on the success path so a future link's stash
+    // doesn't carry forward.
+    await waitFor(() => expect(clearStashedEmailMock).toHaveBeenCalled());
   });
 
   it('cross-device branch — no stashed email → renders the email prompt', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
-    isSignInWithEmailLinkMock.mockReturnValueOnce(true);
-    readAndClearStashedEmailMock.mockReturnValueOnce(null);
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue(null);
 
     render(<EmailLinkRoute />);
 
@@ -138,8 +142,8 @@ describe('/auth/email-link', () => {
 
   it('cross-device branch — submitting the prompt completes sign-in and navigates to /', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
-    isSignInWithEmailLinkMock.mockReturnValueOnce(true);
-    readAndClearStashedEmailMock.mockReturnValueOnce(null);
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue(null);
     completeSignInWithEmailLinkMock.mockResolvedValueOnce({ uid: 'u1' });
 
     render(<EmailLinkRoute />);
@@ -159,8 +163,8 @@ describe('/auth/email-link', () => {
 
   it('cross-device branch — refuses to submit an empty email', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
-    isSignInWithEmailLinkMock.mockReturnValueOnce(true);
-    readAndClearStashedEmailMock.mockReturnValueOnce(null);
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue(null);
 
     render(<EmailLinkRoute />);
     const user = userEvent.setup();
@@ -173,9 +177,9 @@ describe('/auth/email-link', () => {
 
   it('error branch — expired link surfaces the SDK error and renders the re-send link', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
-    isSignInWithEmailLinkMock.mockReturnValueOnce(true);
-    readAndClearStashedEmailMock.mockReturnValueOnce('zach@example.com');
-    completeSignInWithEmailLinkMock.mockRejectedValueOnce(
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue('zach@example.com');
+    completeSignInWithEmailLinkMock.mockRejectedValue(
       new Error('Firebase: Error (auth/invalid-action-code).'),
     );
 
@@ -186,13 +190,16 @@ describe('/auth/email-link', () => {
     const resend = screen.getByRole('link', { name: /Send a new link/i });
     expect(resend).toHaveAttribute('href', '/');
     expect(navigateMock).not.toHaveBeenCalled();
+    // Clear runs on the failure path so a retry / re-send flow doesn't
+    // carry the spent value forward.
+    await waitFor(() => expect(clearStashedEmailMock).toHaveBeenCalled());
   });
 
   it('error branch — malformed URL surfaces the SDK error', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
-    isSignInWithEmailLinkMock.mockReturnValueOnce(true);
-    readAndClearStashedEmailMock.mockReturnValueOnce('zach@example.com');
-    completeSignInWithEmailLinkMock.mockRejectedValueOnce(
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue('zach@example.com');
+    completeSignInWithEmailLinkMock.mockRejectedValue(
       new Error('Firebase: Error (auth/argument-error).'),
     );
 
@@ -204,9 +211,9 @@ describe('/auth/email-link', () => {
 
   it('error branch — email mismatch surfaces the SDK error', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
-    isSignInWithEmailLinkMock.mockReturnValueOnce(true);
-    readAndClearStashedEmailMock.mockReturnValueOnce('zach@example.com');
-    completeSignInWithEmailLinkMock.mockRejectedValueOnce(
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue('zach@example.com');
+    completeSignInWithEmailLinkMock.mockRejectedValue(
       new Error('Firebase: Error (auth/invalid-email).'),
     );
 
@@ -218,9 +225,9 @@ describe('/auth/email-link', () => {
 
   it('error branch — network failure surfaces the SDK error', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
-    isSignInWithEmailLinkMock.mockReturnValueOnce(true);
-    readAndClearStashedEmailMock.mockReturnValueOnce('zach@example.com');
-    completeSignInWithEmailLinkMock.mockRejectedValueOnce(
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue('zach@example.com');
+    completeSignInWithEmailLinkMock.mockRejectedValue(
       new Error('Firebase: Error (auth/network-request-failed).'),
     );
 
@@ -232,16 +239,50 @@ describe('/auth/email-link', () => {
 
   it('cross-device prompt prefills the email field from peekStashedEmail when present', async () => {
     setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
-    isSignInWithEmailLinkMock.mockReturnValueOnce(true);
-    // readAndClear returns null (so the cross-device branch fires) but
-    // peek returns a value (e.g. another tab still has it stashed) —
-    // the prompt should prefill from that peek.
-    readAndClearStashedEmailMock.mockReturnValueOnce(null);
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    // For the prompt to render we need the effect's peek call to
+    // return null. The CrossDevicePrompt subcomponent then calls peek
+    // again to populate `defaultValue`. The two calls run in sequence
+    // and we want the second one to return the stash, so wire that
+    // sequence with mockReturnValueOnce.
+    peekStashedEmailMock.mockReturnValueOnce(null);
     peekStashedEmailMock.mockReturnValueOnce('zach@example.com');
 
     render(<EmailLinkRoute />);
 
     const input = (await screen.findByLabelText(/Email address/i)) as HTMLInputElement;
     expect(input.value).toBe('zach@example.com');
+  });
+
+  // Regression — PR #140 reviewer Fix 1. Under React 18 StrictMode the
+  // effect double-mounts in dev. The previous implementation destructive-
+  // read localStorage in the effect, so mount 2 saw an empty stash and
+  // slipped into the cross-device prompt while mount 1's
+  // `completeSignInWithEmailLink` was still resolving. The fix uses
+  // `peekStashedEmail` (non-destructive) + clears on success/failure so
+  // the effect is idempotent: both mounts see the same stash, both
+  // dispatch `completeSignInWithEmailLink` (the SDK happily handles a
+  // duplicate redemption), and the prompt does NOT render.
+  it('does not render the cross-device prompt when the effect double-mounts under StrictMode', async () => {
+    setHref('https://example.com/auth/email-link?apiKey=abc&oobCode=xyz');
+    isSignInWithEmailLinkMock.mockReturnValue(true);
+    peekStashedEmailMock.mockReturnValue('zach@example.com');
+    completeSignInWithEmailLinkMock.mockResolvedValue({ uid: 'u1' });
+
+    render(
+      <StrictMode>
+        <EmailLinkRoute />
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true }));
+
+    // Both mounts triggered the sign-in path with the SAME email;
+    // neither slipped into the cross-device prompt.
+    expect(screen.queryByText(/Confirm your email/i)).toBeNull();
+    expect(completeSignInWithEmailLinkMock).toHaveBeenCalledWith(
+      'zach@example.com',
+      'https://example.com/auth/email-link?apiKey=abc&oobCode=xyz',
+    );
   });
 });

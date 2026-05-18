@@ -27,7 +27,7 @@ import { useRef, useState, type FormEvent } from 'react';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { BrandIcon } from '../../components/layout/BrandIcon';
-import { sendMagicLink } from './signIn';
+import { clearStashedEmail, sendMagicLink } from './signIn';
 
 // Sentinel: until the extension's Web Store listing is published, this
 // stays pointed at the generic Web Store root. The footer link is
@@ -87,6 +87,13 @@ export function SignInPage() {
   }
 
   function handleUseDifferentEmail() {
+    // Clear the previously stashed email so a still-in-flight first
+    // link (already in the user's inbox) routes through the action
+    // handler's cross-device prompt rather than completing against
+    // the new email — otherwise `signInWithEmailLink(B, hrefForA)`
+    // rejects with `auth/invalid-email` and turns a recoverable typo
+    // into a hard error.
+    clearStashedEmail();
     setSentTo(null);
     setError(null);
     setEmail('');
@@ -96,7 +103,11 @@ export function SignInPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-[#f7f8fb] text-[color:var(--kd-fg-1)]">
-      <HomeTopBar onSignIn={focusHeroForm} />
+      {/* Hide the topbar Sign-in affordance once the hero is in the
+          confirmation state — the form is unmounted, so clicking the
+          topbar would silently no-op against a null ref. The user is
+          mid-flow and already knows where they are. */}
+      <HomeTopBar onSignIn={focusHeroForm} hidden={sentTo !== null} />
       <main className="flex-1">
         <HomeHero
           email={email}
@@ -118,9 +129,10 @@ export function SignInPage() {
 
 interface TopBarProps {
   onSignIn: () => void;
+  hidden: boolean;
 }
 
-function HomeTopBar({ onSignIn }: TopBarProps) {
+function HomeTopBar({ onSignIn, hidden }: TopBarProps) {
   return (
     <header className="sticky top-0 z-20 border-b border-[color:var(--kd-chrome-border)] bg-white">
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-5 py-3">
@@ -130,10 +142,13 @@ function HomeTopBar({ onSignIn }: TopBarProps) {
         </div>
         {/* Topbar Sign-in is a secondary affordance — it scrolls /
             focuses the hero form rather than initiating its own sign-in
-            flow. The hero form is the canonical surface. */}
-        <Button variant="secondary" onClick={onSignIn}>
-          Sign in
-        </Button>
+            flow. Hidden once the hero swaps to the confirmation state
+            (the form is unmounted; clicking would silently no-op). */}
+        {hidden ? null : (
+          <Button variant="secondary" onClick={onSignIn}>
+            Sign in
+          </Button>
+        )}
       </div>
     </header>
   );

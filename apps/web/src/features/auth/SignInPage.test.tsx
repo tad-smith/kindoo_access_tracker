@@ -22,9 +22,11 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const sendMagicLinkMock = vi.fn();
+const clearStashedEmailMock = vi.fn();
 
 vi.mock('./signIn', () => ({
   sendMagicLink: (email: string) => sendMagicLinkMock(email),
+  clearStashedEmail: () => clearStashedEmailMock(),
 }));
 
 // `<Link>` from TanStack Router needs a router context. The homepage
@@ -55,6 +57,7 @@ import { SignInPage } from './SignInPage';
 
 beforeEach(() => {
   sendMagicLinkMock.mockReset();
+  clearStashedEmailMock.mockReset();
   window.localStorage.clear();
 });
 
@@ -183,6 +186,56 @@ describe('SignInPage — email magic link', () => {
     expect(screen.getByLabelText(/Email address/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Email address/i)).toHaveValue('');
     expect(screen.getByRole('button', { name: /Send me a sign-in link/i })).toBeInTheDocument();
+  });
+
+  // Regression — see PR #140 reviewer Fix 2. The previous stashed
+  // email must be cleared when the user resets to a different email,
+  // so any prior link already in their inbox routes through the
+  // action handler's cross-device prompt rather than completing
+  // against the new email (which would reject with `auth/invalid-email`).
+  it('clears the stashed email when the user clicks "Use a different email"', async () => {
+    sendMagicLinkMock.mockResolvedValueOnce(undefined);
+    render(<SignInPage />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/Email address/i), 'first@example.com');
+    await user.click(screen.getByRole('button', { name: /Send me a sign-in link/i }));
+    await screen.findByText(/Check your email/i);
+
+    expect(clearStashedEmailMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: /Use a different email/i }));
+    expect(clearStashedEmailMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression — see PR #140 reviewer Fix 3. The topbar "Sign in"
+  // button becomes a dead click once the hero swaps to the
+  // confirmation state (the form is unmounted, so focusing it is a
+  // null-ref no-op). Hide it instead.
+  it('hides the topbar "Sign in" button once the hero shows the confirmation state', async () => {
+    sendMagicLinkMock.mockResolvedValueOnce(undefined);
+    render(<SignInPage />);
+    const user = userEvent.setup();
+
+    // Topbar present before submit.
+    expect(screen.getByRole('button', { name: /^Sign in$/i })).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/Email address/i), 'zach@example.com');
+    await user.click(screen.getByRole('button', { name: /Send me a sign-in link/i }));
+    await screen.findByText(/Check your email/i);
+
+    expect(screen.queryByRole('button', { name: /^Sign in$/i })).toBeNull();
+  });
+
+  it('re-renders the topbar "Sign in" button after "Use a different email"', async () => {
+    sendMagicLinkMock.mockResolvedValueOnce(undefined);
+    render(<SignInPage />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/Email address/i), 'zach@example.com');
+    await user.click(screen.getByRole('button', { name: /Send me a sign-in link/i }));
+    await screen.findByText(/Check your email/i);
+    expect(screen.queryByRole('button', { name: /^Sign in$/i })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /Use a different email/i }));
+    expect(screen.getByRole('button', { name: /^Sign in$/i })).toBeInTheDocument();
   });
 
   it('disables the submit button while the request is in flight', async () => {
