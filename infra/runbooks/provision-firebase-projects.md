@@ -29,7 +29,7 @@ You'll be using the Google account you're already signed into when you visit <ht
 
 ### 0.2 Billing account
 
-Firebase's free Spark plan does not allow Cloud Functions deploys, Cloud Scheduler jobs, or the Sheets API call the importer will eventually make. Per F1 in `docs/firebase-migration.md`, this stack requires the **Blaze (pay-as-you-go) plan** on both projects. Blaze requires a Google Cloud billing account with a payment method attached.
+Firebase's free Spark plan does not allow Cloud Functions deploys, Cloud Scheduler jobs, Cloud Run invocations (the v2 functions runtime), or Secret Manager access. Per F1 in `docs/firebase-migration.md`, this stack requires the **Blaze (pay-as-you-go) plan** on both projects. Blaze requires a Google Cloud billing account with a payment method attached.
 
 To check:
 
@@ -225,7 +225,6 @@ gcloud services enable \
   cloudscheduler.googleapis.com \
   fcm.googleapis.com \
   fcmregistrations.googleapis.com \
-  sheets.googleapis.com \
   secretmanager.googleapis.com \
   eventarc.googleapis.com \
   pubsub.googleapis.com
@@ -241,13 +240,12 @@ What each API does for us:
 | `identitytoolkit.googleapis.com` | Firebase Authentication backend. |
 | `firebase.googleapis.com` | Firebase project metadata + management API; the CLI uses it. |
 | `firebasehosting.googleapis.com` | Hosts the SPA at `kindoo-staging.web.app` with auto-provisioned HTTPS (per F10). |
-| `cloudfunctions.googleapis.com` | Cloud Functions 2nd-gen — auth triggers, claim-sync, audit fan-out, importer, expiry. |
+| `cloudfunctions.googleapis.com` | Cloud Functions 2nd-gen — auth triggers, claim-sync, audit fan-out, expiry, email + push notifications. |
 | `cloudbuild.googleapis.com` | Cloud Functions 2nd-gen builds via Cloud Build under the hood. |
 | `run.googleapis.com` | Cloud Functions 2nd-gen *runs* on Cloud Run (per F1). |
-| `cloudscheduler.googleapis.com` | Hourly importer + hourly expiry + nightly audit-reconcile (per F8 / Phase 8). |
+| `cloudscheduler.googleapis.com` | Hourly expiry + nightly audit-reconcile (per F8). |
 | `fcm.googleapis.com` | Firebase Cloud Messaging — push notifications (Phase 10). |
 | `fcmregistrations.googleapis.com` | FCM device-registration API (Phase 10). |
-| `sheets.googleapis.com` | The importer reads the LCR callings sheet (Phase 8). |
 | `secretmanager.googleapis.com` | Resend API key + any other secrets (Phase 9 onward). |
 | `eventarc.googleapis.com` | Firestore-trigger plumbing for 2nd-gen Functions (used by audit + claim-sync). |
 | `pubsub.googleapis.com` | Pub/Sub backs Cloud Scheduler delivery to Pub/Sub-targeted Functions; required even if jobs use HTTP targets. |
@@ -313,7 +311,7 @@ Now configure authorized domains:
 
 ### 1.8 Create the runtime service account `kindoo-app`
 
-This is the explicit-credentials service account for any code path that uses the Admin SDK with a service-account key (notably the Sheets API client in the importer; Phase 8 work). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
+This is the service account pinned by the nine Cloud Functions that need a non-default runtime identity — all three notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`), both scheduled jobs (`runExpiry`, `reconcileAuditGaps`), and four callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`). It also runs the weekly Firestore export Cloud Scheduler job (created in §3.4 below). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
 
 ```bash
 gcloud iam service-accounts create kindoo-app \
@@ -360,7 +358,7 @@ This trips people up the first time. Cloud Functions 2nd-gen runs on Cloud Run, 
 
 For staging, substituting your project number from step 1.2, that's e.g., `123456789012-compute@developer.gserviceaccount.com`.
 
-`kindoo-app` is the SA for explicit-credentials operations (where code instantiates an Admin SDK client with `kindoo-app` as the impersonated identity, e.g., the Sheets API client). The Functions runtime itself uses the compute SA.
+`kindoo-app` is the SA pinned by the nine Cloud Functions enumerated in step 1.8 (notification triggers, scheduled jobs, and callables that need a non-default identity). Functions that don't pin an SA fall back to the compute SA.
 
 In Phase 1 the function we deploy (`hello`) needs no special permissions — it's a pure callable returning `{version, builtAt, env}`. From Phase 2 onward, when `auth.user().onCreate` writes to Firestore, the compute SA must have `roles/datastore.user` and the Functions deploy will fail without it. Add it now while you're already in IAM:
 
@@ -876,7 +874,6 @@ Both should succeed. The pipeline middle-steps are blocked until later phases.
 ## What this runbook does NOT cover
 
 - **Custom domain (B2 / F17)** — `stakebuildingaccess.org` chosen 2026-04-27; registration + DNS records land separately in B2 alongside Resend domain verification. Lands at the Firebase Hosting layer in Phase 11.
-- **LCR Sheet sharing for the importer (B4)** — Phase 8.
 - **Resend domain verification (B2 / F16)** — Phase 9.
 - **Real Firestore data** — Phase 11 cutover via `infra/scripts/migrate-sheet-to-firestore.ts`.
 - **CI deploy automation** — operator-triggered through the migration period; CI deploys land post-Phase-11.

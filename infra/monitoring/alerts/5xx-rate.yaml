@@ -28,7 +28,7 @@ documentation:
 
     Common causes:
       - Bug in a recently-deployed function (check recent deploys)
-      - Downstream dependency (Sheets API, Resend) returning errors
+      - Downstream dependency (Resend, FCM) returning errors
       - Quota or rate-limit hit
   mimeType: text/markdown
 combiner: OR
