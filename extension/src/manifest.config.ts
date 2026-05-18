@@ -45,7 +45,13 @@ export default defineManifest(({ mode }) => {
   const isStaging = mode === 'staging';
   const name = env.VITE_EXTENSION_NAME || DEFAULT_NAME;
   const oauthClientId = env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? '';
-  const extensionKey = env.VITE_EXTENSION_KEY ?? '';
+  // Chrome Web Store rejects packages that carry a `key` field — it
+  // assigns the extension ID from the upload itself. Set
+  // `VITE_OMIT_KEY=true` when producing the Web Store zip; leave
+  // unset for local sideload + unpacked dev so the deterministic ID
+  // (pinned via the keypair) persists across rebuilds.
+  const omitKey = env.VITE_OMIT_KEY === 'true';
+  const extensionKey = omitKey ? '' : (env.VITE_EXTENSION_KEY ?? '');
 
   const iconSuffix = isStaging ? '-staging' : '';
   const icons = {
@@ -59,7 +65,7 @@ export default defineManifest(({ mode }) => {
     name,
     short_name: 'SBA Helper',
     description:
-      'Surfaces pending Stake Building Access requests in a slide-over panel on Kindoo so a Kindoo Manager can work the queue alongside the Kindoo admin UI.',
+      'Surfaces pending Stake Building Access requests in a side panel on Kindoo so Kindoo Managers can provision access.',
     version: '1.0.0',
     // `key` pins the extension ID across rebuilds when set. Omit
     // when unset so Chrome auto-assigns a random ID for first-time
