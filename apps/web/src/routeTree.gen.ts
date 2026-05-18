@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthEmailLinkRouteImport } from './routes/auth/email-link'
 import { Route as AuthedNotificationsRouteImport } from './routes/_authed/notifications'
 import { Route as AuthedNewRouteImport } from './routes/_authed/new'
 import { Route as AuthedMyRequestsRouteImport } from './routes/_authed/my-requests'
@@ -41,6 +42,11 @@ const AuthedRoute = AuthedRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthEmailLinkRoute = AuthEmailLinkRouteImport.update({
+  id: '/auth/email-link',
+  path: '/auth/email-link',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthedNotificationsRoute = AuthedNotificationsRouteImport.update({
@@ -131,6 +137,7 @@ export interface FileRoutesByFullPath {
   '/my-requests': typeof AuthedMyRequestsRoute
   '/new': typeof AuthedNewRoute
   '/notifications': typeof AuthedNotificationsRoute
+  '/auth/email-link': typeof AuthEmailLinkRoute
   '/admin/migrate': typeof AuthedAdminMigrateRoute
   '/bishopric/new': typeof AuthedBishopricNewRoute
   '/bishopric/roster': typeof AuthedBishopricRosterRoute
@@ -151,6 +158,7 @@ export interface FileRoutesByTo {
   '/my-requests': typeof AuthedMyRequestsRoute
   '/new': typeof AuthedNewRoute
   '/notifications': typeof AuthedNotificationsRoute
+  '/auth/email-link': typeof AuthEmailLinkRoute
   '/admin/migrate': typeof AuthedAdminMigrateRoute
   '/bishopric/new': typeof AuthedBishopricNewRoute
   '/bishopric/roster': typeof AuthedBishopricRosterRoute
@@ -173,6 +181,7 @@ export interface FileRoutesById {
   '/_authed/my-requests': typeof AuthedMyRequestsRoute
   '/_authed/new': typeof AuthedNewRoute
   '/_authed/notifications': typeof AuthedNotificationsRoute
+  '/auth/email-link': typeof AuthEmailLinkRoute
   '/_authed/admin/migrate': typeof AuthedAdminMigrateRoute
   '/_authed/bishopric/new': typeof AuthedBishopricNewRoute
   '/_authed/bishopric/roster': typeof AuthedBishopricRosterRoute
@@ -195,6 +204,7 @@ export interface FileRouteTypes {
     | '/my-requests'
     | '/new'
     | '/notifications'
+    | '/auth/email-link'
     | '/admin/migrate'
     | '/bishopric/new'
     | '/bishopric/roster'
@@ -215,6 +225,7 @@ export interface FileRouteTypes {
     | '/my-requests'
     | '/new'
     | '/notifications'
+    | '/auth/email-link'
     | '/admin/migrate'
     | '/bishopric/new'
     | '/bishopric/roster'
@@ -236,6 +247,7 @@ export interface FileRouteTypes {
     | '/_authed/my-requests'
     | '/_authed/new'
     | '/_authed/notifications'
+    | '/auth/email-link'
     | '/_authed/admin/migrate'
     | '/_authed/bishopric/new'
     | '/_authed/bishopric/roster'
@@ -255,6 +267,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthedRoute: typeof AuthedRouteWithChildren
   PrivacyRoute: typeof PrivacyRoute
+  AuthEmailLinkRoute: typeof AuthEmailLinkRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -278,6 +291,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/email-link': {
+      id: '/auth/email-link'
+      path: '/auth/email-link'
+      fullPath: '/auth/email-link'
+      preLoaderRoute: typeof AuthEmailLinkRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authed/notifications': {
@@ -440,6 +460,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthedRoute: AuthedRouteWithChildren,
   PrivacyRoute: PrivacyRoute,
+  AuthEmailLinkRoute: AuthEmailLinkRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
