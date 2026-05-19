@@ -12,10 +12,16 @@
 // inside the same transaction that writes the parent doc, so a
 // concurrent retry is safe.
 //
-// `bootstrap_admin_email`: stored TYPED (trimmed only — NOT
-// canonicalized). The `isBootstrapAdmin` rule compares typed against
-// `request.auth.token.email`; canonicalizing on write would silently
-// break the bootstrap-admin escape hatch (`firebase-schema.md` §4.1).
+// `bootstrap_admin_email`: stored lowercased — but ONLY case is
+// normalized; dots and `+suffix` are preserved verbatim. The
+// `isBootstrapAdmin` rule does a plain string compare against
+// `request.auth.token.email` (Firebase Auth always emits the email
+// claim lowercased), so case-normalizing on write closes the operator
+// typo where the form has `Foo@Bar` but Auth hands the rule
+// `foo@bar`. We do NOT call `canonicalEmail()` — that strips Gmail
+// dots and `+suffix`, which would silently break the bootstrap-admin
+// escape hatch for operators who actually use those address variants.
+// See F19 / `firebase-schema.md` §4.1 for the full rationale.
 //
 // `platformAuditLog`: written directly by this callable in the same
 // transaction as the parent doc — this is the one place a callable
@@ -84,7 +90,11 @@ export const createStake = onCall(
     if (stakeName.length === 0) {
       return { success: false, error: 'name_required' };
     }
-    const bootstrapAdminEmail = (data.bootstrap_admin_email ?? '').trim();
+    // Lowercase but do NOT canonicalize: dots and `+suffix` survive,
+    // case is normalized so the `isBootstrapAdmin` rule's plain-string
+    // compare against Firebase Auth's (always-lowercase) `email` claim
+    // can't be defeated by an operator typo like `Foo@Bar` in the form.
+    const bootstrapAdminEmail = (data.bootstrap_admin_email ?? '').trim().toLowerCase();
     if (bootstrapAdminEmail.length === 0) {
       return { success: false, error: 'email_required' };
     }

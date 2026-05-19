@@ -2,8 +2,9 @@
 // List page's Create Stake form (spec §5.4 / F19). Coverage: auth gate
 // on the `isPlatformSuperadmin` claim, slug derivation + collision
 // detection, soft-failure envelope on empty inputs / invalid slugs,
-// typed (NOT canonicalized) bootstrap email storage, ActorRef shape on
-// the bookkeeping fields, and `platformAuditLog` row emission.
+// lowercased-but-dots-and-+suffix-preserved bootstrap email storage,
+// ActorRef shape on the bookkeeping fields, and `platformAuditLog`
+// row emission.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -271,10 +272,14 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     expect(stake.timezone).toBe('America/Los_Angeles');
   });
 
-  it('stores bootstrap_admin_email TYPED (mixed-case, dots, +suffix preserved — NOT canonicalized)', async () => {
+  it('lowercases bootstrap_admin_email on write (case normalized; dots + +suffix preserved)', async () => {
     // Per F19 / firebase-schema.md §4.1: the isBootstrapAdmin rule
-    // compares typed against request.auth.token.email, so canonicalising
-    // here would silently break the bootstrap-admin escape hatch.
+    // does a plain string compare against request.auth.token.email,
+    // and Firebase Auth always emits the email claim lowercased.
+    // Case-normalize on write so an operator typo (`Foo@Bar`) can't
+    // defeat the gate. We do NOT call canonicalEmail() — that would
+    // strip Gmail dots and +suffix, silently breaking the escape
+    // hatch for operators who use those address variants.
     await createStake.run(
       callableReq({
         auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
@@ -286,9 +291,9 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     );
     const { db } = requireEmulators();
     const stake = (await db.doc('stakes/bootstrap-stake').get()).data() as Stake;
-    expect(stake.bootstrap_admin_email).toBe('Foo.Bar+wizard@Gmail.com');
-    // Sanity: the canonical form is `foobar@gmail.com`; verify the value
-    // is NOT that, i.e. the callable preserved the typed string.
+    // Lowercased — case normalized.
+    expect(stake.bootstrap_admin_email).toBe('foo.bar+wizard@gmail.com');
+    // Dots and +suffix survive (NOT the canonical 'foobar@gmail.com').
     expect(stake.bootstrap_admin_email).not.toBe('foobar@gmail.com');
   });
 
@@ -420,5 +425,37 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     // separator between an ISO-8601 prefix and a non-empty suffix.
     const docId = auditSnap.docs[0]!.id;
     expect(docId).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z_.+/);
+  });
+
+  it('lowercased bootstrap email lands identically on the stake doc and the audit `after`; actor stays the typed caller email', async () => {
+    // Round-trip the case-normalization through both writes:
+    //   - `stakes/{slug}.bootstrap_admin_email` is lowercased.
+    //   - `platformAuditLog.after.bootstrap_admin_email` mirrors that.
+    //   - `actor_email` is the CALLER's typed superadmin email — only
+    //     the stored bootstrap-admin field is normalized.
+    const TYPED_CALLER = 'Super@gmail.com';
+    await createStake.run(
+      callableReq({
+        auth: { email: TYPED_CALLER, isPlatformSuperadmin: true },
+        data: {
+          stake_name: 'Lowercase Email Stake',
+          bootstrap_admin_email: 'Foo.Bar+work@Gmail.com',
+        },
+      }),
+    );
+
+    const { db } = requireEmulators();
+    const stake = (await db.doc('stakes/lowercase-email-stake').get()).data() as Stake;
+    expect(stake.bootstrap_admin_email).toBe('foo.bar+work@gmail.com');
+
+    const auditSnap = await db.collection('platformAuditLog').get();
+    expect(auditSnap.size).toBe(1);
+    const row = auditSnap.docs[0]!.data() as PlatformAuditLog & { after: Record<string, unknown> };
+    expect(row.after['bootstrap_admin_email']).toBe('foo.bar+work@gmail.com');
+    // The caller's typed email lands on `actor_email` (display field);
+    // case-normalization on `bootstrap_admin_email` is unrelated to
+    // the audit's `actor_*` provenance fields.
+    expect(row.actor_email).toBe(TYPED_CALLER);
+    expect(row.actor_canonical).toBe('super@gmail.com');
   });
 });
