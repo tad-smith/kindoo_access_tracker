@@ -5,21 +5,28 @@
 // Soft-failure envelopes from the callable (`{success:false, error}`)
 // are surfaced as inline field errors against the field that owns the
 // problem; hard `HttpsError`s (caught from the SDK) become a toast.
-// `{success:true}` clears the form, fires a success toast, and the
-// hook's `onSuccess` invalidates the stakes query so the list re-
-// renders with the new row.
+// `{success:true}` clears the form and fires a success toast; the new
+// stake row arrives via the live `useStakes()` snapshot listener.
 //
 // Slug preview: the doc ID slug is derived from the typed stake name
 // using the same `buildingSlug` helper the callable applies. We show
 // it under the name field so the operator can sanity-check the
 // resulting URL before submitting.
+//
+// Timezone: rendered via the shared `TimezoneCombobox` (curated US
+// IANA list). The default is `America/Denver`; the operator picks
+// from the list. Server-side `invalid_timezone` validation stays on
+// the callable as defense-in-depth for non-SDK callers; the form-
+// error mapping for that code is preserved even though the UI can't
+// practically produce it.
 
 import { useMemo } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { buildingSlug, type CreateStakeError } from '@kindoo/shared';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { TimezoneCombobox } from '../../components/TimezoneCombobox';
 import { toast } from '../../lib/store/toast';
 import { useCreateStake } from './hooks';
 import { createStakeSchema, DEFAULT_TIMEZONE, type CreateStakeForm } from './schemas';
@@ -83,7 +90,7 @@ export function CreateStakeForm() {
       timezone: DEFAULT_TIMEZONE,
     },
   });
-  const { register, handleSubmit, watch, reset, setError, formState } = form;
+  const { register, control, handleSubmit, watch, reset, setError, formState } = form;
 
   const watchedName = watch('stake_name') ?? '';
   // Mirror the callable's slug rule. Reused at render so the preview
@@ -160,15 +167,20 @@ export function CreateStakeForm() {
         </p>
       ) : null}
 
-      <label className="flex flex-col gap-1">
+      <label className="flex flex-col gap-1" htmlFor="create-stake-timezone">
         <span className="text-sm font-medium">Timezone</span>
-        <Input
-          type="text"
-          autoComplete="off"
-          {...register('timezone')}
-          data-testid="create-stake-timezone"
+        <Controller
+          name="timezone"
+          control={control}
+          render={({ field }) => (
+            <TimezoneCombobox
+              id="create-stake-timezone"
+              value={field.value}
+              onChange={field.onChange}
+              data-testid="create-stake-timezone"
+            />
+          )}
         />
-        <span className="text-xs text-gray-500">IANA tz identifier (e.g. America/Denver).</span>
       </label>
       {formState.errors.timezone ? (
         <p className="kd-form-error" role="alert" data-testid="create-stake-timezone-error">

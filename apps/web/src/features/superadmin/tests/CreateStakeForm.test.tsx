@@ -5,13 +5,17 @@
 // or the Functions emulator.
 //
 // Coverage target:
-//   - Fields render with sensible defaults (timezone defaulted).
+//   - Fields render with sensible defaults (timezone defaulted via the
+//     shared TimezoneCombobox).
 //   - Empty `stake_name` is rejected client-side by the zod resolver.
 //   - Empty `bootstrap_admin_email` is rejected client-side.
 //   - Valid submit invokes the mutation with the expected payload.
+//   - Picking a different timezone from the combobox propagates into
+//     the submitted payload.
 //   - Each soft-fail error code (`name_required`, `email_required`,
-//     `slug_collision`, `invalid_slug`, `invalid_timezone`) surfaces
-//     as an inline message against the matching field.
+//     `invalid_email`, `slug_collision`, `invalid_slug`,
+//     `invalid_timezone`) surfaces as an inline message against the
+//     matching field.
 //   - `{success:true}` resets the form to empty + tz default and fires
 //     a success toast. The new stake row arrives via the live
 //     `useStakes()` snapshot listener; `useCreateStake` has no
@@ -53,10 +57,12 @@ describe('<CreateStakeForm />', () => {
     render(<CreateStakeForm />);
     const name = screen.getByTestId('create-stake-name') as HTMLInputElement;
     const email = screen.getByTestId('create-stake-email') as HTMLInputElement;
-    const tz = screen.getByTestId('create-stake-timezone') as HTMLInputElement;
+    const tz = screen.getByTestId('create-stake-timezone');
     expect(name.value).toBe('');
     expect(email.value).toBe('');
-    expect(tz.value).toBe(DEFAULT_TIMEZONE);
+    // The combobox trigger is a button; assert the rendered IANA label
+    // rather than a non-existent `.value`.
+    expect(tz).toHaveTextContent(DEFAULT_TIMEZONE);
   });
 
   it('blocks submit when stake_name is empty (zod resolver)', async () => {
@@ -123,18 +129,21 @@ describe('<CreateStakeForm />', () => {
     });
   });
 
-  it('omits an empty timezone from the callable payload', async () => {
+  it('propagates a timezone change picked from the combobox into the payload', async () => {
     mutateAsyncMock.mockResolvedValue({ success: true, stakeId: 'cottonwood-south-stake' });
     const user = userEvent.setup();
     render(<CreateStakeForm />);
     await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
     await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
-    await user.clear(screen.getByTestId('create-stake-timezone'));
+    // Open the combobox, pick a non-default zone, then submit.
+    await user.click(screen.getByTestId('create-stake-timezone'));
+    await user.click(await screen.findByTestId('create-stake-timezone-option-America/Chicago'));
     await user.click(screen.getByTestId('create-stake-submit'));
 
     expect(mutateAsyncMock).toHaveBeenCalledWith({
       stake_name: 'Cottonwood South Stake',
       bootstrap_admin_email: 'admin@example.com',
+      timezone: 'America/Chicago',
     });
   });
 
@@ -144,6 +153,11 @@ describe('<CreateStakeForm />', () => {
     render(<CreateStakeForm />);
     await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
     await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    // Pick a non-default zone first so we can confirm the reset rolls
+    // it back to DEFAULT_TIMEZONE rather than just leaving it where it
+    // already was.
+    await user.click(screen.getByTestId('create-stake-timezone'));
+    await user.click(await screen.findByTestId('create-stake-timezone-option-America/Chicago'));
     await user.click(screen.getByTestId('create-stake-submit'));
 
     // Wait for the post-submit state — toast fires after mutateAsync
@@ -152,9 +166,7 @@ describe('<CreateStakeForm />', () => {
     expect(toastMock).toHaveBeenCalledWith('Stake `cottonwood-south-stake` created.', 'success');
     expect((screen.getByTestId('create-stake-name') as HTMLInputElement).value).toBe('');
     expect((screen.getByTestId('create-stake-email') as HTMLInputElement).value).toBe('');
-    expect((screen.getByTestId('create-stake-timezone') as HTMLInputElement).value).toBe(
-      DEFAULT_TIMEZONE,
-    );
+    expect(screen.getByTestId('create-stake-timezone')).toHaveTextContent(DEFAULT_TIMEZONE);
   });
 
   it('surfaces `name_required` against the stake_name field', async () => {
@@ -189,6 +201,26 @@ describe('<CreateStakeForm />', () => {
     expect(toastMock).not.toHaveBeenCalled();
   });
 
+  it('surfaces `invalid_email` against the bootstrap_admin_email field', async () => {
+    // The form's zod resolver already blocks malformed addresses
+    // client-side; this exists as defense-in-depth for the server's
+    // own shape check (non-SDK callers / future zod-schema drift).
+    mutateAsyncMock.mockResolvedValue({
+      success: false,
+      error: 'invalid_email',
+    } as unknown as CreateStakeResult);
+    const user = userEvent.setup();
+    render(<CreateStakeForm />);
+    await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
+    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    await user.click(screen.getByTestId('create-stake-submit'));
+
+    expect(await screen.findByTestId('create-stake-email-error')).toHaveTextContent(
+      /not a valid email/i,
+    );
+    expect(toastMock).not.toHaveBeenCalled();
+  });
+
   it('surfaces `invalid_slug` against the stake_name field', async () => {
     mutateAsyncMock.mockResolvedValue({ success: false, error: 'invalid_slug' });
     const user = userEvent.setup();
@@ -218,13 +250,16 @@ describe('<CreateStakeForm />', () => {
   });
 
   it('surfaces `invalid_timezone` against the timezone field', async () => {
+    // The combobox restricts the picker to known-good IANA values, so
+    // this code is unreachable from the UI in practice — kept as a
+    // defense-in-depth assertion that the form-error mapping still
+    // surfaces correctly if a non-SDK caller (or a server-side change)
+    // produces it.
     mutateAsyncMock.mockResolvedValue({ success: false, error: 'invalid_timezone' });
     const user = userEvent.setup();
     render(<CreateStakeForm />);
     await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
     await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
-    await user.clear(screen.getByTestId('create-stake-timezone'));
-    await user.type(screen.getByTestId('create-stake-timezone'), 'Not/A_Real_TZ');
     await user.click(screen.getByTestId('create-stake-submit'));
 
     expect(await screen.findByTestId('create-stake-timezone-error')).toHaveTextContent(
