@@ -8,7 +8,7 @@
 // and a deep-link to that stake's normal landing page (the manager
 // Dashboard while the active-stake selector is still single-stake;
 // 12.4 turns the link into a stake-switch). The Create Stake form is
-// 12.3's deliverable — explicitly out of scope here.
+// rendered inline above the list.
 //
 // Stable order: ascending `created_at` (oldest first). At target scale
 // — a handful of stakes platform-wide — no pagination is needed.
@@ -19,6 +19,7 @@ import type { Stake } from '@kindoo/shared';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../lib/render/EmptyState';
 import { formatDate } from '../../lib/render/formatDate';
+import { CreateStakeForm } from './CreateStakeForm';
 import { useStakes } from './hooks';
 
 /**
@@ -50,6 +51,8 @@ export function SuperadminStakeListPage() {
     <section className="kd-page-medium" data-testid="superadmin-stake-list">
       <h1>Stake List</h1>
       <p className="kd-page-subtitle">Every stake on the platform.</p>
+
+      <CreateStakeForm />
 
       {stakes.isLoading || stakes.data === undefined ? (
         <LoadingSpinner variant="block" />
