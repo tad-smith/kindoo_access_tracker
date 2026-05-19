@@ -18,6 +18,7 @@ import {
   Bell,
   Building2,
   ClipboardList,
+  Globe2,
   Inbox,
   KeyRound,
   LayoutDashboard,
@@ -53,7 +54,7 @@ export type NavItem = NavLinkItem | NavActionItem;
 
 export interface NavSection {
   /** Stable key. Section header text doubles as the screen-reader label. */
-  key: 'quick-links' | 'rosters' | 'settings' | 'account';
+  key: 'quick-links' | 'rosters' | 'settings' | 'account' | 'superadmin';
   label: string;
   items: NavItem[];
 }
@@ -208,6 +209,21 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
     });
   }
 
+  // Superadmin section — gated strictly on the literal claim per
+  // `navigation-redesign.md` §8. A Kindoo Manager who is NOT a
+  // superadmin does not see this section even though they administer
+  // the rest of the app.
+  const superadmin: NavItem[] = [];
+  if (principal.isPlatformSuperadmin) {
+    superadmin.push({
+      kind: 'link',
+      key: 'superadmin-stakes',
+      label: 'Stake List',
+      to: '/superadmin/stakes',
+      icon: Globe2,
+    });
+  }
+
   const out: NavSection[] = [];
   if (quickLinks.length > 0) {
     out.push({ key: 'quick-links', label: 'Quick Links', items: quickLinks });
@@ -220,6 +236,9 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
   }
   if (account.length > 0) {
     out.push({ key: 'account', label: 'Account', items: account });
+  }
+  if (superadmin.length > 0) {
+    out.push({ key: 'superadmin', label: 'Superadmin', items: superadmin });
   }
   return out;
 }

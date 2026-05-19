@@ -157,6 +157,47 @@ describe('firestore.rules — stakes/{stakeId} parent doc', () => {
       const db = unauthedContext(env).firestore();
       await assertFails(db.doc(PATH).get());
     });
+
+    // Phase 12.2 — platform superadmin can read every stake's parent
+    // doc so the Stake List page (`/superadmin/stakes`) renders for the
+    // zero-role first-run state (superadmin holds no manager / stake /
+    // bishopric claim on any stake). `superadminContext` builds a token
+    // with `isPlatformSuperadmin: true` and NO `stakes` claim block, so
+    // `isAnyMember` returns false — this test exercises the new
+    // `isPlatformSuperadmin()` branch on the read predicate.
+    it('platform superadmin (no per-stake role) can read the parent stake doc', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = superadminContext(env).firestore();
+      await assertSucceeds(db.doc(PATH).get());
+    });
+
+    // Cross-stake variant: a superadmin reads a different stake's
+    // parent doc — proves the new branch is not stake-scoped.
+    it('platform superadmin can read any stake parent doc (cross-stake)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(OTHER_PATH)
+          .set(freshStakeDoc({ stake_id: OTHER_STAKE_ID }));
+      });
+      const db = superadminContext(env).firestore();
+      await assertSucceeds(db.doc(OTHER_PATH).get());
+    });
+
+    // Negative companion: an authed user without the
+    // `isPlatformSuperadmin` claim AND without any per-stake role is
+    // denied. This is the same surface the positive cases above
+    // exercise; the assertion proves the gate is the superadmin claim
+    // itself, not a side effect of being authed at all.
+    it('authed non-superadmin with no per-stake role is denied (negative for superadmin branch)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = outsiderContext(env, STAKE_ID).firestore();
+      await assertFails(db.doc(PATH).get());
+    });
   });
 
   describe('update', () => {

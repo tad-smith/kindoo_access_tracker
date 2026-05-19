@@ -115,6 +115,37 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     expect(sections.map((s) => s.key)).toContain('settings');
   });
 
+  it('Superadmin section appears for `isPlatformSuperadmin === true` with the Stake List entry', () => {
+    const sections = navSectionsForPrincipal(makePrincipal({ isPlatformSuperadmin: true }));
+    const superadmin = sections.find((s) => s.key === 'superadmin');
+    expect(superadmin).toBeDefined();
+    expect(superadmin?.items.map((i) => i.label)).toEqual(['Stake List']);
+    // Per `navigation-redesign.md` §8, Superadmin is the fifth (last) section.
+    expect(sections[sections.length - 1]?.key).toBe('superadmin');
+  });
+
+  it('Superadmin section is hidden for a Kindoo Manager who is not a superadmin', () => {
+    // The manager-superset is for stake/bishopric/manager gates — the
+    // Superadmin section is gated strictly on the literal claim.
+    const sections = navSectionsForPrincipal(makePrincipal({ managerStakes: ['csnorth'] }));
+    expect(sections.map((s) => s.key)).not.toContain('superadmin');
+  });
+
+  it('Superadmin section is hidden for users with no role at all', () => {
+    expect(navSectionsForPrincipal(makePrincipal()).map((s) => s.key)).not.toContain('superadmin');
+  });
+
+  it('Superadmin section is hidden for a bishopric- or stake-only user', () => {
+    expect(
+      navSectionsForPrincipal(makePrincipal({ bishopricWards: { csnorth: ['CO'] } })).map(
+        (s) => s.key,
+      ),
+    ).not.toContain('superadmin');
+    expect(
+      navSectionsForPrincipal(makePrincipal({ stakeMemberStakes: ['csnorth'] })).map((s) => s.key),
+    ).not.toContain('superadmin');
+  });
+
   it('items have unique keys', () => {
     const sections = navSectionsForPrincipal(
       makePrincipal({

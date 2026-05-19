@@ -28,6 +28,7 @@ import { Route as AuthedManagerAccessRouteImport } from './routes/_authed/manage
 import { Route as AuthedBishopricRosterRouteImport } from './routes/_authed/bishopric/roster'
 import { Route as AuthedBishopricNewRouteImport } from './routes/_authed/bishopric/new'
 import { Route as AuthedAdminMigrateRouteImport } from './routes/_authed/admin/migrate'
+import { Route as AuthedSuperadminStakesRouteImport } from './routes/_authed/superadmin/stakes'
 
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
@@ -124,6 +125,11 @@ const AuthedAdminMigrateRoute = AuthedAdminMigrateRouteImport.update({
   path: '/admin/migrate',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedSuperadminStakesRoute = AuthedSuperadminStakesRouteImport.update({
+  id: '/superadmin/stakes',
+  path: '/superadmin/stakes',
+  getParentRoute: () => AuthedRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -144,6 +150,7 @@ export interface FileRoutesByFullPath {
   '/stake/new': typeof AuthedStakeNewRoute
   '/stake/roster': typeof AuthedStakeRosterRoute
   '/stake/wards': typeof AuthedStakeWardsRoute
+  '/superadmin/stakes': typeof AuthedSuperadminStakesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -164,6 +171,7 @@ export interface FileRoutesByTo {
   '/stake/new': typeof AuthedStakeNewRoute
   '/stake/roster': typeof AuthedStakeRosterRoute
   '/stake/wards': typeof AuthedStakeWardsRoute
+  '/superadmin/stakes': typeof AuthedSuperadminStakesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -186,6 +194,7 @@ export interface FileRoutesById {
   '/_authed/stake/new': typeof AuthedStakeNewRoute
   '/_authed/stake/roster': typeof AuthedStakeRosterRoute
   '/_authed/stake/wards': typeof AuthedStakeWardsRoute
+  '/_authed/superadmin/stakes': typeof AuthedSuperadminStakesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -208,6 +217,7 @@ export interface FileRouteTypes {
     | '/stake/new'
     | '/stake/roster'
     | '/stake/wards'
+    | '/superadmin/stakes'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -228,6 +238,7 @@ export interface FileRouteTypes {
     | '/stake/new'
     | '/stake/roster'
     | '/stake/wards'
+    | '/superadmin/stakes'
   id:
     | '__root__'
     | '/'
@@ -249,6 +260,7 @@ export interface FileRouteTypes {
     | '/_authed/stake/new'
     | '/_authed/stake/roster'
     | '/_authed/stake/wards'
+    | '/_authed/superadmin/stakes'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -393,6 +405,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAdminMigrateRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/superadmin/stakes': {
+      id: '/_authed/superadmin/stakes'
+      path: '/superadmin/stakes'
+      fullPath: '/superadmin/stakes'
+      preLoaderRoute: typeof AuthedSuperadminStakesRouteImport
+      parentRoute: typeof AuthedRoute
+    }
   }
 }
 
@@ -412,6 +431,7 @@ interface AuthedRouteChildren {
   AuthedStakeNewRoute: typeof AuthedStakeNewRoute
   AuthedStakeRosterRoute: typeof AuthedStakeRosterRoute
   AuthedStakeWardsRoute: typeof AuthedStakeWardsRoute
+  AuthedSuperadminStakesRoute: typeof AuthedSuperadminStakesRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
@@ -430,6 +450,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedStakeNewRoute: AuthedStakeNewRoute,
   AuthedStakeRosterRoute: AuthedStakeRosterRoute,
   AuthedStakeWardsRoute: AuthedStakeWardsRoute,
+  AuthedSuperadminStakesRoute: AuthedSuperadminStakesRoute,
 }
 
 const AuthedRouteWithChildren =

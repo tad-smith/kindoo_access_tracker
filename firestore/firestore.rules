@@ -268,8 +268,20 @@ service cloud.firestore {
       // a narrow read-only loosening tied to the same time-bound
       // condition as `isBootstrapAdmin`; once setup completes, the
       // standard `isAnyMember` rule takes over again.
+      //
+      // Platform-superadmin read gate (Phase 12.2): a superadmin must
+      // be able to read every stake's parent doc to render the Stake
+      // List page at `/superadmin/stakes`. This covers the zero-role
+      // first-run state where the operator has just been seeded as a
+      // superadmin but holds no manager / stake / bishopric role on any
+      // stake — without this branch the page would render empty. The
+      // superadmin claim already gates `platformSuperadmins` and
+      // `platformAuditLog` reads; adding it here extends the same
+      // surface to the per-stake parent docs only (no subcollection
+      // widening — those stay member-gated).
       allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId)
-        || isSetupInProgressReadable(stakeId);
+        || isSetupInProgressReadable(stakeId)
+        || isPlatformSuperadmin();
       allow create: if isPlatformSuperadmin();
       // `kindoo_config` (extension v2.1) is manager-writable as part of
       // the standard stake update path. Validation enforces the field

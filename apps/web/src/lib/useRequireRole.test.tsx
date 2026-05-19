@@ -178,6 +178,29 @@ describe('useRequireRole', () => {
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
+  it('redirects a manager-without-superadmin from a platformSuperadmin-only gate', () => {
+    setPrincipal({
+      isAuthenticated: true,
+      managerStakes: [STAKE_ID],
+      isPlatformSuperadmin: false,
+    });
+    let captured: { ready: boolean; allowed: boolean } | null = null;
+    render(<Probe role="platformSuperadmin" onResult={(r) => (captured = r)} />);
+    expect(captured).toEqual({ ready: true, allowed: false });
+    expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true });
+  });
+
+  it('admits a platform superadmin to a platformSuperadmin-only gate', () => {
+    setPrincipal({
+      isAuthenticated: true,
+      isPlatformSuperadmin: true,
+    });
+    let captured: { ready: boolean; allowed: boolean } | null = null;
+    render(<Probe role="platformSuperadmin" onResult={(r) => (captured = r)} />);
+    expect(captured).toEqual({ ready: true, allowed: true });
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
   it('redirects when the principal holds none of an either-of role array', () => {
     setPrincipal({
       isAuthenticated: true,
@@ -234,6 +257,19 @@ describe('holdsAnyRole', () => {
     expect(holdsAnyRole(manager, ['manager'])).toBe(true);
     expect(holdsAnyRole(manager, ['stake'])).toBe(true);
     expect(holdsAnyRole(manager, ['bishopric'])).toBe(true);
+  });
+
+  it('does NOT let a manager-without-superadmin pass a platformSuperadmin-only gate', () => {
+    // The manager superset is for stake/bishopric/manager — the
+    // platformSuperadmin gate is strict because the surfaces behind
+    // it (Stake List, Create Stake) require the literal claim.
+    const manager = principal({ managerStakes: [STAKE_ID], isPlatformSuperadmin: false });
+    expect(holdsAnyRole(manager, ['platformSuperadmin'])).toBe(false);
+  });
+
+  it('still admits a true platform superadmin to a platformSuperadmin gate', () => {
+    const sa = principal({ isPlatformSuperadmin: true });
+    expect(holdsAnyRole(sa, ['platformSuperadmin'])).toBe(true);
   });
 
   it('does not let a manager in a different stake bypass STAKE_ID gates', () => {
