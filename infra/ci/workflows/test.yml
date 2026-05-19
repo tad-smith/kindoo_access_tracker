@@ -104,11 +104,6 @@ jobs:
         run: npx --yes firebase-tools emulators:exec --only firestore,auth "pnpm test:rules"
         continue-on-error: true
 
-      - name: Integration tests
-        id: integration
-        run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions "pnpm test:integration"
-        continue-on-error: true
-
       - name: Build functions for emulator
         id: build-functions
         # The Functions emulator loads compiled artefacts from
@@ -116,9 +111,13 @@ jobs:
         # "Could not detect runtime for functions at .../functions/lib"
         # and registers zero callables / triggers — every E2E spec that
         # invokes `installScheduledJobs` (or any other callable) then hits a
-        # not-found path. Predeploy hooks in firebase.json only fire on
-        # `firebase deploy`, not on `emulators:exec`, so we run the
-        # build explicitly here.
+        # not-found path, and integration tests that depend on real
+        # trigger firing (e.g. syncSuperadminClaims.e2e) see zero
+        # trigger executions. Predeploy hooks in firebase.json only
+        # fire on `firebase deploy`, not on `emulators:exec`, so we run
+        # the build explicitly here. Runs BEFORE Integration tests so
+        # the Functions emulator has triggers to fire when the
+        # integration step boots it.
         #
         # Synthesize functions/.env.kindoo-staging FIRST so the build
         # script copies it into functions/lib/. The real env file is
@@ -139,6 +138,11 @@ jobs:
           KINDOO_SKIP_CLAIM_SYNC=true
           EOF
           pnpm --filter @kindoo/functions build
+        continue-on-error: true
+
+      - name: Integration tests
+        id: integration
+        run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions "pnpm test:integration"
         continue-on-error: true
 
       - name: E2E tests

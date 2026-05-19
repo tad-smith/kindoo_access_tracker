@@ -39,7 +39,7 @@ A door-access tracker that manages Kindoo seat assignments across the wards of a
 - **Tests are non-negotiable.** Every workspace has a test suite that gates merges.
 - **Custom claims are the role-resolution source.** `usePrincipal()` (web) and `request.auth.token.stakes[stakeId]` (rules) are the only paths.
 - **Audit rows are server-written.** The parameterized `auditTrigger` Cloud Function fans audit rows for every entity write. Don't write audit rows from client or from non-audit Cloud Functions.
-- **`{stakeId}` parameterized from day one** (per F15). The hardcoded `'csnorth'` constant in `apps/web/src/lib/constants.ts` is going away in Phase 12's B.4 PR in favour of the active-stake selector — every new per-stake read consumes the active stake, not the constant.
+- **`{stakeId}` parameterized from day one** (per F15). The hardcoded `'csnorth'` constant in `apps/web/src/lib/constants.ts` is going away in Phase 12's 12.4 PR in favour of the active-stake selector — every new per-stake read consumes the active stake, not the constant.
 - **No secrets in code.** Secret Manager + env-var injection.
 
 ## Work discipline
@@ -69,7 +69,7 @@ A door-access tracker that manages Kindoo seat assignments across the wards of a
 
 **Open follow-ups:**
 
-- Phase 12 (multi-stake) — **active** as of 2026-05-18; ships as five sub-deliverables (B.1 → B.5). See `docs/firebase-migration.md` Phase 12 and T-46.
+- Phase 12 (multi-stake) — **active** as of 2026-05-18; ships as five sub-deliverables (12.1 → 12.5). See `docs/firebase-migration.md` Phase 12 and T-46.
 - B-1 — iPhone PWA notification deep-link.
 - T-26 — finish Phase 11 SA hardening (pin remaining functions to `kindoo-app@`, audit IAM, revoke project-default `roles/editor`).
 - Phase 10.6 (push expansion) — operator-deferred.
