@@ -38,7 +38,7 @@ A door-access tracker that manages Kindoo seat assignments across the wards of a
 - **TypeScript strict everywhere.**
 - **Tests are non-negotiable.** Every workspace has a test suite that gates merges.
 - **Custom claims are the role-resolution source.** `usePrincipal()` (web) and `request.auth.token.stakes[stakeId]` (rules) are the only paths.
-- **Audit rows are server-written.** The parameterized `auditTrigger` Cloud Function fans audit rows for every entity write. Don't write audit rows from client or from non-audit Cloud Functions.
+- **Audit rows are server-written.** The parameterized `auditTrigger` Cloud Function fans audit rows for every entity write. Don't write audit rows from client or from non-audit Cloud Functions. **Exception:** `createStake` writes the cross-stake `platformAuditLog` row directly (per F19). The `auditTrigger` only fans per-stake `auditLog`, not platform-level audit.
 - **`{stakeId}` parameterized from day one** (per F15). The hardcoded `'csnorth'` constant in `apps/web/src/lib/constants.ts` is going away in Phase 12's 12.4 PR in favour of the active-stake selector — every new per-stake read consumes the active stake, not the constant.
 - **No secrets in code.** Secret Manager + env-var injection.
 
