@@ -679,6 +679,7 @@ service cloud.firestore {
       // read every stake's parent doc, including the zero-role first-run case
       // where the superadmin holds no per-stake role on any stake.
       allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId)
+        || isSetupInProgressReadable(stakeId)
         || isPlatformSuperadmin();
       allow create: if isPlatformSuperadmin();
       allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
