@@ -4,11 +4,15 @@
 // invocation; the payload carries the operator's typed inputs and the
 // callable derives the doc-ID slug + writes the parent doc.
 //
-// `bootstrap_admin_email` is stored on the parent stake doc in TYPED
-// form (NOT canonicalized) per F19 / `firebase-schema.md` §4.1 — the
-// `isBootstrapAdmin` rule compares it against typed
-// `request.auth.token.email`, so canonicalizing here would silently
-// break the bootstrap-admin escape hatch.
+// `bootstrap_admin_email` is stored on the parent stake doc
+// lowercased on write; dots and `+suffix` are preserved verbatim
+// (NOT `canonicalEmail()`) per F19 / `firebase-schema.md` §4.1.
+// The `isBootstrapAdmin` rule compares against
+// `request.auth.token.email`, which Firebase Auth always emits
+// lowercased — so case must match. Dots and `+suffix` survive
+// because Google itself dedupes those at sign-in to the same
+// identity, keeping the Gmail escape hatch usable for operators
+// who actually rely on those address variants.
 //
 // Failure envelope: soft-fail with `{success:false, error}` for domain
 // misses (empty inputs, invalid email, invalid slug, invalid timezone,
@@ -19,7 +23,7 @@
 export type CreateStakeInput = {
   /** Display name — trimmed server-side. Non-empty required. */
   stake_name: string;
-  /** Typed bootstrap admin email — trimmed but NOT canonicalized. Non-empty required. */
+  /** Bootstrap admin email — trimmed + lowercased server-side; dots and `+suffix` preserved (NOT `canonicalEmail()`). Non-empty required. */
   bootstrap_admin_email: string;
   /** Optional IANA tz identifier. Defaults to `'America/Denver'` when absent. */
   timezone?: string;

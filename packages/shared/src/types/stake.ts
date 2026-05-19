@@ -52,7 +52,7 @@ export type Stake = {
   created_by: string;
 
   // ----- Setup -----
-  /** Typed email of the bootstrap admin (auto-added to kindooManagers on setup). */
+  /** Bootstrap admin email — stored lowercased; dots and `+suffix` preserved (NOT `canonicalEmail()`). Auto-added to kindooManagers on setup. See `docs/firebase-schema.md` §4.1. */
   bootstrap_admin_email: string;
   /** True iff the bootstrap wizard has completed — gates manager UI access. */
   setup_complete: boolean;

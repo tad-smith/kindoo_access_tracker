@@ -77,12 +77,18 @@ First docs pass (`8e4567d`):
 - `docs/spec.md` — §5.4 Create Stake paragraph rewritten to mention the timezone field, the shared `TimezoneCombobox`, and the soft-fail enumeration with defense-in-depth posture for `invalid_email` / `invalid_timezone`.
 - `docs/changelog/phase-12.3-create-stake.md` — this entry.
 
-Reviewer-driven follow-up docs pass (this commit; covers backend `35d576f` + web `1c2dea6` lockstep — see the "Reviewer-driven follow-up" subsection above):
+Reviewer-driven follow-up docs pass (commit `50529f9`; covers backend `35d576f` + web `1c2dea6` lockstep — see the "Reviewer-driven follow-up" subsection above):
 
 - `docs/firebase-schema.md` — §4.1 `bootstrap_admin_email` field comment rewritten from "typed form" to "stored with case lowercased; dots and `+suffix` preserved (NOT `canonicalEmail()`)" plus the rationale (`request.auth.token.email` is always lowercased; Gmail-dot / `+suffix` aliases must survive). §6.1 bootstrap-admin gate predicate text updated to drop "typed-form comparison" and explain the lowercase-on-write side. §6.1 operator pre-step note updated to point operator at lowercased seed values.
 - `docs/firebase-migration.md` — F19 row's `bootstrap_admin_email` clause rewritten with the lowercase-on-write rule + the explicit "NOT `canonicalEmail()`" carve-out. The F-decisions roll-up paragraph (item 2) mirrors the same rule.
 - `docs/spec.md` — §5.4 Create Stake paragraph rewritten to describe lowercase-on-write + the inline hint shipped under the email field. §10 setup-complete-gate description updated to drop "typed form" / "typed-form compare" framing in favour of the lowercase + plain string compare against `auth.token.email`. §10 operator pre-step note updated to match §6.1.
 - `docs/changelog/phase-12.3-create-stake.md` — this enumeration; the new "Reviewer-driven follow-up: bootstrap-email case normalization" subsection above.
+
+Second follow-up sweep (this commit; reviewer caught two shared-types JSDoc spots and a rules-file pre-step comment that the first pass missed — the JSDoc is the public contract a consumer reads first, so leaving "TYPED form" there would silently mislead future callers):
+
+- `packages/shared/src/types/createStake.ts` — header comment block (lines 7-11) rewritten from "stored in TYPED form (NOT canonicalized)" to the lowercase-on-write rule + the Auth-emission rationale + the Gmail escape-hatch carve-out. `CreateStakeInput.bootstrap_admin_email` field JSDoc tightened from "Typed bootstrap admin email — trimmed but NOT canonicalized" to "trimmed + lowercased server-side; dots and `+suffix` preserved (NOT `canonicalEmail()`)".
+- `packages/shared/src/types/stake.ts` — `Stake.bootstrap_admin_email` field JSDoc rewritten from "Typed email of the bootstrap admin" to the lowercase-on-write rule with a cross-reference to `firebase-schema.md` §4.1.
+- `firestore/firestore.rules:49` — operator pre-step comment updated in the same sweep (backend-engineer's parallel lane; lands separately).
 
 ## Test footprint
 
