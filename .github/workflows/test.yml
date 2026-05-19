@@ -145,6 +145,25 @@ jobs:
         #   that assert the real Firestore-write → Eventarc →
         #   `setCustomUserClaims` chain.
         #
+        #   CAVEAT — existing handler tests in `functions/tests/` are
+        #   now timing-sensitive under this env. Suites that
+        #   `auth.createUser(...)` (`onAuthUserCreate.test.ts`,
+        #   `syncSuperadminClaims.test.ts`, `syncAccessClaims.test.ts`,
+        #   `syncManagersClaims.test.ts`) used to rely on
+        #   `KINDOO_SKIP_CLAIM_SYNC=true` short-circuiting the
+        #   `applyClaims.ts` helpers, so the async `onAuthUserCreate`
+        #   trigger was a no-op and could not race their synchronous
+        #   `.run(event)` writes. With the flag unset, that trigger
+        #   now actually calls `setCustomUserClaims` in the background
+        #   — those suites pass today because Eventarc fan-out is
+        #   slower than the synchronous test body (~hundreds of ms
+        #   vs. multi-second delivery). The protection is now
+        #   timing-only. If a new handler test starts flaking around
+        #   claim values shortly after `createUser`, this is the
+        #   first thing to suspect; the fix is to switch to the
+        #   pre-seed-then-createUser pattern used in
+        #   `syncSuperadminClaims.e2e.test.ts`.
+        #
         # The Integration step below pins `--project demo-kindoo-tests`
         # so the Functions emulator loads the right env file; the E2E
         # step pins `--project kindoo-staging` to match

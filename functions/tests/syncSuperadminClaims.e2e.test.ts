@@ -89,40 +89,44 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     await clearEmulators();
   });
 
-  // 30s per-test timeout: vitest's default is 5s but the e2e cycle is
-  // doc-write → Firestore commit → Eventarc fan-out → Functions
-  // emulator runtime spin-up → setCustomUserClaims → admin-SDK
-  // getUser refresh, and the cold start on the Functions emulator's
-  // first trigger fire can chew through several seconds before the
-  // claim materialises. 30s gives plenty of headroom on a CI runner
-  // that's also booting other emulators; the polling loop inside the
-  // test exits as soon as the claim flips, so happy-path runtime is
-  // typically <2s.
+  // 50s per-test timeout. Vitest's default is 5s; observed CI run on
+  // PR #153 measured ~14.7s for Eventarc delete-event delivery alone,
+  // which makes the previous 30s/25s pair (~60% used) flake-prone if
+  // a future runner regresses or Eventarc emulator delivery slows.
+  // 50s per-test + 40s polling budget keeps headroom comfortable.
+  // The polling loop inside each test exits as soon as the claim
+  // flips, so happy-path runtime is still typically <2s.
 
   it(
     'mints isPlatformSuperadmin=true when a platformSuperadmins doc is created',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth, db } = requireEmulators();
       const typedEmail = 'Super.Admin@gmail.com';
       const canonical = 'superadmin@gmail.com';
 
       // Pre-seed `platformSuperadmins/{canonical}` BEFORE `createUser`
-      // so the `onAuthUserCreate` handler — which runs
-      // `seedClaimsFromRoleData` → reads `platformSuperadmins/{canonical}`
-      // — finds the doc and stamps `isPlatformSuperadmin: true` as part
-      // of the initial claim set. Without this pre-seed there is a
-      // race: `syncSuperadminClaims` (fired by the `platformSuperadmins`
-      // write) and `onAuthUserCreate` (fired by `createUser`) both
-      // race to call `setCustomUserClaims`, and whichever runs last
-      // wins. If `onAuthUserCreate` lands second it computes claims
-      // against an empty `platformSuperadmins` doc and stomps the
-      // freshly-minted superadmin flag. Pre-seeding makes
-      // `onAuthUserCreate` the deterministic source of truth and
-      // collapses the race. (The `syncSuperadminClaims` trigger still
-      // fires from the pre-seed write, but no-ops because
-      // `uidForCanonical` returns null — `userIndex/{canonical}`
-      // doesn't exist until `onAuthUserCreate` writes it.)
+      // so that the `onAuthUserCreate` handler — which runs
+      // `seedClaimsFromRoleData`, which reads
+      // `platformSuperadmins/{canonical}` — finds the doc populated
+      // and includes `isPlatformSuperadmin: true` in the initial
+      // claim set it writes via `setCustomUserClaims`.
+      //
+      // Why this matters: without the pre-seed, two triggers race to
+      // call `setCustomUserClaims` on the same uid —
+      // `syncSuperadminClaims` (fired by the platformSuperadmins
+      // write) and `onAuthUserCreate` (fired by `createUser`). If
+      // `onAuthUserCreate` lands second, it reads
+      // `platformSuperadmins/{canonical}` while the doc still doesn't
+      // exist and overwrites the freshly-minted claim with one that
+      // lacks `isPlatformSuperadmin: true`. Pre-seeding makes
+      // `onAuthUserCreate` the deterministic claim author and
+      // eliminates the order-dependence: by the time
+      // `onAuthUserCreate` reads the doc, the value is already
+      // there. (`syncSuperadminClaims` still fires from the pre-seed
+      // write but no-ops because `uidForCanonical` returns null —
+      // `userIndex/{canonical}` is written by `onAuthUserCreate`,
+      // which hasn't run yet.)
       //
       // Fields shadow `firebase-schema.md` §3.2: `email` (typed),
       // `addedAt` (server timestamp), `addedBy` (canonical email of
@@ -139,13 +143,13 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
         const u = await auth.getUser(user.uid);
         const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
         return claims.isPlatformSuperadmin === true;
-      }, 25_000);
+      }, 40_000);
 
       expect(flipped).toBe(true);
     },
   );
 
-  it('revokes isPlatformSuperadmin when the doc is deleted', { timeout: 30_000 }, async () => {
+  it('revokes isPlatformSuperadmin when the doc is deleted', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
     const typedEmail = 'Super.Admin@gmail.com';
     const canonical = 'superadmin@gmail.com';
@@ -168,18 +172,19 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       return claims.isPlatformSuperadmin === true;
-    }, 25_000);
+    }, 40_000);
     expect(minted).toBe(true);
 
     // Step 2: delete the doc, wait for the claim to clear. Eventarc
-    // delete-event delivery on CI takes ~14–15s; 25s budget matches
-    // the mint test for headroom.
+    // delete-event delivery on CI was measured at ~14.7s on the PR
+    // that introduced this test; 40s budget matches the mint test
+    // for headroom against future runner regression.
     await db.doc(`platformSuperadmins/${canonical}`).delete();
     const revoked = await waitFor(async () => {
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       return claims.isPlatformSuperadmin !== true;
-    }, 25_000);
+    }, 40_000);
     expect(revoked).toBe(true);
   });
 });
