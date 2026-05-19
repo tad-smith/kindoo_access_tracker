@@ -9,7 +9,7 @@
 
 import { useMemo } from 'react';
 import { httpsCallable } from 'firebase/functions';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import type { CreateStakeInput, CreateStakeResult, Stake } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../lib/data';
 import { db, functions } from '../../lib/firebase';
@@ -31,26 +31,21 @@ export function useStakes() {
  * Invoke the `createStake` callable. Returns the typed envelope
  * (`{success:true, stakeId}` or `{success:false, error}`); shape /
  * auth `HttpsError`s bubble as thrown errors. The Create Stake form
- * inspects `success` and either resets + invalidates or maps the
- * error code onto the right inline field error.
+ * inspects `success` and either resets the form or maps the error
+ * code onto the right inline field error.
  *
- * On `success` we fire-and-forget invalidate every TanStack Query
- * entry so the live stakes-collection subscription re-snapshots with
- * the new row. (Live hooks have a never-resolving `queryFn`, so we
- * don't await — awaiting would hang.)
+ * No `onSuccess` invalidate: per D11, the live `useStakes()`
+ * subscription is driven by `onSnapshot` against a never-resolving
+ * `queryFn`, so `invalidateQueries` is a no-op against it. The new
+ * stake row arrives via the snapshot listener on its own; the form
+ * owns the success toast + reset off the mutation hook directly.
  */
 export function useCreateStake() {
-  const qc = useQueryClient();
   return useMutation<CreateStakeResult, Error, CreateStakeInput>({
     mutationFn: async (input) => {
       const fn = httpsCallable<CreateStakeInput, CreateStakeResult>(functions, 'createStake');
       const res = await fn(input);
       return res.data;
-    },
-    onSuccess: (result) => {
-      if (result.success) {
-        void qc.invalidateQueries();
-      }
     },
   });
 }

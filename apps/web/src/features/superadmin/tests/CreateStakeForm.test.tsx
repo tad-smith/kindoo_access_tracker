@@ -10,11 +10,14 @@
 //   - Empty `bootstrap_admin_email` is rejected client-side.
 //   - Valid submit invokes the mutation with the expected payload.
 //   - Each soft-fail error code (`name_required`, `email_required`,
-//     `slug_collision`, `invalid_slug`) surfaces as an inline message
-//     against the matching field.
+//     `slug_collision`, `invalid_slug`, `invalid_timezone`) surfaces
+//     as an inline message against the matching field.
 //   - `{success:true}` resets the form to empty + tz default and fires
-//     a success toast (which the hook's onSuccess invalidates queries
-//     for — that side is exercised via the mock).
+//     a success toast. The new stake row arrives via the live
+//     `useStakes()` snapshot listener; `useCreateStake` has no
+//     `onSuccess` (`invalidateQueries` is a no-op against the D11
+//     never-resolving `queryFn`), so there is nothing to assert on the
+//     invalidate side here.
 //   - Hard errors (thrown HttpsError) surface as a toast.
 //   - Slug preview tracks the typed name in real time.
 
@@ -210,6 +213,22 @@ describe('<CreateStakeForm />', () => {
 
     expect(await screen.findByTestId('create-stake-name-error')).toHaveTextContent(
       /A stake with that slug already exists/i,
+    );
+    expect(toastMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces `invalid_timezone` against the timezone field', async () => {
+    mutateAsyncMock.mockResolvedValue({ success: false, error: 'invalid_timezone' });
+    const user = userEvent.setup();
+    render(<CreateStakeForm />);
+    await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
+    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    await user.clear(screen.getByTestId('create-stake-timezone'));
+    await user.type(screen.getByTestId('create-stake-timezone'), 'Not/A_Real_TZ');
+    await user.click(screen.getByTestId('create-stake-submit'));
+
+    expect(await screen.findByTestId('create-stake-timezone-error')).toHaveTextContent(
+      /not a recognized IANA identifier/i,
     );
     expect(toastMock).not.toHaveBeenCalled();
   });
