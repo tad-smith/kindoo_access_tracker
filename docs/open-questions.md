@@ -517,7 +517,7 @@ The block persisted across all of those, indicating that Workspace-owned Apps Sc
 
 **Flagged (PR #130 review, 2026-05-17).** Should the migration callable run across every stake at once, or be parameterized per stake?
 
-**Resolved 2026-05-17.** Per-stake. The callable takes a `stakeId` parameter, matching the rest of the architecture's stake-parameterization (F15). The operator runs it once per stake at T-42 implementation time. Currently single-stake; Phase B / multi-stake operators run it per stake when they onboard.
+**Resolved 2026-05-17.** Per-stake. The callable takes a `stakeId` parameter, matching the rest of the architecture's stake-parameterization (F15). The operator runs it once per stake at T-42 implementation time. Currently single-stake; Phase 12 / multi-stake operators run it per stake when they onboard.
 
 ### KS-7 `[RESOLVED 2026-05-17 — disabled with tooltip; primary-only edits remain]` T-42 Phase B — Edit button on AllSeats duplicate rows
 

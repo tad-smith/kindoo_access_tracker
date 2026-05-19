@@ -23,7 +23,7 @@ A door-access tracker that manages Kindoo seat assignments across the wards of a
 1. `docs/spec.md` — live source of truth for runtime behaviour.
 2. `docs/firebase-schema.md` — data model + rules + indexes.
 3. The latest `docs/changelog/phase-N-*.md` — what shipped most recently.
-4. `docs/firebase-migration.md` — phase plan (Phase A complete; Phase 12 deferred).
+4. `docs/firebase-migration.md` — phase plan (Phase A complete; Phase 12 active).
 5. `docs/TASKS.md` — cross-workspace work-in-flight.
 6. `docs/BUGS.md` — known defects.
 7. `docs/open-questions.md` — active ambiguities and the `[RESOLVED]` trail.
@@ -39,7 +39,7 @@ A door-access tracker that manages Kindoo seat assignments across the wards of a
 - **Tests are non-negotiable.** Every workspace has a test suite that gates merges.
 - **Custom claims are the role-resolution source.** `usePrincipal()` (web) and `request.auth.token.stakes[stakeId]` (rules) are the only paths.
 - **Audit rows are server-written.** The parameterized `auditTrigger` Cloud Function fans audit rows for every entity write. Don't write audit rows from client or from non-audit Cloud Functions.
-- **`{stakeId}` parameterized from day one** (per F15) even in single-stake v1. Constant lives in `apps/web/src/lib/constants.ts`; one place to change for Phase B.
+- **`{stakeId}` parameterized from day one** (per F15). The hardcoded `'csnorth'` constant in `apps/web/src/lib/constants.ts` is going away in Phase 12's B.4 PR in favour of the active-stake selector — every new per-stake read consumes the active stake, not the constant.
 - **No secrets in code.** Secret Manager + env-var injection.
 
 ## Work discipline
@@ -69,6 +69,7 @@ A door-access tracker that manages Kindoo seat assignments across the wards of a
 
 **Open follow-ups:**
 
+- Phase 12 (multi-stake) — **active** as of 2026-05-18; ships as five sub-deliverables (B.1 → B.5). See `docs/firebase-migration.md` Phase 12 and T-46.
 - B-1 — iPhone PWA notification deep-link.
 - T-26 — finish Phase 11 SA hardening (pin remaining functions to `kindoo-app@`, audit IAM, revoke project-default `roles/editor`).
-- Phase 10.6 (push expansion), Phase 12 (multi-stake) — operator-deferred.
+- Phase 10.6 (push expansion) — operator-deferred.

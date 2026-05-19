@@ -651,15 +651,15 @@ Surfaced by the 2026-05-14 callable-permission security review: none of the five
 Add App Check enforcement so calls without a valid App Check token are rejected at the Functions runtime. Defense-in-depth against bot / scripted / MITM invocation — does not replace the per-callable manager auth check. Web app (Firebase Hosting) registers via reCAPTCHA Enterprise; Chrome extension needs a separate App Check provider (custom debug provider during development; production attestation TBD — operator decision).
 
 ## [T-41] Enable Firestore TTL on `platformAuditLog`
-Status: deferred to Phase 12 (2026-05-18 — no production writers today)
+Status: deferred to Phase 12 (re-open when B.3 lands and `createStake` starts writing rows)
 Owner: @infra-engineer (operator runs gcloud) + @tad
 Phase: cross-cutting
 
 T-15 closed 2026-04-29 by enabling Firestore TTL on the `auditLog` collection-group. The sibling `platformAuditLog` collection (superadmin records — see Q20) was originally deferred at operator's discretion.
 
-**Closed 2026-05-18: no production code writes to `platformAuditLog` today.** The type, zod schema, doc-ref helpers (`platformAuditLogRef` / `platformAuditLogCol` in `apps/web/src/lib/docs.ts`), and Firestore rules all exist as Phase-12 scaffolding, but no caller invokes them — `grep -rn 'platformAuditLogRef\|platformAuditLogCol'` returns only the definitions. The collection is empty in production; enabling TTL now would expire zero rows. Re-open when Phase 12 superadmin callables (`createStake`, etc.) start emitting platformAuditLog rows.
+**2026-05-18: no production code writes to `platformAuditLog` today.** The type, zod schema, doc-ref helpers (`platformAuditLogRef` / `platformAuditLogCol` in `apps/web/src/lib/docs.ts`), and Firestore rules all exist as scaffolding, but no caller invokes them — `grep -rn 'platformAuditLogRef\|platformAuditLogCol'` returns only the definitions. The collection is empty in production; enabling TTL now would expire zero rows. The Phase 12 `createStake` callable (sub-deliverable B.3) will be the first production writer; re-open this task when B.3 lands.
 
-When Phase 12 lands, the work needed:
+When Phase 12's `createStake` lands, the work needed:
 
 ```
 gcloud firestore fields ttls update ttl \
@@ -848,3 +848,20 @@ Decision recorded as `architecture.md` D14; spec rewritten in this PR. The exten
 **Out of scope:** Renaming `access.importer_callings` (the field name is historical post-removal — see `spec.md` §3 reference). Phase 12 multi-stake bootstrap UX. Changes to Sync's classifier or fix paths.
 
 Cross-ref: `spec.md` §8 (rewritten), `architecture.md` D14, `firebase-schema.md` §3 Stake doc.
+
+## [T-46] Phase 12 — multi-stake support promoted to first-class
+Status: pending
+Owner: cross-workspace (web-engineer, backend-engineer, extension-engineer, infra-engineer, docs-keeper)
+Phase: B (active as of 2026-05-18)
+
+Phase 12 (current plan) replaces the deferred Phase 12 plan that settled 2026-05-05 with first-class multi-stake support. Three reversals from the prior plan are captured in `firebase-migration.md` F18 / F19 / F20 and rolled up into `architecture.md` D15. Five operator-resolved design decisions (`firebase-migration.md` Phase 12 "Operator-resolved design decisions") are baked into the sub-deliverable scope.
+
+Lands as five sub-deliverables, each on its own implementation PR with its own changelog entry and its own `T-N` when opened:
+
+- **B.1 — Seed runbook + e2e test for the existing `syncSuperadminClaims` trigger.** The trigger already exists at `functions/src/triggers/syncSuperadminClaims.ts` with full mint / revoke wiring through `functions/src/lib/applyClaims.ts`; no new trigger code is needed. B.1 ships the `infra/runbooks/seed-platform-superadmin.md` runbook for the operator-side console-write step + an end-to-end emulator test that writes a `platformSuperadmins/{canonical}` doc and asserts the claim lands on the matching auth user.
+- **B.2 — Stake List page + Superadmin nav section.** `/superadmin/stakes` route gated on `principal.isPlatformSuperadmin`. New "Superadmin" section in `navigation-redesign.md` §8 carries the Stake List entry; section hidden for non-superadmin users.
+- **B.3 — `createStake` callable + Create Stake form.** New `createStake` Cloud Function callable (superadmin-gated) writes the `stakes/{slug}` parent doc with `setup_complete=false` and emits a `platformAuditLog` `create_stake` row. Stake List page grows a Create Stake form that calls the callable.
+- **B.4 — Active-stake selector + switcher dropdown.** Active-stake resolution priority chain (URL `?stake=X` → `sessionStorage` → `localStorage` → principal-derived first stake) per `spec.md` §2.1. Switcher dropdown in brand bar when principal has ≥ 2 stakes; hidden otherwise. Hardcoded `'csnorth'` constant in `apps/web/src/lib/constants.ts` goes away.
+- **B.5 — Extension EID-to-stake mapping.** When a single Kindoo EID maps to configurations under more than one SBA stake the operator manages, the slide-over panel surfaces a stake picker; choice remembered per-EID in `chrome.storage.local`.
+
+Cross-ref: `firebase-migration.md` Phase 12, `architecture.md` D15, `spec.md` §2.1 + §5.4 + §15 Phase 12 interaction, `firebase-schema.md` §3.2 + §3.3, `navigation-redesign.md` §8.
