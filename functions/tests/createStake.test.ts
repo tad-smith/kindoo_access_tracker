@@ -301,7 +301,9 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
 
   // ----- platformAuditLog -----
 
-  it('emits a platformAuditLog row with action=create_stake on success', async () => {
+  it('emits a platformAuditLog row whose `after` is the full snapshot of the just-written stake doc', async () => {
+    // Mirrors the parameterized `auditTrigger`'s convention: `after`
+    // carries the entire post-write doc body, not a four-field subset.
     await createStake.run(
       callableReq({
         auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
@@ -323,14 +325,49 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     expect(row.actor_email).toBe(SUPERADMIN_EMAIL);
     expect(row.actor_canonical).toBe(SUPERADMIN_EMAIL);
     expect(row.before).toBe(null);
-    expect(row.after).toMatchObject({
-      stake_id: 'audit-stake',
-      stake_name: 'Audit Stake',
-      bootstrap_admin_email: 'admin@example.com',
-      timezone: 'America/Phoenix',
-    });
     expect(row.timestamp).toBeInstanceOf(Timestamp);
     expect(row.ttl).toBeInstanceOf(Timestamp);
+
+    // Pull the stake doc back and assert the audit `after` snapshot
+    // equals it field-for-field. Excludes the doc-snapshot's
+    // bookkeeping timestamps (Timestamp instances on both sides are
+    // equal by reference at this point — they're written from the same
+    // in-process value — so toEqual would still pass; the structural
+    // assertion below is the contract).
+    const stake = (await db.doc('stakes/audit-stake').get()).data() as Stake;
+    const after = row.after as Record<string, unknown>;
+
+    // Every field on the stake doc must appear on `after.*` with the
+    // same value (Timestamp pairs compare via Timestamp.isEqual).
+    for (const [k, v] of Object.entries(stake)) {
+      if (v instanceof Timestamp) {
+        expect(after[k]).toBeInstanceOf(Timestamp);
+        expect((after[k] as Timestamp).isEqual(v)).toBe(true);
+      } else {
+        expect(after[k]).toEqual(v);
+      }
+    }
+    // And the audit row carries no extra fields beyond what's on the doc.
+    expect(new Set(Object.keys(after))).toEqual(new Set(Object.keys(stake)));
+
+    // Spot-check the identity / setup / default fields explicitly so a
+    // future stake-schema addition doesn't silently slip out of the
+    // audit snapshot.
+    expect(after['stake_id']).toBe('audit-stake');
+    expect(after['stake_name']).toBe('Audit Stake');
+    expect(after['bootstrap_admin_email']).toBe('admin@example.com');
+    expect(after['setup_complete']).toBe(false);
+    expect(after['stake_seat_cap']).toBe(0);
+    expect(after['expiry_hour']).toBe(4);
+    expect(after['timezone']).toBe('America/Phoenix');
+    expect(after['notifications_enabled']).toBe(true);
+    expect(after['last_over_caps_json']).toEqual([]);
+    expect(after['created_by']).toBe(SUPERADMIN_EMAIL);
+    expect(after['last_modified_by']).toEqual({
+      email: SUPERADMIN_EMAIL,
+      canonical: SUPERADMIN_EMAIL,
+    });
+    expect(after['lastActor']).toEqual({ email: SUPERADMIN_EMAIL, canonical: SUPERADMIN_EMAIL });
 
     // The doc ID should be the `<ISO timestamp>_<suffix>` shape from
     // `auditId()`. Cheap sanity check: presence of the underscore

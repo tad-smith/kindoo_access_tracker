@@ -31,7 +31,7 @@
 //     inline error.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { Timestamp } from 'firebase-admin/firestore';
 import { buildingSlug, canonicalEmail, auditId } from '@kindoo/shared';
 import type { CreateStakeInput, CreateStakeResult } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
@@ -102,11 +102,20 @@ export const createStake = onCall(
     const db = getDb();
     const stakeRef = db.doc(`stakes/${slug}`);
 
-    // The platformAuditLog doc ID is computed from the in-process write
-    // time (a serverTimestamp() sentinel would not give us an ID we can
-    // address in the transaction). The corresponding `timestamp` field
-    // uses serverTimestamp() so the displayed time is authoritative.
+    // The audit doc ID is derived from the in-process write time (a
+    // serverTimestamp() sentinel cannot be used to address a doc inside
+    // the same transaction). We also use this single in-process
+    // `Timestamp` as the value for `created_at` / `last_modified_at` on
+    // the stake doc, the audit row's `timestamp`, AND the snapshot
+    // mirrored to the audit `after` payload — so the audit row's
+    // `after` exactly equals the body just written to `stakes/{slug}`.
+    // The parameterized `auditTrigger` reads its `after` from the
+    // post-write doc snapshot (server-timestamps already resolved by
+    // Firestore); we get the same property here by writing concrete
+    // `Timestamp` values up front rather than serverTimestamp()
+    // sentinels.
     const writeTime = new Date();
+    const now = Timestamp.fromDate(writeTime);
     const auditDocId = auditId(writeTime);
     const auditRef = db.doc(`platformAuditLog/${auditDocId}`);
     const auditTtl = Timestamp.fromMillis(writeTime.getTime() + TTL_MS);
@@ -117,7 +126,6 @@ export const createStake = onCall(
         return { success: false, error: 'slug_collision' };
       }
 
-      const now = FieldValue.serverTimestamp();
       const stakeBody = {
         // Identity
         stake_id: slug,
@@ -151,12 +159,10 @@ export const createStake = onCall(
         entity_type: 'stake',
         entity_id: slug,
         before: null,
-        after: {
-          stake_id: slug,
-          stake_name: stakeName,
-          bootstrap_admin_email: bootstrapAdminEmail,
-          timezone,
-        },
+        // Full snapshot of the just-written stake doc — mirrors the
+        // `auditTrigger`'s convention of stamping the post-write
+        // snapshot on `after`.
+        after: stakeBody,
         ttl: auditTtl,
       });
 
