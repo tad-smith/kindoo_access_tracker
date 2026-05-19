@@ -675,7 +675,11 @@ service cloud.firestore {
 
       // Parent stake doc — `isBootstrapAdmin` lets the wizard write Step 1 fields
       // and the final `setup_complete=true` flip before the manager claim is minted.
-      allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
+      // `isPlatformSuperadmin()` lets the Stake List page (`/superadmin/stakes`)
+      // read every stake's parent doc, including the zero-role first-run case
+      // where the superadmin holds no per-stake role on any stake.
+      allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId)
+        || isPlatformSuperadmin();
       allow create: if isPlatformSuperadmin();
       allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
         && lastActorMatchesAuth(request.resource.data);
