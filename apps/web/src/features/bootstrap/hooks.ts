@@ -27,29 +27,45 @@ import {
   wardRef,
   wardsCol,
 } from '../../lib/docs';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { usePrincipal } from '../../lib/principal';
 import type { Principal } from '../../lib/principal';
 
 // ---- Live reads -----------------------------------------------------
 
 export function useStakeDoc() {
-  const ref = useMemo(() => stakeRef(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const ref = useMemo(
+    () => (activeStakeId ? stakeRef(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreDoc<Stake>(ref);
 }
 
 export function useBuildings() {
-  const q = useMemo(() => buildingsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<Building>(q);
 }
 
 export function useWards() {
-  const q = useMemo(() => wardsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? wardsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<Ward>(q);
 }
 
 export function useManagers() {
-  const q = useMemo(() => kindooManagersCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? kindooManagersCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<KindooManager>(q);
 }
 
@@ -60,6 +76,13 @@ function actorOf(principal: Principal): { email: string; canonical: string } {
     email: principal.email ?? '',
     canonical: principal.canonical ?? canonicalEmail(principal.email ?? ''),
   };
+}
+
+function requireActiveStake(activeStakeId: string | null): string {
+  if (!activeStakeId) {
+    throw new Error('No active stake. Cannot write per-stake data.');
+  }
+  return activeStakeId;
 }
 
 // ---- Mutations ------------------------------------------------------
@@ -78,11 +101,13 @@ export interface Step1Input {
  */
 export function useStep1Mutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: Step1Input) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
-      await updateDoc(stakeRef(db, STAKE_ID), {
+      await updateDoc(stakeRef(db, sid), {
         stake_name: input.stake_name,
         stake_seat_cap: input.stake_seat_cap,
         last_modified_at: serverTimestamp(),
@@ -105,13 +130,15 @@ export interface BuildingInput {
 
 export function useAddBuildingMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: BuildingInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const slug = buildingSlug(input.building_name);
       if (!slug) throw new Error('Building name is required.');
-      await setDoc(buildingRef(db, STAKE_ID, slug), {
+      await setDoc(buildingRef(db, sid, slug), {
         building_id: slug,
         building_name: input.building_name.trim(),
         address: input.address.trim(),
@@ -144,13 +171,15 @@ export interface DeleteBuildingInput {
   wards: ReadonlyArray<Ward>;
 }
 export function useDeleteBuildingMutation() {
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: DeleteBuildingInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const refs = input.wards.filter((w) => w.building_name === input.buildingName);
       const blocker = buildingDeleteBlocker(refs);
       if (blocker) throw new Error(blocker);
-      await deleteDoc(buildingRef(db, STAKE_ID, input.buildingId));
+      await deleteDoc(buildingRef(db, sid, input.buildingId));
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn so
@@ -181,13 +210,15 @@ export interface WardInput {
 
 export function useAddWardMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: WardInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const code = input.ward_code.trim().toUpperCase();
       if (!code) throw new Error('Ward code is required.');
-      await setDoc(wardRef(db, STAKE_ID, code), {
+      await setDoc(wardRef(db, sid, code), {
         ward_code: code,
         ward_name: input.ward_name.trim(),
         building_name: input.building_name,
@@ -206,10 +237,12 @@ export function useAddWardMutation() {
 }
 
 export function useDeleteWardMutation() {
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (wardCode: string) => {
-      await deleteDoc(wardRef(db, STAKE_ID, wardCode));
+      const sid = requireActiveStake(activeStakeId);
+      await deleteDoc(wardRef(db, sid, wardCode));
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn so
@@ -229,12 +262,14 @@ export interface ManagerInput {
 // wizard Step 4 toggle).
 export function useAddManagerMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: ManagerInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const canonical = canonicalEmail(input.member_email);
-      await setDoc(kindooManagerRef(db, STAKE_ID, canonical), {
+      await setDoc(kindooManagerRef(db, sid, canonical), {
         member_canonical: canonical,
         member_email: input.member_email.trim(),
         name: input.name.trim(),
@@ -254,11 +289,13 @@ export function useAddManagerMutation() {
 
 export function useUpdateManagerActiveMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { canonical: string; active: boolean }) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
-      await updateDoc(kindooManagerRef(db, STAKE_ID, input.canonical), {
+      await updateDoc(kindooManagerRef(db, sid, input.canonical), {
         active: input.active,
         lastActor: actor,
       });
@@ -272,10 +309,12 @@ export function useUpdateManagerActiveMutation() {
 }
 
 export function useDeleteManagerMutation() {
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (canonical: string) => {
-      await deleteDoc(kindooManagerRef(db, STAKE_ID, canonical));
+      const sid = requireActiveStake(activeStakeId);
+      await deleteDoc(kindooManagerRef(db, sid, canonical));
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn so
@@ -295,12 +334,14 @@ export function useDeleteManagerMutation() {
  */
 export function useEnsureBootstrapAdmin() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   return useMutation({
     mutationFn: async (bootstrapAdminEmail: string) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const canonical = canonicalEmail(bootstrapAdminEmail);
       await setDoc(
-        kindooManagerRef(db, STAKE_ID, canonical),
+        kindooManagerRef(db, sid, canonical),
         {
           member_canonical: canonical,
           member_email: bootstrapAdminEmail,
@@ -324,11 +365,13 @@ export function useEnsureBootstrapAdmin() {
  */
 export function useCompleteSetupMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async () => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
-      await updateDoc(stakeRef(db, STAKE_ID), {
+      await updateDoc(stakeRef(db, sid), {
         setup_complete: true,
         last_modified_at: serverTimestamp(),
         last_modified_by: actor,

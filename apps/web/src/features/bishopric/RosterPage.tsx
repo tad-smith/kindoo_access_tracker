@@ -22,7 +22,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import type { Seat } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { useFirestoreOnce } from '../../lib/data';
 import { wardRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
@@ -46,7 +46,8 @@ export interface BishopricRosterPageProps {
 
 export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
   const principal = usePrincipal();
-  const wards = principal.bishopricWards[STAKE_ID] ?? [];
+  const activeStakeId = useActiveStake();
+  const wards = activeStakeId ? (principal.bishopricWards[activeStakeId] ?? []) : [];
   const navigate = useNavigate();
 
   const seedWard = initialWard && wards.includes(initialWard) ? initialWard : (wards[0] ?? null);
@@ -59,7 +60,9 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
   }, [wards, activeWard]);
 
   const seats = useBishopricRoster(activeWard);
-  const wardDocResult = useFirestoreOnce(activeWard ? wardRef(db, STAKE_ID, activeWard) : null);
+  const wardDocResult = useFirestoreOnce(
+    activeWard && activeStakeId ? wardRef(db, activeStakeId, activeWard) : null,
+  );
   const wardDoc = wardDocResult.data;
 
   // Wards + Kindoo Sites — feed the foreign-site badge on ward seats
@@ -177,9 +180,14 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
           ) : (
             <div className="roster-cards">
               {sortedRows.map(({ seat, grant }) => {
-                const canEdit = grant.isPrimary && canEditSeat(principal, STAKE_ID, seat);
+                const canEdit =
+                  activeStakeId !== null &&
+                  grant.isPrimary &&
+                  canEditSeat(principal, activeStakeId, seat);
                 const canRemove =
-                  grant.type !== 'auto' && isScopeAllowed(principal, STAKE_ID, grant.scope);
+                  activeStakeId !== null &&
+                  grant.type !== 'auto' &&
+                  isScopeAllowed(principal, activeStakeId, grant.scope);
                 const isPendingRemoval = pendingRemovesByKey.has(
                   pendingRemoveKey(seat.member_canonical, grant.scope, grant.kindoo_site_id),
                 );

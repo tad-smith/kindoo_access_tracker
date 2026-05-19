@@ -66,7 +66,7 @@ import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
 import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { invokeInstallScheduledJobs } from './callables';
 
 type StepNumber = 1 | 2 | 3 | 4;
@@ -657,15 +657,21 @@ interface CompleteSetupProps {
 
 function CompleteSetupButton({ enabled, onCompleted }: CompleteSetupProps) {
   const mutation = useCompleteSetupMutation();
+  const activeStakeId = useActiveStake();
 
   async function complete() {
     try {
       await mutation.mutateAsync();
+      if (!activeStakeId) {
+        toast('Setup complete, but no active stake to enable scheduled jobs for.', 'warn');
+        onCompleted();
+        return;
+      }
       // Best-effort callable. If the function is unavailable we
       // surface a warn-toast but the setup completion is not rolled
       // back.
       try {
-        await invokeInstallScheduledJobs(STAKE_ID);
+        await invokeInstallScheduledJobs(activeStakeId);
       } catch (callErr) {
         toast(
           `Setup complete, but scheduled jobs could not be enabled: ${errorMessage(callErr)}`,

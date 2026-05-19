@@ -23,7 +23,7 @@ import type { AccessRequest, KindooSite, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
 import { kindooSitesCol, requestsCol, seatsCol, wardsCol } from '../../lib/docs';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { mergeSeatsByCanonical, type RosterResult } from '../../lib/rosters';
 
 /**
@@ -36,14 +36,18 @@ import { mergeSeatsByCanonical, type RosterResult } from '../../lib/rosters';
  * Pass `null` to disable both subscriptions.
  */
 export function useBishopricRoster(wardCode: string | null): RosterResult {
+  const activeStakeId = useActiveStake();
   const primaryQuery = useMemo(() => {
-    if (!wardCode) return null;
-    return query(seatsCol(db, STAKE_ID), where('scope', '==', wardCode));
-  }, [wardCode]);
+    if (!wardCode || !activeStakeId) return null;
+    return query(seatsCol(db, activeStakeId), where('scope', '==', wardCode));
+  }, [wardCode, activeStakeId]);
   const duplicateQuery = useMemo(() => {
-    if (!wardCode) return null;
-    return query(seatsCol(db, STAKE_ID), where('duplicate_scopes', 'array-contains', wardCode));
-  }, [wardCode]);
+    if (!wardCode || !activeStakeId) return null;
+    return query(
+      seatsCol(db, activeStakeId),
+      where('duplicate_scopes', 'array-contains', wardCode),
+    );
+  }, [wardCode, activeStakeId]);
   const primary = useFirestoreCollection<Seat>(primaryQuery);
   const dupe = useFirestoreCollection<Seat>(duplicateQuery);
   return useMemo(() => mergeSeatsByCanonical(primary, dupe), [primary, dupe]);
@@ -55,7 +59,11 @@ export function useBishopricRoster(wardCode: string | null): RosterResult {
  * bishopric holds; the page filters client-side.
  */
 export function useStakeWards() {
-  const q = useMemo(() => wardsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? wardsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<Ward>(q);
 }
 
@@ -64,7 +72,11 @@ export function useStakeWards() {
  * seats (spec §15). Empty when the stake only operates its home site.
  */
 export function useKindooSites() {
-  const q = useMemo(() => kindooSitesCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? kindooSitesCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<KindooSite>(q);
 }
 
@@ -76,13 +88,14 @@ export function useKindooSites() {
  * the hook stays disabled.
  */
 export function useMyRequests(canonical: string | null) {
+  const activeStakeId = useActiveStake();
   const requestsQuery = useMemo(() => {
-    if (!canonical) return null;
+    if (!canonical || !activeStakeId) return null;
     return query(
-      requestsCol(db, STAKE_ID),
+      requestsCol(db, activeStakeId),
       where('requester_canonical', '==', canonical),
       orderBy('requested_at', 'desc'),
     );
-  }, [canonical]);
+  }, [canonical, activeStakeId]);
   return useFirestoreCollection<AccessRequest>(requestsQuery);
 }

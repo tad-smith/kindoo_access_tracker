@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import type { Seat } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { useKindooSites, useStakeWards, useWardSeats } from './hooks';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { RosterUtilization } from '../../lib/render/RosterUtilization';
@@ -38,6 +38,7 @@ export interface WardRostersPageProps {
 
 export function WardRostersPage({ initialWard }: WardRostersPageProps) {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const wards = useStakeWards();
   const kindooSites = useKindooSites();
   const navigate = useNavigate();
@@ -154,9 +155,14 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
               ) : (
                 <div className="roster-cards">
                   {sortedRows.map(({ seat, grant }) => {
-                    const canEdit = grant.isPrimary && canEditSeat(principal, STAKE_ID, seat);
+                    const canEdit =
+                      activeStakeId !== null &&
+                      grant.isPrimary &&
+                      canEditSeat(principal, activeStakeId, seat);
                     const canRemove =
-                      grant.type !== 'auto' && isScopeAllowed(principal, STAKE_ID, grant.scope);
+                      activeStakeId !== null &&
+                      grant.type !== 'auto' &&
+                      isScopeAllowed(principal, activeStakeId, grant.scope);
                     const isPendingRemoval = pendingRemovesByKey.has(
                       pendingRemoveKey(seat.member_canonical, grant.scope, grant.kindoo_site_id),
                     );
