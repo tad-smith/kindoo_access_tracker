@@ -59,12 +59,29 @@ Examples:
 | `Operator@example.org` | `operator@example.org` |
 | `O.PERATOR@example.org` | `o.perator@example.org` |
 
-If you're not sure, the same `canonicalEmail()` function is exposed
-in the SPA — sign in as anyone, open DevTools, and run:
+If you're not sure, paste the snippet below into any DevTools
+console (no SPA session required — it's a pure JS function that
+mirrors [`packages/shared/src/canonicalEmail.ts`](../../packages/shared/src/canonicalEmail.ts)
+verbatim):
 
 ```js
-// In an authenticated SPA session:
-(await import('/src/lib/canonicalEmail.js')).canonicalEmail('Typed.Email@gmail.com')
+function canonicalEmail(typed) {
+  if (typed == null) return '';
+  const s = String(typed).trim().toLowerCase();
+  if (s === '') return '';
+  const at = s.indexOf('@');
+  if (at === -1) return s;
+  let local = s.substring(0, at);
+  let domain = s.substring(at + 1);
+  if (domain === 'gmail.com' || domain === 'googlemail.com') {
+    const plus = local.indexOf('+');
+    if (plus !== -1) local = local.substring(0, plus);
+    local = local.replace(/\./g, '');
+    domain = 'gmail.com';
+  }
+  return local + '@' + domain;
+}
+console.log(canonicalEmail('Typed.Email@gmail.com'));
 ```
 
 ### 2. Create the document in the Firestore console

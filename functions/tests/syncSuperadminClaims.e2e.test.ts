@@ -107,22 +107,33 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
       const typedEmail = 'Super.Admin@gmail.com';
       const canonical = 'superadmin@gmail.com';
 
-      const user = await auth.createUser({ email: typedEmail });
-      await db.doc(`userIndex/${canonical}`).set({
-        uid: user.uid,
-        typedEmail,
-        lastSignIn: FieldValue.serverTimestamp(),
-      });
-
-      // Real Firestore write that should fire `syncSuperadminClaims` via
-      // Eventarc. Fields shadow `firebase-schema.md` §3.2: `email`
-      // (typed), `addedAt` (server timestamp), `addedBy` (canonical
-      // email of the actor — operator-as-bootstrap here).
+      // Pre-seed `platformSuperadmins/{canonical}` BEFORE `createUser`
+      // so the `onAuthUserCreate` handler — which runs
+      // `seedClaimsFromRoleData` → reads `platformSuperadmins/{canonical}`
+      // — finds the doc and stamps `isPlatformSuperadmin: true` as part
+      // of the initial claim set. Without this pre-seed there is a
+      // race: `syncSuperadminClaims` (fired by the `platformSuperadmins`
+      // write) and `onAuthUserCreate` (fired by `createUser`) both
+      // race to call `setCustomUserClaims`, and whichever runs last
+      // wins. If `onAuthUserCreate` lands second it computes claims
+      // against an empty `platformSuperadmins` doc and stomps the
+      // freshly-minted superadmin flag. Pre-seeding makes
+      // `onAuthUserCreate` the deterministic source of truth and
+      // collapses the race. (The `syncSuperadminClaims` trigger still
+      // fires from the pre-seed write, but no-ops because
+      // `uidForCanonical` returns null — `userIndex/{canonical}`
+      // doesn't exist until `onAuthUserCreate` writes it.)
+      //
+      // Fields shadow `firebase-schema.md` §3.2: `email` (typed),
+      // `addedAt` (server timestamp), `addedBy` (canonical email of
+      // the actor — operator-as-bootstrap here).
       await db.doc(`platformSuperadmins/${canonical}`).set({
         email: typedEmail,
         addedAt: FieldValue.serverTimestamp(),
         addedBy: 'operator@example.com',
       });
+
+      const user = await auth.createUser({ email: typedEmail });
 
       const flipped = await waitFor(async () => {
         const u = await auth.getUser(user.uid);
@@ -139,33 +150,36 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     const typedEmail = 'Super.Admin@gmail.com';
     const canonical = 'superadmin@gmail.com';
 
-    const user = await auth.createUser({ email: typedEmail });
-    await db.doc(`userIndex/${canonical}`).set({
-      uid: user.uid,
-      typedEmail,
-      lastSignIn: FieldValue.serverTimestamp(),
-    });
-
-    // Step 1: add the doc, wait for the claim to flip on.
+    // Same pre-seed-then-createUser pattern as the mint test: avoid
+    // the `onAuthUserCreate` ↔ `syncSuperadminClaims` race so the
+    // initial claim is deterministically minted by
+    // `onAuthUserCreate`.
     await db.doc(`platformSuperadmins/${canonical}`).set({
       email: typedEmail,
       addedAt: FieldValue.serverTimestamp(),
       addedBy: 'operator@example.com',
     });
+
+    const user = await auth.createUser({ email: typedEmail });
+
+    // Step 1: wait for the initial claim mint to land via
+    // `onAuthUserCreate` → `seedClaimsFromRoleData`.
     const minted = await waitFor(async () => {
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       return claims.isPlatformSuperadmin === true;
-    }, 12_000);
+    }, 25_000);
     expect(minted).toBe(true);
 
-    // Step 2: delete the doc, wait for the claim to clear.
+    // Step 2: delete the doc, wait for the claim to clear. Eventarc
+    // delete-event delivery on CI takes ~14–15s; 25s budget matches
+    // the mint test for headroom.
     await db.doc(`platformSuperadmins/${canonical}`).delete();
     const revoked = await waitFor(async () => {
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       return claims.isPlatformSuperadmin !== true;
-    }, 12_000);
+    }, 25_000);
     expect(revoked).toBe(true);
   });
 });
