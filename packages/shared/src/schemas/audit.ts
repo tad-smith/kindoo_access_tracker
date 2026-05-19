@@ -19,6 +19,7 @@ export const auditActionSchema = z.enum([
   'create_manager',
   'update_manager',
   'delete_manager',
+  'create_stake',
   'update_stake',
   'setup_complete',
   'import_start',

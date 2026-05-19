@@ -11,9 +11,10 @@
 // break the bootstrap-admin escape hatch.
 //
 // Failure envelope: soft-fail with `{success:false, error}` for domain
-// misses (empty inputs, invalid slug, invalid timezone, slug collision)
-// so the web form can render a clean inline error without trapping a
-// thrown `HttpsError`. Auth + shape errors still throw.
+// misses (empty inputs, invalid email, invalid slug, invalid timezone,
+// slug collision) so the web form can render a clean inline error
+// without trapping a thrown `HttpsError`. Auth + shape errors still
+// throw.
 
 export type CreateStakeInput = {
   /** Display name — trimmed server-side. Non-empty required. */
@@ -28,6 +29,7 @@ export type CreateStakeInput = {
 export type CreateStakeError =
   | 'name_required'
   | 'email_required'
+  | 'invalid_email'
   | 'slug_collision'
   | 'invalid_slug'
   | 'invalid_timezone';

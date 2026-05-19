@@ -114,6 +114,26 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     expect(result).toEqual({ success: false, error: 'email_required' });
   });
 
+  it('returns invalid_email for a malformed bootstrap_admin_email; no parent doc, no audit row', async () => {
+    // Defense in depth alongside the web's zod `.email()` validation —
+    // catches a missing-TLD / missing-@ string sent by a non-form
+    // client (direct REST, extension, etc.). Fires pre-transaction so
+    // neither the parent doc nor the audit row lands.
+    const result = await createStake.run(
+      callableReq({
+        auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
+        data: { stake_name: 'Bad Email Stake', bootstrap_admin_email: 'admin@bad' },
+      }),
+    );
+    expect(result).toEqual({ success: false, error: 'invalid_email' });
+
+    const { db } = requireEmulators();
+    const stakeSnap = await db.doc('stakes/bad-email-stake').get();
+    expect(stakeSnap.exists).toBe(false);
+    const auditSnap = await db.collection('platformAuditLog').get();
+    expect(auditSnap.empty).toBe(true);
+  });
+
   it('returns invalid_slug when stake_name slugifies to empty', async () => {
     const result = await createStake.run(
       callableReq({

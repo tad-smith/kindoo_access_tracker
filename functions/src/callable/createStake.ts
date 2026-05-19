@@ -26,9 +26,9 @@
 //
 // Failure envelope mirrors `syncApplyFix`:
 //   - shape / auth errors → `HttpsError`
-//   - domain misses (empty inputs, invalid slug, invalid timezone,
-//     slug collision) → `{ success: false, error }` so the web form
-//     can render a clean inline error.
+//   - domain misses (empty inputs, invalid email, invalid slug,
+//     invalid timezone, slug collision) → `{ success: false, error }`
+//     so the web form can render a clean inline error.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -87,6 +87,16 @@ export const createStake = onCall(
     const bootstrapAdminEmail = (data.bootstrap_admin_email ?? '').trim();
     if (bootstrapAdminEmail.length === 0) {
       return { success: false, error: 'email_required' };
+    }
+    // Shape check on the typed email — defense in depth alongside the
+    // web's zod `.email()` validation. Same simple regex zod's HTML
+    // `type=email` parser approximates: a local-part, an `@`, a domain
+    // with at least one `.`, and no whitespace anywhere. Catches the
+    // "typo missing TLD / missing @" cases that bypass the form (e.g.
+    // a direct REST POST or an extension client). Not RFC 5322; we
+    // don't need that precision at v1 scale.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(bootstrapAdminEmail)) {
+      return { success: false, error: 'invalid_email' };
     }
 
     const timezone =

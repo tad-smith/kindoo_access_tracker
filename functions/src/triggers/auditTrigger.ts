@@ -317,10 +317,16 @@ function resolveAction(
   before: Record<string, unknown> | null,
   after: Record<string, unknown> | null,
 ): AuditAction {
-  // Stake parent doc — `setup_complete` flip false → true is its own
-  // distinguished action so the audit log shows the wizard close
-  // explicitly. All other stake updates fold to `update_stake`.
+  // Stake parent doc — three distinct actions:
+  //   - create (before=null) → `create_stake` (the `createStake`
+  //     callable writes the parent doc; this is its per-stake audit row,
+  //     distinct from the cross-stake `platformAuditLog` row the
+  //     callable writes directly).
+  //   - `setup_complete` flip false → true → `setup_complete` so the
+  //     audit log shows the wizard close explicitly.
+  //   - everything else → `update_stake`.
   if (ctx.entityType === 'stake' && ctx.collection === 'stake') {
+    if (!before && after) return 'create_stake';
     if (before && after && before['setup_complete'] === false && after['setup_complete'] === true) {
       return 'setup_complete';
     }
@@ -401,6 +407,10 @@ const CREATE_ACTION: Record<AuditEntityType, AuditAction> = {
   access: 'create_access',
   request: 'create_request',
   kindooManager: 'create_manager',
+  // `stake` parent-doc creates are handled by the early-return in
+  // `resolveAction` (collection === 'stake' branch); this table entry
+  // is reached only for stake-bucketed sub-entities (wards / buildings
+  // / kindooSites / calling templates) which keep `update_stake`.
   stake: 'update_stake',
   system: 'update_stake',
 };

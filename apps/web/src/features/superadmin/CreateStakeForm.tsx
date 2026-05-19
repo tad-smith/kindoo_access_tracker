@@ -32,8 +32,8 @@ function errorMessage(err: unknown): string {
  * Map a soft-failure error code to a human-friendly message and the
  * field it should attach to. `invalid_slug` and `slug_collision` both
  * surface against `stake_name` since that's the input the operator
- * controls; `name_required`, `email_required`, and `invalid_timezone`
- * mirror their inputs.
+ * controls; `name_required`, `email_required`, `invalid_email`, and
+ * `invalid_timezone` mirror their inputs.
  */
 function softFailToFieldError(error: CreateStakeError): {
   field: keyof CreateStakeForm;
@@ -46,6 +46,11 @@ function softFailToFieldError(error: CreateStakeError): {
       return {
         field: 'bootstrap_admin_email',
         message: 'Bootstrap admin email is required.',
+      };
+    case 'invalid_email':
+      return {
+        field: 'bootstrap_admin_email',
+        message: 'Not a valid email address.',
       };
     case 'invalid_slug':
       return {
