@@ -104,41 +104,69 @@ jobs:
         run: npx --yes firebase-tools emulators:exec --only firestore,auth "pnpm test:rules"
         continue-on-error: true
 
-      - name: Integration tests
-        id: integration
-        run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions "pnpm test:integration"
-        continue-on-error: true
-
       - name: Build functions for emulator
         id: build-functions
         # The Functions emulator loads compiled artefacts from
         # `functions/lib/`. Without this step the emulator logs
         # "Could not detect runtime for functions at .../functions/lib"
         # and registers zero callables / triggers — every E2E spec that
-        # invokes `runImportNow` or `installScheduledJobs` then hits a
-        # not-found path. Predeploy hooks in firebase.json only fire on
-        # `firebase deploy`, not on `emulators:exec`, so we run the
-        # build explicitly here.
+        # invokes `installScheduledJobs` (or any other callable) hits a
+        # not-found path, and integration tests that depend on real
+        # trigger firing (e.g. syncSuperadminClaims.e2e) see zero
+        # trigger executions. Predeploy hooks in firebase.json only
+        # fire on `firebase deploy`, not on `emulators:exec`, so we run
+        # the build explicitly here. Runs BEFORE Integration tests so
+        # the Functions emulator has triggers to fire when the
+        # integration step boots it.
         #
-        # Synthesize functions/.env.kindoo-staging FIRST so the build
-        # script copies it into functions/lib/. The real env file is
-        # gitignored (it's per-project deploy config); CI just needs
+        # Synthesize functions/.env.<project> files FIRST so the build
+        # script copies them into functions/lib/. The real files are
+        # gitignored (per-project deploy config); CI just needs
         # placeholder values that satisfy the `defineString` param
         # registration so the Functions emulator does not interactively
         # prompt the no-stdin runner. Stub values are fine — email
         # sends are mocked in tests and never reach the configured URL.
-        # `KINDOO_SKIP_CLAIM_SYNC=true` short-circuits the three claim-
-        # sync helpers in `functions/src/lib/applyClaims.ts` so the
-        # E2E suite's synthetic `setCustomClaims` seeds win over the
-        # `onAuthUserCreate` / `syncManagersClaims` / `syncAccessClaims`
-        # writes that would otherwise race them and leave existing
-        # manager / stake / bishopric specs nondeterministic.
+        #
+        # Two env files are synthesized because the two emulator-driven
+        # test layers have opposite needs around claim-sync triggers:
+        #
+        # - `.env.kindoo-staging` for the Playwright E2E suite sets
+        #   `KINDOO_SKIP_CLAIM_SYNC=true` so the three claim-sync
+        #   helpers in `functions/src/lib/applyClaims.ts` no-op. The
+        #   E2E suite's synthetic `setCustomClaims` seeds win over the
+        #   `onAuthUserCreate` / `syncManagersClaims` / `syncAccessClaims`
+        #   writes that would otherwise race them and leave manager /
+        #   stake / bishopric specs nondeterministic.
+        #
+        # - `.env.demo-kindoo-tests` for the Functions-emulator-driven
+        #   integration tests omits `KINDOO_SKIP_CLAIM_SYNC` so the
+        #   claim-sync triggers actually fire. Required by trigger
+        #   e2e tests (e.g. tests/syncSuperadminClaims.e2e.test.ts)
+        #   that assert the real Firestore-write → Eventarc →
+        #   `setCustomUserClaims` chain.
+        #
+        # The Integration step below pins `--project demo-kindoo-tests`
+        # so the Functions emulator loads the right env file; the E2E
+        # step pins `--project kindoo-staging` to match
+        # `VITE_FIREBASE_PROJECT_ID` baked into the SPA preview build.
         run: |
           cat > functions/.env.kindoo-staging <<'EOF'
           WEB_BASE_URL=https://kindoo-staging.web.app
           KINDOO_SKIP_CLAIM_SYNC=true
           EOF
+          cat > functions/.env.demo-kindoo-tests <<'EOF'
+          WEB_BASE_URL=https://kindoo-staging.web.app
+          EOF
           pnpm --filter @kindoo/functions build
+        continue-on-error: true
+
+      - name: Integration tests
+        id: integration
+        # `--project demo-kindoo-tests` matches the project ID the
+        # `tests/lib/emulator.ts` helper defaults to and pairs the
+        # Functions emulator with the env file that does NOT short-
+        # circuit claim sync (see the build step above for why).
+        run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions --project demo-kindoo-tests "pnpm test:integration"
         continue-on-error: true
 
       - name: E2E tests
