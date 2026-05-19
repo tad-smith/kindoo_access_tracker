@@ -484,7 +484,7 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
     | 'create_access' | 'update_access' | 'delete_access'
     | 'create_request' | 'submit_request' | 'complete_request' | 'reject_request' | 'cancel_request'
     | 'create_manager' | 'update_manager' | 'delete_manager'
-    | 'update_stake' | 'setup_complete'
+    | 'create_stake' | 'update_stake' | 'setup_complete'
     | 'import_start' | 'import_end' | 'over_cap_warning' | 'email_send_failed';
 
   entity_type: 'seat' | 'request' | 'access' | 'kindooManager' | 'stake' | 'system';
@@ -505,6 +505,7 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
 - `auditId` is deterministic from `(collection, docId, writeTime)` so trigger retries are idempotent.
 - `member_canonical` is set whenever the underlying doc has a `member_canonical` field; absent for system actions (`import_start`, `import_end`, `over_cap_warning`, `setup_complete`, `email_send_failed`).
 - Firestore TTL policy on the `ttl` field deletes rows ~24h after their `ttl` timestamp passes.
+- `create_stake` fires only on the parent-doc create path (`before==null`, `entity_type='stake'`, `collection='stake'`). Sub-entity creates under `stakes/{sid}/` (wards, buildings, kindooSites, calling templates) audit as `entity_type='stake'` with action `update_stake` per the existing `CREATE_ACTION` table in `auditTrigger.ts` — the parent-doc-only branch keeps the `'create_stake'` action unambiguous for audit consumers (Phase 12.3 / F19).
 
 ### 4.11 `stakes/{stakeId}/kindooSites/{kindooSiteId}`
 

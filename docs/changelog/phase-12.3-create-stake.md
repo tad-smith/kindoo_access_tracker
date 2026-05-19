@@ -1,0 +1,70 @@
+# Phase 12.3 — `createStake` callable + Create Stake form
+
+**Shipped:** 2026-05-19
+**Commits:** see PR [#156](https://github.com/tad-smith/kindoo_access_tracker/pull/156) on `feat/12.3-create-stake`. Major lanes: backend `c41d43f` (initial callable + shared types) → `67fc655` (full-doc snapshot on `platformAuditLog.after`) → `3a0149c` (IANA timezone validation) → `d574a77` (`create_stake` audit action + server-side email shape check) → `415d1a1` (test-harness fix). Web: `a196526` (initial Create Stake form, drop no-op invalidate, `invalid_timezone` test) → `bbe0f0f` (move `TimezoneCombobox` to `apps/web/src/components/`) → `64c77eb` (swap CreateStake timezone input for the shared `TimezoneCombobox`).
+
+## What shipped
+
+The third implementation atom of Phase 12 (multi-stake). 12.1 made the `isPlatformSuperadmin` claim operationally seedable; 12.2 shipped the Stake List page; 12.3 ships the first writer of `platformAuditLog` and turns the Create Stake form into a real web-surface provisioning flow (F19). After 12.3, no operator-laptop Admin SDK script is needed to create a new stake — the named bootstrap admin still has to sign in afterwards to run the Phase 7 bootstrap wizard exactly as today.
+
+**Backend (`functions/` + `packages/shared/` + audit trigger).**
+
+- `functions/src/callable/createStake.ts` — `onCall`, `isPlatformSuperadmin`-gated, slug-derives the doc ID via `packages/shared/buildingSlug.ts`, transactional collision check against `stakes/{slug}`, server-side IANA-timezone validation (`new Intl.DateTimeFormat(undefined, { timeZone })` round-trip in `try/catch`), server-side email shape regex (`/^[^\s@]+@[^\s@]+\.[^\s@]+$/`). Writes the parent doc with the full F19 field set in a single transaction with the matching `platformAuditLog` row.
+- `functions/src/triggers/auditTrigger.ts` — `resolveAction` gains an early-return `if (!before && after) return 'create_stake'` branch for the `stakes/{stakeId}` parent-doc create path (`entity_type='stake'`, `collection='stake'`). Sub-entity creates (wards, buildings, kindooSites, calling templates — `entity_type='stake'`, `collection != 'stake'`) still collapse to `'update_stake'` via `CREATE_ACTION.stake`. The `setup_complete` flip case is unchanged.
+- `packages/shared/src/types/audit.ts` — per-stake `AuditAction` union gains `'create_stake'`. `PlatformAuditAction` was already correct (it had `'create_stake'` since the Phase 12 plan was written).
+- `packages/shared/src/types/createStake.ts` (new) — `CreateStakeInput { stake_name, bootstrap_admin_email, timezone? }` + `CreateStakeResult` discriminated union + `CreateStakeError = 'name_required' | 'email_required' | 'invalid_email' | 'slug_collision' | 'invalid_slug' | 'invalid_timezone'`.
+- `platformAuditLog` row: same transaction as the parent-doc write. `action='create_stake'`, `entity_type='stake'`, `entity_id=slug`, `before=null`, `after` = the full just-written stake-doc body (snapshot-mirror, see decisions below), `ttl` = 365 days from write time.
+- Tests: `functions/tests/createStake.test.ts` (17 tests — auth gate, validation per field, slug derivation, collision, audit-row shape, IANA tz validation, email shape validation); `functions/tests/auditTrigger.test.ts` (34 tests, +1 for the new `create_stake` path).
+
+**Web (`apps/web/`).**
+
+- `apps/web/src/features/superadmin/StakeListPage.tsx` — renders the new `<CreateStakeForm />` inline above the list. `landingPathFor()` still hardcodes `/manager/dashboard` per row; that becomes a real UX regression once a non-`csnorth` stake exists and is 12.4's deliverable to fix.
+- `apps/web/src/features/superadmin/CreateStakeForm.tsx` (new) — `react-hook-form` + zod, live slug preview, `useCreateStake` mutation, `softFailToFieldError` exhaustive mapping of every `CreateStakeError` code to a field-level inline error (no global toast on soft fails — they're all field-actionable). No `onSuccess` invalidate on the mutation: `useFirestoreCollection`'s snapshot listener handles the list refresh (D11 architecture). Hard errors (`HttpsError` shapes) still surface as a toast.
+- `apps/web/src/features/superadmin/hooks.ts` — `useCreateStake` wrapping `httpsCallable<CreateStakeInput, CreateStakeResult>(functions, 'createStake')`.
+- `apps/web/src/components/TimezoneCombobox.tsx` + `usTimezones.ts` (moved) — previously in `apps/web/src/features/manager/configuration/`. Moved to `apps/web/src/components/` so both the Configuration page (update flow) and the Create Stake form (create flow) can consume the same curated US-IANA list legally under the "don't import from another feature's internal files" rule. Configuration's import path updated; the colocated test file moved alongside.
+- Tests: `CreateStakeForm.test.tsx` (13 cases — field rendering, zod blocks, slug preview, each soft-fail error mapping including `invalid_email` and `invalid_timezone`, success behaviour, hard-error toast). `StakeListPage.test.tsx` updated to stub the form to a sentinel.
+
+**Test-harness fix (rolled in incidentally).**
+
+- `functions/tests/lib/emulator.ts` — `clearEmulators` swapped from a `db.recursiveDelete()` loop to the Firestore emulator's atomic REST clear endpoint (`DELETE /emulator/v1/projects/{pid}/databases/(default)/documents`). `recursiveDelete`'s internal `BulkWriter` under-flushed under back-to-back-test load on CI, leaving leftover audit rows visible to the next test. The flake had already hit two prior tests on `main`'s recent CI history (commits `ab65687`, `2b8c76e`) with identical assertion shapes; 12.3's perturbed timing surfaced it on `auditTrigger.test.ts:891`. The REST endpoint blocks server-side until the in-memory store is dropped — synchronous and atomic. Matches what `e2e/fixtures/emulator.ts` already does. Reviewers reading future test-stability postmortems: this was not 12.3-specific drift but a latent flake the timing change of 12.3's tests exposed.
+
+## Deviations from the pre-phase spec
+
+- **`created_at` / `last_modified_at` use `Timestamp.fromDate(writeTime)`, not `serverTimestamp()`.** F19's original text said `serverTimestamp()`. Deviation rationale: the `platformAuditLog.after` snapshot mirrors the just-written stake-doc body verbatim (see Decisions below), and a sentinel here would resolve to a different `Timestamp` value than the one mirrored into the audit `after` payload. Using a concrete `Timestamp` derived from the in-process `writeTime` keeps `platformAuditLog.after === stakes/{slug}` field-for-field. The same `writeTime` also derives the audit-row doc ID via `packages/shared/auditId.ts` (the deterministic-doc-ID convention can't take a sentinel as input). Spec: `firebase-migration.md` F19 updated (timestamp clause + new "Implementation note on timestamps" in the 12.3 sub-deliverable).
+
+- **Soft-fail enumeration deepened.** The pre-phase plan listed only `name_required` / `email_required` / `slug_collision` / `invalid_slug` as soft-fail codes. 12.3 adds `invalid_email` (basic shape regex — missing `@`, missing TLD, embedded whitespace) and `invalid_timezone` (an `Intl.DateTimeFormat` round-trip throw). Both are pre-empted by the web form (zod `.email()` for email, the curated US-IANA list for timezone), so neither fires from the SPA in practice; the server-side checks are defense-in-depth for non-SDK callers. Spec: `firebase-migration.md` F19 (new soft-fail envelope paragraph), `spec.md` §5.4 (mirrored).
+
+## Decisions made during the phase
+
+- **`bootstrap_admin_email` stored typed, not canonicalized** — already baked into F19, restated here because it's load-bearing on the bootstrap-admin escape hatch. The `isBootstrapAdmin` rule (`firebase-schema.md` §4.1) compares the stake doc's `bootstrap_admin_email` against `request.auth.token.email`, which is the typed Google email. Canonicalizing on write would silently break sign-in for any bootstrap admin whose typed email differs from the canonical form (Gmail dots / `+suffix`).
+
+- **`platformAuditLog.after` mirrors the full written doc, not a subset.** The reviewer flagged early that a sparse `after` payload would diverge from the per-stake `auditLog` trigger's snapshot-mirror convention. Operator decision: write the full stake-doc body verbatim into `after`. This is what the per-stake `auditTrigger` does for every audited write (it reads the post-write doc snapshot), and uniformity across the two audit collections is worth more than the small `platformAuditLog` write-size saving. Tracked in commit `67fc655`. `firebase-schema.md` §3.3 already typed `after: object | null` without claiming subset, so no schema-doc edit needed beyond the §4.10 union update.
+
+- **Per-stake `AuditAction` gains `'create_stake'`.** Before 12.3, parent-doc creates would have audited as `'update_stake'` via the generic `CREATE_ACTION.stake` table entry — confusing for audit consumers reading the per-stake history of a brand-new stake (the first audit row would be labelled "update" for what was actually the create event). The fix is a one-line early-return in `resolveAction` for `entity_type='stake' && collection='stake' && !before && after`. Sub-entity creates (wards, buildings, kindooSites, calling templates) still collapse to `'update_stake'` for the same enum-slot reason as before. `CREATE_ACTION.stake` is now unreachable but retained with a comment (engineering's call); not the docs-keeper's lane to second-guess.
+
+- **Server-side validation deepening (IANA timezone + email shape).** The web form is the primary defense — zod `.email()` for the email field, `TimezoneCombobox` constraining the timezone field to a curated US-IANA list. The server-side checks exist for non-SDK callers (extension clients today; direct REST POSTs theoretically). `invalid_timezone` is materially important: `runExpiry` builds a fresh `Intl.DateTimeFormat` from the stake's `timezone` field every hour, and a malformed value (e.g. `'Americ/Denver'`) would throw `RangeError` and break the expiry trigger for that stake forever. Catching the bad input at provisioning surfaces it as a clean soft-fail rather than as a silent runtime break weeks later.
+
+- **`TimezoneCombobox` + `usTimezones` moved to `apps/web/src/components/`.** From `apps/web/src/features/manager/configuration/`. The configuration page (update flow) and the new Create Stake form (create flow) both need the curated US-IANA list. The "don't import from another feature's internal files" rule made the existing path illegal for cross-feature reuse; moving to `components/` is the canonical fix. The colocated test file moved alongside; no test-shape changes.
+
+No new architecture D-numbers earned. The callable follows the existing `onCall` + `HttpsError`/soft-fail-envelope pattern (`syncApplyFix` is the template). The audit-row write inside the callable's transaction is a deliberate one-off — the `auditTrigger` only fans per-stake `auditLog` rows; `platformAuditLog` has no trigger writer, so callables that touch cross-stake state write the row directly (see `firebase-schema.md` §3.3 "Written by" line).
+
+## Spec / doc edits in this phase
+
+- `docs/firebase-schema.md` — §4.10 `action` union gains `'create_stake'`; new invariant clarifies that the action fires only on the parent-doc-create branch and that sub-entity creates under `stakes/{sid}/` continue to audit as `'update_stake'`. §3.3 already typed `after: object | null` accurately; no edit needed there.
+- `docs/firebase-migration.md` — F19 row updated: `created_at` / `last_modified_at` clause now says `Timestamp.fromDate(writeTime)` instead of `serverTimestamp()`; new soft-fail envelope paragraph enumerates all six error codes and notes the defense-in-depth posture of the server-side `invalid_email` / `invalid_timezone` checks. The 12.3 sub-deliverable section gains a `[SHIPPED 2026-05-19]` tag, the explicit `platformAuditLog` field shape, and an "Implementation note on timestamps" explaining the `Timestamp.fromDate` deviation.
+- `docs/spec.md` — §5.4 Create Stake paragraph rewritten to mention the timezone field, the shared `TimezoneCombobox`, and the soft-fail enumeration with defense-in-depth posture for `invalid_email` / `invalid_timezone`.
+- `docs/changelog/phase-12.3-create-stake.md` — this entry.
+
+## Test footprint
+
+- Backend: `createStake.test.ts` (17 new tests). `auditTrigger.test.ts` (+1 test for the `create_stake` parent-doc-create path; 34 tests total).
+- Web: `CreateStakeForm.test.tsx` (13 new tests). `StakeListPage.test.tsx` updated to stub the form. Configuration / `TimezoneCombobox` suites untouched apart from the file-path move (no shape changes).
+
+## Reviewer notes worth carrying forward
+
+- **`clearEmulators` REST swap was not 12.3 drift.** The flake had already hit `main` on `ab65687` (12.2) and `2b8c76e` (12.1 reviewer-followups) with the same `auditTrigger.test.ts` assertion shape. 12.3's test timing perturbation surfaced it again at `auditTrigger.test.ts:891`. The fix is correct and worth keeping; future reviewers reading the test-harness change should not assume it's 12.3-specific drift.
+- **`CREATE_ACTION.stake` is now unreachable.** Engineering left it in deliberately with a comment — the `'stake'` entry covers the type-system requirement that `CREATE_ACTION` be exhaustive over `AuditEntityType`. Reviewer flagged as "trivial, keep or drop"; engineering chose keep. Docs-keeper agrees: removing it would force a non-exhaustive table or an `Exclude<>` gymnastic that buys nothing.
+
+## Next
+
+12.4 — active-stake selector + switcher dropdown. The first 12.3-only-window UX regression now materializes the moment a second stake is created: every `StakeListPage` row's deep-link in `landingPathFor()` still resolves to `/manager/dashboard` against the hardcoded `'csnorth'` constant in `apps/web/src/lib/constants.ts`. 12.4 ships the active-stake resolver and the switcher dropdown, and the `landingPathFor()` rewrite drops out of that lane. The 12.2 changelog flagged this regression window; the operator's call at 12.3 kickoff was to leave it for 12.4 rather than pull the stake-aware piece forward.

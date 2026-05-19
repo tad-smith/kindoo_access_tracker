@@ -651,13 +651,15 @@ Surfaced by the 2026-05-14 callable-permission security review: none of the five
 Add App Check enforcement so calls without a valid App Check token are rejected at the Functions runtime. Defense-in-depth against bot / scripted / MITM invocation — does not replace the per-callable manager auth check. Web app (Firebase Hosting) registers via reCAPTCHA Enterprise; Chrome extension needs a separate App Check provider (custom debug provider during development; production attestation TBD — operator decision).
 
 ## [T-41] Enable Firestore TTL on `platformAuditLog`
-Status: deferred to Phase 12 (re-open when 12.3 lands and `createStake` starts writing rows)
+Status: open (re-opened 2026-05-19 — Phase 12.3 shipped, see `docs/changelog/phase-12.3-create-stake.md`)
 Owner: @infra-engineer (operator runs gcloud) + @tad
 Phase: cross-cutting
 
 T-15 closed 2026-04-29 by enabling Firestore TTL on the `auditLog` collection-group. The sibling `platformAuditLog` collection (superadmin records — see Q20) was originally deferred at operator's discretion.
 
 **2026-05-18: no production code writes to `platformAuditLog` today.** The type, zod schema, doc-ref helpers (`platformAuditLogRef` / `platformAuditLogCol` in `apps/web/src/lib/docs.ts`), and Firestore rules all exist as scaffolding, but no caller invokes them — `grep -rn 'platformAuditLogRef\|platformAuditLogCol'` returns only the definitions. The collection is empty in production; enabling TTL now would expire zero rows. The Phase 12 `createStake` callable (sub-deliverable 12.3) will be the first production writer; re-open this task when 12.3 lands.
+
+**2026-05-19: 12.3 has shipped.** The `createStake` callable writes `platformAuditLog` rows in production (one row per stake create, with `ttl` = 365 days from write time stamped at write). The collection is no longer scaffolding-only — every new stake provision now lands a row. Run the gcloud command below against staging then production to wire Firestore's TTL deletion against the `ttl` field.
 
 When Phase 12's `createStake` lands, the work needed:
 
@@ -860,7 +862,7 @@ Lands as five sub-deliverables, each on its own implementation PR with its own c
 
 - **12.1 — Seed runbook + e2e test for the existing `syncSuperadminClaims` trigger.** (in flight as of 2026-05-18 — `feat/12.1-superadmin-seed-v2`.) The trigger already exists at `functions/src/triggers/syncSuperadminClaims.ts` with full mint / revoke wiring through `functions/src/lib/applyClaims.ts`; no new trigger code is needed. 12.1 ships the `infra/runbooks/seed-platform-superadmin.md` runbook for the operator-side console-write step + an end-to-end emulator test that writes a `platformSuperadmins/{canonical}` doc and asserts the claim lands on the matching auth user.
 - **12.2 — Stake List page + Superadmin nav section.** `/superadmin/stakes` route gated on `principal.isPlatformSuperadmin`. New "Superadmin" section in `navigation-redesign.md` §8 carries the Stake List entry; section hidden for non-superadmin users.
-- **12.3 — `createStake` callable + Create Stake form.** New `createStake` Cloud Function callable (superadmin-gated) writes the `stakes/{slug}` parent doc with `setup_complete=false` and emits a `platformAuditLog` `create_stake` row. Stake List page grows a Create Stake form that calls the callable.
+- **12.3 — `createStake` callable + Create Stake form.** [SHIPPED 2026-05-19, PR #156, see `docs/changelog/phase-12.3-create-stake.md`.] New `createStake` Cloud Function callable (superadmin-gated) writes the `stakes/{slug}` parent doc with `setup_complete=false` and emits a `platformAuditLog` `create_stake` row. Stake List page grows a Create Stake form that calls the callable.
 - **12.4 — Active-stake selector + switcher dropdown.** Active-stake resolution priority chain (URL `?stake=X` → `sessionStorage` → `localStorage` → principal-derived first stake) per `spec.md` §2.1. Switcher dropdown in brand bar when principal has ≥ 2 stakes; hidden otherwise. Hardcoded `'csnorth'` constant in `apps/web/src/lib/constants.ts` goes away.
 - **12.5 — Extension EID-to-stake mapping.** When a single Kindoo EID maps to configurations under more than one SBA stake the operator manages, the slide-over panel surfaces a stake picker; choice remembered per-EID in `chrome.storage.local`.
 
