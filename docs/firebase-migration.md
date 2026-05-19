@@ -1,10 +1,10 @@
 # Firebase migration plan
 
-> **Status: Phase A COMPLETE (2026-05-03); Phase B ACTIVE (2026-05-18).** Phase 11 cutover closed; Firebase is live in production at `kindoo-prod`; `kindoo.csnorth.org` resolves to Firebase Hosting; the Apps Script app is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md). Phase B (multi-stake) was promoted from deferred to first-class on 2026-05-18; see the Phase B section below for the active scope. **Companion document: [`docs/firebase-schema.md`](firebase-schema.md)** — data model, rules, and indexes. **Live runtime behaviour:** [`docs/spec.md`](spec.md).
+> **Status: Phase A COMPLETE (2026-05-03); Phase 12 ACTIVE (2026-05-18).** Phase 11 cutover closed; Firebase is live in production at `kindoo-prod`; `kindoo.csnorth.org` resolves to Firebase Hosting; the Apps Script app is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md). Phase 12 (multi-stake) was promoted from deferred to first-class on 2026-05-18; see the Phase 12 section below for the active scope. **Companion document: [`docs/firebase-schema.md`](firebase-schema.md)** — data model, rules, and indexes. **Live runtime behaviour:** [`docs/spec.md`](spec.md).
 >
-> **History:** an earlier version of this plan ("Cloud Run + Express") was superseded on 2026-04-27 after architectural exploration concluded that direct-to-Firestore with custom claims was a better fit at this scale. Git history preserves the prior plan if needed. The Phase 12 single-stake-per-user / CLI-only-provisioning shape settled on 2026-05-05 was superseded on 2026-05-18 by Phase B's multi-stake-first design; see Phase B's section for the three reversals.
+> **History:** an earlier version of this plan ("Cloud Run + Express") was superseded on 2026-04-27 after architectural exploration concluded that direct-to-Firestore with custom claims was a better fit at this scale. Git history preserves the prior plan if needed. The original Phase 12 plan that settled on 2026-05-05 (single-stake-per-user, CLI-only provisioning, no stake switcher) was superseded on 2026-05-18 by the multi-stake-first design now in the Phase 12 section below; see that section for the three reversals.
 
-Phases 1–11 ported the Apps Script app to Firebase as a single-stake deployment and ended Phase A on 2026-05-03. Phase B (multi-stake) lifts the data model and UX to first-class multi-stake support: provisioning moves from CLI to a superadmin web surface, users may hold roles on multiple stakes simultaneously, and an in-app stake switcher exposes the active stake. The Apps Script app remains in production through the end of Phase 11; cutover was one maintenance window.
+Phases 1–11 ported the Apps Script app to Firebase as a single-stake deployment and ended Phase A on 2026-05-03. Phase 12 (multi-stake) lifts the data model and UX to first-class multi-stake support: provisioning moves from CLI to a superadmin web surface, users may hold roles on multiple stakes simultaneously, and an in-app stake switcher exposes the active stake. The Apps Script app remains in production through the end of Phase 11; cutover was one maintenance window.
 
 The companion `docs/firebase-schema.md` is the authoritative description of the data model, rules, and indexes — this plan references it rather than duplicating. `docs/spec.md` describes runtime behaviour and is updated in lockstep with each phase that changes it. `docs/architecture.md` gets substantially rewritten across Phases 2–4; sections that survive verbatim (request lifecycle state machine, audit-log shape, role union model, email policy) are explicitly left untouched.
 
@@ -37,12 +37,12 @@ The pure-client + minimal-Cloud-Functions approach trades a centralised service 
 | F12 | **Big-bang cutover** during a maintenance window. Apps Script stays as rollback for ~one week, then retires. | 1–2 requests/week; no dual-writes worth the complexity. Same as prior plan. |
 | F13 | **Tests are non-negotiable; CI gates every PR.** Vitest (unit + integration), `@firebase/rules-unit-testing` (rules), Playwright (E2E), React Testing Library (component). No phase merges without green CI. | Past pain on the Apps Script side: integration bugs surfaced only at user-facing-flow time. Rigor up front makes each phase independently shippable. |
 | F14 | **Repo layout side-by-side during migration.** New code in monorepo at repo root (`apps/web/`, `functions/`, `firestore/`, `packages/shared/`, `infra/`, `e2e/`); existing `src/` and `identity-project/` untouched until Phase 11's cutover. | Keeps the live app deployable for rollback throughout. Phase 11 retires `src/` and `identity-project/`; their git history is preserved. |
-| F15 | **`stakeId` parameterized from day one.** Even though there's only one stake (`csnorth`) for v1, every collection path and rule takes `{stakeId}` as a path segment. Phase B is then a routing change, not a data refactor. | Prior plan's lesson learned. The hardcoded `csnorth` constant is consolidated in one place (`apps/web/src/lib/constants.ts`) so Phase B is grep-and-fix. |
+| F15 | **`stakeId` parameterized from day one.** Even though there's only one stake (`csnorth`) for v1, every collection path and rule takes `{stakeId}` as a path segment. Phase 12 is then a routing change, not a data refactor. | Prior plan's lesson learned. The hardcoded `csnorth` constant is consolidated in one place (`apps/web/src/lib/constants.ts`) so Phase 12 is grep-and-fix. |
 | F16 | **Email via Resend** (100/day free tier; 3000/month). Domain verification via DKIM CNAME + DMARC TXT records (~10 min setup, no significant DNS lead time). Locked in 2026-04-27. | Resend has the cleanest developer experience among free transactional-email vendors at this scale. SendGrid (originally proposed) and Brevo are equivalent fallbacks if needed; vendor swap is a Cloud Function wrapper change of ~30 lines. |
 | F17 **[DONE 2026-05-13]** | **Custom domain `stakebuildingaccess.org`** (chosen 2026-04-27), split across two surfaces: Firebase Hosting serves on the apex `stakebuildingaccess.org`; Resend "From" branding uses the `mail.stakebuildingaccess.org` subdomain (verified 2026-05-02 per T-04 — DKIM CNAME + DMARC TXT records on the `mail.` subdomain). Both share the same brand identity. The apex-pointing procedure (and the staging-subdomain rehearsal that precedes it) lives in `infra/runbooks/custom-domain.md`. The legacy `kindoo.csnorth.org` GitHub-Pages-iframe-wrapper URL is decommissioned at Phase 11 cutover (the redirect-vs-takedown decision itself is deferred to the cutover runbook, separate from the apex-pointing procedure). **[Closure 2026-05-13]:** apex flipped to Firebase Hosting on `kindoo-prod`. Dual-hosting is the chosen final state — `kindoo.csnorth.org` also remains live on the same Hosting target. The redirect-vs-takedown decision resolved as "keep both live": no redirect from the legacy hostname to the brand apex, no takedown of the legacy hostname. | User explicitly chose a fresh domain over staying on `kindoo.csnorth.org`. The apex/subdomain split keeps Resend's DNS records scoped to `mail.` so the apex SPF/DMARC posture is independent of the transactional-email vendor — vendor swap (per F16's fallback note) is a subdomain-only DNS change. |
-| F18 | **Multi-stake managers allowed; the principal carries plural stake sets.** A single user can hold any role on multiple stakes simultaneously. The principal shape (`packages/shared/principal.ts`) carries `managerStakes: string[]`, `stakeMemberStakes: string[]`, and `bishopricWards: Record<stakeId, string[]>`; custom claims mirror the same shape. Reverses Phase 12's single-stake-per-user constraint. | The original Phase 12 design treated multi-stake support as a CLI hop between stakes — operator manually moves a manager from stake A to stake B for support work. In practice the operator routinely needs simultaneous access to multiple stakes (cross-stake helpers, the operator themselves as superadmin holding a manager role on every stake they support). Encoding multi-stake at the claim shape costs nothing — the claim shape was already plural (per F3) — and removes the entire hop-script mechanism. See `architecture.md` D15. |
-| F19 | **Stake provisioning moves to a superadmin web surface.** A new `createStake` Cloud Function callable (superadmin-gated) writes the `stakes/{slug}` parent doc with `setup_complete=false` and `bootstrap_admin_email=X`. A new Stake List page at `/superadmin/stakes` lists existing stakes and offers a Create Stake form. The bootstrap admin (X) still has to sign in to run the bootstrap wizard exactly as today — superadmin's only act is creating the parent doc. Reverses Phase 12's CLI-only-provisioning constraint. | The CLI-only design was sized for "once-every-six-months stake onboarding"; Phase B sizes for "operator-or-trusted-helper creates a new stake when the conversation calls for it." Surfacing provisioning in the web removes the Admin-SDK-script-on-operator-laptop dependency, makes the `platformAuditLog` `create_stake` row a real write (not a CLI-script log line), and keeps the bootstrap-wizard split (created → setup_complete) unchanged. `platformSuperadmins` management stays console-only — see F20 / `firebase-schema.md` §3.2. |
-| F20 | **In-app stake switcher; per-tab active stake with sticky fallback.** When a user has any role on ≥ 2 stakes, the app shell surfaces a drop-down next to the current stake name; clicking switches the active stake. Hidden when the user has access to only one stake. Active stake resolution priority: URL `?stake=X` (read once on first render then `history.replaceState`-stripped), `sessionStorage['kindoo.activeStake']` (per-tab), `localStorage['kindoo.activeStake']` (sticky default for fresh tabs), principal-derived first stake (deterministic sort across the union of `managerStakes ∪ stakeMemberStakes ∪ Object.keys(bishopricWards)`). Switcher click writes both `sessionStorage` AND `localStorage` and invalidates TanStack Query's per-stake reads; no URL change. Push-notification taps land on `?stake=X` deep links so the tap targets the right stake without disturbing other tabs. Reverses Phase 12's "no stake picker, no stake switcher, derive from principal at boot" rule. | A path-prefixed (`/{stakeId}/...`) URL shape was the prior plan's instinct but pollutes every URL with a stake segment that's almost always implicit. A `?stake=X` query param on every link has the same pollution at a different layer. Per-tab `sessionStorage` plus a sticky `localStorage` fallback gives the operator independent active-stake state in each tab (multi-stake helpers regularly want stake A in one tab and stake B in another) while a fresh tab still lands on the most-recently-used stake. The URL param is an entry boundary only — push deep links and shared links carry `?stake=X`; the SPA reads it once, persists it, and strips it. See `spec.md` §2 "Active stake" for the resolution chain. |
+| F18 | **Multi-stake managers allowed; the principal carries plural stake sets.** A single user can hold any role on multiple stakes simultaneously. The principal shape (`packages/shared/principal.ts`) carries `managerStakes: string[]`, `stakeMemberStakes: string[]`, and `bishopricWards: Record<stakeId, string[]>`; custom claims mirror the same shape. Reverses the prior Phase 12 plan's single-stake-per-user constraint. | The original Phase 12 design treated multi-stake support as a CLI hop between stakes — operator manually moves a manager from stake A to stake B for support work. In practice the operator routinely needs simultaneous access to multiple stakes (cross-stake helpers, the operator themselves as superadmin holding a manager role on every stake they support). Encoding multi-stake at the claim shape costs nothing — the claim shape was already plural (per F3) — and removes the entire hop-script mechanism. See `architecture.md` D15. |
+| F19 | **Stake provisioning moves to a superadmin web surface.** A new `createStake` Cloud Function callable (superadmin-gated) writes the `stakes/{slug}` parent doc with `setup_complete=false` and `bootstrap_admin_email=X`. A new Stake List page at `/superadmin/stakes` lists existing stakes and offers a Create Stake form. The bootstrap admin (X) still has to sign in to run the bootstrap wizard exactly as today — superadmin's only act is creating the parent doc. Reverses the prior Phase 12 plan's CLI-only-provisioning constraint. | The CLI-only design was sized for "once-every-six-months stake onboarding"; the current Phase 12 plan sizes for "operator-or-trusted-helper creates a new stake when the conversation calls for it." Surfacing provisioning in the web removes the Admin-SDK-script-on-operator-laptop dependency, makes the `platformAuditLog` `create_stake` row a real write (not a CLI-script log line), and keeps the bootstrap-wizard split (created → setup_complete) unchanged. `platformSuperadmins` management stays console-only — see F20 / `firebase-schema.md` §3.2. |
+| F20 | **In-app stake switcher; per-tab active stake with sticky fallback.** When a user has any role on ≥ 2 stakes, the app shell surfaces a drop-down next to the current stake name; clicking switches the active stake. Hidden when the user has access to only one stake. Active stake resolution priority: URL `?stake=X` (read once on first render then `history.replaceState`-stripped), `sessionStorage['kindoo.activeStake']` (per-tab), `localStorage['kindoo.activeStake']` (sticky default for fresh tabs), principal-derived first stake (deterministic sort across the union of `managerStakes ∪ stakeMemberStakes ∪ Object.keys(bishopricWards)`). Switcher click writes both `sessionStorage` AND `localStorage` and invalidates TanStack Query's per-stake reads; no URL change. Push-notification taps land on `?stake=X` deep links so the tap targets the right stake without disturbing other tabs. Reverses the prior Phase 12 plan's "no stake picker, no stake switcher, derive from principal at boot" rule. | A path-prefixed (`/{stakeId}/...`) URL shape was the prior plan's instinct but pollutes every URL with a stake segment that's almost always implicit. A `?stake=X` query param on every link has the same pollution at a different layer. Per-tab `sessionStorage` plus a sticky `localStorage` fallback gives the operator independent active-stake state in each tab (multi-stake helpers regularly want stake A in one tab and stake B in another) while a fresh tab still lands on the most-recently-used stake. The URL param is an entry boundary only — push deep links and shared links carry `?stake=X`; the SPA reads it once, persists it, and strips it. See `spec.md` §2 "Active stake" for the resolution chain. |
 
 ## Team composition
 
@@ -187,7 +187,7 @@ kindoo/
              │   │       └─ 7 Manager admin pages + bootstrap wizard
              │   │           └─ 10 PWA shell + branding
              │   │               └─ 11 Data migration + cutover  ◄─── end of Phase A
-             │   │                   └─ 12 Multi-stake (Phase B)
+             │   │                   └─ 12 Multi-stake (active 2026-05-18)
              │   └─ 8 Importer + Expiry + audit triggers
              │       └─ 9 Email triggers via SendGrid
              └─ (rules + indexes serve everything below)
@@ -195,7 +195,7 @@ kindoo/
 
 Phase 5 → 6 → 7 is web-engineer's serial path. Phase 8 → 9 is backend-engineer's serial path. Once Phase 4 ships, both arcs run in parallel until they converge for Phase 10. Phase 11 is everyone-on-deck for the cutover window. Phase 3.5 is a single-pass infra refresh (replacing reactfire + bumping major deps) that all downstream phases inherit.
 
-**Status as of 2026-05-03: Phase 11 closed; Phase A complete.** Firebase is live in production at `kindoo-prod`; `kindoo.csnorth.org` resolves to Firebase Hosting; the Apps Script app is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md) for the close note. **Phase B (multi-stake) was promoted from deferred to first-class on 2026-05-18** — see the Phase B section below. The Phase 12 single-stake-per-user / CLI-only-provisioning shape settled on 2026-05-05 has been superseded; F18 / F19 / F20 + `architecture.md` D15 capture the three reversals.
+**Status as of 2026-05-03: Phase 11 closed; Phase A complete.** Firebase is live in production at `kindoo-prod`; `kindoo.csnorth.org` resolves to Firebase Hosting; the Apps Script app is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md) for the close note. **Phase 12 (multi-stake) was promoted from deferred to first-class on 2026-05-18** — see the Phase 12 section below. The original Phase 12 plan (single-stake-per-user, CLI-only provisioning) settled on 2026-05-05 has been superseded; F18 / F19 / F20 + `architecture.md` D15 capture the three reversals.
 
 Phase 10.1 (navigation redesign — left rail + sectioned nav) shipped 2026-05-01 in PR #35 and is not shown in the tree above (it was originally planned post-cutover). Phase 10.5 (FCM push notifications — new-request → managers) shipped post-cutover. Phase 10.6 (push expansion — remaining four lifecycle types) is deferred. Phase 10.1 depended on Phases 4 + 7 (it replaced the Phase-4 nav once the Phase-7 admin pages had established the full nav-item set); Phase 10.6 depends on Phases 9 + 10.5. See [`navigation-redesign.md`](navigation-redesign.md) for Phase 10.1's design.
 
@@ -420,8 +420,8 @@ _E2E (Playwright)_
 ### Out of scope
 
 - Real role-based pages — Phase 5+.
-- Multi-stake principal shape — Phase B.
-- Platform superadmin UI — Phase B (trigger skeleton lands here).
+- Multi-stake principal shape — Phase 12.
+- Platform superadmin UI — Phase 12 (trigger skeleton lands here).
 
 ---
 
@@ -1048,7 +1048,7 @@ _Nightly reconciliation_
 
 _Cloud Scheduler jobs_
 
-- [ ] Single-job-loops-over-stakes pattern from day one (per F15, parameterizing for Phase B). Two scheduler jobs total: `runImporter` hourly, `runExpiry` hourly. `reconcileAuditGaps` is a third (nightly). All three within Cloud Scheduler's free tier.
+- [ ] Single-job-loops-over-stakes pattern from day one (per F15, parameterizing for Phase 12). Two scheduler jobs total: `runImporter` hourly, `runExpiry` hourly. `reconcileAuditGaps` is a third (nightly). All three within Cloud Scheduler's free tier.
 
 _Remove-completion handler_
 
@@ -1426,7 +1426,7 @@ _Tests_
 
 ### Out of scope
 
-- Multi-device notification preferences synchronization across user's devices (Phase B candidate).
+- Multi-device notification preferences synchronization across user's devices (Phase 12 candidate).
 - Notification grouping or quiet-hours logic.
 
 ---
@@ -1574,13 +1574,13 @@ Acceptance against the original criteria, updated post-close:
 
 ### Out of scope
 
-- Multi-stake — Phase B.
+- Multi-stake — Phase 12.
 - Performance tuning beyond what was needed for Phases 6/7 to ship.
 - Cost optimization beyond the $1 budget alert.
 
 ---
 
-## Phase B — Multi-stake (active)
+## Phase 12 — Multi-stake (active)
 
 **Status:** Active as of 2026-05-18. Not yet started in code; this section is the planning surface for the implementation PRs B.1 → B.5.
 
@@ -1590,13 +1590,13 @@ Acceptance against the original criteria, updated post-close:
 
 **Dependencies:** Phase 11 (complete). No other gating.
 
-**Supersedes:** The Phase 12 plan that settled on 2026-05-05 (CLI-only provisioning + single-stake-per-user + no stake switcher). The earlier section is preserved in git history under the "Phase 12 — Multi-stake (Phase B, deferred)" heading at this file's prior state.
+**Supersedes:** the prior Phase 12 plan that settled on 2026-05-05 (CLI-only provisioning + single-stake-per-user + no stake switcher). The earlier section is preserved in git history.
 
 ### Three reversals from Phase 12
 
-These three reversals are the architectural delta from Phase 12 to Phase B. Each is captured as a numbered F-decision (F18, F19, F20) and rolled up into `architecture.md` D15.
+These three reversals are the architectural delta from the original Phase 12 plan to the current one. Each is captured as a numbered F-decision (F18, F19, F20) and rolled up into `architecture.md` D15.
 
-1. **Single-stake-per-user → multi-stake managers allowed (F18).** The `packages/shared/principal.ts` shape already carries `managerStakes: string[]`, `stakeMemberStakes: string[]`, and `bishopricWards: Record<stakeId, string[]>`. Phase B treats those plural fields as load-bearing instead of vestigial: a user can hold any role on any subset of stakes simultaneously, and the role-resolution union (web `usePrincipal()`; rules `request.auth.token.stakes[stakeId]`) reads off whichever stake the active-stake selector picked. The Phase 12 `transfer-manager.ts` hop-script and the "importer-driven-role abort" pre-check go away — both were artifacts of the single-stake constraint.
+1. **Single-stake-per-user → multi-stake managers allowed (F18).** The `packages/shared/principal.ts` shape already carries `managerStakes: string[]`, `stakeMemberStakes: string[]`, and `bishopricWards: Record<stakeId, string[]>`. The current plan treats those plural fields as load-bearing instead of vestigial: a user can hold any role on any subset of stakes simultaneously, and the role-resolution union (web `usePrincipal()`; rules `request.auth.token.stakes[stakeId]`) reads off whichever stake the active-stake selector picked. The original Phase 12 plan's `transfer-manager.ts` hop-script and the "importer-driven-role abort" pre-check go away — both were artifacts of the single-stake constraint.
 
 2. **CLI-only stake provisioning → web-surface provisioning (F19).** A new `createStake` Cloud Function callable, gated on `request.auth.token.isPlatformSuperadmin === true`, writes the `stakes/{slug}` parent doc with `setup_complete=false`, `bootstrap_admin_email=<input>`, default `expiry_hour=3`, `timezone='America/Denver'`, and the operator-typed `stake_name`. The new Stake List page at `/superadmin/stakes` lists existing stakes and offers a Create Stake form. The Phase 12 `provision-stake.ts` Admin-SDK script and its operator-laptop dependency go away. The bootstrap wizard itself is unchanged: the named `bootstrap_admin_email` still has to sign in to complete setup (operator-resolved decision #1 — superadmin's only act is creating the parent doc).
 
@@ -1604,7 +1604,7 @@ These three reversals are the architectural delta from Phase 12 to Phase B. Each
 
 ### Operator-resolved design decisions (2026-05-18)
 
-These five questions were settled in the conversation that promoted Phase B from deferred. They're load-bearing on the sub-task list and the acceptance criteria below.
+These five questions were settled in the conversation that promoted Phase 12 from deferred. They're load-bearing on the sub-task list and the acceptance criteria below.
 
 1. **Bootstrap admin email mismatch on new stake.** The named admin owns the wizard. Superadmin's only act is creating the `stakes/{slug}` doc with `setup_complete=false` and `bootstrap_admin_email=X`; X must sign in for the wizard to run. The existing Phase-7 setup-complete gate (`spec.md` §10) handles this unchanged.
 
@@ -1618,7 +1618,7 @@ These five questions were settled in the conversation that promoted Phase B from
 
 ### Sub-deliverables — five implementation PRs
 
-Phase B lands as five PRs in this order. Each lands its own implementation PR with its own changelog entry, runbook updates (where applicable), and per-workspace CLAUDE.md updates as needed. None are tagged with `T-N` numbers yet — those get filed when each PR opens.
+Phase 12 lands as five PRs in this order. Each lands its own implementation PR with its own changelog entry, runbook updates (where applicable), and per-workspace CLAUDE.md updates as needed. None are tagged with `T-N` numbers yet — those get filed when each PR opens.
 
 - **B.1 — Seed runbook + e2e test for the existing `syncSuperadminClaims` trigger.** The trigger already exists at `functions/src/triggers/syncSuperadminClaims.ts` with full mint / revoke wiring through `functions/src/lib/applyClaims.ts` (calls `revokeRefreshTokens` symmetrically on add and delete). B.1 ships the `infra/runbooks/seed-platform-superadmin.md` runbook for the operator-side console-write step + an end-to-end emulator test that writes a `platformSuperadmins/{canonical}` doc and asserts the `isPlatformSuperadmin: true` claim lands on the matching auth user. Owner: backend-engineer + infra-engineer.
 
@@ -1626,7 +1626,7 @@ Phase B lands as five PRs in this order. Each lands its own implementation PR wi
 
 - **B.3 — `createStake` callable + Create Stake form.** A new Cloud Function callable `createStake({stake_name, bootstrap_admin_email})` gated on `isPlatformSuperadmin`. Validates the canonical-email-canonicalized bootstrap email, slugs `stake_name` into a doc ID (collision-checked), and writes the parent doc with defaults. Emits a `platformAuditLog` row with `action='create_stake'`. The Stake List page grows a Create Stake form (modal or inline section — implementer's call) that calls the callable and re-renders. Owner: backend-engineer + web-engineer.
 
-- **B.4 — Active-stake selector + switcher dropdown.** The Phase B core. `apps/web/src/lib/activeStake.ts` (or equivalent) implements the resolution priority chain: URL `?stake=X` → `sessionStorage` → `localStorage` → principal-derived first stake. The first-render URL read strips the param via `history.replaceState`. Switcher writes both `sessionStorage` and `localStorage` and invalidates TanStack Query's per-stake reads. The app shell renders a drop-down next to the current stake name in the brand bar when the principal carries ≥ 2 stakes; hidden otherwise. Every per-stake read in the SPA reads off the active stake instead of the hardcoded `csnorth` constant in `apps/web/src/lib/constants.ts`. Owner: web-engineer.
+- **B.4 — Active-stake selector + switcher dropdown.** The Phase 12 core. `apps/web/src/lib/activeStake.ts` (or equivalent) implements the resolution priority chain: URL `?stake=X` → `sessionStorage` → `localStorage` → principal-derived first stake. The first-render URL read strips the param via `history.replaceState`. Switcher writes both `sessionStorage` and `localStorage` and invalidates TanStack Query's per-stake reads. The app shell renders a drop-down next to the current stake name in the brand bar when the principal carries ≥ 2 stakes; hidden otherwise. Every per-stake read in the SPA reads off the active stake instead of the hardcoded `csnorth` constant in `apps/web/src/lib/constants.ts`. Owner: web-engineer.
 
 - **B.5 — Extension EID-to-stake mapping.** When the extension's active Kindoo session resolves to an EID that's configured under more than one stake the operator manages, the slide-over panel surfaces a stake picker. The choice is remembered per-EID in `chrome.storage.local` (key shape implementer's call — suggested `eidStakeChoice:<eid>` → `stakeId`). All extension callables propagate the chosen stake. Owner: extension-engineer.
 

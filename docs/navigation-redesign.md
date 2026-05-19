@@ -75,7 +75,7 @@ Dismissal: tap a nav item, tap the backdrop, tap the hamburger again, swipe the 
 
 ## 8. Sectioned navigation
 
-Five sections, in this order. The fifth (Superadmin) is Phase B and visible only to platform superadmins. Each item lists the role(s) it's visible for.
+Five sections, in this order. The fifth (Superadmin) is Phase 12 and visible only to platform superadmins. Each item lists the role(s) it's visible for.
 
 **Quick Links**
 
@@ -103,7 +103,7 @@ Five sections, in this order. The fifth (Superadmin) is Phase B and visible only
 
 On phone only, the signed-in user's email is appended below Logout as informational, non-interactive text (see §7). Tablet and desktop show the email in the brand bar instead.
 
-**Superadmin** (Phase B)
+**Superadmin** (Phase 12)
 
 - Stake List (Superadmin only — `/superadmin/stakes`; lists existing stakes and offers a Create Stake form per `spec.md` §5.4)
 

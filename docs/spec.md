@@ -36,7 +36,7 @@ Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for
 
 ### 2.1 Active stake
 
-A user can hold roles on more than one stake simultaneously (per F18 / `architecture.md` D15). The SPA carries an **active-stake selector** that picks which stake's data the current tab is reading and writing. The selector's behaviour is fully specified here because it spans URL, per-tab session, and cross-tab sticky storage; the implementation lives in `apps/web/src/lib/activeStake.ts` (or equivalent, established in Phase B's B.4 PR).
+A user can hold roles on more than one stake simultaneously (per F18 / `architecture.md` D15). The SPA carries an **active-stake selector** that picks which stake's data the current tab is reading and writing. The selector's behaviour is fully specified here because it spans URL, per-tab session, and cross-tab sticky storage; the implementation lives in `apps/web/src/lib/activeStake.ts` (or equivalent, established in Phase 12's B.4 PR).
 
 **Resolution priority on first render**, top wins:
 
@@ -53,6 +53,10 @@ A user can hold roles on more than one stake simultaneously (per F18 / `architec
 
 **No URL pollution.** Path-prefixed (`/{stakeId}/...`) URLs and on-every-link `?stake=X` query params were both considered and rejected. The query param is an entry-boundary signal only — push deep links and operator-shared URLs carry it; the SPA reads it once, persists it, and strips it.
 
+**Invalid `?stake=X`.** The URL is the only entry-boundary source outside the trust envelope (shared link to a stake the user never had access to, stale push tap after role revocation, hand-typed URL). On first render the SPA validates the requested stake against the principal's accessible set (`managerStakes ∪ stakeMemberStakes ∪ Object.keys(bishopricWards)` plus `isPlatformSuperadmin === true`, which can access any stake's `/superadmin/...` routes but not per-stake data). If the requested stake is not accessible, the SPA ignores the URL value, falls through to the next priority (sessionStorage → localStorage → principal-derived first stake), and surfaces a one-time toast "This notification was for a stake you no longer have access to." The `history.replaceState` strip still runs so the bad param doesn't survive in the URL.
+
+**Zero-role platform superadmin.** A platform superadmin with no manager / stake / bishopric roles on any stake (the first-run state immediately after the operator seeds the first superadmin) has no accessible stake to render against. The brand bar shows no stake name (just the product mark). The post-sign-in landing route is `/superadmin/stakes` instead of the role-default per §5. The same first-run state applies to a superadmin who has created stakes but is not a member of any of them — they manage the platform via the Superadmin section without ever entering a per-stake page.
+
 ## 3. Data model
 
 The authoritative schema reference is [`firebase-schema.md`](firebase-schema.md). This section names the collections and gives the role-resolution invariants; field-by-field shapes live in the schema doc.
@@ -60,8 +64,8 @@ The authoritative schema reference is [`firebase-schema.md`](firebase-schema.md)
 ### 3.1 Top-level collections
 
 - **`userIndex/{canonicalEmail}`** — bridge between canonical-email-keyed role data and Firebase Auth's uid. Carries the FCM device-token map and per-category notification preferences. Written by `onAuthUserCreate` and by the user themselves (subscribing to push); claim-sync triggers translate canonical email → uid through this. See `firebase-schema.md` §3.1.
-- **`platformSuperadmins/{canonicalEmail}`** — active source of truth for the platform-superadmin role (Phase B). The `syncSuperadminClaims` trigger reads writes here and mints / revokes the `isPlatformSuperadmin: true` claim. Writes are console-only — there is no in-app management UI.
-- **`platformAuditLog/{auditId}`** — cross-stake audit trail. The Phase B `createStake` callable writes `action='create_stake'` rows here; future cross-stake actions (e.g. superadmin add/remove triggers) append the same way.
+- **`platformSuperadmins/{canonicalEmail}`** — active source of truth for the platform-superadmin role (Phase 12). The `syncSuperadminClaims` trigger reads writes here and mints / revokes the `isPlatformSuperadmin: true` claim. Writes are console-only — there is no in-app management UI.
+- **`platformAuditLog/{auditId}`** — cross-stake audit trail. The Phase 12 `createStake` callable writes `action='create_stake'` rows here; future cross-stake actions (e.g. superadmin add/remove triggers) append the same way.
 
 ### 3.2 Per-stake collections
 
@@ -361,8 +365,8 @@ The Resend `mail.stakebuildingaccess.org` subdomain is verified and in active us
 
 ## 13. Out of scope for v1
 
-- Per-stake "From" address or verified email subdomain (the Phase A shared envelope continues under Phase B) — see `firebase-migration.md` Phase B "Out of scope".
-- Web UI for `platformSuperadmins` management — console-only by operator decision (`firebase-migration.md` Phase B / `firebase-schema.md` §3.2).
+- Per-stake "From" address or verified email subdomain (the Phase A shared envelope continues under Phase 12) — see `firebase-migration.md` Phase 12 "Out of scope".
+- Web UI for `platformSuperadmins` management — console-only by operator decision (`firebase-migration.md` Phase 12 / `firebase-schema.md` §3.2).
 - Kindoo API integration (they don't have one).
 - Native mobile app (the PWA is enough; installable on iOS, Android, desktop).
 - Building permissions UI on bishopric requests (the `building_names` defaulting + manager pre-tick on the complete dialog covers it; the comment field handles exceptions).
@@ -372,13 +376,13 @@ The Resend `mail.stakebuildingaccess.org` subdomain is verified and in active us
 
 ## 14. Build history
 
-The Apps Script implementation shipped in 11 chunks (chunks 1-11 in `docs/changelog/chunk-N-*.md`). The Firebase migration shipped in phases 1-11 plus four interleaved sub-phases (10.2 / 10.3 / 10.4 / 10.5); see `docs/changelog/phase-N-*.md`. Phase 11 cutover (2026-05-03) closed Phase A. Phase B (multi-stake) was promoted from deferred to active on 2026-05-18 and ships as five sub-deliverables (B.1 → B.5); see `docs/firebase-migration.md` Phase B.
+The Apps Script implementation shipped in 11 chunks (chunks 1-11 in `docs/changelog/chunk-N-*.md`). The Firebase migration shipped in phases 1-11 plus four interleaved sub-phases (10.2 / 10.3 / 10.4 / 10.5); see `docs/changelog/phase-N-*.md`. Phase 11 cutover (2026-05-03) closed Phase A. Phase 12 (multi-stake) was promoted from deferred to active on 2026-05-18 and ships as five sub-deliverables (B.1 → B.5); see `docs/firebase-migration.md` Phase 12.
 
 ## 15. Kindoo Sites (multi-site Kindoo management)
 
 The operator manages a single SBA stake (`csnorth`) but is a Kindoo Manager on multiple Kindoo sites — two wards in csnorth live in buildings whose access doors are physically governed by a different stake's Kindoo environment than the SBA stake's own home site. "Kindoo Sites" tracks those N Kindoo environments the operator's managers can write to (home + 0..N foreign), so the SPA, the companion Chrome extension, and the weekly sync can route Kindoo-side operations to the correct environment without misprovisioning.
 
-This is **not** multi-stake on the SBA side. Kindoo Sites is local per stake — the existing `kindooManagers` allow-list governs all Kindoo writes regardless of which Kindoo site they target, and Kindoo Sites does NOT introduce a new role or principal shape. **Phase B (multi-stake) interaction.** The data layer is unaffected: each stake's `kindooSites/{kindooSiteId}` sub-collection is local to that stake, and a foreign Kindoo site configured under stake A is not visible from stake B. The extension gains one Phase-B-specific behaviour: when a single Kindoo EID resolves to configurations under more than one SBA stake the operator manages (rare, but reachable when a foreign-site grant from stake A and a home grant from stake B both target the same Kindoo environment), the slide-over panel surfaces a stake picker; the choice is remembered per-EID in `chrome.storage.local`. See `firebase-migration.md` Phase B sub-deliverable B.5.
+This is **not** multi-stake on the SBA side. Kindoo Sites is local per stake — the existing `kindooManagers` allow-list governs all Kindoo writes regardless of which Kindoo site they target, and Kindoo Sites does NOT introduce a new role or principal shape. **Phase 12 (multi-stake) interaction.** The data layer is unaffected: each stake's `kindooSites/{kindooSiteId}` sub-collection is local to that stake, and a foreign Kindoo site configured under stake A is not visible from stake B. The extension gains one Phase-12-specific behaviour: when a single Kindoo EID resolves to configurations under more than one SBA stake the operator manages (rare, but reachable when a foreign-site grant from stake A and a home grant from stake B both target the same Kindoo environment), the slide-over panel surfaces a stake picker; the choice is remembered per-EID in `chrome.storage.local`. See `firebase-migration.md` Phase 12 sub-deliverable B.5.
 
 ### Data model
 
