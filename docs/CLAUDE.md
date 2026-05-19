@@ -11,7 +11,7 @@ docs/
 ├── spec.md                        # live source of truth for runtime behaviour
 ├── architecture.md                # numbered design decisions (D1, D2, ...)
 ├── firebase-schema.md             # authoritative data model + rules + indexes
-├── firebase-migration.md          # phase plan (Phase A complete; Phase 12 deferred)
+├── firebase-migration.md          # phase plan (Phase A complete; Phase 12 active)
 ├── open-questions.md              # active ambiguities + [RESOLVED] trail
 ├── navigation-redesign.md         # Phase 10.1 nav redesign design doc
 ├── TASKS.md                       # cross-cutting work-in-flight

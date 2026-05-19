@@ -67,7 +67,7 @@ Bridge between canonical-email-keyed role data and Firebase Auth's uid-keyed use
 
 ### 3.2 `platformSuperadmins/{canonicalEmail}`
 
-Allow-list for the multi-tenant superadmin role. Empty in single-stake v1.
+Active source of truth for the platform-superadmin role (Phase 12 / F19). The `syncSuperadminClaims` trigger reads writes here and mints / revokes the `isPlatformSuperadmin: true` claim. Writes remain console-only per Phase 12 operator decision #2 — there is no in-app UI for adding or removing superadmins, by design (the chicken-and-egg of "who creates the first superadmin?" plus the operator's preference to keep this surface small).
 
 **Doc ID:** canonical email.
 
@@ -82,7 +82,7 @@ Allow-list for the multi-tenant superadmin role. Empty in single-stake v1.
 }
 ```
 
-**Written by:** Firestore console (chicken-and-egg — no in-app management).
+**Written by:** Firestore console (chicken-and-egg — no in-app management; see Phase 12 in `firebase-migration.md`).
 
 **Read by:** `syncSuperadminClaims` trigger (sets `isPlatformSuperadmin` claim).
 
@@ -110,9 +110,9 @@ Audit trail for cross-stake operations (stake creation, superadmin changes) that
 }
 ```
 
-**Written by:** `createStake` callable Cloud Function; superadmin-management triggers.
+**Written by:** the `createStake` Cloud Function callable (Phase 12 / F19) emits `action='create_stake'` rows on every successful stake-doc write. Future superadmin-management triggers (if added) write `add_superadmin` / `remove_superadmin` rows here; for now those actions are reserved enum values with no writer.
 
-**Read by:** Platform admin page.
+**Read by:** Platform admin / Stake List page (`spec.md` §5.4) for cross-stake audit views.
 
 **Rules:** read by superadmins; writes server-only.
 
@@ -943,7 +943,7 @@ Q2 (duplicate manual/temp blocking), Q3 (multi-calling collapse + utilization re
 
 **Q7. `getAfter()` viability spike.** The `seats.create` rule's cross-doc check against request status leans on `getAfter()`. It's documented for exactly this purpose, but uncommon enough that emulator behaviour should be verified to match live behaviour before committing the architecture to it.
 
-**Q8. Custom claims size budget.** Firebase caps custom claims at 1 KB. With one stake and ~12 ward codes plus the canonical email and superadmin flag, we're nowhere near the limit. The long-tail multi-stake concern is largely moot under the 2026-05-05 Phase 12 re-scope: every user belongs to exactly one stake at a time, so the claim never carries more entries than a single-stake user does today. Phase B work need not bound this further.
+**Q8. Custom claims size budget.** Firebase caps custom claims at 1 KB. With one stake and ~12 ward codes plus the canonical email and superadmin flag, we're nowhere near the limit. **Phase 12 re-opens this** (2026-05-18): F18 makes multi-stake claims load-bearing — a user may now hold roles on N stakes simultaneously. At target scale (operator's foreseeable horizon: 2–4 stakes per power user, ~12 wards each), the worst-case claim is `~4 × (12 ward codes + manager + stake flags) ≈ 250-400 bytes`, still well under 1 KB. Revisit if a user routinely accumulates roles across 10+ stakes; the mitigation in that scenario is to drop `wards: string[]` in favour of a denormalized `userIndex/{canonical}.bishopricWards` lookup that the rules consult via `get()`. Not built; tracked as a future re-evaluation when stake count grows.
 
 **Q9. Bootstrap admin first sign-in sequencing.** The bootstrap admin signs into a stake with `setup_complete=false`. Their `userIndex` doc gets written; claims sync from existing role data — but the access doc doesn't exist yet for them, and they're added to `kindooManagers/` only by the wizard's first step. Race-prone. Worth tracing through end-to-end.
 

@@ -44,7 +44,7 @@ tests/                             # one test file per match block
 - **Web-engineer added a new query that needs an index** → they PR the index alongside the query and tag you for review.
 - **Web-engineer requests a new rule** → `TASKS.md` entry from them; you write rule + passing test.
 - **Schema change** in `packages/shared/` → coordinate via `TASKS.md`; rules may need updating.
-- **Phase B (multi-stake) collection-group rules** → significant rewrite; coordinate with web-engineer's principal-shape change.
+- **Phase 12 (multi-stake) collection-group rules** → significant rewrite; coordinate with web-engineer's principal-shape change.
 
 ## Tests
 
