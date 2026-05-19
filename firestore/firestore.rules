@@ -46,8 +46,18 @@ rules_version = '2';
 //     kindooManagers doc) had nothing else to authorise it.
 //
 //     Operator pre-step: the stake doc must exist with
-//     `setup_complete=false` and `bootstrap_admin_email=<typed email>`
-//     BEFORE the bootstrap admin signs in for the first time. See
+//     `setup_complete=false` and
+//     `bootstrap_admin_email=<lowercased email; dots and +suffix preserved>`
+//     BEFORE the bootstrap admin signs in for the first time. The
+//     `createStake` callable applies `.trim().toLowerCase()`; manual
+//     Firestore-console seeds must apply the same transform. The rule
+//     does a case-sensitive string compare against
+//     `request.auth.token.email`, which Google OAuth delivers
+//     lowercased — so the stored value must be lowercased on both
+//     sides. NOT `canonicalEmail()` — that would strip Gmail dots
+//     and `+suffix`, breaking the escape hatch for any operator who
+//     uses those address variants (see `firebase-schema.md` §4.1
+//     "Bootstrap-admin email normalization"). See
 //     `infra/runbooks/provision-firebase-projects.md` for the seed
 //     instructions.
 //
