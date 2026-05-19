@@ -89,38 +89,52 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     await clearEmulators();
   });
 
-  it('mints isPlatformSuperadmin=true when a platformSuperadmins doc is created', async () => {
-    const { auth, db } = requireEmulators();
-    const typedEmail = 'Super.Admin@gmail.com';
-    const canonical = 'superadmin@gmail.com';
+  // 30s per-test timeout: vitest's default is 5s but the e2e cycle is
+  // doc-write → Firestore commit → Eventarc fan-out → Functions
+  // emulator runtime spin-up → setCustomUserClaims → admin-SDK
+  // getUser refresh, and the cold start on the Functions emulator's
+  // first trigger fire can chew through several seconds before the
+  // claim materialises. 30s gives plenty of headroom on a CI runner
+  // that's also booting other emulators; the polling loop inside the
+  // test exits as soon as the claim flips, so happy-path runtime is
+  // typically <2s.
 
-    const user = await auth.createUser({ email: typedEmail });
-    await db.doc(`userIndex/${canonical}`).set({
-      uid: user.uid,
-      typedEmail,
-      lastSignIn: FieldValue.serverTimestamp(),
-    });
+  it(
+    'mints isPlatformSuperadmin=true when a platformSuperadmins doc is created',
+    { timeout: 30_000 },
+    async () => {
+      const { auth, db } = requireEmulators();
+      const typedEmail = 'Super.Admin@gmail.com';
+      const canonical = 'superadmin@gmail.com';
 
-    // Real Firestore write that should fire `syncSuperadminClaims` via
-    // Eventarc. Fields shadow `firebase-schema.md` §3.2: `email`
-    // (typed), `addedAt` (server timestamp), `addedBy` (canonical
-    // email of the actor — operator-as-bootstrap here).
-    await db.doc(`platformSuperadmins/${canonical}`).set({
-      email: typedEmail,
-      addedAt: FieldValue.serverTimestamp(),
-      addedBy: 'operator@example.com',
-    });
+      const user = await auth.createUser({ email: typedEmail });
+      await db.doc(`userIndex/${canonical}`).set({
+        uid: user.uid,
+        typedEmail,
+        lastSignIn: FieldValue.serverTimestamp(),
+      });
 
-    const flipped = await waitFor(async () => {
-      const u = await auth.getUser(user.uid);
-      const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
-      return claims.isPlatformSuperadmin === true;
-    }, 15_000);
+      // Real Firestore write that should fire `syncSuperadminClaims` via
+      // Eventarc. Fields shadow `firebase-schema.md` §3.2: `email`
+      // (typed), `addedAt` (server timestamp), `addedBy` (canonical
+      // email of the actor — operator-as-bootstrap here).
+      await db.doc(`platformSuperadmins/${canonical}`).set({
+        email: typedEmail,
+        addedAt: FieldValue.serverTimestamp(),
+        addedBy: 'operator@example.com',
+      });
 
-    expect(flipped).toBe(true);
-  });
+      const flipped = await waitFor(async () => {
+        const u = await auth.getUser(user.uid);
+        const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
+        return claims.isPlatformSuperadmin === true;
+      }, 25_000);
 
-  it('revokes isPlatformSuperadmin when the doc is deleted', async () => {
+      expect(flipped).toBe(true);
+    },
+  );
+
+  it('revokes isPlatformSuperadmin when the doc is deleted', { timeout: 30_000 }, async () => {
     const { auth, db } = requireEmulators();
     const typedEmail = 'Super.Admin@gmail.com';
     const canonical = 'superadmin@gmail.com';
@@ -142,7 +156,7 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       return claims.isPlatformSuperadmin === true;
-    }, 15_000);
+    }, 12_000);
     expect(minted).toBe(true);
 
     // Step 2: delete the doc, wait for the claim to clear.
@@ -151,7 +165,7 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       return claims.isPlatformSuperadmin !== true;
-    }, 15_000);
+    }, 12_000);
     expect(revoked).toBe(true);
   });
 });
