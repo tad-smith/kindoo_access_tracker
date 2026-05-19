@@ -118,23 +118,31 @@ export function useRequireRole(
  * roles in `STAKE_ID`? `platformSuperadmin` is the only stake-agnostic
  * axis.
  *
- * Two roles are implicit supersets that pass any gate:
- *   - `platformSuperadmin` administers every stake.
+ * Two roles are implicit supersets that pass any gate they cover:
+ *   - `platformSuperadmin` administers every stake — passes any gate.
  *   - `manager` (Kindoo Manager) administers the entire app, so a
  *     manager in `STAKE_ID` passes a `stake` or `bishopric` gate
- *     without literally holding those roles.
+ *     without literally holding those roles. The manager shortcut does
+ *     NOT cover the `platformSuperadmin` gate — a manager who isn't a
+ *     superadmin must still be redirected away from a
+ *     `platformSuperadmin`-only page.
  *
  * Exported for unit testing — components use {@link useRequireRole}.
  */
 export function holdsAnyRole(principal: Principal, roles: RequiredRole[]): boolean {
   if (principal.isPlatformSuperadmin) return true;
-  if (principal.managerStakes.includes(STAKE_ID)) return true;
+  const manager = principal.managerStakes.includes(STAKE_ID);
+  // Manager superset only fires when at least one requested role is
+  // one a manager covers. A `'platformSuperadmin'`-only gate must
+  // remain strict.
+  const requiresOnlySuperadmin = roles.every((r) => r === 'platformSuperadmin');
+  if (manager && !requiresOnlySuperadmin) return true;
   for (const r of roles) {
     if (r === 'platformSuperadmin') {
       // Already handled above; falsy unless `isPlatformSuperadmin`.
       continue;
     }
-    if (r === 'manager' && principal.managerStakes.includes(STAKE_ID)) return true;
+    if (r === 'manager' && manager) return true;
     if (r === 'stake' && principal.stakeMemberStakes.includes(STAKE_ID)) return true;
     if (r === 'bishopric') {
       const wards = principal.bishopricWards[STAKE_ID];
