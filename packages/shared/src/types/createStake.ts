@@ -1,0 +1,36 @@
+// Input / output shapes for the `createStake` HTTPS callable invoked
+// from the Superadmin Stake List page (`/superadmin/stakes`, spec §5.4).
+// Each click of the Create Stake form dispatches one callable
+// invocation; the payload carries the operator's typed inputs and the
+// callable derives the doc-ID slug + writes the parent doc.
+//
+// `bootstrap_admin_email` is stored on the parent stake doc in TYPED
+// form (NOT canonicalized) per F19 / `firebase-schema.md` §4.1 — the
+// `isBootstrapAdmin` rule compares it against typed
+// `request.auth.token.email`, so canonicalizing here would silently
+// break the bootstrap-admin escape hatch.
+//
+// Failure envelope: soft-fail with `{success:false, error}` for domain
+// misses (empty inputs, invalid slug, slug collision) so the web form
+// can render a clean inline error without trapping a thrown
+// `HttpsError`. Auth + shape errors still throw.
+
+export type CreateStakeInput = {
+  /** Display name — trimmed server-side. Non-empty required. */
+  stake_name: string;
+  /** Typed bootstrap admin email — trimmed but NOT canonicalized. Non-empty required. */
+  bootstrap_admin_email: string;
+  /** Optional IANA tz identifier. Defaults to `'America/Denver'` when absent. */
+  timezone?: string;
+};
+
+/** Soft-failure error codes for the `{success:false}` envelope. */
+export type CreateStakeError =
+  | 'name_required'
+  | 'email_required'
+  | 'slug_collision'
+  | 'invalid_slug';
+
+export type CreateStakeResult =
+  | { success: true; stakeId: string }
+  | { success: false; error: CreateStakeError };

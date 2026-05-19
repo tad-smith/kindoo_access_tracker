@@ -14,6 +14,7 @@ export type {
 } from './audit.js';
 export type { CustomClaims, Principal, StakeClaims } from './auth.js';
 export type { Building, KindooBuildingRule } from './building.js';
+export type { CreateStakeError, CreateStakeInput, CreateStakeResult } from './createStake.js';
 export type {
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
