@@ -59,7 +59,7 @@ No Sheets-client wrapper, no importer service, no `runImporter` / `runImportNow`
 
 ## Don't
 
-- **Don't write audit rows directly from non-audit functions.** The parameterized `auditTrigger` handles it. Server-driven writes stamp the synthetic actor (e.g. `ExpiryTrigger`, `RemoveTrigger`) on the entity's `lastActor` and let the trigger emit the audit row.
+- **Don't write audit rows directly from non-audit functions.** The parameterized `auditTrigger` handles it. Server-driven writes stamp the synthetic actor (e.g. `ExpiryTrigger`, `RemoveTrigger`) on the entity's `lastActor` and let the trigger emit the audit row. **Exception:** `createStake` writes the `platformAuditLog` row directly (per F19). The `auditTrigger` only fans per-stake `auditLog`, not the cross-stake `platformAuditLog`, and sub-1-write-a-year doesn't justify a separate trigger — keep this in-callable.
 - **Don't reach into Firestore from outside `src/services/` helpers.** Keeps test boundaries clean and audit traceable.
 - **Don't store secrets in code.** Use Secret Manager + env vars.
 - **Don't bypass `packages/shared/` types.** Define new types there.

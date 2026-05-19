@@ -562,6 +562,40 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
 
   // -------- Stake parent doc --------
 
+  it('stake create (before=null) emits create_stake with the new doc snapshot on after', async () => {
+    // The `createStake` callable writes the parent doc; this trigger
+    // fan emits the per-stake audit row alongside the cross-stake
+    // `platformAuditLog` row the callable writes directly. Distinct
+    // from `update_stake`, which fires on any subsequent edit.
+    const after = {
+      stake_id: STAKE_ID,
+      stake_name: 'CS North Stake',
+      bootstrap_admin_email: 'admin@example.com',
+      setup_complete: false,
+      stake_seat_cap: 0,
+      expiry_hour: 4,
+      timezone: 'America/Denver',
+      notifications_enabled: true,
+      last_over_caps_json: [],
+      created_by: 'super@gmail.com',
+      lastActor: lastActor('super@gmail.com'),
+    };
+    await auditStakeWrites.run(makeEvent({ params: { stakeId: STAKE_ID }, before: null, after }));
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    const r = rows[0]!;
+    expect(r.action).toBe('create_stake');
+    expect(r.entity_type).toBe('stake');
+    expect(r.entity_id).toBe(STAKE_ID);
+    expect(r.before).toBeNull();
+    expect(r.after).toMatchObject({
+      stake_id: STAKE_ID,
+      stake_name: 'CS North Stake',
+      setup_complete: false,
+    });
+    expect(r.actor_canonical).toBe('super@gmail.com');
+  });
+
   it('stake update emits update_stake; setup_complete flip emits setup_complete', async () => {
     const before = {
       stake_id: STAKE_ID,

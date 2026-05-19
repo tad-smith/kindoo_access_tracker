@@ -28,6 +28,7 @@ export type AuditAction =
   | 'update_manager'
   | 'delete_manager'
   // Stake parent
+  | 'create_stake'
   | 'update_stake'
   | 'setup_complete'
   // System (email failure; no underlying entity write).

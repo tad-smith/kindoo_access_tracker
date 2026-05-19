@@ -52,9 +52,20 @@ export function requireEmulators(): { app: App; db: Firestore; auth: Auth } {
   return { app, db: getFirestore(app), auth: getAuth(app) };
 }
 
-/** Delete every Auth user + Firestore doc in the named project. */
+/** Delete every Auth user + Firestore doc in the named project.
+ *
+ * Firestore clear: hit the emulator's REST `DELETE …/databases/(default)/documents`
+ * endpoint directly rather than relying on `db.recursiveDelete()`.
+ * `recursiveDelete` walks the tree client-side via a `BulkWriter`; under
+ * back-to-back-test load on CI the promise has been observed to resolve
+ * before all rows are fully gone, leaving leftover audit rows visible to
+ * the next test's reads (the "expected length 1 but got 2" flake in
+ * `auditTrigger.test.ts`, seen across `B-5 follow-up`, idempotency, and
+ * out-of-band tests). The REST endpoint blocks until the emulator has
+ * dropped its in-memory store — synchronous and atomic.
+ */
 export async function clearEmulators(): Promise<void> {
-  const { auth, db } = requireEmulators();
+  const { auth } = requireEmulators();
   // Auth: list+delete in batches.
   let pageToken: string | undefined;
   do {
@@ -65,11 +76,13 @@ export async function clearEmulators(): Promise<void> {
     pageToken = page.pageToken;
   } while (pageToken);
 
-  // Firestore: recursively delete every collection. The emulator's
-  // recursive delete REST endpoint isn't exposed via the Admin SDK
-  // directly, but `recursiveDelete` covers it for collection roots.
-  const collections = await db.listCollections();
-  for (const c of collections) {
-    await db.recursiveDelete(c);
+  // Firestore: REST blow-away. `FIRESTORE_EMULATOR_HOST` is
+  // `host:port` (asserted by `hasEmulators()` above). Project ID is the
+  // one Admin SDK already resolved.
+  const host = process.env['FIRESTORE_EMULATOR_HOST']!;
+  const url = `http://${host}/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+  const res = await fetch(url, { method: 'DELETE' });
+  if (!res.ok) {
+    throw new Error(`clearEmulators(Firestore) failed: ${res.status} ${await res.text()}`);
   }
 }

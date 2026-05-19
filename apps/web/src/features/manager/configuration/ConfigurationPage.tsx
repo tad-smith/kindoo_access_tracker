@@ -76,7 +76,7 @@ import {
 import { CallingTemplateFormDialog } from './CallingTemplateFormDialog';
 import type { CallingTemplateDialogMode } from './CallingTemplateFormDialog';
 import { CallingTemplatesTable } from './CallingTemplatesTable';
-import { TimezoneCombobox } from './TimezoneCombobox';
+import { TimezoneCombobox } from '../../../components/TimezoneCombobox';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';

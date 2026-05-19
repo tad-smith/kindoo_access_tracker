@@ -213,7 +213,9 @@ Every manager page renders against the **active stake** (§2.1). A manager who h
 
 Visible iff `principal.isPlatformSuperadmin === true`. A new "Superadmin" section in the app shell's nav (see `navigation-redesign.md` §8) carries one entry:
 
-- **Stake List** (`/superadmin/stakes`) — lists every stake in the platform: `stake_name`, doc ID slug, `created_at`, `setup_complete` flag, and a deep-link to each stake's normal landing page (e.g. the manager Dashboard scoped to that stake). A **Create Stake** form (inline or modal — implementer's call in 12.3) takes `stake_name` and `bootstrap_admin_email`. Submit calls the `createStake` Cloud Function callable (superadmin-gated server-side; the web-side render gate is defense-in-depth), which slugs the stake name into a doc ID, validates collision, preserves the bootstrap email in typed form (NOT canonicalized — see F19 / `firebase-schema.md` §4.1: `isBootstrapAdmin` compares typed against `request.auth.token.email`), writes the `stakes/{slug}` parent doc with `setup_complete=false`, and emits a `platformAuditLog` `create_stake` row. The named bootstrap admin must then sign in for the bootstrap wizard (§10) to run — superadmin's only act is creating the parent doc.
+- **Stake List** (`/superadmin/stakes`) — lists every stake in the platform: `stake_name`, doc ID slug, `created_at`, `setup_complete` flag, and a deep-link to each stake's normal landing page (e.g. the manager Dashboard scoped to that stake). A **Create Stake** form (inline above the list as of 12.3) takes `stake_name`, `bootstrap_admin_email`, and an optional IANA timezone (defaults to `'America/Denver'`; the field uses the shared `TimezoneCombobox` in `apps/web/src/components/`, constrained to the curated US-IANA list in `usTimezones.ts`). Submit calls the `createStake` Cloud Function callable (superadmin-gated server-side; the web-side render gate is defense-in-depth), which slugs the stake name into a doc ID, validates collision, lowercases the bootstrap email while preserving dots and `+suffix` (NOT `canonicalEmail()` — see F19 / `firebase-schema.md` §4.1: `isBootstrapAdmin` compares against `request.auth.token.email`, which Firebase Auth always emits lowercased, while Gmail-dot / `+suffix` aliases must survive to keep that escape hatch usable), writes the `stakes/{slug}` parent doc with `setup_complete=false`, and emits a `platformAuditLog` `create_stake` row. An inline hint under the email field (`"Lowercased on save to match the user's Google sign-in address."`) tells the operator the case-normalization will happen — without it, the resulting list row would silently show different casing than what they typed. The named bootstrap admin must then sign in for the bootstrap wizard (§10) to run — superadmin's only act is creating the parent doc.
+
+  The callable's failure envelope mirrors `syncApplyFix`: auth + shape errors throw `HttpsError`; domain misses return `{success:false, error}` so the form maps each code to an inline field error. Soft-fail codes: `name_required`, `email_required`, `invalid_email` (basic shape regex — missing `@`, missing TLD, embedded whitespace), `slug_collision`, `invalid_slug` (slug derivation collapsed to empty), `invalid_timezone` (the value fails an `Intl.DateTimeFormat` round-trip). The web form pre-empts `invalid_email` with zod `.email()` client-side and pre-empts `invalid_timezone` by constraining the user to the curated US-IANA list; the server checks are defense-in-depth for non-SDK callers (extension clients, direct REST POSTs).
 
 The `platformSuperadmins/{canonical}` allow-list itself is **not** managed from the web. Adding or removing a superadmin is a Firestore console write; the `syncSuperadminClaims` trigger picks up the write and mints / revokes the `isPlatformSuperadmin: true` claim. No in-app UI exists for it.
 
@@ -321,9 +323,9 @@ Bodies are plain text; every email includes a link back to the relevant page (`W
 
 ## 10. Bootstrap flow
 
-`stake.bootstrap_admin_email` (typed form) is seeded by the operator at stake creation, alongside `setup_complete=false`. Until `setup_complete` flips to `true`, every page load first routes through the **setup-complete gate** in `apps/web` (runs **before** role resolution):
+`stake.bootstrap_admin_email` (lowercased on save by the `createStake` callable; dots and `+suffix` preserved — see `firebase-schema.md` §4.1) is seeded by the operator at stake creation, alongside `setup_complete=false`. Until `setup_complete` flips to `true`, every page load first routes through the **setup-complete gate** in `apps/web` (runs **before** role resolution):
 
-- If the signed-in email matches `bootstrap_admin_email` (typed-form compare) and `setup_complete === false` → render the bootstrap wizard, ignoring deep-link route params.
+- If the signed-in email matches `bootstrap_admin_email` (plain string compare against `auth.token.email`, which Firebase Auth always emits lowercased) and `setup_complete === false` → render the bootstrap wizard, ignoring deep-link route params.
 - If `setup_complete === false` and the email does NOT match → render a "Setup in progress" page (distinct from "Not authorized" — the user isn't unauthorised, the app isn't ready).
 - If `setup_complete === true` → normal role resolution.
 
@@ -340,7 +342,7 @@ Steps:
 
 **One-shot wizard.** The bootstrap-admin gate's `setup_complete === false` clause is what makes this strictly time-bounded. Post-setup edits go through the normal manager Configuration page.
 
-**Operator pre-step.** The stake doc must exist with `setup_complete=false` and `bootstrap_admin_email=<typed email>` BEFORE the bootstrap admin signs in. The gate's `get()` short-circuits if the stake doc is missing — operator seed is mandatory. See `infra/runbooks/provision-firebase-projects.md`.
+**Operator pre-step.** The stake doc must exist with `setup_complete=false` and `bootstrap_admin_email=<lowercased email>` BEFORE the bootstrap admin signs in. The `createStake` callable handles the lowercase transform; any out-of-band seed path (direct-console write, future CLI) must do the same — see `firebase-schema.md` §4.1 for the rationale. The gate's `get()` short-circuits if the stake doc is missing — operator seed is mandatory. See `infra/runbooks/provision-firebase-projects.md`.
 
 ## 11. Concurrency
 

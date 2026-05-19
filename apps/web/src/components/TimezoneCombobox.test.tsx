@@ -1,6 +1,8 @@
-// Render + interaction tests for the Configuration > Config tab's
-// timezone combobox. The schema-level "non-empty string" rule lives in
-// schemas.test.ts; this file owns the picker UX itself.
+// Render + interaction tests for the shared timezone combobox. Reused
+// by every form that writes a stake-doc `timezone` field (Configuration
+// > Config tab and the Superadmin Create Stake form today). The
+// schema-level "non-empty string" rule lives on each caller's schema;
+// this file owns the picker UX itself.
 
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';

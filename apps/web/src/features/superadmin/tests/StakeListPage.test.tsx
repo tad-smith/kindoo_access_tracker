@@ -20,6 +20,14 @@ const useStakesMock = vi.fn();
 
 vi.mock('../hooks', () => ({
   useStakes: () => useStakesMock(),
+  useCreateStake: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
+// CreateStakeForm has its own dedicated test file; here we stub it to a
+// sentinel marker so the page-level tests stay focused on the list
+// rendering shape and don't have to thread react-hook-form's deps.
+vi.mock('../CreateStakeForm', () => ({
+  CreateStakeForm: () => <div data-testid="create-stake-form-stub" />,
 }));
 
 import { SuperadminStakeListPage } from '../StakeListPage';
@@ -96,6 +104,12 @@ beforeEach(() => {
 });
 
 describe('<SuperadminStakeListPage />', () => {
+  it('renders the Create Stake form above the list', async () => {
+    mockStakes([]);
+    await renderPage();
+    expect(screen.getByTestId('create-stake-form-stub')).toBeInTheDocument();
+  });
+
   it('renders a loading affordance while the subscription is pending', async () => {
     mockStakes(undefined, true);
     await renderPage();
