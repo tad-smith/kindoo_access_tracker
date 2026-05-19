@@ -221,13 +221,21 @@ Fix by editing the doc in the console.
 ### Claim seems to land on the wrong user
 
 The `email` field on the doc and the `customClaims.canonical` field
-on the resulting auth token must point at the same human. If the
-canonical-email computation collapsed two distinct typed forms onto
-the same canonical key (Gmail dot/`+suffix` cases — see
-`packages/shared/src/canonicalEmail.ts`), both users share the same
-`userIndex/{canonical}` doc and the same `platformSuperadmins`
-entry. That is the intended behavior: Gmail treats those addresses
-as one identity, so SBA does too.
+on the resulting auth token must point at the same human. The Gmail
+dot/`+suffix` canonicalization in
+`packages/shared/src/canonicalEmail.ts` is mostly theoretical at the
+auth boundary: Google itself dedupes those typed forms to a single
+identity, so two "distinct" typed sign-ins for the same canonical
+key resolve to the same Firebase Auth user. There is no two-users-
+sharing-one-doc scenario in practice — the canonical key, the
+`userIndex/{canonical}` doc, the `platformSuperadmins/{canonical}`
+entry, and the auth user are all 1:1.
+
+If the claim looks wrong, the most likely cause is that the doc ID
+itself was computed from a different typed form than the one the
+user signed in with. Verify the canonical computation step above
+against the actual sign-in email; correct the doc by deleting it
+and re-creating with the right canonical doc ID.
 
 ## Rotation / multi-superadmin
 
