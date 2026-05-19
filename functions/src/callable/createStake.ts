@@ -26,9 +26,9 @@
 //
 // Failure envelope mirrors `syncApplyFix`:
 //   - shape / auth errors → `HttpsError`
-//   - domain misses (empty inputs, invalid slug, slug collision) →
-//     `{ success: false, error }` so the web form can render a clean
-//     inline error.
+//   - domain misses (empty inputs, invalid slug, invalid timezone,
+//     slug collision) → `{ success: false, error }` so the web form
+//     can render a clean inline error.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -93,6 +93,21 @@ export const createStake = onCall(
       data.timezone !== undefined && data.timezone.trim().length > 0
         ? data.timezone.trim()
         : DEFAULT_TIMEZONE;
+
+    // Validate the IANA tz before writing. `runExpiry` builds an
+    // `Intl.DateTimeFormat` from this string every hour; a malformed
+    // value (e.g. `'Americ/Denver'`) would throw `RangeError` and break
+    // the expiry trigger for that stake forever. Catching it here
+    // surfaces the bad input as a clean soft-fail at provisioning time.
+    // Applied to BOTH the operator-typed value and the default fallback
+    // (defense in depth — `'America/Denver'` should never trip the
+    // check, but if it does that's a Node-runtime config bug worth
+    // catching).
+    try {
+      new Intl.DateTimeFormat(undefined, { timeZone: timezone });
+    } catch {
+      return { success: false, error: 'invalid_timezone' };
+    }
 
     const slug = buildingSlug(stakeName);
     if (slug.length === 0) {

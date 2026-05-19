@@ -32,7 +32,8 @@ function errorMessage(err: unknown): string {
  * Map a soft-failure error code to a human-friendly message and the
  * field it should attach to. `invalid_slug` and `slug_collision` both
  * surface against `stake_name` since that's the input the operator
- * controls; `name_required` and `email_required` mirror their inputs.
+ * controls; `name_required`, `email_required`, and `invalid_timezone`
+ * mirror their inputs.
  */
 function softFailToFieldError(error: CreateStakeError): {
   field: keyof CreateStakeForm;
@@ -56,6 +57,12 @@ function softFailToFieldError(error: CreateStakeError): {
       return {
         field: 'stake_name',
         message: 'A stake with that slug already exists. Pick a different name.',
+      };
+    case 'invalid_timezone':
+      return {
+        field: 'timezone',
+        message:
+          'Timezone is not a recognized IANA identifier (e.g. America/Denver, America/Phoenix).',
       };
   }
 }

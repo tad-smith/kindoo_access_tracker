@@ -124,6 +124,32 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     expect(result).toEqual({ success: false, error: 'invalid_slug' });
   });
 
+  it('returns invalid_timezone for a non-IANA tz; no parent doc, no audit row', async () => {
+    // `runExpiry` calls `Intl.DateTimeFormat(undefined, { timeZone })`
+    // every hour for every stake; a malformed value would throw
+    // `RangeError` and break the expiry trigger for that stake forever.
+    // Catch it here at provisioning time.
+    const result = await createStake.run(
+      callableReq({
+        auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
+        data: {
+          stake_name: 'Bad TZ Stake',
+          bootstrap_admin_email: 'admin@example.com',
+          timezone: 'Mars/Olympus',
+        },
+      }),
+    );
+    expect(result).toEqual({ success: false, error: 'invalid_timezone' });
+
+    // No parent doc and no audit row should land — the check fires
+    // before the transaction is entered.
+    const { db } = requireEmulators();
+    const stakeSnap = await db.doc('stakes/bad-tz-stake').get();
+    expect(stakeSnap.exists).toBe(false);
+    const auditSnap = await db.collection('platformAuditLog').get();
+    expect(auditSnap.empty).toBe(true);
+  });
+
   it('rejects non-string stake_name with invalid-argument', async () => {
     await expect(
       createStake.run(
