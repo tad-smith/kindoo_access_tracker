@@ -156,10 +156,15 @@ export function CreateStakeForm() {
         <span className="text-sm font-medium">Bootstrap admin email</span>
         <Input
           type="email"
-          autoComplete="off"
+          autoComplete="email"
+          inputMode="email"
+          spellCheck={false}
           {...register('bootstrap_admin_email')}
           data-testid="create-stake-email"
         />
+        <span className="text-xs text-gray-500" data-testid="create-stake-email-hint">
+          Lowercased on save to match the user&apos;s Google sign-in address.
+        </span>
       </label>
       {formState.errors.bootstrap_admin_email ? (
         <p className="kd-form-error" role="alert" data-testid="create-stake-email-error">

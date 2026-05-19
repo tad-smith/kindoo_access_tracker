@@ -65,6 +65,15 @@ describe('<CreateStakeForm />', () => {
     expect(tz).toHaveTextContent(DEFAULT_TIMEZONE);
   });
 
+  it('renders a hint under the bootstrap email explaining the lowercase normalization', () => {
+    // Backend lowercases the stored bootstrap_admin_email server-side
+    // so it matches what Google sign-in normalizes addresses to. The
+    // hint exists so the operator isn't surprised when their input
+    // changes case on save.
+    render(<CreateStakeForm />);
+    expect(screen.getByTestId('create-stake-email-hint')).toHaveTextContent(/lowercased/i);
+  });
+
   it('blocks submit when stake_name is empty (zod resolver)', async () => {
     const user = userEvent.setup();
     render(<CreateStakeForm />);
