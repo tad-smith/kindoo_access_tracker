@@ -1,5 +1,5 @@
-// US-relevant IANA timezones for the Configuration > Config tab's
-// timezone combobox.
+// US-relevant IANA timezones for the shared `TimezoneCombobox`. Reused
+// by every form that writes a stake-doc `timezone` field.
 //
 // Source: IANA tz database `zone.tab` rows whose ISO country code is
 // `US` (50 states + DC), plus the inhabited territories the system may

@@ -1,4 +1,7 @@
-// Combobox for the Configuration > Config tab's `timezone` field.
+// Combobox for a stake-doc `timezone` field. Reused across every form
+// that writes a timezone — currently the Configuration > Config tab
+// (updates the stake's tz) and the Superadmin Create Stake form (sets
+// the new stake's tz on provision).
 //
 // Surfaces the curated US-relevant IANA timezone list from
 // `usTimezones.ts`. Behaviour:
@@ -16,6 +19,9 @@
 //     suffix and surfaced as a separate "Current value" group at the
 //     top of the list so the user can keep it without retyping. Picking
 //     anything else from the list replaces the legacy value as usual.
+//     The Create Stake form never seeds a legacy value (no pre-existing
+//     doc), so this branch is dead code there — it's load-bearing only
+//     on the Configuration page.
 //
 // We are NOT enforcing "must be in the curated list" on save — that
 // stays a `z.string().trim().min(1)` schema check, identical to today.
@@ -28,9 +34,9 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from '../../../components/ui/Command';
-import { Popover, PopoverAnchor, PopoverContent } from '../../../components/ui/Popover';
-import { cn } from '../../../lib/cn';
+} from './ui/Command';
+import { Popover, PopoverAnchor, PopoverContent } from './ui/Popover';
+import { cn } from '../lib/cn';
 import { US_TIMEZONES, US_TIMEZONE_SET, type UsTimezoneOption } from './usTimezones';
 
 export interface TimezoneComboboxProps {
