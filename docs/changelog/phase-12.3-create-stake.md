@@ -36,7 +36,7 @@ The third implementation atom of Phase 12 (multi-stake). 12.1 made the `isPlatfo
 
 ## Decisions made during the phase
 
-- **`bootstrap_admin_email` stored typed, not canonicalized** — already baked into F19, restated here because it's load-bearing on the bootstrap-admin escape hatch. The `isBootstrapAdmin` rule (`firebase-schema.md` §4.1) compares the stake doc's `bootstrap_admin_email` against `request.auth.token.email`, which is the typed Google email. Canonicalizing on write would silently break sign-in for any bootstrap admin whose typed email differs from the canonical form (Gmail dots / `+suffix`).
+- **`bootstrap_admin_email` stored lowercased; dots and `+suffix` preserved.** Initially baked into F19 as "stored in typed form, not canonicalized." The reviewer-driven follow-up (see subsection below) tightened this to "case lowercased, but explicitly NOT `canonicalEmail()`." The `isBootstrapAdmin` rule (`firebase-schema.md` §4.1) compares the stake doc's `bootstrap_admin_email` against `request.auth.token.email`, which Firebase Auth always emits lowercased — so case must match. Dots and `+suffix` still survive verbatim because Google itself dedupes those at sign-in to the same identity, so the Gmail-dot / `+suffix` escape hatch keeps working for any operator who actually uses those address variants.
 
 - **`platformAuditLog.after` mirrors the full written doc, not a subset.** The reviewer flagged early that a sparse `after` payload would diverge from the per-stake `auditLog` trigger's snapshot-mirror convention. Operator decision: write the full stake-doc body verbatim into `after`. This is what the per-stake `auditTrigger` does for every audited write (it reads the post-write doc snapshot), and uniformity across the two audit collections is worth more than the small `platformAuditLog` write-size saving. Tracked in commit `67fc655`. `firebase-schema.md` §3.3 already typed `after: object | null` without claiming subset, so no schema-doc edit needed beyond the §4.10 union update.
 
@@ -46,14 +46,43 @@ The third implementation atom of Phase 12 (multi-stake). 12.1 made the `isPlatfo
 
 - **`TimezoneCombobox` + `usTimezones` moved to `apps/web/src/components/`.** From `apps/web/src/features/manager/configuration/`. The configuration page (update flow) and the new Create Stake form (create flow) both need the curated US-IANA list. The "don't import from another feature's internal files" rule made the existing path illegal for cross-feature reuse; moving to `components/` is the canonical fix. The colocated test file moved alongside; no test-shape changes.
 
+### Reviewer-driven follow-up: bootstrap-email case normalization
+
+The first docs commit on this phase (`8e4567d`) closed out the originally-spec'd "store typed form, don't canonicalize" rule for `bootstrap_admin_email`. The reviewer immediately surfaced the gap that rule actually left open: Firebase Auth always emits `request.auth.token.email` lowercased (Gmail unconditionally; Google Workspace typically), and the `isBootstrapAdmin` rule does a plain `==` compare. So an operator typing `Admin@CSNorth.org` into the Create Stake form would write that mixed-case string to the doc, the bootstrap admin would sign in and arrive with `admin@csnorth.org` in the auth token, the rule would `==`-mismatch on case alone, and the wizard would refuse to load. `stakes/{slug}` has `allow delete: if false`, so the wedged doc has no in-app remediation path — operator would have to delete it from the Firestore console.
+
+Three options surfaced:
+
+- **A — server-only:** silently lowercase on the way in. Behaviour fixes; UI says nothing; operator sees the resulting list row shows different casing than what they typed.
+- **B — UI-only:** add a hint and rely on the operator to lowercase. Doesn't actually prevent the wedge.
+- **C — server + UI hint + docs note (selected):** lowercase server-side AND tell the operator the form will do it. Behaviour fixes regardless of operator typing; the hint sets the expectation so the resulting list row doesn't look like a bug.
+
+Crucial nuance baked into the option-C fix: case is the ONLY thing normalized — dots and `+suffix` survive verbatim. The `createStake` callable uses plain `.trim().toLowerCase()`, explicitly NOT `canonicalEmail()`. Operators who actually use Gmail-dot variants or `+suffix` aliases on bootstrap-admin addresses (which the operator at least theoretically might rely on for inbox routing) keep the escape hatch working — the only behavioural change is that case mismatches no longer wedge the stake.
+
+The shipped fix:
+
+- **Backend (`35d576f`)** — `functions/src/callable/createStake.ts` swaps `.trim()` for `.trim().toLowerCase()` on `bootstrap_admin_email`. The lowercased value flows through to the email-shape regex, the parent-doc write, and the `platformAuditLog.after` snapshot uniformly. `createStake.test.ts`: the existing "stores TYPED" assertion is rewritten as "lowercases on write (case normalized; dots + `+suffix` preserved)"; one new round-trip test asserts `Foo.Bar+work@Gmail.com` lands as `foo.bar+work@gmail.com` in both the stake doc and the audit `after` payload, while the audit row's `actor_email` still carries the CALLER's typed email unchanged (only the stored bootstrap field is normalized). 17 → 18 tests; full functions integration suite 245 / 2 skipped (was 244 / 2).
+- **Web (`1c2dea6`)** — `CreateStakeForm.tsx` adds an explainer hint under the bootstrap-email input: `"Lowercased on save to match the user's Google sign-in address."` (`data-testid="create-stake-email-hint"`, same `text-xs text-gray-500` chrome as the slug-preview hint). Also tightens the input's typing affordances to match `SignInPage.tsx`'s email field: `autoComplete="email"` (was `"off"` — autofill is appropriate when the operator is creating a stake against a known admin address), `inputMode="email"` (mobile email keyboard), `spellCheck={false}` (avoid mobile auto-correct mangling). Superadmin suite 25 / 25 (was 24); full web suite 1159 / 1159 across 92 files.
+- **Docs (this commit)** — `firebase-schema.md` §4.1 field comment + §6.1 gate predicate text + operator pre-step note all updated; `firebase-migration.md` F19 row + the F-decisions roll-up paragraph updated; `spec.md` §5.4 Create Stake paragraph + §10 setup-complete-gate text + operator pre-step note all updated. Same lock-in everywhere: "lowercased on save, dots and `+suffix` preserved, NOT `canonicalEmail()`," with the rationale that Auth always emits lowercased and the Gmail escape hatch must survive.
+
+`docs/architecture.md` D-numbers are untouched — the fix is a tightening of an existing decision (F19's "preserve the bootstrap-admin escape hatch"), not a new architectural choice. The reviewer caught a misapplication of the original rule; the fix restores its actual intent.
+
 No new architecture D-numbers earned. The callable follows the existing `onCall` + `HttpsError`/soft-fail-envelope pattern (`syncApplyFix` is the template). The audit-row write inside the callable's transaction is a deliberate one-off — the `auditTrigger` only fans per-stake `auditLog` rows; `platformAuditLog` has no trigger writer, so callables that touch cross-stake state write the row directly (see `firebase-schema.md` §3.3 "Written by" line).
 
 ## Spec / doc edits in this phase
+
+First docs pass (`8e4567d`):
 
 - `docs/firebase-schema.md` — §4.10 `action` union gains `'create_stake'`; new invariant clarifies that the action fires only on the parent-doc-create branch and that sub-entity creates under `stakes/{sid}/` continue to audit as `'update_stake'`. §3.3 already typed `after: object | null` accurately; no edit needed there.
 - `docs/firebase-migration.md` — F19 row updated: `created_at` / `last_modified_at` clause now says `Timestamp.fromDate(writeTime)` instead of `serverTimestamp()`; new soft-fail envelope paragraph enumerates all six error codes and notes the defense-in-depth posture of the server-side `invalid_email` / `invalid_timezone` checks. The 12.3 sub-deliverable section gains a `[SHIPPED 2026-05-19]` tag, the explicit `platformAuditLog` field shape, and an "Implementation note on timestamps" explaining the `Timestamp.fromDate` deviation.
 - `docs/spec.md` — §5.4 Create Stake paragraph rewritten to mention the timezone field, the shared `TimezoneCombobox`, and the soft-fail enumeration with defense-in-depth posture for `invalid_email` / `invalid_timezone`.
 - `docs/changelog/phase-12.3-create-stake.md` — this entry.
+
+Reviewer-driven follow-up docs pass (this commit; covers backend `35d576f` + web `1c2dea6` lockstep — see the "Reviewer-driven follow-up" subsection above):
+
+- `docs/firebase-schema.md` — §4.1 `bootstrap_admin_email` field comment rewritten from "typed form" to "stored with case lowercased; dots and `+suffix` preserved (NOT `canonicalEmail()`)" plus the rationale (`request.auth.token.email` is always lowercased; Gmail-dot / `+suffix` aliases must survive). §6.1 bootstrap-admin gate predicate text updated to drop "typed-form comparison" and explain the lowercase-on-write side. §6.1 operator pre-step note updated to point operator at lowercased seed values.
+- `docs/firebase-migration.md` — F19 row's `bootstrap_admin_email` clause rewritten with the lowercase-on-write rule + the explicit "NOT `canonicalEmail()`" carve-out. The F-decisions roll-up paragraph (item 2) mirrors the same rule.
+- `docs/spec.md` — §5.4 Create Stake paragraph rewritten to describe lowercase-on-write + the inline hint shipped under the email field. §10 setup-complete-gate description updated to drop "typed form" / "typed-form compare" framing in favour of the lowercase + plain string compare against `auth.token.email`. §10 operator pre-step note updated to match §6.1.
+- `docs/changelog/phase-12.3-create-stake.md` — this enumeration; the new "Reviewer-driven follow-up: bootstrap-email case normalization" subsection above.
 
 ## Test footprint
 

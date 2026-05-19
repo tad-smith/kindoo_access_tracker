@@ -135,7 +135,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   created_by: string;                  // superadmin canonical email
 
   // Identity / setup
-  bootstrap_admin_email: string;       // typed form
+  bootstrap_admin_email: string;       // stored with case lowercased; dots and `+suffix` preserved (NOT `canonicalEmail()`). The `isBootstrapAdmin` rule below compares against `request.auth.token.email` (Firebase Auth always emits lowercased), so case must match what Auth will hand the rule. Dots and `+suffix` survive because Google itself dedupes those at sign-in to the same identity — preserving them keeps the Gmail escape hatch (dotted local-parts, `+suffix` aliases) usable by operators who actually rely on those address variants.
   setup_complete: boolean;
 
   // Capacity
@@ -892,7 +892,7 @@ The `isBootstrapAdmin(stakeId)` predicate provides the escape hatch. It evaluate
 1. The user is authenticated, AND
 2. The stake doc exists, AND
 3. `stake.setup_complete == false`, AND
-4. `stake.bootstrap_admin_email == request.auth.token.email` (typed-form comparison).
+4. `stake.bootstrap_admin_email == request.auth.token.email`. The stored value is lowercased on the way in (dots and `+suffix` preserved — see §4.1 field comment); `request.auth.token.email` is whatever Firebase Auth emitted, which is always lowercased. Case-normalizing on the write side closes the operator-typo gap where the Create Stake form receives `Foo@Bar` but the rule is handed `foo@bar`.
 
 The gate is OR'd into the read + write rules of the four wizard-managed paths:
 
@@ -905,7 +905,7 @@ The other wizard-adjacent collections (access, seats, requests, calling template
 
 **One-shot enforcement.** Step 3 of the gate's predicate (`setup_complete == false`) is what makes it strictly time-bounded. The wizard's final write flips `setup_complete=true`; the rule evaluates against pre-write state, so the flip itself succeeds, but every subsequent wizard-shaped write fails because the gate's predicate now returns false. By that point the bootstrap admin holds the manager claim minted by `syncManagersClaims`, so `isManager(stakeId)` takes over.
 
-**Operator pre-step.** The stake doc must exist with `setup_complete=false` and `bootstrap_admin_email=<typed email>` BEFORE the bootstrap admin signs in for the first time. The gate's `get()` short-circuits if the stake doc is missing — operator seed is mandatory. See `infra/runbooks/provision-firebase-projects.md` for the seed instructions.
+**Operator pre-step.** The stake doc must exist with `setup_complete=false` and `bootstrap_admin_email=<lowercased email>` BEFORE the bootstrap admin signs in for the first time. The Phase 12.3 `createStake` callable lowercases on the way in; a direct-console seed (or any out-of-band write path) must do the same. The gate's `get()` short-circuits if the stake doc is missing — operator seed is mandatory. See `infra/runbooks/provision-firebase-projects.md` for the seed instructions.
 
 **`lastActorMatchesAuth` still applies.** The gate widens the *who can write* predicate but doesn't bypass the lastActor integrity check — the bootstrap admin's writes must still carry `lastActor.{email, canonical}` matching their auth token. This keeps audit trail integrity intact during bootstrap.
 
