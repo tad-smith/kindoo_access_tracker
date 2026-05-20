@@ -152,6 +152,12 @@ describe('ActiveStakeToastBoundary', () => {
   });
 
   it('fires the short-form copy when the resolver lands on null (zero-role superadmin)', () => {
+    // Item 8: zero-role superadmin with stale storage from a prior
+    // session must see the storage tier invalidated (NOT silently
+    // resumed). The toast wording drops the "switched to <name>" tail
+    // because there's no new stake to substitute — the resolver fell
+    // through to `null` and the route gate sends the user to
+    // `/superadmin/stakes`.
     mockedPrincipal.current = {
       ...basePrincipal,
       isPlatformSuperadmin: true,
@@ -166,13 +172,12 @@ describe('ActiveStakeToastBoundary', () => {
         <ActiveStakeToastBoundary />
       </>,
     );
-    // Note: this case actually fires the permissive-superadmin path
-    // now (item 3): 'foreign' is admitted without invalidation. So no
-    // toast fires at all — verify that.
-    const storageToasts = toastSpy.mock.calls.filter(([msg]) =>
-      (msg as string).startsWith('Your last-active stake is no longer available'),
+    expect(toastSpy).toHaveBeenCalledWith('Your last-active stake is no longer available.', 'warn');
+    // The "switched to" half must NOT appear — there is no new stake.
+    const switchedToCalls = toastSpy.mock.calls.filter(([msg]) =>
+      (msg as string).includes('switched to'),
     );
-    expect(storageToasts).toHaveLength(0);
+    expect(switchedToCalls).toHaveLength(0);
   });
 
   it('does not double-fire on a Shell remount of the same logical event', async () => {

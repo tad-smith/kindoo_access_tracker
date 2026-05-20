@@ -136,17 +136,18 @@ describe('resolveActiveStake', () => {
     expect(result).toEqual({ stakeId: null, source: 'none', invalidatedTier: null });
   });
 
-  it('platform superadmin with zero accessible stakes accepts a local-tier hint deep-link target', () => {
-    // Per spec §5.4 / F19, a platform superadmin can read every stake's
-    // parent doc and the Stake List deep-links route through `?stake=X`
-    // which then persists into storage. The resolver must not invalidate
-    // the value — they have access to the navigation surface for every
-    // stake. Per-stake data reads are still rule-gated downstream.
+  it('platform superadmin with stale localStorage from a prior session falls through to null with invalidation', () => {
+    // Item 8: storage-tier permissive is bootstrap-candidate ONLY.
+    // A zero-role superadmin whose previous role on stake X has been
+    // rotated away (stale `localStorage['kindoo.activeStake']` from a
+    // prior session) must see the spec §2.1 invalidation — toast +
+    // null — and route to `/superadmin/stakes`, NOT silently resume
+    // reads against a stake they no longer have access to.
     const sa = makePrincipal({ isPlatformSuperadmin: true });
     const result = resolveActiveStake(sa, null, null, 'foreign');
-    expect(result.stakeId).toBe('foreign');
-    expect(result.source).toBe('local');
-    expect(result.invalidatedTier).toBeNull();
+    expect(result.stakeId).toBeNull();
+    expect(result.source).toBe('none');
+    expect(result.invalidatedTier).toBe('local');
   });
 
   it('URL value is preferred over session and local even when all three differ', () => {
@@ -156,8 +157,10 @@ describe('resolveActiveStake', () => {
     expect(result.source).toBe('url');
   });
 
-  describe('platform superadmin deep-link carve-out (item 3)', () => {
+  describe('platform superadmin deep-link carve-out (item 3 + item 8 split)', () => {
     it('accepts any stake id from the URL tier without invalidation', () => {
+      // The explicit Stake-List click case. URL deep-link is the only
+      // tier where superadmin permissive applies (item 8 split).
       const sa = makePrincipal({ isPlatformSuperadmin: true });
       const result = resolveActiveStake(sa, 'foreignstake', null, null);
       expect(result.stakeId).toBe('foreignstake');
@@ -165,12 +168,15 @@ describe('resolveActiveStake', () => {
       expect(result.invalidatedTier).toBeNull();
     });
 
-    it('accepts any stake id from the sessionStorage tier without invalidation', () => {
+    it('INVALIDATES a stale sessionStorage value for a zero-role superadmin (item 8)', () => {
+      // Storage tier is no longer superadmin-permissive — a zero-role
+      // superadmin with stale `sessionStorage['kindoo.activeStake']`
+      // from a prior session falls through to null + invalidation.
       const sa = makePrincipal({ isPlatformSuperadmin: true });
       const result = resolveActiveStake(sa, null, 'foreignstake', null);
-      expect(result.stakeId).toBe('foreignstake');
-      expect(result.source).toBe('session');
-      expect(result.invalidatedTier).toBeNull();
+      expect(result.stakeId).toBeNull();
+      expect(result.source).toBe('none');
+      expect(result.invalidatedTier).toBe('session');
     });
 
     it('still resolves null when nothing is set (superadmin with empty hint chain)', () => {
@@ -183,14 +189,37 @@ describe('resolveActiveStake', () => {
 
     it('does not toast/invalidate for a superadmin who also has per-stake roles but deep-links to a foreign stake', () => {
       // A superadmin with `managerStakes=['csnorth']` clicking a row for
-      // `ridgeline` in the Stake List page. Permissive path admits the
-      // URL value regardless of per-stake role.
+      // `ridgeline` in the Stake List page. Permissive URL path admits
+      // the value regardless of per-stake role.
       const sa = makePrincipal({
         isPlatformSuperadmin: true,
         managerStakes: ['csnorth'],
       });
       const result = resolveActiveStake(sa, 'ridgeline', null, null);
       expect(result.stakeId).toBe('ridgeline');
+      expect(result.source).toBe('url');
+      expect(result.invalidatedTier).toBeNull();
+    });
+
+    it('invalid URL value for a zero-role superadmin admits the URL anyway (URL-tier permissive)', () => {
+      // The URL tier is still permissive for superadmins — they have
+      // navigation rights to any stake's parent doc. A `?stake=X` for
+      // any X is admitted. (This distinguishes item 8 from a blanket
+      // "superadmin lose all permissive treatment" — only the storage
+      // tiers narrow.)
+      const sa = makePrincipal({ isPlatformSuperadmin: true });
+      const result = resolveActiveStake(sa, 'foreign', null, null);
+      expect(result.stakeId).toBe('foreign');
+      expect(result.invalidatedTier).toBeNull();
+    });
+
+    it('invalid URL value with stale storage for a zero-role superadmin admits the URL, NOT the storage', () => {
+      // URL takes priority. Even if storage has its own (stale) value,
+      // the URL value is what resolves — and the URL tier is permissive
+      // for the superadmin.
+      const sa = makePrincipal({ isPlatformSuperadmin: true });
+      const result = resolveActiveStake(sa, 'fromurl', 'fromsession', 'fromlocal');
+      expect(result.stakeId).toBe('fromurl');
       expect(result.source).toBe('url');
       expect(result.invalidatedTier).toBeNull();
     });

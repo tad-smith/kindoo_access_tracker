@@ -118,37 +118,52 @@ export function resolveActiveStake(
   //     validation possible without a stake-read).
   //
   // Platform superadmins (the `isPlatformSuperadmin === true` flag) are
-  // treated permissively against the URL/storage tiers too: per F19 +
-  // spec §5.4 the rules permit them to read every stake's parent doc,
-  // so deep-linking from the Stake List page to a stake they don't hold
-  // a per-stake role on is a supported flow. Per-stake DATA reads are
-  // still rule-gated and will surface as empty states when the
-  // superadmin lacks the required role.
+  // treated permissively at the URL TIER ONLY. Per spec §5.4 + F19 the
+  // rules permit them to read every stake's parent doc, so a Stake-List
+  // click landing on `/manager/dashboard?stake=X` is an explicit
+  // deep-link the resolver honours. Storage tiers (session / local)
+  // however carry stale values from prior sessions and are NOT a
+  // superadmin-permissive surface: a zero-role superadmin whose
+  // previous role on stake X has been rotated away must see the spec
+  // §2.1 "no longer available" toast, fall through to `null`, and land
+  // on `/superadmin/stakes` — not silently resume reads against a
+  // stake they no longer have access to.
   const isBootstrapCandidate =
     principal.firebaseAuthSignedIn === true &&
     accessible.length === 0 &&
     !principal.isPlatformSuperadmin;
   const isPlatformSuperadmin = principal.isPlatformSuperadmin === true;
-  const isPermissive = isBootstrapCandidate || isPlatformSuperadmin;
+  // URL-tier permissive: superadmin OR bootstrap candidate.
+  const isPermissiveUrl = isBootstrapCandidate || isPlatformSuperadmin;
+  // Storage-tier permissive: bootstrap candidate ONLY. Superadmins
+  // intentionally fall through to invalidation here.
+  const isPermissiveStorage = isBootstrapCandidate;
 
   // Tier 1: URL.
   if (urlParam !== null && urlParam.length > 0) {
     if (accessSet.has(urlParam)) {
       return { stakeId: urlParam, source: 'url', invalidatedTier: null };
     }
-    if (isPermissive) {
+    if (isPermissiveUrl) {
       // Permissive paths (bootstrap-admin or platform superadmin). No
       // invalidation toast — neither identity has a fallback we'd be
       // demoting to.
       return { stakeId: urlParam, source: 'url', invalidatedTier: null };
     }
-    // Invalid URL value — fall through, remember to toast.
-    const fallback = resolveStorageTiers(accessSet, sessionValue, localValue, accessible, false);
+    // Invalid URL value — fall through, remember to toast. Storage
+    // tier uses the storage-permissive flag (bootstrap candidate only).
+    const fallback = resolveStorageTiers(
+      accessSet,
+      sessionValue,
+      localValue,
+      accessible,
+      isPermissiveStorage,
+    );
     return { ...fallback, invalidatedTier: 'url' };
   }
 
   // Tiers 2-4.
-  return resolveStorageTiers(accessSet, sessionValue, localValue, accessible, isPermissive);
+  return resolveStorageTiers(accessSet, sessionValue, localValue, accessible, isPermissiveStorage);
 }
 
 function resolveStorageTiers(
