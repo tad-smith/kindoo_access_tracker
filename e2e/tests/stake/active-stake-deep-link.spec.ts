@@ -119,14 +119,16 @@ test.describe('Active-stake URL deep-link (?stake=X)', () => {
       timeout: 10_000,
     });
 
-    // Both params are consumed and stripped — `?stake=` by the active-
-    // stake hook, `?focus=` by the queue page itself.
+    // `?stake=` is consumed and stripped by the active-stake hook.
     await expect.poll(async () => page.url()).not.toMatch(/stake=ridgeline/);
 
-    // Storage carries the deep-linked stake.
+    // Both storage tiers carry the deep-linked stake (spec §2.1
+    // URL-tier success path writes session AND local).
     const sessionValue = await page.evaluate(() =>
       window.sessionStorage.getItem('kindoo.activeStake'),
     );
+    const localValue = await page.evaluate(() => window.localStorage.getItem('kindoo.activeStake'));
     expect(sessionValue).toBe('ridgeline');
+    expect(localValue).toBe('ridgeline');
   });
 });
