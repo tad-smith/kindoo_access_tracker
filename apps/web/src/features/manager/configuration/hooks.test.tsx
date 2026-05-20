@@ -25,7 +25,7 @@ import {
 function ward(overrides: Partial<Ward> = {}): Ward {
   return {
     ward_code: 'CO',
-    ward_name: 'Cordera',
+    ward_name: 'Maple',
     building_name: 'Main',
     seat_cap: 20,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,12 +49,12 @@ describe('configuration buildingDeleteBlocker', () => {
 
   it('returns a message listing referencing ward names + codes', () => {
     const msg = buildingDeleteBlocker([
-      ward({ ward_code: 'CO', ward_name: 'Cordera' }),
+      ward({ ward_code: 'CO', ward_name: 'Maple' }),
       ward({ ward_code: 'PR', ward_name: 'Prairie' }),
     ]);
     expect(msg).toContain('Cannot delete');
     expect(msg).toContain('2 ward(s)');
-    expect(msg).toContain('Cordera (CO)');
+    expect(msg).toContain('Maple (CO)');
     expect(msg).toContain('Prairie (PR)');
   });
 });
@@ -68,13 +68,13 @@ describe('configuration kindooSiteDeleteBlocker', () => {
     const msg = kindooSiteDeleteBlocker(
       'east-stake',
       [
-        ward({ ward_code: 'CO', ward_name: 'Cordera', kindoo_site_id: 'east-stake' }),
+        ward({ ward_code: 'CO', ward_name: 'Maple', kindoo_site_id: 'east-stake' }),
         ward({ ward_code: 'PC', ward_name: 'Pine Creek', kindoo_site_id: 'east-stake' }),
       ],
       [],
     );
     expect(msg).toContain('Cannot delete Kindoo site "east-stake"');
-    expect(msg).toContain('Wards: Cordera (CO), Pine Creek (PC)');
+    expect(msg).toContain('Wards: Maple (CO), Pine Creek (PC)');
     expect(msg).not.toContain('Buildings:');
     expect(msg).toContain('Unassign these wards / buildings from this site before deleting.');
   });
@@ -83,21 +83,21 @@ describe('configuration kindooSiteDeleteBlocker', () => {
     const msg = kindooSiteDeleteBlocker(
       'east-stake',
       [],
-      [building({ building_id: 'foothills', building_name: 'Foothills Stake Center' })],
+      [building({ building_id: 'pine', building_name: 'Pine Stake Center' })],
     );
     expect(msg).toContain('Cannot delete Kindoo site "east-stake"');
     expect(msg).not.toContain('Wards:');
-    expect(msg).toContain('Buildings: Foothills Stake Center');
+    expect(msg).toContain('Buildings: Pine Stake Center');
   });
 
   it('groups wards and buildings on separate lines when both block', () => {
     const msg = kindooSiteDeleteBlocker(
       'east-stake',
-      [ward({ ward_code: 'CO', ward_name: 'Cordera', kindoo_site_id: 'east-stake' })],
-      [building({ building_id: 'foothills', building_name: 'Foothills Stake Center' })],
+      [ward({ ward_code: 'CO', ward_name: 'Maple', kindoo_site_id: 'east-stake' })],
+      [building({ building_id: 'pine', building_name: 'Pine Stake Center' })],
     );
-    expect(msg).toContain('Wards: Cordera (CO)');
-    expect(msg).toContain('Buildings: Foothills Stake Center');
+    expect(msg).toContain('Wards: Maple (CO)');
+    expect(msg).toContain('Buildings: Pine Stake Center');
   });
 });
 
@@ -309,19 +309,19 @@ describe('useUpsertKindooSiteMutation', () => {
     getDocMock.mockResolvedValue({ exists: () => false });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
-      display_name: 'East Stake Foothills',
-      kindoo_expected_site_name: 'East Stake Foothills CS',
+      display_name: 'East Stake Pine',
+      kindoo_expected_site_name: 'East Stake Pine CS',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [ref, body, options] = setDocMock.mock.calls[0]!;
     expect(ref).toMatchObject({
-      path: 'stakes/csnorth/kindooSites/east-stake-foothills',
-      id: 'east-stake-foothills',
+      path: 'stakes/csnorth/kindooSites/east-stake-pine',
+      id: 'east-stake-pine',
     });
     expect(body).toMatchObject({
-      id: 'east-stake-foothills',
-      display_name: 'East Stake Foothills',
-      kindoo_expected_site_name: 'East Stake Foothills CS',
+      id: 'east-stake-pine',
+      display_name: 'East Stake Pine',
+      kindoo_expected_site_name: 'East Stake Pine CS',
     });
     // merge: true is load-bearing — it preserves any extension-written
     // kindoo_eid the manager UI doesn't surface.
@@ -336,18 +336,18 @@ describe('useUpsertKindooSiteMutation', () => {
     getDocMock.mockResolvedValue({ exists: () => true });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
-      id: 'east-stake-foothills',
+      id: 'east-stake-pine',
       display_name: 'Other Name',
       kindoo_expected_site_name: 'Other Name CS',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [ref, body] = setDocMock.mock.calls[0]!;
     expect(ref).toMatchObject({
-      path: 'stakes/csnorth/kindooSites/east-stake-foothills',
-      id: 'east-stake-foothills',
+      path: 'stakes/csnorth/kindooSites/east-stake-pine',
+      id: 'east-stake-pine',
     });
     expect(body).toMatchObject({
-      id: 'east-stake-foothills',
+      id: 'east-stake-pine',
       display_name: 'Other Name',
     });
   });
@@ -357,8 +357,8 @@ describe('useUpsertKindooSiteMutation', () => {
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await expect(
       result.current.mutateAsync({
-        display_name: 'East Stake Foothills',
-        kindoo_expected_site_name: 'East Stake Foothills CS',
+        display_name: 'East Stake Pine',
+        kindoo_expected_site_name: 'East Stake Pine CS',
       }),
     ).rejects.toThrow(/already exists/i);
     expect(setDocMock).not.toHaveBeenCalled();
@@ -374,9 +374,9 @@ describe('useUpsertKindooSiteMutation', () => {
     getDocMock.mockResolvedValue({ exists: () => true });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
-      id: 'east-stake-foothills',
-      display_name: 'East Stake Foothills (renamed)',
-      kindoo_expected_site_name: 'East Stake Foothills CS',
+      id: 'east-stake-pine',
+      display_name: 'East Stake Pine (renamed)',
+      kindoo_expected_site_name: 'East Stake Pine CS',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [, body, options] = setDocMock.mock.calls[0]!;
@@ -399,8 +399,8 @@ describe('useUpsertKindooSiteMutation', () => {
     getDocMock.mockResolvedValue({ exists: () => false });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
-      display_name: 'East Stake Foothills',
-      kindoo_expected_site_name: 'East Stake Foothills CS',
+      display_name: 'East Stake Pine',
+      kindoo_expected_site_name: 'East Stake Pine CS',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [, body] = setDocMock.mock.calls[0]!;
@@ -416,8 +416,8 @@ describe('useUpsertKindooSiteMutation', () => {
     getDocMock.mockResolvedValue({ exists: () => false });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
-      display_name: 'East Stake Foothills',
-      kindoo_expected_site_name: 'East Stake Foothills CS',
+      display_name: 'East Stake Pine',
+      kindoo_expected_site_name: 'East Stake Pine CS',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     expect(runTransactionMock).toHaveBeenCalledTimes(1);
@@ -431,9 +431,9 @@ describe('useUpsertKindooSiteMutation', () => {
     getDocMock.mockResolvedValue({ exists: () => true });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
-      id: 'east-stake-foothills',
-      display_name: 'East Stake Foothills (renamed)',
-      kindoo_expected_site_name: 'East Stake Foothills CS',
+      id: 'east-stake-pine',
+      display_name: 'East Stake Pine (renamed)',
+      kindoo_expected_site_name: 'East Stake Pine CS',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     expect(runTransactionMock).toHaveBeenCalledTimes(1);
@@ -448,9 +448,9 @@ describe('useUpsertKindooSiteMutation', () => {
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await expect(
       result.current.mutateAsync({
-        id: 'east-stake-foothills',
-        display_name: 'East Stake Foothills (renamed)',
-        kindoo_expected_site_name: 'East Stake Foothills CS',
+        id: 'east-stake-pine',
+        display_name: 'East Stake Pine (renamed)',
+        kindoo_expected_site_name: 'East Stake Pine CS',
       }),
     ).rejects.toThrow(/Kindoo site no longer exists/i);
     expect(setDocMock).not.toHaveBeenCalled();
@@ -461,8 +461,8 @@ describe('useDeleteKindooSiteMutation', () => {
   const refWard = (overrides: Partial<Ward> = {}): Ward =>
     ({
       ward_code: 'CO',
-      ward_name: 'Cordera',
-      building_name: 'Cordera Building',
+      ward_name: 'Maple',
+      building_name: 'Maple Building',
       seat_cap: 20,
       kindoo_site_id: 'east-stake',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -471,8 +471,8 @@ describe('useDeleteKindooSiteMutation', () => {
 
   const refBuilding = (overrides: Partial<Building> = {}): Building =>
     ({
-      building_id: 'foothills',
-      building_name: 'Foothills Stake Center',
+      building_id: 'pine',
+      building_name: 'Pine Stake Center',
       kindoo_site_id: 'east-stake',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ...(overrides as any),
@@ -510,7 +510,7 @@ describe('useDeleteKindooSiteMutation', () => {
         wards: [],
         buildings: [refBuilding()],
       }),
-    ).rejects.toThrow(/Foothills Stake Center/);
+    ).rejects.toThrow(/Pine Stake Center/);
     expect(deleteDocMock).not.toHaveBeenCalled();
   });
 
@@ -522,7 +522,7 @@ describe('useDeleteKindooSiteMutation', () => {
         wards: [refWard()],
         buildings: [refBuilding()],
       }),
-    ).rejects.toThrow(/Cordera \(CO\).*Foothills Stake Center/s);
+    ).rejects.toThrow(/Maple \(CO\).*Pine Stake Center/s);
   });
 
   it('ignores wards / buildings pointing at a different site', async () => {
@@ -549,8 +549,8 @@ describe('useUpsertKindooSiteMutation created_at semantics', () => {
     getDocMock.mockResolvedValue({ exists: () => false });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
-      display_name: 'East Stake Foothills',
-      kindoo_expected_site_name: 'East Stake Foothills CS',
+      display_name: 'East Stake Pine',
+      kindoo_expected_site_name: 'East Stake Pine CS',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [, body] = setDocMock.mock.calls[0]!;
@@ -561,9 +561,9 @@ describe('useUpsertKindooSiteMutation created_at semantics', () => {
     getDocMock.mockResolvedValue({ exists: () => true });
     const { result } = renderHook(() => useUpsertKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
-      id: 'east-stake-foothills',
-      display_name: 'East Stake Foothills (renamed)',
-      kindoo_expected_site_name: 'East Stake Foothills CS',
+      id: 'east-stake-pine',
+      display_name: 'East Stake Pine (renamed)',
+      kindoo_expected_site_name: 'East Stake Pine CS',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [, body] = setDocMock.mock.calls[0]!;
@@ -578,7 +578,7 @@ describe('useUpsertWardMutation', () => {
     const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
     await result.current.mutateAsync({
       ward_code: 'CO',
-      ward_name: 'Cordera',
+      ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
       kindoo_site_id: null,
@@ -588,7 +588,7 @@ describe('useUpsertWardMutation', () => {
     expect(ref).toMatchObject({ path: 'stakes/csnorth/wards/CO' });
     expect(body).toMatchObject({
       ward_code: 'CO',
-      ward_name: 'Cordera',
+      ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
       kindoo_site_id: null,
@@ -603,7 +603,7 @@ describe('useUpsertWardMutation', () => {
     const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
     await result.current.mutateAsync({
       ward_code: 'CO',
-      ward_name: 'Cordera Renamed',
+      ward_name: 'Maple Renamed',
       building_name: 'Main',
       seat_cap: 22,
       kindoo_site_id: 'east-stake',
@@ -613,7 +613,7 @@ describe('useUpsertWardMutation', () => {
     expect(body).not.toHaveProperty('created_at');
     expect(body).toMatchObject({
       ward_code: 'CO',
-      ward_name: 'Cordera Renamed',
+      ward_name: 'Maple Renamed',
       last_modified_at: '__server_timestamp__',
     });
   });
@@ -623,7 +623,7 @@ describe('useUpsertWardMutation', () => {
     const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
     await result.current.mutateAsync({
       ward_code: 'CO',
-      ward_name: 'Cordera',
+      ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
       kindoo_site_id: null,
@@ -637,7 +637,7 @@ describe('useUpsertWardMutation', () => {
     const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
     await result.current.mutateAsync({
       ward_code: 'co',
-      ward_name: 'Cordera',
+      ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
       kindoo_site_id: null,
@@ -654,16 +654,16 @@ describe('useUpsertBuildingMutation', () => {
     getDocMock.mockResolvedValue({ exists: () => false });
     const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
     await result.current.mutateAsync({
-      building_name: 'Cordera Building',
+      building_name: 'Maple Building',
       address: '123 Main',
       kindoo_site_id: null,
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [ref, body, options] = setDocMock.mock.calls[0]!;
-    expect(ref).toMatchObject({ path: 'stakes/csnorth/buildings/cordera-building' });
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/buildings/maple-building' });
     expect(body).toMatchObject({
-      building_id: 'cordera-building',
-      building_name: 'Cordera Building',
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
       address: '123 Main',
       kindoo_site_id: null,
       created_at: '__server_timestamp__',
@@ -676,7 +676,7 @@ describe('useUpsertBuildingMutation', () => {
     getDocMock.mockResolvedValue({ exists: () => true });
     const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
     await result.current.mutateAsync({
-      building_name: 'Cordera Building',
+      building_name: 'Maple Building',
       address: '456 Other',
       kindoo_site_id: 'east-stake',
     });
@@ -684,7 +684,7 @@ describe('useUpsertBuildingMutation', () => {
     const [, body] = setDocMock.mock.calls[0]!;
     expect(body).not.toHaveProperty('created_at');
     expect(body).toMatchObject({
-      building_name: 'Cordera Building',
+      building_name: 'Maple Building',
       address: '456 Other',
       last_modified_at: '__server_timestamp__',
     });
@@ -694,7 +694,7 @@ describe('useUpsertBuildingMutation', () => {
     getDocMock.mockResolvedValue({ exists: () => false });
     const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
     await result.current.mutateAsync({
-      building_name: 'Cordera Building',
+      building_name: 'Maple Building',
       address: '123 Main',
       kindoo_site_id: null,
     });

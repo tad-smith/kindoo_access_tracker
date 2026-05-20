@@ -75,9 +75,9 @@ function bundle(): StakeConfigBundle {
     } as unknown as StakeConfigBundle['stake'],
     buildings: [
       {
-        building_id: 'cordera',
-        building_name: 'Cordera Building',
-        kindoo_rule: { rule_id: 6248, rule_name: 'Cordera Doors' },
+        building_id: 'maple',
+        building_name: 'Maple Building',
+        kindoo_rule: { rule_id: 6248, rule_name: 'Maple Doors' },
       },
     ] as unknown as StakeConfigBundle['buildings'],
     wards: [],
@@ -95,7 +95,7 @@ function addRequest(overrides: Partial<AccessRequest> = {}): AccessRequest {
     member_name: 'Tad Smith',
     reason: 'Sunday School Teacher',
     comment: '',
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     status: 'pending',
     requester_email: 'requester@example.com',
     requester_canonical: 'requester@example.com',
@@ -166,7 +166,7 @@ describe('RequestCard', () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Added Tad Smith to Kindoo with access to Cordera Building.',
+      note: 'Added Tad Smith to Kindoo with access to Maple Building.',
     });
     markRequestCompleteMock.mockResolvedValue({ ok: true });
 
@@ -176,13 +176,13 @@ describe('RequestCard', () => {
 
     await waitFor(() => expect(screen.getByTestId('sba-result-dialog')).toBeInTheDocument());
     expect(screen.getByTestId('sba-result-note')).toHaveTextContent(
-      'Added Tad Smith to Kindoo with access to Cordera Building.',
+      'Added Tad Smith to Kindoo with access to Maple Building.',
     );
     expect(markRequestCompleteMock).toHaveBeenCalledWith({
       stakeId: 'csnorth',
       requestId: 'r1',
-      completionNote: 'Added Tad Smith to Kindoo with access to Cordera Building.',
-      provisioningNote: 'Added Tad Smith to Kindoo with access to Cordera Building.',
+      completionNote: 'Added Tad Smith to Kindoo with access to Maple Building.',
+      provisioningNote: 'Added Tad Smith to Kindoo with access to Maple Building.',
       kindooUid: 'new-uid',
     });
   });
@@ -275,7 +275,7 @@ describe('RequestCard', () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Added Tad Smith to Kindoo with access to Cordera Building.',
+      note: 'Added Tad Smith to Kindoo with access to Maple Building.',
     });
     markRequestCompleteMock.mockRejectedValueOnce(new Error('SBA down'));
 
@@ -292,7 +292,7 @@ describe('RequestCard', () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Added Tad Smith to Kindoo with access to Cordera Building.',
+      note: 'Added Tad Smith to Kindoo with access to Maple Building.',
     });
     markRequestCompleteMock
       .mockRejectedValueOnce(new Error('SBA down'))
@@ -316,7 +316,7 @@ describe('RequestCard', () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Added Tad Smith to Kindoo with access to Cordera Building.',
+      note: 'Added Tad Smith to Kindoo with access to Maple Building.',
     });
     markRequestCompleteMock.mockResolvedValue({
       ok: true,
@@ -347,14 +347,14 @@ describe('RequestCard', () => {
         {
           ward_code: 'FN',
           ward_name: 'Foreign Ward',
-          building_name: 'Foothills Building',
+          building_name: 'Pine Building',
           kindoo_site_id: 'east-stake',
         } as unknown as StakeConfigBundle['wards'][number],
       ],
       kindooSites: [
         {
           id: 'east-stake',
-          display_name: 'East Stake (Foothills)',
+          display_name: 'East Stake (Pine)',
           kindoo_expected_site_name: 'East Stake',
           ...(opts.withEid ? { kindoo_eid: 4321 } : {}),
         } as unknown as StakeConfigBundle['kindooSites'][number],
@@ -386,11 +386,9 @@ describe('RequestCard', () => {
     await user.click(screen.getByTestId('sba-add-r1'));
 
     await waitFor(() =>
-      // Operator-facing message uses display_name ("East Stake (Foothills)"),
+      // Operator-facing message uses display_name ("East Stake (Pine)"),
       // not the slug ("east-stake") or the internal matching key ("East Stake").
-      expect(screen.getByTestId('sba-provision-error-r1')).toHaveTextContent(
-        "'East Stake (Foothills)'",
-      ),
+      expect(screen.getByTestId('sba-provision-error-r1')).toHaveTextContent("'East Stake (Pine)'"),
     );
     expect(screen.getByTestId('sba-provision-error-r1')).toHaveTextContent(
       /Switch Kindoo sites and try again/,
@@ -418,7 +416,7 @@ describe('RequestCard', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('sba-provision-error-r-edit')).toHaveTextContent(
-        "'East Stake (Foothills)'",
+        "'East Stake (Pine)'",
       ),
     );
     expect(screen.getByTestId('sba-provision-error-r-edit')).toHaveTextContent(
@@ -448,7 +446,7 @@ describe('RequestCard', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('sba-provision-error-r-remove')).toHaveTextContent(
-        "'East Stake (Foothills)'",
+        "'East Stake (Pine)'",
       ),
     );
     expect(screen.getByTestId('sba-provision-error-r-remove')).toHaveTextContent(
@@ -523,8 +521,8 @@ describe('RequestCard', () => {
       wards: [
         {
           ward_code: 'CO',
-          ward_name: 'Cordera Ward',
-          building_name: 'Cordera Building',
+          ward_name: 'Maple Ward',
+          building_name: 'Maple Building',
         } as unknown as StakeConfigBundle['wards'][number],
       ],
     };

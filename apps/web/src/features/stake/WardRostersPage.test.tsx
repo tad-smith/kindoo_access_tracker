@@ -168,19 +168,19 @@ describe('<WardRostersPage />', () => {
 
   it('lists every ward in the dropdown sorted alphabetically', () => {
     mockWards([
-      makeWard({ ward_code: 'GE', ward_name: 'Genoa' }),
-      makeWard({ ward_code: 'CO', ward_name: 'Cordera' }),
+      makeWard({ ward_code: 'GE', ward_name: 'Cedar' }),
+      makeWard({ ward_code: 'CO', ward_name: 'Maple' }),
     ]);
     mockSeats(undefined);
     render(<WardRostersPage />);
     const opts = screen.getAllByRole('option').map((o) => o.textContent);
     // "Choose a ward…" is at index 0; CO comes before GE alphabetically.
-    expect(opts.slice(1)).toEqual(['Cordera (CO)', 'Genoa (GE)']);
+    expect(opts.slice(1)).toEqual(['Maple (CO)', 'Cedar (GE)']);
   });
 
   it('renders the chosen ward’s roster with its utilization bar', async () => {
     const user = userEvent.setup();
-    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
     mockSeats([
       makeSeat({ scope: 'CO' }),
       makeSeat({ scope: 'CO', member_canonical: 'b@x.com', member_email: 'b@x.com' }),
@@ -191,7 +191,7 @@ describe('<WardRostersPage />', () => {
   });
 
   it('honours the initialWard prop (URL deep link)', () => {
-    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
     mockSeats([makeSeat({ scope: 'CO' })]);
     render(<WardRostersPage initialWard="CO" />);
     expect(useWardSeatsMock).toHaveBeenCalledWith('CO');
@@ -208,7 +208,7 @@ describe('<WardRostersPage />', () => {
 
   describe('pending requests surfaced inline', () => {
     it('shows the Outstanding Requests section when an add is pending for the selected ward', () => {
-      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([makeSeat({ scope: 'CO' })]);
       mockPendingRequests([
         makeRequest({
@@ -226,7 +226,7 @@ describe('<WardRostersPage />', () => {
     });
 
     it('marks a roster card with the Pending Removal badge when a remove is pending for the selected ward', () => {
-      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'CO',
@@ -255,7 +255,7 @@ describe('<WardRostersPage />', () => {
 
   describe('per-row Remove affordance', () => {
     it('renders a Remove button next to every manual / temp seat', () => {
-      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'CO',
@@ -281,7 +281,7 @@ describe('<WardRostersPage />', () => {
     });
 
     it('does not render a Remove button on auto seats', () => {
-      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'CO',
@@ -297,7 +297,7 @@ describe('<WardRostersPage />', () => {
 
     it('opens the removal confirmation dialog when Remove is clicked', async () => {
       const user = userEvent.setup();
-      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'CO',
@@ -316,7 +316,7 @@ describe('<WardRostersPage />', () => {
 
     it('submits a remove request with the seat ward scope + member identity when confirmed', async () => {
       const user = userEvent.setup();
-      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'CO',
@@ -345,7 +345,7 @@ describe('<WardRostersPage />', () => {
     });
 
     it('replaces the Remove button with a Removal pending badge once a remove is in flight', () => {
-      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'CO',
@@ -363,7 +363,7 @@ describe('<WardRostersPage />', () => {
     });
 
     it('mixes auto + manual + temp seats and renders the button only on the non-auto rows (regression for staging report 2026-05-03)', () => {
-      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'CO',
@@ -410,7 +410,7 @@ describe('<WardRostersPage />', () => {
       // removal badge / row class still need to render (read-only
       // signal), but no Remove button.
       usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
-      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Genoa', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'GE',
@@ -427,7 +427,7 @@ describe('<WardRostersPage />', () => {
 
     it('renders the Remove button when the principal HAS authority for the scope (stake + multi-ward bishopric viewing one of those wards)', () => {
       usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO', 'GE'] }));
-      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Genoa', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'GE',
@@ -444,7 +444,7 @@ describe('<WardRostersPage />', () => {
 
     it('hides the Remove button for a stake-only principal viewing a ward roster (stake authority does not extend to wards)', () => {
       usePrincipalMock.mockReturnValue(principal({ stake: true }));
-      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'CO',
@@ -465,7 +465,7 @@ describe('<WardRostersPage />', () => {
       // A stake user can edit ward-scope auto seats per the policy
       // table — only stake-scope auto is the locked-out case.
       usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO'] }));
-      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'CO',
@@ -502,7 +502,7 @@ describe('<WardRostersPage />', () => {
 
     it('hides the Edit button on rows whose scope the principal lacks authority for', () => {
       usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
-      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Genoa', seat_cap: 20 })]);
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
       mockSeats([
         makeSeat({
           scope: 'GE',
@@ -550,7 +550,7 @@ describe('<WardRostersPage /> — Kindoo Sites label (spec §15)', () => {
     mockWards([
       makeWard({
         ward_code: 'FN',
-        ward_name: 'Foothills',
+        ward_name: 'Pine',
         seat_cap: 20,
         kindoo_site_id: 'foreign-1',
       } as Partial<Ward>),
@@ -563,15 +563,13 @@ describe('<WardRostersPage /> — Kindoo Sites label (spec §15)', () => {
         member_name: 'Alpha',
       }),
     ]);
-    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }]);
+    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Pine)' }]);
     render(<WardRostersPage initialWard="FN" />);
-    expect(screen.getByTestId('kindoo-site-badge-a@x.com')).toHaveTextContent(
-      'East Stake (Foothills)',
-    );
+    expect(screen.getByTestId('kindoo-site-badge-a@x.com')).toHaveTextContent('East Stake (Pine)');
   });
 
   it('omits the badge when the ward is on the home site', () => {
-    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })]);
+    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
     mockSeats([
       makeSeat({
         scope: 'CO',
@@ -580,7 +578,7 @@ describe('<WardRostersPage /> — Kindoo Sites label (spec §15)', () => {
         member_name: 'Alpha',
       }),
     ]);
-    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }]);
+    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Pine)' }]);
     render(<WardRostersPage initialWard="CO" />);
     expect(screen.queryByTestId('kindoo-site-badge-a@x.com')).toBeNull();
   });

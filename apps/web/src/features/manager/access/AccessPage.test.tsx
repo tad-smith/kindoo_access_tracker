@@ -286,8 +286,8 @@ describe('<AccessPage />', () => {
     // collection. Seed wards so CO + GE surface in the picker.
     useStakeWardsMock.mockReturnValue(
       liveResult([
-        { ward_code: 'CO', ward_name: 'Cordera' },
-        { ward_code: 'GE', ward_name: 'Genoa' },
+        { ward_code: 'CO', ward_name: 'Maple' },
+        { ward_code: 'GE', ward_name: 'Cedar' },
       ]),
     );
     useAccessListMock.mockReturnValue(
@@ -332,8 +332,8 @@ describe('<AccessPage />', () => {
     const u = userEvent.setup();
     useStakeWardsMock.mockReturnValue(
       liveResult([
-        { ward_code: 'GE', ward_name: 'Genoa' },
-        { ward_code: 'CO', ward_name: 'Cordera' },
+        { ward_code: 'GE', ward_name: 'Cedar' },
+        { ward_code: 'CO', ward_name: 'Maple' },
       ]),
     );
     useAccessListMock.mockReturnValue(liveResult<Access>([]));
@@ -453,8 +453,8 @@ describe('<AccessPage />', () => {
     );
     useStakeWardsMock.mockReturnValue(
       liveResult([
-        { ward_code: 'CO', ward_name: 'Cordera' },
-        { ward_code: 'GE', ward_name: 'Genoa' },
+        { ward_code: 'CO', ward_name: 'Maple' },
+        { ward_code: 'GE', ward_name: 'Cedar' },
       ]),
     );
     useAccessListMock.mockReturnValue(
@@ -521,7 +521,7 @@ describe('<AccessPage />', () => {
       ]),
     );
     useWardCallingTemplatesMock.mockReturnValue(liveResult([]));
-    useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Cordera' }]));
+    useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Maple' }]));
     useAccessListMock.mockReturnValue(
       liveResult([
         makeAccess({

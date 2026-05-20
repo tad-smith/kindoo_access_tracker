@@ -49,7 +49,7 @@ async function seedSeat(opts: {
     scope: 'CO',
     type: opts.type,
     callings: opts.type === 'auto' ? ['Bishop'] : [],
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     duplicate_grants: [],
     ...(opts.end_date ? { end_date: opts.end_date, start_date: '2026-01-01' } : {}),
     ...(opts.type !== 'auto' ? { reason: 'helper', granted_by_request: 'r1' } : {}),

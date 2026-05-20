@@ -9,7 +9,7 @@ Phase A of T-42 lands the data-model + behavioural changes across `packages/shar
 
 ## Why
 
-The Phase 4 sync detector resolved a Kindoo user's site by collapsing the parsed `Description` to a single primary segment via `pickPrimarySegment`. A Description like `'Cordera Ward (Bishop) | Foothills Ward (Stake Clerk)'` (Cordera home, Foothills foreign) has both segments resolve to real wards on different sites, but the picker chose one and the unpicked side lost visibility of the user entirely. Per-site provisioning was similarly broken — the orchestrator unioned every seat grant against the active session, polluting Kindoo with buildings from another environment.
+The Phase 4 sync detector resolved a Kindoo user's site by collapsing the parsed `Description` to a single primary segment via `pickPrimarySegment`. A Description like `'Maple Ward (Bishop) | Pine Ward (Stake Clerk)'` (Maple home, Pine foreign) has both segments resolve to real wards on different sites, but the picker chose one and the unpicked side lost visibility of the user entirely. Per-site provisioning was similarly broken — the orchestrator unioned every seat grant against the active session, polluting Kindoo with buildings from another environment.
 
 ## packages/shared
 

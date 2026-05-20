@@ -133,21 +133,21 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
 
   it('create on a building emits a row with entity_id=building:<slug>', async () => {
     const after = {
-      building_id: 'cordera',
-      building_name: 'Cordera',
-      address: '123 Cordera Way',
+      building_id: 'maple',
+      building_name: 'Maple',
+      address: '123 Maple Way',
       lastActor: lastActor('alice@gmail.com'),
     };
     await auditBuildingWrites.run(
       makeEvent({
-        params: { stakeId: STAKE_ID, buildingId: 'cordera' },
+        params: { stakeId: STAKE_ID, buildingId: 'maple' },
         before: null,
         after,
       }),
     );
     const rows = await readAuditRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.entity_id).toBe('building:cordera');
+    expect(rows[0]!.entity_id).toBe('building:maple');
     expect(rows[0]!.action).toBe('update_stake');
   });
 
@@ -156,7 +156,7 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
   it('create on a kindooSite emits a row with entity_id=kindooSite:<slug>', async () => {
     const after = {
       id: 'east-stake',
-      display_name: 'East Stake (Foothills Building)',
+      display_name: 'East Stake (Pine Building)',
       kindoo_expected_site_name: 'East Stake',
       lastActor: lastActor('alice@gmail.com'),
     };
@@ -175,7 +175,7 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     expect(rows[0]!.before).toBeNull();
     expect(rows[0]!.after).toMatchObject({
       id: 'east-stake',
-      display_name: 'East Stake (Foothills Building)',
+      display_name: 'East Stake (Pine Building)',
     });
     expect(rows[0]!.actor_canonical).toBe('alice@gmail.com');
     expect(rows[0]!.member_canonical).toBeUndefined();
@@ -190,7 +190,7 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     };
     const after = {
       ...before,
-      display_name: 'East Stake (Foothills)',
+      display_name: 'East Stake (Pine)',
       lastActor: lastActor('bob@gmail.com'),
     };
     await auditKindooSiteWrites.run(
@@ -205,9 +205,7 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     expect(rows[0]!.action).toBe('update_stake');
     expect(rows[0]!.entity_id).toBe('kindooSite:east-stake');
     expect((rows[0]!.before as Record<string, unknown>)['display_name']).toBe('East Stake');
-    expect((rows[0]!.after as Record<string, unknown>)['display_name']).toBe(
-      'East Stake (Foothills)',
-    );
+    expect((rows[0]!.after as Record<string, unknown>)['display_name']).toBe('East Stake (Pine)');
     expect(rows[0]!.actor_canonical).toBe('bob@gmail.com');
   });
 

@@ -77,9 +77,9 @@ function configuredBundle() {
     },
     buildings: [
       {
-        building_id: 'cordera',
-        building_name: 'Cordera Building',
-        kindoo_rule: { rule_id: 6248, rule_name: 'Cordera Doors' },
+        building_id: 'maple',
+        building_name: 'Maple Building',
+        kindoo_rule: { rule_id: 6248, rule_name: 'Maple Doors' },
       },
     ],
     wards: [],
@@ -94,7 +94,7 @@ function unconfiguredBundle() {
       stake_id: 'csnorth',
       stake_name: 'Colorado Springs North Stake',
     },
-    buildings: [{ building_id: 'cordera', building_name: 'Cordera Building' }],
+    buildings: [{ building_id: 'maple', building_name: 'Maple Building' }],
     wards: [],
     kindooSites: [],
   };
@@ -378,7 +378,7 @@ describe('App', () => {
           stakeId: 'east-co',
           label: 'East CO',
           match: 'foreign',
-          siteLabel: 'Foothills Building',
+          siteLabel: 'Pine Building',
         },
       ],
       managedStakeCount: 2,
@@ -405,7 +405,7 @@ describe('App', () => {
     resolveEidStakesMock.mockResolvedValue({
       candidates: [
         { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Pine' },
       ],
       managedStakeCount: 2,
       failedStakes: [],
@@ -431,7 +431,7 @@ describe('App', () => {
     resolveEidStakesMock.mockResolvedValue({
       candidates: [
         { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Pine' },
       ],
       managedStakeCount: 2,
       failedStakes: [],
@@ -564,7 +564,7 @@ describe('App', () => {
     resolveEidStakesMock.mockResolvedValue({
       candidates: [
         { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Pine' },
       ],
       managedStakeCount: 2,
       failedStakes: [],
@@ -598,7 +598,7 @@ describe('App', () => {
     resolveEidStakesMock.mockResolvedValue({
       candidates: [
         { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Pine' },
       ],
       managedStakeCount: 3,
       failedStakes: ['south-co'],
@@ -681,7 +681,7 @@ describe('App', () => {
       .mockResolvedValueOnce({
         candidates: [
           { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-          { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+          { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Pine' },
         ],
         managedStakeCount: 2,
         failedStakes: [],

@@ -187,7 +187,7 @@ describe('<BootstrapWizardPage />', () => {
       liveResult<Ward>([
         {
           ward_code: 'CO',
-          ward_name: 'Cordera',
+          ward_name: 'Maple',
           building_name: 'Main',
           seat_cap: 20,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -246,7 +246,7 @@ describe('<BootstrapWizardPage />', () => {
     );
     useWardsMock.mockReturnValue(
       liveResult<Ward>([
-        { ward_code: 'CO', ward_name: 'Cordera', building_name: 'B', seat_cap: 1 } as Ward,
+        { ward_code: 'CO', ward_name: 'Maple', building_name: 'B', seat_cap: 1 } as Ward,
       ]),
     );
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
@@ -290,7 +290,7 @@ describe('<BootstrapWizardPage />', () => {
     );
     useWardsMock.mockReturnValue(
       liveResult<Ward>([
-        { ward_code: 'CO', ward_name: 'Cordera', building_name: 'B', seat_cap: 1 } as Ward,
+        { ward_code: 'CO', ward_name: 'Maple', building_name: 'B', seat_cap: 1 } as Ward,
       ]),
     );
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
@@ -374,7 +374,7 @@ describe('<BootstrapWizardPage />', () => {
       ]),
     );
     const wardsList = [
-      { ward_code: 'CO', ward_name: 'Cordera', building_name: 'Other', seat_cap: 1 } as Ward,
+      { ward_code: 'CO', ward_name: 'Maple', building_name: 'Other', seat_cap: 1 } as Ward,
     ];
     useWardsMock.mockReturnValue(liveResult<Ward>(wardsList));
     const user = userEvent.setup();
@@ -392,7 +392,7 @@ describe('<BootstrapWizardPage />', () => {
 
   it('surfaces the ref-guard message when the mutation rejects with it', async () => {
     deleteBuildingMutate.mockRejectedValue(
-      new Error('Cannot delete: referenced by 1 ward(s) — Cordera (CO)'),
+      new Error('Cannot delete: referenced by 1 ward(s) — Maple (CO)'),
     );
     useBuildingsMock.mockReturnValue(
       liveResult<Building>([
@@ -415,7 +415,7 @@ describe('<BootstrapWizardPage />', () => {
     deleteWardMutate.mockRejectedValue(new Error('Permission denied: delete wards'));
     useWardsMock.mockReturnValue(
       liveResult<Ward>([
-        { ward_code: 'CO', ward_name: 'Cordera', building_name: 'B', seat_cap: 1 } as Ward,
+        { ward_code: 'CO', ward_name: 'Maple', building_name: 'B', seat_cap: 1 } as Ward,
       ]),
     );
     const user = userEvent.setup();

@@ -14,7 +14,7 @@ describe('configuration wardSchema', () => {
   it('accepts a valid ward (Home site)', () => {
     const r = wardSchema.safeParse({
       ward_code: 'CO',
-      ward_name: 'Cordera',
+      ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
       kindoo_site_id: null,
@@ -25,7 +25,7 @@ describe('configuration wardSchema', () => {
   it('accepts a valid ward (foreign site)', () => {
     const r = wardSchema.safeParse({
       ward_code: 'CO',
-      ward_name: 'Cordera',
+      ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
       kindoo_site_id: 'east-stake',
@@ -48,7 +48,7 @@ describe('configuration wardSchema', () => {
 describe('configuration buildingSchema', () => {
   it('accepts a valid building (Home site)', () => {
     const r = buildingSchema.safeParse({
-      building_name: 'Cordera Building',
+      building_name: 'Maple Building',
       address: '',
       kindoo_site_id: null,
     });
@@ -57,7 +57,7 @@ describe('configuration buildingSchema', () => {
 
   it('accepts a valid building (foreign site)', () => {
     const r = buildingSchema.safeParse({
-      building_name: 'Foothills Building',
+      building_name: 'Pine Building',
       address: '',
       kindoo_site_id: 'east-stake',
     });

@@ -1071,17 +1071,17 @@ describe('<AllSeatsPage /> — Kindoo Sites label (spec §15)', () => {
       wards: [
         makeWard({
           ward_code: 'FN',
-          ward_name: 'Foothills',
+          ward_name: 'Pine',
           kindoo_site_id: 'foreign-1',
         } as Partial<Ward>),
       ],
       buildings: [],
-      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }],
+      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake (Pine)' }],
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);
     expect(screen.getByTestId('kindoo-site-badge-foreign@x.com')).toHaveTextContent(
-      'East Stake (Foothills)',
+      'East Stake (Pine)',
     );
   });
 
@@ -1100,7 +1100,7 @@ describe('<AllSeatsPage /> — Kindoo Sites label (spec §15)', () => {
       ],
       wards: [makeWard({ ward_code: 'CO' })],
       buildings: [],
-      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }],
+      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake (Pine)' }],
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);

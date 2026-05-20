@@ -1,7 +1,7 @@
 // `buildingSlug` — derive a URL-safe doc ID from a building's display
 // name. Used as the doc ID for `stakes/{stakeId}/buildings/{buildingId}`
-// per `docs/firebase-schema.md` §4.3 (`'Cordera Building'` →
-// `'cordera-building'`).
+// per `docs/firebase-schema.md` §4.3 (`'Maple Building'` →
+// `'maple-building'`).
 //
 // Properties (locked in by tests):
 //   - Deterministic — same input always yields same output. The

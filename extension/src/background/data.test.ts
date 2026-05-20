@@ -68,7 +68,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
       data: () => ({
         kindoo_config: {
           site_id: 27994,
-          site_name: 'Cordera Stake',
+          site_name: 'Maple Stake',
           configured_at: '__ts__',
           configured_by: { email: 'prev@example.com', canonical: 'prev@example.com' },
         },
@@ -90,7 +90,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     // preserve unrelated kindoo_config.* subfields on partial-merge.
     const stakePayload = updateMock.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(stakePayload['kindoo_config.site_id']).toBe(27994);
-    expect(stakePayload['kindoo_config.site_name']).toBe('Cordera Stake');
+    expect(stakePayload['kindoo_config.site_name']).toBe('Maple Stake');
   });
 
   it('falls back to empty string when payload.siteName is empty AND stake doc is missing', async () => {
@@ -124,7 +124,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
       {
         kindooSiteId: null,
         siteId: 27994,
-        siteName: 'Cordera Stake',
+        siteName: 'Maple Stake',
         buildingRules: [],
       },
       actor(),
@@ -132,7 +132,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     expect(getDocMock).not.toHaveBeenCalled();
     expect(getDocsMock).toHaveBeenCalledTimes(1);
     const stakePayload = updateMock.mock.calls[0]?.[1] as Record<string, unknown>;
-    expect(stakePayload['kindoo_config.site_name']).toBe('Cordera Stake');
+    expect(stakePayload['kindoo_config.site_name']).toBe('Maple Stake');
   });
 
   it('rejects when actor has no email', async () => {
@@ -143,7 +143,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
         {
           kindooSiteId: null,
           siteId: 27994,
-          siteName: 'Cordera Stake',
+          siteName: 'Maple Stake',
           buildingRules: [],
         },
         { email: null } as unknown as User,
@@ -161,7 +161,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     getDocMock.mockResolvedValue({
       exists: () => true,
       data: () => ({
-        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
       }),
     });
     getDocsMock.mockResolvedValue({
@@ -169,7 +169,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
         {
           data: () => ({
             id: 'east-stake',
-            display_name: 'East Stake (Foothills Building)',
+            display_name: 'East Stake (Pine Building)',
             kindoo_expected_site_name: 'East Stake',
             kindoo_eid: 4321,
           }),
@@ -200,7 +200,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     getDocMock.mockResolvedValue({
       exists: () => true,
       data: () => ({
-        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
       }),
     });
     getDocsMock.mockResolvedValue({ docs: [] });
@@ -210,7 +210,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
       {
         kindooSiteId: null,
         siteId: 27994,
-        siteName: 'Cordera Stake',
+        siteName: 'Maple Stake',
         buildingRules: [],
       },
       actor(),
@@ -218,7 +218,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     const stakePayload = updateMock.mock.calls[0]?.[1] as Record<string, unknown>;
     // Must use dotted-path keys, NOT a nested kindoo_config object.
     expect(stakePayload['kindoo_config.site_id']).toBe(27994);
-    expect(stakePayload['kindoo_config.site_name']).toBe('Cordera Stake');
+    expect(stakePayload['kindoo_config.site_name']).toBe('Maple Stake');
     expect(stakePayload['kindoo_config.configured_at']).toBe('__ts__');
     expect(stakePayload['kindoo_config.configured_by']).toMatchObject({
       email: 'mgr@example.com',
@@ -237,7 +237,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     getDocMock.mockResolvedValue({
       exists: () => true,
       data: () => ({
-        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
       }),
     });
     const { writeKindooConfig } = await import('./data');
@@ -266,7 +266,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     getDocMock.mockResolvedValue({
       exists: () => true,
       data: () => ({
-        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
       }),
     });
     const { writeKindooConfig } = await import('./data');
@@ -296,7 +296,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
       .mockResolvedValueOnce({
         exists: () => true,
         data: () => ({
-          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+          kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
         }),
       })
       // Second read: foreign site doc (overwrite guard) — already populated.
@@ -332,7 +332,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
       .mockResolvedValueOnce({
         exists: () => true,
         data: () => ({
-          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+          kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
         }),
       })
       .mockResolvedValueOnce({
@@ -382,7 +382,7 @@ describe('writeKindooSiteEid — home-collision guard', () => {
     getDocMock.mockResolvedValue({
       exists: () => true,
       data: () => ({
-        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
       }),
     });
     const { writeKindooSiteEid } = await import('./data');
@@ -396,7 +396,7 @@ describe('writeKindooSiteEid — home-collision guard', () => {
     getDocMock.mockResolvedValue({
       exists: () => true,
       data: () => ({
-        kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+        kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
       }),
     });
     const { writeKindooSiteEid } = await import('./data');
@@ -434,7 +434,7 @@ describe('writeKindooSiteEid — home-collision guard', () => {
       .mockResolvedValueOnce({
         exists: () => true,
         data: () => ({
-          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+          kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
         }),
       })
       // Second read: foreign site doc (overwrite guard) — no kindoo_eid yet.
@@ -442,7 +442,7 @@ describe('writeKindooSiteEid — home-collision guard', () => {
         exists: () => true,
         data: () => ({
           id: 'east-stake',
-          display_name: 'East Stake (Foothills Building)',
+          display_name: 'East Stake (Pine Building)',
           kindoo_expected_site_name: 'East Stake',
           // kindoo_eid absent.
         }),
@@ -465,14 +465,14 @@ describe('writeKindooSiteEid — home-collision guard', () => {
       .mockResolvedValueOnce({
         exists: () => true,
         data: () => ({
-          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+          kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
         }),
       })
       .mockResolvedValueOnce({
         exists: () => true,
         data: () => ({
           id: 'east-stake',
-          display_name: 'East Stake (Foothills Building)',
+          display_name: 'East Stake (Pine Building)',
           kindoo_expected_site_name: 'East Stake',
           kindoo_eid: 1234, // already populated with a different EID
         }),
@@ -493,7 +493,7 @@ describe('writeKindooSiteEid — home-collision guard', () => {
       .mockResolvedValueOnce({
         exists: () => true,
         data: () => ({
-          kindoo_config: { site_id: 27994, site_name: 'Cordera Stake' },
+          kindoo_config: { site_id: 27994, site_name: 'Maple Stake' },
         }),
       })
       .mockResolvedValueOnce({
@@ -554,8 +554,8 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
       docs: [
         {
           data: () => ({
-            id: 'foothills',
-            display_name: 'Foothills Building',
+            id: 'pine',
+            display_name: 'Pine Building',
             kindoo_eid: 27994,
           }),
         },
@@ -569,7 +569,7 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
           stakeId: 'east-co',
           label: 'East Colorado Stake',
           match: 'foreign',
-          siteLabel: 'Foothills Building',
+          siteLabel: 'Pine Building',
         },
       ],
       failedStakes: [],
@@ -612,8 +612,8 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
           docs: [
             {
               data: () => ({
-                id: 'foothills',
-                display_name: 'Foothills Building',
+                id: 'pine',
+                display_name: 'Pine Building',
                 kindoo_eid: 27994,
               }),
             },
@@ -631,7 +631,7 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
     expect(out.candidates[0]?.match).toBe('home');
     expect(out.candidates[1]?.stakeId).toBe('east-co');
     expect(out.candidates[1]?.match).toBe('foreign');
-    expect(out.candidates[1]?.siteLabel).toBe('Foothills Building');
+    expect(out.candidates[1]?.siteLabel).toBe('Pine Building');
   });
 
   it('returns an empty candidate list with failedStakes=[] when no managed stake has the EID configured', async () => {

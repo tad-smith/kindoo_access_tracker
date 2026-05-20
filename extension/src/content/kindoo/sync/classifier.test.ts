@@ -30,7 +30,7 @@ function template(overrides: Partial<CallingTemplate>): CallingTemplate {
 
 function segment(overrides: Partial<ParsedSegment>): ParsedSegment {
   return {
-    rawScopeName: 'Cordera Ward',
+    rawScopeName: 'Maple Ward',
     scope: 'CO',
     calling: 'Sunday School Teacher',
     resolvedScope: true,

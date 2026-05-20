@@ -54,7 +54,7 @@ type ParsedDescription = {
 };
 
 type ParsedSegment = {
-  rawScopeName: string;          // e.g. "Cordera Ward"
+  rawScopeName: string;          // e.g. "Maple Ward"
   scope: 'stake' | string;       // resolved: ward_code or 'stake'
   calling: string;               // free-text from parens
   resolvedScope: boolean;        // true if scope name matched a known ward/stake
@@ -70,7 +70,7 @@ Algorithm:
    - No match → `resolvedScope = false`.
 4. `unparseable = segments.every(s => !s.resolvedScope)`.
 
-Multi-calling within a single segment (`Cordera Ward (Elders Quorum First Counselor, Accompanist)`) → calling field contains the comma-joined raw text; the classifier splits on `, ` when it needs to check each individually.
+Multi-calling within a single segment (`Maple Ward (Elders Quorum First Counselor, Accompanist)`) → calling field contains the comma-joined raw text; the classifier splits on `, ` when it needs to check each individually.
 
 ### Classifier (`sync/classifier.ts`)
 

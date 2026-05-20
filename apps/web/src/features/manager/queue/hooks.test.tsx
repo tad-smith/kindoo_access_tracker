@@ -141,7 +141,7 @@ function addManualRequest(overrides: Partial<AccessRequest> = {}): AccessRequest
     member_name: 'Subject Person',
     reason: 'Visiting authority',
     comment: '',
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     status: 'pending',
     requester_email: 'mgr@example.com',
     requester_canonical: 'mgr@example.com',
@@ -156,7 +156,7 @@ describe('useCompleteAddRequest seat-body shape', () => {
     const { result } = renderHook(() => useCompleteAddRequest(), { wrapper });
     await result.current.mutateAsync({
       request: addManualRequest(),
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     await waitFor(() => expect(txSetMock).toHaveBeenCalled());
     const [seatRefArg, body] = txSetMock.mock.calls[0]!;
@@ -178,7 +178,7 @@ describe('useCompleteAddRequest seat-body shape', () => {
         start_date: '2026-06-01',
         end_date: '2026-06-30',
       }),
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     await waitFor(() => expect(txSetMock).toHaveBeenCalled());
     const [, body] = txSetMock.mock.calls[0]!;

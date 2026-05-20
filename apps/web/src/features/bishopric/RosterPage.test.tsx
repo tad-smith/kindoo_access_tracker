@@ -713,7 +713,7 @@ describe('<BishopricRosterPage />', () => {
     // T-43 reviewer fix: a person can hold multiple grants at the
     // same scope (e.g. a home-site CO duplicate AND a foreign-site
     // CO duplicate alongside a stake primary). The per-scope picker
-    // is deterministic: home-site beats foreign-site so Cordera's
+    // is deterministic: home-site beats foreign-site so Maple's
     // roster renders the local grant.
     // Operator-reported same-scope collapse on the ward roster: a
     // primary at scope CO with a same-scope DuplicateGrant naming
@@ -880,19 +880,17 @@ describe('<BishopricRosterPage /> — Kindoo Sites label (spec §15)', () => {
         scope: 'FN',
       }),
     ]);
-    mockWardDoc(makeWard({ ward_code: 'FN', ward_name: 'Foothills', seat_cap: 20 }));
+    mockWardDoc(makeWard({ ward_code: 'FN', ward_name: 'Pine', seat_cap: 20 }));
     mockStakeWards([
       makeWard({
         ward_code: 'FN',
-        ward_name: 'Foothills',
+        ward_name: 'Pine',
         kindoo_site_id: 'foreign-1',
       } as Partial<Ward>),
     ]);
-    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }]);
+    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Pine)' }]);
     render(<BishopricRosterPage initialWard="FN" />);
-    expect(screen.getByTestId('kindoo-site-badge-a@x.com')).toHaveTextContent(
-      'East Stake (Foothills)',
-    );
+    expect(screen.getByTestId('kindoo-site-badge-a@x.com')).toHaveTextContent('East Stake (Pine)');
   });
 
   it('omits the foreign-site badge when the ward is on the home site (kindoo_site_id null)', () => {
@@ -907,7 +905,7 @@ describe('<BishopricRosterPage /> — Kindoo Sites label (spec §15)', () => {
     ]);
     mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
     mockStakeWards([makeWard({ ward_code: 'CO' } as Partial<Ward>)]);
-    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Foothills)' }]);
+    mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Pine)' }]);
     render(<BishopricRosterPage initialWard="CO" />);
     expect(screen.queryByTestId('kindoo-site-badge-a@x.com')).toBeNull();
   });

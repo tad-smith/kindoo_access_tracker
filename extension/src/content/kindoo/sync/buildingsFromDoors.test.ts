@@ -94,26 +94,26 @@ describe('derivedBuildingNames', () => {
   it('returns building names for buildings whose rule id is in the effective set', () => {
     const effective = new Set([6248, 6250]);
     const buildings = [
-      building('Cordera Building', 6248),
+      building('Maple Building', 6248),
       building('Pine Creek Building', 6249),
       building('Jamboree Building', 6250),
     ];
     expect(derivedBuildingNames(effective, buildings)).toEqual([
-      'Cordera Building',
+      'Maple Building',
       'Jamboree Building',
     ]);
   });
 
   it('excludes buildings whose rule id is not in the effective set', () => {
     const effective = new Set([6248]);
-    const buildings = [building('Cordera Building', 6248), building('Pine Creek Building', 6249)];
-    expect(derivedBuildingNames(effective, buildings)).toEqual(['Cordera Building']);
+    const buildings = [building('Maple Building', 6248), building('Pine Creek Building', 6249)];
+    expect(derivedBuildingNames(effective, buildings)).toEqual(['Maple Building']);
   });
 
   it('excludes buildings with no kindoo_rule (rule_id absent)', () => {
     const effective = new Set([6248]);
-    const buildings = [building('Cordera Building', 6248), building('Unconfigured Building', null)];
-    expect(derivedBuildingNames(effective, buildings)).toEqual(['Cordera Building']);
+    const buildings = [building('Maple Building', 6248), building('Unconfigured Building', null)];
+    expect(derivedBuildingNames(effective, buildings)).toEqual(['Maple Building']);
   });
 
   it('returns alphabetically sorted, deduplicated list', () => {
@@ -132,13 +132,13 @@ describe('derivedBuildingNames', () => {
 
   it('returns [] when no rule ids match', () => {
     const effective = new Set([9999]);
-    const buildings = [building('Cordera Building', 6248)];
+    const buildings = [building('Maple Building', 6248)];
     expect(derivedBuildingNames(effective, buildings)).toEqual([]);
   });
 
   it('returns [] for an empty effective set', () => {
     const effective = new Set<number>();
-    const buildings = [building('Cordera Building', 6248)];
+    const buildings = [building('Maple Building', 6248)];
     expect(derivedBuildingNames(effective, buildings)).toEqual([]);
   });
 });
@@ -166,7 +166,7 @@ describe('buildRuleDoorMap', () => {
     let call = 0;
     const fetchImpl = vi.fn(async () => {
       call += 1;
-      if (call === 1) return ruleResp(6248, 'Cordera - Everyday', [1, 2, 3], [10, 20]);
+      if (call === 1) return ruleResp(6248, 'Maple - Everyday', [1, 2, 3], [10, 20]);
       if (call === 2) return ruleResp(6249, 'Pine Creek', [10, 11]);
       return ruleResp(6250, 'Jamboree', [20, 21, 22]);
     });
@@ -225,9 +225,9 @@ describe('enrichUsersWithDerivedBuildings', () => {
       [6248, new Set([1, 2])],
       [6249, new Set([10, 11])],
     ]);
-    const buildings = [building('Cordera Building', 6248), building('Pine Creek Building', 6249)];
+    const buildings = [building('Maple Building', 6248), building('Pine Creek Building', 6249)];
 
-    // alice → doors [1, 2] (claims Cordera); bob → doors [10, 11] (claims Pine Creek).
+    // alice → doors [1, 2] (claims Maple); bob → doors [10, 11] (claims Pine Creek).
     const responses = new Map<string, ReturnType<typeof pageResp>>();
     responses.set('u1', pageResp([{ DoorID: 1 }, { DoorID: 2 }], 2));
     responses.set('u2', pageResp([{ DoorID: 10 }, { DoorID: 11 }], 2));
@@ -247,14 +247,14 @@ describe('enrichUsersWithDerivedBuildings', () => {
       buildings,
       { concurrency: 2, fetchImpl: fetchImpl as unknown as typeof fetch },
     );
-    expect(enriched[0]?.derivedBuildings).toEqual(['Cordera Building']);
+    expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
     expect(enriched[1]?.derivedBuildings).toEqual(['Pine Creek Building']);
   });
 
   it('sets derivedBuildings to null when a per-user call throws', async () => {
     const users = [ku({ userId: 'u1', username: 'fail@example.com' })];
     const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1])]]);
-    const buildings = [building('Cordera Building', 6248)];
+    const buildings = [building('Maple Building', 6248)];
     const fetchImpl = vi.fn(async () => {
       throw new Error('boom');
     });

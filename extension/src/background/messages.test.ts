@@ -220,7 +220,7 @@ describe('handleRequest', () => {
       kindooSiteId: null,
       siteId: 27994,
       siteName: 'Colorado Springs North Stake',
-      buildingRules: [{ buildingId: 'cordera', ruleId: 6248, ruleName: 'Cordera Doors' }],
+      buildingRules: [{ buildingId: 'maple', ruleId: 6248, ruleName: 'Maple Doors' }],
     };
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
@@ -240,7 +240,7 @@ describe('handleRequest', () => {
       kindooSiteId: 'east-stake',
       siteId: 4321,
       siteName: 'East Stake',
-      buildingRules: [{ buildingId: 'foothills', ruleId: 8001, ruleName: 'Foothills Doors' }],
+      buildingRules: [{ buildingId: 'pine', ruleId: 8001, ruleName: 'Pine Doors' }],
     };
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
@@ -310,7 +310,7 @@ describe('handleRequest', () => {
       scope: 'CO',
       type: 'auto',
       callings: ['Sunday School Teacher'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [],
     };
     loadSeatByEmailMock.mockResolvedValue(seat);
@@ -390,7 +390,7 @@ describe('handleRequest', () => {
           stakeId: 'east-co',
           label: 'East CO',
           match: 'foreign',
-          siteLabel: 'Foothills Building',
+          siteLabel: 'Pine Building',
         },
       ],
       failedStakes: [],
@@ -407,7 +407,7 @@ describe('handleRequest', () => {
             stakeId: 'east-co',
             label: 'East CO',
             match: 'foreign',
-            siteLabel: 'Foothills Building',
+            siteLabel: 'Pine Building',
           },
         ],
         managedStakeCount: 2,

@@ -465,7 +465,7 @@ _Unit_
 
 - [ ] zod schema parses for representative documents in each collection. Round-trip via `schema.parse(seedDoc)`.
 - [ ] `auditId` generator: deterministic; sortable by reverse lex; no collisions for synthetic distinct inputs.
-- [ ] `buildingSlug`: `'Cordera Building'` → `'cordera-building'`; deterministic.
+- [ ] `buildingSlug`: `'Maple Building'` → `'maple-building'`; deterministic.
 
 _Rules (rules-unit-testing) — every collection_
 

@@ -148,16 +148,16 @@ describe('<ManagerDashboardPage />', () => {
         makeSeat({ scope: 'GE', member_canonical: 'g@x.com', member_email: 'g@x.com' }),
       ],
       wards: [
-        makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 }),
-        makeWard({ ward_code: 'GE', ward_name: 'Genoa', seat_cap: 20 }),
+        makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 }),
+        makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 }),
       ],
       stake: { stake_seat_cap: 200, last_over_caps_json: [] },
     });
     await renderWithRouter();
     const util = screen.getByTestId('dashboard-card-utilization');
     expect(within(util).getByText('Stake')).toBeInTheDocument();
-    expect(within(util).getByText(/2 \/ 20 seats used/)).toBeInTheDocument(); // Cordera
-    expect(within(util).getByText(/1 \/ 20 seats used/)).toBeInTheDocument(); // Genoa
+    expect(within(util).getByText(/2 \/ 20 seats used/)).toBeInTheDocument(); // Maple
+    expect(within(util).getByText(/1 \/ 20 seats used/)).toBeInTheDocument(); // Cedar
   });
 
   it('uses the stake-presidency pool size (stake_seat_cap minus ward caps) for the Stake bar', async () => {
@@ -256,7 +256,7 @@ describe('<ManagerDashboardPage />', () => {
             duplicate_scopes: ['CO'],
           }),
         ],
-        wards: [makeWard({ ward_code: 'CO', ward_name: 'Cordera', seat_cap: 20 })],
+        wards: [makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })],
         stake: { stake_seat_cap: 200, last_over_caps_json: [] },
       });
       await renderWithRouter();

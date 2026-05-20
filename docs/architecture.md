@@ -263,7 +263,7 @@ Called only from `Identity_serve` after `Session.getActiveUser` succeeds.
   roles: [
     { type: "manager" },
     { type: "stake" },
-    { type: "bishopric", wardId: "cordera-1st" }
+    { type: "bishopric", wardId: "maple-1st" }
   ]
 }
 ```

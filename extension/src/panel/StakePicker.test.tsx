@@ -23,7 +23,7 @@ describe('StakePicker', () => {
         eid={27994}
         candidates={[
           homeCandidate('csnorth', 'Colorado Springs North Stake'),
-          foreignCandidate('east-co', 'East Colorado Stake', 'Foothills Building'),
+          foreignCandidate('east-co', 'East Colorado Stake', 'Pine Building'),
         ]}
         onPick={vi.fn()}
       />,
@@ -35,7 +35,7 @@ describe('StakePicker', () => {
     expect(csnorth).toHaveTextContent('Colorado Springs North Stake');
     expect(csnorth).toHaveTextContent('(home site)');
     expect(east).toHaveTextContent('East Colorado Stake');
-    expect(east).toHaveTextContent('(foreign site: Foothills Building)');
+    expect(east).toHaveTextContent('(foreign site: Pine Building)');
   });
 
   it('surfaces the signed-in email when one is provided', () => {
@@ -73,7 +73,7 @@ describe('StakePicker', () => {
         eid={27994}
         candidates={[
           homeCandidate('csnorth', 'CSN'),
-          foreignCandidate('east-co', 'East CO', 'Foothills'),
+          foreignCandidate('east-co', 'East CO', 'Pine'),
         ]}
         onPick={onPick}
       />,
@@ -97,7 +97,7 @@ describe('StakePicker', () => {
         eid={27994}
         candidates={[
           homeCandidate('csnorth', 'CSN'),
-          foreignCandidate('east-co', 'East CO', 'Foothills'),
+          foreignCandidate('east-co', 'East CO', 'Pine'),
         ]}
         onPick={onPick}
       />,
@@ -124,7 +124,7 @@ describe('StakePicker', () => {
         eid={27994}
         candidates={[
           homeCandidate('csnorth', 'CSN'),
-          foreignCandidate('east-co', 'East CO', 'Foothills'),
+          foreignCandidate('east-co', 'East CO', 'Pine'),
         ]}
         onPick={onPick}
       />,

@@ -5,7 +5,7 @@ import { stakeAvailablePoolSize } from './stakePool';
 function ward(overrides: Partial<Ward> = {}): Ward {
   return {
     ward_code: 'CO',
-    ward_name: 'Cordera',
+    ward_name: 'Maple',
     building_name: 'Main',
     seat_cap: 20,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

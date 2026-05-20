@@ -28,7 +28,7 @@ function freshWardDoc(overrides: Partial<Record<string, unknown>> = {}): Record<
   return {
     ward_code: WARD_CODE,
     ward_name: '1st Ward',
-    building_name: 'Cordera Building',
+    building_name: 'Maple Building',
     seat_cap: 30,
     created_at: new Date(),
     last_modified_at: new Date(),

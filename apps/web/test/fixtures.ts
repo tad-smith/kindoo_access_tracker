@@ -54,7 +54,7 @@ export function makeRequest(overrides: Partial<AccessRequest> = {}): AccessReque
 export function makeWard(overrides: Partial<Ward> = {}): Ward {
   return {
     ward_code: 'CO',
-    ward_name: 'Cordera',
+    ward_name: 'Maple',
     building_name: 'North Building',
     seat_cap: 20,
     created_at: NOW,

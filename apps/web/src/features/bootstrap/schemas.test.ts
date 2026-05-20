@@ -61,7 +61,7 @@ describe('wardSchema', () => {
   it('accepts a valid ward', () => {
     const r = wardSchema.safeParse({
       ward_code: 'CO',
-      ward_name: 'Cordera',
+      ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
     });

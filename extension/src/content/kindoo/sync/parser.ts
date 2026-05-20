@@ -21,7 +21,7 @@ import type { CallingTemplateSets } from './classifier';
 
 /** One scope+calling segment within a parsed description. */
 export interface ParsedSegment {
-  /** Scope name exactly as it appeared in the description (`"Cordera Ward"`). */
+  /** Scope name exactly as it appeared in the description (`"Maple Ward"`). */
   rawScopeName: string;
   /** `'stake'` or a `ward_code` once the name resolves; `null` when unresolved. */
   scope: 'stake' | string | null;

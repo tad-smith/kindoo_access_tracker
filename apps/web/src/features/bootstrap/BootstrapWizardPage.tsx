@@ -405,7 +405,7 @@ function Step2Buildings() {
       <form onSubmit={handleSubmit(onAdd)}>
         <label>
           Building name
-          <Input {...register('building_name')} placeholder="Cordera Building" />
+          <Input {...register('building_name')} placeholder="Maple Building" />
         </label>
         {formState.errors.building_name ? (
           <p role="alert" className="kd-form-error">
@@ -492,7 +492,7 @@ function Step3Wards() {
         ) : null}
         <label>
           Ward name
-          <Input {...register('ward_name')} placeholder="Cordera Ward" />
+          <Input {...register('ward_name')} placeholder="Maple Ward" />
         </label>
         {formState.errors.ward_name ? (
           <p role="alert" className="kd-form-error">

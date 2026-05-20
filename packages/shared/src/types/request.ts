@@ -115,7 +115,7 @@ export type AccessRequest = {
   /**
    * Extension v2.2 — human-readable summary of what the Provision &
    * Complete flow did in Kindoo (e.g. "Added X to Kindoo with access
-   * to Cordera Building."). Same shape contract as `completion_note`.
+   * to Maple Building."). Same shape contract as `completion_note`.
    */
   provisioning_note?: string;
 

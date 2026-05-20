@@ -10,7 +10,7 @@ const seat = (overrides: Partial<Seat> = {}): Seat =>
     scope: 'CO',
     type: 'auto',
     callings: ['Bishop'],
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     duplicate_grants: [],
     ...overrides,
   }) as Seat;
@@ -18,8 +18,8 @@ const seat = (overrides: Partial<Seat> = {}): Seat =>
 const ward = (overrides: Partial<Ward> = {}): Ward =>
   ({
     ward_code: 'CO',
-    ward_name: 'Cordera',
-    building_name: 'Cordera Building',
+    ward_name: 'Maple',
+    building_name: 'Maple Building',
     seat_cap: 20,
     ...overrides,
   }) as Ward;

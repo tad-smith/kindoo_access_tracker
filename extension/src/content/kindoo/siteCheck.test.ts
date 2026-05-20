@@ -41,28 +41,28 @@ const STAKE: Stake = {
 
 const HOME_WARD: Ward = {
   ward_code: 'CO',
-  ward_name: 'Cordera Ward',
-  building_name: 'Cordera Building',
+  ward_name: 'Maple Ward',
+  building_name: 'Maple Building',
   // kindoo_site_id absent → home
 } as unknown as Ward;
 
 const FOREIGN_WARD: Ward = {
   ward_code: 'FN',
   ward_name: 'Foreign Ward',
-  building_name: 'Foothills Building',
+  building_name: 'Pine Building',
   kindoo_site_id: 'east-stake',
 } as unknown as Ward;
 
 const FOREIGN_SITE_WITH_EID: KindooSite = {
   id: 'east-stake',
-  display_name: 'East Stake (Foothills Building)',
+  display_name: 'East Stake (Pine Building)',
   kindoo_expected_site_name: 'East Stake',
   kindoo_eid: FOREIGN_EID,
 } as unknown as KindooSite;
 
 const FOREIGN_SITE_NO_EID: KindooSite = {
   id: 'east-stake',
-  display_name: 'East Stake (Foothills Building)',
+  display_name: 'East Stake (Pine Building)',
   kindoo_expected_site_name: 'East Stake',
   // kindoo_eid absent — Phase 3 auto-populate path
 } as unknown as KindooSite;
@@ -82,7 +82,7 @@ function stakeRequest(overrides: Partial<AccessRequest> = {}): AccessRequest {
     scope: 'stake',
     member_email: 'tad.e.smith@gmail.com',
     member_canonical: 'tad.e.smith@gmail.com',
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     ...overrides,
   } as unknown as AccessRequest;
 }
@@ -235,8 +235,8 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     // Operator-facing wording must use the human-readable `display_name`,
     // never the slug (`east-stake`) or the internal matching key
     // (`kindoo_expected_site_name`).
-    expect(result.error.expectedSiteName).toBe('East Stake (Foothills Building)');
-    expect(result.error.message).toContain("'East Stake (Foothills Building)'");
+    expect(result.error.expectedSiteName).toBe('East Stake (Pine Building)');
+    expect(result.error.message).toContain("'East Stake (Pine Building)'");
     expect(result.error.message).toContain('Switch Kindoo sites and try again');
   });
 
@@ -282,7 +282,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     if (result.ok) return;
     expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
     if (!(result.error instanceof ProvisionSiteMismatchError)) return;
-    expect(result.error.expectedSiteName).toBe('East Stake (Foothills Building)');
+    expect(result.error.expectedSiteName).toBe('East Stake (Pine Building)');
   });
 
   it('refuses with ProvisionForeignSiteMissingError when ward references a kindoo_site_id not in the loaded set', () => {
@@ -325,7 +325,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     // foreign doc, permanently bypassing Phase 3.
     const collidingForeign: KindooSite = {
       id: 'east-stake',
-      display_name: 'East Stake (Foothills Building)',
+      display_name: 'East Stake (Pine Building)',
       // Whatever bug got us here, the foreign doc's expected name now
       // equals the home stake's name.
       kindoo_expected_site_name: 'Colorado Springs North Stake',
@@ -343,7 +343,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     if (result.ok) return;
     expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
     if (!(result.error instanceof ProvisionSiteMismatchError)) return;
-    expect(result.error.expectedSiteName).toBe('East Stake (Foothills Building)');
+    expect(result.error.expectedSiteName).toBe('East Stake (Pine Building)');
   });
 
   it('still auto-populates on name match when the active EID is not the home site_id', () => {
@@ -374,7 +374,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     // door access through whatever site already carries that EID.
     const otherForeign: KindooSite = {
       id: 'west-stake',
-      display_name: 'West Stake (Foothills Building)',
+      display_name: 'West Stake (Pine Building)',
       kindoo_expected_site_name: 'West Stake',
       kindoo_eid: FOREIGN_EID, // collides with the session EID below
     } as unknown as KindooSite;
@@ -392,7 +392,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     if (result.ok) return;
     expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
     if (!(result.error instanceof ProvisionSiteMismatchError)) return;
-    expect(result.error.expectedSiteName).toBe('East Stake (Foothills Building)');
+    expect(result.error.expectedSiteName).toBe('East Stake (Pine Building)');
   });
 
   it('refuses (using display_name) when active session has no matching env entry (unknown site name)', () => {
@@ -408,7 +408,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     if (result.ok) return;
     expect(result.error).toBeInstanceOf(ProvisionSiteMismatchError);
     if (!(result.error instanceof ProvisionSiteMismatchError)) return;
-    expect(result.error.expectedSiteName).toBe('East Stake (Foothills Building)');
+    expect(result.error.expectedSiteName).toBe('East Stake (Pine Building)');
   });
 });
 
@@ -461,7 +461,7 @@ describe('resolveActiveKindooSite — Phase 5 wizard helper', () => {
     expect(result).toEqual({
       kind: 'foreign',
       siteId: 'east-stake',
-      displayName: 'East Stake (Foothills Building)',
+      displayName: 'East Stake (Pine Building)',
     });
   });
 
@@ -475,7 +475,7 @@ describe('resolveActiveKindooSite — Phase 5 wizard helper', () => {
     expect(result).toEqual({
       kind: 'foreign',
       siteId: 'east-stake',
-      displayName: 'East Stake (Foothills Building)',
+      displayName: 'East Stake (Pine Building)',
       populateEid: FOREIGN_EID,
     });
   });
@@ -528,7 +528,7 @@ describe('resolveActiveKindooSite — Phase 5 wizard helper', () => {
     // touches kindooSites/<id>, not stake.kindoo_config.
     const ambiguousForeign: KindooSite = {
       id: 'east-stake',
-      display_name: 'East Stake (Foothills Building)',
+      display_name: 'East Stake (Pine Building)',
       kindoo_expected_site_name: 'Colorado Springs North Stake',
       // kindoo_eid absent.
     } as unknown as KindooSite;
@@ -580,7 +580,7 @@ describe('resolveActiveKindooSite — Phase 5 wizard helper', () => {
       kindooSites: [
         {
           id: 'east-stake',
-          display_name: 'East Stake (Foothills Building)',
+          display_name: 'East Stake (Pine Building)',
           kindoo_expected_site_name: 'East Stake',
           kindoo_eid: FOREIGN_EID,
         } as unknown as KindooSite,
@@ -604,7 +604,7 @@ describe('resolveActiveKindooSite — Phase 5 wizard helper', () => {
       kindooSites: [
         {
           id: 'east-stake',
-          display_name: 'East Stake (Foothills Building)',
+          display_name: 'East Stake (Pine Building)',
           kindoo_expected_site_name: 'East Stake',
         } as unknown as KindooSite,
       ],
