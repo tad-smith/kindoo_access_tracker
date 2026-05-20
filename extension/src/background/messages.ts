@@ -194,19 +194,26 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
       try {
         const user = currentUser();
         if (!user) {
-          return { ok: true, data: { candidates: [], managedStakeCount: 0 } };
+          return {
+            ok: true,
+            data: { candidates: [], managedStakeCount: 0, partialFailure: false },
+          };
         }
         // `readManagerStakes` propagates token-refresh failures so the
-        // panel can surface a wire-error recovery state. A successful
-        // claims read with no manager roles is `managedStakeCount: 0`
-        // (route to NotAuthorized); a non-empty managerStakes with no
-        // EID match is `managedStakeCount > 0, candidates: []` (route
-        // to the existing no-candidates recovery copy).
+        // panel can surface a wire-error recovery state. The resolver
+        // returns `{ candidates, partialFailure }` so the panel can
+        // distinguish:
+        //   - `managedStakeCount === 0` → NotAuthorized
+        //   - `partialFailure && candidates.length === 0` → wire-error
+        //     (every per-stake read threw — transient outage)
+        //   - `managedStakeCount > 0 && !partialFailure && candidates.length === 0`
+        //     → no-candidates (EID not configured under any managed
+        //     stake)
         const managerStakes = await readManagerStakes(user);
-        const candidates = await resolveEidStakes(req.eid, managerStakes);
+        const { candidates, partialFailure } = await resolveEidStakes(req.eid, managerStakes);
         return {
           ok: true,
-          data: { candidates, managedStakeCount: managerStakes.length },
+          data: { candidates, managedStakeCount: managerStakes.length, partialFailure },
         };
       } catch (err) {
         return { ok: false, error: toWireError(err) };

@@ -19,19 +19,28 @@ interface StakePickerProps {
   eid: number;
   candidates: EidStakeCandidate[];
   /** Called when the operator confirms a choice — App persists it and
-   * re-runs the active-stake resolution. */
+   * re-runs the active-stake resolution. Rejections (chrome.storage
+   * write failure, quota exhausted, etc.) surface as an inline error
+   * banner above the buttons; the picker stays clickable. */
   onPick: (stakeId: string) => Promise<void> | void;
 }
 
 export function StakePicker({ email, eid, candidates, onPick }: StakePickerProps) {
   const [pending, setPending] = useState<string | null>(null);
+  const [writeError, setWriteError] = useState<string | null>(null);
 
   const handle = useCallback(
     async (stakeId: string) => {
       if (pending !== null) return;
       setPending(stakeId);
+      setWriteError(null);
       try {
         await onPick(stakeId);
+        // Resolution happens via App.tsx state — picker unmounts when
+        // the choice persists, so no success path runs here.
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setWriteError(message);
       } finally {
         setPending(null);
       }
@@ -55,13 +64,20 @@ export function StakePicker({ email, eid, candidates, onPick }: StakePickerProps
           configured under more than one stake you manage. Pick the stake whose pending requests you
           want to work on. The choice sticks for this Kindoo site until you sign out.
         </p>
+        {writeError !== null ? (
+          <p role="alert" className="sba-error" data-testid="sba-stake-picker-write-error">
+            Couldn&rsquo;t save your choice — try again.
+          </p>
+        ) : null}
         <ul className="sba-stake-picker-list" data-testid="sba-stake-picker-list">
           {candidates.map((c) => (
             <li key={c.stakeId}>
               <button
                 type="button"
                 className="sba-btn sba-btn-primary sba-stake-picker-btn"
-                onClick={() => void handle(c.stakeId)}
+                onClick={() => {
+                  void handle(c.stakeId);
+                }}
                 disabled={pending !== null}
                 data-testid={`sba-stake-picker-${c.stakeId}`}
               >

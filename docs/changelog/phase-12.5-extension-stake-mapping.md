@@ -11,8 +11,8 @@ The fifth and final implementation atom of Phase 12 (multi-stake). The Chrome ex
 
 - New `resolveEidStakes(eid, managerStakes)` in `background/data.ts`. Reads each managed stake's parent doc + `kindooSites/*` in parallel and returns a sorted array of `{ stakeId, label, match: 'home' | 'foreign', siteLabel? }` candidates. A stake is a candidate iff `stake.kindoo_config.site_id === eid` (home) OR some `kindooSites/<id>.kindoo_eid === eid` (foreign). Home wins over a foreign collision on the same stake (defensive).
 - `loadStakeConfig`, `loadSyncData`, `loadSeatByEmail`, `writeKindooConfig`, `writeKindooSiteEid` all take an explicit `stakeId` parameter — no more hardcoded constant.
-- New SW message `data.resolveEidStakes` in `background/messages.ts`. Reads `managerStakes` off the signed-in user's ID token via the new `readManagerStakes(user)` helper in `lib/auth.ts`, then fans out the per-stake reads.
-- `PrincipalSnapshot` (the cross-boundary auth shape) gains `managerStakes: string[]`. Both `auth.getState` and the `auth.stateChanged` push carry it.
+- New SW message `data.resolveEidStakes` in `background/messages.ts`. Reads `managerStakes` off the signed-in user's ID token via the new `readManagerStakes(user)` helper in `lib/auth.ts`, then fans out the per-stake reads. The SW re-reads claims on every `data.resolveEidStakes` call rather than caching them on `PrincipalSnapshot` — this avoids a staleness window between the CS's snapshot read and the SW's resolver dispatch, and the round-trip cost is one `getIdTokenResult()` call which the SDK serves from the local cache when the token is still fresh.
+- The cross-boundary `PrincipalSnapshot` carries only `{ uid, email, displayName }`. No claims are exposed across the SW <-> CS boundary; the resolver call is the single point where managerStakes is consulted.
 - Sign-out wipes `STORAGE_KEYS.eidStakeChoice` alongside `googleAccessToken` and `principalSnapshot` — one chrome.storage write.
 
 **Content-script (`extension/src/content/`, `extension/src/lib/`, `extension/src/panel/`).**
@@ -26,18 +26,18 @@ The fifth and final implementation atom of Phase 12 (multi-stake). The Chrome ex
 
 **Manifest.**
 
-- `extension/src/manifest.config.ts` version 1.0.1 → 1.0.2. No permission or host-permission changes.
+- `extension/src/manifest.config.ts` version 1.0.1 → 1.0.4 (bumped on each commit touching `extension/` per the in-flight bump rule; ships at 1.0.4 once this PR merges). No permission or host-permission changes.
 
 **Tests.**
 
-- `background/data.test.ts` — new `resolveEidStakes` block (7 cases: empty manager list, single home, single foreign, multi-stake collision, no-match, missing stake doc, home-wins-over-foreign-self-collision) plus stake-parameterisation assertions on `loadStakeConfig` and `loadSeatByEmail`.
-- `background/messages.test.ts` — `data.resolveEidStakes` handler, `auth.getState` + `auth.signIn` now assert `managerStakes` in the principal snapshot, every per-stake handler asserts the `stakeId` parameter on the inner mock.
-- `lib/extensionApi.test.ts` — `resolveEidStakes` wrapper + `eidStakeChoice` helpers (read / write / clear / no-op-on-missing).
-- `lib/auth.test.ts` — `readManagerStakes` (manager-only filtering, empty claims, getIdTokenResult throws, non-manager entries ignored).
-- `panel/StakePicker.test.tsx` (new) — five cases covering rendering, email row, click → onPick, button disablement during pick.
-- `panel/App.test.tsx` — five new branch tests: multi-candidate renders the picker, stored-choice-is-candidate skips the picker, stale stored choice triggers `clearEidStakeChoice`, no-candidates renders the recovery copy, no-session renders the existing copy, plus a picker-click → tabbed-shell integration test that asserts `writeEidStakeChoice` fires and the queue read carries the new stakeId.
+- `background/data.test.ts` — new `resolveEidStakes` block (10 cases: empty manager list, single home, single foreign, multi-stake collision, no-match, missing stake doc, home-wins-over-foreign-self-collision, single-stake throw, multi-stake throw with one good, every-stake throw with `partialFailure: true`) plus stake-parameterisation assertions on `loadStakeConfig` and `loadSeatByEmail`.
+- `background/messages.test.ts` — `data.resolveEidStakes` handler with the `{ candidates, managedStakeCount, partialFailure }` shape; the empty-managerStakes route, the EID-not-configured route, the wire-error route via `readManagerStakes` throw, and the `partialFailure: true` passthrough. Every per-stake handler asserts the `stakeId` parameter on the inner mock.
+- `lib/extensionApi.test.ts` — `resolveEidStakes` wrapper unwraps the full payload + throws `ExtensionApiError` on wire failure; `eidStakeChoice` helpers (read / write / clear / no-op-on-missing).
+- `lib/auth.test.ts` — `readManagerStakes` (manager-only filtering, empty claims, `getIdTokenResult` throws propagate (no swallow), non-manager entries ignored).
+- `panel/StakePicker.test.tsx` (new) — six cases covering rendering, email row, click → onPick, button disablement during pick, and the Item 1 inline-error banner / retry path.
+- `panel/App.test.tsx` — seven new branch tests: multi-candidate renders the picker, stored-choice-is-candidate skips the picker, stale stored choice triggers `clearEidStakeChoice`, no-candidates renders the recovery copy (only when `managedStakeCount > 0 && !partialFailure`), no-session renders the existing copy, wire-error route on resolver throw, wire-error route on `partialFailure: true` (Item 2), `managedStakeCount === 0` → NotAuthorized (Risk 3), plus a picker-click → tabbed-shell integration test that asserts `writeEidStakeChoice` fires and the queue read carries the new stakeId.
 
-479 tests pass (was 450).
+491 tests pass (was 450).
 
 ## Deviations from the pre-phase spec
 
@@ -61,6 +61,10 @@ None. The acceptance criteria in `firebase-migration.md` sub-deliverable 12.5 an
 - **Single-stake transition does not persist.** When `resolveEidStakes(eid).length === 1`, App auto-resolves to that stake but does NOT write to `eidStakeChoice` — the resolution is structural (driven by Firestore config), not a remembered choice. Persisting would muddy the "stored choice" semantic and require extra invalidation logic if a second stake later gets configured against the same EID.
 
 - **Storage helpers live in `lib/extensionApi.ts`, not the SW.** `extension/CLAUDE.md` says STORAGE_KEYS are owned by the SW + the CS mount; we extended that to the lib so the panel can call read/write helpers directly without a SW round-trip. The "single owner per key" intent of the rule still holds — these three helpers ARE the only readers + writers of `sba.eidStakeChoice`. Documented in the helpers' header comment.
+
+- **Resolver response carries `managedStakeCount` + `partialFailure` instead of a single empty-candidates list.** Reviewer-flagged after the initial implementation: an empty `candidates` array carries three structurally distinct meanings (user not a manager anywhere; EID not configured under any managed stake; every per-stake read failed transiently). Collapsing them into one wire shape forced App.tsx to misroute two of the three. The widened response lets the panel disambiguate `managedStakeCount === 0` → NotAuthorized, `partialFailure && empty` → wire-error retry, and `count > 0 && !partialFailure && empty` → the genuine "reconfigure SBA" copy. Per-stake `try/catch` in the resolver isolates a single stake's failure to that stake (no Promise.all nuking the whole list), and the aggregate `partialFailure` flag surfaces the transient-outage signal upstream.
+
+- **Picker write failures surface inline.** Reviewer-flagged: a `writeEidStakeChoice` rejection (chrome.storage quota exhausted, etc.) was silently dropped by the picker's `void handle(...)` wrapper, leaving the picker re-enabled with no banner. The picker's local handler now catches the rejection, sets a `writeError` state, and renders an inline `sba-stake-picker-write-error` banner above the buttons; the buttons re-enable so a retry is possible.
 
 No new `architecture.md` D-numbers earned. The picker + EID resolver follow the existing CS ↔ SW + chrome.storage.local pattern; the per-stake parameterisation is the same shape T-13 already applied on the functions side (`STAKE_IDS` → `getStakeIds()`).
 

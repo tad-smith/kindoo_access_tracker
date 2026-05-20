@@ -107,4 +107,40 @@ describe('StakePicker', () => {
     expect(screen.getByTestId('sba-stake-picker-east-co')).toBeDisabled();
     release?.();
   });
+
+  it('renders an inline error banner and re-enables the buttons when onPick rejects (Item 1)', async () => {
+    // Item 1: chrome.storage write failure (quota exhausted, etc.)
+    // must not silently disappear. The picker surfaces an inline
+    // banner above the buttons, re-enables them so a retry is
+    // possible, and stays mounted (no auto-resolve).
+    const onPick = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('storage write failed'))
+      .mockResolvedValueOnce(undefined);
+    const user = userEvent.setup();
+    render(
+      <StakePicker
+        email="mgr@example.com"
+        eid={27994}
+        candidates={[
+          homeCandidate('csnorth', 'CSN'),
+          foreignCandidate('east-co', 'East CO', 'Foothills'),
+        ]}
+        onPick={onPick}
+      />,
+    );
+    await user.click(screen.getByTestId('sba-stake-picker-csnorth'));
+    // Error banner visible.
+    expect(screen.getByTestId('sba-stake-picker-write-error')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-stake-picker-write-error')).toHaveTextContent(
+      'save your choice',
+    );
+    // Buttons re-enabled.
+    expect(screen.getByTestId('sba-stake-picker-csnorth')).not.toBeDisabled();
+    expect(screen.getByTestId('sba-stake-picker-east-co')).not.toBeDisabled();
+    // Retrying clears the banner once the next call resolves.
+    await user.click(screen.getByTestId('sba-stake-picker-east-co'));
+    expect(onPick).toHaveBeenCalledTimes(2);
+    expect(onPick).toHaveBeenLastCalledWith('east-co');
+  });
 });

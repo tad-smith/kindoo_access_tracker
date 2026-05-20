@@ -214,6 +214,7 @@ describe('extensionApi', () => {
               },
             ],
             managedStakeCount: 2,
+            partialFailure: false,
           },
         });
       },
@@ -235,6 +236,7 @@ describe('extensionApi', () => {
         },
       ],
       managedStakeCount: 2,
+      partialFailure: false,
     });
   });
 

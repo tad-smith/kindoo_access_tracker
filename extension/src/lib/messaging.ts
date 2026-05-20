@@ -257,17 +257,25 @@ export interface EidStakeCandidate {
   siteLabel?: string;
 }
 
-/** Wire shape for resolveEidStakes result. `managedStakeCount` lets the
- * panel disambiguate "candidates empty because no manager roles" (route
- * to NotAuthorized) from "candidates empty because no managed stake
- * has the EID configured" (route to the no-candidates recovery copy). */
+/** Wire shape for resolveEidStakes result. The count + flag fields let
+ * the panel disambiguate three structurally distinct empty-candidates
+ * cases without re-querying:
+ *   - `managedStakeCount === 0`                          → NotAuthorized
+ *   - `partialFailure && candidates.length === 0`        → wire-error
+ *     (every per-stake read threw — transient outage; misleading to
+ *      tell the operator to reconfigure SBA)
+ *   - `managedStakeCount > 0 && !partialFailure && candidates.length === 0`
+ *                                                       → no-candidates
+ *     (genuine "EID isn't configured under any of your stakes") */
 export interface ResolveEidStakesPayload {
   candidates: EidStakeCandidate[];
   /** Total number of stakes on which the signed-in user holds
-   * `manager: true`. Zero means the user is not a manager anywhere
-   * (route to NotAuthorized); >0 with empty `candidates` means the
-   * EID isn't configured under any of their managed stakes. */
+   * `manager: true`. Zero routes to NotAuthorized. */
   managedStakeCount: number;
+  /** True iff at least one per-stake closure caught (rules denial,
+   * Firestore hiccup, transient outage). Empty `candidates` plus this
+   * flag routes to the wire-error recovery state. */
+  partialFailure: boolean;
 }
 
 /** Discriminated union of every request the panel may send. */

@@ -521,7 +521,7 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
   it('returns an empty array when the caller manages no stakes', async () => {
     const { resolveEidStakes } = await import('./data');
     const out = await resolveEidStakes(27994, []);
-    expect(out).toEqual([]);
+    expect(out).toEqual({ candidates: [], partialFailure: false });
     expect(getDocMock).not.toHaveBeenCalled();
   });
 
@@ -536,9 +536,10 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
     getDocsMock.mockResolvedValue({ docs: [] });
     const { resolveEidStakes } = await import('./data');
     const out = await resolveEidStakes(27994, ['csnorth']);
-    expect(out).toEqual([
-      { stakeId: 'csnorth', label: 'Colorado Springs North Stake', match: 'home' },
-    ]);
+    expect(out).toEqual({
+      candidates: [{ stakeId: 'csnorth', label: 'Colorado Springs North Stake', match: 'home' }],
+      partialFailure: false,
+    });
   });
 
   it('returns the single foreign-match candidate when the EID matches a kindooSite doc', async () => {
@@ -562,14 +563,17 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
     });
     const { resolveEidStakes } = await import('./data');
     const out = await resolveEidStakes(27994, ['east-co']);
-    expect(out).toEqual([
-      {
-        stakeId: 'east-co',
-        label: 'East Colorado Stake',
-        match: 'foreign',
-        siteLabel: 'Foothills Building',
-      },
-    ]);
+    expect(out).toEqual({
+      candidates: [
+        {
+          stakeId: 'east-co',
+          label: 'East Colorado Stake',
+          match: 'foreign',
+          siteLabel: 'Foothills Building',
+        },
+      ],
+      partialFailure: false,
+    });
   });
 
   it('returns two candidates when the EID is home for one stake and foreign for another', async () => {
@@ -620,16 +624,17 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
     });
     const { resolveEidStakes } = await import('./data');
     const out = await resolveEidStakes(27994, ['csnorth', 'east-co']);
-    expect(out).toHaveLength(2);
+    expect(out.candidates).toHaveLength(2);
+    expect(out.partialFailure).toBe(false);
     // Alphabetical sort by label — Colorado Springs ... < East Colorado.
-    expect(out[0]?.stakeId).toBe('csnorth');
-    expect(out[0]?.match).toBe('home');
-    expect(out[1]?.stakeId).toBe('east-co');
-    expect(out[1]?.match).toBe('foreign');
-    expect(out[1]?.siteLabel).toBe('Foothills Building');
+    expect(out.candidates[0]?.stakeId).toBe('csnorth');
+    expect(out.candidates[0]?.match).toBe('home');
+    expect(out.candidates[1]?.stakeId).toBe('east-co');
+    expect(out.candidates[1]?.match).toBe('foreign');
+    expect(out.candidates[1]?.siteLabel).toBe('Foothills Building');
   });
 
-  it('returns an empty array when no managed stake has the EID configured', async () => {
+  it('returns an empty candidate list with partialFailure=false when no managed stake has the EID configured', async () => {
     getDocMock.mockResolvedValue({
       exists: () => true,
       data: () => ({
@@ -640,17 +645,19 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
     getDocsMock.mockResolvedValue({ docs: [] });
     const { resolveEidStakes } = await import('./data');
     const out = await resolveEidStakes(99999, ['csnorth']);
-    expect(out).toEqual([]);
+    expect(out).toEqual({ candidates: [], partialFailure: false });
   });
 
-  it('skips managed stakes whose parent doc no longer exists', async () => {
+  it('skips managed stakes whose parent doc no longer exists (not a failure)', async () => {
     // Defensive: rules could deny the read OR the stake was deleted.
-    // The resolver returns whatever's resolvable, not an error.
+    // The resolver returns whatever's resolvable, not an error. A
+    // missing doc is NOT a per-stake failure (no exception thrown);
+    // partialFailure stays false.
     getDocMock.mockResolvedValue({ exists: () => false, data: () => ({}) });
     getDocsMock.mockResolvedValue({ docs: [] });
     const { resolveEidStakes } = await import('./data');
     const out = await resolveEidStakes(27994, ['ghost-stake']);
-    expect(out).toEqual([]);
+    expect(out).toEqual({ candidates: [], partialFailure: false });
   });
 
   it('prefers a home match over a foreign match on the same stake', async () => {
@@ -668,7 +675,10 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
     });
     const { resolveEidStakes } = await import('./data');
     const out = await resolveEidStakes(27994, ['csnorth']);
-    expect(out).toEqual([{ stakeId: 'csnorth', label: 'CSN', match: 'home' }]);
+    expect(out).toEqual({
+      candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
+      partialFailure: false,
+    });
   });
 
   it('returns only the resolvable subset when one stake read rejects (Risk 1)', async () => {
@@ -703,7 +713,10 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
     });
     const { resolveEidStakes } = await import('./data');
     const out = await resolveEidStakes(27994, ['stake-a', 'stake-b']);
-    expect(out).toEqual([{ stakeId: 'stake-b', label: 'Stake B', match: 'home' }]);
+    expect(out).toEqual({
+      candidates: [{ stakeId: 'stake-b', label: 'Stake B', match: 'home' }],
+      partialFailure: true,
+    });
   });
 
   it('drops every failing stake but returns the remainder when multiple stakes throw', async () => {
@@ -731,7 +744,23 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
     });
     const { resolveEidStakes } = await import('./data');
     const out = await resolveEidStakes(27994, ['stake-bad-1', 'stake-good', 'stake-bad-2']);
-    expect(out).toEqual([{ stakeId: 'stake-good', label: 'Good Stake', match: 'home' }]);
+    expect(out).toEqual({
+      candidates: [{ stakeId: 'stake-good', label: 'Good Stake', match: 'home' }],
+      partialFailure: true,
+    });
+  });
+
+  it('returns empty candidates with partialFailure=true when every per-stake read throws (Item 2)', async () => {
+    // Item 2: a transient Firestore-wide outage would surface as
+    // every per-stake read rejecting. The resolver must report this
+    // as a partial failure so App.tsx can route to wire-error
+    // recovery (not the misleading no-candidates "reconfigure SBA"
+    // copy).
+    getDocMock.mockRejectedValue(new Error('unavailable'));
+    getDocsMock.mockRejectedValue(new Error('unavailable'));
+    const { resolveEidStakes } = await import('./data');
+    const out = await resolveEidStakes(27994, ['stake-a', 'stake-b']);
+    expect(out).toEqual({ candidates: [], partialFailure: true });
   });
 });
 

@@ -410,25 +410,47 @@ export async function loadSeatByEmail(stakeId: string, canonical: string): Promi
  * Stakes are sorted alphabetically by `stake_name` so the picker
  * order is deterministic.
  */
+/** Outcome of a single per-stake resolve closure. `candidate: null`
+ * means "stake exists and was read successfully but the EID does not
+ * match"; `failed: true` means "the read threw and the stake was
+ * dropped from the candidate list." The two are kept distinct so the
+ * caller can route a transient Firestore-wide outage to the
+ * wire-error recovery state instead of the misleading no-candidates
+ * copy. */
+interface PerStakeOutcome {
+  candidate: EidStakeCandidate | null;
+  failed: boolean;
+}
+
+/** Aggregate resolver result. `partialFailure` is true iff at least
+ * one per-stake closure caught — drives App.tsx's wire-error route
+ * when combined with an empty `candidates` list. */
+export interface ResolveEidStakesOutcome {
+  candidates: EidStakeCandidate[];
+  partialFailure: boolean;
+}
+
 export async function resolveEidStakes(
   eid: number,
   managerStakes: readonly string[],
-): Promise<EidStakeCandidate[]> {
-  if (managerStakes.length === 0) return [];
+): Promise<ResolveEidStakesOutcome> {
+  if (managerStakes.length === 0) return { candidates: [], partialFailure: false };
   const db = firestore();
-  const reads = managerStakes.map(async (stakeId) => {
+  const reads = managerStakes.map(async (stakeId): Promise<PerStakeOutcome> => {
     // Per-stake try / catch: a single stake's rules denial or
     // Firestore hiccup must drop ONLY that stake from the candidate
     // list, never nuke every candidate via Promise.all rejection.
-    // Downstream branching (picker / auto-pick / no-candidates) wants
-    // the resolvable subset, not all-or-nothing.
+    // Downstream branching (picker / auto-pick / no-candidates /
+    // wire-error) wants the resolvable subset plus a failure flag so
+    // "EID isn't configured anywhere" reads distinct from
+    // "Firestore-wide outage."
     try {
       const stakeRef = doc(db, 'stakes', stakeId);
       const [stakeSnap, sitesSnap] = await Promise.all([
         getDoc(stakeRef),
         getDocs(collection(db, 'stakes', stakeId, 'kindooSites')),
       ]);
-      if (!stakeSnap.exists()) return null;
+      if (!stakeSnap.exists()) return { candidate: null, failed: false };
       const stake = stakeSnap.data() as Stake;
       const homeMatch = stake.kindoo_config?.site_id === eid;
       if (homeMatch) {
@@ -437,7 +459,7 @@ export async function resolveEidStakes(
           label: stake.stake_name,
           match: 'home',
         };
-        return candidate;
+        return { candidate, failed: false };
       }
       for (const sd of sitesSnap.docs) {
         const site = sd.data() as KindooSite;
@@ -448,17 +470,20 @@ export async function resolveEidStakes(
             match: 'foreign',
             siteLabel: site.display_name,
           };
-          return candidate;
+          return { candidate, failed: false };
         }
       }
-      return null;
+      return { candidate: null, failed: false };
     } catch (err) {
       console.warn(`[sba-ext] resolveEidStakes: dropped stake '${stakeId}'`, err);
-      return null;
+      return { candidate: null, failed: true };
     }
   });
   const settled = await Promise.all(reads);
-  const candidates: EidStakeCandidate[] = settled.filter((c): c is EidStakeCandidate => c !== null);
+  const candidates: EidStakeCandidate[] = settled
+    .map((o) => o.candidate)
+    .filter((c): c is EidStakeCandidate => c !== null);
   candidates.sort((a, b) => a.label.localeCompare(b.label));
-  return candidates;
+  const partialFailure = settled.some((o) => o.failed);
+  return { candidates, partialFailure };
 }

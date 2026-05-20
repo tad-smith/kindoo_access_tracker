@@ -153,6 +153,7 @@ describe('App', () => {
     resolveEidStakesMock.mockResolvedValue({
       candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
       managedStakeCount: 1,
+      partialFailure: false,
     });
     readEidStakeChoiceMock.mockResolvedValue(null);
     writeEidStakeChoiceMock.mockResolvedValue(undefined);
@@ -380,6 +381,7 @@ describe('App', () => {
         },
       ],
       managedStakeCount: 2,
+      partialFailure: false,
     });
     readEidStakeChoiceMock.mockResolvedValue(null);
 
@@ -404,6 +406,7 @@ describe('App', () => {
         { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
       ],
       managedStakeCount: 2,
+      partialFailure: false,
     });
     readEidStakeChoiceMock.mockResolvedValue('east-co');
     getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
@@ -428,6 +431,7 @@ describe('App', () => {
         { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
       ],
       managedStakeCount: 2,
+      partialFailure: false,
     });
     // Stored choice points at a stake no longer in the candidate set
     // (operator's role got rotated away).
@@ -447,7 +451,11 @@ describe('App', () => {
     });
     // Managed-stake count > 0 with empty candidates list = genuine
     // "EID isn't configured under any of my stakes" → reconfigure copy.
-    resolveEidStakesMock.mockResolvedValue({ candidates: [], managedStakeCount: 2 });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [],
+      managedStakeCount: 2,
+      partialFailure: false,
+    });
 
     await renderApp();
 
@@ -468,7 +476,11 @@ describe('App', () => {
       email: 'mgr@example.com',
       displayName: null,
     });
-    resolveEidStakesMock.mockResolvedValue({ candidates: [], managedStakeCount: 0 });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [],
+      managedStakeCount: 0,
+      partialFailure: false,
+    });
 
     await renderApp();
 
@@ -492,6 +504,30 @@ describe('App', () => {
 
     await waitFor(() => expect(screen.getByTestId('sba-wire-error')).toBeInTheDocument());
     expect(screen.getByTestId('sba-wire-error-message')).toHaveTextContent('reach SBA');
+    expect(screen.queryByTestId('sba-no-candidates')).toBeNull();
+    expect(screen.queryByTestId('sba-not-authorized')).toBeNull();
+    expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
+  });
+
+  it('renders the wire-error recovery copy when every per-stake read fails (Item 2)', async () => {
+    // Item 2: a Firestore-wide outage surfaces as the resolver
+    // returning empty candidates + partialFailure=true. The panel
+    // must distinguish this from "EID not configured anywhere"
+    // (which would tell the operator to reconfigure SBA — wrong).
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [],
+      managedStakeCount: 2,
+      partialFailure: true,
+    });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-wire-error')).toBeInTheDocument());
     expect(screen.queryByTestId('sba-no-candidates')).toBeNull();
     expect(screen.queryByTestId('sba-not-authorized')).toBeNull();
     expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
@@ -524,6 +560,7 @@ describe('App', () => {
         { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
       ],
       managedStakeCount: 2,
+      partialFailure: false,
     });
     readEidStakeChoiceMock.mockResolvedValue(null);
     getMyPendingRequestsMock.mockResolvedValue({ requests: [] });

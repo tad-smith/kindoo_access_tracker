@@ -380,18 +380,21 @@ describe('handleRequest', () => {
     });
   });
 
-  it('data.resolveEidStakes reads claims, fans out per managed stake, returns the candidate list + managedStakeCount', async () => {
+  it('data.resolveEidStakes reads claims, fans out per managed stake, returns the candidate list + managedStakeCount + partialFailure', async () => {
     currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
     readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
-    resolveEidStakesMock.mockResolvedValue([
-      { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-      {
-        stakeId: 'east-co',
-        label: 'East CO',
-        match: 'foreign',
-        siteLabel: 'Foothills Building',
-      },
-    ]);
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        {
+          stakeId: 'east-co',
+          label: 'East CO',
+          match: 'foreign',
+          siteLabel: 'Foothills Building',
+        },
+      ],
+      partialFailure: false,
+    });
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
     expect(resolveEidStakesMock).toHaveBeenCalledWith(27994, ['csnorth', 'east-co']);
@@ -408,6 +411,7 @@ describe('handleRequest', () => {
           },
         ],
         managedStakeCount: 2,
+        partialFailure: false,
       },
     });
   });
@@ -417,7 +421,10 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
     expect(resolveEidStakesMock).not.toHaveBeenCalled();
-    expect(result).toEqual({ ok: true, data: { candidates: [], managedStakeCount: 0 } });
+    expect(result).toEqual({
+      ok: true,
+      data: { candidates: [], managedStakeCount: 0, partialFailure: false },
+    });
   });
 
   it('data.resolveEidStakes returns managedStakeCount=0 + empty candidates when claims carry no manager roles', async () => {
@@ -426,20 +433,42 @@ describe('handleRequest', () => {
     // rather than the reconfigure-copy no-candidates branch.
     currentUserMock.mockReturnValue({ uid: 'u1', email: 'nonmgr@example.com' });
     readManagerStakesMock.mockResolvedValue([]);
-    resolveEidStakesMock.mockResolvedValue([]);
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: false });
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
     expect(resolveEidStakesMock).toHaveBeenCalledWith(27994, []);
-    expect(result).toEqual({ ok: true, data: { candidates: [], managedStakeCount: 0 } });
+    expect(result).toEqual({
+      ok: true,
+      data: { candidates: [], managedStakeCount: 0, partialFailure: false },
+    });
   });
 
   it('data.resolveEidStakes returns managedStakeCount>0 + empty candidates when EID is not configured under any managed stake', async () => {
     currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
     readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
-    resolveEidStakesMock.mockResolvedValue([]);
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: false });
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 99999 });
-    expect(result).toEqual({ ok: true, data: { candidates: [], managedStakeCount: 2 } });
+    expect(result).toEqual({
+      ok: true,
+      data: { candidates: [], managedStakeCount: 2, partialFailure: false },
+    });
+  });
+
+  it('data.resolveEidStakes propagates partialFailure=true from the resolver (Item 2)', async () => {
+    // Item 2: when every per-stake closure throws, the resolver
+    // reports partialFailure=true alongside empty candidates. The
+    // dispatcher must thread that flag through to the wire response
+    // so App.tsx can route to wire-error instead of no-candidates.
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: true });
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(result).toEqual({
+      ok: true,
+      data: { candidates: [], managedStakeCount: 2, partialFailure: true },
+    });
   });
 
   it('data.resolveEidStakes surfaces readManagerStakes throws as a wire error (Risk 2)', async () => {

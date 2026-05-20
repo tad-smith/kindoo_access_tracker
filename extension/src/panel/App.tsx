@@ -104,6 +104,17 @@ export function App() {
       setNotAuthorized(true);
       return;
     }
+    if (payload.candidates.length === 0 && payload.partialFailure) {
+      // Every per-stake read failed (transient Firestore-wide outage
+      // or sweeping rules-denial). The no-candidates copy would tell
+      // the operator to reconfigure SBA — misleading. Surface as
+      // wire-error so the retry button gets the right framing.
+      setStake({
+        kind: 'wire-error',
+        message: 'Some stake reads failed.',
+      });
+      return;
+    }
     if (payload.candidates.length === 0) {
       setStake({ kind: 'no-candidates', eid });
       return;
