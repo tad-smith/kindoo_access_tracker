@@ -7,15 +7,16 @@
 // `created_at` (in the stake's own timezone), `setup_complete` pill,
 // and a deep-link to that stake's normal landing page (the manager
 // Dashboard while the active-stake selector is still single-stake;
-// 12.4 turns the link into a stake-switch). The Create Stake form is
-// rendered inline above the list.
+// 12.4 turns the link into a stake-switch). A **Create Stake** button
+// in the page header opens the create-stake form in a modal dialog.
 //
 // Stable order: ascending `created_at` (oldest first). At target scale
 // — a handful of stakes platform-wide — no pagination is needed.
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { Stake } from '@kindoo/shared';
+import { Button } from '../../components/ui/Button';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../lib/render/EmptyState';
 import { formatDate } from '../../lib/render/formatDate';
@@ -43,6 +44,7 @@ function timestampToMillis(value: Stake['created_at']): number {
 
 export function SuperadminStakeListPage() {
   const stakes = useStakes();
+  const [createOpen, setCreateOpen] = useState(false);
 
   const sorted = useMemo(() => {
     const rows = [...(stakes.data ?? [])];
@@ -52,10 +54,17 @@ export function SuperadminStakeListPage() {
 
   return (
     <section className="kd-page-medium" data-testid="superadmin-stake-list">
-      <h1>Stake List</h1>
-      <p className="kd-page-subtitle">Every stake on the platform.</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1>Stake List</h1>
+          <p className="kd-page-subtitle">Every stake on the platform.</p>
+        </div>
+        <Button onClick={() => setCreateOpen(true)} data-testid="create-stake-open">
+          Create Stake
+        </Button>
+      </div>
 
-      <CreateStakeForm />
+      <CreateStakeForm open={createOpen} onClose={() => setCreateOpen(false)} />
 
       {stakes.isLoading || stakes.data === undefined ? (
         <LoadingSpinner variant="block" />
