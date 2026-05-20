@@ -94,7 +94,7 @@ export function resolveActiveStake(
 ): ResolveActiveStakeResult {
   const accessible = accessibleStakes(principal);
   const accessSet = new Set(accessible);
-  // Bootstrap-admin / pre-claim path: a signed-in user with zero
+  // Bootstrap-admin / pre-claim path: an AUTHENTICATED user with zero
   // accessible stakes who is NOT a platform superadmin is either
   // (a) the bootstrap admin for a stake whose `setup_complete` hasn't
   // flipped to true yet, or (b) a not-yet-claimed user landing
@@ -106,34 +106,49 @@ export function resolveActiveStake(
   // to render an authed page unless the user actually has a role on
   // the stake, so this permissive resolution can't escalate access.
   //
-  // Zero-role platform superadmins (the explicit "no per-stake roles +
-  // global flag" identity) are NOT given this treatment — they belong
-  // on the `/superadmin/stakes` page, not on a single-stake landing.
-  // Stale storage tiers for that identity stay invalidated so the
-  // existing spec wording ("Your last-active stake is no longer
-  // available") still fires.
-  const isBootstrapCandidate = accessible.length === 0 && !principal.isPlatformSuperadmin;
+  // Four conditions for the bootstrap carve-out (must ALL hold):
+  //   - principal is signed in to Firebase Auth (authenticated; an
+  //     unauth user landing on a `?stake=X` deep-link must NOT be
+  //     treated as a bootstrap candidate),
+  //   - accessible set is empty,
+  //   - principal is NOT a platform superadmin (superadmins are
+  //     handled separately — see below),
+  //   - URL/storage value is a non-empty string (already enforced
+  //     downstream by the `value.length > 0` checks; no further
+  //     validation possible without a stake-read).
+  //
+  // Platform superadmins (the `isPlatformSuperadmin === true` flag) are
+  // treated permissively against the URL/storage tiers too: per F19 +
+  // spec §5.4 the rules permit them to read every stake's parent doc,
+  // so deep-linking from the Stake List page to a stake they don't hold
+  // a per-stake role on is a supported flow. Per-stake DATA reads are
+  // still rule-gated and will surface as empty states when the
+  // superadmin lacks the required role.
+  const isBootstrapCandidate =
+    principal.firebaseAuthSignedIn === true &&
+    accessible.length === 0 &&
+    !principal.isPlatformSuperadmin;
+  const isPlatformSuperadmin = principal.isPlatformSuperadmin === true;
+  const isPermissive = isBootstrapCandidate || isPlatformSuperadmin;
 
   // Tier 1: URL.
   if (urlParam !== null && urlParam.length > 0) {
     if (accessSet.has(urlParam)) {
       return { stakeId: urlParam, source: 'url', invalidatedTier: null };
     }
-    if (isBootstrapCandidate) {
-      // Permissive bootstrap-admin path. No invalidation toast —
-      // there's nothing for us to "fall back to" yet.
+    if (isPermissive) {
+      // Permissive paths (bootstrap-admin or platform superadmin). No
+      // invalidation toast — neither identity has a fallback we'd be
+      // demoting to.
       return { stakeId: urlParam, source: 'url', invalidatedTier: null };
     }
-    // Invalid URL value — fall through, remember to toast. We're past
-    // the `isBootstrapCandidate` short-circuit, so `accessible.length`
-    // is `> 0` or the principal is a zero-role superadmin; either way
-    // the recursive helper defaults work.
+    // Invalid URL value — fall through, remember to toast.
     const fallback = resolveStorageTiers(accessSet, sessionValue, localValue, accessible, false);
     return { ...fallback, invalidatedTier: 'url' };
   }
 
   // Tiers 2-4.
-  return resolveStorageTiers(accessSet, sessionValue, localValue, accessible, isBootstrapCandidate);
+  return resolveStorageTiers(accessSet, sessionValue, localValue, accessible, isPermissive);
 }
 
 function resolveStorageTiers(
@@ -141,38 +156,40 @@ function resolveStorageTiers(
   sessionValue: string | null,
   localValue: string | null,
   accessible: string[],
-  isBootstrapCandidate: boolean = accessible.length === 0,
+  isPermissive: boolean = accessible.length === 0,
 ): ResolveActiveStakeResult {
   // Tier 2: sessionStorage.
   if (sessionValue !== null && sessionValue.length > 0) {
     if (accessSet.has(sessionValue)) {
       return { stakeId: sessionValue, source: 'session', invalidatedTier: null };
     }
-    if (isBootstrapCandidate) {
-      // Permissive bootstrap-admin path — see `resolveActiveStake`.
+    if (isPermissive) {
+      // Permissive paths (bootstrap-admin / superadmin) — see
+      // `resolveActiveStake`.
       return { stakeId: sessionValue, source: 'session', invalidatedTier: null };
     }
     // Invalid — fall through to local + principal but flag.
-    const next = resolveLocalThenPrincipal(accessSet, localValue, accessible, isBootstrapCandidate);
+    const next = resolveLocalThenPrincipal(accessSet, localValue, accessible, isPermissive);
     return { ...next, invalidatedTier: 'session' };
   }
 
   // Tier 3 + 4.
-  return resolveLocalThenPrincipal(accessSet, localValue, accessible, isBootstrapCandidate);
+  return resolveLocalThenPrincipal(accessSet, localValue, accessible, isPermissive);
 }
 
 function resolveLocalThenPrincipal(
   accessSet: Set<string>,
   localValue: string | null,
   accessible: string[],
-  isBootstrapCandidate: boolean = accessible.length === 0,
+  isPermissive: boolean = accessible.length === 0,
 ): ResolveActiveStakeResult {
   if (localValue !== null && localValue.length > 0) {
     if (accessSet.has(localValue)) {
       return { stakeId: localValue, source: 'local', invalidatedTier: null };
     }
-    if (isBootstrapCandidate) {
-      // Permissive bootstrap-admin path — see `resolveActiveStake`.
+    if (isPermissive) {
+      // Permissive paths (bootstrap-admin / superadmin) — see
+      // `resolveActiveStake`.
       return { stakeId: localValue, source: 'local', invalidatedTier: null };
     }
     // Invalid — fall through to principal but flag.

@@ -3,9 +3,15 @@
 //     via history.replaceState, returns the resolved stake.
 //   - Re-resolve on subsequent navigations (SW notificationclick
 //     deep-link arriving mid-lifecycle).
-//   - Toast on URL-tier invalidation (spec wording).
-//   - Toast on storage-tier invalidation (spec wording).
+//   - Invalidation event published on URL-tier invalidation.
+//   - Invalidation event published on storage-tier invalidation.
 //   - null for zero-role platform superadmin.
+//
+// Toast TEXT is owned by `<ActiveStakeToastBoundary>` (per item 7) so
+// the storage-tier wording substitutes the display name. Those test
+// cases live alongside the boundary in `ActiveStakeToastBoundary.test.tsx`.
+// Here we assert that the hook publishes the right invalidation event
+// (tier + new stake id) and that the dedupe holds across siblings.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, act } from '@testing-library/react';
@@ -29,18 +35,31 @@ vi.mock('./principal', () => ({
   usePrincipal: () => mockedPrincipal.current,
 }));
 
-// Spy on the toast push.
-const toastSpy = vi.fn();
-vi.mock('./store/toast', () => ({
-  toast: (msg: string, kind: string) => toastSpy(msg, kind),
-}));
+// Spy on the invalidation publisher. We use `useActiveStakeInvalidation`
+// (the public subscriber hook) inside a tiny Probe to capture events.
+const invalidationEvents: Array<{
+  tier: 'url' | 'session' | 'local';
+  newStakeId: string | null;
+  eventId: number;
+}> = [];
 
 import {
   __resetActiveStakeModuleForTests,
   notifyActiveStakeUrlNavigated,
   useActiveStake,
+  useActiveStakeInvalidation,
 } from './useActiveStake';
 import { ACTIVE_STAKE_LOCAL_KEY, ACTIVE_STAKE_SESSION_KEY } from './activeStake';
+import { useEffect } from 'react';
+
+function InvalidationProbe() {
+  const event = useActiveStakeInvalidation();
+  useEffect(() => {
+    if (event === null) return;
+    invalidationEvents.push({ ...event });
+  }, [event]);
+  return null;
+}
 
 function Probe({ onResult }: { onResult: (v: string | null) => void }) {
   const id = useActiveStake();
@@ -57,7 +76,7 @@ function setUrl(pathWithQuery: string): void {
 }
 
 beforeEach(() => {
-  toastSpy.mockClear();
+  invalidationEvents.length = 0;
   if (typeof window !== 'undefined') {
     window.sessionStorage.clear();
     window.localStorage.clear();
@@ -69,8 +88,8 @@ beforeEach(() => {
     bishopricWards: {},
     isPlatformSuperadmin: false,
   });
-  // Reset the hook's module-scoped URL state so each test starts from
-  // the URL set above, not the one that lingered from the previous test.
+  // Reset the hook's module-scoped URL + invalidation state so each
+  // test starts from the URL set above, not the one that lingered.
   __resetActiveStakeModuleForTests();
 });
 
@@ -96,13 +115,16 @@ describe('useActiveStake — URL-tier handling', () => {
     expect(window.location.search).not.toContain('stake=');
   });
 
-  it('fires a warn toast with the push-notification copy on an invalid URL stake', () => {
+  it('publishes a url-tier invalidation event on an invalid URL stake', () => {
     setUrl('/manager/dashboard?stake=foreign');
-    render(<Probe onResult={() => {}} />);
-    expect(toastSpy).toHaveBeenCalledWith(
-      'This notification was for a stake you no longer have access to.',
-      'warn',
+    render(
+      <>
+        <Probe onResult={() => {}} />
+        <InvalidationProbe />
+      </>,
     );
+    const urlEvents = invalidationEvents.filter((e) => e.tier === 'url');
+    expect(urlEvents).toHaveLength(1);
   });
 });
 
@@ -133,22 +155,30 @@ describe('useActiveStake — storage-tier handling', () => {
     expect(result).toBe('csnorth');
   });
 
-  it('fires the last-active-stake toast on stale session, includes the new stake name', () => {
+  it('publishes a session-tier invalidation event carrying the new stake id on stale session', () => {
     window.sessionStorage.setItem(ACTIVE_STAKE_SESSION_KEY, 'foreign');
-    render(<Probe onResult={() => {}} />);
-    expect(toastSpy).toHaveBeenCalledWith(
-      'Your last-active stake is no longer available; switched to csnorth.',
-      'warn',
+    render(
+      <>
+        <Probe onResult={() => {}} />
+        <InvalidationProbe />
+      </>,
     );
+    const sessionEvents = invalidationEvents.filter((e) => e.tier === 'session');
+    expect(sessionEvents).toHaveLength(1);
+    expect(sessionEvents[0]?.newStakeId).toBe('csnorth');
   });
 
-  it('fires the last-active-stake toast on stale local', () => {
+  it('publishes a local-tier invalidation event on stale local', () => {
     window.localStorage.setItem(ACTIVE_STAKE_LOCAL_KEY, 'foreign');
-    render(<Probe onResult={() => {}} />);
-    expect(toastSpy).toHaveBeenCalledWith(
-      'Your last-active stake is no longer available; switched to csnorth.',
-      'warn',
+    render(
+      <>
+        <Probe onResult={() => {}} />
+        <InvalidationProbe />
+      </>,
     );
+    const localEvents = invalidationEvents.filter((e) => e.tier === 'local');
+    expect(localEvents).toHaveLength(1);
+    expect(localEvents[0]?.newStakeId).toBe('csnorth');
   });
 });
 
@@ -206,5 +236,58 @@ describe('useActiveStake — re-resolve on URL navigation', () => {
     });
     expect(result).toBe('ridgeline');
     expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('ridgeline');
+  });
+
+  it('strips ?stake=X from the URL on a same-value re-arrival (item 4)', async () => {
+    // First arrival: ?stake=csnorth lands, hook strips it.
+    setUrl('/manager/dashboard?stake=csnorth');
+    render(<Probe onResult={() => {}} />);
+    expect(window.location.search).not.toContain('stake=');
+
+    // Same stake re-arrives in the URL (e.g., a Stake List click on
+    // the currently-active stake fires another router push). The
+    // module's same-value early-return must NOT suppress the URL
+    // strip — `?stake=csnorth` would otherwise linger in the address
+    // bar.
+    await act(async () => {
+      window.history.replaceState({}, '', '/manager/dashboard?stake=csnorth');
+      notifyActiveStakeUrlNavigated();
+    });
+    expect(window.location.search).not.toContain('stake=');
+  });
+});
+
+describe('useActiveStake — invalidation event dedupe across hook instances (item 1)', () => {
+  it('publishes exactly one URL-tier invalidation event even when multiple hook instances are mounted', () => {
+    // Reproduce the Shell + AuthedLayout + useRequireRole + per-
+    // feature-data-hook tree by mounting three concurrent consumers.
+    // The module-scoped dedupe ensures only the first instance fires.
+    setUrl('/manager/dashboard?stake=foreign');
+    render(
+      <>
+        <Probe onResult={() => {}} />
+        <Probe onResult={() => {}} />
+        <Probe onResult={() => {}} />
+        <InvalidationProbe />
+      </>,
+    );
+    const urlEvents = invalidationEvents.filter((e) => e.tier === 'url');
+    expect(urlEvents).toHaveLength(1);
+  });
+
+  it('publishes exactly one storage-tier invalidation event even when multiple hook instances are mounted', () => {
+    window.sessionStorage.setItem(ACTIVE_STAKE_SESSION_KEY, 'foreign');
+    render(
+      <>
+        <Probe onResult={() => {}} />
+        <Probe onResult={() => {}} />
+        <Probe onResult={() => {}} />
+        <InvalidationProbe />
+      </>,
+    );
+    const storageEvents = invalidationEvents.filter(
+      (e) => e.tier === 'session' || e.tier === 'local',
+    );
+    expect(storageEvents).toHaveLength(1);
   });
 });

@@ -136,12 +136,17 @@ describe('resolveActiveStake', () => {
     expect(result).toEqual({ stakeId: null, source: 'none', invalidatedTier: null });
   });
 
-  it('zero accessible stakes with stale local still falls through to null + invalidated local', () => {
-    const zero = makePrincipal({ isPlatformSuperadmin: true });
-    const result = resolveActiveStake(zero, null, null, 'foreign');
-    expect(result.stakeId).toBeNull();
-    expect(result.source).toBe('none');
-    expect(result.invalidatedTier).toBe('local');
+  it('platform superadmin with zero accessible stakes accepts a local-tier hint deep-link target', () => {
+    // Per spec §5.4 / F19, a platform superadmin can read every stake's
+    // parent doc and the Stake List deep-links route through `?stake=X`
+    // which then persists into storage. The resolver must not invalidate
+    // the value — they have access to the navigation surface for every
+    // stake. Per-stake data reads are still rule-gated downstream.
+    const sa = makePrincipal({ isPlatformSuperadmin: true });
+    const result = resolveActiveStake(sa, null, null, 'foreign');
+    expect(result.stakeId).toBe('foreign');
+    expect(result.source).toBe('local');
+    expect(result.invalidatedTier).toBeNull();
   });
 
   it('URL value is preferred over session and local even when all three differ', () => {
@@ -149,6 +154,76 @@ describe('resolveActiveStake', () => {
     const result = resolveActiveStake(p, 'a', 'b', 'c');
     expect(result.stakeId).toBe('a');
     expect(result.source).toBe('url');
+  });
+
+  describe('platform superadmin deep-link carve-out (item 3)', () => {
+    it('accepts any stake id from the URL tier without invalidation', () => {
+      const sa = makePrincipal({ isPlatformSuperadmin: true });
+      const result = resolveActiveStake(sa, 'foreignstake', null, null);
+      expect(result.stakeId).toBe('foreignstake');
+      expect(result.source).toBe('url');
+      expect(result.invalidatedTier).toBeNull();
+    });
+
+    it('accepts any stake id from the sessionStorage tier without invalidation', () => {
+      const sa = makePrincipal({ isPlatformSuperadmin: true });
+      const result = resolveActiveStake(sa, null, 'foreignstake', null);
+      expect(result.stakeId).toBe('foreignstake');
+      expect(result.source).toBe('session');
+      expect(result.invalidatedTier).toBeNull();
+    });
+
+    it('still resolves null when nothing is set (superadmin with empty hint chain)', () => {
+      const sa = makePrincipal({ isPlatformSuperadmin: true });
+      const result = resolveActiveStake(sa, null, null, null);
+      expect(result.stakeId).toBeNull();
+      expect(result.source).toBe('none');
+      expect(result.invalidatedTier).toBeNull();
+    });
+
+    it('does not toast/invalidate for a superadmin who also has per-stake roles but deep-links to a foreign stake', () => {
+      // A superadmin with `managerStakes=['csnorth']` clicking a row for
+      // `ridgeline` in the Stake List page. Permissive path admits the
+      // URL value regardless of per-stake role.
+      const sa = makePrincipal({
+        isPlatformSuperadmin: true,
+        managerStakes: ['csnorth'],
+      });
+      const result = resolveActiveStake(sa, 'ridgeline', null, null);
+      expect(result.stakeId).toBe('ridgeline');
+      expect(result.source).toBe('url');
+      expect(result.invalidatedTier).toBeNull();
+    });
+  });
+
+  describe('bootstrap-admin carve-out narrowing (item 5)', () => {
+    it('authenticated principal with zero accessible stakes accepts a URL hint', () => {
+      // The pre-claim / bootstrap-admin window: signed in to Firebase
+      // Auth, but `onAuthUserCreate` hasn't stamped role claims yet.
+      const p = makePrincipal({ firebaseAuthSignedIn: true, isAuthenticated: false });
+      const result = resolveActiveStake(p, 'newstake', null, null);
+      expect(result.stakeId).toBe('newstake');
+      expect(result.source).toBe('url');
+      expect(result.invalidatedTier).toBeNull();
+    });
+
+    it('UNAUTHENTICATED principal with a URL hint does NOT resolve to it', () => {
+      // An unauth visitor landing on a `?stake=X` deep-link must NOT be
+      // treated as a bootstrap candidate. The resolver falls through to
+      // null (the sign-in page is what the route gate ultimately
+      // renders); the URL hint is ignored.
+      const p = makePrincipal({ firebaseAuthSignedIn: false, isAuthenticated: false });
+      const result = resolveActiveStake(p, 'newstake', null, null);
+      expect(result.stakeId).toBeNull();
+      expect(result.source).toBe('none');
+    });
+
+    it('UNAUTHENTICATED principal with a sessionStorage hint does NOT resolve to it', () => {
+      const p = makePrincipal({ firebaseAuthSignedIn: false, isAuthenticated: false });
+      const result = resolveActiveStake(p, null, 'leftover', null);
+      expect(result.stakeId).toBeNull();
+      expect(result.source).toBe('none');
+    });
   });
 });
 

@@ -35,6 +35,7 @@ import { LeftRail } from './LeftRail';
 import { IconRail } from './IconRail';
 import { NavOverlay } from './NavOverlay';
 import { StakeSwitcher } from './StakeSwitcher';
+import { ActiveStakeToastBoundary } from './ActiveStakeToastBoundary';
 import { ToastHost } from '../ui/Toast';
 import './Shell.css';
 
@@ -198,6 +199,7 @@ export function Shell({ children }: ShellProps) {
         />
       ) : null}
 
+      <ActiveStakeToastBoundary />
       <ToastHost />
     </div>
   );

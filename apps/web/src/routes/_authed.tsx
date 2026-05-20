@@ -53,7 +53,11 @@ export function AuthedLayout() {
     principal.firebaseAuthSignedIn && activeStakeId !== null ? stakeRef(db, activeStakeId) : null,
   );
 
-  const decision = gateDecision(principal, { data: stake.data, status: stake.status });
+  const decision = gateDecision(
+    principal,
+    { data: stake.data, status: stake.status },
+    activeStakeId,
+  );
 
   switch (decision) {
     case 'sign-in':

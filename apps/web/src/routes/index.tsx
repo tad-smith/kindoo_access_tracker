@@ -68,7 +68,11 @@ function Index() {
   // upstream by `useActiveStake()` and stripped from the URL.
   const { p } = Route.useSearch();
 
-  const decision = gateDecision(principal, { data: stake.data, status: stake.status });
+  const decision = gateDecision(
+    principal,
+    { data: stake.data, status: stake.status },
+    activeStakeId,
+  );
 
   // Decide where to send a fully-authed principal. Only meaningful
   // when the gate has cleared all the setup-precedence branches.

@@ -46,6 +46,7 @@ vi.mock('../../lib/useActiveStake', () => ({
   useActiveStake: () => 'csnorth',
   useAccessibleStakes: () => ['csnorth'],
   useActiveStakeSwitcher: () => () => {},
+  useActiveStakeInvalidation: () => null,
 }));
 
 const signOutMock = vi.fn();

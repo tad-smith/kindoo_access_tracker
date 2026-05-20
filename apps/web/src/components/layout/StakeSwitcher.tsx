@@ -32,6 +32,15 @@ interface StakeSwitcherProps {
 export function StakeSwitcher({ activeStakeId }: StakeSwitcherProps) {
   const accessible = useAccessibleStakes();
   const switchStake = useActiveStakeSwitcher();
+  // Read the active stake's display name so the trigger labels itself
+  // with WHICH stake the user is currently on — matching the brand-bar
+  // pattern from Shell. The dropdown reveals the alternatives.
+  const activeStakeRef = useMemo(
+    () => (activeStakeId !== null ? stakeRef(db, activeStakeId) : null),
+    [activeStakeId],
+  );
+  const activeStakeDoc = useFirestoreDoc<Stake>(activeStakeRef);
+  const activeStakeName = activeStakeDoc.data?.stake_name ?? activeStakeId;
 
   // Hidden when the user has < 2 accessible stakes.
   if (accessible.length < 2) return null;
@@ -49,7 +58,7 @@ export function StakeSwitcher({ activeStakeId }: StakeSwitcherProps) {
           aria-label="Switch active stake"
           data-testid="stake-switcher-trigger"
         >
-          <span data-testid="stake-switcher-current">Switch stake</span>
+          <span data-testid="stake-switcher-current">{activeStakeName}</span>
           <ChevronDown size={14} aria-hidden="true" />
         </button>
       </PopoverTrigger>

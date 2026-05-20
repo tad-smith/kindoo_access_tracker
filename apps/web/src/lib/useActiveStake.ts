@@ -44,7 +44,6 @@ import {
 } from './activeStake';
 import { FIRESTORE_QUERY_KEY_PREFIX } from './data/queryKeys';
 import { usePrincipal } from './principal';
-import { toast } from './store/toast';
 
 const STAKE_PARAM = 'stake';
 
@@ -115,6 +114,22 @@ let moduleUrlStakeParam: string | null = null;
 let moduleUrlStakeParamConsumed = false;
 const urlStakeParamSubscribers = new Set<() => void>();
 
+// Module-scoped invalidated-tier dedupe. The hook is mounted by every
+// route gate (Shell, AuthedLayout, useRequireRole) AND by every
+// per-feature data hook that reads the active stake, so a single
+// invalidated tier would otherwise fire N toasts on the same page.
+// Track the most recently fired (invalidatedTier, stakeId) key here so
+// the FIRST instance to fire records the key and every sibling sees
+// the key as already-fired. Reset on:
+//   - URL stake-param change (a new invalidated arrival is a new event),
+//   - principal signature change (claims rotation invalidates the prior
+//     decision — a previously-stale storage value may have become
+//     valid, or vice versa).
+let lastInvalidationKey: string | null = null;
+// Signature carried alongside the key so we can detect "context changed
+// → reset the dedupe" without needing per-hook-instance refs.
+let lastInvalidationContext: string | null = null;
+
 function readModuleUrlStakeParam(): string | null {
   return moduleUrlStakeParam;
 }
@@ -152,7 +167,15 @@ function refreshModuleUrlStakeParamFromUrl(): void {
     }
     return;
   }
-  if (next === moduleUrlStakeParam) return;
+  // Same-value early-return only guards against rebroadcasting
+  // subscribers and resetting the consumed flag. The URL strip still
+  // needs to run — a fresh `?stake=X` arrival on a tab already settled
+  // on X (e.g., a re-navigation from the Stake List to the current
+  // stake) would otherwise leave `?stake=X` lingering in the URL bar.
+  if (next === moduleUrlStakeParam) {
+    stripStakeParamFromUrl();
+    return;
+  }
   moduleUrlStakeParam = next;
   moduleUrlStakeParamConsumed = false;
   notifyUrlStakeParamSubscribers();
@@ -192,7 +215,18 @@ moduleUrlStakeParam = readStakeParamFromUrl();
 export function __resetActiveStakeModuleForTests(): void {
   moduleUrlStakeParam = readStakeParamFromUrl();
   moduleUrlStakeParamConsumed = false;
+  lastInvalidationKey = null;
+  lastInvalidationContext = null;
+  activeStakeInvalidation = null;
+  activeStakeInvalidationEventId = 0;
   notifyUrlStakeParamSubscribers();
+  for (const fn of activeStakeInvalidationSubscribers) {
+    try {
+      fn();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 /**
@@ -244,24 +278,84 @@ function invalidatePerStakeQueries(): void {
 }
 
 /**
- * Surface the spec's toast for an invalidated tier (`spec.md` §2.1).
- * URL-tier invalidations show the push-notification copy; storage-tier
- * invalidations show the last-active-stake copy.
+ * An invalidated-tier event surfaced to the `<ActiveStakeToastBoundary>`
+ * component for display-name-aware toast rendering. The hook publishes
+ * via `setActiveStakeInvalidation()`; the boundary subscribes via
+ * {@link useActiveStakeInvalidation}.
+ *
+ * Why this is split out of the hook: storage-tier invalidations need to
+ * say "switched to <stake_name>" (display name), but `useActiveStake`
+ * is consumed by route-gate code-paths that don't have a stake-doc
+ * subscription — they only know slugs. The boundary mounts inside the
+ * Shell where the stake doc IS subscribed via `useFirestoreDoc`, so it
+ * can substitute the display name before firing the toast.
  */
-function toastForInvalidatedTier(
+export interface ActiveStakeInvalidationEvent {
+  /** Which tier was stale. */
+  tier: 'url' | 'session' | 'local';
+  /**
+   * The stake the resolver fell through to after the stale tier was
+   * discarded. `null` when nothing further was available (e.g., a
+   * zero-role superadmin with stale storage).
+   */
+  newStakeId: string | null;
+  /**
+   * Monotonic event id — bumps on every published event so React's
+   * `useEffect` dep array can recognise a re-fire (same `tier`/`newStakeId`
+   * pair on a different context).
+   */
+  eventId: number;
+}
+
+let activeStakeInvalidation: ActiveStakeInvalidationEvent | null = null;
+let activeStakeInvalidationEventId = 0;
+const activeStakeInvalidationSubscribers = new Set<() => void>();
+
+function publishActiveStakeInvalidation(
   tier: 'url' | 'session' | 'local',
   newStakeId: string | null,
 ): void {
-  if (tier === 'url') {
-    toast('This notification was for a stake you no longer have access to.', 'warn');
-    return;
+  activeStakeInvalidationEventId += 1;
+  activeStakeInvalidation = {
+    tier,
+    newStakeId,
+    eventId: activeStakeInvalidationEventId,
+  };
+  for (const fn of activeStakeInvalidationSubscribers) {
+    try {
+      fn();
+    } catch {
+      // ignore individual subscriber errors
+    }
   }
-  // session / local — last-active-stake case.
-  if (newStakeId !== null) {
-    toast(`Your last-active stake is no longer available; switched to ${newStakeId}.`, 'warn');
-  } else {
-    toast('Your last-active stake is no longer available.', 'warn');
-  }
+}
+
+function subscribeToActiveStakeInvalidation(callback: () => void): () => void {
+  activeStakeInvalidationSubscribers.add(callback);
+  return () => {
+    activeStakeInvalidationSubscribers.delete(callback);
+  };
+}
+
+function readActiveStakeInvalidation(): ActiveStakeInvalidationEvent | null {
+  return activeStakeInvalidation;
+}
+
+/**
+ * Subscribe to invalidated-tier events. Returns the most recent event
+ * (or `null` if no event has fired yet). Re-renders on every new
+ * publish.
+ *
+ * Consumed by `<ActiveStakeToastBoundary>`; surfaced for tests that
+ * want to exercise the publisher contract without rendering the
+ * boundary.
+ */
+export function useActiveStakeInvalidation(): ActiveStakeInvalidationEvent | null {
+  return useSyncExternalStore(
+    subscribeToActiveStakeInvalidation,
+    readActiveStakeInvalidation,
+    readActiveStakeInvalidation,
+  );
 }
 
 /**
@@ -395,9 +489,6 @@ export function useActiveStake(): string | null {
   // Track the last storage value we wrote for a given URL-tier hit so a
   // re-render doesn't re-persist + re-invalidate every frame.
   const lastPersistedUrlStakeIdRef = useRef<string | null>(null);
-  // Track whether we've already fired the invalidated-tier toast for a
-  // given resolution so re-renders don't repeat the toast.
-  const lastInvalidationKeyRef = useRef<string | null>(null);
 
   // True iff the principal is still settling claims (`onAuthStateChanged`
   // has fired but `getIdTokenResult` hasn't returned yet). Defer all
@@ -437,15 +528,33 @@ export function useActiveStake(): string | null {
       stripStakeParamFromUrl();
     }
 
-    // Toast + overwrite-stale-storage handling. Dedupe by
-    // (invalidatedTier, stakeId) so the effect re-running for other
-    // reasons (urlStakeParam churn, principal changes that don't move
-    // the active stake) doesn't re-fire the toast.
+    // Toast + overwrite-stale-storage handling. Dedupe on a
+    // MODULE-SCOPED key so a single invalidated tier fires exactly one
+    // toast across the whole React tree — not once per mounted hook
+    // instance (Shell + AuthedLayout + useRequireRole + every
+    // feature data hook all mount this hook). The dedupe key is
+    // (invalidatedTier:stakeId); the context that gates "this is a
+    // NEW invalidation event" is (principalSignature|urlStakeParam) —
+    // when either changes, the prior decision is stale and a new toast
+    // for the same key is legitimate.
+    const invalidationContext = `${principalSignature}|${urlStakeParam ?? ''}`;
     if (resolved.invalidatedTier !== null) {
       const invalidationKey = `${resolved.invalidatedTier}:${resolved.stakeId ?? ''}`;
-      if (lastInvalidationKeyRef.current !== invalidationKey) {
-        lastInvalidationKeyRef.current = invalidationKey;
-        toastForInvalidatedTier(resolved.invalidatedTier, resolved.stakeId);
+      const contextChanged = lastInvalidationContext !== invalidationContext;
+      if (contextChanged) {
+        // New context (URL or claims changed) — reset the dedupe so a
+        // legitimate repeat-invalidation can fire its toast again.
+        lastInvalidationKey = null;
+        lastInvalidationContext = invalidationContext;
+      }
+      if (lastInvalidationKey !== invalidationKey) {
+        lastInvalidationKey = invalidationKey;
+        // Publish the event to the boundary component for display-name
+        // aware toast rendering. The boundary mounts once in Shell, so
+        // module-scope dedupe above is belt-and-braces — even if the
+        // dedupe slipped, the subscriber bus delivers one event per
+        // publish and the boundary renders exactly one toast per event.
+        publishActiveStakeInvalidation(resolved.invalidatedTier, resolved.stakeId);
         // Overwrite the stale storage entries with the resolved stake so
         // the next read doesn't re-trigger the toast. When `stakeId` is
         // null (zero-role superadmin with stale storage) clear both
@@ -469,14 +578,18 @@ export function useActiveStake(): string | null {
       }
     } else {
       // Clear the invalidation dedupe key when the resolution is clean
-      // so a later stale tier can re-fire the toast.
-      lastInvalidationKeyRef.current = null;
+      // so a later stale tier can re-fire the toast. Track the
+      // last-seen context so a return-to-clean state doesn't itself
+      // count as a "context change" that re-fires the toast on the
+      // next invalidation.
+      lastInvalidationKey = null;
+      lastInvalidationContext = invalidationContext;
     }
     // Re-run side effects when the resolution changes or the principal
     // settles. `resolved` is memoized on `principalSignature` +
     // `urlStakeParam`; `principalSettling` is the gate that defers side
     // effects until the principal's claims have actually loaded.
-  }, [resolved, urlStakeParam, principalSettling]);
+  }, [resolved, urlStakeParam, principalSettling, principalSignature]);
 
   return resolved.stakeId;
 }

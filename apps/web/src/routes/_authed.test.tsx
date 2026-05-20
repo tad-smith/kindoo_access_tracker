@@ -318,6 +318,41 @@ describe('_authed gate', () => {
     expect(screen.queryByTestId('shell-rendered')).toBeNull();
   });
 
+  it('regression (item 2): platform superadmin with no per-stake role renders Shell instead of hanging on pending', () => {
+    // Zero-role platform superadmin: accessibleStakes is empty,
+    // useActiveStake returns null, the caller passes null to
+    // useFirestoreDoc(stakeRef) so the query is disabled and reports
+    // status: 'pending' forever. Previously, the gate hit the pending
+    // branch and rendered null forever (the operator-visible hang on
+    // PR #157). After the fix, the gate short-circuits to 'authed' so
+    // the Shell + Outlet render — `routes/index.tsx` then redirects to
+    // `/superadmin/stakes` via `defaultLandingFor`.
+    mockedPrincipal.current = {
+      ...mockedPrincipal.current,
+      firebaseAuthSignedIn: true,
+      isAuthenticated: true,
+      isPlatformSuperadmin: true,
+      email: 'sa@example.com',
+      canonical: 'sa@example.com',
+      hasAnyRole: () => true,
+    };
+    // Stake-doc subscription stays pending because activeStakeId
+    // resolves to null (no per-stake roles) and the caller passes a
+    // null ref to useFirestoreDoc.
+    setStake({
+      data: undefined,
+      status: 'pending',
+      isLoading: true,
+      isPending: true,
+      isSuccess: false,
+    });
+    const { container } = render(<AuthedLayout />);
+    expect(screen.getByTestId('shell-rendered')).toBeInTheDocument();
+    // The previous behaviour was `container.firstChild === null`; pin
+    // the new behaviour explicitly.
+    expect(container.firstChild).not.toBeNull();
+  });
+
   it('regression: stake doc with bootstrap_admin_email field missing routes non-admin to SetupInProgress', () => {
     // The exact staging repro (2026-04-29): setup_complete=false AND
     // bootstrap_admin_email field absent. Manager-claimed user must

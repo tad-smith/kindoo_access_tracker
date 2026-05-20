@@ -221,6 +221,43 @@ describe('gateDecision', () => {
     expect(gateDecision(p, stake)).toBe('not-authorized');
   });
 
+  describe('platform superadmin with no active stake (item 2)', () => {
+    it('returns authed for an isPlatformSuperadmin principal when activeStakeId is null', () => {
+      // Zero per-stake roles + global flag. The caller passes `null` to
+      // useFirestoreDoc(stakeRef), the query is disabled and reports
+      // status: 'pending' forever, so the gate must short-circuit to
+      // authed and let the redirect logic in routes/index.tsx route the
+      // user to /superadmin/stakes.
+      const p = principal({
+        isAuthenticated: true,
+        isPlatformSuperadmin: true,
+      });
+      expect(gateDecision(p, stakePending, null)).toBe('authed');
+    });
+
+    it('non-superadmin authenticated user with null activeStakeId still resolves via the pending branch', () => {
+      // Regression guard: the superadmin short-circuit must NOT widen
+      // to include non-superadmin principals.
+      const p = principal({
+        isAuthenticated: true,
+        isPlatformSuperadmin: false,
+      });
+      expect(gateDecision(p, stakePending, null)).toBe('pending');
+    });
+
+    it('superadmin with a non-null activeStakeId follows the regular pending branch', () => {
+      // After item 3's deep-link fix, a superadmin can land with
+      // activeStakeId set; in that case the stake-doc subscription is
+      // a normal read and the gate waits for it to resolve (the
+      // short-circuit only fires when activeStakeId is null).
+      const p = principal({
+        isAuthenticated: true,
+        isPlatformSuperadmin: true,
+      });
+      expect(gateDecision(p, stakePending, 'csnorth')).toBe('pending');
+    });
+  });
+
   it('canonicalises bootstrap_admin_email and current email before comparison', () => {
     // The wizard match must canonicalise both sides so a Gmail user's
     // typed-form `Tad.E.Smith+test@gmail.com` matches a stored
