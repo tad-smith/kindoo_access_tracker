@@ -99,8 +99,8 @@ describe('derivedBuildingNames', () => {
       building('Jamboree Building', 6250),
     ];
     expect(derivedBuildingNames(effective, buildings)).toEqual([
-      'Maple Building',
       'Jamboree Building',
+      'Maple Building',
     ]);
   });
 

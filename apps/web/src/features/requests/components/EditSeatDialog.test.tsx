@@ -363,7 +363,7 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     expect(arg.scope).toBe('CO');
     expect(arg.member_email).toBe('auto@x.com');
     expect(arg.member_name).toBe('Auto Person');
-    expect([...arg.building_names].sort()).toEqual(['Maple Building', 'Cedar Building']);
+    expect([...arg.building_names].sort()).toEqual(['Cedar Building', 'Maple Building']);
     expect(arg.comment).toBe('note');
     // No dates on edit_auto.
     expect(arg.start_date).toBeUndefined();
@@ -482,7 +482,7 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     };
     expect(arg.type).toBe('edit_manual');
     expect(arg.reason).toBe('sub teacher');
-    expect([...arg.building_names].sort()).toEqual(['Maple Building', 'Cedar Building']);
+    expect([...arg.building_names].sort()).toEqual(['Cedar Building', 'Maple Building']);
     expect(arg.comment).toBe('note');
     expect(arg.start_date).toBeUndefined();
     expect(arg.end_date).toBeUndefined();
