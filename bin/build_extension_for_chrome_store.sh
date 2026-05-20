@@ -22,3 +22,4 @@ rm -f "$ZIP"
 ( cd "$DIST" && zip -rq "../sba-$VERSION.zip" . )
 
 echo "Built: $ZIP"
+echo "Upload the new version here: https://chrome.google.com/webstore/devconsole/2e4cca80-eb0c-4cd7-a0bb-d3c8201d89f5"
