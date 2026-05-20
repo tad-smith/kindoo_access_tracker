@@ -126,7 +126,7 @@ function addManualRequest(overrides: Partial<AccessRequest> = {}): AccessRequest
     scope: 'stake',
     member_email: 'tad.e.smith@gmail.com',
     member_canonical: 'tad.e.smith@gmail.com',
-    member_name: 'Tad Smith',
+    member_name: 'Test User',
     reason: 'Sunday School Teacher',
     comment: '',
     building_names: ['Maple Building', 'Pine Creek Building'],
@@ -152,7 +152,7 @@ function removeRequest(overrides: Partial<AccessRequest> = {}): AccessRequest {
   return addManualRequest({
     type: 'remove',
     reason: '',
-    member_name: 'Tad Smith',
+    member_name: 'Test User',
     ...overrides,
   });
 }
@@ -235,7 +235,7 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
     expect(result).toEqual({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Invited Tad Smith to Kindoo with access to Maple Building, Pine Creek Building.',
+      note: 'Invited Test User to Kindoo with access to Maple Building, Pine Creek Building.',
     });
   });
 
@@ -380,7 +380,7 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
     );
     // Note mentions all four buildings, not just three.
     expect(result.note).toBe(
-      'Invited Tad Smith to Kindoo with access to Maple Building, Pine Creek Building, Monument Building, Kings Deer Building.',
+      'Invited Test User to Kindoo with access to Maple Building, Pine Creek Building, Monument Building, Kings Deer Building.',
     );
   });
 
@@ -605,7 +605,7 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
     expect(result.action).toBe('updated');
     expect(result.kindoo_uid).toBe(existing.userId);
-    expect(result.note).toBe('No Kindoo changes needed for Tad Smith.');
+    expect(result.note).toBe('No Kindoo changes needed for Test User.');
   });
 });
 
@@ -747,7 +747,7 @@ function stakeSeat(overrides: Partial<Seat> = {}): Seat {
   return {
     member_canonical: 'tad.e.smith@gmail.com',
     member_email: 'tad.e.smith@gmail.com',
-    member_name: 'Tad Smith',
+    member_name: 'Test User',
     scope: 'stake',
     type: 'manual',
     callings: [],
@@ -779,7 +779,7 @@ describe('provisionRemove', () => {
     expect(result).toEqual({
       kindoo_uid: null,
       action: 'noop-remove',
-      note: 'Tad Smith was not in Kindoo (no-op).',
+      note: 'Test User was not in Kindoo (no-op).',
     });
   });
 
@@ -824,7 +824,7 @@ describe('provisionRemove', () => {
     expect(result).toEqual({
       kindoo_uid: existing.userId,
       action: 'removed',
-      note: 'Removed Tad Smith from Kindoo.',
+      note: 'Removed Test User from Kindoo.',
     });
   });
 
@@ -860,7 +860,7 @@ describe('provisionRemove', () => {
     expect(editUserMock).not.toHaveBeenCalled();
     expect(result.action).toBe('removed');
     expect(result.kindoo_uid).toBe(existing.userId);
-    expect(result.note).toBe('Removed Tad Smith from Kindoo.');
+    expect(result.note).toBe('Removed Test User from Kindoo.');
   });
 
   it('primary scope removal with one duplicate: revokes only the primary rules; description updated via editUser', async () => {
@@ -918,7 +918,7 @@ describe('provisionRemove', () => {
     });
     expect(result.action).toBe('updated');
     expect(result.kindoo_uid).toBe(existing.userId);
-    expect(result.note).toBe("Updated Tad Smith's Kindoo access to Maple Building.");
+    expect(result.note).toBe("Updated Test User's Kindoo access to Maple Building.");
   });
 
   it('duplicate scope removal: revokes only the duplicate rules; primary untouched; description updated', async () => {
@@ -969,7 +969,7 @@ describe('provisionRemove', () => {
     });
     expect(result.action).toBe('updated');
     expect(result.note).toBe(
-      "Updated Tad Smith's Kindoo access to Maple Building, Pine Creek Building.",
+      "Updated Test User's Kindoo access to Maple Building, Pine Creek Building.",
     );
   });
 
@@ -1224,7 +1224,7 @@ describe('provisionEdit — edit_auto', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Primary President'],
@@ -1260,7 +1260,7 @@ describe('provisionEdit — edit_auto', () => {
     expect(result.action).toBe('updated');
     expect(result.kindoo_uid).toBe(existing.userId);
     expect(result.note).toBe(
-      "Updated Tad Smith's Kindoo access to Maple Building, Pine Creek Building.",
+      "Updated Test User's Kindoo access to Maple Building, Pine Creek Building.",
     );
   });
 
@@ -1271,7 +1271,7 @@ describe('provisionEdit — edit_auto', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Primary President'],
@@ -1337,7 +1337,7 @@ describe('provisionEdit — edit_manual', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'manual',
       callings: [],
@@ -1379,7 +1379,7 @@ describe('provisionEdit — edit_manual', () => {
     });
     expect(result.action).toBe('updated');
     expect(result.note).toBe(
-      "Updated Tad Smith's Kindoo access to Maple Building, Pine Creek Building.",
+      "Updated Test User's Kindoo access to Maple Building, Pine Creek Building.",
     );
   });
 
@@ -1391,7 +1391,7 @@ describe('provisionEdit — edit_manual', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'manual',
       callings: [],
@@ -1450,7 +1450,7 @@ describe('provisionEdit — edit_temp', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'temp',
       callings: [],
@@ -1506,7 +1506,7 @@ describe('provisionEdit — edit_temp', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Primary President'],
@@ -1616,7 +1616,7 @@ describe('provisionEdit — guards + edge cases', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'manual',
       callings: [],
@@ -1648,14 +1648,14 @@ describe('provisionEdit — guards + edge cases', () => {
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
     expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
     expect(editUserMock).not.toHaveBeenCalled();
-    expect(result.note).toBe('No Kindoo changes needed for Tad Smith.');
+    expect(result.note).toBe('No Kindoo changes needed for Test User.');
   });
 
   it('description-only edit (reason changed but buildings unchanged): calls editUser, skips rule writes', async () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'manual',
       callings: [],
@@ -1755,7 +1755,7 @@ describe('provisionEdit — cross-slot revoke regression', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'manual',
       callings: [],
@@ -1822,7 +1822,7 @@ describe('provisionEdit — cross-slot revoke regression', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Primary President'],
@@ -1933,7 +1933,7 @@ describe('provisionEdit — skip AccessSchedules already covered by direct grant
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'LX',
       type: 'auto',
       callings: ['Primary President'],
@@ -2001,7 +2001,7 @@ describe('provisionEdit — skip AccessSchedules already covered by direct grant
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'LX',
       type: 'auto',
       callings: ['Primary President'],
@@ -2073,7 +2073,7 @@ describe('provisionEdit — skip AccessSchedules already covered by direct grant
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'LX',
       type: 'auto',
       callings: ['Primary President'],
@@ -2170,7 +2170,7 @@ describe('provisionAddOrChange — skip AccessSchedules already covered by direc
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'LX',
       type: 'auto',
       callings: ['Primary President'],
@@ -2240,7 +2240,7 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Sunday School Teacher'],
@@ -2305,7 +2305,7 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Sunday School Teacher'],
@@ -2370,7 +2370,7 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'manual',
       callings: [],
@@ -2444,7 +2444,7 @@ describe('provisionRemove — T-42 per-site union', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'manual',
       callings: [],

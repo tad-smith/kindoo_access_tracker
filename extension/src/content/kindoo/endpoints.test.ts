@@ -40,7 +40,7 @@ function richUser(overrides: Record<string, unknown> = {}) {
     EUID: 'fcf38b4c-1111-1111-1111-111111111111',
     UserID: '85bea3c7-1c18-40f0-b514-c828e48bd983',
     Username: 'tad.e.smith@gmail.com',
-    DisplayName: 'Tad Smith',
+    DisplayName: 'Test User',
     Description: 'Maple Ward (Sunday School Teacher)',
     IsTempUser: false,
     StartAccessDoorsDate: '2026-05-13T14:00:00Z',

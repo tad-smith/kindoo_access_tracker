@@ -306,7 +306,7 @@ describe('handleRequest', () => {
     const seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Sunday School Teacher'],

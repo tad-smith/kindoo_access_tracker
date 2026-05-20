@@ -173,14 +173,14 @@ describe('<ManagerQueuePage />', () => {
         type: 'add_manual',
         scope: 'CO',
         member_email: 'tad.e.smith@gmail.com',
-        member_name: 'Tad Smith',
+        member_name: 'Test User',
       }),
     ];
     usePendingMock.mockReturnValue(liveResult(requests));
     render(<ManagerQueuePage />);
     const card = screen.getByTestId('queue-card-r1');
     expect(within(card).getByText(/Give Access To:/)).toBeInTheDocument();
-    expect(card.textContent).toMatch(/Tad Smith \(tad\.e\.smith@gmail\.com\)/);
+    expect(card.textContent).toMatch(/Test User \(tad\.e\.smith@gmail\.com\)/);
   });
 
   it('falls back to bare email on the Give Access To row when member_name is empty (add)', () => {

@@ -92,7 +92,7 @@ function addRequest(overrides: Partial<AccessRequest> = {}): AccessRequest {
     scope: 'stake',
     member_email: 'tad.e.smith@gmail.com',
     member_canonical: 'tad.e.smith@gmail.com',
-    member_name: 'Tad Smith',
+    member_name: 'Test User',
     reason: 'Sunday School Teacher',
     comment: '',
     building_names: ['Maple Building'],
@@ -166,7 +166,7 @@ describe('RequestCard', () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Added Tad Smith to Kindoo with access to Maple Building.',
+      note: 'Added Test User to Kindoo with access to Maple Building.',
     });
     markRequestCompleteMock.mockResolvedValue({ ok: true });
 
@@ -176,13 +176,13 @@ describe('RequestCard', () => {
 
     await waitFor(() => expect(screen.getByTestId('sba-result-dialog')).toBeInTheDocument());
     expect(screen.getByTestId('sba-result-note')).toHaveTextContent(
-      'Added Tad Smith to Kindoo with access to Maple Building.',
+      'Added Test User to Kindoo with access to Maple Building.',
     );
     expect(markRequestCompleteMock).toHaveBeenCalledWith({
       stakeId: 'csnorth',
       requestId: 'r1',
-      completionNote: 'Added Tad Smith to Kindoo with access to Maple Building.',
-      provisioningNote: 'Added Tad Smith to Kindoo with access to Maple Building.',
+      completionNote: 'Added Test User to Kindoo with access to Maple Building.',
+      provisioningNote: 'Added Test User to Kindoo with access to Maple Building.',
       kindooUid: 'new-uid',
     });
   });
@@ -191,7 +191,7 @@ describe('RequestCard', () => {
     provisionRemoveMock.mockResolvedValue({
       kindoo_uid: 'removed-uid',
       action: 'removed',
-      note: 'Removed Tad Smith from Kindoo.',
+      note: 'Removed Test User from Kindoo.',
     });
     markRequestCompleteMock.mockResolvedValue({ ok: true });
 
@@ -209,7 +209,7 @@ describe('RequestCard', () => {
     provisionRemoveMock.mockResolvedValue({
       kindoo_uid: null,
       action: 'noop-remove',
-      note: 'Tad Smith was not in Kindoo (no-op).',
+      note: 'Test User was not in Kindoo (no-op).',
     });
     markRequestCompleteMock.mockResolvedValue({ ok: true });
 
@@ -220,7 +220,7 @@ describe('RequestCard', () => {
     await waitFor(() => expect(markRequestCompleteMock).toHaveBeenCalledTimes(1));
     const payload = markRequestCompleteMock.mock.calls[0]![0];
     expect(payload.kindooUid).toBeUndefined();
-    expect(payload.provisioningNote).toBe('Tad Smith was not in Kindoo (no-op).');
+    expect(payload.provisioningNote).toBe('Test User was not in Kindoo (no-op).');
   });
 
   it('disables the button + shows the spinner label during provisioning', async () => {
@@ -275,7 +275,7 @@ describe('RequestCard', () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Added Tad Smith to Kindoo with access to Maple Building.',
+      note: 'Added Test User to Kindoo with access to Maple Building.',
     });
     markRequestCompleteMock.mockRejectedValueOnce(new Error('SBA down'));
 
@@ -292,7 +292,7 @@ describe('RequestCard', () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Added Tad Smith to Kindoo with access to Maple Building.',
+      note: 'Added Test User to Kindoo with access to Maple Building.',
     });
     markRequestCompleteMock
       .mockRejectedValueOnce(new Error('SBA down'))
@@ -316,7 +316,7 @@ describe('RequestCard', () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Added Tad Smith to Kindoo with access to Maple Building.',
+      note: 'Added Test User to Kindoo with access to Maple Building.',
     });
     markRequestCompleteMock.mockResolvedValue({
       ok: true,
@@ -472,7 +472,7 @@ describe('RequestCard', () => {
     provisionAddOrChangeMock.mockResolvedValue({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Invited Tad Smith.',
+      note: 'Invited Test User.',
     });
     markRequestCompleteMock.mockResolvedValue({ ok: true });
 
