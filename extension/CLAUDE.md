@@ -125,6 +125,8 @@ All reads route through `content/kindoo/auth.ts`. Do not access these keys from 
 
 Staging and production builds coexist in the same Chrome profile. Each env has its own RSA keypair (so each pins a stable extension ID), its own GCP "Chrome extension" OAuth client (bound to that extension ID), and distinguishable visual identity (different `name`, orange-tinted icons for staging).
 
+**Two extension IDs are in play.** The deterministic ID derived from the manifest `key` (via `pnpm --filter @kindoo/extension ext-id`) is what staging and prod-mode local unpacked loads use. The published production build strips the `key` (`VITE_OMIT_KEY=true`) and Chrome assigns its own ID at first Web Store upload — those two IDs are not the same string. Each ID needs its own GCP OAuth client. Runbook covers the post-first-upload OAuth client registration; runtime code shouldn't care which ID is live (`chrome.identity` resolves it from the running extension).
+
 **Operator walkthrough lives in `infra/runbooks/extension-deploy.md`.** It covers keypair generation, OAuth client registration, the `.env.<mode>` template (including which `VITE_FIREBASE_*` values to copy from `apps/web/.env.<mode>`), and the per-build loop. Read that runbook end-to-end before the first build in a new env.
 
 Subsequent builds for the same env reuse the existing `.env.<mode>` — only re-run the keypair / GCP / Chrome dance if you rotate the keypair (which invalidates the extension ID — you'd need a new GCP OAuth client) or rotate the OAuth client itself.

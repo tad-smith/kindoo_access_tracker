@@ -14,6 +14,15 @@ Three properties distinguish the extension from the SPA:
 
 Staging and production builds are designed to coexist in the same Chrome profile: distinct extension IDs, distinct names (`SBA Helper (Staging)` vs `Stake Building Access — Kindoo Helper`), and orange-tinted staging icons so you can tell them apart in the toolbar.
 
+### Two extension IDs: deterministic (staging) vs Web Store-assigned (production)
+
+The extension has **two distinct IDs** in play, one per distribution path. Both are valid; each requires its own OAuth client registration in GCP.
+
+- **Deterministic ID (staging, unpacked loads).** Derived from the manifest `key` field, which is the base64 SPKI public key of the locally-generated RSA keypair. Stable across rebuilds for the same keypair. This is what `pnpm --filter @kindoo/extension ext-id --key <…>` outputs. The current staging ID is `cpkoobhcoddjkoflpijeoocniepgnnle`.
+- **Web Store-assigned ID (production).** Chrome rejects packages that ship a `key` field (see `extension/src/manifest.config.ts` lines 47–54) and assigns its own extension ID at first upload. The production build is produced with `VITE_OMIT_KEY=true` so the `key` is stripped from the manifest before zipping. The current production ID is `klkkpfdafbjebccodmgkogdklachelpb`.
+
+The two IDs are **not** the same string and never will be. The GCP project for production must carry an OAuth client registered against the Web Store-assigned ID — the deterministic ID is meaningless for the Web Store build because the shipped manifest has no `key`. See §"Production: Chrome Web Store distribution" for the registration step that runs after the first upload.
+
 ## Prerequisites
 
 Installed and authenticated locally:
@@ -33,6 +42,8 @@ Access:
 Do this **once** per environment. Subsequent rebuilds reuse the keypair, the GCP OAuth client, and the `.env.<mode>` file.
 
 The walkthrough below uses staging; for production substitute `production` for `staging` and `kindoo-prod` for `kindoo-staging`.
+
+**Production has an extra one-shot step after the first Web Store upload.** Chrome strips the manifest `key` from production builds (`VITE_OMIT_KEY=true`), so the deterministic ID derived here is **not** the ID Chrome assigns at first upload. The deterministic-ID OAuth client registered in step 4 is fine for the staging build and for local prod-mode unpacked smoke tests against the keypair-pinned ID, but the **published** prod extension carries the Web Store-assigned ID — and that ID needs its own OAuth client registration. See §"Production: Chrome Web Store distribution" step 4 for the post-upload registration.
 
 ### 1. Generate the RSA keypair
 
@@ -206,12 +217,14 @@ The flow below is the **Phase 1 procedure**. Follows the staging pattern; the fi
 
 ### 1. Build the prod artifact
 
-Complete the first-time per-env setup (above) for `kindoo-prod`, then run a clean prod build:
+Complete the first-time per-env setup (above) for `kindoo-prod`, then run a clean prod build **with the `key` stripped** so the Web Store accepts the zip:
 
 ```bash
-pnpm --filter @kindoo/extension build
+VITE_OMIT_KEY=true pnpm --filter @kindoo/extension build
 ls extension/dist/production
 ```
+
+The `VITE_OMIT_KEY=true` flag drops the manifest `key` field (see `extension/src/manifest.config.ts` lines 47–54). Without it, the zip uploads but the Web Store rejects it on submission — Chrome assigns extension IDs from the uploaded bytes itself and won't accept a pre-pinned ID.
 
 ### 2. Zip the build for upload
 
@@ -240,7 +253,23 @@ Dashboard: <https://chrome.google.com/webstore/devconsole/>.
 
 Web Store review can take days to weeks. Plan accordingly.
 
-### 4. OAuth consent screen (prod GCP project)
+**After the first successful upload, capture the assigned extension ID from the dev console** (visible at the top of the item's edit page, and in the public listing URL once the listing exists). That is the ID Chrome ships to end-users — it is **not** the deterministic ID derived in first-time setup step 3. Move on to step 4 immediately; until the corresponding OAuth client is registered, the published extension cannot sign in (see Troubleshooting §"bad client id").
+
+The current production Web Store ID is `klkkpfdafbjebccodmgkogdklachelpb`.
+
+### 4. Register an OAuth client for the Web Store-assigned ID
+
+This step runs **once**, after the first Web Store upload, against the ID Chrome just assigned.
+
+1. Open the prod Credentials page: <https://console.cloud.google.com/apis/credentials?project=kindoo-prod>.
+2. **+ CREATE CREDENTIALS → OAuth client ID.** (Alternatively: edit the existing prod OAuth client created in first-time setup step 4 — but the Item ID isn't editable post-creation, so you'll be creating a fresh client either way.)
+3. **Application type: Chrome extension.**
+4. **Item ID:** paste the Web Store-assigned ID captured above (`klkkpfdafbjebccodmgkogdklachelpb`).
+5. **CREATE.**
+6. Copy the resulting `xxxxxxxxxxxx.apps.googleusercontent.com` client ID.
+7. Rebuild the prod artifact with `VITE_GOOGLE_OAUTH_CLIENT_ID` set to the new client ID, re-zip, and upload as a new version. (The deterministic-ID OAuth client from first-time setup is now unused by the published build; leave it in place for prod-mode unpacked smoke tests or delete it.)
+
+### 5. OAuth consent screen (prod GCP project)
 
 Before any non-test user can sign in via the prod extension, the prod GCP project's OAuth consent screen must be configured. The extension uses only `openid`, `email`, and `profile` scopes — all non-sensitive — so Google's app-verification process is **not** required.
 
@@ -261,8 +290,11 @@ The first run on `kindoo-prod` will validate this section.
 ---
 
 **Symptom:** Sign-in fails silently, or the OAuth screen shows `bad client id: <id>`.
-**Likely cause:** The OAuth client registered in GCP doesn't match the extension's actual ID.
-**Fix:** Re-run `pnpm --filter @kindoo/extension ext-id --key "$VITE_EXTENSION_KEY"` and compare the output to the Item ID on the GCP OAuth client. If they differ, either rebuild with the matching key, or update the GCP client's Item ID (requires creating a new client — the Item ID isn't editable post-creation).
+**Likely cause:** The OAuth client registered in GCP doesn't match the extension's actual ID. Two flavours:
+- **Unpacked load (staging or prod-mode local):** the manifest `key` produces a deterministic ID, and the GCP OAuth client must be registered against that derived ID.
+- **Published prod build:** the Web Store assigns its own ID at first upload, which **differs** from the deterministic ID. A prod build that ships with only the deterministic-ID OAuth client will surface this error in the Web Store-installed extension — the OAuth client must be re-registered against the Web Store-assigned ID. See §"Production: Chrome Web Store distribution" step 4.
+
+**Fix:** For unpacked loads, re-run `pnpm --filter @kindoo/extension ext-id --key "$VITE_EXTENSION_KEY"` and compare the output to the Item ID on the GCP OAuth client. If they differ, either rebuild with the matching key, or update the GCP client's Item ID (requires creating a new client — the Item ID isn't editable post-creation). For Web Store builds, get the assigned ID from the Chrome Web Store dev console and create a new OAuth client against it; rebuild the zip with `VITE_GOOGLE_OAUTH_CLIENT_ID` pointing at the new client.
 
 ---
 
