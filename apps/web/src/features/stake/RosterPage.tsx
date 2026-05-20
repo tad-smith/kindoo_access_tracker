@@ -14,7 +14,7 @@ import type { Seat } from '@kindoo/shared';
 import { useFirestoreDoc } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { usePrincipal } from '../../lib/principal';
 import { useKindooSites, useStakeRoster, useStakeWards } from './hooks';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
@@ -31,11 +31,12 @@ import { pickGrantForScope, type GrantView } from '../../lib/grants';
 
 export function StakeRosterPage() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const seats = useStakeRoster();
   const wards = useStakeWards();
   // Live subscription for the stake doc — `useFirestoreOnce` was
   // empty in production for this page; live keeps the cap fresh.
-  const stakeDocResult = useFirestoreDoc(stakeRef(db, STAKE_ID));
+  const stakeDocResult = useFirestoreDoc(activeStakeId ? stakeRef(db, activeStakeId) : null);
   const stakeDoc = stakeDocResult.data;
   const kindooSites = useKindooSites();
 
@@ -102,9 +103,14 @@ export function StakeRosterPage() {
           ) : (
             <div className="roster-cards">
               {sortedRows.map(({ seat, grant }) => {
-                const canEdit = grant.isPrimary && canEditSeat(principal, STAKE_ID, seat);
+                const canEdit =
+                  activeStakeId !== null &&
+                  grant.isPrimary &&
+                  canEditSeat(principal, activeStakeId, seat);
                 const canRemove =
-                  grant.type !== 'auto' && isScopeAllowed(principal, STAKE_ID, grant.scope);
+                  activeStakeId !== null &&
+                  grant.type !== 'auto' &&
+                  isScopeAllowed(principal, activeStakeId, grant.scope);
                 const isPendingRemoval = pendingRemovesByKey.has(
                   pendingRemoveKey(seat.member_canonical, grant.scope, grant.kindoo_site_id),
                 );

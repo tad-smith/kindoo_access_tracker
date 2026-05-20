@@ -10,7 +10,7 @@
 import { useMemo, useState } from 'react';
 import type { AccessRequest } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { useMyRequests } from './hooks';
 import { useCancelRequest } from './cancelRequest';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
@@ -25,12 +25,16 @@ interface ScopeOption {
   label: string;
 }
 
-function requestableScopes(principal: ReturnType<typeof usePrincipal>): ScopeOption[] {
+function requestableScopes(
+  principal: ReturnType<typeof usePrincipal>,
+  stakeId: string | null,
+): ScopeOption[] {
+  if (!stakeId) return [];
   const scopes: ScopeOption[] = [];
-  if (principal.stakeMemberStakes.includes(STAKE_ID)) {
+  if (principal.stakeMemberStakes.includes(stakeId)) {
     scopes.push({ value: 'stake', label: 'Stake' });
   }
-  for (const ward of principal.bishopricWards[STAKE_ID] ?? []) {
+  for (const ward of principal.bishopricWards[stakeId] ?? []) {
     scopes.push({ value: ward, label: `Ward ${ward}` });
   }
   return scopes;
@@ -38,7 +42,8 @@ function requestableScopes(principal: ReturnType<typeof usePrincipal>): ScopeOpt
 
 export function MyRequestsPage() {
   const principal = usePrincipal();
-  const scopes = requestableScopes(principal);
+  const activeStakeId = useActiveStake();
+  const scopes = requestableScopes(principal, activeStakeId);
   const [selectedScope, setSelectedScope] = useState<string>('');
 
   const requests = useMyRequests(principal.canonical || null);

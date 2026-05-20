@@ -46,44 +46,66 @@ import {
   wardRef,
   wardsCol,
 } from '../../../lib/docs';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 import { usePrincipal } from '../../../lib/principal';
 import type { Principal } from '../../../lib/principal';
 
 // ---- Live reads -----------------------------------------------------
 
 export function useStakeDoc() {
-  const ref = useMemo(() => stakeRef(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const ref = useMemo(() => (activeStakeId ? stakeRef(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreDoc<Stake>(ref);
 }
 
 export function useWards() {
-  const q = useMemo(() => wardsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(() => (activeStakeId ? wardsCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Ward>(q);
 }
 
 export function useBuildings() {
-  const q = useMemo(() => buildingsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<Building>(q);
 }
 
 export function useManagers() {
-  const q = useMemo(() => kindooManagersCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? kindooManagersCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<KindooManager>(q);
 }
 
 export function useWardCallingTemplates() {
-  const q = useMemo(() => wardCallingTemplatesCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? wardCallingTemplatesCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<WardCallingTemplate>(q);
 }
 
 export function useStakeCallingTemplates() {
-  const q = useMemo(() => stakeCallingTemplatesCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? stakeCallingTemplatesCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<StakeCallingTemplate>(q);
 }
 
 export function useKindooSites() {
-  const q = useMemo(() => kindooSitesCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? kindooSitesCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<KindooSite>(q);
 }
 
@@ -94,6 +116,13 @@ function actorOf(principal: Principal): { email: string; canonical: string } {
     email: principal.email ?? '',
     canonical: principal.canonical ?? canonicalEmail(principal.email ?? ''),
   };
+}
+
+function requireActiveStake(activeStakeId: string | null): string {
+  if (!activeStakeId) {
+    throw new Error('No active stake. Cannot write per-stake data.');
+  }
+  return activeStakeId;
 }
 
 // ---- Wards mutations ------------------------------------------------
@@ -114,13 +143,15 @@ export interface WardInput {
 
 export function useUpsertWardMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: WardInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const code = input.ward_code.trim().toUpperCase();
       if (!code) throw new Error('Ward code is required.');
-      const ref = wardRef(db, STAKE_ID, code);
+      const ref = wardRef(db, sid, code);
       // Stamp `created_at` only on the create path. `merge: true` would
       // otherwise re-stamp it on every edit, silently losing the
       // original creation timestamp. `runTransaction` makes the
@@ -160,10 +191,12 @@ export function useUpsertWardMutation() {
 }
 
 export function useDeleteWardMutation() {
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (wardCode: string) => {
-      await deleteDoc(wardRef(db, STAKE_ID, wardCode));
+      const sid = requireActiveStake(activeStakeId);
+      await deleteDoc(wardRef(db, sid, wardCode));
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
@@ -189,13 +222,15 @@ export interface BuildingInput {
 
 export function useUpsertBuildingMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: BuildingInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const slug = buildingSlug(input.building_name);
       if (!slug) throw new Error('Building name is required.');
-      const ref = buildingRef(db, STAKE_ID, slug);
+      const ref = buildingRef(db, sid, slug);
       // Stamp `created_at` only on the create path. `merge: true` would
       // otherwise re-stamp it on every edit, silently losing the
       // original creation timestamp. `runTransaction` makes the
@@ -248,13 +283,15 @@ export interface DeleteBuildingInput {
   wards: ReadonlyArray<Ward>;
 }
 export function useDeleteBuildingMutation() {
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: DeleteBuildingInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const refs = input.wards.filter((w) => w.building_name === input.buildingName);
       const blocker = buildingDeleteBlocker(refs);
       if (blocker) throw new Error(blocker);
-      await deleteDoc(buildingRef(db, STAKE_ID, input.buildingId));
+      await deleteDoc(buildingRef(db, sid, input.buildingId));
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
@@ -289,12 +326,14 @@ export interface ManagerInput {
 // manager." error than a silent merge that looks like a no-op.
 export function useUpsertManagerMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: ManagerInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const can = canonicalEmail(input.member_email);
-      const ref = kindooManagerRef(db, STAKE_ID, can);
+      const ref = kindooManagerRef(db, sid, can);
       const existing = await getDoc(ref);
       if (existing.exists()) {
         throw new Error('Already a manager.');
@@ -322,10 +361,12 @@ export function useUpsertManagerMutation() {
 }
 
 export function useDeleteManagerMutation() {
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (canonical: string) => {
-      await deleteDoc(kindooManagerRef(db, STAKE_ID, canonical));
+      const sid = requireActiveStake(activeStakeId);
+      await deleteDoc(kindooManagerRef(db, sid, canonical));
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
@@ -346,13 +387,15 @@ export interface CallingTemplateInput {
 
 export function useUpsertWardCallingTemplateMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: CallingTemplateInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const name = input.calling_name.trim();
       if (!name) throw new Error('Calling name is required.');
-      const ref = wardCallingTemplateRef(db, STAKE_ID, name);
+      const ref = wardCallingTemplateRef(db, sid, name);
       // Stamp `created_at` only on the create path. `merge: true` would
       // otherwise re-stamp it on every edit, silently losing the
       // original creation timestamp. `runTransaction` makes the
@@ -390,10 +433,12 @@ export function useUpsertWardCallingTemplateMutation() {
 }
 
 export function useDeleteWardCallingTemplateMutation() {
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (callingName: string) => {
-      await deleteDoc(wardCallingTemplateRef(db, STAKE_ID, callingName));
+      const sid = requireActiveStake(activeStakeId);
+      await deleteDoc(wardCallingTemplateRef(db, sid, callingName));
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
@@ -405,13 +450,15 @@ export function useDeleteWardCallingTemplateMutation() {
 
 export function useUpsertStakeCallingTemplateMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: CallingTemplateInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const name = input.calling_name.trim();
       if (!name) throw new Error('Calling name is required.');
-      const ref = stakeCallingTemplateRef(db, STAKE_ID, name);
+      const ref = stakeCallingTemplateRef(db, sid, name);
       // Stamp `created_at` only on the create path. `merge: true` would
       // otherwise re-stamp it on every edit, silently losing the
       // original creation timestamp. `runTransaction` makes the
@@ -449,10 +496,12 @@ export function useUpsertStakeCallingTemplateMutation() {
 }
 
 export function useDeleteStakeCallingTemplateMutation() {
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (callingName: string) => {
-      await deleteDoc(stakeCallingTemplateRef(db, STAKE_ID, callingName));
+      const sid = requireActiveStake(activeStakeId);
+      await deleteDoc(stakeCallingTemplateRef(db, sid, callingName));
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
@@ -515,12 +564,14 @@ function buildReorderBatch(
 
 export function useReorderWardCallingTemplatesMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: ReorderInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const { batch, writes } = buildReorderBatch(
-        (name) => wardCallingTemplateRef(db, STAKE_ID, name),
+        (name) => wardCallingTemplateRef(db, sid, name),
         input,
         actor,
       );
@@ -535,12 +586,14 @@ export function useReorderWardCallingTemplatesMutation() {
 
 export function useReorderStakeCallingTemplatesMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: ReorderInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const { batch, writes } = buildReorderBatch(
-        (name) => stakeCallingTemplateRef(db, STAKE_ID, name),
+        (name) => stakeCallingTemplateRef(db, sid, name),
         input,
         actor,
       );
@@ -620,13 +673,15 @@ export function planDeleteResequenceWrites(
 
 export function useAddWardCallingTemplateMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: AddCallingTemplateInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const name = input.calling_name.trim();
       if (!name) throw new Error('Calling name is required.');
-      const ref = wardCallingTemplateRef(db, STAKE_ID, name);
+      const ref = wardCallingTemplateRef(db, sid, name);
       const existing = await getDoc(ref);
       if (existing.exists()) throw new Error('A calling with that name already exists.');
       await setDoc(
@@ -650,13 +705,15 @@ export function useAddWardCallingTemplateMutation() {
 
 export function useAddStakeCallingTemplateMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: AddCallingTemplateInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const name = input.calling_name.trim();
       if (!name) throw new Error('Calling name is required.');
-      const ref = stakeCallingTemplateRef(db, STAKE_ID, name);
+      const ref = stakeCallingTemplateRef(db, sid, name);
       const existing = await getDoc(ref);
       if (existing.exists()) throw new Error('A calling with that name already exists.');
       await setDoc(
@@ -704,12 +761,14 @@ function buildDeleteWithResequenceBatch(
 
 export function useDeleteWardCallingTemplateWithResequenceMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: DeleteWithResequenceInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const batch = buildDeleteWithResequenceBatch(
-        (name) => wardCallingTemplateRef(db, STAKE_ID, name),
+        (name) => wardCallingTemplateRef(db, sid, name),
         input,
         actor,
       );
@@ -723,12 +782,14 @@ export function useDeleteWardCallingTemplateWithResequenceMutation() {
 
 export function useDeleteStakeCallingTemplateWithResequenceMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: DeleteWithResequenceInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const batch = buildDeleteWithResequenceBatch(
-        (name) => stakeCallingTemplateRef(db, STAKE_ID, name),
+        (name) => stakeCallingTemplateRef(db, sid, name),
         input,
         actor,
       );
@@ -752,11 +813,13 @@ export interface ConfigInput {
 
 export function useUpdateStakeConfigMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: ConfigInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
-      await updateDoc(stakeRef(db, STAKE_ID), {
+      await updateDoc(stakeRef(db, sid), {
         stake_name: input.stake_name,
         stake_seat_cap: input.stake_seat_cap,
         expiry_hour: input.expiry_hour,
@@ -798,15 +861,17 @@ export interface KindooSiteInput {
 
 export function useUpsertKindooSiteMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: KindooSiteInput & { id?: string }) => {
+      const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
       const displayName = input.display_name.trim();
       const expectedSiteName = input.kindoo_expected_site_name.trim();
       const slug = input.id ?? buildingSlug(displayName);
       if (!slug) throw new Error('Display name is required.');
-      const ref = kindooSiteRef(db, STAKE_ID, slug);
+      const ref = kindooSiteRef(db, sid, slug);
       // `created_at` is stamped only on the create path. `merge: true`
       // would otherwise re-stamp it on every edit, silently losing the
       // original creation timestamp.
@@ -867,14 +932,16 @@ export interface DeleteKindooSiteInput {
   buildings: ReadonlyArray<Building>;
 }
 export function useDeleteKindooSiteMutation() {
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: DeleteKindooSiteInput) => {
+      const sid = requireActiveStake(activeStakeId);
       const wardRefs = input.wards.filter((w) => w.kindoo_site_id === input.kindooSiteId);
       const buildingRefs = input.buildings.filter((b) => b.kindoo_site_id === input.kindooSiteId);
       const blocker = kindooSiteDeleteBlocker(input.kindooSiteId, wardRefs, buildingRefs);
       if (blocker) throw new Error(blocker);
-      await deleteDoc(kindooSiteRef(db, STAKE_ID, input.kindooSiteId));
+      await deleteDoc(kindooSiteRef(db, sid, input.kindooSiteId));
     },
     onSuccess: () => {
       void qc.invalidateQueries();

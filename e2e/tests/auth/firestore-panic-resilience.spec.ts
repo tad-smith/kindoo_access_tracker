@@ -76,7 +76,10 @@ test.describe('Firestore SDK panic resilience', () => {
       }
     });
 
-    await page.goto('/');
+    // No-claims user has no accessible stakes — pass `?stake=csnorth`
+    // so the gate has a target stake doc to subscribe to (and fail
+    // permission-denied against, which is what this test exercises).
+    await page.goto('/?stake=csnorth');
     await signInViaTestHatch(page, 'panic-noclaims@example.com', TEST_PASSWORD);
 
     // Sensible page rendered — not the boundary fallback.
@@ -85,11 +88,18 @@ test.describe('Firestore SDK panic resilience', () => {
 
     // The hook should have logged the failing path. The matching console
     // message includes the path and the `permission-denied` code so
-    // operators can grep staging.
-    const hookErrorSeen = consoleErrors.some(
-      (txt) => txt.includes('[useFirestoreDoc]') && txt.includes('stakes/csnorth'),
-    );
-    expect(hookErrorSeen).toBe(true);
+    // operators can grep staging. The listener fires asynchronously
+    // (after the SDK round-trips with the emulator), so poll instead of
+    // a one-shot read.
+    await expect
+      .poll(
+        () =>
+          consoleErrors.some(
+            (txt) => txt.includes('[useFirestoreDoc]') && txt.includes('stakes/csnorth'),
+          ),
+        { timeout: 5_000 },
+      )
+      .toBe(true);
   });
 
   test('non-admin user during setup-in-progress lands on SetupInProgress without crashing', async ({
@@ -109,7 +119,9 @@ test.describe('Firestore SDK panic resilience', () => {
     });
     await createAuthUser({ email: 'panic-nonadmin@example.com' });
 
-    await page.goto('/');
+    // Non-admin during setup-in-progress has no claims yet — pass
+    // `?stake=csnorth` so the gate has a target stake doc to read.
+    await page.goto('/?stake=csnorth');
     await signInViaTestHatch(page, 'panic-nonadmin@example.com', TEST_PASSWORD);
 
     await expect(page.getByRole('heading', { name: /Setup in progress/i })).toBeVisible();

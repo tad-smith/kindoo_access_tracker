@@ -54,10 +54,15 @@ import type { Stake } from '@kindoo/shared';
  * Minimal shape consumed from `usePrincipal()`. Kept narrow so this
  * module doesn't pull the full `Principal` type and the unit tests can
  * synthesize inputs without constructing a full Firebase user.
+ *
+ * `isPlatformSuperadmin` is included so the gate can short-circuit
+ * the "no active stake" case for a superadmin (see `gateDecision`
+ * stake-doc-pending branch). Defaults to `false` when omitted.
  */
 export type GatePrincipal = {
   firebaseAuthSignedIn: boolean;
   isAuthenticated: boolean;
+  isPlatformSuperadmin?: boolean;
   email: string | null | undefined;
   canonical?: string | null | undefined;
 };
@@ -87,9 +92,24 @@ export type GateDecision =
  * often as you like; identical inputs always produce the identical
  * decision string.
  */
-export function gateDecision(principal: GatePrincipal, stake: GateStakeRead): GateDecision {
+export function gateDecision(
+  principal: GatePrincipal,
+  stake: GateStakeRead,
+  activeStakeId: string | null = null,
+): GateDecision {
   if (!principal.firebaseAuthSignedIn) {
     return 'sign-in';
+  }
+
+  // Platform superadmin with no active stake (zero per-stake roles).
+  // The caller passes `null` to `useFirestoreDoc(stakeRef)` in that
+  // case so the query is disabled and reports `status: 'pending'`
+  // forever; the pending branch below would hang the route. Spec §2.1
+  // sends this identity to `/superadmin/stakes`, so admit them past
+  // the gate and let the caller's redirect logic (`defaultLandingFor`)
+  // route them.
+  if (principal.isPlatformSuperadmin === true && activeStakeId === null) {
+    return 'authed';
   }
 
   // Stake-doc subscription not yet resolved.

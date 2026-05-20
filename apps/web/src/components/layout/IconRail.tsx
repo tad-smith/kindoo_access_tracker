@@ -23,6 +23,7 @@ import { useRef } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { navSectionsForPrincipal, type NavItem, type NavSection } from './navModel';
 import type { Principal } from '../../lib/principal';
+import { useActiveStake } from '../../lib/useActiveStake';
 
 /** Horizontal drag distance that triggers expansion. */
 const DRAG_THRESHOLD_PX = 32;
@@ -38,7 +39,8 @@ interface IconRailProps {
 }
 
 export function IconRail({ principal, onActivate, onSignOut, signingOut, version }: IconRailProps) {
-  const sections = navSectionsForPrincipal(principal);
+  const activeStakeId = useActiveStake();
+  const sections = navSectionsForPrincipal(principal, activeStakeId);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   // Drag tracking. Starts on `pointerdown`, latches `expanded` when

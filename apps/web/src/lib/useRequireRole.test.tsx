@@ -29,6 +29,11 @@ vi.mock('./principal', () => ({
   usePrincipal: () => mockedPrincipal.current,
 }));
 
+const STAKE_ID = 'csnorth';
+vi.mock('./useActiveStake', () => ({
+  useActiveStake: () => STAKE_ID,
+}));
+
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 vi.mock('@tanstack/react-router', async () => {
   const actual =
@@ -40,7 +45,6 @@ vi.mock('@tanstack/react-router', async () => {
 });
 
 import { holdsAnyRole, useRequireRole, type RequiredRole } from './useRequireRole';
-import { STAKE_ID } from './constants';
 
 function setPrincipal(overrides: Partial<Principal>) {
   mockedPrincipal.current = { ...mockedPrincipal.current, ...overrides };
@@ -231,32 +235,40 @@ describe('holdsAnyRole', () => {
   }
 
   it('returns true for a manager when manager is required', () => {
-    expect(holdsAnyRole(principal({ managerStakes: [STAKE_ID] }), ['manager'])).toBe(true);
-  });
-
-  it('returns true for a bishopric user when bishopric is required', () => {
-    expect(holdsAnyRole(principal({ bishopricWards: { [STAKE_ID]: ['CO'] } }), ['bishopric'])).toBe(
+    expect(holdsAnyRole(principal({ managerStakes: [STAKE_ID] }), ['manager'], STAKE_ID)).toBe(
       true,
     );
   });
 
+  it('returns true for a bishopric user when bishopric is required', () => {
+    expect(
+      holdsAnyRole(principal({ bishopricWards: { [STAKE_ID]: ['CO'] } }), ['bishopric'], STAKE_ID),
+    ).toBe(true);
+  });
+
   it('returns true for a stake-member user when stake is required', () => {
-    expect(holdsAnyRole(principal({ stakeMemberStakes: [STAKE_ID] }), ['stake'])).toBe(true);
+    expect(holdsAnyRole(principal({ stakeMemberStakes: [STAKE_ID] }), ['stake'], STAKE_ID)).toBe(
+      true,
+    );
   });
 
   it('returns true for a superadmin against any role', () => {
-    expect(holdsAnyRole(principal({ isPlatformSuperadmin: true }), ['manager'])).toBe(true);
-    expect(holdsAnyRole(principal({ isPlatformSuperadmin: true }), ['bishopric'])).toBe(true);
-    expect(holdsAnyRole(principal({ isPlatformSuperadmin: true }), ['stake'])).toBe(true);
+    expect(holdsAnyRole(principal({ isPlatformSuperadmin: true }), ['manager'], STAKE_ID)).toBe(
+      true,
+    );
+    expect(holdsAnyRole(principal({ isPlatformSuperadmin: true }), ['bishopric'], STAKE_ID)).toBe(
+      true,
+    );
+    expect(holdsAnyRole(principal({ isPlatformSuperadmin: true }), ['stake'], STAKE_ID)).toBe(true);
   });
 
   it('returns true for a Kindoo Manager against any role gate', () => {
-    // Managers are an implicit superset: a manager in STAKE_ID passes
-    // a stake or bishopric gate without literally holding those roles.
+    // Managers are an implicit superset: a manager in the active stake
+    // passes a stake or bishopric gate without literally holding those.
     const manager = principal({ managerStakes: [STAKE_ID] });
-    expect(holdsAnyRole(manager, ['manager'])).toBe(true);
-    expect(holdsAnyRole(manager, ['stake'])).toBe(true);
-    expect(holdsAnyRole(manager, ['bishopric'])).toBe(true);
+    expect(holdsAnyRole(manager, ['manager'], STAKE_ID)).toBe(true);
+    expect(holdsAnyRole(manager, ['stake'], STAKE_ID)).toBe(true);
+    expect(holdsAnyRole(manager, ['bishopric'], STAKE_ID)).toBe(true);
   });
 
   it('does NOT let a manager-without-superadmin pass a platformSuperadmin-only gate', () => {
@@ -264,40 +276,60 @@ describe('holdsAnyRole', () => {
     // platformSuperadmin gate is strict because the surfaces behind
     // it (Stake List, Create Stake) require the literal claim.
     const manager = principal({ managerStakes: [STAKE_ID], isPlatformSuperadmin: false });
-    expect(holdsAnyRole(manager, ['platformSuperadmin'])).toBe(false);
+    expect(holdsAnyRole(manager, ['platformSuperadmin'], STAKE_ID)).toBe(false);
   });
 
   it('still admits a true platform superadmin to a platformSuperadmin gate', () => {
     const sa = principal({ isPlatformSuperadmin: true });
-    expect(holdsAnyRole(sa, ['platformSuperadmin'])).toBe(true);
+    expect(holdsAnyRole(sa, ['platformSuperadmin'], STAKE_ID)).toBe(true);
   });
 
-  it('does not let a manager in a different stake bypass STAKE_ID gates', () => {
-    // The manager-superset short-circuit must scope to STAKE_ID.
+  it('does not let a manager in a different stake bypass the active-stake gates', () => {
+    // The manager-superset short-circuit must scope to the active stake.
     const otherStakeManager = principal({ managerStakes: ['other-stake'] });
-    expect(holdsAnyRole(otherStakeManager, ['stake'])).toBe(false);
-    expect(holdsAnyRole(otherStakeManager, ['bishopric'])).toBe(false);
+    expect(holdsAnyRole(otherStakeManager, ['stake'], STAKE_ID)).toBe(false);
+    expect(holdsAnyRole(otherStakeManager, ['bishopric'], STAKE_ID)).toBe(false);
   });
 
   it('returns false for an empty bishopricWards array on the stake', () => {
-    expect(holdsAnyRole(principal({ bishopricWards: { [STAKE_ID]: [] } }), ['bishopric'])).toBe(
+    expect(
+      holdsAnyRole(principal({ bishopricWards: { [STAKE_ID]: [] } }), ['bishopric'], STAKE_ID),
+    ).toBe(false);
+  });
+
+  it('returns false for a role in a different stake', () => {
+    expect(holdsAnyRole(principal({ managerStakes: ['other-stake'] }), ['manager'], STAKE_ID)).toBe(
       false,
     );
   });
 
-  it('returns false for a role in a different stake', () => {
-    expect(holdsAnyRole(principal({ managerStakes: ['other-stake'] }), ['manager'])).toBe(false);
-  });
-
   it('returns true if any of an array of required roles match', () => {
-    expect(holdsAnyRole(principal({ stakeMemberStakes: [STAKE_ID] }), ['manager', 'stake'])).toBe(
-      true,
-    );
+    expect(
+      holdsAnyRole(principal({ stakeMemberStakes: [STAKE_ID] }), ['manager', 'stake'], STAKE_ID),
+    ).toBe(true);
   });
 
   it('returns false when no required role matches', () => {
     expect(
-      holdsAnyRole(principal({ stakeMemberStakes: [STAKE_ID] }), ['manager', 'bishopric']),
+      holdsAnyRole(
+        principal({ stakeMemberStakes: [STAKE_ID] }),
+        ['manager', 'bishopric'],
+        STAKE_ID,
+      ),
     ).toBe(false);
+  });
+
+  it('returns false for every per-stake role when stakeId is null', () => {
+    // Zero-role platform superadmin path.
+    const stakeMember = principal({ stakeMemberStakes: [STAKE_ID] });
+    expect(holdsAnyRole(stakeMember, ['stake'], null)).toBe(false);
+    expect(holdsAnyRole(stakeMember, ['manager'], null)).toBe(false);
+    expect(holdsAnyRole(stakeMember, ['bishopric'], null)).toBe(false);
+  });
+
+  it('still admits a platform superadmin to any gate when stakeId is null', () => {
+    const sa = principal({ isPlatformSuperadmin: true });
+    expect(holdsAnyRole(sa, ['platformSuperadmin'], null)).toBe(true);
+    expect(holdsAnyRole(sa, ['manager'], null)).toBe(true);
   });
 });

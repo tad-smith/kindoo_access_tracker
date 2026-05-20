@@ -56,6 +56,10 @@ vi.mock('../../../../lib/docs', () => ({
   }),
 }));
 
+vi.mock('../../../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+}));
+
 import { useAddManualGrantMutation } from '../hooks';
 
 function wrapper({ children }: { children: ReactNode }) {

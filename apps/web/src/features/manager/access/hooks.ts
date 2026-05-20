@@ -33,20 +33,29 @@ import {
   stakeCallingTemplatesCol,
   wardCallingTemplatesCol,
 } from '../../../lib/docs';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 
 export function useAccessList() {
-  const q = useMemo(() => accessCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(() => (activeStakeId ? accessCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Access>(q);
 }
 
 export function useStakeCallingTemplates() {
-  const q = useMemo(() => stakeCallingTemplatesCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? stakeCallingTemplatesCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<StakeCallingTemplate>(q);
 }
 
 export function useWardCallingTemplates() {
-  const q = useMemo(() => wardCallingTemplatesCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? wardCallingTemplatesCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<WardCallingTemplate>(q);
 }
 
@@ -122,8 +131,12 @@ export interface AddManualGrantInput {
  */
 export function useAddManualGrantMutation() {
   const qc = useQueryClient();
+  const activeStakeId = useActiveStake();
   return useMutation({
     mutationFn: async (input: AddManualGrantInput) => {
+      if (!activeStakeId) {
+        throw new Error('No active stake.');
+      }
       // Force-refresh the ID token: a manager freshly minted (or whose
       // canonical claim was set after their last sign-in) needs a
       // round-trip before the rule's `isManager` + `lastActor`
@@ -143,14 +156,14 @@ export function useAddManualGrantMutation() {
         // serverTimestamp.
         granted_at: new Date() as unknown as ManualGrant['granted_at'],
       };
-      const ref = accessRef(db, STAKE_ID, can);
+      const ref = accessRef(db, activeStakeId, can);
       const snap = await getDoc(ref);
 
       // Diagnostic: which path are we taking + what's on the token?
       // Operator pastes from staging when a denial surfaces.
       if (isLoggable()) {
         console.log(`${LOG_PREFIX} resolved`, {
-          docPath: `stakes/${STAKE_ID}/access/${can}`,
+          docPath: `stakes/${activeStakeId}/access/${can}`,
           docExists: snap.exists(),
           scope: input.scope,
           authEmail: refreshed.email,
@@ -263,11 +276,15 @@ export interface DeleteManualGrantInput {
  */
 export function useDeleteManualGrantMutation() {
   const qc = useQueryClient();
+  const activeStakeId = useActiveStake();
   return useMutation({
     mutationFn: async ({ member_canonical, scope, grant }: DeleteManualGrantInput) => {
+      if (!activeStakeId) {
+        throw new Error('No active stake.');
+      }
       const refreshed = await readRefreshedActor();
       const actor = { email: refreshed.email, canonical: refreshed.canonical };
-      const ref = accessRef(db, STAKE_ID, member_canonical);
+      const ref = accessRef(db, activeStakeId, member_canonical);
       await updateDoc(ref, {
         [`manual_grants.${scope}`]: arrayRemove(grant),
         last_modified_at: serverTimestamp(),

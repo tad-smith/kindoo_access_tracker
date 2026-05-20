@@ -25,6 +25,10 @@ vi.mock('../../../lib/principal', () => ({
   usePrincipal: () => mockedPrincipal.current,
 }));
 
+vi.mock('../../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+}));
+
 vi.mock('../../../lib/data', () => ({
   useFirestoreCollection: (q: unknown) => {
     if ((q as { kind?: string }).kind === 'wards') return wardsState.current;

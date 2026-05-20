@@ -18,6 +18,9 @@ vi.mock('../../lib/principal', () => ({
 }));
 vi.mock('../../lib/firebase', () => ({ db: {} }));
 vi.mock('../../lib/docs', () => ({ stakeRef: () => ({}) }));
+vi.mock('../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+}));
 
 import { SetupInProgressPage } from './SetupInProgressPage';
 

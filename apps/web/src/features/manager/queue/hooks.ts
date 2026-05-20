@@ -28,20 +28,23 @@ import { canonicalEmail, type AccessRequest } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../../lib/data';
 import { db, auth } from '../../../lib/firebase';
 import { requestsCol, requestRef, seatRef } from '../../../lib/docs';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 
 // ---- Reads ----------------------------------------------------------
 
 /** Live FIFO pending-requests list. */
 export function usePendingRequests() {
+  const activeStakeId = useActiveStake();
   const q = useMemo(
     () =>
-      query(
-        requestsCol(db, STAKE_ID),
-        where('status', '==', 'pending'),
-        orderBy('requested_at', 'asc'),
-      ),
-    [],
+      activeStakeId
+        ? query(
+            requestsCol(db, activeStakeId),
+            where('status', '==', 'pending'),
+            orderBy('requested_at', 'asc'),
+          )
+        : null,
+    [activeStakeId],
   );
   return useFirestoreCollection<AccessRequest>(q);
 }
@@ -83,8 +86,12 @@ export interface CompleteAddInput {
  */
 export function useCompleteAddRequest() {
   const qc = useQueryClient();
+  const activeStakeId = useActiveStake();
   return useMutation({
     mutationFn: async ({ request, building_names, completion_note }: CompleteAddInput) => {
+      if (!activeStakeId) {
+        throw new Error('No active stake.');
+      }
       if (request.type !== 'add_manual' && request.type !== 'add_temp') {
         throw new Error(`Cannot use add-completion for type "${request.type}".`);
       }
@@ -96,7 +103,7 @@ export function useCompleteAddRequest() {
       const seatType = request.type === 'add_manual' ? 'manual' : 'temp';
 
       await runTransaction(db, async (tx) => {
-        const reqRef = requestRef(db, STAKE_ID, request.request_id);
+        const reqRef = requestRef(db, activeStakeId, request.request_id);
         const reqSnap = await tx.get(reqRef);
         if (!reqSnap.exists()) {
           throw new Error('Request not found.');
@@ -105,7 +112,7 @@ export function useCompleteAddRequest() {
         if (cur.status !== 'pending') {
           throw new Error(`Request is no longer pending (current status: ${cur.status}).`);
         }
-        const newSeatRef = seatRef(db, STAKE_ID, request.member_canonical);
+        const newSeatRef = seatRef(db, activeStakeId, request.member_canonical);
         const seatSnap = await tx.get(newSeatRef);
         if (seatSnap.exists()) {
           // The rules let the seat create succeed only when there isn't
@@ -223,14 +230,18 @@ export function resolveRemoveCompletionNote(
  */
 export function useCompleteRemoveRequest() {
   const qc = useQueryClient();
+  const activeStakeId = useActiveStake();
   return useMutation({
     mutationFn: async ({ request, completion_note }: CompleteRemoveInput) => {
+      if (!activeStakeId) {
+        throw new Error('No active stake.');
+      }
       if (request.type !== 'remove') {
         throw new Error('useCompleteRemoveRequest requires type=remove.');
       }
       const actor = await readActor();
       await runTransaction(db, async (tx) => {
-        const reqRef = requestRef(db, STAKE_ID, request.request_id);
+        const reqRef = requestRef(db, activeStakeId, request.request_id);
         const reqSnap = await tx.get(reqRef);
         if (!reqSnap.exists()) {
           throw new Error('Request not found.');
@@ -240,7 +251,7 @@ export function useCompleteRemoveRequest() {
           throw new Error(`Request is no longer pending (current status: ${cur.status}).`);
         }
         const seatTargetCanonical = request.seat_member_canonical ?? request.member_canonical;
-        const targetSeat = seatRef(db, STAKE_ID, seatTargetCanonical);
+        const targetSeat = seatRef(db, activeStakeId, seatTargetCanonical);
         const seatSnap = await tx.get(targetSeat);
 
         const update: Record<string, unknown> = {
@@ -279,14 +290,18 @@ export interface RejectRequestInput {
 
 export function useRejectRequest() {
   const qc = useQueryClient();
+  const activeStakeId = useActiveStake();
   return useMutation({
     mutationFn: async ({ request, rejection_reason }: RejectRequestInput) => {
+      if (!activeStakeId) {
+        throw new Error('No active stake.');
+      }
       const reason = rejection_reason.trim();
       if (!reason) throw new Error('A rejection reason is required.');
       const actor = await readActor();
 
       await runTransaction(db, async (tx) => {
-        const reqRef = requestRef(db, STAKE_ID, request.request_id);
+        const reqRef = requestRef(db, activeStakeId, request.request_id);
         const reqSnap = await tx.get(reqRef);
         if (!reqSnap.exists()) {
           throw new Error('Request not found.');

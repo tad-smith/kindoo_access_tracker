@@ -15,8 +15,8 @@
 //     version pinned to the rail's foot.
 //
 // Brand text. Authenticated principals see their stake's `stake_name`
-// (live from `stakes/{STAKE_ID}`). The product name "Stake Building
-// Access" is the fallback while the stake doc loads.
+// (live from `stakes/{activeStakeId}`). The product name "Stake
+// Building Access" is the fallback while the stake doc loads.
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Menu, X } from 'lucide-react';
@@ -26,7 +26,7 @@ import { KINDOO_WEB_VERSION } from '../../version';
 import { useFirestoreDoc } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { useOnlineStatus } from '../../lib/pwa/useOnlineStatus';
 import { useBreakpoint } from '../../lib/useBreakpoint';
 import { BrandIcon } from './BrandIcon';
@@ -34,6 +34,8 @@ import { PwaInstallButton } from './PwaInstallButton';
 import { LeftRail } from './LeftRail';
 import { IconRail } from './IconRail';
 import { NavOverlay } from './NavOverlay';
+import { StakeSwitcher } from './StakeSwitcher';
+import { ActiveStakeToastBoundary } from './ActiveStakeToastBoundary';
 import { ToastHost } from '../ui/Toast';
 import './Shell.css';
 
@@ -63,7 +65,10 @@ export function Shell({ children }: ShellProps) {
 
   const version = (import.meta.env.VITE_APP_VERSION as string | undefined) ?? KINDOO_WEB_VERSION;
 
-  const stakeDocResult = useFirestoreDoc(principal.isAuthenticated ? stakeRef(db, STAKE_ID) : null);
+  const activeStakeId = useActiveStake();
+  const stakeDocResult = useFirestoreDoc(
+    principal.isAuthenticated && activeStakeId !== null ? stakeRef(db, activeStakeId) : null,
+  );
   const brandText =
     principal.isAuthenticated && stakeDocResult.data?.stake_name
       ? stakeDocResult.data.stake_name
@@ -128,7 +133,7 @@ export function Shell({ children }: ShellProps) {
               </span>
             ) : null}
             <div className="kd-brandbar-stake-slot" data-testid="stake-selector-slot">
-              {/* Multi-stake selector lands here. Empty in v1. */}
+              {principal.isAuthenticated ? <StakeSwitcher activeStakeId={activeStakeId} /> : null}
             </div>
             {showEmailInBar ? (
               <span className="kd-brandbar-email" title={principal.email}>
@@ -194,6 +199,7 @@ export function Shell({ children }: ShellProps) {
         />
       ) : null}
 
+      <ActiveStakeToastBoundary />
       <ToastHost />
     </div>
   );

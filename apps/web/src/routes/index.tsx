@@ -35,11 +35,16 @@ import { defaultLandingFor, deepLinkPath } from '../lib/routing';
 import { useFirestoreDoc } from '../lib/data';
 import { stakeRef } from '../lib/docs';
 import { db } from '../lib/firebase';
-import { STAKE_ID } from '../lib/constants';
+import { useActiveStake } from '../lib/useActiveStake';
 import { gateDecision } from '../lib/setupGate';
 
 const indexSearchSchema = z.object({
   p: z.string().optional(),
+  // `?stake=X` is read once by `useActiveStake()` on entry; the hook
+  // persists it to both storage tiers and `history.replaceState`-
+  // strips it. Declared here so TanStack Router's typed-search-params
+  // gate accepts the deep link from the Stake List page / push taps.
+  stake: z.string().optional(),
 });
 
 export type IndexSearch = z.infer<typeof indexSearchSchema>;
@@ -51,19 +56,28 @@ export const Route = createFileRoute('/')({
 
 function Index() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const navigate = useNavigate();
-  const stake = useFirestoreDoc(principal.firebaseAuthSignedIn ? stakeRef(db, STAKE_ID) : null);
+  const stake = useFirestoreDoc(
+    principal.firebaseAuthSignedIn && activeStakeId !== null ? stakeRef(db, activeStakeId) : null,
+  );
   // Typed search params from `validateSearch`. The autogen plugin
   // wires `Route.useSearch()` so the `p` field is statically known
   // here; we still use the raw URLSearchParams shape for parity with
-  // the schema's `.optional()` field.
+  // the schema's `.optional()` field. The `stake` param is consumed
+  // upstream by `useActiveStake()` and stripped from the URL.
   const { p } = Route.useSearch();
 
-  const decision = gateDecision(principal, { data: stake.data, status: stake.status });
+  const decision = gateDecision(
+    principal,
+    { data: stake.data, status: stake.status },
+    activeStakeId,
+  );
 
   // Decide where to send a fully-authed principal. Only meaningful
   // when the gate has cleared all the setup-precedence branches.
-  const target = decision === 'authed' ? (deepLinkPath(p) ?? defaultLandingFor(principal)) : null;
+  const target =
+    decision === 'authed' ? (deepLinkPath(p) ?? defaultLandingFor(principal, activeStakeId)) : null;
 
   useEffect(() => {
     if (target !== null) {

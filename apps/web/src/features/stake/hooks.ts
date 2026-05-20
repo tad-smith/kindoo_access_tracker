@@ -14,17 +14,22 @@ import type { KindooSite, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
 import { kindooSitesCol, seatsCol, wardsCol } from '../../lib/docs';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { mergeSeatsByCanonical, type RosterResult } from '../../lib/rosters';
 
 export function useStakeRoster(): RosterResult {
+  const activeStakeId = useActiveStake();
   const primaryQuery = useMemo(
-    () => query(seatsCol(db, STAKE_ID), where('scope', '==', 'stake')),
-    [],
+    () =>
+      activeStakeId ? query(seatsCol(db, activeStakeId), where('scope', '==', 'stake')) : null,
+    [activeStakeId],
   );
   const duplicateQuery = useMemo(
-    () => query(seatsCol(db, STAKE_ID), where('duplicate_scopes', 'array-contains', 'stake')),
-    [],
+    () =>
+      activeStakeId
+        ? query(seatsCol(db, activeStakeId), where('duplicate_scopes', 'array-contains', 'stake'))
+        : null,
+    [activeStakeId],
   );
   const primary = useFirestoreCollection<Seat>(primaryQuery);
   const dupe = useFirestoreCollection<Seat>(duplicateQuery);
@@ -32,21 +37,29 @@ export function useStakeRoster(): RosterResult {
 }
 
 export function useWardSeats(wardCode: string | null): RosterResult {
+  const activeStakeId = useActiveStake();
   const primaryQuery = useMemo(() => {
-    if (!wardCode) return null;
-    return query(seatsCol(db, STAKE_ID), where('scope', '==', wardCode));
-  }, [wardCode]);
+    if (!wardCode || !activeStakeId) return null;
+    return query(seatsCol(db, activeStakeId), where('scope', '==', wardCode));
+  }, [wardCode, activeStakeId]);
   const duplicateQuery = useMemo(() => {
-    if (!wardCode) return null;
-    return query(seatsCol(db, STAKE_ID), where('duplicate_scopes', 'array-contains', wardCode));
-  }, [wardCode]);
+    if (!wardCode || !activeStakeId) return null;
+    return query(
+      seatsCol(db, activeStakeId),
+      where('duplicate_scopes', 'array-contains', wardCode),
+    );
+  }, [wardCode, activeStakeId]);
   const primary = useFirestoreCollection<Seat>(primaryQuery);
   const dupe = useFirestoreCollection<Seat>(duplicateQuery);
   return useMemo(() => mergeSeatsByCanonical(primary, dupe), [primary, dupe]);
 }
 
 export function useStakeWards() {
-  const wardsQuery = useMemo(() => wardsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const wardsQuery = useMemo(
+    () => (activeStakeId ? wardsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<Ward>(wardsQuery);
 }
 
@@ -55,6 +68,10 @@ export function useStakeWards() {
  * seats (spec §15). Empty when the stake only operates its home site.
  */
 export function useKindooSites() {
-  const q = useMemo(() => kindooSitesCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? kindooSitesCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<KindooSite>(q);
 }

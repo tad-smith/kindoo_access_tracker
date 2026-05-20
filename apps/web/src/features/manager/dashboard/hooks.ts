@@ -20,42 +20,56 @@ import type { AccessRequest, AuditLog, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreCollection, useFirestoreDoc } from '../../../lib/data';
 import { db } from '../../../lib/firebase';
 import { auditLogCol, requestsCol, seatsCol, stakeRef, wardsCol } from '../../../lib/docs';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 
 const RECENT_AUDIT_LIMIT = 10;
 
 export function usePendingRequests() {
+  const activeStakeId = useActiveStake();
   const q = useMemo(
     () =>
-      query(
-        requestsCol(db, STAKE_ID),
-        where('status', '==', 'pending'),
-        orderBy('requested_at', 'asc'),
-      ),
-    [],
+      activeStakeId
+        ? query(
+            requestsCol(db, activeStakeId),
+            where('status', '==', 'pending'),
+            orderBy('requested_at', 'asc'),
+          )
+        : null,
+    [activeStakeId],
   );
   return useFirestoreCollection<AccessRequest>(q);
 }
 
 export function useRecentAuditLog() {
+  const activeStakeId = useActiveStake();
   const q = useMemo(
-    () => query(auditLogCol(db, STAKE_ID), orderBy('timestamp', 'desc'), limit(RECENT_AUDIT_LIMIT)),
-    [],
+    () =>
+      activeStakeId
+        ? query(
+            auditLogCol(db, activeStakeId),
+            orderBy('timestamp', 'desc'),
+            limit(RECENT_AUDIT_LIMIT),
+          )
+        : null,
+    [activeStakeId],
   );
   return useFirestoreCollection<AuditLog>(q);
 }
 
 export function useStakeSeats() {
-  const q = useMemo(() => seatsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(() => (activeStakeId ? seatsCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Seat>(q);
 }
 
 export function useStakeWards() {
-  const q = useMemo(() => wardsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(() => (activeStakeId ? wardsCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Ward>(q);
 }
 
 export function useStakeDoc() {
-  const ref = useMemo(() => stakeRef(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const ref = useMemo(() => (activeStakeId ? stakeRef(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreDoc(ref);
 }

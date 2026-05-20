@@ -14,12 +14,13 @@
 import { useFirestoreDoc } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { usePrincipal } from '../../lib/principal';
 
 export function SetupInProgressPage() {
   const principal = usePrincipal();
-  const stake = useFirestoreDoc(stakeRef(db, STAKE_ID));
+  const activeStakeId = useActiveStake();
+  const stake = useFirestoreDoc(activeStakeId ? stakeRef(db, activeStakeId) : null);
   const adminEmail = stake.data?.bootstrap_admin_email;
 
   return (

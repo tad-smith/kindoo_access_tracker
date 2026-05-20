@@ -32,6 +32,10 @@ vi.mock('../../lib/principal', () => ({
   usePrincipal: () => mockedPrincipal.current,
 }));
 
+vi.mock('../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+}));
+
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 vi.mock('@tanstack/react-router', async () => {
   const actual =

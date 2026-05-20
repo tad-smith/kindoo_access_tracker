@@ -19,7 +19,7 @@ import type { AccessRequest, Building, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreDoc, useFirestoreCollection } from '../../lib/data';
 import { db, auth } from '../../lib/firebase';
 import { buildingsCol, requestsCol, seatRef, wardsCol } from '../../lib/docs';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 
 /**
  * Live duplicate-warning hook. Per `docs/spec.md` §5.1: inline
@@ -33,10 +33,11 @@ import { STAKE_ID } from '../../lib/constants';
  * `null` canonical disables the subscription.
  */
 export function useSeatForMember(canonical: string | null) {
+  const activeStakeId = useActiveStake();
   const ref = useMemo(() => {
-    if (!canonical) return null;
-    return seatRef(db, STAKE_ID, canonical);
-  }, [canonical]);
+    if (!canonical || !activeStakeId) return null;
+    return seatRef(db, activeStakeId, canonical);
+  }, [canonical, activeStakeId]);
   return useFirestoreDoc<Seat>(ref);
 }
 
@@ -55,16 +56,17 @@ export function useSeatForMember(canonical: string | null) {
  * exact (scope, member) pair.
  */
 export function usePendingRemoveRequests(memberCanonical: string | null, scope: string | null) {
+  const activeStakeId = useActiveStake();
   const q = useMemo(() => {
-    if (!memberCanonical || !scope) return null;
+    if (!memberCanonical || !scope || !activeStakeId) return null;
     return query(
-      requestsCol(db, STAKE_ID),
+      requestsCol(db, activeStakeId),
       where('scope', '==', scope),
       where('type', '==', 'remove'),
       where('status', '==', 'pending'),
       where('member_canonical', '==', memberCanonical),
     );
-  }, [memberCanonical, scope]);
+  }, [memberCanonical, scope, activeStakeId]);
   return useFirestoreCollection<AccessRequest>(q);
 }
 
@@ -83,15 +85,16 @@ export function usePendingRemoveRequests(memberCanonical: string | null, scope: 
  * their ward's scope. Pass `null` to disable the subscription.
  */
 export function usePendingRequestsForScope(scope: string | null) {
+  const activeStakeId = useActiveStake();
   const q = useMemo(() => {
-    if (!scope) return null;
+    if (!scope || !activeStakeId) return null;
     return query(
-      requestsCol(db, STAKE_ID),
+      requestsCol(db, activeStakeId),
       where('scope', '==', scope),
       where('status', '==', 'pending'),
       orderBy('requested_at', 'asc'),
     );
-  }, [scope]);
+  }, [scope, activeStakeId]);
   return useFirestoreCollection<AccessRequest>(q);
 }
 
@@ -102,7 +105,8 @@ export function usePendingRequestsForScope(scope: string | null) {
  * `edit_auto` request) without a manager claim.
  */
 export function useStakeWards() {
-  const q = useMemo(() => wardsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(() => (activeStakeId ? wardsCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Ward>(q);
 }
 
@@ -111,7 +115,11 @@ export function useStakeWards() {
  * Powers the building checklist in the edit modal for every role.
  */
 export function useStakeBuildings() {
-  const q = useMemo(() => buildingsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<Building>(q);
 }
 
@@ -153,8 +161,12 @@ export interface SubmitRequestInput {
  */
 export function useSubmitRequest() {
   const qc = useQueryClient();
+  const activeStakeId = useActiveStake();
   return useMutation({
     mutationFn: async (input: SubmitRequestInput) => {
+      if (!activeStakeId) {
+        throw new Error('No active stake.');
+      }
       const user = auth.currentUser;
       if (!user || !user.email) {
         throw new Error('Not signed in.');
@@ -183,7 +195,7 @@ export function useSubmitRequest() {
       // pending to satisfy the rules' update rule — which would defeat
       // the purpose. Pre-allocating the ref keeps the body internally
       // consistent in a single rules-allowed create.
-      const ref = doc(requestsCol(db, STAKE_ID));
+      const ref = doc(requestsCol(db, activeStakeId));
 
       // The doc body. Rules require: status='pending',
       // requester_canonical = auth canonical, requested_at = request.time
@@ -242,7 +254,7 @@ export function useSubmitRequest() {
       // Remove or gate behind a flag once staging is happy.
       if (typeof console !== 'undefined' && process.env['NODE_ENV'] !== 'test') {
         console.log('[submit-request] payload', {
-          docPath: `stakes/${STAKE_ID}/requests/${ref.id}`,
+          docPath: `stakes/${activeStakeId}/requests/${ref.id}`,
           body,
           authEmail: user.email,
           tokenEmail: claims.email,
@@ -255,7 +267,7 @@ export function useSubmitRequest() {
       } catch (err) {
         if (typeof console !== 'undefined' && process.env['NODE_ENV'] !== 'test') {
           console.error('[submit-request] denied', {
-            docPath: `stakes/${STAKE_ID}/requests/${ref.id}`,
+            docPath: `stakes/${activeStakeId}/requests/${ref.id}`,
             scope: input.scope,
             type: input.type,
             tokenCanonical: claims.canonical,

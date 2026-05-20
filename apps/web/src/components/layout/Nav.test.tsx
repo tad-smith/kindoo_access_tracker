@@ -18,6 +18,12 @@ import { Nav } from './Nav';
 import { navSectionsForPrincipal, wardRosterPathFor } from './navModel';
 import type { Principal } from '../../lib/principal';
 
+const STAKE_ID = 'csnorth';
+
+vi.mock('../../lib/useActiveStake', () => ({
+  useActiveStake: () => STAKE_ID,
+}));
+
 function makePrincipal(overrides: Partial<Principal> = {}): Principal {
   return {
     isAuthenticated: true,
@@ -36,11 +42,14 @@ function makePrincipal(overrides: Partial<Principal> = {}): Principal {
 
 describe('navSectionsForPrincipal — section visibility by role', () => {
   it('returns no sections for a principal with no roles', () => {
-    expect(navSectionsForPrincipal(makePrincipal())).toEqual([]);
+    expect(navSectionsForPrincipal(makePrincipal(), STAKE_ID)).toEqual([]);
   });
 
   it('manager-only: shows all four sections, all manager items', () => {
-    const sections = navSectionsForPrincipal(makePrincipal({ managerStakes: ['csnorth'] }));
+    const sections = navSectionsForPrincipal(
+      makePrincipal({ managerStakes: ['csnorth'] }),
+      STAKE_ID,
+    );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'settings', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
     expect(quick).toEqual(['Dashboard', 'Request Queue', 'My Requests']);
@@ -55,6 +64,7 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
   it('bishopric-only: shows Quick Links + Rosters + Account; hides Settings entirely', () => {
     const sections = navSectionsForPrincipal(
       makePrincipal({ bishopricWards: { csnorth: ['CO'] } }),
+      STAKE_ID,
     );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
@@ -66,7 +76,10 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
   });
 
   it('stake-only: shows Quick Links + Rosters + Account; hides Settings entirely', () => {
-    const sections = navSectionsForPrincipal(makePrincipal({ stakeMemberStakes: ['csnorth'] }));
+    const sections = navSectionsForPrincipal(
+      makePrincipal({ stakeMemberStakes: ['csnorth'] }),
+      STAKE_ID,
+    );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
     expect(quick).toEqual(['New Request', 'My Requests']);
@@ -80,6 +93,7 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
         managerStakes: ['csnorth'],
         bishopricWards: { csnorth: ['CO'] },
       }),
+      STAKE_ID,
     );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'settings', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
@@ -95,14 +109,17 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
       { overrides: { bishopricWards: { csnorth: ['CO'] } }, expected: ['Logout'] },
     ];
     for (const { overrides, expected } of cases) {
-      const sections = navSectionsForPrincipal(makePrincipal(overrides));
+      const sections = navSectionsForPrincipal(makePrincipal(overrides), STAKE_ID);
       const account = sections.find((s) => s.key === 'account');
       expect(account?.items.map((i) => i.label)).toEqual(expected);
     }
   });
 
   it('Logout is an action item, not a link', () => {
-    const sections = navSectionsForPrincipal(makePrincipal({ managerStakes: ['csnorth'] }));
+    const sections = navSectionsForPrincipal(
+      makePrincipal({ managerStakes: ['csnorth'] }),
+      STAKE_ID,
+    );
     const logout = sections.find((s) => s.key === 'account')?.items.find((i) => i.key === 'logout');
     expect(logout?.kind).toBe('action');
     if (logout?.kind === 'action') {
@@ -111,12 +128,18 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
   });
 
   it('platform superadmin without explicit manager claim still sees Settings', () => {
-    const sections = navSectionsForPrincipal(makePrincipal({ isPlatformSuperadmin: true }));
+    const sections = navSectionsForPrincipal(
+      makePrincipal({ isPlatformSuperadmin: true }),
+      STAKE_ID,
+    );
     expect(sections.map((s) => s.key)).toContain('settings');
   });
 
   it('Superadmin section appears for `isPlatformSuperadmin === true` with the Stake List entry', () => {
-    const sections = navSectionsForPrincipal(makePrincipal({ isPlatformSuperadmin: true }));
+    const sections = navSectionsForPrincipal(
+      makePrincipal({ isPlatformSuperadmin: true }),
+      STAKE_ID,
+    );
     const superadmin = sections.find((s) => s.key === 'superadmin');
     expect(superadmin).toBeDefined();
     expect(superadmin?.items.map((i) => i.label)).toEqual(['Stake List']);
@@ -127,22 +150,29 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
   it('Superadmin section is hidden for a Kindoo Manager who is not a superadmin', () => {
     // The manager-superset is for stake/bishopric/manager gates — the
     // Superadmin section is gated strictly on the literal claim.
-    const sections = navSectionsForPrincipal(makePrincipal({ managerStakes: ['csnorth'] }));
+    const sections = navSectionsForPrincipal(
+      makePrincipal({ managerStakes: ['csnorth'] }),
+      STAKE_ID,
+    );
     expect(sections.map((s) => s.key)).not.toContain('superadmin');
   });
 
   it('Superadmin section is hidden for users with no role at all', () => {
-    expect(navSectionsForPrincipal(makePrincipal()).map((s) => s.key)).not.toContain('superadmin');
+    expect(navSectionsForPrincipal(makePrincipal(), STAKE_ID).map((s) => s.key)).not.toContain(
+      'superadmin',
+    );
   });
 
   it('Superadmin section is hidden for a bishopric- or stake-only user', () => {
     expect(
-      navSectionsForPrincipal(makePrincipal({ bishopricWards: { csnorth: ['CO'] } })).map(
+      navSectionsForPrincipal(makePrincipal({ bishopricWards: { csnorth: ['CO'] } }), STAKE_ID).map(
         (s) => s.key,
       ),
     ).not.toContain('superadmin');
     expect(
-      navSectionsForPrincipal(makePrincipal({ stakeMemberStakes: ['csnorth'] })).map((s) => s.key),
+      navSectionsForPrincipal(makePrincipal({ stakeMemberStakes: ['csnorth'] }), STAKE_ID).map(
+        (s) => s.key,
+      ),
     ).not.toContain('superadmin');
   });
 
@@ -153,6 +183,7 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
         stakeMemberStakes: ['csnorth'],
         bishopricWards: { csnorth: ['CO'] },
       }),
+      STAKE_ID,
     );
     const keys = sections.flatMap((s) => s.items.map((i) => i.key));
     expect(new Set(keys).size).toBe(keys.length);
@@ -161,19 +192,21 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
 
 describe('wardRosterPathFor — Ward Roster routing logic (§9)', () => {
   it('manager → /stake/wards (any-ward picker)', () => {
-    expect(wardRosterPathFor(makePrincipal({ managerStakes: ['csnorth'] }))).toBe('/stake/wards');
+    expect(wardRosterPathFor(makePrincipal({ managerStakes: ['csnorth'] }), STAKE_ID)).toBe(
+      '/stake/wards',
+    );
   });
 
   it('stake → /stake/wards (any-ward picker)', () => {
-    expect(wardRosterPathFor(makePrincipal({ stakeMemberStakes: ['csnorth'] }))).toBe(
+    expect(wardRosterPathFor(makePrincipal({ stakeMemberStakes: ['csnorth'] }), STAKE_ID)).toBe(
       '/stake/wards',
     );
   });
 
   it('bishopric only → /bishopric/roster', () => {
-    expect(wardRosterPathFor(makePrincipal({ bishopricWards: { csnorth: ['CO'] } }))).toBe(
-      '/bishopric/roster',
-    );
+    expect(
+      wardRosterPathFor(makePrincipal({ bishopricWards: { csnorth: ['CO'] } }), STAKE_ID),
+    ).toBe('/bishopric/roster');
   });
 
   it('manager + bishopric → /stake/wards (manager wins; bishopric ward is one option)', () => {
@@ -183,6 +216,7 @@ describe('wardRosterPathFor — Ward Roster routing logic (§9)', () => {
           managerStakes: ['csnorth'],
           bishopricWards: { csnorth: ['CO'] },
         }),
+        STAKE_ID,
       ),
     ).toBe('/stake/wards');
   });
@@ -194,12 +228,15 @@ describe('wardRosterPathFor — Ward Roster routing logic (§9)', () => {
           stakeMemberStakes: ['csnorth'],
           bishopricWards: { csnorth: ['CO'] },
         }),
+        STAKE_ID,
       ),
     ).toBe('/stake/wards');
   });
 
   it('platform superadmin without explicit manager → /stake/wards', () => {
-    expect(wardRosterPathFor(makePrincipal({ isPlatformSuperadmin: true }))).toBe('/stake/wards');
+    expect(wardRosterPathFor(makePrincipal({ isPlatformSuperadmin: true }), STAKE_ID)).toBe(
+      '/stake/wards',
+    );
   });
 });
 

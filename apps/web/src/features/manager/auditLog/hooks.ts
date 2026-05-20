@@ -24,7 +24,7 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import type { AuditLog } from '@kindoo/shared';
 import { db } from '../../../lib/firebase';
 import { auditLogCol } from '../../../lib/docs';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 
 export interface AuditLogFilters {
   action?: string | undefined;
@@ -81,11 +81,12 @@ interface AuditLogPage {
  * concatenate `data.pages.flatMap(p => p.rows)` for the visible list.
  */
 export function useAuditLogInfinite(filters: AuditLogFilters) {
+  const activeStakeId = useActiveStake();
   return useInfiniteQuery<AuditLogPage, FirestoreError>({
     queryKey: [
       '__kindoo_firestore__',
       'audit-log-infinite',
-      STAKE_ID,
+      activeStakeId ?? '',
       filters.action ?? '',
       filters.entity_type ?? '',
       filters.entity_id ?? '',
@@ -95,9 +96,11 @@ export function useAuditLogInfinite(filters: AuditLogFilters) {
       filters.date_to ?? '',
     ],
     initialPageParam: null as Timestamp | null,
+    enabled: activeStakeId !== null,
     queryFn: async ({ pageParam }) => {
+      if (!activeStakeId) return { rows: [], nextCursor: null };
       const cursor = pageParam as Timestamp | null;
-      const q = query(auditLogCol(db, STAKE_ID), ...buildConstraints(filters, cursor));
+      const q = query(auditLogCol(db, activeStakeId), ...buildConstraints(filters, cursor));
       const snap = await getDocs(q);
       const rows = snap.docs.map((d) => d.data());
       const last = rows[rows.length - 1];

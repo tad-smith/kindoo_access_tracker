@@ -1,8 +1,10 @@
 // Shared routing helpers. Two responsibilities:
 //
-//   - `defaultLandingFor(principal)` — picks the leftmost nav tab for
-//     the principal's highest-priority role (manager > stake >
-//     bishopric). Used by `routes/index.tsx`.
+//   - `defaultLandingFor(principal, stakeId)` — picks the leftmost
+//     nav tab for the principal's highest-priority role in the active
+//     stake (manager > stake > bishopric). For a zero-role platform
+//     superadmin (no accessible stake) returns `/superadmin/stakes`
+//     per spec §2.1. Used by `routes/index.tsx`.
 //
 //   - `deepLinkPath(p)` — resolves the legacy `?p=<page-key>` query-
 //     param deep-link form to the SPA route. Kept so external
@@ -13,7 +15,6 @@
 // resolve to the highest-priority role's leftmost tab.
 
 import type { Principal } from './principal';
-import { STAKE_ID } from './constants';
 
 /**
  * Map of legacy `?p=` page keys to SPA routes. Lookups not present
@@ -55,22 +56,28 @@ export function deepLinkPath(p: string | undefined): string | null {
 }
 
 /**
- * Per-principal default landing route:
- *   - manager → `/manager/dashboard` (leftmost tab is Dashboard)
- *   - stake   → `/new` (leftmost tab is New Request)
- *   - bishopric → `/new` (same)
- *   - multi-role → highest-priority role's leftmost tab (manager wins)
- *   - no role → null-equivalent ('/'); the route gate surfaces
- *               NotAuthorizedPage in that case.
+ * Per-principal default landing route. Resolved against the active
+ * stake (or null for a zero-role platform superadmin):
+ *   - zero-role superadmin (stakeId === null) → `/superadmin/stakes`
+ *   - manager in stakeId  → `/manager/dashboard` (leftmost tab)
+ *   - stake in stakeId    → `/new`
+ *   - bishopric in stakeId → `/new`
+ *   - multi-role → highest-priority role wins (manager > stake > bishopric)
+ *   - no role in stakeId → `/`; the route gate surfaces NotAuthorizedPage.
  */
-export function defaultLandingFor(principal: Principal): string {
-  if (principal.managerStakes.includes(STAKE_ID) || principal.isPlatformSuperadmin) {
+export function defaultLandingFor(principal: Principal, stakeId: string | null): string {
+  // Zero-role platform superadmin lands on the Stake List per spec §2.1.
+  if (stakeId === null) {
+    if (principal.isPlatformSuperadmin) return '/superadmin/stakes';
+    return '/';
+  }
+  if (principal.managerStakes.includes(stakeId) || principal.isPlatformSuperadmin) {
     return '/manager/dashboard';
   }
-  if (principal.stakeMemberStakes.includes(STAKE_ID)) {
+  if (principal.stakeMemberStakes.includes(stakeId)) {
     return '/new';
   }
-  const wards = principal.bishopricWards[STAKE_ID];
+  const wards = principal.bishopricWards[stakeId];
   if (Array.isArray(wards) && wards.length > 0) {
     return '/new';
   }

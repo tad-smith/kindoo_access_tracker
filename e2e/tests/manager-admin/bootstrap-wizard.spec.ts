@@ -62,7 +62,11 @@ test.describe('Bootstrap wizard gate', () => {
       stakes: {},
     });
 
-    await page.goto('/');
+    // Bootstrap admin has no role claims (the wizard hasn't run yet),
+    // so `useActiveStake` can't derive a target stake from the
+    // principal alone. Pass `?stake=csnorth` to scope the gate to the
+    // stake whose `bootstrap_admin_email` matches this signed-in user.
+    await page.goto('/?stake=csnorth');
     await signInViaTestHatch(page, adminEmail, TEST_PASSWORD);
 
     await expect(page.getByTestId('bootstrap-wizard')).toBeVisible();
@@ -88,7 +92,10 @@ test.describe('Bootstrap wizard gate', () => {
     const { uid } = await createAuthUser({ email: otherEmail });
     await setCustomClaims(uid, { canonical: otherEmail, stakes: {} });
 
-    await page.goto('/');
+    // Non-admin also needs `?stake=csnorth` so the gate can read the
+    // target stake — the user has no role claims and the resolver
+    // can't derive an active stake without a hint.
+    await page.goto('/?stake=csnorth');
     await signInViaTestHatch(page, otherEmail, TEST_PASSWORD);
 
     await expect(page.getByRole('heading', { name: /Setup in progress/i })).toBeVisible();
@@ -141,7 +148,9 @@ test.describe('Bootstrap wizard gate', () => {
     const { uid } = await createAuthUser({ email: adminEmail });
     await setCustomClaims(uid, { canonical: adminEmail, stakes: {} });
 
-    await page.goto('/?p=mgr/dashboard');
+    // Pass `?stake=csnorth` to scope the gate; `?p=mgr/dashboard`
+    // remains the deep-link the test proves the wizard suppresses.
+    await page.goto('/?stake=csnorth&p=mgr/dashboard');
     await signInViaTestHatch(page, adminEmail, TEST_PASSWORD);
 
     // Wizard renders, NOT the dashboard, even though we passed ?p=mgr/dashboard.
@@ -166,7 +175,11 @@ test.describe('Bootstrap wizard gate', () => {
     });
     const { uid } = await createAuthUser({ email: adminEmail });
     await setCustomClaims(uid, { canonical: adminEmail, stakes: {} });
-    await page.goto('/');
+    // Bootstrap admin has no role claims (the wizard hasn't run yet),
+    // so `useActiveStake` can't derive a target stake from the
+    // principal alone. Pass `?stake=csnorth` to scope the gate to the
+    // stake whose `bootstrap_admin_email` matches this signed-in user.
+    await page.goto('/?stake=csnorth');
     await signInViaTestHatch(page, adminEmail, TEST_PASSWORD);
 
     await expect(page.getByTestId('bootstrap-wizard')).toBeVisible();
@@ -195,7 +208,11 @@ test.describe('Bootstrap wizard gate', () => {
     });
     const { uid } = await createAuthUser({ email: adminEmail });
     await setCustomClaims(uid, { canonical: adminEmail, stakes: {} });
-    await page.goto('/');
+    // Bootstrap admin has no role claims (the wizard hasn't run yet),
+    // so `useActiveStake` can't derive a target stake from the
+    // principal alone. Pass `?stake=csnorth` to scope the gate to the
+    // stake whose `bootstrap_admin_email` matches this signed-in user.
+    await page.goto('/?stake=csnorth');
     await signInViaTestHatch(page, adminEmail, TEST_PASSWORD);
 
     await expect(page.getByTestId('bootstrap-wizard')).toBeVisible();
@@ -249,7 +266,11 @@ test.describe('Bootstrap wizard gate', () => {
     });
     const { uid } = await createAuthUser({ email: adminEmail });
     await setCustomClaims(uid, { canonical: adminEmail, stakes: {} });
-    await page.goto('/');
+    // Bootstrap admin has no role claims (the wizard hasn't run yet),
+    // so `useActiveStake` can't derive a target stake from the
+    // principal alone. Pass `?stake=csnorth` to scope the gate to the
+    // stake whose `bootstrap_admin_email` matches this signed-in user.
+    await page.goto('/?stake=csnorth');
     await signInViaTestHatch(page, adminEmail, TEST_PASSWORD);
     await expect(page.getByTestId('bootstrap-wizard')).toBeVisible();
 
@@ -298,7 +319,11 @@ test.describe('Bootstrap wizard gate', () => {
     });
     const { uid } = await createAuthUser({ email: adminEmail });
     await setCustomClaims(uid, { canonical: adminEmail, stakes: {} });
-    await page.goto('/');
+    // Bootstrap admin has no role claims (the wizard hasn't run yet),
+    // so `useActiveStake` can't derive a target stake from the
+    // principal alone. Pass `?stake=csnorth` to scope the gate to the
+    // stake whose `bootstrap_admin_email` matches this signed-in user.
+    await page.goto('/?stake=csnorth');
     await signInViaTestHatch(page, adminEmail, TEST_PASSWORD);
 
     await expect(page.getByTestId('bootstrap-wizard')).toBeVisible();

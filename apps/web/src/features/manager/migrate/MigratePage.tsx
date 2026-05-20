@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { Button } from '../../../components/ui/Button';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 import { invokeBackfillKindooSiteId, type BackfillKindooSiteIdResult } from './callables';
 
 function errorMessage(err: unknown): string {
@@ -14,16 +14,21 @@ function errorMessage(err: unknown): string {
 }
 
 export function MigratePage() {
+  const activeStakeId = useActiveStake();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<BackfillKindooSiteIdResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function run() {
+    if (!activeStakeId) {
+      setError('No active stake.');
+      return;
+    }
     setBusy(true);
     setError(null);
     setResult(null);
     try {
-      const out = await invokeBackfillKindooSiteId(STAKE_ID);
+      const out = await invokeBackfillKindooSiteId(activeStakeId);
       setResult(out);
     } catch (err) {
       setError(errorMessage(err));

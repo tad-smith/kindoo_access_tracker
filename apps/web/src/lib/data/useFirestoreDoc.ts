@@ -33,7 +33,7 @@
 //     registry inconsistency). A throw there must not unmount the tree.
 //   - The effect deps are keyed on the doc *path string*, not on the
 //     `DocumentReference` instance. Callers like
-//     `useFirestoreDoc(stakeRef(db, STAKE_ID))` produce a fresh ref each
+//     `useFirestoreDoc(stakeRef(db, activeStakeId))` produce a fresh ref each
 //     render; identity-keyed deps would tear down/re-subscribe on every
 //     parent render, and a throw on subscribe would loop the tree
 //     (setState → re-render → fresh ref → throws → setState …).
@@ -100,7 +100,7 @@ export function useFirestoreDoc<T>(
   const key = ref ? docKey(ref) : NULL_DOC_KEY;
 
   // Effect identity is the doc path string, not the ref instance.
-  // Callers like `useFirestoreDoc(stakeRef(db, STAKE_ID))` produce a
+  // Callers like `useFirestoreDoc(stakeRef(db, activeStakeId))` produce a
   // fresh `DocumentReference` each render; if we keyed the effect on
   // the ref, every parent re-render would tear down and re-subscribe.
   // Worse, a synchronous `onSnapshot` throw would `setState` →
