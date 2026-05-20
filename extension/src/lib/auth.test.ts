@@ -191,3 +191,53 @@ describe('auth.signOut', () => {
     await expect(signOut()).rejects.toMatchObject({ code: 'sign_out_failed' });
   });
 });
+
+describe('readManagerStakes', () => {
+  it('returns every stake id with manager === true', async () => {
+    const user = {
+      getIdTokenResult: vi.fn().mockResolvedValue({
+        claims: {
+          stakes: {
+            csnorth: { manager: true, stake: false, wards: [] },
+            'east-co': { manager: true, stake: false, wards: [] },
+            'south-co': { manager: false, stake: true, wards: [] },
+          },
+        },
+      }),
+    };
+    const { readManagerStakes } = await import('./auth');
+    const out = await readManagerStakes(user as never);
+    expect(out.sort()).toEqual(['csnorth', 'east-co']);
+  });
+
+  it('returns an empty array when the user has no stake claims', async () => {
+    const user = {
+      getIdTokenResult: vi.fn().mockResolvedValue({ claims: {} }),
+    };
+    const { readManagerStakes } = await import('./auth');
+    expect(await readManagerStakes(user as never)).toEqual([]);
+  });
+
+  it('returns an empty array when getIdTokenResult throws', async () => {
+    const user = {
+      getIdTokenResult: vi.fn().mockRejectedValue(new Error('network')),
+    };
+    const { readManagerStakes } = await import('./auth');
+    expect(await readManagerStakes(user as never)).toEqual([]);
+  });
+
+  it('ignores non-manager entries (stake-only, bishopric-only)', async () => {
+    const user = {
+      getIdTokenResult: vi.fn().mockResolvedValue({
+        claims: {
+          stakes: {
+            csnorth: { manager: false, stake: true, wards: [] },
+            'east-co': { manager: false, stake: false, wards: ['CO'] },
+          },
+        },
+      }),
+    };
+    const { readManagerStakes } = await import('./auth');
+    expect(await readManagerStakes(user as never)).toEqual([]);
+  });
+});

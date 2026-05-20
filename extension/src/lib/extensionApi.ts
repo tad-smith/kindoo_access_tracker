@@ -31,20 +31,27 @@ import type {
   DataGetStakeConfigResponse,
   DataGetSyncDataRequest,
   DataGetSyncDataResponse,
+  DataResolveEidStakesRequest,
+  DataResolveEidStakesResponse,
   DataSyncApplyFixRequest,
   DataSyncApplyFixResponse,
   DataWriteKindooConfigRequest,
   DataWriteKindooConfigResponse,
   DataWriteKindooSiteEidRequest,
   DataWriteKindooSiteEidResponse,
+  EidStakeCandidate,
+  EidStakeChoiceMap,
   ExtensionRequest,
+  ResolveEidStakesPayload,
   ResponseFor,
   SyncDataBundle,
   WireError,
   WriteKindooConfigPayload,
 } from './messaging';
+import { STORAGE_KEYS } from './messaging';
 
 export type { SyncDataBundle } from './messaging';
+export type { EidStakeCandidate, ResolveEidStakesPayload } from './messaging';
 
 /** Public alias for the stake-config bundle the panel passes between
  * components. */
@@ -125,7 +132,13 @@ export async function fetchAuthState(): Promise<AuthSnapshot> {
 export type AuthState =
   | { status: 'loading' }
   | { status: 'signed-out' }
-  | { status: 'signed-in'; email: string | null; displayName: string | null };
+  | {
+      status: 'signed-in';
+      email: string | null;
+      displayName: string | null;
+      /** Stake IDs the user manages — comes from the SW's claims read. */
+      managerStakes: string[];
+    };
 
 /**
  * React hook: read the SW's auth state and subscribe to push updates.
@@ -167,6 +180,7 @@ function snapToState(snap: AuthSnapshot): AuthState {
     status: 'signed-in',
     email: snap.user.email,
     displayName: snap.user.displayName,
+    managerStakes: snap.user.managerStakes ?? [],
   };
 }
 
@@ -195,14 +209,21 @@ export async function markRequestComplete(
 
 // ---- v2.1 config ------------------------------------------------------
 
-export async function getStakeConfig(): Promise<DataGetStakeConfigPayload> {
-  const req: DataGetStakeConfigRequest = { type: 'data.getStakeConfig' };
+export async function getStakeConfig(stakeId: string): Promise<DataGetStakeConfigPayload> {
+  const req: DataGetStakeConfigRequest = { type: 'data.getStakeConfig', stakeId };
   const res: DataGetStakeConfigResponse = await sendMessage(req);
   return unwrap(res);
 }
 
-export async function writeKindooConfig(payload: WriteKindooConfigPayload): Promise<void> {
-  const req: DataWriteKindooConfigRequest = { type: 'data.writeKindooConfig', payload };
+export async function writeKindooConfig(
+  stakeId: string,
+  payload: WriteKindooConfigPayload,
+): Promise<void> {
+  const req: DataWriteKindooConfigRequest = {
+    type: 'data.writeKindooConfig',
+    stakeId,
+    payload,
+  };
   const res: DataWriteKindooConfigResponse = await sendMessage(req);
   unwrap(res);
 }
@@ -212,8 +233,8 @@ export async function writeKindooConfig(payload: WriteKindooConfigPayload): Prom
  * `null` when the member has no seat yet — that's the v2.2 first-add
  * signal (orchestrator treats `seat=null` as "no prior grants").
  */
-export async function getSeatByEmail(canonical: string): Promise<Seat | null> {
-  const req: DataGetSeatByEmailRequest = { type: 'data.getSeatByEmail', canonical };
+export async function getSeatByEmail(stakeId: string, canonical: string): Promise<Seat | null> {
+  const req: DataGetSeatByEmailRequest = { type: 'data.getSeatByEmail', stakeId, canonical };
   const res: DataGetSeatByEmailResponse = await sendMessage(req);
   return unwrap(res);
 }
@@ -222,8 +243,8 @@ export async function getSeatByEmail(canonical: string): Promise<Seat | null> {
  * One-shot read of every Firestore collection the Sync feature needs.
  * Used by `SyncPanel` to compute drift between SBA and Kindoo.
  */
-export async function getSyncData(): Promise<SyncDataBundle> {
-  const req: DataGetSyncDataRequest = { type: 'data.getSyncData' };
+export async function getSyncData(stakeId: string): Promise<SyncDataBundle> {
+  const req: DataGetSyncDataRequest = { type: 'data.getSyncData', stakeId };
   const res: DataGetSyncDataResponse = await sendMessage(req);
   return unwrap(res);
 }
@@ -247,11 +268,90 @@ export async function syncApplyFix(input: SyncApplyFixInput): Promise<SyncApplyF
  * UI has already determined the operator is a manager so the only
  * realistic failures are transient.
  */
-export async function writeKindooSiteEid(kindooSiteId: string, kindooEid: number): Promise<void> {
+export async function writeKindooSiteEid(
+  stakeId: string,
+  kindooSiteId: string,
+  kindooEid: number,
+): Promise<void> {
   const req: DataWriteKindooSiteEidRequest = {
     type: 'data.writeKindooSiteEid',
+    stakeId,
     payload: { kindooSiteId, kindooEid },
   };
   const res: DataWriteKindooSiteEidResponse = await sendMessage(req);
   unwrap(res);
+}
+
+/**
+ * Return the set of stakes the operator manages that have the given
+ * Kindoo EID configured (home or foreign). Drives the slide-over
+ * panel's stake picker when a session's EID maps to ≥ 2 candidates.
+ * Empty array means the EID is not configured under any managed
+ * stake — the panel surfaces the existing unknown-site recovery copy.
+ */
+export async function resolveEidStakes(eid: number): Promise<EidStakeCandidate[]> {
+  const req: DataResolveEidStakesRequest = { type: 'data.resolveEidStakes', eid };
+  const res: DataResolveEidStakesResponse = await sendMessage(req);
+  const data = unwrap(res);
+  return data.candidates;
+}
+
+// ---- Per-EID stake choice (chrome.storage.local) ----------------------
+//
+// One canonical key (`STORAGE_KEYS.eidStakeChoice`) holds a
+// `Record<eidString, stakeId>` of every per-EID picker choice the
+// operator has made. Stored choices are validated against the live
+// `resolveEidStakes` candidates on every read; stale entries get
+// dropped + the picker re-runs. The whole map is wiped on sign-out
+// alongside the principal snapshot (see `auth.ts`).
+//
+// Per extension/CLAUDE.md, `STORAGE_KEYS.*` are owned by the SW + the
+// CS mount file; these helpers extend that scope to the panel because
+// the picker UX lives there. There is still ONE writer for the key —
+// these helpers — so the "single owner per key" intent of the rule
+// holds.
+
+async function readChoiceMap(): Promise<EidStakeChoiceMap> {
+  try {
+    const result = await chrome.storage.local.get([STORAGE_KEYS.eidStakeChoice]);
+    const raw = result?.[STORAGE_KEYS.eidStakeChoice];
+    if (raw && typeof raw === 'object') return raw as EidStakeChoiceMap;
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Return the previously-picked stake for `eid`, or `null` if no choice
+ * has been recorded. Caller validates against the live candidate set
+ * before consuming the value.
+ */
+export async function readEidStakeChoice(eid: number): Promise<string | null> {
+  const map = await readChoiceMap();
+  const value = map[String(eid)];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
+ * Persist a picker choice. Writes the whole map back — `chrome.storage`
+ * is structured-clone at the key level, so partial-map merging has to
+ * be done in JS.
+ */
+export async function writeEidStakeChoice(eid: number, stakeId: string): Promise<void> {
+  const map = await readChoiceMap();
+  map[String(eid)] = stakeId;
+  await chrome.storage.local.set({ [STORAGE_KEYS.eidStakeChoice]: map });
+}
+
+/**
+ * Drop a stale picker choice. Used when the live `resolveEidStakes`
+ * result no longer lists the stored stakeId (operator lost their role
+ * or the EID was un-configured from that stake).
+ */
+export async function clearEidStakeChoice(eid: number): Promise<void> {
+  const map = await readChoiceMap();
+  if (!(String(eid) in map)) return;
+  delete map[String(eid)];
+  await chrome.storage.local.set({ [STORAGE_KEYS.eidStakeChoice]: map });
 }

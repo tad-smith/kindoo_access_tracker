@@ -33,9 +33,7 @@ vi.mock('../lib/firebase', () => ({
   firestore: () => ({ __firestore: true }),
 }));
 
-vi.mock('../lib/constants', () => ({
-  STAKE_ID: 'test-stake',
-}));
+const STAKE_ID = 'test-stake';
 
 function actor(email = 'mgr@example.com'): User {
   return { email } as unknown as User;
@@ -78,6 +76,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     });
     const { writeKindooConfig } = await import('./data');
     await writeKindooConfig(
+      STAKE_ID,
       {
         kindooSiteId: null,
         siteId: 27994,
@@ -100,6 +99,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     getDocMock.mockResolvedValue({ exists: () => false, data: () => ({}) });
     const { writeKindooConfig } = await import('./data');
     await writeKindooConfig(
+      STAKE_ID,
       {
         kindooSiteId: null,
         siteId: 27994,
@@ -120,6 +120,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     // non-empty.
     const { writeKindooConfig } = await import('./data');
     await writeKindooConfig(
+      STAKE_ID,
       {
         kindooSiteId: null,
         siteId: 27994,
@@ -138,6 +139,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     const { writeKindooConfig } = await import('./data');
     await expect(
       writeKindooConfig(
+        STAKE_ID,
         {
           kindooSiteId: null,
           siteId: 27994,
@@ -177,6 +179,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     const { writeKindooConfig } = await import('./data');
     await expect(
       writeKindooConfig(
+        STAKE_ID,
         {
           kindooSiteId: null,
           siteId: 4321, // collides with foreign kindoo_eid
@@ -203,6 +206,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     getDocsMock.mockResolvedValue({ docs: [] });
     const { writeKindooConfig } = await import('./data');
     await writeKindooConfig(
+      STAKE_ID,
       {
         kindooSiteId: null,
         siteId: 27994,
@@ -239,6 +243,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     const { writeKindooConfig } = await import('./data');
     await expect(
       writeKindooConfig(
+        STAKE_ID,
         {
           kindooSiteId: 'east-stake',
           siteId: 27994, // collides with home's site_id
@@ -266,6 +271,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     });
     const { writeKindooConfig } = await import('./data');
     await writeKindooConfig(
+      STAKE_ID,
       {
         kindooSiteId: 'east-stake',
         siteId: 4321,
@@ -304,6 +310,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
     const { writeKindooConfig } = await import('./data');
     await expect(
       writeKindooConfig(
+        STAKE_ID,
         {
           kindooSiteId: 'east-stake',
           siteId: 5678, // differs from existing kindoo_eid 1234
@@ -337,6 +344,7 @@ describe('writeKindooConfig — home save site_name clobber guard', () => {
       });
     const { writeKindooConfig } = await import('./data');
     await writeKindooConfig(
+      STAKE_ID,
       {
         kindooSiteId: 'east-stake',
         siteId: 4321,
@@ -378,7 +386,7 @@ describe('writeKindooSiteEid — home-collision guard', () => {
       }),
     });
     const { writeKindooSiteEid } = await import('./data');
-    await expect(writeKindooSiteEid('east-stake', 27994, actor())).rejects.toThrow(
+    await expect(writeKindooSiteEid(STAKE_ID, 'east-stake', 27994, actor())).rejects.toThrow(
       /HOME_EID|home/i,
     );
     expect(updateDocMock).not.toHaveBeenCalled();
@@ -392,7 +400,7 @@ describe('writeKindooSiteEid — home-collision guard', () => {
       }),
     });
     const { writeKindooSiteEid } = await import('./data');
-    await writeKindooSiteEid('east-stake', 4321, actor());
+    await writeKindooSiteEid(STAKE_ID, 'east-stake', 4321, actor());
     expect(updateDocMock).toHaveBeenCalledTimes(1);
     const payload = updateDocMock.mock.calls[0]?.[1] as { kindoo_eid: number };
     expect(payload.kindoo_eid).toBe(4321);
@@ -405,14 +413,14 @@ describe('writeKindooSiteEid — home-collision guard', () => {
     // the guard must not block legitimate setups while it's unset.
     getDocMock.mockResolvedValue({ exists: () => true, data: () => ({}) });
     const { writeKindooSiteEid } = await import('./data');
-    await writeKindooSiteEid('east-stake', 4321, actor());
+    await writeKindooSiteEid(STAKE_ID, 'east-stake', 4321, actor());
     expect(updateDocMock).toHaveBeenCalledTimes(1);
   });
 
   it('rejects when actor has no email', async () => {
     const { writeKindooSiteEid } = await import('./data');
     await expect(
-      writeKindooSiteEid('east-stake', 4321, { email: null } as unknown as User),
+      writeKindooSiteEid(STAKE_ID, 'east-stake', 4321, { email: null } as unknown as User),
     ).rejects.toThrow(/no email/);
   });
 
@@ -440,7 +448,7 @@ describe('writeKindooSiteEid — home-collision guard', () => {
         }),
       });
     const { writeKindooSiteEid } = await import('./data');
-    await writeKindooSiteEid('east-stake', 4321, actor());
+    await writeKindooSiteEid(STAKE_ID, 'east-stake', 4321, actor());
     expect(updateDocMock).toHaveBeenCalledTimes(1);
     const payload = updateDocMock.mock.calls[0]?.[1] as { kindoo_eid: number };
     expect(payload.kindoo_eid).toBe(4321);
@@ -470,7 +478,7 @@ describe('writeKindooSiteEid — home-collision guard', () => {
         }),
       });
     const { writeKindooSiteEid } = await import('./data');
-    await expect(writeKindooSiteEid('east-stake', 5678, actor())).rejects.toThrow(
+    await expect(writeKindooSiteEid(STAKE_ID, 'east-stake', 5678, actor())).rejects.toThrow(
       /overwrite existing kindoo_eid/i,
     );
     expect(updateDocMock).not.toHaveBeenCalled();
@@ -496,7 +504,234 @@ describe('writeKindooSiteEid — home-collision guard', () => {
         }),
       });
     const { writeKindooSiteEid } = await import('./data');
-    await writeKindooSiteEid('east-stake', 4321, actor());
+    await writeKindooSiteEid(STAKE_ID, 'east-stake', 4321, actor());
     expect(updateDocMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('resolveEidStakes — multi-stake candidate resolution', () => {
+  beforeEach(() => {
+    getDocMock.mockReset();
+    getDocsMock.mockReset();
+  });
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it('returns an empty array when the caller manages no stakes', async () => {
+    const { resolveEidStakes } = await import('./data');
+    const out = await resolveEidStakes(27994, []);
+    expect(out).toEqual([]);
+    expect(getDocMock).not.toHaveBeenCalled();
+  });
+
+  it('returns the single home-match candidate when the EID is the stake home site', async () => {
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        stake_name: 'Colorado Springs North Stake',
+        kindoo_config: { site_id: 27994 },
+      }),
+    });
+    getDocsMock.mockResolvedValue({ docs: [] });
+    const { resolveEidStakes } = await import('./data');
+    const out = await resolveEidStakes(27994, ['csnorth']);
+    expect(out).toEqual([
+      { stakeId: 'csnorth', label: 'Colorado Springs North Stake', match: 'home' },
+    ]);
+  });
+
+  it('returns the single foreign-match candidate when the EID matches a kindooSite doc', async () => {
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        stake_name: 'East Colorado Stake',
+        kindoo_config: { site_id: 11111 },
+      }),
+    });
+    getDocsMock.mockResolvedValue({
+      docs: [
+        {
+          data: () => ({
+            id: 'foothills',
+            display_name: 'Foothills Building',
+            kindoo_eid: 27994,
+          }),
+        },
+      ],
+    });
+    const { resolveEidStakes } = await import('./data');
+    const out = await resolveEidStakes(27994, ['east-co']);
+    expect(out).toEqual([
+      {
+        stakeId: 'east-co',
+        label: 'East Colorado Stake',
+        match: 'foreign',
+        siteLabel: 'Foothills Building',
+      },
+    ]);
+  });
+
+  it('returns two candidates when the EID is home for one stake and foreign for another', async () => {
+    // Operator-resolved decision #3's example: stake A's foreign-site
+    // grant and stake B's home grant target the same Kindoo
+    // environment. Both surface in the picker.
+    //
+    // The doc / collection mocks return tagged refs that carry the
+    // original positional args under `__doc` / `__coll` (see top of
+    // file). We use that to route each call to the right fixture.
+    getDocMock.mockImplementation((ref: unknown) => {
+      const args = (ref as { __doc: unknown[] }).__doc;
+      const stakeId = args[2] as string;
+      if (stakeId === 'csnorth') {
+        return Promise.resolve({
+          exists: () => true,
+          data: () => ({
+            stake_name: 'Colorado Springs North Stake',
+            kindoo_config: { site_id: 27994 },
+          }),
+        });
+      }
+      return Promise.resolve({
+        exists: () => true,
+        data: () => ({
+          stake_name: 'East Colorado Stake',
+          kindoo_config: { site_id: 11111 },
+        }),
+      });
+    });
+    getDocsMock.mockImplementation((ref: unknown) => {
+      const args = (ref as { __coll: unknown[] }).__coll;
+      const stakeId = args[2] as string;
+      if (stakeId === 'east-co') {
+        return Promise.resolve({
+          docs: [
+            {
+              data: () => ({
+                id: 'foothills',
+                display_name: 'Foothills Building',
+                kindoo_eid: 27994,
+              }),
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ docs: [] });
+    });
+    const { resolveEidStakes } = await import('./data');
+    const out = await resolveEidStakes(27994, ['csnorth', 'east-co']);
+    expect(out).toHaveLength(2);
+    // Alphabetical sort by label — Colorado Springs ... < East Colorado.
+    expect(out[0]?.stakeId).toBe('csnorth');
+    expect(out[0]?.match).toBe('home');
+    expect(out[1]?.stakeId).toBe('east-co');
+    expect(out[1]?.match).toBe('foreign');
+    expect(out[1]?.siteLabel).toBe('Foothills Building');
+  });
+
+  it('returns an empty array when no managed stake has the EID configured', async () => {
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        stake_name: 'Colorado Springs North Stake',
+        kindoo_config: { site_id: 11111 },
+      }),
+    });
+    getDocsMock.mockResolvedValue({ docs: [] });
+    const { resolveEidStakes } = await import('./data');
+    const out = await resolveEidStakes(99999, ['csnorth']);
+    expect(out).toEqual([]);
+  });
+
+  it('skips managed stakes whose parent doc no longer exists', async () => {
+    // Defensive: rules could deny the read OR the stake was deleted.
+    // The resolver returns whatever's resolvable, not an error.
+    getDocMock.mockResolvedValue({ exists: () => false, data: () => ({}) });
+    getDocsMock.mockResolvedValue({ docs: [] });
+    const { resolveEidStakes } = await import('./data');
+    const out = await resolveEidStakes(27994, ['ghost-stake']);
+    expect(out).toEqual([]);
+  });
+
+  it('prefers a home match over a foreign match on the same stake', async () => {
+    // Defensive: SBA config would be malformed if a stake's own foreign
+    // site shared its home EID. Resolver returns home, not foreign.
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        stake_name: 'CSN',
+        kindoo_config: { site_id: 27994 },
+      }),
+    });
+    getDocsMock.mockResolvedValue({
+      docs: [{ data: () => ({ id: 'weird', display_name: 'Weird', kindoo_eid: 27994 }) }],
+    });
+    const { resolveEidStakes } = await import('./data');
+    const out = await resolveEidStakes(27994, ['csnorth']);
+    expect(out).toEqual([{ stakeId: 'csnorth', label: 'CSN', match: 'home' }]);
+  });
+});
+
+describe('loadStakeConfig — stake parameterisation', () => {
+  beforeEach(() => {
+    getDocMock.mockReset();
+    getDocsMock.mockReset();
+    docMock.mockClear();
+    collectionMock.mockClear();
+  });
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it('reads against the supplied stakeId path, not a hardcoded constant', async () => {
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ stake_id: 'east-co', stake_name: 'East CO' }),
+    });
+    getDocsMock.mockResolvedValue({ docs: [] });
+    const { loadStakeConfig } = await import('./data');
+    await loadStakeConfig('east-co');
+    // First docMock call is `doc(db, 'stakes', 'east-co')` for the
+    // parent doc; collectionMock calls cover the three sub-collections.
+    expect(docMock).toHaveBeenCalledWith(expect.anything(), 'stakes', 'east-co');
+    expect(collectionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'stakes',
+      'east-co',
+      'buildings',
+    );
+    expect(collectionMock).toHaveBeenCalledWith(expect.anything(), 'stakes', 'east-co', 'wards');
+    expect(collectionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'stakes',
+      'east-co',
+      'kindooSites',
+    );
+  });
+});
+
+describe('loadSeatByEmail — stake parameterisation', () => {
+  beforeEach(() => {
+    getDocMock.mockReset();
+    docMock.mockClear();
+  });
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it('reads the seat under the supplied stakeId, not a hardcoded constant', async () => {
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ member_canonical: 'a@example.com' }),
+    });
+    const { loadSeatByEmail } = await import('./data');
+    await loadSeatByEmail('east-co', 'a@example.com');
+    expect(docMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'stakes',
+      'east-co',
+      'seats',
+      'a@example.com',
+    );
   });
 });

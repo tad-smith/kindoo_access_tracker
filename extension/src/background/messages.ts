@@ -8,12 +8,20 @@
 // resolve via Promises) so the listener returns `true`
 // unconditionally for known message types.
 
-import { signIn, signOut, currentUser, waitForAuthHydrated, AuthError } from '../lib/auth';
+import {
+  signIn,
+  signOut,
+  currentUser,
+  readManagerStakes,
+  waitForAuthHydrated,
+  AuthError,
+} from '../lib/auth';
 import { getMyPendingRequests, markRequestComplete, syncApplyFix } from '../lib/api';
 import {
   loadSeatByEmail,
   loadStakeConfig,
   loadSyncData,
+  resolveEidStakes,
   writeKindooConfig,
   writeKindooSiteEid,
 } from './data';
@@ -25,20 +33,23 @@ import type {
 } from '../lib/messaging';
 import type { User } from 'firebase/auth/web-extension';
 
-/** Reduce a Firebase User to the slim cross-boundary shape. */
-function toPrincipalSnapshot(user: User): PrincipalSnapshot {
+/** Reduce a Firebase User + claims read to the slim cross-boundary shape.
+ * Reads `managerStakes` off the ID token so the panel can fan out
+ * per-stake resolution without touching the Firebase SDK. */
+async function toPrincipalSnapshot(user: User): Promise<PrincipalSnapshot> {
   return {
     uid: user.uid,
     email: user.email,
     displayName: user.displayName,
+    managerStakes: await readManagerStakes(user),
   };
 }
 
-/** Synchronous (no IDB read) auth-state snapshot from the SDK. */
-function snapshotAuthState(): AuthSnapshot {
+/** Async auth-state snapshot — `getIdTokenResult` may force a refresh. */
+async function snapshotAuthState(): Promise<AuthSnapshot> {
   const user = currentUser();
   if (!user) return { status: 'signed-out' };
-  return { status: 'signed-in', user: toPrincipalSnapshot(user) };
+  return { status: 'signed-in', user: await toPrincipalSnapshot(user) };
 }
 
 /** Translate any error into the wire shape. */
@@ -67,12 +78,15 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
       // answering; otherwise on SW revive we would reply
       // `'signed-out'` to a still-valid session.
       await waitForAuthHydrated();
-      return { ok: true, data: snapshotAuthState() };
+      return { ok: true, data: await snapshotAuthState() };
     }
     case 'auth.signIn': {
       try {
         const user = await signIn();
-        const state: AuthSnapshot = { status: 'signed-in', user: toPrincipalSnapshot(user) };
+        const state: AuthSnapshot = {
+          status: 'signed-in',
+          user: await toPrincipalSnapshot(user),
+        };
         return { ok: true, data: state };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
@@ -111,7 +125,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
     }
     case 'data.getStakeConfig': {
       try {
-        const data = await loadStakeConfig();
+        const data = await loadStakeConfig(req.stakeId);
         return { ok: true, data };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
@@ -126,7 +140,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
             error: { code: 'unauthenticated', message: 'sign in before saving config' },
           };
         }
-        await writeKindooConfig(req.payload, user);
+        await writeKindooConfig(req.stakeId, req.payload, user);
         return { ok: true, data: { ok: true } };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
@@ -134,7 +148,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
     }
     case 'data.getSeatByEmail': {
       try {
-        const seat = await loadSeatByEmail(req.canonical);
+        const seat = await loadSeatByEmail(req.stakeId, req.canonical);
         return { ok: true, data: seat };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
@@ -142,7 +156,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
     }
     case 'data.getSyncData': {
       try {
-        const data = await loadSyncData();
+        const data = await loadSyncData(req.stakeId);
         return { ok: true, data };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
@@ -165,8 +179,26 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
             error: { code: 'unauthenticated', message: 'sign in before writing site eid' },
           };
         }
-        await writeKindooSiteEid(req.payload.kindooSiteId, req.payload.kindooEid, user);
+        await writeKindooSiteEid(
+          req.stakeId,
+          req.payload.kindooSiteId,
+          req.payload.kindooEid,
+          user,
+        );
         return { ok: true, data: { ok: true } };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.resolveEidStakes': {
+      try {
+        const user = currentUser();
+        if (!user) {
+          return { ok: true, data: { candidates: [] } };
+        }
+        const managerStakes = await readManagerStakes(user);
+        const candidates = await resolveEidStakes(req.eid, managerStakes);
+        return { ok: true, data: { candidates } };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }

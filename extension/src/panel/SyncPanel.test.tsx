@@ -62,7 +62,7 @@ vi.mock('../content/kindoo/sync/buildingsFromDoors', async () => {
 
 async function renderSync() {
   const { SyncPanel } = await import('./SyncPanel');
-  return render(<SyncPanel />);
+  return render(<SyncPanel stakeId="csnorth" />);
 }
 
 function bundle() {

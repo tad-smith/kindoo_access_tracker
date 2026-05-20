@@ -9,6 +9,7 @@ const signInMock = vi.fn();
 const signOutMock = vi.fn();
 const currentUserMock = vi.fn();
 const waitForAuthHydratedMock = vi.fn(() => Promise.resolve(null));
+const readManagerStakesMock = vi.fn(() => Promise.resolve<string[]>([]));
 
 vi.mock('../lib/auth', async () => {
   const actual = await vi.importActual<typeof import('../lib/auth')>('../lib/auth');
@@ -18,6 +19,7 @@ vi.mock('../lib/auth', async () => {
     signOut: () => signOutMock(),
     currentUser: () => currentUserMock(),
     waitForAuthHydrated: () => waitForAuthHydratedMock(),
+    readManagerStakes: (..._args: unknown[]) => readManagerStakesMock(),
   };
 });
 
@@ -35,12 +37,14 @@ const writeKindooConfigMock = vi.fn();
 const loadSeatByEmailMock = vi.fn();
 const loadSyncDataMock = vi.fn();
 const writeKindooSiteEidMock = vi.fn();
+const resolveEidStakesMock = vi.fn();
 vi.mock('./data', () => ({
   loadStakeConfig: (...args: unknown[]) => loadStakeConfigMock(...args),
   writeKindooConfig: (...args: unknown[]) => writeKindooConfigMock(...args),
   loadSeatByEmail: (...args: unknown[]) => loadSeatByEmailMock(...args),
   loadSyncData: (...args: unknown[]) => loadSyncDataMock(...args),
   writeKindooSiteEid: (...args: unknown[]) => writeKindooSiteEidMock(...args),
+  resolveEidStakes: (...args: unknown[]) => resolveEidStakesMock(...args),
 }));
 
 describe('handleRequest', () => {
@@ -50,6 +54,8 @@ describe('handleRequest', () => {
     currentUserMock.mockReset();
     waitForAuthHydratedMock.mockReset();
     waitForAuthHydratedMock.mockResolvedValue(null);
+    readManagerStakesMock.mockReset();
+    readManagerStakesMock.mockResolvedValue([]);
     getMyPendingRequestsMock.mockReset();
     markRequestCompleteMock.mockReset();
     syncApplyFixMock.mockReset();
@@ -58,6 +64,7 @@ describe('handleRequest', () => {
     loadSeatByEmailMock.mockReset();
     loadSyncDataMock.mockReset();
     writeKindooSiteEidMock.mockReset();
+    resolveEidStakesMock.mockReset();
   });
   afterEach(() => {
     vi.resetModules();
@@ -76,26 +83,38 @@ describe('handleRequest', () => {
       email: 'mgr@example.com',
       displayName: 'Manager',
     });
+    readManagerStakesMock.mockResolvedValue(['csnorth']);
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'auth.getState' });
     expect(result).toEqual({
       ok: true,
       data: {
         status: 'signed-in',
-        user: { uid: 'u1', email: 'mgr@example.com', displayName: 'Manager' },
+        user: {
+          uid: 'u1',
+          email: 'mgr@example.com',
+          displayName: 'Manager',
+          managerStakes: ['csnorth'],
+        },
       },
     });
   });
 
   it('auth.signIn returns the signed-in snapshot on success', async () => {
     signInMock.mockResolvedValue({ uid: 'u1', email: 'mgr@example.com', displayName: null });
+    readManagerStakesMock.mockResolvedValue(['csnorth']);
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'auth.signIn' });
     expect(result).toEqual({
       ok: true,
       data: {
         status: 'signed-in',
-        user: { uid: 'u1', email: 'mgr@example.com', displayName: null },
+        user: {
+          uid: 'u1',
+          email: 'mgr@example.com',
+          displayName: null,
+          managerStakes: ['csnorth'],
+        },
       },
     });
   });
@@ -165,8 +184,8 @@ describe('handleRequest', () => {
     };
     loadStakeConfigMock.mockResolvedValue(fakeBundle);
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.getStakeConfig' });
-    expect(loadStakeConfigMock).toHaveBeenCalledTimes(1);
+    const result = await handleRequest({ type: 'data.getStakeConfig', stakeId: 'csnorth' });
+    expect(loadStakeConfigMock).toHaveBeenCalledWith('csnorth');
     expect(result).toEqual({ ok: true, data: fakeBundle });
   });
 
@@ -175,7 +194,7 @@ describe('handleRequest', () => {
       Object.assign(new Error('rules blocked the read'), { code: 'permission-denied' }),
     );
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.getStakeConfig' });
+    const result = await handleRequest({ type: 'data.getStakeConfig', stakeId: 'csnorth' });
     expect(result).toEqual({
       ok: false,
       error: { code: 'permission-denied', message: 'rules blocked the read' },
@@ -187,6 +206,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooConfig',
+      stakeId: 'csnorth',
       payload: { kindooSiteId: null, siteId: 27994, siteName: 'CSN', buildingRules: [] },
     });
     expect(writeKindooConfigMock).not.toHaveBeenCalled();
@@ -207,8 +227,12 @@ describe('handleRequest', () => {
       buildingRules: [{ buildingId: 'cordera', ruleId: 6248, ruleName: 'Cordera Doors' }],
     };
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.writeKindooConfig', payload });
-    expect(writeKindooConfigMock).toHaveBeenCalledWith(payload, user);
+    const result = await handleRequest({
+      type: 'data.writeKindooConfig',
+      stakeId: 'csnorth',
+      payload,
+    });
+    expect(writeKindooConfigMock).toHaveBeenCalledWith('csnorth', payload, user);
     expect(result).toEqual({ ok: true, data: { ok: true } });
   });
 
@@ -223,8 +247,12 @@ describe('handleRequest', () => {
       buildingRules: [{ buildingId: 'foothills', ruleId: 8001, ruleName: 'Foothills Doors' }],
     };
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.writeKindooConfig', payload });
-    expect(writeKindooConfigMock).toHaveBeenCalledWith(payload, user);
+    const result = await handleRequest({
+      type: 'data.writeKindooConfig',
+      stakeId: 'csnorth',
+      payload,
+    });
+    expect(writeKindooConfigMock).toHaveBeenCalledWith('csnorth', payload, user);
     expect(result).toEqual({ ok: true, data: { ok: true } });
   });
 
@@ -240,6 +268,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooConfig',
+      stakeId: 'csnorth',
       payload: { kindooSiteId: null, siteId: 27994, siteName: 'CSN', buildingRules: [] },
     });
     expect(result).toEqual({
@@ -253,6 +282,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooSiteEid',
+      stakeId: 'csnorth',
       payload: { kindooSiteId: 'east-stake', kindooEid: 4321 },
     });
     expect(writeKindooSiteEidMock).not.toHaveBeenCalled();
@@ -269,9 +299,10 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooSiteEid',
+      stakeId: 'csnorth',
       payload: { kindooSiteId: 'east-stake', kindooEid: 4321 },
     });
-    expect(writeKindooSiteEidMock).toHaveBeenCalledWith('east-stake', 4321, user);
+    expect(writeKindooSiteEidMock).toHaveBeenCalledWith('csnorth', 'east-stake', 4321, user);
     expect(result).toEqual({ ok: true, data: { ok: true } });
   });
 
@@ -290,9 +321,10 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.getSeatByEmail',
+      stakeId: 'csnorth',
       canonical: 'tad.e.smith@gmail.com',
     });
-    expect(loadSeatByEmailMock).toHaveBeenCalledWith('tad.e.smith@gmail.com');
+    expect(loadSeatByEmailMock).toHaveBeenCalledWith('csnorth', 'tad.e.smith@gmail.com');
     expect(result).toEqual({ ok: true, data: seat });
   });
 
@@ -301,6 +333,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.getSeatByEmail',
+      stakeId: 'csnorth',
       canonical: 'unknown@example.com',
     });
     expect(result).toEqual({ ok: true, data: null });
@@ -313,6 +346,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.getSeatByEmail',
+      stakeId: 'csnorth',
       canonical: 'x@example.com',
     });
     expect(result).toEqual({
@@ -333,8 +367,8 @@ describe('handleRequest', () => {
     };
     loadSyncDataMock.mockResolvedValue(bundle);
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.getSyncData' });
-    expect(loadSyncDataMock).toHaveBeenCalledTimes(1);
+    const result = await handleRequest({ type: 'data.getSyncData', stakeId: 'csnorth' });
+    expect(loadSyncDataMock).toHaveBeenCalledWith('csnorth');
     expect(result).toEqual({ ok: true, data: bundle });
   });
 
@@ -343,11 +377,50 @@ describe('handleRequest', () => {
       Object.assign(new Error('rules blocked the read'), { code: 'permission-denied' }),
     );
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.getSyncData' });
+    const result = await handleRequest({ type: 'data.getSyncData', stakeId: 'csnorth' });
     expect(result).toEqual({
       ok: false,
       error: { code: 'permission-denied', message: 'rules blocked the read' },
     });
+  });
+
+  it('data.resolveEidStakes reads claims, fans out per managed stake, returns the candidate list', async () => {
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
+    resolveEidStakesMock.mockResolvedValue([
+      { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+      {
+        stakeId: 'east-co',
+        label: 'East CO',
+        match: 'foreign',
+        siteLabel: 'Foothills Building',
+      },
+    ]);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(resolveEidStakesMock).toHaveBeenCalledWith(27994, ['csnorth', 'east-co']);
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        candidates: [
+          { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+          {
+            stakeId: 'east-co',
+            label: 'East CO',
+            match: 'foreign',
+            siteLabel: 'Foothills Building',
+          },
+        ],
+      },
+    });
+  });
+
+  it('data.resolveEidStakes returns an empty candidate list when no user is signed in', async () => {
+    currentUserMock.mockReturnValue(null);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(resolveEidStakesMock).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true, data: { candidates: [] } });
   });
 
   it('data.syncApplyFix forwards the payload and unwraps the callable result', async () => {

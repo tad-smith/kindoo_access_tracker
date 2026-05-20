@@ -23,7 +23,6 @@ import {
   writeKindooSiteEid,
   type StakeConfigBundle,
 } from '../lib/extensionApi';
-import { STAKE_ID } from '../lib/constants';
 import { readKindooSession, type KindooSession } from '../content/kindoo/auth';
 import { KindooApiError } from '../content/kindoo/client';
 import { getEnvironments, type KindooEnvironment } from '../content/kindoo/endpoints';
@@ -46,6 +45,8 @@ import {
 import { ResultDialog, type ResultDialogState } from './ResultDialog';
 
 interface RequestCardProps {
+  /** Active stake — threaded from App's resolution step. */
+  stakeId: string;
   request: AccessRequest;
   bundle: StakeConfigBundle;
   /** Called after the operator dismisses the result dialog; parent
@@ -59,7 +60,7 @@ type CardState =
   | { kind: 'error'; message: string }
   | { kind: 'result'; dialog: ResultDialogState };
 
-export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) {
+export function RequestCard({ stakeId, request, bundle, onDismissed }: RequestCardProps) {
   const [state, setState] = useState<CardState>({ kind: 'idle' });
 
   const isUrgent = request.urgent === true;
@@ -89,7 +90,7 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
     //    reconciliation) + envs (for TimeZone on editUser).
     let seat: Awaited<ReturnType<typeof getSeatByEmail>>;
     try {
-      seat = await getSeatByEmail(request.member_canonical);
+      seat = await getSeatByEmail(stakeId, request.member_canonical);
     } catch (err) {
       setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
       return;
@@ -127,7 +128,11 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
     }
     if (siteCheck.populate) {
       try {
-        await writeKindooSiteEid(siteCheck.populate.kindooSiteId, siteCheck.populate.kindooEid);
+        await writeKindooSiteEid(
+          stakeId,
+          siteCheck.populate.kindooSiteId,
+          siteCheck.populate.kindooEid,
+        );
       } catch (err) {
         setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
         return;
@@ -178,10 +183,10 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
 
     // 3. Kindoo done — now mark the SBA request complete. If this
     //    fails, surface a partial-success dialog with a retry button.
-    await sendMarkComplete(request.request_id, result, (dialog) =>
+    await sendMarkComplete(stakeId, request.request_id, result, (dialog) =>
       setState({ kind: 'result', dialog }),
     );
-  }, [request, bundle]);
+  }, [stakeId, request, bundle]);
 
   const dismiss = useCallback(() => {
     onDismissed(request.request_id);
@@ -297,13 +302,14 @@ export function RequestCard({ request, bundle, onDismissed }: RequestCardProps) 
  * dialog that re-tries only the SBA side on user request.
  */
 async function sendMarkComplete(
+  stakeId: string,
   requestId: string,
   provision: ProvisionResult,
   setDialog: (dialog: ResultDialogState) => void,
 ): Promise<void> {
   const note = provision.note;
   const payload: Parameters<typeof markRequestComplete>[0] = {
-    stakeId: STAKE_ID,
+    stakeId,
     requestId,
     completionNote: note,
     provisioningNote: note,

@@ -9,14 +9,15 @@
 // that — it just means the user is not on a Kindoo page right now.
 
 import type { User } from 'firebase/auth/web-extension';
-import { subscribeAuthState } from '../lib/auth';
+import { readManagerStakes, subscribeAuthState } from '../lib/auth';
 import type { AuthStateChangedPush, PrincipalSnapshot } from '../lib/messaging';
 
-function toPrincipalSnapshot(user: User): PrincipalSnapshot {
+async function toPrincipalSnapshot(user: User): Promise<PrincipalSnapshot> {
   return {
     uid: user.uid,
     email: user.email,
     displayName: user.displayName,
+    managerStakes: await readManagerStakes(user),
   };
 }
 
@@ -33,12 +34,15 @@ function broadcast(push: AuthStateChangedPush): void {
 
 export function registerAuthStatePush(): () => void {
   return subscribeAuthState((user) => {
-    const push: AuthStateChangedPush = user
-      ? {
+    if (user) {
+      void toPrincipalSnapshot(user).then((snapshot) => {
+        broadcast({
           type: 'auth.stateChanged',
-          state: { status: 'signed-in', user: toPrincipalSnapshot(user) },
-        }
-      : { type: 'auth.stateChanged', state: { status: 'signed-out' } };
-    broadcast(push);
+          state: { status: 'signed-in', user: snapshot },
+        });
+      });
+      return;
+    }
+    broadcast({ type: 'auth.stateChanged', state: { status: 'signed-out' } });
   });
 }

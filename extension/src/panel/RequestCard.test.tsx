@@ -115,6 +115,7 @@ async function renderCard(
   const { RequestCard } = await import('./RequestCard');
   return render(
     <RequestCard
+      stakeId="csnorth"
       request={opts.request ?? addRequest()}
       bundle={bundle()}
       onDismissed={opts.onDismissed ?? vi.fn()}
@@ -363,7 +364,14 @@ describe('RequestCard', () => {
 
   async function renderCardWithBundle(request: AccessRequest, customBundle: StakeConfigBundle) {
     const { RequestCard } = await import('./RequestCard');
-    return render(<RequestCard request={request} bundle={customBundle} onDismissed={vi.fn()} />);
+    return render(
+      <RequestCard
+        stakeId="csnorth"
+        request={request}
+        bundle={customBundle}
+        onDismissed={vi.fn()}
+      />,
+    );
   }
 
   it('refuses with the foreign site display_name before any Kindoo write on EID mismatch (add path)', async () => {
@@ -478,7 +486,7 @@ describe('RequestCard', () => {
     await user.click(screen.getByTestId('sba-add-r1'));
 
     await waitFor(() => expect(writeKindooSiteEidMock).toHaveBeenCalledTimes(1));
-    expect(writeKindooSiteEidMock).toHaveBeenCalledWith('east-stake', 4321);
+    expect(writeKindooSiteEidMock).toHaveBeenCalledWith('csnorth', 'east-stake', 4321);
 
     // Persist must complete BEFORE the orchestrator runs — verify by
     // call order via `mock.invocationCallOrder`.
