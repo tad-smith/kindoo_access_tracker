@@ -16,6 +16,7 @@ const searchSchema = z.object({
   member_canonical: z.string().optional(),
   date_from: z.string().optional(),
   date_to: z.string().optional(),
+  stake: z.string().optional(),
 });
 
 export const Route = createFileRoute('/_authed/manager/audit')({
@@ -31,9 +32,10 @@ function AuditLogRoute() {
 }
 
 function AuditLogContent() {
-  const search = Route.useSearch();
+  // `stake` is consumed by `useActiveStake`; it isn't an audit filter.
+  const { stake: _stake, ...filterSearch } = Route.useSearch();
   const initialFilters = Object.fromEntries(
-    Object.entries(search).filter(([, v]) => v !== undefined),
+    Object.entries(filterSearch).filter(([, v]) => v !== undefined),
   );
   return <AuditLogPage initialFilters={initialFilters} />;
 }

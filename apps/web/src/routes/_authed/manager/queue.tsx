@@ -11,6 +11,7 @@ import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 
 const searchSchema = z.object({
   focus: z.string().optional(),
+  stake: z.string().optional(),
 });
 
 export const Route = createFileRoute('/_authed/manager/queue')({

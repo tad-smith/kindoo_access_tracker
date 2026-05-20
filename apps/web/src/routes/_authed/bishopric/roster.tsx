@@ -9,6 +9,7 @@ import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 
 const searchSchema = z.object({
   ward: z.string().optional(),
+  stake: z.string().optional(),
 });
 
 export const Route = createFileRoute('/_authed/bishopric/roster')({

@@ -24,6 +24,7 @@ const tabSchema = z.enum([
 
 const searchSchema = z.object({
   tab: tabSchema.optional(),
+  stake: z.string().optional(),
 });
 
 export const Route = createFileRoute('/_authed/manager/configuration')({

@@ -498,11 +498,17 @@ export function useActiveStake(): string | null {
   // re-render doesn't re-persist + re-invalidate every frame.
   const lastPersistedUrlStakeIdRef = useRef<string | null>(null);
 
-  // True iff the principal is still settling claims (`onAuthStateChanged`
-  // has fired but `getIdTokenResult` hasn't returned yet). Defer all
-  // side effects while in this transient state — running them on a
-  // half-loaded principal would clear storage / fire false-positive
-  // "this stake is no longer available" toasts for the deep-link case.
+  // True for two cases that both warrant deferring the side effects:
+  //   (a) the transient claims-loading window — `onAuthStateChanged`
+  //       has fired but `getIdTokenResult` hasn't returned yet; and
+  //   (b) the permanent no-roles signed-in state (typo'd email, revoked
+  //       access). The predicate stays true forever in (b), which is
+  //       intentional: the user is parked on NotAuthorized, and firing
+  //       the URL-strip / storage-persist / toast effects would be a
+  //       false signal that the deep-link landed somewhere usable.
+  // Running side effects on a half-loaded principal in (a) would also
+  // fire false-positive "this stake is no longer available" toasts on
+  // the deep-link path.
   const principalSettling = principal.firebaseAuthSignedIn && !principal.isAuthenticated;
 
   useEffect(() => {
