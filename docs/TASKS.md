@@ -852,9 +852,9 @@ Decision recorded as `architecture.md` D14; spec rewritten in this PR. The exten
 Cross-ref: `spec.md` §8 (rewritten), `architecture.md` D14, `firebase-schema.md` §3 Stake doc.
 
 ## [T-46] Phase 12 — multi-stake support promoted to first-class
-Status: pending
+Status: done (2026-05-20 — all five sub-deliverables shipped: 12.1 PRs #153 + #154, 12.2 PR #155, 12.3 PR #156, 12.4 PRs #157 + #158, 12.5 PR #159)
 Owner: cross-workspace (web-engineer, backend-engineer, extension-engineer, infra-engineer, docs-keeper)
-Phase: B (active as of 2026-05-18)
+Phase: B (closed 2026-05-20)
 
 Phase 12 (current plan) replaces the deferred Phase 12 plan that settled 2026-05-05 with first-class multi-stake support. Three reversals from the prior plan are captured in `firebase-migration.md` F18 / F19 / F20 and rolled up into `architecture.md` D15. Five operator-resolved design decisions (`firebase-migration.md` Phase 12 "Operator-resolved design decisions") are baked into the sub-deliverable scope.
 
