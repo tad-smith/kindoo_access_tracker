@@ -55,6 +55,7 @@ function discrepancy(over: Partial<Discrepancy> = {}): Discrepancy {
 
 function ctxWith(overrides: Partial<DispatchContext> = {}): DispatchContext {
   return {
+    stakeId: 'csnorth',
     stake: stake(),
     wards: [ward('CO', 'Cordera Ward', 'Cordera Building')],
     buildings: [building('Cordera Building', 6248)],
@@ -107,7 +108,7 @@ describe('fixActionsFor', () => {
 
 describe('buildCallableInput', () => {
   it('kindoo-only on an auto seat carries scope/type/callings + building names', () => {
-    const input = buildCallableInput(discrepancy({ code: 'kindoo-only' }));
+    const input = buildCallableInput('csnorth', discrepancy({ code: 'kindoo-only' }));
     expect(input.stakeId).toBe('csnorth');
     expect(input.fix.code).toBe('kindoo-only');
     const payload = input.fix.payload as Record<string, unknown>;
@@ -127,6 +128,7 @@ describe('buildCallableInput', () => {
     // Church Access Automation direct grants; `derivedBuildings`
     // (from the door-grant chain) is the truth for auto seats.
     const input = buildCallableInput(
+      'csnorth',
       discrepancy({
         code: 'kindoo-only',
         kindoo: {
@@ -149,6 +151,7 @@ describe('buildCallableInput', () => {
 
   it('kindoo-only on an auto seat falls back to buildingNames when derivedBuildings is null', () => {
     const input = buildCallableInput(
+      'csnorth',
       discrepancy({
         code: 'kindoo-only',
         kindoo: {
@@ -174,6 +177,7 @@ describe('buildCallableInput', () => {
     // derivedBuildings is only the truth for auto. Even if both are
     // populated, the manual branch sticks with buildingNames.
     const input = buildCallableInput(
+      'csnorth',
       discrepancy({
         code: 'kindoo-only',
         kindoo: {
@@ -196,6 +200,7 @@ describe('buildCallableInput', () => {
 
   it('kindoo-only on a manual seat splits intended free-text into callings + reason', () => {
     const input = buildCallableInput(
+      'csnorth',
       discrepancy({
         code: 'kindoo-only',
         kindoo: {
@@ -220,6 +225,7 @@ describe('buildCallableInput', () => {
 
   it('kindoo-only on a temp seat carries startDate/endDate', () => {
     const input = buildCallableInput(
+      'csnorth',
       discrepancy({
         code: 'kindoo-only',
         kindoo: {
@@ -247,6 +253,7 @@ describe('buildCallableInput', () => {
 
   it('extra-kindoo-calling splits free text into extraCallings', () => {
     const input = buildCallableInput(
+      'csnorth',
       discrepancy({
         code: 'extra-kindoo-calling',
         kindoo: {
@@ -270,6 +277,7 @@ describe('buildCallableInput', () => {
 
   it('scope-mismatch sends Kindoo primary scope', () => {
     const input = buildCallableInput(
+      'csnorth',
       discrepancy({
         code: 'scope-mismatch',
         sba: { scope: 'PC', type: 'auto', callings: [], buildingNames: [] },
@@ -293,6 +301,7 @@ describe('buildCallableInput', () => {
 
   it('type-mismatch sends Kindoo intended type', () => {
     const input = buildCallableInput(
+      'csnorth',
       discrepancy({
         code: 'type-mismatch',
         sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: [] },
@@ -318,6 +327,7 @@ describe('buildCallableInput', () => {
 
   it('buildings-mismatch on a manual seat sends AccessSchedules-derived buildingNames', () => {
     const input = buildCallableInput(
+      'csnorth',
       discrepancy({
         code: 'buildings-mismatch',
         sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Cordera Building'] },
@@ -346,6 +356,7 @@ describe('buildCallableInput', () => {
     // the seat's correct buildings server-side. `derivedBuildings` is
     // the truth.
     const input = buildCallableInput(
+      'csnorth',
       discrepancy({
         code: 'buildings-mismatch',
         sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Cordera Building'] },
@@ -370,6 +381,7 @@ describe('buildCallableInput', () => {
   it('buildings-mismatch on an auto seat with null derivedBuildings throws (no valid source)', () => {
     expect(() =>
       buildCallableInput(
+        'csnorth',
         discrepancy({
           code: 'buildings-mismatch',
           sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Cordera Building'] },
@@ -391,11 +403,13 @@ describe('buildCallableInput', () => {
   });
 
   it('throws for sba-only (no SBA-side path)', () => {
-    expect(() => buildCallableInput(discrepancy({ code: 'sba-only' }))).toThrow();
+    expect(() => buildCallableInput('csnorth', discrepancy({ code: 'sba-only' }))).toThrow();
   });
 
   it('throws for kindoo-unparseable (no SBA-side path)', () => {
-    expect(() => buildCallableInput(discrepancy({ code: 'kindoo-unparseable' }))).toThrow();
+    expect(() =>
+      buildCallableInput('csnorth', discrepancy({ code: 'kindoo-unparseable' })),
+    ).toThrow();
   });
 });
 

@@ -8,12 +8,20 @@
 // resolve via Promises) so the listener returns `true`
 // unconditionally for known message types.
 
-import { signIn, signOut, currentUser, waitForAuthHydrated, AuthError } from '../lib/auth';
+import {
+  signIn,
+  signOut,
+  currentUser,
+  readManagerStakes,
+  waitForAuthHydrated,
+  AuthError,
+} from '../lib/auth';
 import { getMyPendingRequests, markRequestComplete, syncApplyFix } from '../lib/api';
 import {
   loadSeatByEmail,
   loadStakeConfig,
   loadSyncData,
+  resolveEidStakes,
   writeKindooConfig,
   writeKindooSiteEid,
 } from './data';
@@ -25,7 +33,10 @@ import type {
 } from '../lib/messaging';
 import type { User } from 'firebase/auth/web-extension';
 
-/** Reduce a Firebase User to the slim cross-boundary shape. */
+/** Reduce a Firebase User to the slim cross-boundary shape. The panel
+ * does not consume claims directly — the SW re-reads them on every
+ * `data.resolveEidStakes` to avoid staleness windows across the
+ * SW <-> CS boundary. */
 function toPrincipalSnapshot(user: User): PrincipalSnapshot {
   return {
     uid: user.uid,
@@ -34,7 +45,7 @@ function toPrincipalSnapshot(user: User): PrincipalSnapshot {
   };
 }
 
-/** Synchronous (no IDB read) auth-state snapshot from the SDK. */
+/** Synchronous auth-state snapshot from the SDK. */
 function snapshotAuthState(): AuthSnapshot {
   const user = currentUser();
   if (!user) return { status: 'signed-out' };
@@ -72,7 +83,10 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
     case 'auth.signIn': {
       try {
         const user = await signIn();
-        const state: AuthSnapshot = { status: 'signed-in', user: toPrincipalSnapshot(user) };
+        const state: AuthSnapshot = {
+          status: 'signed-in',
+          user: toPrincipalSnapshot(user),
+        };
         return { ok: true, data: state };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
@@ -111,7 +125,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
     }
     case 'data.getStakeConfig': {
       try {
-        const data = await loadStakeConfig();
+        const data = await loadStakeConfig(req.stakeId);
         return { ok: true, data };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
@@ -126,7 +140,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
             error: { code: 'unauthenticated', message: 'sign in before saving config' },
           };
         }
-        await writeKindooConfig(req.payload, user);
+        await writeKindooConfig(req.stakeId, req.payload, user);
         return { ok: true, data: { ok: true } };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
@@ -134,7 +148,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
     }
     case 'data.getSeatByEmail': {
       try {
-        const seat = await loadSeatByEmail(req.canonical);
+        const seat = await loadSeatByEmail(req.stakeId, req.canonical);
         return { ok: true, data: seat };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
@@ -142,7 +156,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
     }
     case 'data.getSyncData': {
       try {
-        const data = await loadSyncData();
+        const data = await loadSyncData(req.stakeId);
         return { ok: true, data };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
@@ -165,8 +179,54 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
             error: { code: 'unauthenticated', message: 'sign in before writing site eid' },
           };
         }
-        await writeKindooSiteEid(req.payload.kindooSiteId, req.payload.kindooEid, user);
+        await writeKindooSiteEid(
+          req.stakeId,
+          req.payload.kindooSiteId,
+          req.payload.kindooEid,
+          user,
+        );
         return { ok: true, data: { ok: true } };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.resolveEidStakes': {
+      try {
+        // Wait for Firebase Auth to hydrate before reading currentUser().
+        // On SW cold-start (idle suspension → wake on the CS's retry
+        // click), `currentUser()` is null until the SDK rehydrates from
+        // IndexedDB. Without this gate the resolver would surface
+        // `managedStakeCount: 0` and route the panel to NotAuthorized —
+        // a no-retry dead end for a still-signed-in operator. Matches
+        // the `auth.getState` handler's pattern above.
+        await waitForAuthHydrated();
+        const user = currentUser();
+        if (!user) {
+          // Truly signed out (the CS would not normally call this, but
+          // we surface an unauthenticated wire error rather than
+          // `managedStakeCount: 0` so the panel routes to wire-error
+          // /retry — not NotAuthorized.
+          return {
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before resolving stakes' },
+          };
+        }
+        // `readManagerStakes` propagates token-refresh failures so the
+        // panel can surface a wire-error recovery state. The resolver
+        // returns `{ candidates, partialFailure }` so the panel can
+        // distinguish:
+        //   - `managedStakeCount === 0` → NotAuthorized
+        //   - `partialFailure && candidates.length === 0` → wire-error
+        //     (every per-stake read threw — transient outage)
+        //   - `managedStakeCount > 0 && !partialFailure && candidates.length === 0`
+        //     → no-candidates (EID not configured under any managed
+        //     stake)
+        const managerStakes = await readManagerStakes(user);
+        const { candidates, partialFailure } = await resolveEidStakes(req.eid, managerStakes);
+        return {
+          ok: true,
+          data: { candidates, managedStakeCount: managerStakes.length, partialFailure },
+        };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }

@@ -52,6 +52,7 @@ async function renderConfigure(
   const { ConfigurePanel } = await import('./ConfigurePanel');
   return render(
     <ConfigurePanel
+      stakeId="csnorth"
       email={opts.email ?? 'mgr@example.com'}
       onComplete={opts.onComplete ?? vi.fn()}
       onCancel={opts.onCancel ?? (() => undefined)}
@@ -164,7 +165,7 @@ describe('ConfigurePanel — active = home', () => {
     await user.click(screen.getByTestId('sba-configure-save'));
 
     await waitFor(() => expect(writeKindooConfigMock).toHaveBeenCalledTimes(1));
-    expect(writeKindooConfigMock).toHaveBeenCalledWith({
+    expect(writeKindooConfigMock).toHaveBeenCalledWith('csnorth', {
       kindooSiteId: null,
       siteId: 27994,
       siteName: 'Colorado Springs North Stake',
@@ -316,7 +317,7 @@ describe('ConfigurePanel — active = foreign', () => {
     await user.click(screen.getByTestId('sba-configure-save'));
 
     await waitFor(() => expect(writeKindooConfigMock).toHaveBeenCalledTimes(1));
-    expect(writeKindooConfigMock).toHaveBeenCalledWith({
+    expect(writeKindooConfigMock).toHaveBeenCalledWith('csnorth', {
       kindooSiteId: 'east-stake',
       siteId: 4321,
       siteName: 'East Stake',
@@ -367,7 +368,7 @@ describe('ConfigurePanel — active = foreign', () => {
     await user.click(screen.getByTestId('sba-configure-save'));
 
     await waitFor(() => expect(writeKindooConfigMock).toHaveBeenCalledTimes(1));
-    expect(writeKindooConfigMock).toHaveBeenCalledWith({
+    expect(writeKindooConfigMock).toHaveBeenCalledWith('csnorth', {
       kindooSiteId: 'east-stake',
       siteId: 4321,
       siteName: 'East Stake',

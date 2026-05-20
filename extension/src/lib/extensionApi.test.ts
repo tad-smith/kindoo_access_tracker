@@ -10,6 +10,13 @@ interface ChromeStub {
     onMessage: { addListener: ReturnType<typeof vi.fn>; removeListener: ReturnType<typeof vi.fn> };
     lastError: { message: string } | undefined;
   };
+  storage: {
+    local: {
+      get: ReturnType<typeof vi.fn>;
+      set: ReturnType<typeof vi.fn>;
+      remove: ReturnType<typeof vi.fn>;
+    };
+  };
 }
 
 function chromeStub(): ChromeStub {
@@ -108,7 +115,7 @@ describe('extensionApi', () => {
     await expect(signIn()).rejects.toMatchObject({ code: 'sw-unreachable' });
   });
 
-  it('getStakeConfig posts data.getStakeConfig and unwraps the bundle', async () => {
+  it('getStakeConfig posts data.getStakeConfig with the stakeId and unwraps the bundle', async () => {
     const bundle = {
       stake: { stake_id: 'csnorth', stake_name: 'CSN' },
       buildings: [{ building_id: 'b1', building_name: 'B1' }],
@@ -119,15 +126,15 @@ describe('extensionApi', () => {
       },
     );
     const { getStakeConfig } = await import('./extensionApi');
-    const result = await getStakeConfig();
+    const result = await getStakeConfig('csnorth');
     expect(chromeStub().runtime.sendMessage).toHaveBeenCalledWith(
-      { type: 'data.getStakeConfig' },
+      { type: 'data.getStakeConfig', stakeId: 'csnorth' },
       expect.any(Function),
     );
     expect(result).toEqual(bundle);
   });
 
-  it('writeKindooConfig posts data.writeKindooConfig with the payload', async () => {
+  it('writeKindooConfig posts data.writeKindooConfig with the stakeId + payload', async () => {
     chromeStub().runtime.sendMessage.mockImplementation(
       (_req: unknown, cb: SendMessageCallback) => {
         cb({ ok: true, data: { ok: true } });
@@ -140,9 +147,9 @@ describe('extensionApi', () => {
       siteName: 'CSN',
       buildingRules: [{ buildingId: 'b1', ruleId: 6248, ruleName: 'Doors' }],
     };
-    await writeKindooConfig(payload);
+    await writeKindooConfig('csnorth', payload);
     expect(chromeStub().runtime.sendMessage).toHaveBeenCalledWith(
-      { type: 'data.writeKindooConfig', payload },
+      { type: 'data.writeKindooConfig', stakeId: 'csnorth', payload },
       expect.any(Function),
     );
   });
@@ -155,11 +162,16 @@ describe('extensionApi', () => {
     );
     const { writeKindooConfig } = await import('./extensionApi');
     await expect(
-      writeKindooConfig({ kindooSiteId: null, siteId: 1, siteName: 'X', buildingRules: [] }),
+      writeKindooConfig('csnorth', {
+        kindooSiteId: null,
+        siteId: 1,
+        siteName: 'X',
+        buildingRules: [],
+      }),
     ).rejects.toMatchObject({ code: 'permission-denied' });
   });
 
-  it('getSeatByEmail posts data.getSeatByEmail with the canonical and unwraps the Seat', async () => {
+  it('getSeatByEmail posts data.getSeatByEmail with stakeId + canonical and unwraps the Seat', async () => {
     const seat = { member_canonical: 'x@example.com', building_names: ['B1'] };
     chromeStub().runtime.sendMessage.mockImplementation(
       (_req: unknown, cb: SendMessageCallback) => {
@@ -167,9 +179,9 @@ describe('extensionApi', () => {
       },
     );
     const { getSeatByEmail } = await import('./extensionApi');
-    const result = await getSeatByEmail('x@example.com');
+    const result = await getSeatByEmail('csnorth', 'x@example.com');
     expect(chromeStub().runtime.sendMessage).toHaveBeenCalledWith(
-      { type: 'data.getSeatByEmail', canonical: 'x@example.com' },
+      { type: 'data.getSeatByEmail', stakeId: 'csnorth', canonical: 'x@example.com' },
       expect.any(Function),
     );
     expect(result).toEqual(seat);
@@ -182,8 +194,61 @@ describe('extensionApi', () => {
       },
     );
     const { getSeatByEmail } = await import('./extensionApi');
-    const result = await getSeatByEmail('nobody@example.com');
+    const result = await getSeatByEmail('csnorth', 'nobody@example.com');
     expect(result).toBeNull();
+  });
+
+  it('resolveEidStakes posts data.resolveEidStakes with the eid and unwraps the full payload', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({
+          ok: true,
+          data: {
+            candidates: [
+              { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+              {
+                stakeId: 'east-co',
+                label: 'East CO',
+                match: 'foreign',
+                siteLabel: 'Foothills Building',
+              },
+            ],
+            managedStakeCount: 2,
+            partialFailure: false,
+          },
+        });
+      },
+    );
+    const { resolveEidStakes } = await import('./extensionApi');
+    const result = await resolveEidStakes(27994);
+    expect(chromeStub().runtime.sendMessage).toHaveBeenCalledWith(
+      { type: 'data.resolveEidStakes', eid: 27994 },
+      expect.any(Function),
+    );
+    expect(result).toEqual({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        {
+          stakeId: 'east-co',
+          label: 'East CO',
+          match: 'foreign',
+          siteLabel: 'Foothills Building',
+        },
+      ],
+      managedStakeCount: 2,
+      partialFailure: false,
+    });
+  });
+
+  it('resolveEidStakes throws ExtensionApiError on wire-level failure (Risk 2)', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: false, error: { code: 'network-error', message: 'token refresh failed' } });
+      },
+    );
+    const { resolveEidStakes, ExtensionApiError } = await import('./extensionApi');
+    await expect(resolveEidStakes(27994)).rejects.toBeInstanceOf(ExtensionApiError);
+    await expect(resolveEidStakes(27994)).rejects.toMatchObject({ code: 'network-error' });
   });
 
   it('syncApplyFix posts the discriminated payload + unwraps the callable result', async () => {
@@ -224,5 +289,61 @@ describe('extensionApi', () => {
         },
       }),
     ).rejects.toMatchObject({ code: 'permission-denied' });
+  });
+});
+
+describe('eidStakeChoice — per-EID picker persistence', () => {
+  beforeEach(() => {
+    chromeStub().storage.local.get.mockReset();
+    chromeStub().storage.local.set.mockReset();
+    chromeStub().storage.local.get.mockResolvedValue({});
+    chromeStub().storage.local.set.mockResolvedValue(undefined);
+  });
+
+  it('readEidStakeChoice returns null when no choice has been persisted', async () => {
+    chromeStub().storage.local.get.mockResolvedValue({});
+    const { readEidStakeChoice } = await import('./extensionApi');
+    expect(await readEidStakeChoice(27994)).toBeNull();
+  });
+
+  it('readEidStakeChoice returns the stored stakeId for the given EID', async () => {
+    chromeStub().storage.local.get.mockResolvedValue({
+      'sba.eidStakeChoice': { '27994': 'east-co', '4321': 'csnorth' },
+    });
+    const { readEidStakeChoice } = await import('./extensionApi');
+    expect(await readEidStakeChoice(27994)).toBe('east-co');
+    expect(await readEidStakeChoice(4321)).toBe('csnorth');
+    expect(await readEidStakeChoice(9999)).toBeNull();
+  });
+
+  it('writeEidStakeChoice merges into the existing map under the single canonical key', async () => {
+    chromeStub().storage.local.get.mockResolvedValue({
+      'sba.eidStakeChoice': { '4321': 'csnorth' },
+    });
+    const { writeEidStakeChoice } = await import('./extensionApi');
+    await writeEidStakeChoice(27994, 'east-co');
+    expect(chromeStub().storage.local.set).toHaveBeenCalledWith({
+      'sba.eidStakeChoice': { '4321': 'csnorth', '27994': 'east-co' },
+    });
+  });
+
+  it('clearEidStakeChoice drops the entry but leaves others intact', async () => {
+    chromeStub().storage.local.get.mockResolvedValue({
+      'sba.eidStakeChoice': { '27994': 'east-co', '4321': 'csnorth' },
+    });
+    const { clearEidStakeChoice } = await import('./extensionApi');
+    await clearEidStakeChoice(27994);
+    expect(chromeStub().storage.local.set).toHaveBeenCalledWith({
+      'sba.eidStakeChoice': { '4321': 'csnorth' },
+    });
+  });
+
+  it('clearEidStakeChoice is a no-op when the EID has no stored choice', async () => {
+    chromeStub().storage.local.get.mockResolvedValue({
+      'sba.eidStakeChoice': { '4321': 'csnorth' },
+    });
+    const { clearEidStakeChoice } = await import('./extensionApi');
+    await clearEidStakeChoice(99999);
+    expect(chromeStub().storage.local.set).not.toHaveBeenCalled();
   });
 });

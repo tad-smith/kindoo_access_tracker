@@ -4,13 +4,19 @@
 // through these handlers.
 //
 // Operations:
-//   - `loadStakeConfig()`           — one-shot read of stake + buildings +
-//                                     wards + kindooSites
-//   - `writeKindooConfig(payload)`  — single batched write across stake +
-//                                     building docs
-//   - `writeKindooSiteEid(...)`     — auto-populate `kindoo_eid` on a
-//                                     foreign `KindooSite` doc (Kindoo
-//                                     Sites Phase 3 — see spec §15)
+//   - `loadStakeConfig(stakeId)`         — one-shot read of stake + buildings +
+//                                           wards + kindooSites
+//   - `writeKindooConfig(stakeId, ...)`   — single batched write across stake +
+//                                           building docs
+//   - `writeKindooSiteEid(stakeId, ...)`  — auto-populate `kindoo_eid` on a
+//                                           foreign `KindooSite` doc (Kindoo
+//                                           Sites Phase 3 — see spec §15)
+//   - `resolveEidStakes(eid, user)`       — return the candidate stakes the
+//                                           caller manages that have `eid`
+//                                           configured (home or foreign)
+//
+// Every per-stake operation takes a `stakeId` parameter — the extension
+// no longer carries a single-stake constant.
 //
 // Both run under the SW's Firebase Auth session — the same one that
 // signs the v1 callable invocations. Firestore rules gate the actual
@@ -37,8 +43,7 @@ import type {
 import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
-import { STAKE_ID } from '../lib/constants';
-import type { WriteKindooConfigPayload } from '../lib/messaging';
+import type { EidStakeCandidate, WriteKindooConfigPayload } from '../lib/messaging';
 
 interface StakeConfigBundle {
   stake: Stake;
@@ -61,7 +66,7 @@ export interface SyncDataBundle {
   wardCallingTemplates: WardCallingTemplate[];
   stakeCallingTemplates: StakeCallingTemplate[];
   /**
-   * Foreign Kindoo sites under `stakes/{STAKE_ID}/kindooSites/*`. The
+   * Foreign Kindoo sites under `stakes/{stakeId}/kindooSites/*`. The
    * Sync feature filters its comparison to seats / users on the
    * currently-active Kindoo site (see `content/kindoo/sync/activeSite.ts`).
    * Empty for stakes that operate only the home Kindoo site.
@@ -70,26 +75,26 @@ export interface SyncDataBundle {
 }
 
 /**
- * One-shot read of `stakes/{STAKE_ID}` plus every doc under
- * `stakes/{STAKE_ID}/buildings/*`, `stakes/{STAKE_ID}/wards/*`, and
- * `stakes/{STAKE_ID}/kindooSites/*`. Buildings sorted by name (stable
+ * One-shot read of `stakes/{stakeId}` plus every doc under
+ * `stakes/{stakeId}/buildings/*`, `stakes/{stakeId}/wards/*`, and
+ * `stakes/{stakeId}/kindooSites/*`. Buildings sorted by name (stable
  * order in the v2.1 wizard); wards sorted by code (stable order for
  * v2.2 ward-scope resolution); kindooSites sorted by display_name for
  * predictable surfacing if a UI ever lists them inline.
  */
-export async function loadStakeConfig(): Promise<StakeConfigBundle> {
+export async function loadStakeConfig(stakeId: string): Promise<StakeConfigBundle> {
   const db = firestore();
-  const stakeRef = doc(db, 'stakes', STAKE_ID);
+  const stakeRef = doc(db, 'stakes', stakeId);
 
   const [stakeSnap, buildingsSnap, wardsSnap, kindooSitesSnap] = await Promise.all([
     getDoc(stakeRef),
-    getDocs(collection(db, 'stakes', STAKE_ID, 'buildings')),
-    getDocs(collection(db, 'stakes', STAKE_ID, 'wards')),
-    getDocs(collection(db, 'stakes', STAKE_ID, 'kindooSites')),
+    getDocs(collection(db, 'stakes', stakeId, 'buildings')),
+    getDocs(collection(db, 'stakes', stakeId, 'wards')),
+    getDocs(collection(db, 'stakes', stakeId, 'kindooSites')),
   ]);
 
   if (!stakeSnap.exists()) {
-    throw new Error(`stake doc ${STAKE_ID} not found`);
+    throw new Error(`stake doc ${stakeId} not found`);
   }
   const stake = stakeSnap.data() as Stake;
 
@@ -135,6 +140,7 @@ export async function loadStakeConfig(): Promise<StakeConfigBundle> {
  * `writeKindooConfig` below.
  */
 export async function writeKindooSiteEid(
+  stakeId: string,
   kindooSiteId: string,
   kindooEid: number,
   actor: User,
@@ -147,7 +153,7 @@ export async function writeKindooSiteEid(
     canonical: canonicalEmail(actor.email),
   };
   const db = firestore();
-  const stakeRef = doc(db, 'stakes', STAKE_ID);
+  const stakeRef = doc(db, 'stakes', stakeId);
   const stakeSnap = await getDoc(stakeRef);
   const homeSiteId = stakeSnap.exists()
     ? ((stakeSnap.data() as Stake).kindoo_config?.site_id ?? null)
@@ -158,7 +164,7 @@ export async function writeKindooSiteEid(
         `KindooSite '${kindooSiteId}'; this would trap HOME_EID on the foreign doc`,
     );
   }
-  const siteRef = doc(db, 'stakes', STAKE_ID, 'kindooSites', kindooSiteId);
+  const siteRef = doc(db, 'stakes', stakeId, 'kindooSites', kindooSiteId);
   const siteSnap = await getDoc(siteRef);
   const existingEid = siteSnap.exists()
     ? ((siteSnap.data() as KindooSite).kindoo_eid ?? null)
@@ -193,6 +199,7 @@ export async function writeKindooSiteEid(
  * writes, per the rules' integrity contract.
  */
 export async function writeKindooConfig(
+  stakeId: string,
   payload: WriteKindooConfigPayload,
   actor: User,
 ): Promise<void> {
@@ -228,8 +235,8 @@ export async function writeKindooConfig(
     // any field that exists today but isn't in the literal — and any
     // field future phases add. Phase 5 runs this writer on every
     // re-configure, so the partial-merge shape is load-bearing.
-    const stakeRef = doc(db, 'stakes', STAKE_ID);
-    const kindooSitesSnap = await getDocs(collection(db, 'stakes', STAKE_ID, 'kindooSites'));
+    const stakeRef = doc(db, 'stakes', stakeId);
+    const kindooSitesSnap = await getDocs(collection(db, 'stakes', stakeId, 'kindooSites'));
     const foreignEids = kindooSitesSnap.docs
       .map((d) => (d.data() as KindooSite).kindoo_eid)
       .filter((eid): eid is number => eid !== undefined && eid !== null);
@@ -273,7 +280,7 @@ export async function writeKindooConfig(
     // already has X. Without this guard the wizard's save would silently
     // overwrite X with Y and re-route door access for that foreign ward.
     // Re-asserting an identical value is still allowed.
-    const stakeRef = doc(db, 'stakes', STAKE_ID);
+    const stakeRef = doc(db, 'stakes', stakeId);
     const stakeSnap = await getDoc(stakeRef);
     const homeSiteId = stakeSnap.exists()
       ? ((stakeSnap.data() as Stake).kindoo_config?.site_id ?? null)
@@ -284,7 +291,7 @@ export async function writeKindooConfig(
           `KindooSite '${payload.kindooSiteId}'; this would trap HOME_EID on the foreign doc`,
       );
     }
-    const foreignRef = doc(db, 'stakes', STAKE_ID, 'kindooSites', payload.kindooSiteId);
+    const foreignRef = doc(db, 'stakes', stakeId, 'kindooSites', payload.kindooSiteId);
     const foreignSnap = await getDoc(foreignRef);
     const existingEid = foreignSnap.exists()
       ? ((foreignSnap.data() as KindooSite).kindoo_eid ?? null)
@@ -303,7 +310,7 @@ export async function writeKindooConfig(
   }
 
   for (const row of payload.buildingRules) {
-    const buildingRef = doc(db, 'stakes', STAKE_ID, 'buildings', row.buildingId);
+    const buildingRef = doc(db, 'stakes', stakeId, 'buildings', row.buildingId);
     batch.update(buildingRef, {
       kindoo_rule: {
         rule_id: row.ruleId,
@@ -326,9 +333,9 @@ export async function writeKindooConfig(
  * permission-denied that surfaces back through the SW message
  * pipeline.
  */
-export async function loadSyncData(): Promise<SyncDataBundle> {
+export async function loadSyncData(stakeId: string): Promise<SyncDataBundle> {
   const db = firestore();
-  const stakeRef = doc(db, 'stakes', STAKE_ID);
+  const stakeRef = doc(db, 'stakes', stakeId);
 
   const [
     stakeSnap,
@@ -340,16 +347,16 @@ export async function loadSyncData(): Promise<SyncDataBundle> {
     kindooSitesSnap,
   ] = await Promise.all([
     getDoc(stakeRef),
-    getDocs(collection(db, 'stakes', STAKE_ID, 'wards')),
-    getDocs(collection(db, 'stakes', STAKE_ID, 'buildings')),
-    getDocs(collection(db, 'stakes', STAKE_ID, 'seats')),
-    getDocs(collection(db, 'stakes', STAKE_ID, 'wardCallingTemplates')),
-    getDocs(collection(db, 'stakes', STAKE_ID, 'stakeCallingTemplates')),
-    getDocs(collection(db, 'stakes', STAKE_ID, 'kindooSites')),
+    getDocs(collection(db, 'stakes', stakeId, 'wards')),
+    getDocs(collection(db, 'stakes', stakeId, 'buildings')),
+    getDocs(collection(db, 'stakes', stakeId, 'seats')),
+    getDocs(collection(db, 'stakes', stakeId, 'wardCallingTemplates')),
+    getDocs(collection(db, 'stakes', stakeId, 'stakeCallingTemplates')),
+    getDocs(collection(db, 'stakes', stakeId, 'kindooSites')),
   ]);
 
   if (!stakeSnap.exists()) {
-    throw new Error(`stake doc ${STAKE_ID} not found`);
+    throw new Error(`stake doc ${stakeId} not found`);
   }
   const stake = stakeSnap.data() as Stake;
   const wards = wardsSnap.docs.map((d) => d.data() as Ward);
@@ -373,16 +380,110 @@ export async function loadSyncData(): Promise<SyncDataBundle> {
 }
 
 /**
- * One-shot read of `stakes/{STAKE_ID}/seats/{canonical}`. Returns
+ * One-shot read of `stakes/{stakeId}/seats/{canonical}`. Returns
  * `null` when the seat doesn't exist (first-time-add cases).
  * Firestore rules gate read authorisation; non-managers get a
  * permission-denied that surfaces back through the SW message
  * pipeline.
  */
-export async function loadSeatByEmail(canonical: string): Promise<Seat | null> {
+export async function loadSeatByEmail(stakeId: string, canonical: string): Promise<Seat | null> {
   const db = firestore();
-  const seatRef = doc(db, 'stakes', STAKE_ID, 'seats', canonical);
+  const seatRef = doc(db, 'stakes', stakeId, 'seats', canonical);
   const snap = await getDoc(seatRef);
   if (!snap.exists()) return null;
   return snap.data() as Seat;
+}
+
+/**
+ * Resolve the candidate stakes for a Kindoo EID. The operator's
+ * managed-stakes list comes from the auth token's claims (mirrored to
+ * the SW message handler as `PrincipalSnapshot.managerStakes`). For
+ * each managed stake we read the parent doc and `kindooSites/*` in
+ * parallel; a stake is a candidate iff its
+ * `kindoo_config.site_id === eid` (home match) OR any of its foreign
+ * `kindoo_eid` values equals `eid`.
+ *
+ * Returns an empty array when the caller manages no stakes OR no
+ * managed stake has the EID configured — the panel surfaces the
+ * existing "unknown site" error path in that case.
+ *
+ * Stakes are sorted alphabetically by `stake_name` so the picker
+ * order is deterministic.
+ */
+/** Outcome of a single per-stake resolve closure. `candidate: null`
+ * means "stake exists and was read successfully but the EID does not
+ * match"; `failed: true` means "the read threw and the stake was
+ * dropped from the candidate list." The two are kept distinct so the
+ * caller can route a transient Firestore-wide outage to the
+ * wire-error recovery state instead of the misleading no-candidates
+ * copy. */
+interface PerStakeOutcome {
+  candidate: EidStakeCandidate | null;
+  failed: boolean;
+}
+
+/** Aggregate resolver result. `partialFailure` is true iff at least
+ * one per-stake closure caught — drives App.tsx's wire-error route
+ * when combined with an empty `candidates` list. */
+export interface ResolveEidStakesOutcome {
+  candidates: EidStakeCandidate[];
+  partialFailure: boolean;
+}
+
+export async function resolveEidStakes(
+  eid: number,
+  managerStakes: readonly string[],
+): Promise<ResolveEidStakesOutcome> {
+  if (managerStakes.length === 0) return { candidates: [], partialFailure: false };
+  const db = firestore();
+  const reads = managerStakes.map(async (stakeId): Promise<PerStakeOutcome> => {
+    // Per-stake try / catch: a single stake's rules denial or
+    // Firestore hiccup must drop ONLY that stake from the candidate
+    // list, never nuke every candidate via Promise.all rejection.
+    // Downstream branching (picker / auto-pick / no-candidates /
+    // wire-error) wants the resolvable subset plus a failure flag so
+    // "EID isn't configured anywhere" reads distinct from
+    // "Firestore-wide outage."
+    try {
+      const stakeRef = doc(db, 'stakes', stakeId);
+      const [stakeSnap, sitesSnap] = await Promise.all([
+        getDoc(stakeRef),
+        getDocs(collection(db, 'stakes', stakeId, 'kindooSites')),
+      ]);
+      if (!stakeSnap.exists()) return { candidate: null, failed: false };
+      const stake = stakeSnap.data() as Stake;
+      const homeMatch = stake.kindoo_config?.site_id === eid;
+      if (homeMatch) {
+        const candidate: EidStakeCandidate = {
+          stakeId,
+          label: stake.stake_name,
+          match: 'home',
+        };
+        return { candidate, failed: false };
+      }
+      for (const sd of sitesSnap.docs) {
+        const site = sd.data() as KindooSite;
+        if (typeof site.kindoo_eid === 'number' && site.kindoo_eid === eid) {
+          const candidate: EidStakeCandidate = {
+            stakeId,
+            label: stake.stake_name,
+            match: 'foreign',
+            siteLabel: site.display_name,
+          };
+          return { candidate, failed: false };
+        }
+      }
+      return { candidate: null, failed: false };
+    } catch (err) {
+      console.warn(`[sba-ext] resolveEidStakes: dropped stake '${stakeId}'`, err);
+      return { candidate: null, failed: true };
+    }
+  });
+  const settled = await Promise.all(reads);
+  const candidates: EidStakeCandidate[] = settled
+    .map((o) => o.candidate)
+    .filter((c): c is EidStakeCandidate => c !== null);
+  candidates.sort((a, b) => a.label.localeCompare(b.label));
+  const partialFailure = settled.some((o) => o.failed);
+  return { candidates, partialFailure };
 }

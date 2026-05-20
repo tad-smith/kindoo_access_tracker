@@ -21,6 +21,10 @@ import { TabBar, type TabKey } from './TabBar';
 import { Toolbar } from './Toolbar';
 
 interface TabbedShellProps {
+  /** Active stake the shell's panels read / write against. Threaded
+   * from App's stake resolution step (single-candidate auto-pick or the
+   * picker's persisted choice). */
+  stakeId: string;
   email: string | null | undefined;
   bundle: StakeConfigBundle;
   /** Called when the queue fetch returns permission-denied — App flips
@@ -38,6 +42,7 @@ const PANEL_IDS: Record<TabKey, string> = {
 };
 
 export function TabbedShell({
+  stakeId,
   email,
   bundle,
   onPermissionDenied,
@@ -56,11 +61,16 @@ export function TabbedShell({
         aria-labelledby={`sba-tab-${active}`}
       >
         {active === 'queue' ? (
-          <QueuePanel bundle={bundle} onPermissionDenied={onPermissionDenied} />
+          <QueuePanel stakeId={stakeId} bundle={bundle} onPermissionDenied={onPermissionDenied} />
         ) : null}
-        {active === 'sync' ? <SyncPanel /> : null}
+        {active === 'sync' ? <SyncPanel stakeId={stakeId} /> : null}
         {active === 'configure' ? (
-          <ConfigurePanel mode="tab" email={email} onComplete={onConfigComplete} />
+          <ConfigurePanel
+            stakeId={stakeId}
+            mode="tab"
+            email={email}
+            onComplete={onConfigComplete}
+          />
         ) : null}
       </div>
     </main>

@@ -64,9 +64,10 @@ extension/
 │   │           │                  #  + AccessRule grants)
 │   │           └── fix.ts         # Phase 2 — per-row fix dispatcher (callable | orchestrator)
 │   ├── panel/
-│   │   ├── App.tsx                # React root — five-state router
+│   │   ├── App.tsx                # React root — top-level router (stake resolution + downstream)
 │   │   ├── SignedOutPanel.tsx
 │   │   ├── NotAuthorizedPanel.tsx
+│   │   ├── StakePicker.tsx        # full-takeover gate when an EID has >1 candidate stake (12.5)
 │   │   ├── ConfigurePanel.tsx     # v2.1 first-run + reconfigure wizard
 │   │   ├── QueuePanel.tsx
 │   │   ├── RequestCard.tsx        # v2.2 Provision & Complete button
@@ -78,8 +79,7 @@ extension/
 │       ├── auth.ts                # chrome.identity → Firebase credential exchange (SW)
 │       ├── api.ts                 # callable client wrappers (SW)
 │       ├── messaging.ts           # shared SW <-> CS wire protocol
-│       ├── extensionApi.ts        # CS-side wrappers over chrome.runtime.sendMessage
-│       └── constants.ts           # STAKE_ID
+│       └── extensionApi.ts        # CS-side wrappers over chrome.runtime.sendMessage
 └── CLAUDE.md
 ```
 
@@ -104,7 +104,7 @@ extension/
 - **Don't read Kindoo's `localStorage` outside the documented `kindoo/auth.ts` helper.** The keys are documented in the Kindoo runtime state section; readers route through that helper so we have one place to handle missing/expired state.
 - **Don't bundle production credentials.** Firebase web SDK config is public; the Google OAuth client ID is public-by-design; nothing else ships in the bundle.
 - **Don't depend on `apps/web/` code.** Share types via `@kindoo/shared`. The extension is its own consumer.
-- **Don't touch the Chrome storage keys** declared in `lib/messaging.ts` `STORAGE_KEYS` from outside the SW + the content-script mount file — they are owned by those two surfaces. If you need to read them from a new place, route through a message.
+- **Don't touch the Chrome storage keys** declared in `lib/messaging.ts` `STORAGE_KEYS` from outside their owning module. Each key has a single owner: `googleAccessToken` + `principalSnapshot` belong to the SW (`lib/auth.ts`), `panelOpen` belongs to the CS mount (`content/mount.tsx`), and `eidStakeChoice` belongs to `lib/extensionApi.ts`'s `readEidStakeChoice` / `writeEidStakeChoice` / `clearEidStakeChoice` helpers. If you need a new key, give it one owner module and route every other reader / writer through that owner.
 
 ## Kindoo runtime state — reference
 

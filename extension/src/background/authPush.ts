@@ -12,6 +12,12 @@ import type { User } from 'firebase/auth/web-extension';
 import { subscribeAuthState } from '../lib/auth';
 import type { AuthStateChangedPush, PrincipalSnapshot } from '../lib/messaging';
 
+/** Synchronous projection of the Firebase User to the wire shape. No
+ * claims read here — the panel does not consume them; the SW re-reads
+ * on every `data.resolveEidStakes` to avoid staleness. Keeping this
+ * synchronous also blocks the previous-iteration reorder race where a
+ * sign-out broadcast could overtake a still-in-flight sign-in's
+ * claims-read promise. */
 function toPrincipalSnapshot(user: User): PrincipalSnapshot {
   return {
     uid: user.uid,

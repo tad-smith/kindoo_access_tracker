@@ -32,7 +32,6 @@ import type { Discrepancy } from './detector';
 import { syncApplyFix as callSyncApplyFix } from '../../../lib/extensionApi';
 import { syncProvisionFromSeat } from '../sync-provision';
 import type { ProvisionDeps, ProvisionResult } from '../provision';
-import { STAKE_ID } from '../../../lib/constants';
 
 /** Result envelope the panel renders. Success → splice the row; error
  * → inline message + Retry button. */
@@ -83,6 +82,9 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
  * helpers need stake / wards / buildings / envs / session; the SBA
  * side just needs the row. The panel hands in whatever's loaded. */
 export interface DispatchContext {
+  /** Active stake the fix targets — used as the callable payload's
+   * `stakeId` and threaded into Firestore reads / writes. */
+  stakeId: string;
   stake: Stake;
   wards: Ward[];
   buildings: Building[];
@@ -148,7 +150,7 @@ function describeError(err: unknown): string {
  */
 async function dispatchSbaFix(d: Discrepancy, ctx: DispatchContext): Promise<SyncApplyFixResult> {
   const call = ctx.callSyncApplyFix ?? callSyncApplyFix;
-  const input = buildCallableInput(d);
+  const input = buildCallableInput(ctx.stakeId, d);
   return call(input);
 }
 
@@ -157,7 +159,7 @@ async function dispatchSbaFix(d: Discrepancy, ctx: DispatchContext): Promise<Syn
  * Exported for tests that want to assert the wire payload without
  * mocking the dispatcher.
  */
-export function buildCallableInput(d: Discrepancy): SyncApplyFixInput {
+export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFixInput {
   switch (d.code) {
     case 'kindoo-only': {
       if (!d.kindoo) throw new Error('kindoo-only row missing Kindoo block');
@@ -204,14 +206,14 @@ export function buildCallableInput(d: Discrepancy): SyncApplyFixInput {
         if (d.kindoo.endDate) (payload as { endDate?: string }).endDate = d.kindoo.endDate;
       }
       return {
-        stakeId: STAKE_ID,
+        stakeId,
         fix: { code: 'kindoo-only', payload: payload as never },
       };
     }
     case 'extra-kindoo-calling': {
       if (!d.kindoo) throw new Error('extra-kindoo-calling row missing Kindoo block');
       return {
-        stakeId: STAKE_ID,
+        stakeId,
         fix: {
           code: 'extra-kindoo-calling',
           payload: {
@@ -226,7 +228,7 @@ export function buildCallableInput(d: Discrepancy): SyncApplyFixInput {
         throw new Error('scope-mismatch row missing resolved Kindoo scope');
       }
       return {
-        stakeId: STAKE_ID,
+        stakeId,
         fix: {
           code: 'scope-mismatch',
           payload: { memberEmail: d.displayEmail, newScope: d.kindoo.primaryScope },
@@ -238,7 +240,7 @@ export function buildCallableInput(d: Discrepancy): SyncApplyFixInput {
         throw new Error('type-mismatch row missing resolved Kindoo type');
       }
       return {
-        stakeId: STAKE_ID,
+        stakeId,
         fix: {
           code: 'type-mismatch',
           payload: { memberEmail: d.displayEmail, newType: d.kindoo.intendedType },
@@ -268,7 +270,7 @@ export function buildCallableInput(d: Discrepancy): SyncApplyFixInput {
         newBuildingNames = d.kindoo.buildingNames;
       }
       return {
-        stakeId: STAKE_ID,
+        stakeId,
         fix: {
           code: 'buildings-mismatch',
           payload: {

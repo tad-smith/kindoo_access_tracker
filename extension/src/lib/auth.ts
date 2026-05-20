@@ -32,6 +32,37 @@ import { STORAGE_KEYS } from './messaging';
 // Note: in production this module runs in the service worker context.
 // Tests mock chrome.storage and firebase/auth at the module boundary.
 
+/** Per-stake claim block written by the backend's sync triggers. Mirrors
+ * `packages/shared/src/types/auth.ts` `StakeClaims`. */
+interface StakeClaimBlock {
+  manager?: boolean;
+  stake?: boolean;
+  wards?: string[];
+}
+
+/**
+ * Pull the `managerStakes` list from the signed-in user's Firebase ID
+ * token. Walks `claims.stakes[*]` and returns each stake id whose block
+ * has `manager === true`. An empty return means the claims were read
+ * successfully and the user holds no manager role anywhere — distinct
+ * from a token-refresh failure, which throws so callers can surface a
+ * "wire error" recovery state instead of mis-routing the user to
+ * NotAuthorized or no-candidates.
+ */
+export async function readManagerStakes(user: User): Promise<string[]> {
+  const result = await user.getIdTokenResult();
+  const claims = result.claims as { stakes?: Record<string, StakeClaimBlock> };
+  const map = claims.stakes;
+  if (!map || typeof map !== 'object') return [];
+  const out: string[] = [];
+  for (const [stakeId, block] of Object.entries(map)) {
+    if (block && typeof block === 'object' && block.manager === true) {
+      out.push(stakeId);
+    }
+  }
+  return out;
+}
+
 /** Discriminated error codes the UI can switch on for friendlier copy. */
 export type AuthErrorCode = 'consent_dismissed' | 'no_token' | 'sign_in_failed' | 'sign_out_failed';
 
@@ -184,6 +215,7 @@ export async function signOut(): Promise<void> {
     await chrome.storage.local.remove([
       STORAGE_KEYS.googleAccessToken,
       STORAGE_KEYS.principalSnapshot,
+      STORAGE_KEYS.eidStakeChoice,
     ]);
   } catch {
     // chrome.storage.local errors are non-fatal for sign-out.

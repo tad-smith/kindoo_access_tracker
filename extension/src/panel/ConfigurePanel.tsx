@@ -40,6 +40,8 @@ import { KindooApiError } from '../content/kindoo/client';
 import { resolveActiveKindooSite, type ActiveSiteResolution } from '../content/kindoo/siteCheck';
 
 interface ConfigurePanelProps {
+  /** Active stake — threaded from App's resolution step. */
+  stakeId: string;
   email?: string | null | undefined;
   onComplete: () => void;
   onCancel?: () => void;
@@ -111,6 +113,7 @@ function filterBuildingsForSite(
 }
 
 export function ConfigurePanel({
+  stakeId,
   email,
   onComplete,
   onCancel,
@@ -130,7 +133,7 @@ export function ConfigurePanel({
 
     let bundle: Awaited<ReturnType<typeof getStakeConfig>>;
     try {
-      bundle = await getStakeConfig();
+      bundle = await getStakeConfig(stakeId);
     } catch (err) {
       setStep({
         kind: 'fatal',
@@ -198,7 +201,7 @@ export function ConfigurePanel({
       assignments,
       saveError: null,
     });
-  }, []);
+  }, [stakeId]);
 
   useEffect(() => {
     void beginLoad();
@@ -230,7 +233,7 @@ export function ConfigurePanel({
         };
       });
       try {
-        await writeKindooConfig({
+        await writeKindooConfig(stakeId, {
           kindooSiteId: current.active.kind === 'home' ? null : current.active.siteId,
           siteId: current.eid,
           siteName: current.kindooSiteName,
@@ -244,7 +247,7 @@ export function ConfigurePanel({
         });
       }
     },
-    [onComplete],
+    [stakeId, onComplete],
   );
 
   const headerLabel = useMemo(() => {

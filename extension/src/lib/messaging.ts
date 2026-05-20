@@ -31,7 +31,10 @@ import type {
   WardCallingTemplate,
 } from '@kindoo/shared';
 
-/** Reduced user shape — the only auth fields the panel renders. */
+/** Reduced user shape — the only auth fields the panel renders. The
+ * panel does NOT consume custom claims directly; the SW re-reads
+ * `managerStakes` on every `data.resolveEidStakes` to avoid staleness
+ * windows between snapshot read and resolver dispatch. */
 export interface PrincipalSnapshot {
   uid: string;
   email: string | null;
@@ -88,6 +91,9 @@ export interface PanelTogglePushRequest {
  */
 export interface DataGetStakeConfigRequest {
   type: 'data.getStakeConfig';
+  /** Stake to read against. Threaded from the picker / single-resolution
+   * step in `App.tsx`; the SW does not assume a default. */
+  stakeId: string;
 }
 
 export interface DataGetStakeConfigPayload {
@@ -116,6 +122,8 @@ export interface DataGetStakeConfigPayload {
  */
 export interface DataWriteKindooConfigRequest {
   type: 'data.writeKindooConfig';
+  /** Stake to write against. */
+  stakeId: string;
   payload: WriteKindooConfigPayload;
 }
 
@@ -159,6 +167,8 @@ export interface WriteKindooConfigPayload {
  */
 export interface DataGetSeatByEmailRequest {
   type: 'data.getSeatByEmail';
+  /** Stake to read against. */
+  stakeId: string;
   /** Canonical email — caller has already run `canonicalEmail()`. */
   canonical: string;
 }
@@ -173,6 +183,8 @@ export interface DataGetSeatByEmailRequest {
  */
 export interface DataWriteKindooSiteEidRequest {
   type: 'data.writeKindooSiteEid';
+  /** Stake to write against. */
+  stakeId: string;
   payload: {
     /** Foreign `KindooSite` doc id under `stakes/{stakeId}/kindooSites/`. */
     kindooSiteId: string;
@@ -187,6 +199,8 @@ export interface DataWriteKindooSiteEidRequest {
  */
 export interface DataGetSyncDataRequest {
   type: 'data.getSyncData';
+  /** Stake to read against. */
+  stakeId: string;
 }
 
 /**
@@ -210,11 +224,58 @@ export interface SyncDataBundle {
   wardCallingTemplates: WardCallingTemplate[];
   stakeCallingTemplates: StakeCallingTemplate[];
   /**
-   * Foreign Kindoo sites (`stakes/{STAKE_ID}/kindooSites/*`). Used by
+   * Foreign Kindoo sites (`stakes/{stakeId}/kindooSites/*`). Used by
    * the Sync detector to scope drift comparisons to the active Kindoo
    * site (see `content/kindoo/sync/activeSite.ts`).
    */
   kindooSites: KindooSite[];
+}
+
+/**
+ * Resolve the set of stakes the signed-in operator manages that are
+ * configured with the given Kindoo EID — either as a stake's home site
+ * (`stake.kindoo_config.site_id`) or as one of its `kindooSites/<id>`
+ * foreign entries (`kindoo_eid`). Drives the slide-over panel's stake
+ * picker when an EID is shared across multiple managed stakes.
+ */
+export interface DataResolveEidStakesRequest {
+  type: 'data.resolveEidStakes';
+  /** Active Kindoo session's EID (DOM-scraped by the content script). */
+  eid: number;
+}
+
+/** One candidate stake for a given EID. */
+export interface EidStakeCandidate {
+  stakeId: string;
+  /** Display label sourced from the stake doc (`stake_name`). */
+  label: string;
+  /** Why the EID matched this stake — drives an inline hint in the
+   * picker. `home` = `stake.kindoo_config.site_id === eid`;
+   * `foreign` = some `kindooSites/<id>.kindoo_eid === eid`. */
+  match: 'home' | 'foreign';
+  /** When `match === 'foreign'`, the foreign site's display name. */
+  siteLabel?: string;
+}
+
+/** Wire shape for resolveEidStakes result. The count + flag fields let
+ * the panel disambiguate three structurally distinct empty-candidates
+ * cases without re-querying:
+ *   - `managedStakeCount === 0`                          → NotAuthorized
+ *   - `partialFailure && candidates.length === 0`        → wire-error
+ *     (every per-stake read threw — transient outage; misleading to
+ *      tell the operator to reconfigure SBA)
+ *   - `managedStakeCount > 0 && !partialFailure && candidates.length === 0`
+ *                                                       → no-candidates
+ *     (genuine "EID isn't configured under any of your stakes") */
+export interface ResolveEidStakesPayload {
+  candidates: EidStakeCandidate[];
+  /** Total number of stakes on which the signed-in user holds
+   * `manager: true`. Zero routes to NotAuthorized. */
+  managedStakeCount: number;
+  /** True iff at least one per-stake closure caught (rules denial,
+   * Firestore hiccup, transient outage). Empty `candidates` plus this
+   * flag routes to the wire-error recovery state. */
+  partialFailure: boolean;
 }
 
 /** Discriminated union of every request the panel may send. */
@@ -230,7 +291,8 @@ export type ExtensionRequest =
   | DataGetSeatByEmailRequest
   | DataGetSyncDataRequest
   | DataSyncApplyFixRequest
-  | DataWriteKindooSiteEidRequest;
+  | DataWriteKindooSiteEidRequest
+  | DataResolveEidStakesRequest;
 
 // ---- Response envelopes ------------------------------------------------
 
@@ -247,6 +309,7 @@ export type DataGetSeatByEmailResponse = Result<Seat | null>;
 export type DataGetSyncDataResponse = Result<SyncDataBundle>;
 export type DataSyncApplyFixResponse = Result<SyncApplyFixResult>;
 export type DataWriteKindooSiteEidResponse = Result<{ ok: true }>;
+export type DataResolveEidStakesResponse = Result<ResolveEidStakesPayload>;
 
 /** Lookup from a request `type` to its response shape. */
 export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequest
@@ -271,7 +334,9 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
                     ? DataSyncApplyFixResponse
                     : R extends DataWriteKindooSiteEidRequest
                       ? DataWriteKindooSiteEidResponse
-                      : never;
+                      : R extends DataResolveEidStakesRequest
+                        ? DataResolveEidStakesResponse
+                        : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 
@@ -296,4 +361,17 @@ export const STORAGE_KEYS = {
   /** Whether the slide-over panel is open. Persists across Kindoo
    * SPA navigations + page reloads. */
   panelOpen: 'sba.panelOpen',
+  /**
+   * Per-EID stake choice. Value is `Record<eidString, stakeId>` — one
+   * single chrome.storage.local slot rather than one slot per EID so
+   * sign-out can wipe every choice in a single `remove()`. Written by
+   * the picker's confirm handler; read on every panel mount during
+   * App.tsx's active-stake resolution. Stored choices are validated
+   * against the live `data.resolveEidStakes` result and dropped if the
+   * stake is no longer a candidate (role revocation, config change).
+   */
+  eidStakeChoice: 'sba.eidStakeChoice',
 } as const;
+
+/** Shape stored under `STORAGE_KEYS.eidStakeChoice`. */
+export type EidStakeChoiceMap = Record<string, string>;

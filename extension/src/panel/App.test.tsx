@@ -22,6 +22,10 @@ const markRequestCompleteMock = vi.fn();
 const getStakeConfigMock = vi.fn();
 const writeKindooConfigMock = vi.fn();
 const getSyncDataMock = vi.fn();
+const resolveEidStakesMock = vi.fn();
+const readEidStakeChoiceMock = vi.fn();
+const writeEidStakeChoiceMock = vi.fn();
+const clearEidStakeChoiceMock = vi.fn();
 const readKindooSessionMock = vi.fn();
 const listAllEnvironmentUsersMock = vi.fn();
 
@@ -37,6 +41,10 @@ vi.mock('../lib/extensionApi', async () => {
     getStakeConfig: (...args: unknown[]) => getStakeConfigMock(...args),
     writeKindooConfig: (...args: unknown[]) => writeKindooConfigMock(...args),
     getSyncData: (...args: unknown[]) => getSyncDataMock(...args),
+    resolveEidStakes: (...args: unknown[]) => resolveEidStakesMock(...args),
+    readEidStakeChoice: (...args: unknown[]) => readEidStakeChoiceMock(...args),
+    writeEidStakeChoice: (...args: unknown[]) => writeEidStakeChoiceMock(...args),
+    clearEidStakeChoice: (...args: unknown[]) => clearEidStakeChoiceMock(...args),
   };
 });
 
@@ -128,11 +136,28 @@ describe('App', () => {
     getStakeConfigMock.mockReset();
     writeKindooConfigMock.mockReset();
     getSyncDataMock.mockReset();
+    resolveEidStakesMock.mockReset();
+    readEidStakeChoiceMock.mockReset();
+    writeEidStakeChoiceMock.mockReset();
+    clearEidStakeChoiceMock.mockReset();
     readKindooSessionMock.mockReset();
     listAllEnvironmentUsersMock.mockReset();
     // Most existing tests assume the stake is already configured; the
     // needs-config flow has its own dedicated tests.
     getStakeConfigMock.mockResolvedValue(configuredBundle());
+    // Default to "operator is on a Kindoo site that maps to exactly
+    // one managed stake" — keeps existing tests on the happy path
+    // without modeling the picker explicitly. Picker-specific tests
+    // override these.
+    readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 't', eid: 27994 } });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
+      managedStakeCount: 1,
+      partialFailure: false,
+    });
+    readEidStakeChoiceMock.mockResolvedValue(null);
+    writeEidStakeChoiceMock.mockResolvedValue(undefined);
+    clearEidStakeChoiceMock.mockResolvedValue(undefined);
   });
   afterEach(() => {
     vi.resetModules();
@@ -179,7 +204,21 @@ describe('App', () => {
       displayName: null,
     });
     getStakeConfigMock.mockResolvedValue(unconfiguredBundle());
-    readKindooSessionMock.mockReturnValue({ ok: false, error: 'no-token' });
+    // App's resolveStake uses the default Kindoo session set in
+    // beforeEach (eid 27994, one candidate). The wizard's internal
+    // ConfigurePanel mounts and immediately calls readKindooSession a
+    // second time; override here so the wizard's own probe surfaces
+    // its no-token branch — but App still mounts ConfigurePanel.
+    let sessionCalls = 0;
+    readKindooSessionMock.mockImplementation(() => {
+      sessionCalls += 1;
+      // First call: App's stake resolver. Use a valid session.
+      if (sessionCalls === 1) return { ok: true, session: { token: 't', eid: 27994 } };
+      // Subsequent calls: wizard's own probe. The test asserts the
+      // wizard rendered; its internal branching is covered in
+      // ConfigurePanel.test.tsx.
+      return { ok: false, error: 'no-token' };
+    });
 
     await renderApp();
 
@@ -260,9 +299,15 @@ describe('App', () => {
       displayName: null,
     });
     getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
-    // ConfigurePanel inside the tab starts loading on mount; stub the
-    // session so it does not throw.
-    readKindooSessionMock.mockReturnValue({ ok: false, error: 'no-token' });
+    // App's stake resolver needs a valid session; ConfigurePanel
+    // inside the gear tab makes its own probe and is allowed to
+    // surface no-token — its rendering happens regardless.
+    let sessionCalls = 0;
+    readKindooSessionMock.mockImplementation(() => {
+      sessionCalls += 1;
+      if (sessionCalls === 1) return { ok: true, session: { token: 't', eid: 27994 } };
+      return { ok: false, error: 'no-token' };
+    });
 
     const user = userEvent.setup();
     await renderApp();
@@ -317,5 +362,217 @@ describe('App', () => {
     await renderApp();
     await waitFor(() => expect(screen.getByTestId('sba-remove-r2')).toBeInTheDocument());
     expect(screen.getByTestId('sba-remove-r2')).toHaveTextContent('Remove Kindoo Access');
+  });
+
+  it('renders the stake picker when the active EID resolves to ≥ 2 managed stakes with no stored choice', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        {
+          stakeId: 'east-co',
+          label: 'East CO',
+          match: 'foreign',
+          siteLabel: 'Foothills Building',
+        },
+      ],
+      managedStakeCount: 2,
+      partialFailure: false,
+    });
+    readEidStakeChoiceMock.mockResolvedValue(null);
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-stake-picker')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-stake-picker-csnorth')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-stake-picker-east-co')).toBeInTheDocument();
+    // The shell is gated behind the picker — no toolbar / tabs yet.
+    expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
+  });
+
+  it('skips the picker and resolves directly when a previously-stored choice is still a candidate', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+      ],
+      managedStakeCount: 2,
+      partialFailure: false,
+    });
+    readEidStakeChoiceMock.mockResolvedValue('east-co');
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-stake-picker')).toBeNull();
+    // Queue read carries the resolved stakeId.
+    expect(getMyPendingRequestsMock).toHaveBeenCalledWith({ stakeId: 'east-co' });
+  });
+
+  it('clears a stale stored choice when it is no longer a candidate, then renders the picker', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+      ],
+      managedStakeCount: 2,
+      partialFailure: false,
+    });
+    // Stored choice points at a stake no longer in the candidate set
+    // (operator's role got rotated away).
+    readEidStakeChoiceMock.mockResolvedValue('south-co');
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-stake-picker')).toBeInTheDocument());
+    expect(clearEidStakeChoiceMock).toHaveBeenCalledWith(27994);
+  });
+
+  it('renders the no-candidates recovery copy when the operator manages stakes but none has the EID configured', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    // Managed-stake count > 0 with empty candidates list = genuine
+    // "EID isn't configured under any of my stakes" → reconfigure copy.
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [],
+      managedStakeCount: 2,
+      partialFailure: false,
+    });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-no-candidates')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-no-candidates-message')).toHaveTextContent('EID 27994');
+    expect(screen.queryByTestId('sba-stake-picker')).toBeNull();
+    expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
+  });
+
+  it('renders NotAuthorized (not no-candidates) when the user holds no manager role anywhere', async () => {
+    // Risk 3 fix: signed-in user with `stakes === {}` in claims should
+    // land on NotAuthorized, not on the reconfigure-copy
+    // no-candidates state. The old queue-callable permission-denied
+    // route is preempted in App.tsx now that managerStakes is known
+    // up front.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [],
+      managedStakeCount: 0,
+      partialFailure: false,
+    });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-not-authorized')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-no-candidates')).toBeNull();
+    expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
+  });
+
+  it('renders the wire-error recovery copy (not no-candidates) when resolveEidStakes throws', async () => {
+    // Risk 2 fix: a token-refresh blip or other SW failure should not
+    // be misrepresented as "this EID isn't configured." Distinct copy,
+    // distinct retry button.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockRejectedValue(new Error('SW asleep'));
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-wire-error')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-wire-error-message')).toHaveTextContent('reach SBA');
+    expect(screen.queryByTestId('sba-no-candidates')).toBeNull();
+    expect(screen.queryByTestId('sba-not-authorized')).toBeNull();
+    expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
+  });
+
+  it('renders the wire-error recovery copy when every per-stake read fails (Item 2)', async () => {
+    // Item 2: a Firestore-wide outage surfaces as the resolver
+    // returning empty candidates + partialFailure=true. The panel
+    // must distinguish this from "EID not configured anywhere"
+    // (which would tell the operator to reconfigure SBA — wrong).
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [],
+      managedStakeCount: 2,
+      partialFailure: true,
+    });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-wire-error')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-no-candidates')).toBeNull();
+    expect(screen.queryByTestId('sba-not-authorized')).toBeNull();
+    expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
+  });
+
+  it('renders the no-kindoo recovery copy when the Kindoo session is missing', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    readKindooSessionMock.mockReturnValue({ ok: false, error: 'no-token' });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-no-kindoo')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-stake-picker')).toBeNull();
+    expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
+  });
+
+  it('persists the picker choice and re-renders the resolved tabbed shell', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+      ],
+      managedStakeCount: 2,
+      partialFailure: false,
+    });
+    readEidStakeChoiceMock.mockResolvedValue(null);
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    const user = userEvent.setup();
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-stake-picker')).toBeInTheDocument());
+    await user.click(screen.getByTestId('sba-stake-picker-east-co'));
+
+    await waitFor(() => expect(writeEidStakeChoiceMock).toHaveBeenCalledWith(27994, 'east-co'));
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(getMyPendingRequestsMock).toHaveBeenCalledWith({ stakeId: 'east-co' });
   });
 });

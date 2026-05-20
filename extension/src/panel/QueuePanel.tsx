@@ -12,10 +12,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AccessRequest } from '@kindoo/shared';
 import { getMyPendingRequests, type StakeConfigBundle } from '../lib/extensionApi';
-import { STAKE_ID } from '../lib/constants';
 import { RequestCard } from './RequestCard';
 
 interface QueuePanelProps {
+  /** Active stake — threaded from App's resolution step. */
+  stakeId: string;
   /** Stake / building / ward config loaded by App; threaded down so
    * each RequestCard can run the v2.2 provision flow. */
   bundle: StakeConfigBundle;
@@ -31,7 +32,7 @@ type FetchState =
   | { status: 'ready'; requests: AccessRequest[] }
   | { status: 'error'; message: string };
 
-export function QueuePanel({ bundle, onPermissionDenied }: QueuePanelProps) {
+export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelProps) {
   const [state, setState] = useState<FetchState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
 
@@ -40,7 +41,7 @@ export function QueuePanel({ bundle, onPermissionDenied }: QueuePanelProps) {
       if (mode === 'refresh') setRefreshing(true);
       else setState({ status: 'loading' });
       try {
-        const result = await getMyPendingRequests({ stakeId: STAKE_ID });
+        const result = await getMyPendingRequests({ stakeId });
         setState({ status: 'ready', requests: result.requests });
       } catch (err) {
         const code = readFunctionsErrorCode(err);
@@ -54,7 +55,7 @@ export function QueuePanel({ bundle, onPermissionDenied }: QueuePanelProps) {
         setRefreshing(false);
       }
     },
-    [onPermissionDenied],
+    [stakeId, onPermissionDenied],
   );
 
   useEffect(() => {
@@ -101,7 +102,12 @@ export function QueuePanel({ bundle, onPermissionDenied }: QueuePanelProps) {
         <ul className="sba-request-list" data-testid="sba-queue-list">
           {state.requests.map((req) => (
             <li key={req.request_id}>
-              <RequestCard request={req} bundle={bundle} onDismissed={handleDismissed} />
+              <RequestCard
+                stakeId={stakeId}
+                request={req}
+                bundle={bundle}
+                onDismissed={handleDismissed}
+              />
             </li>
           ))}
         </ul>

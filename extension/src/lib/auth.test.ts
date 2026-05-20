@@ -191,3 +191,58 @@ describe('auth.signOut', () => {
     await expect(signOut()).rejects.toMatchObject({ code: 'sign_out_failed' });
   });
 });
+
+describe('readManagerStakes', () => {
+  it('returns every stake id with manager === true', async () => {
+    const user = {
+      getIdTokenResult: vi.fn().mockResolvedValue({
+        claims: {
+          stakes: {
+            csnorth: { manager: true, stake: false, wards: [] },
+            'east-co': { manager: true, stake: false, wards: [] },
+            'south-co': { manager: false, stake: true, wards: [] },
+          },
+        },
+      }),
+    };
+    const { readManagerStakes } = await import('./auth');
+    const out = await readManagerStakes(user as never);
+    expect(out.sort()).toEqual(['csnorth', 'east-co']);
+  });
+
+  it('returns an empty array when the user has no stake claims', async () => {
+    const user = {
+      getIdTokenResult: vi.fn().mockResolvedValue({ claims: {} }),
+    };
+    const { readManagerStakes } = await import('./auth');
+    expect(await readManagerStakes(user as never)).toEqual([]);
+  });
+
+  it('propagates the error when getIdTokenResult throws (callers route to wire-error state)', async () => {
+    // Risk 2 fix: swallowing to [] would conflate token-refresh
+    // failures with "user has no manager roles," routing transient
+    // wire failures to NotAuthorized or no-candidates. The resolver
+    // now propagates so App.tsx can surface the distinct
+    // "Couldn't reach SBA" recovery copy.
+    const user = {
+      getIdTokenResult: vi.fn().mockRejectedValue(new Error('network')),
+    };
+    const { readManagerStakes } = await import('./auth');
+    await expect(readManagerStakes(user as never)).rejects.toThrow('network');
+  });
+
+  it('ignores non-manager entries (stake-only, bishopric-only)', async () => {
+    const user = {
+      getIdTokenResult: vi.fn().mockResolvedValue({
+        claims: {
+          stakes: {
+            csnorth: { manager: false, stake: true, wards: [] },
+            'east-co': { manager: false, stake: false, wards: ['CO'] },
+          },
+        },
+      }),
+    };
+    const { readManagerStakes } = await import('./auth');
+    expect(await readManagerStakes(user as never)).toEqual([]);
+  });
+});

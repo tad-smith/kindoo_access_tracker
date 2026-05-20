@@ -113,7 +113,12 @@ function describeKindooError(err: unknown): string {
   return String(err);
 }
 
-export function SyncPanel() {
+interface SyncPanelProps {
+  /** Active stake — threaded from App's resolution step. */
+  stakeId: string;
+}
+
+export function SyncPanel({ stakeId }: SyncPanelProps) {
   const [step, setStep] = useState<Step>({ kind: 'idle' });
   const [filter, setFilter] = useState<FilterMode>('all');
   const [codeFilter, setCodeFilter] = useState<CodeFilter>('all');
@@ -134,7 +139,7 @@ export function SyncPanel() {
       // (to know which RIDs to fetch), so it kicks off once the
       // bundle resolves.
       const [bundle, kindooUsers, envs] = await Promise.all([
-        getSyncData(),
+        getSyncData(stakeId),
         listAllEnvironmentUsers(session),
         getEnvironments(session),
       ]);
@@ -187,7 +192,7 @@ export function SyncPanel() {
       );
 
       const result = detect({ ...bundle, kindooUsers: enriched, activeSite });
-      const ctx = buildDispatchContext(bundle, envs, session);
+      const ctx = buildDispatchContext(stakeId, bundle, envs, session);
       const activeSiteLabel = describeActiveSite(activeSite, bundle);
       setStep({ kind: 'report', result, ctx, activeSiteLabel });
     } catch (err) {
@@ -195,7 +200,7 @@ export function SyncPanel() {
         err instanceof KindooApiError ? describeKindooError(err) : describeExtensionError(err);
       setStep({ kind: 'error', message });
     }
-  }, []);
+  }, [stakeId]);
 
   return (
     <div className="sba-body" data-testid="sba-sync">
@@ -212,11 +217,13 @@ export function SyncPanel() {
 }
 
 function buildDispatchContext(
+  stakeId: string,
   bundle: SyncDataBundle,
   envs: KindooEnvironment[],
   session: KindooSession,
 ): DispatchContext {
   return {
+    stakeId,
     stake: bundle.stake,
     wards: bundle.wards,
     buildings: bundle.buildings,

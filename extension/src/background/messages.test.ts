@@ -9,6 +9,7 @@ const signInMock = vi.fn();
 const signOutMock = vi.fn();
 const currentUserMock = vi.fn();
 const waitForAuthHydratedMock = vi.fn(() => Promise.resolve(null));
+const readManagerStakesMock = vi.fn(() => Promise.resolve<string[]>([]));
 
 vi.mock('../lib/auth', async () => {
   const actual = await vi.importActual<typeof import('../lib/auth')>('../lib/auth');
@@ -18,6 +19,7 @@ vi.mock('../lib/auth', async () => {
     signOut: () => signOutMock(),
     currentUser: () => currentUserMock(),
     waitForAuthHydrated: () => waitForAuthHydratedMock(),
+    readManagerStakes: (..._args: unknown[]) => readManagerStakesMock(),
   };
 });
 
@@ -35,12 +37,14 @@ const writeKindooConfigMock = vi.fn();
 const loadSeatByEmailMock = vi.fn();
 const loadSyncDataMock = vi.fn();
 const writeKindooSiteEidMock = vi.fn();
+const resolveEidStakesMock = vi.fn();
 vi.mock('./data', () => ({
   loadStakeConfig: (...args: unknown[]) => loadStakeConfigMock(...args),
   writeKindooConfig: (...args: unknown[]) => writeKindooConfigMock(...args),
   loadSeatByEmail: (...args: unknown[]) => loadSeatByEmailMock(...args),
   loadSyncData: (...args: unknown[]) => loadSyncDataMock(...args),
   writeKindooSiteEid: (...args: unknown[]) => writeKindooSiteEidMock(...args),
+  resolveEidStakes: (...args: unknown[]) => resolveEidStakesMock(...args),
 }));
 
 describe('handleRequest', () => {
@@ -50,6 +54,8 @@ describe('handleRequest', () => {
     currentUserMock.mockReset();
     waitForAuthHydratedMock.mockReset();
     waitForAuthHydratedMock.mockResolvedValue(null);
+    readManagerStakesMock.mockReset();
+    readManagerStakesMock.mockResolvedValue([]);
     getMyPendingRequestsMock.mockReset();
     markRequestCompleteMock.mockReset();
     syncApplyFixMock.mockReset();
@@ -58,6 +64,7 @@ describe('handleRequest', () => {
     loadSeatByEmailMock.mockReset();
     loadSyncDataMock.mockReset();
     writeKindooSiteEidMock.mockReset();
+    resolveEidStakesMock.mockReset();
   });
   afterEach(() => {
     vi.resetModules();
@@ -82,7 +89,11 @@ describe('handleRequest', () => {
       ok: true,
       data: {
         status: 'signed-in',
-        user: { uid: 'u1', email: 'mgr@example.com', displayName: 'Manager' },
+        user: {
+          uid: 'u1',
+          email: 'mgr@example.com',
+          displayName: 'Manager',
+        },
       },
     });
   });
@@ -95,7 +106,11 @@ describe('handleRequest', () => {
       ok: true,
       data: {
         status: 'signed-in',
-        user: { uid: 'u1', email: 'mgr@example.com', displayName: null },
+        user: {
+          uid: 'u1',
+          email: 'mgr@example.com',
+          displayName: null,
+        },
       },
     });
   });
@@ -165,8 +180,8 @@ describe('handleRequest', () => {
     };
     loadStakeConfigMock.mockResolvedValue(fakeBundle);
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.getStakeConfig' });
-    expect(loadStakeConfigMock).toHaveBeenCalledTimes(1);
+    const result = await handleRequest({ type: 'data.getStakeConfig', stakeId: 'csnorth' });
+    expect(loadStakeConfigMock).toHaveBeenCalledWith('csnorth');
     expect(result).toEqual({ ok: true, data: fakeBundle });
   });
 
@@ -175,7 +190,7 @@ describe('handleRequest', () => {
       Object.assign(new Error('rules blocked the read'), { code: 'permission-denied' }),
     );
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.getStakeConfig' });
+    const result = await handleRequest({ type: 'data.getStakeConfig', stakeId: 'csnorth' });
     expect(result).toEqual({
       ok: false,
       error: { code: 'permission-denied', message: 'rules blocked the read' },
@@ -187,6 +202,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooConfig',
+      stakeId: 'csnorth',
       payload: { kindooSiteId: null, siteId: 27994, siteName: 'CSN', buildingRules: [] },
     });
     expect(writeKindooConfigMock).not.toHaveBeenCalled();
@@ -207,8 +223,12 @@ describe('handleRequest', () => {
       buildingRules: [{ buildingId: 'cordera', ruleId: 6248, ruleName: 'Cordera Doors' }],
     };
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.writeKindooConfig', payload });
-    expect(writeKindooConfigMock).toHaveBeenCalledWith(payload, user);
+    const result = await handleRequest({
+      type: 'data.writeKindooConfig',
+      stakeId: 'csnorth',
+      payload,
+    });
+    expect(writeKindooConfigMock).toHaveBeenCalledWith('csnorth', payload, user);
     expect(result).toEqual({ ok: true, data: { ok: true } });
   });
 
@@ -223,8 +243,12 @@ describe('handleRequest', () => {
       buildingRules: [{ buildingId: 'foothills', ruleId: 8001, ruleName: 'Foothills Doors' }],
     };
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.writeKindooConfig', payload });
-    expect(writeKindooConfigMock).toHaveBeenCalledWith(payload, user);
+    const result = await handleRequest({
+      type: 'data.writeKindooConfig',
+      stakeId: 'csnorth',
+      payload,
+    });
+    expect(writeKindooConfigMock).toHaveBeenCalledWith('csnorth', payload, user);
     expect(result).toEqual({ ok: true, data: { ok: true } });
   });
 
@@ -240,6 +264,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooConfig',
+      stakeId: 'csnorth',
       payload: { kindooSiteId: null, siteId: 27994, siteName: 'CSN', buildingRules: [] },
     });
     expect(result).toEqual({
@@ -253,6 +278,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooSiteEid',
+      stakeId: 'csnorth',
       payload: { kindooSiteId: 'east-stake', kindooEid: 4321 },
     });
     expect(writeKindooSiteEidMock).not.toHaveBeenCalled();
@@ -269,9 +295,10 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.writeKindooSiteEid',
+      stakeId: 'csnorth',
       payload: { kindooSiteId: 'east-stake', kindooEid: 4321 },
     });
-    expect(writeKindooSiteEidMock).toHaveBeenCalledWith('east-stake', 4321, user);
+    expect(writeKindooSiteEidMock).toHaveBeenCalledWith('csnorth', 'east-stake', 4321, user);
     expect(result).toEqual({ ok: true, data: { ok: true } });
   });
 
@@ -290,9 +317,10 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.getSeatByEmail',
+      stakeId: 'csnorth',
       canonical: 'tad.e.smith@gmail.com',
     });
-    expect(loadSeatByEmailMock).toHaveBeenCalledWith('tad.e.smith@gmail.com');
+    expect(loadSeatByEmailMock).toHaveBeenCalledWith('csnorth', 'tad.e.smith@gmail.com');
     expect(result).toEqual({ ok: true, data: seat });
   });
 
@@ -301,6 +329,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.getSeatByEmail',
+      stakeId: 'csnorth',
       canonical: 'unknown@example.com',
     });
     expect(result).toEqual({ ok: true, data: null });
@@ -313,6 +342,7 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.getSeatByEmail',
+      stakeId: 'csnorth',
       canonical: 'x@example.com',
     });
     expect(result).toEqual({
@@ -333,8 +363,8 @@ describe('handleRequest', () => {
     };
     loadSyncDataMock.mockResolvedValue(bundle);
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.getSyncData' });
-    expect(loadSyncDataMock).toHaveBeenCalledTimes(1);
+    const result = await handleRequest({ type: 'data.getSyncData', stakeId: 'csnorth' });
+    expect(loadSyncDataMock).toHaveBeenCalledWith('csnorth');
     expect(result).toEqual({ ok: true, data: bundle });
   });
 
@@ -343,10 +373,156 @@ describe('handleRequest', () => {
       Object.assign(new Error('rules blocked the read'), { code: 'permission-denied' }),
     );
     const { handleRequest } = await import('./messages');
-    const result = await handleRequest({ type: 'data.getSyncData' });
+    const result = await handleRequest({ type: 'data.getSyncData', stakeId: 'csnorth' });
     expect(result).toEqual({
       ok: false,
       error: { code: 'permission-denied', message: 'rules blocked the read' },
+    });
+  });
+
+  it('data.resolveEidStakes reads claims, fans out per managed stake, returns the candidate list + managedStakeCount + partialFailure', async () => {
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        {
+          stakeId: 'east-co',
+          label: 'East CO',
+          match: 'foreign',
+          siteLabel: 'Foothills Building',
+        },
+      ],
+      partialFailure: false,
+    });
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(resolveEidStakesMock).toHaveBeenCalledWith(27994, ['csnorth', 'east-co']);
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        candidates: [
+          { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+          {
+            stakeId: 'east-co',
+            label: 'East CO',
+            match: 'foreign',
+            siteLabel: 'Foothills Building',
+          },
+        ],
+        managedStakeCount: 2,
+        partialFailure: false,
+      },
+    });
+  });
+
+  it('data.resolveEidStakes returns an unauthenticated wire error when no user is signed in', async () => {
+    // SW cold-start fix: after `waitForAuthHydrated()` returns and
+    // `currentUser()` is still null, the user truly is signed out.
+    // Return an unauthenticated wire error rather than
+    // `managedStakeCount: 0` so the panel routes to wire-error
+    // (with retry), NOT to NotAuthorized (which would be a dead-end
+    // for a still-signed-in operator caught by the SW cold-start
+    // race).
+    currentUserMock.mockReturnValue(null);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(resolveEidStakesMock).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'unauthenticated', message: 'sign in before resolving stakes' },
+    });
+  });
+
+  it('data.resolveEidStakes awaits waitForAuthHydrated before reading currentUser (SW cold-start race)', async () => {
+    // Concrete scenario: SW had idle-suspended, operator clicks Retry
+    // on the slide-over's error panel, the SW wakes but Firebase Auth
+    // has not finished rehydrating from IndexedDB. Without the
+    // `waitForAuthHydrated()` gate, `currentUser()` would still be null
+    // and the handler would surface "no user" — sending the panel to
+    // NotAuthorized for a still-signed-in operator. With the gate, the
+    // handler waits, sees the hydrated user, and resolves normally.
+    let releaseHydration: (() => void) | undefined;
+    waitForAuthHydratedMock.mockReturnValue(
+      new Promise<null>((resolve) => {
+        releaseHydration = () => resolve(null);
+      }),
+    );
+    currentUserMock.mockReturnValue(null);
+    readManagerStakesMock.mockResolvedValue(['csnorth']);
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: false });
+    const { handleRequest } = await import('./messages');
+    const pending = handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    // Resolver must not have been invoked yet — we are still waiting on
+    // auth to hydrate.
+    expect(resolveEidStakesMock).not.toHaveBeenCalled();
+    // Now hydration "completes" and the user becomes visible.
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    releaseHydration?.();
+    const result = await pending;
+    expect(resolveEidStakesMock).toHaveBeenCalledWith(27994, ['csnorth']);
+    expect(result).toEqual({
+      ok: true,
+      data: { candidates: [], managedStakeCount: 1, partialFailure: false },
+    });
+  });
+
+  it('data.resolveEidStakes returns managedStakeCount=0 + empty candidates when claims carry no manager roles', async () => {
+    // Risk 3: signed-in user with `stakes === {}` claims must surface
+    // `managedStakeCount: 0` so the panel routes to NotAuthorized
+    // rather than the reconfigure-copy no-candidates branch.
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'nonmgr@example.com' });
+    readManagerStakesMock.mockResolvedValue([]);
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: false });
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(resolveEidStakesMock).toHaveBeenCalledWith(27994, []);
+    expect(result).toEqual({
+      ok: true,
+      data: { candidates: [], managedStakeCount: 0, partialFailure: false },
+    });
+  });
+
+  it('data.resolveEidStakes returns managedStakeCount>0 + empty candidates when EID is not configured under any managed stake', async () => {
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: false });
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 99999 });
+    expect(result).toEqual({
+      ok: true,
+      data: { candidates: [], managedStakeCount: 2, partialFailure: false },
+    });
+  });
+
+  it('data.resolveEidStakes propagates partialFailure=true from the resolver (Item 2)', async () => {
+    // Item 2: when every per-stake closure throws, the resolver
+    // reports partialFailure=true alongside empty candidates. The
+    // dispatcher must thread that flag through to the wire response
+    // so App.tsx can route to wire-error instead of no-candidates.
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: true });
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(result).toEqual({
+      ok: true,
+      data: { candidates: [], managedStakeCount: 2, partialFailure: true },
+    });
+  });
+
+  it('data.resolveEidStakes surfaces readManagerStakes throws as a wire error (Risk 2)', async () => {
+    // The CS-side App.tsx routes wire errors to a distinct
+    // "Couldn't reach SBA" state, not to no-candidates.
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    readManagerStakesMock.mockRejectedValue(
+      Object.assign(new Error('token refresh failed'), { code: 'network-error' }),
+    );
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'network-error', message: 'token refresh failed' },
     });
   });
 
