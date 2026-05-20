@@ -18,19 +18,11 @@ vi.mock('../../lib/useActiveStake', () => ({
   useActiveStakeSwitcher: () => switcherSpy,
 }));
 
-// Each call to `useFirestoreDoc` returns a stake-name-only doc keyed
-// on the ref id; tests that need the loading state (data: undefined)
-// flip `firestoreDataOverride` to suppress doc data for a specific
-// stake id.
-const firestoreDataOverride: { suppressFor: Set<string> } = { suppressFor: new Set() };
 vi.mock('../../lib/data', () => ({
-  useFirestoreDoc: (ref: { id?: string } | null) => {
-    if (!ref) return { data: undefined, isLoading: false };
-    if (firestoreDataOverride.suppressFor.has(ref.id ?? '')) {
-      return { data: undefined, isLoading: true };
-    }
-    return { data: { stake_name: `Stake ${ref.id ?? ''}` }, isLoading: false };
-  },
+  useFirestoreDoc: (ref: { id?: string } | null) => ({
+    data: ref ? { stake_name: `Stake ${ref.id ?? ''}` } : undefined,
+    isLoading: false,
+  }),
 }));
 
 vi.mock('../../lib/firebase', () => ({
@@ -46,7 +38,6 @@ import { StakeSwitcher } from './StakeSwitcher';
 beforeEach(() => {
   accessibleSpy.current = [];
   switcherSpy.mockClear();
-  firestoreDataOverride.suppressFor = new Set();
 });
 
 describe('StakeSwitcher visibility', () => {
@@ -74,24 +65,21 @@ describe('StakeSwitcher visibility', () => {
     expect(screen.getByTestId('stake-switcher-trigger')).toBeInTheDocument();
   });
 
-  it('trigger label shows the active stake display name (item 6)', () => {
+  it('trigger renders as a chevron-only affordance (no duplicated stake name)', () => {
+    // Operator decision: the brand-bar (`Shell.tsx` `.kd-brandbar-stake`)
+    // already shows which stake the user is on. The switcher trigger
+    // doesn't repeat the label; it's a chevron the user clicks to open
+    // the dropdown.
     accessibleSpy.current = ['csnorth', 'ridgeline'];
     render(<StakeSwitcher activeStakeId="csnorth" />);
-    // The mocked `useFirestoreDoc` returns `Stake ${ref.id}` for the
-    // display name — the trigger should render that, not the static
-    // "Switch stake" label the previous design used.
-    expect(screen.getByTestId('stake-switcher-current')).toHaveTextContent('Stake csnorth');
-    expect(screen.getByTestId('stake-switcher-current')).not.toHaveTextContent('Switch stake');
-  });
-
-  it('trigger label falls back to the slug while the stake doc is loading', () => {
-    accessibleSpy.current = ['csnorth', 'ridgeline'];
-    firestoreDataOverride.suppressFor = new Set(['csnorth']);
-    render(<StakeSwitcher activeStakeId="csnorth" />);
-    // No data for the active stake — the trigger uses the slug as a
-    // placeholder rather than "Switch stake."
-    expect(screen.getByTestId('stake-switcher-current')).toHaveTextContent('csnorth');
-    expect(screen.getByTestId('stake-switcher-current')).not.toHaveTextContent('Switch stake');
+    const trigger = screen.getByTestId('stake-switcher-trigger');
+    // No `stake-switcher-current` text element any more.
+    expect(screen.queryByTestId('stake-switcher-current')).toBeNull();
+    // The chevron carries no accessible label of its own, so the
+    // button needs `aria-label` for assistive tech.
+    expect(trigger).toHaveAttribute('aria-label', 'Switch active stake');
+    // The trigger text content should be empty (chevron is aria-hidden).
+    expect(trigger.textContent).toBe('');
   });
 });
 

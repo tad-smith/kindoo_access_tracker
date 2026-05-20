@@ -383,10 +383,18 @@ export function useActiveStake(): string | null {
   // render (the decorator allocates new closures), so depending on the
   // raw object would re-fire effects every render — and any effect that
   // calls `setState` with a fresh object would loop indefinitely.
-  // Signature on the accessible-stake set + the superadmin flag instead.
+  // Signature on every field the resolver branches on:
+  //   - `firebaseAuthSignedIn` — gates the bootstrap-admin carve-out
+  //     (per item 5; flipping false→true after sign-in must
+  //     re-invalidate the memo even though the accessible-stake set is
+  //     unchanged).
+  //   - `isPlatformSuperadmin` — gates the superadmin permissive
+  //     resolution (per item 3).
+  //   - `accessibleStakes(...)` — the set the resolver validates URL /
+  //     storage values against.
   const principalSignature = useMemo(() => {
     const accessible = accessibleStakes(principal).join(',');
-    return `${principal.isPlatformSuperadmin ? '1' : '0'}|${accessible}`;
+    return `${principal.firebaseAuthSignedIn ? '1' : '0'}|${principal.isPlatformSuperadmin ? '1' : '0'}|${accessible}`;
   }, [principal]);
 
   // Track the URL `?stake=X` value through navigations. The value is

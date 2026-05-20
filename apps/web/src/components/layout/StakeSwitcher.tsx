@@ -1,6 +1,9 @@
-// Stake-switcher dropdown. Renders next to the current stake name in
-// the brand bar when the principal has any role on ≥ 2 stakes (spec
-// §2.1). Hidden entirely otherwise.
+// Stake-switcher dropdown. Renders next to the brand-bar stake name
+// when the principal has any role on ≥ 2 stakes (spec §2.1). Hidden
+// entirely otherwise. The trigger is a chevron-only affordance — the
+// brand bar (`Shell.tsx` `.kd-brandbar-stake`) already shows WHICH
+// stake the user is on, so the switcher trigger doesn't duplicate the
+// label; the chevron is the "switch" affordance.
 //
 // Click on an option persists the chosen stake to both sessionStorage
 // and localStorage and invalidates per-stake TanStack Query caches so
@@ -22,9 +25,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/Popover';
 
 interface StakeSwitcherProps {
   /**
-   * The currently-active stake ID; the trigger renders its display
-   * name. Pass `null` when no active stake is resolved (zero-role
-   * superadmin) — the component returns `null` in that case too.
+   * The currently-active stake ID. Pass `null` when no active stake is
+   * resolved (zero-role superadmin) — the component returns `null` in
+   * that case too.
    */
   activeStakeId: string | null;
 }
@@ -32,15 +35,6 @@ interface StakeSwitcherProps {
 export function StakeSwitcher({ activeStakeId }: StakeSwitcherProps) {
   const accessible = useAccessibleStakes();
   const switchStake = useActiveStakeSwitcher();
-  // Read the active stake's display name so the trigger labels itself
-  // with WHICH stake the user is currently on — matching the brand-bar
-  // pattern from Shell. The dropdown reveals the alternatives.
-  const activeStakeRef = useMemo(
-    () => (activeStakeId !== null ? stakeRef(db, activeStakeId) : null),
-    [activeStakeId],
-  );
-  const activeStakeDoc = useFirestoreDoc<Stake>(activeStakeRef);
-  const activeStakeName = activeStakeDoc.data?.stake_name ?? activeStakeId;
 
   // Hidden when the user has < 2 accessible stakes.
   if (accessible.length < 2) return null;
@@ -52,13 +46,12 @@ export function StakeSwitcher({ activeStakeId }: StakeSwitcherProps) {
         <button
           type="button"
           className={cn(
-            'inline-flex items-center gap-1 rounded border border-kd-border bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50',
+            'inline-flex items-center justify-center rounded border border-kd-border bg-white p-1 text-gray-700 shadow-sm hover:bg-gray-50',
             'focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--kd-primary)]',
           )}
           aria-label="Switch active stake"
           data-testid="stake-switcher-trigger"
         >
-          <span data-testid="stake-switcher-current">{activeStakeName}</span>
           <ChevronDown size={14} aria-hidden="true" />
         </button>
       </PopoverTrigger>
