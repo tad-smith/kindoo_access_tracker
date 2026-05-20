@@ -172,6 +172,20 @@ function toastForInvalidatedTier(
 export function useActiveStake(): string | null {
   const principal = usePrincipal();
 
+  // Stable signature of the principal fields the resolver actually
+  // reads. `usePrincipal()` returns a fresh `Principal` object on every
+  // render (the decorator allocates new closures), so depending on the
+  // raw object would re-fire effects every render — and any effect that
+  // calls `setState` with a fresh object would loop indefinitely.
+  // Signature on the accessible-stake set + the superadmin flag instead,
+  // and read the live principal inside the effect via a ref.
+  const principalSignature = useMemo(() => {
+    const accessible = accessibleStakes(principal).join(',');
+    return `${principal.isPlatformSuperadmin ? '1' : '0'}|${accessible}`;
+  }, [principal]);
+  const principalRef = useRef(principal);
+  principalRef.current = principal;
+
   // Track the URL `?stake=X` value through navigations. We read it
   // directly off `window.location.search` (no router context required
   // — keeps route-gate unit tests free of TanStack-Router wrapping)
@@ -216,8 +230,16 @@ export function useActiveStake(): string | null {
     const sessionValue = readSessionStake();
     const localValue = readLocalStake();
 
-    const result = resolveActiveStake(principal, urlStakeParam, sessionValue, localValue);
-    setResolved(result);
+    const result = resolveActiveStake(
+      principalRef.current,
+      urlStakeParam,
+      sessionValue,
+      localValue,
+    );
+    // Bail on identity-equivalent results to avoid re-rendering for
+    // free. Without this guard, every effect pass allocates a fresh
+    // object and bumps state, even when nothing actually changed.
+    setResolved((prev) => (isSameResolution(prev, result) ? prev : result));
 
     // URL-tier handling. The validate-then-strip step runs every time
     // a `?stake=X` is present in the URL, whether or not it was valid.
@@ -256,11 +278,19 @@ export function useActiveStake(): string | null {
         // ignore
       }
     }
-    // Re-resolve when the principal claim set or the URL stake param
-    // changes. The storage tiers are read fresh inside the effect.
-  }, [principal, urlStakeParam]);
+    // Re-resolve when the principal's accessible-stake signature or the
+    // URL stake param changes. The live principal is read via
+    // `principalRef`; the signature is the stable trigger that gates
+    // re-runs. Storage tiers are read fresh inside the effect.
+  }, [principalSignature, urlStakeParam]);
 
   return resolved.stakeId;
+}
+
+function isSameResolution(a: ResolveActiveStakeResult, b: ResolveActiveStakeResult): boolean {
+  return (
+    a.stakeId === b.stakeId && a.source === b.source && a.invalidatedTier === b.invalidatedTier
+  );
 }
 
 /**

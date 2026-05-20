@@ -25,10 +25,6 @@ vi.mock('../dashboard/hooks', () => ({
   useStakeWards: () => useStakeWardsMock(),
 }));
 
-vi.mock('../../../lib/useActiveStake', () => ({
-  useActiveStake: () => 'csnorth',
-}));
-
 // AccessPage filters the scope dropdown by the principal's claims.
 // Default the test principal to a manager so all wards + 'stake'
 // surface; individual tests can override.
