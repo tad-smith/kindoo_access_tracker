@@ -35,7 +35,11 @@ vi.mock('./store/toast', () => ({
   toast: (msg: string, kind: string) => toastSpy(msg, kind),
 }));
 
-import { notifyActiveStakeUrlNavigated, useActiveStake } from './useActiveStake';
+import {
+  __resetActiveStakeModuleForTests,
+  notifyActiveStakeUrlNavigated,
+  useActiveStake,
+} from './useActiveStake';
 import { ACTIVE_STAKE_LOCAL_KEY, ACTIVE_STAKE_SESSION_KEY } from './activeStake';
 
 function Probe({ onResult }: { onResult: (v: string | null) => void }) {
@@ -65,6 +69,9 @@ beforeEach(() => {
     bishopricWards: {},
     isPlatformSuperadmin: false,
   });
+  // Reset the hook's module-scoped URL state so each test starts from
+  // the URL set above, not the one that lingered from the previous test.
+  __resetActiveStakeModuleForTests();
 });
 
 describe('useActiveStake — URL-tier handling', () => {

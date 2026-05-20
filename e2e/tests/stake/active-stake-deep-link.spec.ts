@@ -96,9 +96,7 @@ test.describe('Active-stake URL deep-link (?stake=X)', () => {
     const sessionValue = await page.evaluate(() =>
       window.sessionStorage.getItem('kindoo.activeStake'),
     );
-    const localValue = await page.evaluate(() =>
-      window.localStorage.getItem('kindoo.activeStake'),
-    );
+    const localValue = await page.evaluate(() => window.localStorage.getItem('kindoo.activeStake'));
     expect(sessionValue).toBe('ridgeline');
     expect(localValue).toBe('ridgeline');
   });

@@ -94,19 +94,46 @@ export function resolveActiveStake(
 ): ResolveActiveStakeResult {
   const accessible = accessibleStakes(principal);
   const accessSet = new Set(accessible);
+  // Bootstrap-admin / pre-claim path: a signed-in user with zero
+  // accessible stakes who is NOT a platform superadmin is either
+  // (a) the bootstrap admin for a stake whose `setup_complete` hasn't
+  // flipped to true yet, or (b) a not-yet-claimed user landing
+  // mid-import. The gate needs to READ a stake doc to decide what page
+  // to render, but the principal carries no claims to derive the target
+  // stake from. In that case, fall back to the hint from URL >
+  // sessionStorage > localStorage without validating against the
+  // (empty) access set. The downstream gate (`setupGate.ts`) refuses
+  // to render an authed page unless the user actually has a role on
+  // the stake, so this permissive resolution can't escalate access.
+  //
+  // Zero-role platform superadmins (the explicit "no per-stake roles +
+  // global flag" identity) are NOT given this treatment — they belong
+  // on the `/superadmin/stakes` page, not on a single-stake landing.
+  // Stale storage tiers for that identity stay invalidated so the
+  // existing spec wording ("Your last-active stake is no longer
+  // available") still fires.
+  const isBootstrapCandidate = accessible.length === 0 && !principal.isPlatformSuperadmin;
 
   // Tier 1: URL.
   if (urlParam !== null && urlParam.length > 0) {
     if (accessSet.has(urlParam)) {
       return { stakeId: urlParam, source: 'url', invalidatedTier: null };
     }
-    // Invalid URL value — fall through, remember to toast.
-    const fallback = resolveStorageTiers(accessSet, sessionValue, localValue, accessible);
+    if (isBootstrapCandidate) {
+      // Permissive bootstrap-admin path. No invalidation toast —
+      // there's nothing for us to "fall back to" yet.
+      return { stakeId: urlParam, source: 'url', invalidatedTier: null };
+    }
+    // Invalid URL value — fall through, remember to toast. We're past
+    // the `isBootstrapCandidate` short-circuit, so `accessible.length`
+    // is `> 0` or the principal is a zero-role superadmin; either way
+    // the recursive helper defaults work.
+    const fallback = resolveStorageTiers(accessSet, sessionValue, localValue, accessible, false);
     return { ...fallback, invalidatedTier: 'url' };
   }
 
   // Tiers 2-4.
-  return resolveStorageTiers(accessSet, sessionValue, localValue, accessible);
+  return resolveStorageTiers(accessSet, sessionValue, localValue, accessible, isBootstrapCandidate);
 }
 
 function resolveStorageTiers(
@@ -114,28 +141,38 @@ function resolveStorageTiers(
   sessionValue: string | null,
   localValue: string | null,
   accessible: string[],
+  isBootstrapCandidate: boolean = accessible.length === 0,
 ): ResolveActiveStakeResult {
   // Tier 2: sessionStorage.
   if (sessionValue !== null && sessionValue.length > 0) {
     if (accessSet.has(sessionValue)) {
       return { stakeId: sessionValue, source: 'session', invalidatedTier: null };
     }
+    if (isBootstrapCandidate) {
+      // Permissive bootstrap-admin path — see `resolveActiveStake`.
+      return { stakeId: sessionValue, source: 'session', invalidatedTier: null };
+    }
     // Invalid — fall through to local + principal but flag.
-    const next = resolveLocalThenPrincipal(accessSet, localValue, accessible);
+    const next = resolveLocalThenPrincipal(accessSet, localValue, accessible, isBootstrapCandidate);
     return { ...next, invalidatedTier: 'session' };
   }
 
   // Tier 3 + 4.
-  return resolveLocalThenPrincipal(accessSet, localValue, accessible);
+  return resolveLocalThenPrincipal(accessSet, localValue, accessible, isBootstrapCandidate);
 }
 
 function resolveLocalThenPrincipal(
   accessSet: Set<string>,
   localValue: string | null,
   accessible: string[],
+  isBootstrapCandidate: boolean = accessible.length === 0,
 ): ResolveActiveStakeResult {
   if (localValue !== null && localValue.length > 0) {
     if (accessSet.has(localValue)) {
+      return { stakeId: localValue, source: 'local', invalidatedTier: null };
+    }
+    if (isBootstrapCandidate) {
+      // Permissive bootstrap-admin path — see `resolveActiveStake`.
       return { stakeId: localValue, source: 'local', invalidatedTier: null };
     }
     // Invalid — fall through to principal but flag.

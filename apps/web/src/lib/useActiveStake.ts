@@ -31,7 +31,7 @@
 //     (`registerActiveStakeQueryClient`). Route-gate unit tests don't
 //     register one and the invalidate becomes a no-op.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import {
   ACTIVE_STAKE_LOCAL_KEY,
@@ -41,7 +41,6 @@ import {
   readLocalStake,
   readSessionStake,
   resolveActiveStake,
-  type ResolveActiveStakeResult,
 } from './activeStake';
 import { FIRESTORE_QUERY_KEY_PREFIX } from './data/queryKeys';
 import { usePrincipal } from './principal';
@@ -81,6 +80,119 @@ export function notifyActiveStakeUrlNavigated(): void {
       // ignore individual subscriber errors
     }
   }
+}
+
+// Module-scoped subscriber set for storage-tier changes (the switcher
+// click handler is the only writer in normal flow; the URL-tier
+// invalidation overwrite also touches storage and pings here). Same-tab
+// writes don't fire the `storage` window event — that fires for OTHER
+// tabs only — so we route in-tab notifications through this bus.
+const storageChangeSubscribers = new Set<() => void>();
+
+/** Fired by the switcher hook after a storage-tier write lands. */
+function notifyActiveStakeStorageChanged(): void {
+  for (const fn of storageChangeSubscribers) {
+    try {
+      fn();
+    } catch {
+      // ignore individual subscriber errors
+    }
+  }
+}
+
+// Module-scoped storage for the most-recent observed `?stake=X` URL
+// param. Shared across every consumer of `useActiveStake` because
+// multiple components mount the hook (Shell + AuthedLayout +
+// `useRequireRole` in each role-gated route) and the URL gets stripped
+// once after the first resolve. Without sharing, late-mounting
+// instances would see `?stake=X` already stripped and resolve to the
+// alphabetically-first accessible stake instead of the deep-linked
+// one. The module-scoped value lives until the first successful
+// principal-validated persist into storage, at which point the URL
+// tier is considered "consumed" and the hook falls through to storage
+// on subsequent reads.
+let moduleUrlStakeParam: string | null = null;
+let moduleUrlStakeParamConsumed = false;
+const urlStakeParamSubscribers = new Set<() => void>();
+
+function readModuleUrlStakeParam(): string | null {
+  return moduleUrlStakeParam;
+}
+
+function notifyUrlStakeParamSubscribers(): void {
+  for (const fn of urlStakeParamSubscribers) {
+    try {
+      fn();
+    } catch {
+      // ignore individual subscriber errors
+    }
+  }
+}
+
+/**
+ * Seed the module-scoped URL stake param from the current URL. Called
+ * lazily on first hook mount and refreshed on every router-history
+ * navigation (via the `urlNavSubscribers` bus that `main.tsx` pings).
+ * Only PROMOTES the state — null reads (URL was stripped or never had
+ * the param) leave the prior value in place if we haven't yet finished
+ * consuming it. Once consumed (the principal-validated persist landed),
+ * subsequent null reads DO clear the state so a later real URL arrival
+ * isn't shadowed.
+ */
+function refreshModuleUrlStakeParamFromUrl(): void {
+  const next = readStakeParamFromUrl();
+  if (next === null) {
+    // No URL value to read. If we've already consumed the prior value,
+    // leave the slot empty so a later real arrival can land. If we
+    // haven't yet consumed, RETAIN the prior value — the strip was
+    // ours and we're still waiting on principal claims to validate.
+    if (moduleUrlStakeParamConsumed && moduleUrlStakeParam !== null) {
+      moduleUrlStakeParam = null;
+      notifyUrlStakeParamSubscribers();
+    }
+    return;
+  }
+  if (next === moduleUrlStakeParam) return;
+  moduleUrlStakeParam = next;
+  moduleUrlStakeParamConsumed = false;
+  notifyUrlStakeParamSubscribers();
+}
+
+/**
+ * Mark the current URL-tier value as consumed. Called once the
+ * resolver lands on a principal-validated URL-tier hit and persists
+ * to storage — from then on, storage is the source of truth and we
+ * can let `refreshModuleUrlStakeParamFromUrl` clear the slot.
+ */
+function markUrlStakeParamConsumed(): void {
+  moduleUrlStakeParamConsumed = true;
+}
+
+/** `useSyncExternalStore` subscribe contract for the URL stake param. */
+function subscribeToUrlStakeParam(callback: () => void): () => void {
+  urlStakeParamSubscribers.add(callback);
+  return () => {
+    urlStakeParamSubscribers.delete(callback);
+  };
+}
+
+// Synchronously seed the module value at import time so the very first
+// hook render — which happens before any effect can fire — already
+// sees the URL value. Tests + SSR-safe environments may not have a
+// `window`; the guard inside `readStakeParamFromUrl` handles that.
+moduleUrlStakeParam = readStakeParamFromUrl();
+
+/**
+ * Test-only reset. Clears the module-scoped URL-tier state so each
+ * test starts from a clean slate. Calls to this from non-test code
+ * are safe but pointless — the module owns the state and the only
+ * legitimate "reset" is between Vitest test cases. The hook re-seeds
+ * on its next mount + URL read.
+ */
+export function __resetActiveStakeModuleForTests(): void {
+  moduleUrlStakeParam = readStakeParamFromUrl();
+  moduleUrlStakeParamConsumed = false;
+  notifyUrlStakeParamSubscribers();
 }
 
 /**
@@ -177,29 +289,51 @@ export function useActiveStake(): string | null {
   // render (the decorator allocates new closures), so depending on the
   // raw object would re-fire effects every render — and any effect that
   // calls `setState` with a fresh object would loop indefinitely.
-  // Signature on the accessible-stake set + the superadmin flag instead,
-  // and read the live principal inside the effect via a ref.
+  // Signature on the accessible-stake set + the superadmin flag instead.
   const principalSignature = useMemo(() => {
     const accessible = accessibleStakes(principal).join(',');
     return `${principal.isPlatformSuperadmin ? '1' : '0'}|${accessible}`;
   }, [principal]);
-  const principalRef = useRef(principal);
-  principalRef.current = principal;
 
-  // Track the URL `?stake=X` value through navigations. We read it
-  // directly off `window.location.search` (no router context required
-  // — keeps route-gate unit tests free of TanStack-Router wrapping)
-  // and re-read on:
-  //   - `popstate` (browser back/forward + history.replaceState),
+  // Track the URL `?stake=X` value through navigations. The value is
+  // MODULE-SCOPED (shared across every mounted `useActiveStake`)
+  // because multiple components in the tree call this hook (Shell +
+  // AuthedLayout + `useRequireRole` per role-gated route), and the
+  // URL gets stripped once after the first resolver pass. Without
+  // sharing, late-mounting instances would see the URL already
+  // stripped and resolve to the alphabetically-first accessible stake
+  // instead of the deep-linked one. `useSyncExternalStore` subscribes
+  // every instance to the same module value.
+  //
+  // Refresh sources for the module value:
+  //   - `popstate` (browser back/forward navigations),
   //   - the module-scope `urlNavSubscribers` ping that `main.tsx`
-  //     fires after the SW notificationclick bridge pushes a new URL.
-  const [urlStakeParam, setUrlStakeParam] = useState<string | null>(() => readStakeParamFromUrl());
+  //     fires on every router-history change (covers both SW
+  //     notificationclick deep links AND in-app navigations).
+  //
+  // `refreshModuleUrlStakeParamFromUrl` only PROMOTES from null → a
+  // real value (or replaces one real value with another) until the
+  // resolver marks the value as "consumed" via
+  // `markUrlStakeParamConsumed()`. This guards against our own URL
+  // strip clearing the state before the principal claims have loaded
+  // and validated the URL value.
+  const urlStakeParam = useSyncExternalStore(
+    subscribeToUrlStakeParam,
+    readModuleUrlStakeParam,
+    readModuleUrlStakeParam,
+  );
+
+  // On first mount, seed the module value from the current URL if it
+  // hasn't been seeded already. Subsequent navigations refresh it via
+  // the popstate/urlNavSubscribers handlers below.
+  useEffect(() => {
+    refreshModuleUrlStakeParamFromUrl();
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const recheck = () => {
-      const next = readStakeParamFromUrl();
-      setUrlStakeParam((prev) => (prev === next ? prev : next));
+      refreshModuleUrlStakeParamFromUrl();
     };
     window.addEventListener('popstate', recheck);
     urlNavSubscribers.add(recheck);
@@ -209,88 +343,142 @@ export function useActiveStake(): string | null {
     };
   }, []);
 
-  // Resolve synchronously on first render so consumers (`useRequireRole`,
-  // etc.) see the right stake on mount. The effect below re-runs on
-  // changes to keep `resolved` aligned with subsequent principal /
-  // URL-param updates.
-  const [resolved, setResolved] = useState<ResolveActiveStakeResult>(() =>
-    resolveActiveStake(principal, readStakeParamFromUrl(), readSessionStake(), readLocalStake()),
+  // Tick that bumps when storage-tier writes land (the switcher click
+  // handler is the primary trigger). Storage isn't a React signal — the
+  // synchronous `setItem` doesn't notify other listeners — so we route
+  // in-tab changes through the module-scoped subscriber bus and use the
+  // tick to force a re-render of every active consumer. The `resolved`
+  // memo includes this tick in its dep list so it recomputes when the
+  // switcher writes.
+  const [storageTick, setStorageTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setStorageTick((n) => n + 1);
+    storageChangeSubscribers.add(bump);
+    return () => {
+      storageChangeSubscribers.delete(bump);
+    };
+  }, []);
+
+  // Resolve every render so consumers (`useRequireRole`, etc.) see the
+  // right stake on the SAME render that the principal claims load.
+  // Storing the resolution in `useState` and updating it from an effect
+  // creates a one-frame lag: when claims load, `principalSignature`
+  // updates and the render returns the STALE resolved value (still
+  // `null` from the empty-principal first render); the effect then
+  // bumps state and a second render lands with the correct value.
+  // That intermediate frame is enough for `useRequireRole` to read
+  // `activeStakeId === null`, decide the user lacks the role, and fire
+  // `navigate({ to: '/' })` before our effect can correct it.
+  //
+  // `resolveActiveStake` is pure and cheap (set ops on ~12 strings), so
+  // computing it per render is fine. Storage tiers are read fresh each
+  // render — they can change out from under us (the switcher writes on
+  // click; the URL tier writes via the effect below).
+  const resolved = useMemo(
+    () => resolveActiveStake(principal, urlStakeParam, readSessionStake(), readLocalStake()),
+    // `principalSignature` carries the accessible-stake fingerprint;
+    // `urlStakeParam` is state; `storageTick` bumps on switcher click.
+    // Storage reads happen inside; not in the dep list because they're
+    // snapshots, not signals — the tick is the change feed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [principalSignature, urlStakeParam, storageTick],
   );
 
-  // Track whether we've already issued the URL-tier persist + strip for
-  // a given urlStakeParam value so a re-render doesn't repeat the work.
-  // Using a ref + the param itself as the dedupe key (the SW can fire
-  // the same target twice; we only strip once per URL arrival).
-  const lastHandledUrlParamRef = useRef<string | null>(null);
+  // Track whether we've already STRIPPED the URL for a given
+  // `urlStakeParam` value so re-renders don't trigger redundant
+  // `history.replaceState` calls. The strip should run once per URL
+  // arrival; the persist can run multiple times (it's idempotent), and
+  // we want it to fire on the "claims-loaded after empty-principal
+  // first-pass" transition where the URL value was already stripped
+  // but the resolver couldn't validate it on the first render.
+  const lastStrippedUrlParamRef = useRef<string | null>(null);
+  // Track the last storage value we wrote for a given URL-tier hit so a
+  // re-render doesn't re-persist + re-invalidate every frame.
+  const lastPersistedUrlStakeIdRef = useRef<string | null>(null);
+  // Track whether we've already fired the invalidated-tier toast for a
+  // given resolution so re-renders don't repeat the toast.
+  const lastInvalidationKeyRef = useRef<string | null>(null);
+
+  // True iff the principal is still settling claims (`onAuthStateChanged`
+  // has fired but `getIdTokenResult` hasn't returned yet). Defer all
+  // side effects while in this transient state — running them on a
+  // half-loaded principal would clear storage / fire false-positive
+  // "this stake is no longer available" toasts for the deep-link case.
+  const principalSettling = principal.firebaseAuthSignedIn && !principal.isAuthenticated;
 
   useEffect(() => {
-    // Read storage tiers fresh on every resolve — they can change out
-    // from under us (the switcher writes on click; the URL tier writes
-    // here below).
-    const sessionValue = readSessionStake();
-    const localValue = readLocalStake();
+    if (principalSettling) return;
 
-    const result = resolveActiveStake(
-      principalRef.current,
-      urlStakeParam,
-      sessionValue,
-      localValue,
-    );
-    // Bail on identity-equivalent results to avoid re-rendering for
-    // free. Without this guard, every effect pass allocates a fresh
-    // object and bumps state, even when nothing actually changed.
-    setResolved((prev) => (isSameResolution(prev, result) ? prev : result));
+    // URL-tier persist. Fires the first time a `urlStakeParam` resolves
+    // as a valid URL-tier hit (resolved.source === 'url'). Re-runs the
+    // persist if the resolved stakeId changes (e.g., principal claims
+    // arrived AFTER the initial empty-principal first render that
+    // stripped the URL but couldn't validate it). Marks the
+    // module-scoped URL value as consumed so subsequent null reads
+    // from the URL (post-strip) can clear it.
+    if (
+      urlStakeParam !== null &&
+      resolved.source === 'url' &&
+      resolved.stakeId !== null &&
+      lastPersistedUrlStakeIdRef.current !== resolved.stakeId
+    ) {
+      lastPersistedUrlStakeIdRef.current = resolved.stakeId;
+      persistChoiceCore(resolved.stakeId);
+      invalidatePerStakeQueries();
+      markUrlStakeParamConsumed();
+    }
 
-    // URL-tier handling. The validate-then-strip step runs every time
-    // a `?stake=X` is present in the URL, whether or not it was valid.
-    if (urlStakeParam !== null && lastHandledUrlParamRef.current !== urlStakeParam) {
-      lastHandledUrlParamRef.current = urlStakeParam;
-      // Persist on a valid URL hit; strip the URL either way so a bad
-      // param doesn't survive in the bar.
-      if (result.source === 'url' && result.stakeId !== null) {
-        persistChoiceCore(result.stakeId);
-        invalidatePerStakeQueries();
-      }
+    // URL-tier strip. Runs once per `urlStakeParam` arrival, regardless
+    // of whether the param was valid (a bad param still shouldn't
+    // survive in the URL bar). Deduped on `urlStakeParam` itself so the
+    // post-strip router-history subscriber callback doesn't re-fire it.
+    if (urlStakeParam !== null && lastStrippedUrlParamRef.current !== urlStakeParam) {
+      lastStrippedUrlParamRef.current = urlStakeParam;
       stripStakeParamFromUrl();
     }
 
-    // Toast + overwrite-stale-storage handling.
-    if (result.invalidatedTier !== null) {
-      toastForInvalidatedTier(result.invalidatedTier, result.stakeId);
-      // Overwrite the stale storage entries with the resolved stake so
-      // the next read doesn't re-trigger the toast. When `stakeId` is
-      // null (zero-role superadmin with stale storage) clear both
-      // tiers.
-      try {
-        if (result.stakeId === null) {
-          if (typeof window !== 'undefined') {
-            try {
-              window.sessionStorage.removeItem(ACTIVE_STAKE_SESSION_KEY);
-              window.localStorage.removeItem(ACTIVE_STAKE_LOCAL_KEY);
-            } catch {
-              // ignore
+    // Toast + overwrite-stale-storage handling. Dedupe by
+    // (invalidatedTier, stakeId) so the effect re-running for other
+    // reasons (urlStakeParam churn, principal changes that don't move
+    // the active stake) doesn't re-fire the toast.
+    if (resolved.invalidatedTier !== null) {
+      const invalidationKey = `${resolved.invalidatedTier}:${resolved.stakeId ?? ''}`;
+      if (lastInvalidationKeyRef.current !== invalidationKey) {
+        lastInvalidationKeyRef.current = invalidationKey;
+        toastForInvalidatedTier(resolved.invalidatedTier, resolved.stakeId);
+        // Overwrite the stale storage entries with the resolved stake so
+        // the next read doesn't re-trigger the toast. When `stakeId` is
+        // null (zero-role superadmin with stale storage) clear both
+        // tiers.
+        try {
+          if (resolved.stakeId === null) {
+            if (typeof window !== 'undefined') {
+              try {
+                window.sessionStorage.removeItem(ACTIVE_STAKE_SESSION_KEY);
+                window.localStorage.removeItem(ACTIVE_STAKE_LOCAL_KEY);
+              } catch {
+                // ignore
+              }
             }
+          } else {
+            persistChoiceCore(resolved.stakeId);
           }
-        } else {
-          persistChoiceCore(result.stakeId);
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
       }
+    } else {
+      // Clear the invalidation dedupe key when the resolution is clean
+      // so a later stale tier can re-fire the toast.
+      lastInvalidationKeyRef.current = null;
     }
-    // Re-resolve when the principal's accessible-stake signature or the
-    // URL stake param changes. The live principal is read via
-    // `principalRef`; the signature is the stable trigger that gates
-    // re-runs. Storage tiers are read fresh inside the effect.
-  }, [principalSignature, urlStakeParam]);
+    // Re-run side effects when the resolution changes or the principal
+    // settles. `resolved` is memoized on `principalSignature` +
+    // `urlStakeParam`; `principalSettling` is the gate that defers side
+    // effects until the principal's claims have actually loaded.
+  }, [resolved, urlStakeParam, principalSettling]);
 
   return resolved.stakeId;
-}
-
-function isSameResolution(a: ResolveActiveStakeResult, b: ResolveActiveStakeResult): boolean {
-  return (
-    a.stakeId === b.stakeId && a.source === b.source && a.invalidatedTier === b.invalidatedTier
-  );
 }
 
 /**
@@ -307,6 +495,11 @@ export function useActiveStakeSwitcher(): (stakeId: string) => void {
   return useMemo(() => {
     return (stakeId: string) => {
       persistChoiceCore(stakeId);
+      // Notify every mounted `useActiveStake()` consumer so they re-
+      // resolve against the new storage value. Same-tab writes don't
+      // emit a `storage` event; this bus is how in-tab switches reach
+      // the React tree.
+      notifyActiveStakeStorageChanged();
       queryClient.invalidateQueries({ queryKey: [FIRESTORE_QUERY_KEY_PREFIX] }).catch(() => {});
     };
   }, [queryClient]);
