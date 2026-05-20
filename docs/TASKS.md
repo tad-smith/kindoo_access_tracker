@@ -513,7 +513,7 @@ The accepted consequence: once a Kindoo user is permanent, v2.2 never demotes th
 **Not blocking anything.** v2.2 ships with the gap by design. Future work only — pick up when someone wants to close the loop.
 
 ## [T-39] Production: Chrome Web Store distribution for the SBA extension
-Status: open
+Status: done (2026-05-20 — Chrome Web Store listing live at https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/klkkpfdafbjebccodmgkogdklachelpb)
 Owner: Operator (per `extension/CLAUDE.md` and `infra/runbooks/extension-deploy.md` — operator owns the Chrome Web Store listing and the OAuth consent screen)
 Phase: post v2.2 rollout
 
