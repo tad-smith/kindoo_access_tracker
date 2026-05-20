@@ -83,7 +83,6 @@ describe('handleRequest', () => {
       email: 'mgr@example.com',
       displayName: 'Manager',
     });
-    readManagerStakesMock.mockResolvedValue(['csnorth']);
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'auth.getState' });
     expect(result).toEqual({
@@ -94,7 +93,6 @@ describe('handleRequest', () => {
           uid: 'u1',
           email: 'mgr@example.com',
           displayName: 'Manager',
-          managerStakes: ['csnorth'],
         },
       },
     });
@@ -102,7 +100,6 @@ describe('handleRequest', () => {
 
   it('auth.signIn returns the signed-in snapshot on success', async () => {
     signInMock.mockResolvedValue({ uid: 'u1', email: 'mgr@example.com', displayName: null });
-    readManagerStakesMock.mockResolvedValue(['csnorth']);
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'auth.signIn' });
     expect(result).toEqual({
@@ -113,7 +110,6 @@ describe('handleRequest', () => {
           uid: 'u1',
           email: 'mgr@example.com',
           displayName: null,
-          managerStakes: ['csnorth'],
         },
       },
     });
@@ -384,7 +380,7 @@ describe('handleRequest', () => {
     });
   });
 
-  it('data.resolveEidStakes reads claims, fans out per managed stake, returns the candidate list', async () => {
+  it('data.resolveEidStakes reads claims, fans out per managed stake, returns the candidate list + managedStakeCount', async () => {
     currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
     readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
     resolveEidStakesMock.mockResolvedValue([
@@ -411,16 +407,54 @@ describe('handleRequest', () => {
             siteLabel: 'Foothills Building',
           },
         ],
+        managedStakeCount: 2,
       },
     });
   });
 
-  it('data.resolveEidStakes returns an empty candidate list when no user is signed in', async () => {
+  it('data.resolveEidStakes returns managedStakeCount=0 + empty candidates when no user is signed in', async () => {
     currentUserMock.mockReturnValue(null);
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
     expect(resolveEidStakesMock).not.toHaveBeenCalled();
-    expect(result).toEqual({ ok: true, data: { candidates: [] } });
+    expect(result).toEqual({ ok: true, data: { candidates: [], managedStakeCount: 0 } });
+  });
+
+  it('data.resolveEidStakes returns managedStakeCount=0 + empty candidates when claims carry no manager roles', async () => {
+    // Risk 3: signed-in user with `stakes === {}` claims must surface
+    // `managedStakeCount: 0` so the panel routes to NotAuthorized
+    // rather than the reconfigure-copy no-candidates branch.
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'nonmgr@example.com' });
+    readManagerStakesMock.mockResolvedValue([]);
+    resolveEidStakesMock.mockResolvedValue([]);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(resolveEidStakesMock).toHaveBeenCalledWith(27994, []);
+    expect(result).toEqual({ ok: true, data: { candidates: [], managedStakeCount: 0 } });
+  });
+
+  it('data.resolveEidStakes returns managedStakeCount>0 + empty candidates when EID is not configured under any managed stake', async () => {
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
+    resolveEidStakesMock.mockResolvedValue([]);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 99999 });
+    expect(result).toEqual({ ok: true, data: { candidates: [], managedStakeCount: 2 } });
+  });
+
+  it('data.resolveEidStakes surfaces readManagerStakes throws as a wire error (Risk 2)', async () => {
+    // The CS-side App.tsx routes wire errors to a distinct
+    // "Couldn't reach SBA" state, not to no-candidates.
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    readManagerStakesMock.mockRejectedValue(
+      Object.assign(new Error('token refresh failed'), { code: 'network-error' }),
+    );
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'network-error', message: 'token refresh failed' },
+    });
   });
 
   it('data.syncApplyFix forwards the payload and unwraps the callable result', async () => {

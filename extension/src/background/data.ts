@@ -417,35 +417,45 @@ export async function resolveEidStakes(
   if (managerStakes.length === 0) return [];
   const db = firestore();
   const reads = managerStakes.map(async (stakeId) => {
-    const stakeRef = doc(db, 'stakes', stakeId);
-    const [stakeSnap, sitesSnap] = await Promise.all([
-      getDoc(stakeRef),
-      getDocs(collection(db, 'stakes', stakeId, 'kindooSites')),
-    ]);
-    if (!stakeSnap.exists()) return null;
-    const stake = stakeSnap.data() as Stake;
-    const homeMatch = stake.kindoo_config?.site_id === eid;
-    if (homeMatch) {
-      const candidate: EidStakeCandidate = {
-        stakeId,
-        label: stake.stake_name,
-        match: 'home',
-      };
-      return candidate;
-    }
-    for (const sd of sitesSnap.docs) {
-      const site = sd.data() as KindooSite;
-      if (typeof site.kindoo_eid === 'number' && site.kindoo_eid === eid) {
+    // Per-stake try / catch: a single stake's rules denial or
+    // Firestore hiccup must drop ONLY that stake from the candidate
+    // list, never nuke every candidate via Promise.all rejection.
+    // Downstream branching (picker / auto-pick / no-candidates) wants
+    // the resolvable subset, not all-or-nothing.
+    try {
+      const stakeRef = doc(db, 'stakes', stakeId);
+      const [stakeSnap, sitesSnap] = await Promise.all([
+        getDoc(stakeRef),
+        getDocs(collection(db, 'stakes', stakeId, 'kindooSites')),
+      ]);
+      if (!stakeSnap.exists()) return null;
+      const stake = stakeSnap.data() as Stake;
+      const homeMatch = stake.kindoo_config?.site_id === eid;
+      if (homeMatch) {
         const candidate: EidStakeCandidate = {
           stakeId,
           label: stake.stake_name,
-          match: 'foreign',
-          siteLabel: site.display_name,
+          match: 'home',
         };
         return candidate;
       }
+      for (const sd of sitesSnap.docs) {
+        const site = sd.data() as KindooSite;
+        if (typeof site.kindoo_eid === 'number' && site.kindoo_eid === eid) {
+          const candidate: EidStakeCandidate = {
+            stakeId,
+            label: stake.stake_name,
+            match: 'foreign',
+            siteLabel: site.display_name,
+          };
+          return candidate;
+        }
+      }
+      return null;
+    } catch (err) {
+      console.warn(`[sba-ext] resolveEidStakes: dropped stake '${stakeId}'`, err);
+      return null;
     }
-    return null;
   });
   const settled = await Promise.all(reads);
   const candidates: EidStakeCandidate[] = settled.filter((c): c is EidStakeCandidate => c !== null);

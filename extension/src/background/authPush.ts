@@ -9,15 +9,20 @@
 // that — it just means the user is not on a Kindoo page right now.
 
 import type { User } from 'firebase/auth/web-extension';
-import { readManagerStakes, subscribeAuthState } from '../lib/auth';
+import { subscribeAuthState } from '../lib/auth';
 import type { AuthStateChangedPush, PrincipalSnapshot } from '../lib/messaging';
 
-async function toPrincipalSnapshot(user: User): Promise<PrincipalSnapshot> {
+/** Synchronous projection of the Firebase User to the wire shape. No
+ * claims read here — the panel does not consume them; the SW re-reads
+ * on every `data.resolveEidStakes` to avoid staleness. Keeping this
+ * synchronous also blocks the previous-iteration reorder race where a
+ * sign-out broadcast could overtake a still-in-flight sign-in's
+ * claims-read promise. */
+function toPrincipalSnapshot(user: User): PrincipalSnapshot {
   return {
     uid: user.uid,
     email: user.email,
     displayName: user.displayName,
-    managerStakes: await readManagerStakes(user),
   };
 }
 
@@ -34,15 +39,12 @@ function broadcast(push: AuthStateChangedPush): void {
 
 export function registerAuthStatePush(): () => void {
   return subscribeAuthState((user) => {
-    if (user) {
-      void toPrincipalSnapshot(user).then((snapshot) => {
-        broadcast({
+    const push: AuthStateChangedPush = user
+      ? {
           type: 'auth.stateChanged',
-          state: { status: 'signed-in', user: snapshot },
-        });
-      });
-      return;
-    }
-    broadcast({ type: 'auth.stateChanged', state: { status: 'signed-out' } });
+          state: { status: 'signed-in', user: toPrincipalSnapshot(user) },
+        }
+      : { type: 'auth.stateChanged', state: { status: 'signed-out' } };
+    broadcast(push);
   });
 }

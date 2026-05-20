@@ -33,23 +33,23 @@ import type {
 } from '../lib/messaging';
 import type { User } from 'firebase/auth/web-extension';
 
-/** Reduce a Firebase User + claims read to the slim cross-boundary shape.
- * Reads `managerStakes` off the ID token so the panel can fan out
- * per-stake resolution without touching the Firebase SDK. */
-async function toPrincipalSnapshot(user: User): Promise<PrincipalSnapshot> {
+/** Reduce a Firebase User to the slim cross-boundary shape. The panel
+ * does not consume claims directly — the SW re-reads them on every
+ * `data.resolveEidStakes` to avoid staleness windows across the
+ * SW <-> CS boundary. */
+function toPrincipalSnapshot(user: User): PrincipalSnapshot {
   return {
     uid: user.uid,
     email: user.email,
     displayName: user.displayName,
-    managerStakes: await readManagerStakes(user),
   };
 }
 
-/** Async auth-state snapshot — `getIdTokenResult` may force a refresh. */
-async function snapshotAuthState(): Promise<AuthSnapshot> {
+/** Synchronous auth-state snapshot from the SDK. */
+function snapshotAuthState(): AuthSnapshot {
   const user = currentUser();
   if (!user) return { status: 'signed-out' };
-  return { status: 'signed-in', user: await toPrincipalSnapshot(user) };
+  return { status: 'signed-in', user: toPrincipalSnapshot(user) };
 }
 
 /** Translate any error into the wire shape. */
@@ -78,14 +78,14 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
       // answering; otherwise on SW revive we would reply
       // `'signed-out'` to a still-valid session.
       await waitForAuthHydrated();
-      return { ok: true, data: await snapshotAuthState() };
+      return { ok: true, data: snapshotAuthState() };
     }
     case 'auth.signIn': {
       try {
         const user = await signIn();
         const state: AuthSnapshot = {
           status: 'signed-in',
-          user: await toPrincipalSnapshot(user),
+          user: toPrincipalSnapshot(user),
         };
         return { ok: true, data: state };
       } catch (err) {
@@ -194,11 +194,20 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
       try {
         const user = currentUser();
         if (!user) {
-          return { ok: true, data: { candidates: [] } };
+          return { ok: true, data: { candidates: [], managedStakeCount: 0 } };
         }
+        // `readManagerStakes` propagates token-refresh failures so the
+        // panel can surface a wire-error recovery state. A successful
+        // claims read with no manager roles is `managedStakeCount: 0`
+        // (route to NotAuthorized); a non-empty managerStakes with no
+        // EID match is `managedStakeCount > 0, candidates: []` (route
+        // to the existing no-candidates recovery copy).
         const managerStakes = await readManagerStakes(user);
         const candidates = await resolveEidStakes(req.eid, managerStakes);
-        return { ok: true, data: { candidates } };
+        return {
+          ok: true,
+          data: { candidates, managedStakeCount: managerStakes.length },
+        };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }

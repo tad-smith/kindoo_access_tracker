@@ -218,12 +218,17 @@ describe('readManagerStakes', () => {
     expect(await readManagerStakes(user as never)).toEqual([]);
   });
 
-  it('returns an empty array when getIdTokenResult throws', async () => {
+  it('propagates the error when getIdTokenResult throws (callers route to wire-error state)', async () => {
+    // Risk 2 fix: swallowing to [] would conflate token-refresh
+    // failures with "user has no manager roles," routing transient
+    // wire failures to NotAuthorized or no-candidates. The resolver
+    // now propagates so App.tsx can surface the distinct
+    // "Couldn't reach SBA" recovery copy.
     const user = {
       getIdTokenResult: vi.fn().mockRejectedValue(new Error('network')),
     };
     const { readManagerStakes } = await import('./auth');
-    expect(await readManagerStakes(user as never)).toEqual([]);
+    await expect(readManagerStakes(user as never)).rejects.toThrow('network');
   });
 
   it('ignores non-manager entries (stake-only, bishopric-only)', async () => {

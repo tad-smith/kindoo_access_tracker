@@ -198,7 +198,7 @@ describe('extensionApi', () => {
     expect(result).toBeNull();
   });
 
-  it('resolveEidStakes posts data.resolveEidStakes with the eid and unwraps the candidate list', async () => {
+  it('resolveEidStakes posts data.resolveEidStakes with the eid and unwraps the full payload', async () => {
     chromeStub().runtime.sendMessage.mockImplementation(
       (_req: unknown, cb: SendMessageCallback) => {
         cb({
@@ -213,6 +213,7 @@ describe('extensionApi', () => {
                 siteLabel: 'Foothills Building',
               },
             ],
+            managedStakeCount: 2,
           },
         });
       },
@@ -223,15 +224,29 @@ describe('extensionApi', () => {
       { type: 'data.resolveEidStakes', eid: 27994 },
       expect.any(Function),
     );
-    expect(result).toEqual([
-      { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-      {
-        stakeId: 'east-co',
-        label: 'East CO',
-        match: 'foreign',
-        siteLabel: 'Foothills Building',
+    expect(result).toEqual({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        {
+          stakeId: 'east-co',
+          label: 'East CO',
+          match: 'foreign',
+          siteLabel: 'Foothills Building',
+        },
+      ],
+      managedStakeCount: 2,
+    });
+  });
+
+  it('resolveEidStakes throws ExtensionApiError on wire-level failure (Risk 2)', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: false, error: { code: 'network-error', message: 'token refresh failed' } });
       },
-    ]);
+    );
+    const { resolveEidStakes, ExtensionApiError } = await import('./extensionApi');
+    await expect(resolveEidStakes(27994)).rejects.toBeInstanceOf(ExtensionApiError);
+    await expect(resolveEidStakes(27994)).rejects.toMatchObject({ code: 'network-error' });
   });
 
   it('syncApplyFix posts the discriminated payload + unwraps the callable result', async () => {

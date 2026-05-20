@@ -43,27 +43,24 @@ interface StakeClaimBlock {
 /**
  * Pull the `managerStakes` list from the signed-in user's Firebase ID
  * token. Walks `claims.stakes[*]` and returns each stake id whose block
- * has `manager === true`. Returns an empty array on any failure (no
- * user, no claims, token refresh error) — callers treat empty as "not
- * a manager anywhere," which matches the callable's permission-denied
- * surface.
+ * has `manager === true`. An empty return means the claims were read
+ * successfully and the user holds no manager role anywhere — distinct
+ * from a token-refresh failure, which throws so callers can surface a
+ * "wire error" recovery state instead of mis-routing the user to
+ * NotAuthorized or no-candidates.
  */
 export async function readManagerStakes(user: User): Promise<string[]> {
-  try {
-    const result = await user.getIdTokenResult();
-    const claims = result.claims as { stakes?: Record<string, StakeClaimBlock> };
-    const map = claims.stakes;
-    if (!map || typeof map !== 'object') return [];
-    const out: string[] = [];
-    for (const [stakeId, block] of Object.entries(map)) {
-      if (block && typeof block === 'object' && block.manager === true) {
-        out.push(stakeId);
-      }
+  const result = await user.getIdTokenResult();
+  const claims = result.claims as { stakes?: Record<string, StakeClaimBlock> };
+  const map = claims.stakes;
+  if (!map || typeof map !== 'object') return [];
+  const out: string[] = [];
+  for (const [stakeId, block] of Object.entries(map)) {
+    if (block && typeof block === 'object' && block.manager === true) {
+      out.push(stakeId);
     }
-    return out;
-  } catch {
-    return [];
   }
+  return out;
 }
 
 /** Discriminated error codes the UI can switch on for friendlier copy. */

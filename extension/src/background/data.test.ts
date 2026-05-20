@@ -670,6 +670,69 @@ describe('resolveEidStakes — multi-stake candidate resolution', () => {
     const out = await resolveEidStakes(27994, ['csnorth']);
     expect(out).toEqual([{ stakeId: 'csnorth', label: 'CSN', match: 'home' }]);
   });
+
+  it('returns only the resolvable subset when one stake read rejects (Risk 1)', async () => {
+    // Risk 1: a single stake's rules-denial or Firestore hiccup must
+    // NOT nuke every other candidate via Promise.all rejection. The
+    // per-stake try/catch isolates the failure to that one stake.
+    getDocMock.mockImplementation((ref: unknown) => {
+      const args = (ref as { __doc: unknown[] }).__doc;
+      const stakeId = args[2] as string;
+      if (stakeId === 'stake-a') {
+        return Promise.reject(
+          Object.assign(new Error('permission denied'), { code: 'permission-denied' }),
+        );
+      }
+      return Promise.resolve({
+        exists: () => true,
+        data: () => ({
+          stake_name: 'Stake B',
+          kindoo_config: { site_id: 27994 },
+        }),
+      });
+    });
+    getDocsMock.mockImplementation((ref: unknown) => {
+      const args = (ref as { __coll: unknown[] }).__coll;
+      const stakeId = args[2] as string;
+      if (stakeId === 'stake-a') {
+        return Promise.reject(
+          Object.assign(new Error('permission denied'), { code: 'permission-denied' }),
+        );
+      }
+      return Promise.resolve({ docs: [] });
+    });
+    const { resolveEidStakes } = await import('./data');
+    const out = await resolveEidStakes(27994, ['stake-a', 'stake-b']);
+    expect(out).toEqual([{ stakeId: 'stake-b', label: 'Stake B', match: 'home' }]);
+  });
+
+  it('drops every failing stake but returns the remainder when multiple stakes throw', async () => {
+    // Belt-and-braces variant of the Risk 1 test: every stake but one
+    // rejects. The resolvable stake still surfaces.
+    getDocMock.mockImplementation((ref: unknown) => {
+      const args = (ref as { __doc: unknown[] }).__doc;
+      const stakeId = args[2] as string;
+      if (stakeId === 'stake-good') {
+        return Promise.resolve({
+          exists: () => true,
+          data: () => ({
+            stake_name: 'Good Stake',
+            kindoo_config: { site_id: 27994 },
+          }),
+        });
+      }
+      return Promise.reject(new Error('failed'));
+    });
+    getDocsMock.mockImplementation((ref: unknown) => {
+      const args = (ref as { __coll: unknown[] }).__coll;
+      const stakeId = args[2] as string;
+      if (stakeId === 'stake-good') return Promise.resolve({ docs: [] });
+      return Promise.reject(new Error('failed'));
+    });
+    const { resolveEidStakes } = await import('./data');
+    const out = await resolveEidStakes(27994, ['stake-bad-1', 'stake-good', 'stake-bad-2']);
+    expect(out).toEqual([{ stakeId: 'stake-good', label: 'Good Stake', match: 'home' }]);
+  });
 });
 
 describe('loadStakeConfig — stake parameterisation', () => {

@@ -150,7 +150,10 @@ describe('App', () => {
     // without modeling the picker explicitly. Picker-specific tests
     // override these.
     readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 't', eid: 27994 } });
-    resolveEidStakesMock.mockResolvedValue([{ stakeId: 'csnorth', label: 'CSN', match: 'home' }]);
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
+      managedStakeCount: 1,
+    });
     readEidStakeChoiceMock.mockResolvedValue(null);
     writeEidStakeChoiceMock.mockResolvedValue(undefined);
     clearEidStakeChoiceMock.mockResolvedValue(undefined);
@@ -366,15 +369,18 @@ describe('App', () => {
       email: 'mgr@example.com',
       displayName: null,
     });
-    resolveEidStakesMock.mockResolvedValue([
-      { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-      {
-        stakeId: 'east-co',
-        label: 'East CO',
-        match: 'foreign',
-        siteLabel: 'Foothills Building',
-      },
-    ]);
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        {
+          stakeId: 'east-co',
+          label: 'East CO',
+          match: 'foreign',
+          siteLabel: 'Foothills Building',
+        },
+      ],
+      managedStakeCount: 2,
+    });
     readEidStakeChoiceMock.mockResolvedValue(null);
 
     await renderApp();
@@ -392,15 +398,13 @@ describe('App', () => {
       email: 'mgr@example.com',
       displayName: null,
     });
-    resolveEidStakesMock.mockResolvedValue([
-      { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-      {
-        stakeId: 'east-co',
-        label: 'East CO',
-        match: 'foreign',
-        siteLabel: 'Foothills',
-      },
-    ]);
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+      ],
+      managedStakeCount: 2,
+    });
     readEidStakeChoiceMock.mockResolvedValue('east-co');
     getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
 
@@ -418,15 +422,13 @@ describe('App', () => {
       email: 'mgr@example.com',
       displayName: null,
     });
-    resolveEidStakesMock.mockResolvedValue([
-      { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-      {
-        stakeId: 'east-co',
-        label: 'East CO',
-        match: 'foreign',
-        siteLabel: 'Foothills',
-      },
-    ]);
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+      ],
+      managedStakeCount: 2,
+    });
     // Stored choice points at a stake no longer in the candidate set
     // (operator's role got rotated away).
     readEidStakeChoiceMock.mockResolvedValue('south-co');
@@ -437,19 +439,61 @@ describe('App', () => {
     expect(clearEidStakeChoiceMock).toHaveBeenCalledWith(27994);
   });
 
-  it('renders the no-candidates recovery copy when no managed stake has the EID configured', async () => {
+  it('renders the no-candidates recovery copy when the operator manages stakes but none has the EID configured', async () => {
     useAuthStateMock.mockReturnValue({
       status: 'signed-in',
       email: 'mgr@example.com',
       displayName: null,
     });
-    resolveEidStakesMock.mockResolvedValue([]);
+    // Managed-stake count > 0 with empty candidates list = genuine
+    // "EID isn't configured under any of my stakes" → reconfigure copy.
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], managedStakeCount: 2 });
 
     await renderApp();
 
     await waitFor(() => expect(screen.getByTestId('sba-no-candidates')).toBeInTheDocument());
     expect(screen.getByTestId('sba-no-candidates-message')).toHaveTextContent('EID 27994');
     expect(screen.queryByTestId('sba-stake-picker')).toBeNull();
+    expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
+  });
+
+  it('renders NotAuthorized (not no-candidates) when the user holds no manager role anywhere', async () => {
+    // Risk 3 fix: signed-in user with `stakes === {}` in claims should
+    // land on NotAuthorized, not on the reconfigure-copy
+    // no-candidates state. The old queue-callable permission-denied
+    // route is preempted in App.tsx now that managerStakes is known
+    // up front.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], managedStakeCount: 0 });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-not-authorized')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-no-candidates')).toBeNull();
+    expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
+  });
+
+  it('renders the wire-error recovery copy (not no-candidates) when resolveEidStakes throws', async () => {
+    // Risk 2 fix: a token-refresh blip or other SW failure should not
+    // be misrepresented as "this EID isn't configured." Distinct copy,
+    // distinct retry button.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockRejectedValue(new Error('SW asleep'));
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-wire-error')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-wire-error-message')).toHaveTextContent('reach SBA');
+    expect(screen.queryByTestId('sba-no-candidates')).toBeNull();
+    expect(screen.queryByTestId('sba-not-authorized')).toBeNull();
     expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
   });
 
@@ -474,15 +518,13 @@ describe('App', () => {
       email: 'mgr@example.com',
       displayName: null,
     });
-    resolveEidStakesMock.mockResolvedValue([
-      { stakeId: 'csnorth', label: 'CSN', match: 'home' },
-      {
-        stakeId: 'east-co',
-        label: 'East CO',
-        match: 'foreign',
-        siteLabel: 'Foothills',
-      },
-    ]);
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+      ],
+      managedStakeCount: 2,
+    });
     readEidStakeChoiceMock.mockResolvedValue(null);
     getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
 

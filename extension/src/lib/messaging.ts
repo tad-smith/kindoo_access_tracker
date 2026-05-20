@@ -31,19 +31,14 @@ import type {
   WardCallingTemplate,
 } from '@kindoo/shared';
 
-/** Reduced user shape — the only auth fields the panel renders. */
+/** Reduced user shape — the only auth fields the panel renders. The
+ * panel does NOT consume custom claims directly; the SW re-reads
+ * `managerStakes` on every `data.resolveEidStakes` to avoid staleness
+ * windows between snapshot read and resolver dispatch. */
 export interface PrincipalSnapshot {
   uid: string;
   email: string | null;
   displayName: string | null;
-  /**
-   * Stake IDs for which the signed-in user carries `manager: true` in
-   * their `stakes[stakeId]` custom-claims sub-object. The panel reads
-   * this to fan out per-stake EID resolution without touching the
-   * Firebase Auth SDK directly. Empty for non-managers; the callable's
-   * `permission-denied` remains the authoritative authorization signal.
-   */
-  managerStakes: string[];
 }
 
 export type AuthSnapshot =
@@ -262,9 +257,17 @@ export interface EidStakeCandidate {
   siteLabel?: string;
 }
 
-/** Wire shape for resolveEidStakes result. */
+/** Wire shape for resolveEidStakes result. `managedStakeCount` lets the
+ * panel disambiguate "candidates empty because no manager roles" (route
+ * to NotAuthorized) from "candidates empty because no managed stake
+ * has the EID configured" (route to the no-candidates recovery copy). */
 export interface ResolveEidStakesPayload {
   candidates: EidStakeCandidate[];
+  /** Total number of stakes on which the signed-in user holds
+   * `manager: true`. Zero means the user is not a manager anywhere
+   * (route to NotAuthorized); >0 with empty `candidates` means the
+   * EID isn't configured under any of their managed stakes. */
+  managedStakeCount: number;
 }
 
 /** Discriminated union of every request the panel may send. */

@@ -44,6 +44,7 @@ import { TabbedShell } from './TabbedShell';
 type StakeResolution =
   | { kind: 'loading' }
   | { kind: 'no-session'; error: KindooSessionError }
+  | { kind: 'wire-error'; message: string }
   | { kind: 'no-candidates'; eid: number }
   | { kind: 'pick'; eid: number; candidates: EidStakeCandidate[] }
   | { kind: 'resolved'; eid: number; stakeId: string };
@@ -83,22 +84,32 @@ export function App() {
       return;
     }
     const eid = sessionResult.session.eid;
-    let candidates: EidStakeCandidate[];
+    let payload: Awaited<ReturnType<typeof resolveEidStakes>>;
     try {
-      candidates = await resolveEidStakes(eid);
-    } catch {
-      // Wire-level / SW error — treat as "no candidates" so the
-      // operator sees the same recovery copy. The picker can't render
-      // without a real candidate list.
-      setStake({ kind: 'no-candidates', eid });
+      payload = await resolveEidStakes(eid);
+    } catch (err) {
+      // Wire / SW failure — keep distinct from "no candidates" so the
+      // retry copy reads "Couldn't reach SBA" instead of telling the
+      // operator to reconfigure SBA. A token-refresh blip is the
+      // common trigger.
+      const message = err instanceof Error ? err.message : String(err);
+      setStake({ kind: 'wire-error', message });
       return;
     }
-    if (candidates.length === 0) {
+    if (payload.managedStakeCount === 0) {
+      // Signed-in user holds no manager role anywhere. Route to the
+      // same NotAuthorized state the old queue-callable
+      // permission-denied path landed in; the reconfigure copy on
+      // no-candidates would be misleading here.
+      setNotAuthorized(true);
+      return;
+    }
+    if (payload.candidates.length === 0) {
       setStake({ kind: 'no-candidates', eid });
       return;
     }
     const stored = await readEidStakeChoice(eid);
-    if (stored !== null && candidates.some((c) => c.stakeId === stored)) {
+    if (stored !== null && payload.candidates.some((c) => c.stakeId === stored)) {
       setStake({ kind: 'resolved', eid, stakeId: stored });
       return;
     }
@@ -108,14 +119,14 @@ export function App() {
       // that stake, or the EID was un-configured from that stake.
       await clearEidStakeChoice(eid).catch(() => undefined);
     }
-    if (candidates.length === 1) {
+    if (payload.candidates.length === 1) {
       // Single candidate — auto-resolve. Don't persist; the resolution
       // is structural, not a remembered choice.
-      const only = candidates[0]!;
+      const only = payload.candidates[0]!;
       setStake({ kind: 'resolved', eid, stakeId: only.stakeId });
       return;
     }
-    setStake({ kind: 'pick', eid, candidates });
+    setStake({ kind: 'pick', eid, candidates: payload.candidates });
   }, []);
 
   const refreshConfig = useCallback(async (stakeId: string) => {
@@ -211,6 +222,29 @@ export function App() {
             className="sba-btn"
             onClick={() => void resolveStake()}
             data-testid="sba-no-kindoo-retry"
+          >
+            Retry
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  if (stake.kind === 'wire-error') {
+    return (
+      <main className="sba-panel" data-testid="sba-wire-error">
+        <header className="sba-header">
+          <h1>Stake Building Access</h1>
+        </header>
+        <div className="sba-body">
+          <p className="sba-error" data-testid="sba-wire-error-message">
+            Couldn&rsquo;t reach SBA. {stake.message}
+          </p>
+          <button
+            type="button"
+            className="sba-btn"
+            onClick={() => void resolveStake()}
+            data-testid="sba-wire-error-retry"
           >
             Retry
           </button>

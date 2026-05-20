@@ -132,13 +132,7 @@ export async function fetchAuthState(): Promise<AuthSnapshot> {
 export type AuthState =
   | { status: 'loading' }
   | { status: 'signed-out' }
-  | {
-      status: 'signed-in';
-      email: string | null;
-      displayName: string | null;
-      /** Stake IDs the user manages — comes from the SW's claims read. */
-      managerStakes: string[];
-    };
+  | { status: 'signed-in'; email: string | null; displayName: string | null };
 
 /**
  * React hook: read the SW's auth state and subscribe to push updates.
@@ -180,7 +174,6 @@ function snapToState(snap: AuthSnapshot): AuthState {
     status: 'signed-in',
     email: snap.user.email,
     displayName: snap.user.displayName,
-    managerStakes: snap.user.managerStakes ?? [],
   };
 }
 
@@ -283,17 +276,23 @@ export async function writeKindooSiteEid(
 }
 
 /**
- * Return the set of stakes the operator manages that have the given
- * Kindoo EID configured (home or foreign). Drives the slide-over
- * panel's stake picker when a session's EID maps to ≥ 2 candidates.
- * Empty array means the EID is not configured under any managed
- * stake — the panel surfaces the existing unknown-site recovery copy.
+ * Return the candidate stakes for a Kindoo EID plus the total count of
+ * stakes the operator manages. The panel disambiguates:
+ *
+ *  - `managedStakeCount === 0` → user is not a manager anywhere; route
+ *    to NotAuthorized.
+ *  - `managedStakeCount > 0 && candidates.length === 0` → user manages
+ *    stakes but none has this EID configured; route to no-candidates.
+ *  - `candidates.length >= 1` → auto-pick (single) or picker (multiple).
+ *
+ * Throws `ExtensionApiError` on wire / SW-side failures (claims
+ * refresh blew up, SW unreachable, etc.) — caller routes to a
+ * wire-error recovery state distinct from no-candidates.
  */
-export async function resolveEidStakes(eid: number): Promise<EidStakeCandidate[]> {
+export async function resolveEidStakes(eid: number): Promise<ResolveEidStakesPayload> {
   const req: DataResolveEidStakesRequest = { type: 'data.resolveEidStakes', eid };
   const res: DataResolveEidStakesResponse = await sendMessage(req);
-  const data = unwrap(res);
-  return data.candidates;
+  return unwrap(res);
 }
 
 // ---- Per-EID stake choice (chrome.storage.local) ----------------------
