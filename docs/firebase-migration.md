@@ -1,6 +1,6 @@
 # Firebase migration plan
 
-> **Status: Phase A COMPLETE (2026-05-03); Phase 12 ACTIVE (2026-05-18).** Phase 11 cutover closed; Firebase is live in production at `kindoo-prod`; `kindoo.csnorth.org` resolves to Firebase Hosting; the Apps Script app is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md). Phase 12 (multi-stake) was promoted from deferred to first-class on 2026-05-18; see the Phase 12 section below for the active scope. **Companion document: [`docs/firebase-schema.md`](firebase-schema.md)** — data model, rules, and indexes. **Live runtime behaviour:** [`docs/spec.md`](spec.md).
+> **Status: Phase A COMPLETE (2026-05-03); Phase 12 COMPLETE (2026-05-20).** Phase 11 cutover closed; Firebase is live in production at `kindoo-prod`; `kindoo.csnorth.org` resolves to Firebase Hosting; the Apps Script app is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md). Phase 12 (multi-stake) was promoted from deferred to first-class on 2026-05-18 and all five sub-deliverables (12.1 → 12.5) shipped by 2026-05-20; per-PR changelogs under `docs/changelog/phase-12.N-*.md`. **Companion document: [`docs/firebase-schema.md`](firebase-schema.md)** — data model, rules, and indexes. **Live runtime behaviour:** [`docs/spec.md`](spec.md).
 >
 > **History:** an earlier version of this plan ("Cloud Run + Express") was superseded on 2026-04-27 after architectural exploration concluded that direct-to-Firestore with custom claims was a better fit at this scale. Git history preserves the prior plan if needed. The original Phase 12 plan that settled on 2026-05-05 (single-stake-per-user, CLI-only provisioning, no stake switcher) was superseded on 2026-05-18 by the multi-stake-first design now in the Phase 12 section below; see that section for the three reversals.
 
@@ -195,7 +195,7 @@ kindoo/
 
 Phase 5 → 6 → 7 is web-engineer's serial path. Phase 8 → 9 is backend-engineer's serial path. Once Phase 4 ships, both arcs run in parallel until they converge for Phase 10. Phase 11 is everyone-on-deck for the cutover window. Phase 3.5 is a single-pass infra refresh (replacing reactfire + bumping major deps) that all downstream phases inherit.
 
-**Status as of 2026-05-03: Phase 11 closed; Phase A complete.** Firebase is live in production at `kindoo-prod`; `kindoo.csnorth.org` resolves to Firebase Hosting; the Apps Script app is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md) for the close note. **Phase 12 (multi-stake) was promoted from deferred to first-class on 2026-05-18** — see the Phase 12 section below. The original Phase 12 plan (single-stake-per-user, CLI-only provisioning) settled on 2026-05-05 has been superseded; F18 / F19 / F20 + `architecture.md` D15 capture the three reversals.
+**Status as of 2026-05-20: Phase 11 closed; Phase A complete; Phase 12 closed.** Firebase is live in production at `kindoo-prod`; `kindoo.csnorth.org` resolves to Firebase Hosting; the Apps Script app is no longer in the request path. See [`docs/changelog/phase-11-cutover.md`](changelog/phase-11-cutover.md) for the close note. **Phase 12 (multi-stake)** was promoted from deferred to first-class on 2026-05-18 and all five sub-deliverables (12.1 → 12.5) shipped by 2026-05-20; see the Phase 12 section below and the per-PR changelogs under `docs/changelog/phase-12.N-*.md`. The original Phase 12 plan (single-stake-per-user, CLI-only provisioning) settled on 2026-05-05 has been superseded; F18 / F19 / F20 + `architecture.md` D15 capture the three reversals.
 
 Phase 10.1 (navigation redesign — left rail + sectioned nav) shipped 2026-05-01 in PR #35 and is not shown in the tree above (it was originally planned post-cutover). Phase 10.5 (FCM push notifications — new-request → managers) shipped post-cutover. Phase 10.6 (push expansion — remaining four lifecycle types) is deferred. Phase 10.1 depended on Phases 4 + 7 (it replaced the Phase-4 nav once the Phase-7 admin pages had established the full nav-item set); Phase 10.6 depends on Phases 9 + 10.5. See [`navigation-redesign.md`](navigation-redesign.md) for Phase 10.1's design.
 
@@ -1580,9 +1580,9 @@ Acceptance against the original criteria, updated post-close:
 
 ---
 
-## Phase 12 — Multi-stake (active)
+## Phase 12 — Multi-stake
 
-**Status:** Active as of 2026-05-18. Not yet started in code; this section is the planning surface for the implementation PRs 12.1 → 12.5.
+**Status:** [DONE 2026-05-20] — all five sub-deliverables (12.1 → 12.5) shipped. Each landed its own per-PR changelog under `docs/changelog/phase-12.N-*.md`; no phase-rollup changelog (sub-deliverable entries are the trail).
 
 **Goal:** A second (or third, fourth, …) stake can be created from the running app by a platform superadmin. Users hold roles on multiple stakes simultaneously and switch between them via a stake switcher in the app shell. The bootstrap-wizard step remains owned by the new stake's bootstrap admin.
 
