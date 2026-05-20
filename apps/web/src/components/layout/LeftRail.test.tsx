@@ -5,7 +5,7 @@
 // link in the foot — have direct assertions that survive a Shell-
 // level refactor.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import {
   createMemoryHistory,
@@ -15,6 +15,20 @@ import {
   Outlet,
   RouterProvider,
 } from '@tanstack/react-router';
+
+// LeftRail's nav body now runtime-imports `useActiveStake` (which
+// transitively pulls in `lib/principal` → `lib/firebase` side effects:
+// `getAuth`, `connectAuthEmulator`, etc.). Mock the hook here so the
+// test's jsdom environment doesn't stand up a real Firebase Auth
+// singleton against a non-running emulator port — the auth-emulator
+// EventSource connection keeps the vitest worker from exiting (12.4
+// CI postmortem).
+vi.mock('../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+  useAccessibleStakes: () => ['csnorth'],
+  useActiveStakeSwitcher: () => () => {},
+}));
+
 import { LeftRail } from './LeftRail';
 import type { Principal } from '../../lib/principal';
 
