@@ -23,13 +23,16 @@ import { CreateStakeForm } from './CreateStakeForm';
 import { useStakes } from './hooks';
 
 /**
- * Per-stake landing path. In the single-stake-constant era (pre-12.4)
- * every stake's "landing" is the manager Dashboard against the active
- * stake. Once 12.4 ships the active-stake selector, this becomes a
- * stake-switch URL that swaps the active stake on the way in.
+ * Per-stake landing target. Deep-links into the manager Dashboard
+ * with the target stake as `?stake=<slug>`. `useActiveStake()` on
+ * the destination's first render reads the param, persists it to both
+ * sessionStorage + localStorage, and strips it via `history.replaceState`
+ * (spec §2.1). The role gate on `/manager/dashboard` redirects out to
+ * the user's actual landing for that stake if they don't hold the
+ * manager role there.
  */
-function landingPathFor(_stake: Stake): string {
-  return '/manager/dashboard';
+function landingTargetFor(stake: Stake): { to: string; search: { stake: string } } {
+  return { to: '/manager/dashboard', search: { stake: stake.stake_id } };
 }
 
 function timestampToMillis(value: Stake['created_at']): number {
@@ -87,7 +90,7 @@ function StakeRow({ stake }: StakeRowProps) {
       <div className="flex flex-col gap-1">
         <div className="flex flex-wrap items-baseline gap-2">
           <Link
-            to={landingPathFor(stake)}
+            {...landingTargetFor(stake)}
             className="text-base font-semibold text-[color:var(--kd-primary)] hover:underline"
             data-testid={`superadmin-stake-link-${stake.stake_id}`}
           >

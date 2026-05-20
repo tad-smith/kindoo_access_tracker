@@ -16,6 +16,7 @@
 
 import { Link, useRouterState } from '@tanstack/react-router';
 import type { Principal } from '../../lib/principal';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { navSectionsForPrincipal, type NavItem, type NavSection } from './navModel';
 import './Nav.css';
 
@@ -48,7 +49,8 @@ export function Nav({
   ariaLabel = 'Primary',
   userEmail,
 }: NavProps) {
-  const sections = navSectionsForPrincipal(principal);
+  const activeStakeId = useActiveStake();
+  const sections = navSectionsForPrincipal(principal, activeStakeId);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   if (sections.length === 0) return null;

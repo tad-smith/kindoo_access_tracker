@@ -60,10 +60,7 @@ export function useBishopricRoster(wardCode: string | null): RosterResult {
  */
 export function useStakeWards() {
   const activeStakeId = useActiveStake();
-  const q = useMemo(
-    () => (activeStakeId ? wardsCol(db, activeStakeId) : null),
-    [activeStakeId],
-  );
+  const q = useMemo(() => (activeStakeId ? wardsCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Ward>(q);
 }
 

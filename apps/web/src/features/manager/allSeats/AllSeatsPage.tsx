@@ -47,7 +47,7 @@ import { toast } from '../../../lib/store/toast';
 import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
 import { isScopeAllowed } from '../../requests/scopeOptions';
 import { usePrincipal } from '../../../lib/principal';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -146,6 +146,7 @@ function sortGrantRowsWithinScope(rows: readonly GrantRow[]): GrantRow[] {
 
 export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllSeatsPageProps) {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const seats = useAllSeats();
   const wards = useWards();
   const buildings = useBuildings();
@@ -321,6 +322,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
               wards={wardsList}
               sites={sitesList}
               principal={principal}
+              activeStakeId={activeStakeId}
               onEdit={() => setEditingSeat(row.seat)}
             />
           ))}
@@ -343,13 +345,15 @@ interface GrantRowCardProps {
   wards: readonly Ward[];
   sites: readonly KindooSite[];
   principal: ReturnType<typeof usePrincipal>;
+  activeStakeId: string | null;
   onEdit: () => void;
 }
 
-function GrantRowCard({ row, wards, sites, principal, onEdit }: GrantRowCardProps) {
+function GrantRowCard({ row, wards, sites, principal, activeStakeId, onEdit }: GrantRowCardProps) {
   const { seat, grant } = row;
   const siteLabel = siteLabelForGrant(grant, wards, sites);
-  const canRemoveScope = isScopeAllowed(principal, STAKE_ID, grant.scope);
+  const canRemoveScope =
+    activeStakeId !== null && isScopeAllowed(principal, activeStakeId, grant.scope);
   // Edit affordance: shown only on the primary row of manual / temp
   // seats (auto seats are importer-owned). On every duplicate row
   // the button renders disabled with a tooltip — preserves the

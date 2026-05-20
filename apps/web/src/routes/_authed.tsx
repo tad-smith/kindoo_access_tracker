@@ -37,7 +37,7 @@ import { usePrincipal } from '../lib/principal';
 import { useFirestoreDoc } from '../lib/data';
 import { stakeRef } from '../lib/docs';
 import { db } from '../lib/firebase';
-import { STAKE_ID } from '../lib/constants';
+import { useActiveStake } from '../lib/useActiveStake';
 import { gateDecision } from '../lib/setupGate';
 
 export const Route = createFileRoute('/_authed')({
@@ -48,7 +48,10 @@ export const Route = createFileRoute('/_authed')({
 // rebuilding TanStack Router's file-based-route plumbing.
 export function AuthedLayout() {
   const principal = usePrincipal();
-  const stake = useFirestoreDoc(principal.firebaseAuthSignedIn ? stakeRef(db, STAKE_ID) : null);
+  const activeStakeId = useActiveStake();
+  const stake = useFirestoreDoc(
+    principal.firebaseAuthSignedIn && activeStakeId !== null ? stakeRef(db, activeStakeId) : null,
+  );
 
   const decision = gateDecision(principal, { data: stake.data, status: stake.status });
 

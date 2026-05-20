@@ -1,11 +1,13 @@
 // Unit tests for the routing helpers. Exercises the per-role
-// default-landing rule (priority manager > stake > bishopric) and the
-// legacy `?p=` deep-link table.
+// default-landing rule (priority manager > stake > bishopric), the
+// zero-role-platform-superadmin landing, and the legacy `?p=` deep-link
+// table.
 
 import { describe, expect, it } from 'vitest';
 import { defaultLandingFor, deepLinkPath } from './routing';
-import { STAKE_ID } from './constants';
 import type { Principal } from './principal';
+
+const STAKE_ID = 'csnorth';
 
 function principal(overrides: Partial<Principal> = {}): Principal {
   return {
@@ -25,15 +27,19 @@ function principal(overrides: Partial<Principal> = {}): Principal {
 
 describe('defaultLandingFor', () => {
   it('returns the manager dashboard for a manager principal', () => {
-    expect(defaultLandingFor(principal({ managerStakes: [STAKE_ID] }))).toBe('/manager/dashboard');
+    expect(defaultLandingFor(principal({ managerStakes: [STAKE_ID] }), STAKE_ID)).toBe(
+      '/manager/dashboard',
+    );
   });
 
   it('returns /new for a stake-member principal', () => {
-    expect(defaultLandingFor(principal({ stakeMemberStakes: [STAKE_ID] }))).toBe('/new');
+    expect(defaultLandingFor(principal({ stakeMemberStakes: [STAKE_ID] }), STAKE_ID)).toBe('/new');
   });
 
   it('returns /new for a bishopric principal', () => {
-    expect(defaultLandingFor(principal({ bishopricWards: { [STAKE_ID]: ['CO'] } }))).toBe('/new');
+    expect(defaultLandingFor(principal({ bishopricWards: { [STAKE_ID]: ['CO'] } }), STAKE_ID)).toBe(
+      '/new',
+    );
   });
 
   it('priorities manager > stake > bishopric for multi-role unions', () => {
@@ -44,6 +50,7 @@ describe('defaultLandingFor', () => {
           stakeMemberStakes: [STAKE_ID],
           bishopricWards: { [STAKE_ID]: ['CO'] },
         }),
+        STAKE_ID,
       ),
     ).toBe('/manager/dashboard');
     expect(
@@ -52,16 +59,29 @@ describe('defaultLandingFor', () => {
           stakeMemberStakes: [STAKE_ID],
           bishopricWards: { [STAKE_ID]: ['CO'] },
         }),
+        STAKE_ID,
       ),
     ).toBe('/new');
   });
 
-  it('prefers manager when the principal is a platform superadmin', () => {
-    expect(defaultLandingFor(principal({ isPlatformSuperadmin: true }))).toBe('/manager/dashboard');
+  it('prefers manager when the principal is a platform superadmin in an accessible stake', () => {
+    expect(defaultLandingFor(principal({ isPlatformSuperadmin: true }), STAKE_ID)).toBe(
+      '/manager/dashboard',
+    );
   });
 
   it('falls back to / when the principal has no role in this stake', () => {
-    expect(defaultLandingFor(principal({ managerStakes: ['other-stake'] }))).toBe('/');
+    expect(defaultLandingFor(principal({ managerStakes: ['other-stake'] }), STAKE_ID)).toBe('/');
+  });
+
+  it('lands a zero-role platform superadmin on /superadmin/stakes when stakeId is null', () => {
+    expect(defaultLandingFor(principal({ isPlatformSuperadmin: true }), null)).toBe(
+      '/superadmin/stakes',
+    );
+  });
+
+  it('falls back to / for a no-role non-superadmin when stakeId is null', () => {
+    expect(defaultLandingFor(principal(), null)).toBe('/');
   });
 });
 

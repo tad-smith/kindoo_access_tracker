@@ -18,8 +18,9 @@
 //   - One `<Entity>Ref(stakeId, id)` for `DocumentReference`.
 //   - One `<entities>Col(stakeId)` for `CollectionReference`.
 //   - For top-level (cross-stake) collections, no `stakeId` arg.
-//   - All callers pass `STAKE_ID` from `./constants` — it is a stable
-//     constant in v1; multi-stake makes it dynamic per principal.
+//   - Callers pass the active stake (`useActiveStake()` — `null` for a
+//     zero-role platform superadmin). Consumers gate their subscriptions
+//     on the non-null branch.
 
 import {
   collection,

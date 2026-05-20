@@ -13,7 +13,7 @@ import { updateDoc } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { db } from '../../lib/firebase';
 import { requestRef } from '../../lib/docs';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 import { auth } from '../../lib/firebase';
 
 export interface CancelRequestInput {
@@ -22,8 +22,12 @@ export interface CancelRequestInput {
 
 export function useCancelRequest() {
   const queryClient = useQueryClient();
+  const activeStakeId = useActiveStake();
   return useMutation({
     mutationFn: async ({ requestId }: CancelRequestInput) => {
+      if (!activeStakeId) {
+        throw new Error('No active stake.');
+      }
       const user = auth.currentUser;
       if (!user || !user.email) {
         throw new Error('Not signed in.');
@@ -35,7 +39,7 @@ export function useCancelRequest() {
       const tokenResult = await user.getIdTokenResult();
       const canonical = (tokenResult.claims as { canonical?: string }).canonical ?? user.email;
 
-      await updateDoc(requestRef(db, STAKE_ID, requestId), {
+      await updateDoc(requestRef(db, activeStakeId, requestId), {
         status: 'cancelled',
         lastActor: { email: user.email, canonical },
       });

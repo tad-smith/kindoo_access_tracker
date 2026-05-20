@@ -32,7 +32,7 @@ import {
 } from './sort';
 import { useStakeWards } from '../dashboard/hooks';
 import { usePrincipal } from '../../../lib/principal';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
 import { Select } from '../../../components/ui/Select';
@@ -52,6 +52,7 @@ export function AccessPage() {
   const stakeTemplates = useStakeCallingTemplates();
   const wardTemplates = useWardCallingTemplates();
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   // (scope, calling) → sheet_order. Drives the desktop table view's
   // per-row sort. Card view continues to use the doc-level
   // `sort_order` denormalised by the importer (correct under the
@@ -82,12 +83,13 @@ export function AccessPage() {
   // Sort: 'stake' first, wards alphabetical.
   const scopes = useMemo(() => {
     const seen = new Set<string>();
-    if (principal.managerStakes.includes(STAKE_ID)) {
+    if (!activeStakeId) return [];
+    if (principal.managerStakes.includes(activeStakeId)) {
       seen.add('stake');
       for (const w of wards.data ?? []) seen.add(w.ward_code);
     } else {
-      if (principal.stakeMemberStakes.includes(STAKE_ID)) seen.add('stake');
-      for (const w of principal.bishopricWards[STAKE_ID] ?? []) seen.add(w);
+      if (principal.stakeMemberStakes.includes(activeStakeId)) seen.add('stake');
+      for (const w of principal.bishopricWards[activeStakeId] ?? []) seen.add(w);
     }
     const list = Array.from(seen);
     return list.sort((a, b) => {
@@ -95,7 +97,13 @@ export function AccessPage() {
       if (b === 'stake') return 1;
       return a.localeCompare(b);
     });
-  }, [principal.managerStakes, principal.stakeMemberStakes, principal.bishopricWards, wards.data]);
+  }, [
+    principal.managerStakes,
+    principal.stakeMemberStakes,
+    principal.bishopricWards,
+    wards.data,
+    activeStakeId,
+  ]);
 
   // Filter rows by scope: a user-row is included if either side has a
   // grant for the selected scope.

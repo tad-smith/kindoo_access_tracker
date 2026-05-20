@@ -23,7 +23,7 @@ import { useState } from 'react';
 import type { Seat } from '@kindoo/shared';
 import { Button } from '../../../components/ui/Button';
 import { usePrincipal } from '../../../lib/principal';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 import { canEditSeat } from '../scopeOptions';
 import { EditSeatDialog } from './EditSeatDialog';
 
@@ -33,9 +33,10 @@ export interface EditSeatAffordanceProps {
 
 export function EditSeatAffordance({ seat }: EditSeatAffordanceProps) {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const [open, setOpen] = useState(false);
 
-  if (!canEditSeat(principal, STAKE_ID, seat)) return null;
+  if (!activeStakeId || !canEditSeat(principal, activeStakeId, seat)) return null;
 
   return (
     <>

@@ -35,10 +35,7 @@ import type { Principal } from '../../lib/principal';
 
 export function useStakeDoc() {
   const activeStakeId = useActiveStake();
-  const ref = useMemo(
-    () => (activeStakeId ? stakeRef(db, activeStakeId) : null),
-    [activeStakeId],
-  );
+  const ref = useMemo(() => (activeStakeId ? stakeRef(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreDoc<Stake>(ref);
 }
 
@@ -53,10 +50,7 @@ export function useBuildings() {
 
 export function useWards() {
   const activeStakeId = useActiveStake();
-  const q = useMemo(
-    () => (activeStakeId ? wardsCol(db, activeStakeId) : null),
-    [activeStakeId],
-  );
+  const q = useMemo(() => (activeStakeId ? wardsCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Ward>(q);
 }
 

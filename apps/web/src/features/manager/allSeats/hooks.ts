@@ -17,21 +17,27 @@ import { canonicalEmail } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../../lib/data';
 import { db } from '../../../lib/firebase';
 import { buildingsCol, kindooSitesCol, seatRef, seatsCol, wardsCol } from '../../../lib/docs';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 import { usePrincipal } from '../../../lib/principal';
 
 export function useAllSeats() {
-  const q = useMemo(() => seatsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(() => (activeStakeId ? seatsCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Seat>(q);
 }
 
 export function useWards() {
-  const q = useMemo(() => wardsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(() => (activeStakeId ? wardsCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Ward>(q);
 }
 
 export function useBuildings() {
-  const q = useMemo(() => buildingsCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<Building>(q);
 }
 
@@ -40,7 +46,11 @@ export function useBuildings() {
  * seats (spec §15). Empty when the stake only operates its home site.
  */
 export function useKindooSites() {
-  const q = useMemo(() => kindooSitesCol(db, STAKE_ID), []);
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? kindooSitesCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   return useFirestoreCollection<KindooSite>(q);
 }
 
@@ -68,11 +78,15 @@ export interface InlineSeatEditInput {
  */
 export function useInlineSeatEditMutation() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: InlineSeatEditInput) => {
+      if (!activeStakeId) {
+        throw new Error('No active stake.');
+      }
       const actor = actorOf(principal);
-      const ref = seatRef(db, STAKE_ID, input.member_canonical);
+      const ref = seatRef(db, activeStakeId, input.member_canonical);
       // Build the update map field-by-field so the rule's
       // `affectedKeys().hasOnly(...)` predicate sees only the allowed
       // keys. Empty/undefined fields fall through unchanged.

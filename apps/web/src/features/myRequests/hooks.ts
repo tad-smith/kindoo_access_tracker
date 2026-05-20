@@ -9,7 +9,7 @@ import type { AccessRequest } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
 import { requestsCol } from '../../lib/docs';
-import { STAKE_ID } from '../../lib/constants';
+import { useActiveStake } from '../../lib/useActiveStake';
 
 /**
  * Live request list for the signed-in user. `null` canonical disables
@@ -18,13 +18,14 @@ import { STAKE_ID } from '../../lib/constants';
  * `firestore.indexes.json`.
  */
 export function useMyRequests(canonical: string | null) {
+  const activeStakeId = useActiveStake();
   const reqQuery = useMemo(() => {
-    if (!canonical) return null;
+    if (!canonical || !activeStakeId) return null;
     return query(
-      requestsCol(db, STAKE_ID),
+      requestsCol(db, activeStakeId),
       where('requester_canonical', '==', canonical),
       orderBy('requested_at', 'desc'),
     );
-  }, [canonical]);
+  }, [canonical, activeStakeId]);
   return useFirestoreCollection<AccessRequest>(reqQuery);
 }

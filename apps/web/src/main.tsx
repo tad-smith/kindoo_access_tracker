@@ -33,6 +33,10 @@ import './lib/firebase';
 import { RootErrorBoundary } from './components/RootErrorBoundary';
 import { PwaUpdatePrompt } from './components/layout/PwaUpdatePrompt';
 import { registerNotificationClickRouter } from './features/notifications/serviceWorkerMessenger';
+import {
+  notifyActiveStakeUrlNavigated,
+  registerActiveStakeQueryClient,
+} from './lib/useActiveStake';
 import { routeTree } from './routeTree.gen';
 import './styles/tokens.css';
 import './styles/tailwind.css';
@@ -71,6 +75,22 @@ const queryClient = new QueryClient({
       staleTime: 30_000,
     },
   },
+});
+
+// Register the QueryClient with the active-stake module so URL-tier
+// `?stake=X` hits can invalidate per-stake DIY-Firestore-hook caches.
+// `useActiveStake` is consumed at the top of every route gate
+// (`useRequireRole`); we keep the QueryClient access module-scoped so
+// route-gate unit tests don't need to bring a QueryClientProvider.
+registerActiveStakeQueryClient(queryClient);
+
+// Ping the active-stake module on every router-history change so an
+// SW notificationclick deep-link push (or any in-app navigation that
+// carries `?stake=X`) re-runs the active-stake resolution chain. The
+// hook reads `window.location.search` on each ping; no router context
+// is required inside the hook.
+router.history.subscribe(() => {
+  notifyActiveStakeUrlNavigated();
 });
 
 const rootEl = document.getElementById('root');

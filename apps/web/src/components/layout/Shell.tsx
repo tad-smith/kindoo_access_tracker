@@ -132,9 +132,7 @@ export function Shell({ children }: ShellProps) {
               </span>
             ) : null}
             <div className="kd-brandbar-stake-slot" data-testid="stake-selector-slot">
-              {principal.isAuthenticated ? (
-                <StakeSwitcher activeStakeId={activeStakeId} />
-              ) : null}
+              {principal.isAuthenticated ? <StakeSwitcher activeStakeId={activeStakeId} /> : null}
             </div>
             {showEmailInBar ? (
               <span className="kd-brandbar-email" title={principal.email}>

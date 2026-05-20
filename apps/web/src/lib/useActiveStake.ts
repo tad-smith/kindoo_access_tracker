@@ -15,11 +15,24 @@
 // `null` as "no per-stake reads to issue" (the empty-set superadmin
 // state). The StakeSwitcher hides itself for principals with < 2
 // accessible stakes; per-stake-aware hooks pass `null` through to
-// their queries so TanStack Query stays disabled.
+// their queries so the DIY data hooks stay disabled.
+//
+// Implementation note on context-free reads. `useActiveStake` is
+// consumed by `useRequireRole`, which fires at the top of every route
+// gate — including in route-gate unit tests that don't wrap a
+// `QueryClientProvider` or a TanStack Router. We therefore do NOT
+// read those contexts from inside the hook. Instead:
+//   - URL `?stake=X` is read directly off `window.location.search`.
+//   - The hook subscribes to a module-scoped event emitter that the
+//     SW-notificationclick bridge in `main.tsx` pings on push-deep-link
+//     navigations; `useEffect` re-resolves on each ping.
+//   - The QueryClient used for URL-tier cache invalidation comes from
+//     a module-scoped registry that `main.tsx` populates on app boot
+//     (`registerActiveStakeQueryClient`). Route-gate unit tests don't
+//     register one and the invalidate becomes a no-op.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { useRouterState } from '@tanstack/react-router';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import {
   ACTIVE_STAKE_LOCAL_KEY,
   ACTIVE_STAKE_SESSION_KEY,
@@ -35,6 +48,56 @@ import { usePrincipal } from './principal';
 import { toast } from './store/toast';
 
 const STAKE_PARAM = 'stake';
+
+// Module-scoped QueryClient registry. `main.tsx` populates this on app
+// boot; the hook reads it when it needs to invalidate per-stake caches.
+// `null` is the sentinel for "not yet registered" (route-gate unit
+// tests that don't bring their own QueryClient).
+let activeStakeQueryClient: QueryClient | null = null;
+
+/**
+ * Register the app's QueryClient with the active-stake module. Called
+ * once from `main.tsx` after `createQueryClient`; tests that exercise
+ * the URL-tier invalidate path register a test client via the same
+ * door.
+ */
+export function registerActiveStakeQueryClient(qc: QueryClient | null): void {
+  activeStakeQueryClient = qc;
+}
+
+// Module-scoped subscriber set. `notifyActiveStakeUrlNavigated()` fires
+// each registered callback; the hook subscribes to receive pushes from
+// SW-notificationclick → router-history navigations (`main.tsx` wires
+// the SW bridge to call `notifyActiveStakeUrlNavigated()` after the
+// router push lands).
+const urlNavSubscribers = new Set<() => void>();
+
+/** Fired by `main.tsx` after a SW-driven router navigation lands. */
+export function notifyActiveStakeUrlNavigated(): void {
+  for (const fn of urlNavSubscribers) {
+    try {
+      fn();
+    } catch {
+      // ignore individual subscriber errors
+    }
+  }
+}
+
+/**
+ * Read `?stake=X` directly off the current URL. No router context
+ * needed (context-free; safe to call from route-gate unit tests that
+ * don't mount a router).
+ */
+function readStakeParamFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const url = new URL(window.location.href);
+    const raw = url.searchParams.get(STAKE_PARAM);
+    return raw && raw.length > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Strip `?stake=X` from the current URL via `history.replaceState`.
@@ -59,9 +122,13 @@ function stripStakeParamFromUrl(): void {
  * Invalidate every DIY-Firestore-hook cache entry so all per-stake
  * reads re-issue against the newly-resolved stake. Cheap at our
  * scale (~250 seats) and avoids per-collection invalidation lists.
+ * No-op when no QueryClient is registered (tests without a provider).
  */
-function invalidatePerStakeQueries(queryClient: ReturnType<typeof useQueryClient>): void {
-  queryClient.invalidateQueries({ queryKey: [FIRESTORE_QUERY_KEY_PREFIX] }).catch(() => {});
+function invalidatePerStakeQueries(): void {
+  if (!activeStakeQueryClient) return;
+  activeStakeQueryClient
+    .invalidateQueries({ queryKey: [FIRESTORE_QUERY_KEY_PREFIX] })
+    .catch(() => {});
 }
 
 /**
@@ -69,7 +136,10 @@ function invalidatePerStakeQueries(queryClient: ReturnType<typeof useQueryClient
  * URL-tier invalidations show the push-notification copy; storage-tier
  * invalidations show the last-active-stake copy.
  */
-function toastForInvalidatedTier(tier: 'url' | 'session' | 'local', newStakeId: string | null): void {
+function toastForInvalidatedTier(
+  tier: 'url' | 'session' | 'local',
+  newStakeId: string | null,
+): void {
   if (tier === 'url') {
     toast('This notification was for a stake you no longer have access to.', 'warn');
     return;
@@ -94,33 +164,51 @@ function toastForInvalidatedTier(tier: 'url' | 'session' | 'local', newStakeId: 
  *
  *   - On URL-tier hit: persists value to both storage tiers, strips
  *     `?stake=X` from the URL, invalidates per-stake TanStack Query
- *     caches.
+ *     caches via the registered QueryClient.
  *   - On invalidated tier: shows a toast and overwrites the stale
  *     storage value with the resolved stake (or clears it when the
  *     resolved stake is null).
  */
 export function useActiveStake(): string | null {
   const principal = usePrincipal();
-  const queryClient = useQueryClient();
 
-  // Track the URL `?stake=X` value through router navigations. The
-  // hook re-runs the priority chain whenever this value or the
-  // principal changes. We use `useRouterState` so service-worker-
-  // driven router pushes (the notificationclick deep-link path)
-  // trigger the re-resolve mid-lifecycle.
-  const urlStakeParam = useRouterState({
-    select: (s) => {
-      const search = s.location.search as Record<string, unknown> | undefined;
-      const raw = search?.[STAKE_PARAM];
-      return typeof raw === 'string' && raw.length > 0 ? raw : null;
-    },
-  });
+  // Track the URL `?stake=X` value through navigations. We read it
+  // directly off `window.location.search` (no router context required
+  // — keeps route-gate unit tests free of TanStack-Router wrapping)
+  // and re-read on:
+  //   - `popstate` (browser back/forward + history.replaceState),
+  //   - the module-scope `urlNavSubscribers` ping that `main.tsx`
+  //     fires after the SW notificationclick bridge pushes a new URL.
+  const [urlStakeParam, setUrlStakeParam] = useState<string | null>(() =>
+    readStakeParamFromUrl(),
+  );
 
-  const [resolved, setResolved] = useState<ResolveActiveStakeResult>(() => ({
-    stakeId: null,
-    source: 'none',
-    invalidatedTier: null,
-  }));
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const recheck = () => {
+      const next = readStakeParamFromUrl();
+      setUrlStakeParam((prev) => (prev === next ? prev : next));
+    };
+    window.addEventListener('popstate', recheck);
+    urlNavSubscribers.add(recheck);
+    return () => {
+      window.removeEventListener('popstate', recheck);
+      urlNavSubscribers.delete(recheck);
+    };
+  }, []);
+
+  // Resolve synchronously on first render so consumers (`useRequireRole`,
+  // etc.) see the right stake on mount. The effect below re-runs on
+  // changes to keep `resolved` aligned with subsequent principal /
+  // URL-param updates.
+  const [resolved, setResolved] = useState<ResolveActiveStakeResult>(() =>
+    resolveActiveStake(
+      principal,
+      readStakeParamFromUrl(),
+      readSessionStake(),
+      readLocalStake(),
+    ),
+  );
 
   // Track whether we've already issued the URL-tier persist + strip for
   // a given urlStakeParam value so a re-render doesn't repeat the work.
@@ -146,7 +234,7 @@ export function useActiveStake(): string | null {
       // param doesn't survive in the bar.
       if (result.source === 'url' && result.stakeId !== null) {
         persistChoiceCore(result.stakeId);
-        invalidatePerStakeQueries(queryClient);
+        invalidatePerStakeQueries();
       }
       stripStakeParamFromUrl();
     }
@@ -176,11 +264,8 @@ export function useActiveStake(): string | null {
       }
     }
     // Re-resolve when the principal claim set or the URL stake param
-    // changes. The storage tiers are read fresh inside the effect; a
-    // storage write from elsewhere (switcher) calls
-    // `persistActiveStakeChoice` then triggers its own re-render path
-    // via TanStack Query invalidation.
-  }, [principal, urlStakeParam, queryClient]);
+    // changes. The storage tiers are read fresh inside the effect.
+  }, [principal, urlStakeParam]);
 
   return resolved.stakeId;
 }
@@ -199,7 +284,7 @@ export function useActiveStakeSwitcher(): (stakeId: string) => void {
   return useMemo(() => {
     return (stakeId: string) => {
       persistChoiceCore(stakeId);
-      invalidatePerStakeQueries(queryClient);
+      queryClient.invalidateQueries({ queryKey: [FIRESTORE_QUERY_KEY_PREFIX] }).catch(() => {});
     };
   }, [queryClient]);
 }

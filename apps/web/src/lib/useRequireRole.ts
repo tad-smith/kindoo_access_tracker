@@ -29,11 +29,11 @@
 //      not-allowed URL out of history. Caller renders `null` while the
 //      navigation lands.
 //
-// Roles are evaluated against `STAKE_ID` (the v1 single-stake constant
-// from `lib/constants.ts`); `'platformSuperadmin'` is the only role
-// that doesn't take a stake parameter. Pass an array for either-of
-// semantics: `useRequireRole(['manager', 'platformSuperadmin'])`
-// allows users who hold either role.
+// Roles are evaluated against the active stake (`useActiveStake()`);
+// `'platformSuperadmin'` is the only role that doesn't take a stake
+// parameter. Pass an array for either-of semantics:
+// `useRequireRole(['manager', 'platformSuperadmin'])` allows users
+// who hold either role.
 //
 // The setup-complete gate in `routes/_authed.tsx` runs first; this
 // hook only fires inside an already-authed Outlet. A stake mid-setup
@@ -43,11 +43,11 @@
 import { useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { usePrincipal, type Principal } from './principal';
-import { STAKE_ID } from './constants';
+import { useActiveStake } from './useActiveStake';
 
 /**
  * Role identifiers accepted by {@link useRequireRole}. `'manager'`,
- * `'bishopric'`, `'stake'` are evaluated against `STAKE_ID`;
+ * `'bishopric'`, `'stake'` are evaluated against the active stake;
  * `'platformSuperadmin'` is the global flag.
  */
 export type RequiredRole = 'manager' | 'bishopric' | 'stake' | 'platformSuperadmin';
@@ -94,11 +94,12 @@ export function useRequireRole(
   options?: RequireRoleOptions,
 ): RequireRoleResult {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const navigate = useNavigate();
 
   const claimsLoading = principal.firebaseAuthSignedIn && !principal.isAuthenticated;
   const required = Array.isArray(role) ? role : [role];
-  const allowed = !claimsLoading && holdsAnyRole(principal, required);
+  const allowed = !claimsLoading && holdsAnyRole(principal, required, activeStakeId);
   const redirectTo = options?.redirectTo ?? '/';
 
   useEffect(() => {
@@ -115,23 +116,32 @@ export function useRequireRole(
 
 /**
  * Pure predicate: does the principal hold at least one of the named
- * roles in `STAKE_ID`? `platformSuperadmin` is the only stake-agnostic
- * axis.
+ * roles in the given stake? `platformSuperadmin` is the only stake-
+ * agnostic axis.
  *
  * Two roles are implicit supersets that pass any gate they cover:
  *   - `platformSuperadmin` administers every stake — passes any gate.
  *   - `manager` (Kindoo Manager) administers the entire app, so a
- *     manager in `STAKE_ID` passes a `stake` or `bishopric` gate
+ *     manager in `stakeId` passes a `stake` or `bishopric` gate
  *     without literally holding those roles. The manager shortcut does
  *     NOT cover the `platformSuperadmin` gate — a manager who isn't a
  *     superadmin must still be redirected away from a
  *     `platformSuperadmin`-only page.
  *
+ * When `stakeId` is `null` (zero-role platform superadmin), only the
+ * `platformSuperadmin` axis can match; every per-stake role returns
+ * false.
+ *
  * Exported for unit testing — components use {@link useRequireRole}.
  */
-export function holdsAnyRole(principal: Principal, roles: RequiredRole[]): boolean {
+export function holdsAnyRole(
+  principal: Principal,
+  roles: RequiredRole[],
+  stakeId: string | null,
+): boolean {
   if (principal.isPlatformSuperadmin) return true;
-  const manager = principal.managerStakes.includes(STAKE_ID);
+  if (stakeId === null) return false;
+  const manager = principal.managerStakes.includes(stakeId);
   // Manager superset only fires when at least one requested role is
   // one a manager covers. A `'platformSuperadmin'`-only gate must
   // remain strict.
@@ -143,9 +153,9 @@ export function holdsAnyRole(principal: Principal, roles: RequiredRole[]): boole
       continue;
     }
     if (r === 'manager' && manager) return true;
-    if (r === 'stake' && principal.stakeMemberStakes.includes(STAKE_ID)) return true;
+    if (r === 'stake' && principal.stakeMemberStakes.includes(stakeId)) return true;
     if (r === 'bishopric') {
-      const wards = principal.bishopricWards[STAKE_ID];
+      const wards = principal.bishopricWards[stakeId];
       if (Array.isArray(wards) && wards.length > 0) return true;
     }
   }

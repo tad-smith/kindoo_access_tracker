@@ -29,7 +29,6 @@ import {
   Table,
   Users,
 } from 'lucide-react';
-import { STAKE_ID } from '../../lib/constants';
 import type { Principal } from '../../lib/principal';
 
 interface NavItemBase {
@@ -59,16 +58,18 @@ export interface NavSection {
   items: NavItem[];
 }
 
-function isManager(p: Principal): boolean {
-  return p.isPlatformSuperadmin || p.managerStakes.includes(STAKE_ID);
+function isManager(p: Principal, stakeId: string | null): boolean {
+  if (p.isPlatformSuperadmin) return true;
+  return stakeId !== null && p.managerStakes.includes(stakeId);
 }
 
-function isStake(p: Principal): boolean {
-  return p.stakeMemberStakes.includes(STAKE_ID);
+function isStake(p: Principal, stakeId: string | null): boolean {
+  return stakeId !== null && p.stakeMemberStakes.includes(stakeId);
 }
 
-function isBishopric(p: Principal): boolean {
-  const wards = p.bishopricWards[STAKE_ID];
+function isBishopric(p: Principal, stakeId: string | null): boolean {
+  if (stakeId === null) return false;
+  const wards = p.bishopricWards[stakeId];
   return Array.isArray(wards) && wards.length > 0;
 }
 
@@ -77,8 +78,8 @@ function isBishopric(p: Principal): boolean {
  * they're also bishopric — go to the all-wards picker. Bishopric-only
  * users go to their per-ward roster.
  */
-export function wardRosterPathFor(principal: Principal): string {
-  if (isManager(principal) || isStake(principal)) return '/stake/wards';
+export function wardRosterPathFor(principal: Principal, stakeId: string | null): string {
+  if (isManager(principal, stakeId) || isStake(principal, stakeId)) return '/stake/wards';
   return '/bishopric/roster';
 }
 
@@ -86,10 +87,13 @@ export function wardRosterPathFor(principal: Principal): string {
  * Build the nav sections visible to a principal. Empty sections (no
  * visible items) are omitted entirely.
  */
-export function navSectionsForPrincipal(principal: Principal): NavSection[] {
-  const manager = isManager(principal);
-  const stake = isStake(principal);
-  const bishopric = isBishopric(principal);
+export function navSectionsForPrincipal(
+  principal: Principal,
+  stakeId: string | null,
+): NavSection[] {
+  const manager = isManager(principal, stakeId);
+  const stake = isStake(principal, stakeId);
+  const bishopric = isBishopric(principal, stakeId);
   const anyRole = manager || stake || bishopric;
 
   const quickLinks: NavItem[] = [];
@@ -134,7 +138,7 @@ export function navSectionsForPrincipal(principal: Principal): NavSection[] {
       kind: 'link',
       key: 'ward-roster',
       label: 'Ward Roster',
-      to: wardRosterPathFor(principal),
+      to: wardRosterPathFor(principal, stakeId),
       icon: Users,
     });
   }

@@ -20,7 +20,7 @@
 
 import { useMemo } from 'react';
 import { usePrincipal } from '../../../lib/principal';
-import { STAKE_ID } from '../../../lib/constants';
+import { useActiveStake } from '../../../lib/useActiveStake';
 import { useFirestoreCollection } from '../../../lib/data';
 import { buildingsCol, wardsCol } from '../../../lib/docs';
 import { db } from '../../../lib/firebase';
@@ -31,19 +31,29 @@ import { allowedScopesFor } from '../scopeOptions';
 
 export function NewRequestPage() {
   const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
 
   // Buildings catalogue (for stake-scope checkbox group). The form
   // needs it whenever 'stake' is one of the available scopes; cheap
   // no-op subscription otherwise.
-  const buildingsQuery = useMemo(() => buildingsCol(db, STAKE_ID), []);
+  const buildingsQuery = useMemo(
+    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   const buildings = useFirestoreCollection<Building>(buildingsQuery);
 
   // Wards catalogue. Used by the form to auto-populate building_names
   // for ward-scope requests from each ward's `building_name`.
-  const wardsQuery = useMemo(() => wardsCol(db, STAKE_ID), []);
+  const wardsQuery = useMemo(
+    () => (activeStakeId ? wardsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
   const wards = useFirestoreCollection<Ward>(wardsQuery);
 
-  const scopes = useMemo(() => allowedScopesFor(principal, STAKE_ID), [principal]);
+  const scopes = useMemo(
+    () => (activeStakeId ? allowedScopesFor(principal, activeStakeId) : []),
+    [principal, activeStakeId],
+  );
 
   return (
     <section className="kd-page-narrow">

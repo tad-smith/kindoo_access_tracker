@@ -99,9 +99,7 @@ function StakeSwitcherItem({ stakeId, isActive, onSelect }: StakeSwitcherItemPro
       >
         <span className="flex flex-col">
           <span>{stakeName}</span>
-          {stakeName !== stakeId ? (
-            <span className="text-xs text-gray-500">{stakeId}</span>
-          ) : null}
+          {stakeName !== stakeId ? <span className="text-xs text-gray-500">{stakeId}</span> : null}
         </span>
         {isActive ? <Check size={14} aria-hidden="true" /> : null}
       </button>

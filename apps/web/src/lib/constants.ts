@@ -2,21 +2,11 @@
 // value that must agree across both runtimes.
 //
 // Per F15 ("multi-stake from day one"), every per-stake collection path
-// is parameterized on `{stakeId}` even though v1 ships exactly one
-// stake (`csnorth`). The hardcoded `STAKE_ID` here is the SPA's single
-// source of truth for "which stake's data are we showing?" — when
-// multi-stake lands it gets replaced by a runtime selector that reads
-// the principal's `managerStakes` (etc.) and derives a current stake
-// from the URL or local storage.
-//
-// Until then: change here once when a second stake is provisioned, and
-// every typed-doc helper in `lib/docs.ts` follows automatically.
+// is parameterized on `{stakeId}`. The active stake is resolved at
+// runtime by `useActiveStake()` (`lib/useActiveStake.ts`); the legacy
+// `STAKE_ID = 'csnorth'` constant is gone (12.4). Type alias preserved
+// for callers that constrain a doc helper's `stakeId` parameter — it's
+// `string` now.
 
-/**
- * The single stake the v1 SPA targets. Replace with a runtime selector
- * when multi-stake lands — search `STAKE_ID` for callers to migrate.
- */
-export const STAKE_ID = 'csnorth';
-
-/** Type alias so the typed-doc helper can constrain its `stakeId` arg. */
-export type StakeId = typeof STAKE_ID;
+/** Type alias for a stake ID. Doc helpers in `lib/docs.ts` constrain on this. */
+export type StakeId = string;
