@@ -876,15 +876,15 @@ Phase: post-12.5
 `extension/src/panel/App.tsx`'s `resolveStake` only fires on `authState.status` transitions. If the operator navigates within Kindoo from one EID to another without closing the slide-over panel, the previously resolved stake is reused and writes go to the wrong stake. Pre-existing limitation that 12.5 doesn't make worse (the old code was hardcoded to `csnorth`, so navigating EIDs already routed all reads/writes incorrectly), but in a multi-stake world the consequence is more impactful. Reviewer's recommendation on PR #159: revisit if a multi-stake operator reports confusion.
 
 ## [T-48] Extension `partialFailure` with surviving candidates silently drops the failure
-Status: open
+Status: done (2026-05-20 — PR #160)
 Owner: @extension-engineer
 Phase: post-12.5
 
-When `resolveEidStakes` returns `partialFailure=true` AND `candidates.length >= 1`, `extension/src/panel/App.tsx` treats the surviving subset as authoritative — auto-picks if length=1, renders the picker if length≥2 — with no signal to the operator that another stake's read failed. For a multi-stake operator whose EID happens to collide across two stakes, a transient read failure on the unseen stake means they work in the wrong queue. Practically extremely rare at the 1–2 requests/week scale. Possible mitigations: surface a non-modal warning ("Couldn't read stake X — only showing partial results") above the picker, or escalate to wire-error when the failure rate is high enough.
+When `resolveEidStakes` returns `partialFailure=true` AND `candidates.length >= 1`, `extension/src/panel/App.tsx` treats the surviving subset as authoritative — auto-picks if length=1, renders the picker if length≥2 — with no signal to the operator that another stake's read failed. For a multi-stake operator whose EID happens to collide across two stakes, a transient read failure on the unseen stake means they work in the wrong queue. Practically extremely rare at the 1–2 requests/week scale. Resolved by widening `resolveEidStakes` to emit `failedStakes: string[]` and rendering a non-modal "Could not read N of your stakes — partial results shown" banner above the picker / auto-picked resolved view. Retry button re-runs the resolver. Auto-pick on length=1 preserved.
 
 ## [T-49] Extension `readChoiceMap` swallows `chrome.storage.local.get` rejections
-Status: open
+Status: done (2026-05-20 — PR #160)
 Owner: @extension-engineer
 Phase: post-12.5
 
-`readChoiceMap` in `extension/src/lib/extensionApi.ts` catches `chrome.storage.local.get` rejections and returns `{}`. If a read fails and is immediately followed by `writeEidStakeChoice`, the writer persists a single-entry map and silently erases every other EID's choice. Read failures on `chrome.storage.local` are essentially never observed in practice; this is theoretical hardening. Fix is straightforward: propagate read failures from `readChoiceMap` so `writeEidStakeChoice` can refuse to write on a failed prior read.
+`readChoiceMap` in `extension/src/lib/extensionApi.ts` catches `chrome.storage.local.get` rejections and returns `{}`. If a read fails and is immediately followed by `writeEidStakeChoice`, the writer persists a single-entry map and silently erases every other EID's choice. Read failures on `chrome.storage.local` are essentially never observed in practice; this is theoretical hardening. Resolved by propagating read failures from `readChoiceMap` so `writeEidStakeChoice` / `clearEidStakeChoice` refuse to write on a failed prior read. The picker's existing write-error banner surfaces the failure.

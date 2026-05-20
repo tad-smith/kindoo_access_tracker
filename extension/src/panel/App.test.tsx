@@ -153,6 +153,7 @@ describe('App', () => {
     resolveEidStakesMock.mockResolvedValue({
       candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
       managedStakeCount: 1,
+      failedStakes: [],
       partialFailure: false,
     });
     readEidStakeChoiceMock.mockResolvedValue(null);
@@ -381,6 +382,7 @@ describe('App', () => {
         },
       ],
       managedStakeCount: 2,
+      failedStakes: [],
       partialFailure: false,
     });
     readEidStakeChoiceMock.mockResolvedValue(null);
@@ -406,6 +408,7 @@ describe('App', () => {
         { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
       ],
       managedStakeCount: 2,
+      failedStakes: [],
       partialFailure: false,
     });
     readEidStakeChoiceMock.mockResolvedValue('east-co');
@@ -431,6 +434,7 @@ describe('App', () => {
         { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
       ],
       managedStakeCount: 2,
+      failedStakes: [],
       partialFailure: false,
     });
     // Stored choice points at a stake no longer in the candidate set
@@ -454,6 +458,7 @@ describe('App', () => {
     resolveEidStakesMock.mockResolvedValue({
       candidates: [],
       managedStakeCount: 2,
+      failedStakes: [],
       partialFailure: false,
     });
 
@@ -479,6 +484,7 @@ describe('App', () => {
     resolveEidStakesMock.mockResolvedValue({
       candidates: [],
       managedStakeCount: 0,
+      failedStakes: [],
       partialFailure: false,
     });
 
@@ -522,6 +528,7 @@ describe('App', () => {
     resolveEidStakesMock.mockResolvedValue({
       candidates: [],
       managedStakeCount: 2,
+      failedStakes: ['stake-a', 'stake-b'],
       partialFailure: true,
     });
 
@@ -560,6 +567,7 @@ describe('App', () => {
         { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
       ],
       managedStakeCount: 2,
+      failedStakes: [],
       partialFailure: false,
     });
     readEidStakeChoiceMock.mockResolvedValue(null);
@@ -574,5 +582,125 @@ describe('App', () => {
     await waitFor(() => expect(writeEidStakeChoiceMock).toHaveBeenCalledWith(27994, 'east-co'));
     await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
     expect(getMyPendingRequestsMock).toHaveBeenCalledWith({ stakeId: 'east-co' });
+  });
+
+  it('renders the partial-failure banner above the picker when one stake failed but multiple candidates survived (T-48)', async () => {
+    // T-48: a transient read failure on a sibling stake must not be
+    // silently dropped — the panel surfaces a non-modal banner so a
+    // multi-stake operator can retry instead of working in the wrong
+    // queue. Banner sits above the picker; the picker itself stays
+    // clickable.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+      ],
+      managedStakeCount: 3,
+      failedStakes: ['south-co'],
+      partialFailure: true,
+    });
+    readEidStakeChoiceMock.mockResolvedValue(null);
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-stake-picker')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-partial-failure-banner')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-partial-failure-banner-message')).toHaveTextContent(
+      '1 of your stakes',
+    );
+    // The picker remains rendered; the banner is non-modal.
+    expect(screen.getByTestId('sba-stake-picker-csnorth')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-stake-picker-east-co')).toBeInTheDocument();
+  });
+
+  it('renders the partial-failure banner above the auto-picked single-candidate resolved view (T-48)', async () => {
+    // T-48 (continued): when a partial failure leaves exactly one
+    // surviving candidate, App auto-picks (no picker) but the banner
+    // must still surface so the operator knows they may be working in
+    // the wrong queue. The brief specifies: do NOT force the picker
+    // open just because partialFailure is true.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
+      managedStakeCount: 2,
+      failedStakes: ['east-co'],
+      partialFailure: true,
+    });
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    // Banner sits above the resolved (auto-picked) view.
+    expect(screen.getByTestId('sba-partial-failure-banner')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-partial-failure-banner-message')).toHaveTextContent(
+      '1 of your stakes',
+    );
+    // Picker is NOT forced open.
+    expect(screen.queryByTestId('sba-stake-picker')).toBeNull();
+  });
+
+  it('does not render the partial-failure banner when no per-stake reads failed (T-48)', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-partial-failure-banner')).toBeNull();
+  });
+
+  it('retry button on the partial-failure banner re-runs the resolver (T-48)', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    // First resolver call surfaces the partial failure; second call
+    // (triggered by Retry) returns a clean result.
+    resolveEidStakesMock
+      .mockResolvedValueOnce({
+        candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
+        managedStakeCount: 2,
+        failedStakes: ['east-co'],
+        partialFailure: true,
+      })
+      .mockResolvedValueOnce({
+        candidates: [
+          { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+          { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Foothills' },
+        ],
+        managedStakeCount: 2,
+        failedStakes: [],
+        partialFailure: false,
+      });
+    readEidStakeChoiceMock.mockResolvedValue(null);
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    const user = userEvent.setup();
+    await renderApp();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sba-partial-failure-banner')).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId('sba-partial-failure-banner-retry'));
+
+    // Retry yields >= 2 candidates — banner clears, picker takes over.
+    await waitFor(() => expect(screen.getByTestId('sba-stake-picker')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-partial-failure-banner')).toBeNull();
+    expect(resolveEidStakesMock).toHaveBeenCalledTimes(2);
   });
 });

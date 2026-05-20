@@ -147,6 +147,32 @@ main.sba-panel {
   color: var(--sba-fg-muted);
 }
 
+/* Non-modal warning rendered above the picker / resolved view when the
+ * EID resolver caught on a subset of managed stakes (T-48). Lives
+ * outside `main.sba-panel` so the slide-over flex layout pushes it to
+ * the top with the panel content below; not styled as a full-screen
+ * takeover because the underlying view stays usable. */
+.sba-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 12px;
+  border-bottom: 1px solid var(--sba-border);
+}
+
+.sba-banner-warning {
+  background: #fef3c7;
+  color: var(--sba-warning);
+  border-bottom-color: #fcd34d;
+}
+
+.sba-btn-sm {
+  padding: 0.2rem 0.5rem;
+  font-size: 12px;
+}
+
 .sba-request-list {
   list-style: none;
   margin: 0;

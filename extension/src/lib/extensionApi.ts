@@ -309,22 +309,27 @@ export async function resolveEidStakes(eid: number): Promise<ResolveEidStakesPay
 // the picker UX lives there. There is still ONE writer for the key —
 // these helpers — so the "single owner per key" intent of the rule
 // holds.
+//
+// Read failures propagate. The reviewer-flagged footgun (T-49): if
+// `chrome.storage.local.get` rejected and we returned `{}`, an
+// immediate `writeEidStakeChoice` would persist a single-entry map and
+// silently erase every other EID's stored choice. Propagating the
+// rejection lets the writer refuse before clobbering — the picker's
+// write-error banner surfaces the failure to the operator.
 
 async function readChoiceMap(): Promise<EidStakeChoiceMap> {
-  try {
-    const result = await chrome.storage.local.get([STORAGE_KEYS.eidStakeChoice]);
-    const raw = result?.[STORAGE_KEYS.eidStakeChoice];
-    if (raw && typeof raw === 'object') return raw as EidStakeChoiceMap;
-    return {};
-  } catch {
-    return {};
-  }
+  const result = await chrome.storage.local.get([STORAGE_KEYS.eidStakeChoice]);
+  const raw = result?.[STORAGE_KEYS.eidStakeChoice];
+  if (raw && typeof raw === 'object') return raw as EidStakeChoiceMap;
+  return {};
 }
 
 /**
  * Return the previously-picked stake for `eid`, or `null` if no choice
  * has been recorded. Caller validates against the live candidate set
- * before consuming the value.
+ * before consuming the value. Rejects on chrome.storage failure — the
+ * App.tsx caller wraps this in `.catch(() => null)` so the picker
+ * re-asserts instead of routing to wire-error on a transient read miss.
  */
 export async function readEidStakeChoice(eid: number): Promise<string | null> {
   const map = await readChoiceMap();
@@ -335,7 +340,9 @@ export async function readEidStakeChoice(eid: number): Promise<string | null> {
 /**
  * Persist a picker choice. Writes the whole map back — `chrome.storage`
  * is structured-clone at the key level, so partial-map merging has to
- * be done in JS.
+ * be done in JS. Rejects without writing when the prior read fails;
+ * writing a single-entry map on a failed read would silently erase
+ * every other EID's stored choice (T-49).
  */
 export async function writeEidStakeChoice(eid: number, stakeId: string): Promise<void> {
   const map = await readChoiceMap();
@@ -346,7 +353,9 @@ export async function writeEidStakeChoice(eid: number, stakeId: string): Promise
 /**
  * Drop a stale picker choice. Used when the live `resolveEidStakes`
  * result no longer lists the stored stakeId (operator lost their role
- * or the EID was un-configured from that stake).
+ * or the EID was un-configured from that stake). Rejects without
+ * writing when the prior read fails; same footgun as
+ * `writeEidStakeChoice` (T-49).
  */
 export async function clearEidStakeChoice(eid: number): Promise<void> {
   const map = await readChoiceMap();

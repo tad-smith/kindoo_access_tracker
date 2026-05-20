@@ -380,7 +380,7 @@ describe('handleRequest', () => {
     });
   });
 
-  it('data.resolveEidStakes reads claims, fans out per managed stake, returns the candidate list + managedStakeCount + partialFailure', async () => {
+  it('data.resolveEidStakes reads claims, fans out per managed stake, returns candidates + managedStakeCount + failedStakes + partialFailure', async () => {
     currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
     readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
     resolveEidStakesMock.mockResolvedValue({
@@ -393,7 +393,7 @@ describe('handleRequest', () => {
           siteLabel: 'Foothills Building',
         },
       ],
-      partialFailure: false,
+      failedStakes: [],
     });
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
@@ -411,6 +411,7 @@ describe('handleRequest', () => {
           },
         ],
         managedStakeCount: 2,
+        failedStakes: [],
         partialFailure: false,
       },
     });
@@ -450,7 +451,7 @@ describe('handleRequest', () => {
     );
     currentUserMock.mockReturnValue(null);
     readManagerStakesMock.mockResolvedValue(['csnorth']);
-    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: false });
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], failedStakes: [] });
     const { handleRequest } = await import('./messages');
     const pending = handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
     // Resolver must not have been invoked yet — we are still waiting on
@@ -463,7 +464,7 @@ describe('handleRequest', () => {
     expect(resolveEidStakesMock).toHaveBeenCalledWith(27994, ['csnorth']);
     expect(result).toEqual({
       ok: true,
-      data: { candidates: [], managedStakeCount: 1, partialFailure: false },
+      data: { candidates: [], managedStakeCount: 1, failedStakes: [], partialFailure: false },
     });
   });
 
@@ -473,41 +474,75 @@ describe('handleRequest', () => {
     // rather than the reconfigure-copy no-candidates branch.
     currentUserMock.mockReturnValue({ uid: 'u1', email: 'nonmgr@example.com' });
     readManagerStakesMock.mockResolvedValue([]);
-    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: false });
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], failedStakes: [] });
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
     expect(resolveEidStakesMock).toHaveBeenCalledWith(27994, []);
     expect(result).toEqual({
       ok: true,
-      data: { candidates: [], managedStakeCount: 0, partialFailure: false },
+      data: { candidates: [], managedStakeCount: 0, failedStakes: [], partialFailure: false },
     });
   });
 
   it('data.resolveEidStakes returns managedStakeCount>0 + empty candidates when EID is not configured under any managed stake', async () => {
     currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
     readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
-    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: false });
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], failedStakes: [] });
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 99999 });
     expect(result).toEqual({
       ok: true,
-      data: { candidates: [], managedStakeCount: 2, partialFailure: false },
+      data: { candidates: [], managedStakeCount: 2, failedStakes: [], partialFailure: false },
     });
   });
 
-  it('data.resolveEidStakes propagates partialFailure=true from the resolver (Item 2)', async () => {
+  it('data.resolveEidStakes propagates failedStakes from the resolver and derives partialFailure (Item 2)', async () => {
     // Item 2: when every per-stake closure throws, the resolver
-    // reports partialFailure=true alongside empty candidates. The
-    // dispatcher must thread that flag through to the wire response
-    // so App.tsx can route to wire-error instead of no-candidates.
+    // reports the failed stakeIds alongside empty candidates. The
+    // dispatcher must thread those through to the wire response and
+    // surface a `partialFailure: true` convenience flag so App.tsx
+    // can route to wire-error instead of no-candidates.
     currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
     readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
-    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: true });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [],
+      failedStakes: ['csnorth', 'east-co'],
+    });
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
     expect(result).toEqual({
       ok: true,
-      data: { candidates: [], managedStakeCount: 2, partialFailure: true },
+      data: {
+        candidates: [],
+        managedStakeCount: 2,
+        failedStakes: ['csnorth', 'east-co'],
+        partialFailure: true,
+      },
+    });
+  });
+
+  it('data.resolveEidStakes surfaces a partial failure with surviving candidates (T-48)', async () => {
+    // T-48: when one stake fails but others succeed, the dispatcher
+    // must carry the failed-stake list through to the wire response
+    // so App.tsx can render a non-modal partial-failure banner above
+    // the picker / resolved view. The convenience `partialFailure`
+    // boolean is `failedStakes.length > 0`.
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    readManagerStakesMock.mockResolvedValue(['csnorth', 'east-co']);
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
+      failedStakes: ['east-co'],
+    });
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
+        managedStakeCount: 2,
+        failedStakes: ['east-co'],
+        partialFailure: true,
+      },
     });
   });
 

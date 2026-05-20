@@ -266,15 +266,23 @@ export interface EidStakeCandidate {
  *      tell the operator to reconfigure SBA)
  *   - `managedStakeCount > 0 && !partialFailure && candidates.length === 0`
  *                                                       → no-candidates
- *     (genuine "EID isn't configured under any of your stakes") */
+ *     (genuine "EID isn't configured under any of your stakes")
+ *
+ * `failedStakes` carries the stakeIds whose reads threw, so a partial
+ * failure with surviving candidates can surface a non-modal banner
+ * above the picker / resolved view (T-48). `partialFailure` is a
+ * convenience alias for `failedStakes.length > 0`. */
 export interface ResolveEidStakesPayload {
   candidates: EidStakeCandidate[];
   /** Total number of stakes on which the signed-in user holds
    * `manager: true`. Zero routes to NotAuthorized. */
   managedStakeCount: number;
-  /** True iff at least one per-stake closure caught (rules denial,
-   * Firestore hiccup, transient outage). Empty `candidates` plus this
-   * flag routes to the wire-error recovery state. */
+  /** StakeIds of every per-stake closure that caught (rules denial,
+   * Firestore hiccup, transient outage). Empty array means no
+   * read-side failures. */
+  failedStakes: string[];
+  /** True iff at least one per-stake closure caught. Convenience alias
+   * for `failedStakes.length > 0`. */
   partialFailure: boolean;
 }
 
