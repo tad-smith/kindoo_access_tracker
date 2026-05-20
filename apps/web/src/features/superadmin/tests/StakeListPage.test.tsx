@@ -137,9 +137,15 @@ describe('<SuperadminStakeListPage />', () => {
     expect(screen.getByText('CS North Stake')).toBeInTheDocument();
     expect(screen.getByText('East Stake')).toBeInTheDocument();
     expect(screen.getByTestId('superadmin-stake-slug-csnorth')).toHaveTextContent('csnorth');
+    // 12.4: the row link deep-links via `?stake=<slug>` so a click
+    // resolves the target stake on arrival.
     expect(screen.getByTestId('superadmin-stake-link-csnorth')).toHaveAttribute(
       'href',
-      '/manager/dashboard',
+      '/manager/dashboard?stake=csnorth',
+    );
+    expect(screen.getByTestId('superadmin-stake-link-eaststake')).toHaveAttribute(
+      'href',
+      '/manager/dashboard?stake=eaststake',
     );
   });
 

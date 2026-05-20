@@ -179,9 +179,7 @@ export function useActiveStake(): string | null {
   //   - `popstate` (browser back/forward + history.replaceState),
   //   - the module-scope `urlNavSubscribers` ping that `main.tsx`
   //     fires after the SW notificationclick bridge pushes a new URL.
-  const [urlStakeParam, setUrlStakeParam] = useState<string | null>(() =>
-    readStakeParamFromUrl(),
-  );
+  const [urlStakeParam, setUrlStakeParam] = useState<string | null>(() => readStakeParamFromUrl());
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -202,12 +200,7 @@ export function useActiveStake(): string | null {
   // changes to keep `resolved` aligned with subsequent principal /
   // URL-param updates.
   const [resolved, setResolved] = useState<ResolveActiveStakeResult>(() =>
-    resolveActiveStake(
-      principal,
-      readStakeParamFromUrl(),
-      readSessionStake(),
-      readLocalStake(),
-    ),
+    resolveActiveStake(principal, readStakeParamFromUrl(), readSessionStake(), readLocalStake()),
   );
 
   // Track whether we've already issued the URL-tier persist + strip for

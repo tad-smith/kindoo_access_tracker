@@ -64,6 +64,10 @@ vi.mock('firebase/firestore', async () => {
   };
 });
 
+vi.mock('../../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+}));
+
 vi.mock('../../../lib/firebase', () => ({
   db: { __sentinel: 'db' },
   auth: {

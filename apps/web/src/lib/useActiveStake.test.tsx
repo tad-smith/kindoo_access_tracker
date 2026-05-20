@@ -35,10 +35,7 @@ vi.mock('./store/toast', () => ({
   toast: (msg: string, kind: string) => toastSpy(msg, kind),
 }));
 
-import {
-  notifyActiveStakeUrlNavigated,
-  useActiveStake,
-} from './useActiveStake';
+import { notifyActiveStakeUrlNavigated, useActiveStake } from './useActiveStake';
 import { ACTIVE_STAKE_LOCAL_KEY, ACTIVE_STAKE_SESSION_KEY } from './activeStake';
 
 function Probe({ onResult }: { onResult: (v: string | null) => void }) {

@@ -274,6 +274,10 @@ vi.mock('../../../lib/principal', () => ({
   }),
 }));
 
+vi.mock('../../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+}));
+
 import {
   useDeleteKindooSiteMutation,
   useUpsertBuildingMutation,

@@ -69,6 +69,9 @@ vi.mock('../../lib/store/toast', () => {
 vi.mock('../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
 }));
+vi.mock('../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+}));
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }));

@@ -31,6 +31,10 @@ let currentUserStub: {
   getIdTokenResult: () => Promise<{ claims: Record<string, unknown> }>;
 } | null = null;
 
+vi.mock('../../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+}));
+
 vi.mock('../../../lib/firebase', () => ({
   db: { __sentinel: 'db' },
   auth: {

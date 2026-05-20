@@ -42,6 +42,12 @@ vi.mock('../../lib/principal', () => ({
   usePrincipal: () => mockedPrincipal.current,
 }));
 
+vi.mock('../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+  useAccessibleStakes: () => ['csnorth'],
+  useActiveStakeSwitcher: () => () => {},
+}));
+
 const signOutMock = vi.fn();
 vi.mock('../../features/auth/signOut', () => ({
   signOut: () => signOutMock(),
