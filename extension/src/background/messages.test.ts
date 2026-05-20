@@ -416,14 +416,54 @@ describe('handleRequest', () => {
     });
   });
 
-  it('data.resolveEidStakes returns managedStakeCount=0 + empty candidates when no user is signed in', async () => {
+  it('data.resolveEidStakes returns an unauthenticated wire error when no user is signed in', async () => {
+    // SW cold-start fix: after `waitForAuthHydrated()` returns and
+    // `currentUser()` is still null, the user truly is signed out.
+    // Return an unauthenticated wire error rather than
+    // `managedStakeCount: 0` so the panel routes to wire-error
+    // (with retry), NOT to NotAuthorized (which would be a dead-end
+    // for a still-signed-in operator caught by the SW cold-start
+    // race).
     currentUserMock.mockReturnValue(null);
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
     expect(resolveEidStakesMock).not.toHaveBeenCalled();
     expect(result).toEqual({
+      ok: false,
+      error: { code: 'unauthenticated', message: 'sign in before resolving stakes' },
+    });
+  });
+
+  it('data.resolveEidStakes awaits waitForAuthHydrated before reading currentUser (SW cold-start race)', async () => {
+    // Concrete scenario: SW had idle-suspended, operator clicks Retry
+    // on the slide-over's error panel, the SW wakes but Firebase Auth
+    // has not finished rehydrating from IndexedDB. Without the
+    // `waitForAuthHydrated()` gate, `currentUser()` would still be null
+    // and the handler would surface "no user" — sending the panel to
+    // NotAuthorized for a still-signed-in operator. With the gate, the
+    // handler waits, sees the hydrated user, and resolves normally.
+    let releaseHydration: (() => void) | undefined;
+    waitForAuthHydratedMock.mockReturnValue(
+      new Promise<null>((resolve) => {
+        releaseHydration = () => resolve(null);
+      }),
+    );
+    currentUserMock.mockReturnValue(null);
+    readManagerStakesMock.mockResolvedValue(['csnorth']);
+    resolveEidStakesMock.mockResolvedValue({ candidates: [], partialFailure: false });
+    const { handleRequest } = await import('./messages');
+    const pending = handleRequest({ type: 'data.resolveEidStakes', eid: 27994 });
+    // Resolver must not have been invoked yet — we are still waiting on
+    // auth to hydrate.
+    expect(resolveEidStakesMock).not.toHaveBeenCalled();
+    // Now hydration "completes" and the user becomes visible.
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com' });
+    releaseHydration?.();
+    const result = await pending;
+    expect(resolveEidStakesMock).toHaveBeenCalledWith(27994, ['csnorth']);
+    expect(result).toEqual({
       ok: true,
-      data: { candidates: [], managedStakeCount: 0, partialFailure: false },
+      data: { candidates: [], managedStakeCount: 1, partialFailure: false },
     });
   });
 

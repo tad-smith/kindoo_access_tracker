@@ -192,11 +192,23 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
     }
     case 'data.resolveEidStakes': {
       try {
+        // Wait for Firebase Auth to hydrate before reading currentUser().
+        // On SW cold-start (idle suspension → wake on the CS's retry
+        // click), `currentUser()` is null until the SDK rehydrates from
+        // IndexedDB. Without this gate the resolver would surface
+        // `managedStakeCount: 0` and route the panel to NotAuthorized —
+        // a no-retry dead end for a still-signed-in operator. Matches
+        // the `auth.getState` handler's pattern above.
+        await waitForAuthHydrated();
         const user = currentUser();
         if (!user) {
+          // Truly signed out (the CS would not normally call this, but
+          // we surface an unauthenticated wire error rather than
+          // `managedStakeCount: 0` so the panel routes to wire-error
+          // /retry — not NotAuthorized.
           return {
-            ok: true,
-            data: { candidates: [], managedStakeCount: 0, partialFailure: false },
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before resolving stakes' },
           };
         }
         // `readManagerStakes` propagates token-refresh failures so the

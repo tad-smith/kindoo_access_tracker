@@ -26,7 +26,7 @@ The fifth and final implementation atom of Phase 12 (multi-stake). The Chrome ex
 
 **Manifest.**
 
-- `extension/src/manifest.config.ts` version 1.0.1 → 1.0.4 (bumped on each commit touching `extension/` per the in-flight bump rule; ships at 1.0.4 once this PR merges). No permission or host-permission changes.
+- `extension/src/manifest.config.ts` version 1.0.1 → 1.0.6 (bumped on each commit touching `extension/` per the in-flight bump rule; ships at 1.0.6 once this PR merges). No permission or host-permission changes.
 
 **Tests.**
 
