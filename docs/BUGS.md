@@ -261,7 +261,7 @@ Owner: @web-engineer
 Phase: post Phase 11
 Branch / PR: `fix/b-4-first-login-claims-race` (PR #60)
 
-A first-time signer-in whose `access/{canonical}` doc predates their sign-in lands on NotAuthorized for up to ~1h, even though their role data is in place and the canonical-email mapping is correct. Reported in production for `zach.q.mortensen@gmail.com` with a pre-existing `access/zachqmortensen@gmail.com` doc (gmail dot-strip rule applied — mapping is correct).
+A first-time signer-in whose `access/{canonical}` doc predates their sign-in lands on NotAuthorized for up to ~1h, even though their role data is in place and the canonical-email mapping is correct. Reported in production by an end user whose `access/{canonical}` doc existed prior to first sign-in (gmail dot-strip rule applied — mapping is correct).
 
 **Symptom:** first sign-in by a user who has a pre-existing access / kindooManagers doc lands on NotAuthorized. Reloading the page once fixes it; the user then sees the correct role-gated UI.
 

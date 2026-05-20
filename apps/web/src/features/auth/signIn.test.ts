@@ -69,7 +69,7 @@ afterEach(() => {
 function makeUser() {
   return {
     uid: 'u1',
-    email: 'zach.q.mortensen@gmail.com',
+    email: 'user1@example.com',
     getIdToken: getIdTokenMock,
     getIdTokenResult: getIdTokenResultMock,
   };
@@ -213,7 +213,7 @@ describe('signInWithGoogle — bounded poll for canonical claim (B-4)', () => {
     const user = makeUser();
     signInWithPopupMock.mockResolvedValueOnce({ user });
     getIdTokenResultMock.mockResolvedValueOnce({
-      claims: { canonical: 'zachqmortensen@gmail.com' },
+      claims: { canonical: 'user1@example.com' },
     });
 
     const returned = await signInWithGoogle();
@@ -232,7 +232,7 @@ describe('signInWithGoogle — bounded poll for canonical claim (B-4)', () => {
       .mockResolvedValueOnce({ claims: {} })
       .mockResolvedValueOnce({ claims: {} })
       .mockResolvedValueOnce({ claims: {} })
-      .mockResolvedValueOnce({ claims: { canonical: 'zachqmortensen@gmail.com' } });
+      .mockResolvedValueOnce({ claims: { canonical: 'user1@example.com' } });
 
     const promise = signInWithGoogle();
     await vi.runAllTimersAsync();
@@ -306,7 +306,7 @@ describe('completeSignInWithEmailLink — bounded poll for canonical claim (B-4)
     const user = makeUser();
     signInWithEmailLinkMock.mockResolvedValueOnce({ user });
     getIdTokenResultMock.mockResolvedValueOnce({
-      claims: { canonical: 'zachqmortensen@gmail.com' },
+      claims: { canonical: 'user1@example.com' },
     });
 
     const returned = await completeSignInWithEmailLink('z@example.com', 'https://e.com/x');
@@ -325,7 +325,7 @@ describe('completeSignInWithEmailLink — bounded poll for canonical claim (B-4)
       .mockResolvedValueOnce({ claims: {} })
       .mockResolvedValueOnce({ claims: {} })
       .mockResolvedValueOnce({ claims: {} })
-      .mockResolvedValueOnce({ claims: { canonical: 'zachqmortensen@gmail.com' } });
+      .mockResolvedValueOnce({ claims: { canonical: 'user1@example.com' } });
 
     const promise = completeSignInWithEmailLink('z@example.com', 'https://e.com/x');
     await vi.runAllTimersAsync();
@@ -357,7 +357,7 @@ describe('completeSignInWithEmailLink — bounded poll for canonical claim (B-4)
     signInWithEmailLinkMock.mockResolvedValueOnce({ user });
     getIdTokenResultMock
       .mockResolvedValueOnce({ claims: {} })
-      .mockResolvedValueOnce({ claims: { canonical: 'zachqmortensen@gmail.com' } });
+      .mockResolvedValueOnce({ claims: { canonical: 'user1@example.com' } });
 
     const promise = completeSignInWithEmailLink('z@example.com', 'https://e.com/x');
 
