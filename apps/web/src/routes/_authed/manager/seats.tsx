@@ -10,6 +10,7 @@ const searchSchema = z.object({
   ward: z.string().optional(),
   building: z.string().optional(),
   type: z.enum(['auto', 'manual', 'temp']).optional(),
+  stake: z.string().optional(),
 });
 
 export const Route = createFileRoute('/_authed/manager/seats')({

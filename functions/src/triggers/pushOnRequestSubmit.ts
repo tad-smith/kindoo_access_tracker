@@ -104,7 +104,10 @@ export const pushOnRequestSubmit = onDocumentCreated(
         title: 'New request',
         body: buildBody(req),
         requestId,
-        deepLink: `/manager/queue?focus=${requestId}`,
+        // `stake` param ensures multi-stake managers tapping the push
+        // land in the stake that owns the request — URL tier wins over
+        // storage tiers in the active-stake resolver (spec §2.1).
+        deepLink: `/manager/queue?focus=${requestId}&stake=${stakeId}`,
       },
       tokens: perToken.map((p) => p.token),
     };

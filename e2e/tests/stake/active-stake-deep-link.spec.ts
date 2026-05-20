@@ -100,4 +100,35 @@ test.describe('Active-stake URL deep-link (?stake=X)', () => {
     expect(sessionValue).toBe('ridgeline');
     expect(localValue).toBe('ridgeline');
   });
+
+  test('/manager/queue?focus=…&stake=… consumes both params (push-tap deep link)', async ({
+    page,
+  }) => {
+    // Push-notification deep-link target: per the SW notificationclick
+    // bridge, a tapped push lands on `/manager/queue?focus=<requestId>&stake=<stakeId>`.
+    // Without `stake: z.string().optional()` on the queue route's
+    // searchSchema, TanStack Router would strip the unknown `stake`
+    // param before our `useActiveStake` consumer could read it.
+    await signInAsManagerOnBothStakes(page, 'queue-focus@example.com');
+
+    await page.goto('/manager/queue?focus=req-123&stake=ridgeline');
+
+    // Brand bar shows ridgeline (proves the stake param survived to
+    // `useActiveStake` rather than being canonicalised away).
+    await expect(page.locator('.kd-brandbar-stake')).toContainText('Ridgeline Stake', {
+      timeout: 10_000,
+    });
+
+    // `?stake=` is consumed and stripped by the active-stake hook.
+    await expect.poll(async () => page.url()).not.toMatch(/stake=ridgeline/);
+
+    // Both storage tiers carry the deep-linked stake (spec §2.1
+    // URL-tier success path writes session AND local).
+    const sessionValue = await page.evaluate(() =>
+      window.sessionStorage.getItem('kindoo.activeStake'),
+    );
+    const localValue = await page.evaluate(() => window.localStorage.getItem('kindoo.activeStake'));
+    expect(sessionValue).toBe('ridgeline');
+    expect(localValue).toBe('ridgeline');
+  });
 });

@@ -205,12 +205,17 @@ describe.skipIf(!hasEmulators())('pushOnRequestSubmit', () => {
     // Data-only payload — `notification` block must be absent so the SW
     // is the single display path; double-fire bug regression.
     expect(calls[0]!.notification).toBeUndefined();
+    // deepLink carries both `focus=${requestId}` and `stake=${stakeId}`
+    // so a multi-stake manager tapping the push switches active stake
+    // via the URL tier (spec §2.1) before the queue page reads.
     expect(calls[0]!.data).toEqual({
       title: 'New request',
       body: expect.stringContaining('Subject Person'),
       requestId: REQUEST_ID,
-      deepLink: `/manager/queue?focus=${REQUEST_ID}`,
+      deepLink: `/manager/queue?focus=${REQUEST_ID}&stake=${STAKE_ID}`,
     });
+    expect(calls[0]!.data?.deepLink).toContain(`focus=${REQUEST_ID}`);
+    expect(calls[0]!.data?.deepLink).toContain(`stake=${STAKE_ID}`);
     // FCM constraint: every `data` value must be a string.
     for (const [k, v] of Object.entries(calls[0]!.data ?? {})) {
       expect(typeof v).toBe('string');
