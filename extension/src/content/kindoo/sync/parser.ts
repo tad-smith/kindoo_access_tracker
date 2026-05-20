@@ -157,7 +157,7 @@ function segmentAutoMatches(segment: ParsedSegment, sets: CallingTemplateSets): 
  * Pick the primary segment from a list of resolved segments. When
  * `sets` is supplied, prefer the segment that classifies as auto so a
  * non-auto stake segment doesn't steal primary from a real ward-auto
- * match (the live `corry@corrymac.com` / `drpcneal@gmail.com` case:
+ * match (the two-segment ward-priority case observed in production:
  * stake/Technology Specialist + ward/Bishop where the seat lives on
  * the ward). Among auto-matching segments — and as the fallback when
  * no `sets` are supplied or nothing auto-matches — apply SBA's

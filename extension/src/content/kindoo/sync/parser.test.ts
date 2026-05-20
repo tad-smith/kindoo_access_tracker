@@ -273,7 +273,7 @@ describe('pickPrimarySegment', () => {
     };
   }
 
-  it('prefers an auto-matching ward over a non-auto stake segment (corry@corrymac.com shape)', () => {
+  it('prefers an auto-matching ward over a non-auto stake segment (two-segment ward-priority shape)', () => {
     // Stake "Technology Specialist" is non-auto; ward "Bishop" is auto.
     // The live false-positive scope-mismatch case: SBA seat lives on
     // the ward, but the alphabetical/stake-first rule would have

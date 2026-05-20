@@ -543,7 +543,7 @@ describe('detect', () => {
     expect(result.discrepancies).toEqual([]);
   });
 
-  it('emits no scope-mismatch when stake segment is non-auto but ward segment auto-matches the seat (corry@corrymac.com shape)', () => {
+  it('emits no scope-mismatch when stake segment is non-auto but ward segment auto-matches the seat (two-segment ward-priority shape)', () => {
     // Live false-positive case before the auto-preference primary
     // pick: SBA seat is scope=CO/auto/Sunday School Teacher; Kindoo
     // description carries a non-auto stake calling alongside the auto
@@ -554,8 +554,8 @@ describe('detect', () => {
       baseInputs({
         seats: [
           seat({
-            member_canonical: 'corry@corrymac.com',
-            member_email: 'corry@corrymac.com',
+            member_canonical: 'user2@example.com',
+            member_email: 'user2@example.com',
             scope: 'CO',
             type: 'auto',
             callings: ['Sunday School Teacher'],
@@ -563,7 +563,7 @@ describe('detect', () => {
         ],
         kindooUsers: [
           kuser({
-            username: 'corry@corrymac.com',
+            username: 'user2@example.com',
             description:
               'Colorado Springs North Stake (Technology Specialist)  |  Cordera Ward (Sunday School Teacher)',
             accessSchedules: [{ ruleId: 6248 }],
@@ -571,7 +571,7 @@ describe('detect', () => {
         ],
       }),
     );
-    const rowsForEmail = result.discrepancies.filter((d) => d.canonical === 'corry@corrymac.com');
+    const rowsForEmail = result.discrepancies.filter((d) => d.canonical === 'user2@example.com');
     expect(rowsForEmail).toEqual([]);
   });
 
