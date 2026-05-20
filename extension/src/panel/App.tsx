@@ -46,8 +46,24 @@ type StakeResolution =
   | { kind: 'no-session'; error: KindooSessionError }
   | { kind: 'wire-error'; message: string }
   | { kind: 'no-candidates'; eid: number }
-  | { kind: 'pick'; eid: number; candidates: EidStakeCandidate[] }
-  | { kind: 'resolved'; eid: number; stakeId: string };
+  | {
+      kind: 'pick';
+      eid: number;
+      candidates: EidStakeCandidate[];
+      /** Count of per-stake reads that failed during the last resolver
+       * run. Non-zero renders a partial-failure banner above the
+       * picker (T-48). */
+      failedStakesCount: number;
+    }
+  | {
+      kind: 'resolved';
+      eid: number;
+      stakeId: string;
+      /** Same intent as the `pick` branch — surfaces the banner above
+       * the auto-picked / resolved view when a sibling stake's read
+       * failed during the last resolver run (T-48). */
+      failedStakesCount: number;
+    };
 
 type ConfigStatus =
   | { kind: 'loading' }
@@ -119,9 +135,15 @@ export function App() {
       setStake({ kind: 'no-candidates', eid });
       return;
     }
-    const stored = await readEidStakeChoice(eid);
+    // Capture the failed-stake count so the partial-failure banner
+    // (T-48) can render above whichever downstream view we route to.
+    // We don't surface stake names — resolving them would cost another
+    // Firestore read per failed stake, and the operator can disambiguate
+    // by retrying.
+    const failedStakesCount = payload.failedStakes.length;
+    const stored = await readEidStakeChoice(eid).catch(() => null);
     if (stored !== null && payload.candidates.some((c) => c.stakeId === stored)) {
-      setStake({ kind: 'resolved', eid, stakeId: stored });
+      setStake({ kind: 'resolved', eid, stakeId: stored, failedStakesCount });
       return;
     }
     if (stored !== null) {
@@ -134,10 +156,10 @@ export function App() {
       // Single candidate — auto-resolve. Don't persist; the resolution
       // is structural, not a remembered choice.
       const only = payload.candidates[0]!;
-      setStake({ kind: 'resolved', eid, stakeId: only.stakeId });
+      setStake({ kind: 'resolved', eid, stakeId: only.stakeId, failedStakesCount });
       return;
     }
-    setStake({ kind: 'pick', eid, candidates: payload.candidates });
+    setStake({ kind: 'pick', eid, candidates: payload.candidates, failedStakesCount });
   }, []);
 
   const refreshConfig = useCallback(async (stakeId: string) => {
@@ -174,7 +196,15 @@ export function App() {
     async (stakeId: string) => {
       if (stake.kind !== 'pick') return;
       await writeEidStakeChoice(stake.eid, stakeId);
-      setStake({ kind: 'resolved', eid: stake.eid, stakeId });
+      setStake({
+        kind: 'resolved',
+        eid: stake.eid,
+        stakeId,
+        // Preserve the partial-failure flag across the picker → resolved
+        // transition; the banner stays visible until the next resolver
+        // run clears it.
+        failedStakesCount: stake.failedStakesCount,
+      });
     },
     [stake],
   );
@@ -289,71 +319,115 @@ export function App() {
     );
   }
 
+  // Partial-failure banner: rendered above the picker / resolved view
+  // when at least one sibling stake's read failed but candidates
+  // survived (T-48). Without the banner a multi-stake operator whose
+  // EID collides across two stakes could silently work in the wrong
+  // queue when a transient read failure dropped the other stake from
+  // the candidate set. We do NOT surface stake names — that would cost
+  // another Firestore read per failed stake, and retry resolves the
+  // ambiguity.
+  const partialFailureBanner =
+    (stake.kind === 'pick' || stake.kind === 'resolved') && stake.failedStakesCount > 0 ? (
+      <div
+        role="status"
+        className="sba-banner sba-banner-warning"
+        data-testid="sba-partial-failure-banner"
+      >
+        <span data-testid="sba-partial-failure-banner-message">
+          Couldn&rsquo;t read {stake.failedStakesCount} of your stakes — partial results shown.
+        </span>
+        <button
+          type="button"
+          className="sba-btn sba-btn-sm"
+          onClick={() => void resolveStake()}
+          data-testid="sba-partial-failure-banner-retry"
+        >
+          Retry
+        </button>
+      </div>
+    ) : null;
+
   if (stake.kind === 'pick') {
     return (
-      <StakePicker
-        email={authState.email}
-        eid={stake.eid}
-        candidates={stake.candidates}
-        onPick={handlePick}
-      />
+      <>
+        {partialFailureBanner}
+        <StakePicker
+          email={authState.email}
+          eid={stake.eid}
+          candidates={stake.candidates}
+          onPick={handlePick}
+        />
+      </>
     );
   }
 
   // stake.kind === 'resolved' — render the rest of the existing flow.
   if (configStatus.kind === 'loading') {
     return (
-      <main className="sba-panel" data-testid="sba-config-loading">
-        <header className="sba-header">
-          <h1>Stake Building Access</h1>
-        </header>
-        <div className="sba-body sba-body-center">
-          <p className="sba-muted">Loading…</p>
-        </div>
-      </main>
+      <>
+        {partialFailureBanner}
+        <main className="sba-panel" data-testid="sba-config-loading">
+          <header className="sba-header">
+            <h1>Stake Building Access</h1>
+          </header>
+          <div className="sba-body sba-body-center">
+            <p className="sba-muted">Loading…</p>
+          </div>
+        </main>
+      </>
     );
   }
 
   if (configStatus.kind === 'error') {
     return (
-      <main className="sba-panel" data-testid="sba-config-error">
-        <header className="sba-header">
-          <h1>Stake Building Access</h1>
-        </header>
-        <div className="sba-body">
-          <p className="sba-error">Could not load configuration: {configStatus.message}</p>
-          <button
-            type="button"
-            className="sba-btn"
-            onClick={() => void refreshConfig(stake.stakeId)}
-            data-testid="sba-config-retry"
-          >
-            Retry
-          </button>
-        </div>
-      </main>
+      <>
+        {partialFailureBanner}
+        <main className="sba-panel" data-testid="sba-config-error">
+          <header className="sba-header">
+            <h1>Stake Building Access</h1>
+          </header>
+          <div className="sba-body">
+            <p className="sba-error">Could not load configuration: {configStatus.message}</p>
+            <button
+              type="button"
+              className="sba-btn"
+              onClick={() => void refreshConfig(stake.stakeId)}
+              data-testid="sba-config-retry"
+            >
+              Retry
+            </button>
+          </div>
+        </main>
+      </>
     );
   }
 
   if (configStatus.kind === 'needs-config') {
     // First-run wizard: full takeover, no tab chrome.
     return (
-      <ConfigurePanel
-        stakeId={stake.stakeId}
-        email={authState.email}
-        mode="wizard"
-        onComplete={() => void refreshConfig(stake.stakeId)}
-      />
+      <>
+        {partialFailureBanner}
+        <ConfigurePanel
+          stakeId={stake.stakeId}
+          email={authState.email}
+          mode="wizard"
+          onComplete={() => void refreshConfig(stake.stakeId)}
+        />
+      </>
     );
   }
 
   return (
-    <TabbedShell
-      stakeId={stake.stakeId}
-      email={authState.email}
-      bundle={configStatus.bundle}
-      onPermissionDenied={() => setNotAuthorized(true)}
-      onConfigComplete={() => void refreshConfig(stake.stakeId)}
-    />
+    <>
+      {partialFailureBanner}
+      <TabbedShell
+        stakeId={stake.stakeId}
+        email={authState.email}
+        bundle={configStatus.bundle}
+        onPermissionDenied={() => setNotAuthorized(true)}
+        onConfigComplete={() => void refreshConfig(stake.stakeId)}
+      />
+    </>
   );
 }

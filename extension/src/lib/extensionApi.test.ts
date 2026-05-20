@@ -214,6 +214,7 @@ describe('extensionApi', () => {
               },
             ],
             managedStakeCount: 2,
+            failedStakes: [],
             partialFailure: false,
           },
         });
@@ -236,6 +237,7 @@ describe('extensionApi', () => {
         },
       ],
       managedStakeCount: 2,
+      failedStakes: [],
       partialFailure: false,
     });
   });
@@ -344,6 +346,36 @@ describe('eidStakeChoice — per-EID picker persistence', () => {
     });
     const { clearEidStakeChoice } = await import('./extensionApi');
     await clearEidStakeChoice(99999);
+    expect(chromeStub().storage.local.set).not.toHaveBeenCalled();
+  });
+
+  it('readEidStakeChoice rejects when chrome.storage.local.get rejects (T-49)', async () => {
+    // T-49: previous behavior swallowed the rejection and returned {},
+    // which let writeEidStakeChoice persist a single-entry map and
+    // silently erase every other EID's choice. Read failures now
+    // propagate.
+    chromeStub().storage.local.get.mockRejectedValue(new Error('storage unavailable'));
+    const { readEidStakeChoice } = await import('./extensionApi');
+    await expect(readEidStakeChoice(27994)).rejects.toThrow(/storage unavailable/);
+  });
+
+  it('writeEidStakeChoice rejects and does NOT write when the prior read fails (T-49)', async () => {
+    // T-49: the footgun the reviewer flagged. Without read-rejection
+    // propagation, a single transient `get` failure would have caused
+    // the writer to persist `{ <eid>: <stakeId> }` and wipe every other
+    // stored choice. With propagation, the write is refused.
+    chromeStub().storage.local.get.mockRejectedValue(new Error('storage unavailable'));
+    const { writeEidStakeChoice } = await import('./extensionApi');
+    await expect(writeEidStakeChoice(27994, 'east-co')).rejects.toThrow(/storage unavailable/);
+    expect(chromeStub().storage.local.set).not.toHaveBeenCalled();
+  });
+
+  it('clearEidStakeChoice rejects and does NOT write when the prior read fails (T-49)', async () => {
+    // Same footgun as writeEidStakeChoice — clearing relies on the same
+    // read-then-write merge shape, so the same guard applies.
+    chromeStub().storage.local.get.mockRejectedValue(new Error('storage unavailable'));
+    const { clearEidStakeChoice } = await import('./extensionApi');
+    await expect(clearEidStakeChoice(27994)).rejects.toThrow(/storage unavailable/);
     expect(chromeStub().storage.local.set).not.toHaveBeenCalled();
   });
 });

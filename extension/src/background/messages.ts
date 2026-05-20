@@ -213,19 +213,30 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
         }
         // `readManagerStakes` propagates token-refresh failures so the
         // panel can surface a wire-error recovery state. The resolver
-        // returns `{ candidates, partialFailure }` so the panel can
+        // returns `{ candidates, failedStakes }` so the panel can
         // distinguish:
         //   - `managedStakeCount === 0` → NotAuthorized
         //   - `partialFailure && candidates.length === 0` → wire-error
         //     (every per-stake read threw — transient outage)
+        //   - `partialFailure && candidates.length >= 1` →
+        //     partial-failure banner above the auto-picked / picker
+        //     view (T-48)
         //   - `managedStakeCount > 0 && !partialFailure && candidates.length === 0`
         //     → no-candidates (EID not configured under any managed
         //     stake)
+        // `partialFailure` is derived from `failedStakes.length > 0`
+        // on the wire — App.tsx reads either field interchangeably,
+        // but the explicit boolean keeps existing call sites terse.
         const managerStakes = await readManagerStakes(user);
-        const { candidates, partialFailure } = await resolveEidStakes(req.eid, managerStakes);
+        const { candidates, failedStakes } = await resolveEidStakes(req.eid, managerStakes);
         return {
           ok: true,
-          data: { candidates, managedStakeCount: managerStakes.length, partialFailure },
+          data: {
+            candidates,
+            managedStakeCount: managerStakes.length,
+            failedStakes,
+            partialFailure: failedStakes.length > 0,
+          },
         };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
