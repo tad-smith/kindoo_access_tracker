@@ -1,12 +1,17 @@
-// Create Stake form. Inline section on `/superadmin/stakes` (spec §5.4)
-// that lets a platform superadmin provision a new stake.
+// Create Stake form. Rendered inside a modal dialog opened from the
+// Create Stake button on `/superadmin/stakes` (spec §5.4).
 //
 // Submit dispatches the `createStake` callable (via `useCreateStake`).
 // Soft-failure envelopes from the callable (`{success:false, error}`)
 // are surfaced as inline field errors against the field that owns the
 // problem; hard `HttpsError`s (caught from the SDK) become a toast.
-// `{success:true}` clears the form and fires a success toast; the new
-// stake row arrives via the live `useStakes()` snapshot listener.
+// `{success:true}` fires a success toast and closes the dialog; the
+// new stake row arrives via the live `useStakes()` snapshot listener.
+//
+// Form-state lifecycle: the form `reset()`s to empty defaults on every
+// open transition so re-opening after a successful create (or after a
+// Cancel mid-edit) starts fresh. This matches the pattern used by
+// `CallingTemplateFormDialog`.
 //
 // Slug preview: the doc ID slug is derived from the typed stake name
 // using the same `buildingSlug` helper the callable applies. We show
@@ -20,11 +25,12 @@
 // error mapping for that code is preserved even though the UI can't
 // practically produce it.
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { buildingSlug, type CreateStakeError } from '@kindoo/shared';
 import { Button } from '../../components/ui/Button';
+import { Dialog } from '../../components/ui/Dialog';
 import { Input } from '../../components/ui/Input';
 import { TimezoneCombobox } from '../../components/TimezoneCombobox';
 import { toast } from '../../lib/store/toast';
@@ -79,18 +85,32 @@ function softFailToFieldError(error: CreateStakeError): {
   }
 }
 
-export function CreateStakeForm() {
+const EMPTY_DEFAULTS: CreateStakeForm = {
+  stake_name: '',
+  bootstrap_admin_email: '',
+  timezone: DEFAULT_TIMEZONE,
+};
+
+export interface CreateStakeFormProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
   const mutation = useCreateStake();
 
   const form = useForm<CreateStakeForm>({
     resolver: zodResolver(createStakeSchema),
-    defaultValues: {
-      stake_name: '',
-      bootstrap_admin_email: '',
-      timezone: DEFAULT_TIMEZONE,
-    },
+    defaultValues: EMPTY_DEFAULTS,
   });
   const { register, control, handleSubmit, watch, reset, setError, formState } = form;
+
+  // Reset on every open transition so a re-opened dialog starts empty
+  // (after a successful create, or after a Cancel mid-edit). Mirrors
+  // the pattern used by `CallingTemplateFormDialog`.
+  useEffect(() => {
+    if (open) reset(EMPTY_DEFAULTS);
+  }, [open, reset]);
 
   const watchedName = watch('stake_name') ?? '';
   // Mirror the callable's slug rule. Reused at render so the preview
@@ -106,11 +126,7 @@ export function CreateStakeForm() {
       });
       if (result.success) {
         toast(`Stake \`${result.stakeId}\` created.`, 'success');
-        reset({
-          stake_name: '',
-          bootstrap_admin_email: '',
-          timezone: DEFAULT_TIMEZONE,
-        });
+        onClose();
         return;
       }
       const { field, message } = softFailToFieldError(result.error);
@@ -121,87 +137,94 @@ export function CreateStakeForm() {
   });
 
   return (
-    <form
-      className="flex flex-col gap-3 rounded border border-gray-200 bg-white p-4"
-      onSubmit={onSubmit}
-      data-testid="create-stake-form"
-      noValidate
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="Create stake"
     >
-      <h2 className="text-base font-semibold">Create stake</h2>
+      <form
+        className="flex flex-col gap-3"
+        onSubmit={onSubmit}
+        data-testid="create-stake-form"
+        noValidate
+      >
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">Stake name</span>
+          <Input
+            type="text"
+            autoComplete="off"
+            {...register('stake_name')}
+            data-testid="create-stake-name"
+          />
+          <span className="text-xs text-gray-500" data-testid="create-stake-slug-preview">
+            Slug:{' '}
+            {slugPreview.length > 0 ? (
+              <code>{slugPreview}</code>
+            ) : (
+              <em className="not-italic text-gray-400">(empty)</em>
+            )}
+          </span>
+        </label>
+        {formState.errors.stake_name ? (
+          <p className="kd-form-error" role="alert" data-testid="create-stake-name-error">
+            {formState.errors.stake_name.message}
+          </p>
+        ) : null}
 
-      <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Stake name</span>
-        <Input
-          type="text"
-          autoComplete="off"
-          {...register('stake_name')}
-          data-testid="create-stake-name"
-        />
-        <span className="text-xs text-gray-500" data-testid="create-stake-slug-preview">
-          Slug:{' '}
-          {slugPreview.length > 0 ? (
-            <code>{slugPreview}</code>
-          ) : (
-            <em className="not-italic text-gray-400">(empty)</em>
-          )}
-        </span>
-      </label>
-      {formState.errors.stake_name ? (
-        <p className="kd-form-error" role="alert" data-testid="create-stake-name-error">
-          {formState.errors.stake_name.message}
-        </p>
-      ) : null}
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">Bootstrap admin email</span>
+          <Input
+            type="email"
+            autoComplete="email"
+            inputMode="email"
+            spellCheck={false}
+            {...register('bootstrap_admin_email')}
+            data-testid="create-stake-email"
+          />
+          <span className="text-xs text-gray-500" data-testid="create-stake-email-hint">
+            Lowercased on save to match the user&apos;s Google sign-in address.
+          </span>
+        </label>
+        {formState.errors.bootstrap_admin_email ? (
+          <p className="kd-form-error" role="alert" data-testid="create-stake-email-error">
+            {formState.errors.bootstrap_admin_email.message}
+          </p>
+        ) : null}
 
-      <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Bootstrap admin email</span>
-        <Input
-          type="email"
-          autoComplete="email"
-          inputMode="email"
-          spellCheck={false}
-          {...register('bootstrap_admin_email')}
-          data-testid="create-stake-email"
-        />
-        <span className="text-xs text-gray-500" data-testid="create-stake-email-hint">
-          Lowercased on save to match the user&apos;s Google sign-in address.
-        </span>
-      </label>
-      {formState.errors.bootstrap_admin_email ? (
-        <p className="kd-form-error" role="alert" data-testid="create-stake-email-error">
-          {formState.errors.bootstrap_admin_email.message}
-        </p>
-      ) : null}
+        <label className="flex flex-col gap-1" htmlFor="create-stake-timezone">
+          <span className="text-sm font-medium">Timezone</span>
+          <Controller
+            name="timezone"
+            control={control}
+            render={({ field }) => (
+              <TimezoneCombobox
+                id="create-stake-timezone"
+                value={field.value}
+                onChange={field.onChange}
+                data-testid="create-stake-timezone"
+              />
+            )}
+          />
+        </label>
+        {formState.errors.timezone ? (
+          <p className="kd-form-error" role="alert" data-testid="create-stake-timezone-error">
+            {formState.errors.timezone.message}
+          </p>
+        ) : null}
 
-      <label className="flex flex-col gap-1" htmlFor="create-stake-timezone">
-        <span className="text-sm font-medium">Timezone</span>
-        <Controller
-          name="timezone"
-          control={control}
-          render={({ field }) => (
-            <TimezoneCombobox
-              id="create-stake-timezone"
-              value={field.value}
-              onChange={field.onChange}
-              data-testid="create-stake-timezone"
-            />
-          )}
-        />
-      </label>
-      {formState.errors.timezone ? (
-        <p className="kd-form-error" role="alert" data-testid="create-stake-timezone-error">
-          {formState.errors.timezone.message}
-        </p>
-      ) : null}
-
-      <div className="form-actions">
-        <Button
-          type="submit"
-          disabled={mutation.isPending || formState.isSubmitting}
-          data-testid="create-stake-submit"
-        >
-          {mutation.isPending ? 'Creating…' : 'Create stake'}
-        </Button>
-      </div>
-    </form>
+        <Dialog.Footer>
+          <Dialog.CancelButton data-testid="create-stake-cancel">Cancel</Dialog.CancelButton>
+          <Button
+            type="submit"
+            disabled={mutation.isPending || formState.isSubmitting}
+            data-testid="create-stake-submit"
+          >
+            {mutation.isPending ? 'Creating…' : 'Create stake'}
+          </Button>
+        </Dialog.Footer>
+      </form>
+    </Dialog>
   );
 }

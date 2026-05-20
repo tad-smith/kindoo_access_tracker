@@ -6,6 +6,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import {
   createMemoryHistory,
   createRootRoute,
@@ -26,8 +27,17 @@ vi.mock('../hooks', () => ({
 // CreateStakeForm has its own dedicated test file; here we stub it to a
 // sentinel marker so the page-level tests stay focused on the list
 // rendering shape and don't have to thread react-hook-form's deps.
+// The stub records `open` so we can verify the trigger button toggles
+// it; clicking the stub's close button verifies the page wires
+// `onClose` back into local state.
 vi.mock('../CreateStakeForm', () => ({
-  CreateStakeForm: () => <div data-testid="create-stake-form-stub" />,
+  CreateStakeForm: ({ open, onClose }: { open: boolean; onClose: () => void }) => (
+    <div data-testid="create-stake-form-stub" data-open={open ? 'true' : 'false'}>
+      <button type="button" data-testid="create-stake-form-stub-close" onClick={onClose}>
+        Close
+      </button>
+    </div>
+  ),
 }));
 
 import { SuperadminStakeListPage } from '../StakeListPage';
@@ -104,10 +114,29 @@ beforeEach(() => {
 });
 
 describe('<SuperadminStakeListPage />', () => {
-  it('renders the Create Stake form above the list', async () => {
+  it('renders the Create Stake trigger button with the form initially closed', async () => {
     mockStakes([]);
     await renderPage();
-    expect(screen.getByTestId('create-stake-form-stub')).toBeInTheDocument();
+    expect(screen.getByTestId('create-stake-open')).toBeInTheDocument();
+    expect(screen.getByTestId('create-stake-form-stub')).toHaveAttribute('data-open', 'false');
+  });
+
+  it('opens the Create Stake dialog when the trigger button is clicked', async () => {
+    mockStakes([]);
+    await renderPage();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('create-stake-open'));
+    expect(screen.getByTestId('create-stake-form-stub')).toHaveAttribute('data-open', 'true');
+  });
+
+  it('closes the Create Stake dialog when the form invokes onClose', async () => {
+    mockStakes([]);
+    await renderPage();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('create-stake-open'));
+    expect(screen.getByTestId('create-stake-form-stub')).toHaveAttribute('data-open', 'true');
+    await user.click(screen.getByTestId('create-stake-form-stub-close'));
+    expect(screen.getByTestId('create-stake-form-stub')).toHaveAttribute('data-open', 'false');
   });
 
   it('renders a loading affordance while the subscription is pending', async () => {
