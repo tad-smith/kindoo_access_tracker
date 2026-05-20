@@ -141,6 +141,6 @@ Subsequent builds for the same env reuse the existing `.env.<mode>` — only re-
 
 ## Deploy
 
-Operator walkthrough lives in `infra/runbooks/extension-deploy.md`. Summary: per-env builds via `pnpm --filter @kindoo/extension build [--mode staging]`; output in `extension/dist/<mode>/`. Staging is loaded unpacked from `dist/staging/`. Production ships via Chrome Web Store (Unlisted in v1) — zip the contents of `dist/production/`, upload to the developer dashboard, submit for review. The operator owns the Web Store listing content + the OAuth consent screen in each GCP project.
+Operator walkthrough lives in `infra/runbooks/extension-deploy.md`. Summary: per-env builds via `pnpm --filter @kindoo/extension build [--mode staging]`; output in `extension/dist/<mode>/`. Staging is loaded unpacked from `dist/staging/`. Production ships via Chrome Web Store (Unlisted in v1) — operator runs `./bin/build_extension_for_chrome_store.sh` from the repo root, which produces `extension/dist/sba-<version>.zip` with the manifest `key` stripped (`VITE_OMIT_KEY=true`), then uploads to the developer dashboard. The operator owns the Web Store listing content + the OAuth consent screen in each GCP project.
 
 Before any callable-driven path works in a freshly-deployed env, the two callables (`getMyPendingRequests`, `markRequestComplete`) must already be deployed to that env. The browser surfaces a missing callable as a CORS error; runbook §Troubleshooting captures the symptom and fix.

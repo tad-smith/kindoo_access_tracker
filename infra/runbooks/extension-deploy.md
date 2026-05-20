@@ -43,7 +43,7 @@ Do this **once** per environment. Subsequent rebuilds reuse the keypair, the GCP
 
 The walkthrough below uses staging; for production substitute `production` for `staging` and `kindoo-prod` for `kindoo-staging`.
 
-**Production has an extra one-shot step after the first Web Store upload.** Chrome strips the manifest `key` from production builds (`VITE_OMIT_KEY=true`), so the deterministic ID derived here is **not** the ID Chrome assigns at first upload. The deterministic-ID OAuth client registered in step 4 is fine for the staging build and for local prod-mode unpacked smoke tests against the keypair-pinned ID, but the **published** prod extension carries the Web Store-assigned ID — and that ID needs its own OAuth client registration. See §"Production: Chrome Web Store distribution" step 4 for the post-upload registration.
+**Production has an extra one-shot step after the first Web Store upload.** Chrome strips the manifest `key` from production builds (`VITE_OMIT_KEY=true`), so the deterministic ID derived here is **not** the ID Chrome assigns at first upload. The deterministic-ID OAuth client registered in step 4 is fine for the staging build and for local prod-mode unpacked smoke tests against the keypair-pinned ID, but the **published** prod extension carries the Web Store-assigned ID — and that ID needs its own OAuth client registration. See §"Production: Chrome Web Store distribution" step 3 for the post-upload registration.
 
 ### 1. Generate the RSA keypair
 
@@ -217,31 +217,20 @@ The flow below is the **Phase 1 procedure**. Follows the staging pattern; the fi
 
 ### 1. Build the prod artifact
 
-Complete the first-time per-env setup (above) for `kindoo-prod`, then run a clean prod build **with the `key` stripped** so the Web Store accepts the zip:
+Complete the first-time per-env setup (above) for `kindoo-prod` so `extension/.env.production` exists (the script does not provision env files), then run the build helper from the repo root:
 
 ```bash
-VITE_OMIT_KEY=true pnpm --filter @kindoo/extension build
-ls extension/dist/production
+./bin/build_extension_for_chrome_store.sh
 ```
 
-The `VITE_OMIT_KEY=true` flag drops the manifest `key` field (see `extension/src/manifest.config.ts` lines 47–54). Without it, the zip uploads but the Web Store rejects it on submission — Chrome assigns extension IDs from the uploaded bytes itself and won't accept a pre-pinned ID.
+The script runs `VITE_OMIT_KEY=true pnpm --filter @kindoo/extension build` and zips the result to `extension/dist/sba-<version>.zip` (version pulled from the built manifest). The `VITE_OMIT_KEY=true` flag drops the manifest `key` field (see `extension/src/manifest.config.ts` lines 47–54); without it the zip uploads but the Web Store rejects it on submission, since Chrome assigns extension IDs from the uploaded bytes itself and won't accept a pre-pinned ID. The script also strips the directory wrapper — the Web Store rejects zips whose top entry is a folder, so the archive contains the manifest at the root.
 
-### 2. Zip the build for upload
-
-Zip the **contents** of `extension/dist/production/`, not the directory itself. The Web Store rejects a zip whose top entry is a folder.
-
-```bash
-cd extension/dist/production && zip -r ../../sba-extension-v$(node -p "require('./manifest.json').version").zip ./* && cd -
-```
-
-The resulting zip lands in `extension/sba-extension-vX.Y.Z.zip`.
-
-### 3. Upload to the Chrome Web Store Developer Dashboard
+### 2. Upload to the Chrome Web Store Developer Dashboard
 
 Dashboard: <https://chrome.google.com/webstore/devconsole/>.
 
 1. Create a new item (first time) or pick the existing SBA item.
-2. Upload the zip from step 2.
+2. Upload `extension/dist/sba-<version>.zip` from step 1.
 3. Fill in the listing fields. Operator owns this content; it is not in scope for the engineering team:
    - Icon (use `apps/web/public/icon-512.png` or one of the production extension icons unchanged).
    - Short description.
@@ -253,11 +242,11 @@ Dashboard: <https://chrome.google.com/webstore/devconsole/>.
 
 Web Store review can take days to weeks. Plan accordingly.
 
-**After the first successful upload, capture the assigned extension ID from the dev console** (visible at the top of the item's edit page, and in the public listing URL once the listing exists). That is the ID Chrome ships to end-users — it is **not** the deterministic ID derived in first-time setup step 3. Move on to step 4 immediately; until the corresponding OAuth client is registered, the published extension cannot sign in (see Troubleshooting §"bad client id").
+**After the first successful upload, capture the assigned extension ID from the dev console** (visible at the top of the item's edit page, and in the public listing URL once the listing exists). That is the ID Chrome ships to end-users — it is **not** the deterministic ID derived in first-time setup step 3. Move on to step 3 immediately; until the corresponding OAuth client is registered, the published extension cannot sign in (see Troubleshooting §"bad client id").
 
 The current production Web Store ID is `klkkpfdafbjebccodmgkogdklachelpb`.
 
-### 4. Register an OAuth client for the Web Store-assigned ID
+### 3. Register an OAuth client for the Web Store-assigned ID
 
 This step runs **once**, after the first Web Store upload, against the ID Chrome just assigned.
 
@@ -267,9 +256,9 @@ This step runs **once**, after the first Web Store upload, against the ID Chrome
 4. **Item ID:** paste the Web Store-assigned ID captured above (`klkkpfdafbjebccodmgkogdklachelpb`).
 5. **CREATE.**
 6. Copy the resulting `xxxxxxxxxxxx.apps.googleusercontent.com` client ID.
-7. Rebuild the prod artifact with `VITE_GOOGLE_OAUTH_CLIENT_ID` set to the new client ID, re-zip, and upload as a new version. (The deterministic-ID OAuth client from first-time setup is now unused by the published build; leave it in place for prod-mode unpacked smoke tests or delete it.)
+7. Update `extension/.env.production` so `VITE_GOOGLE_OAUTH_CLIENT_ID` points at the new client ID, re-run `./bin/build_extension_for_chrome_store.sh`, and upload the regenerated `extension/dist/sba-<version>.zip` as a new version. (The deterministic-ID OAuth client from first-time setup is now unused by the published build; leave it in place for prod-mode unpacked smoke tests or delete it.)
 
-### 5. OAuth consent screen (prod GCP project)
+### 4. OAuth consent screen (prod GCP project)
 
 Before any non-test user can sign in via the prod extension, the prod GCP project's OAuth consent screen must be configured. The extension uses only `openid`, `email`, and `profile` scopes — all non-sensitive — so Google's app-verification process is **not** required.
 
@@ -292,7 +281,7 @@ The first run on `kindoo-prod` will validate this section.
 **Symptom:** Sign-in fails silently, or the OAuth screen shows `bad client id: <id>`.
 **Likely cause:** The OAuth client registered in GCP doesn't match the extension's actual ID. Two flavours:
 - **Unpacked load (staging or prod-mode local):** the manifest `key` produces a deterministic ID, and the GCP OAuth client must be registered against that derived ID.
-- **Published prod build:** the Web Store assigns its own ID at first upload, which **differs** from the deterministic ID. A prod build that ships with only the deterministic-ID OAuth client will surface this error in the Web Store-installed extension — the OAuth client must be re-registered against the Web Store-assigned ID. See §"Production: Chrome Web Store distribution" step 4.
+- **Published prod build:** the Web Store assigns its own ID at first upload, which **differs** from the deterministic ID. A prod build that ships with only the deterministic-ID OAuth client will surface this error in the Web Store-installed extension — the OAuth client must be re-registered against the Web Store-assigned ID. See §"Production: Chrome Web Store distribution" step 3.
 
 **Fix:** For unpacked loads, re-run `pnpm --filter @kindoo/extension ext-id --key "$VITE_EXTENSION_KEY"` and compare the output to the Item ID on the GCP OAuth client. If they differ, either rebuild with the matching key, or update the GCP client's Item ID (requires creating a new client — the Item ID isn't editable post-creation). For Web Store builds, get the assigned ID from the Chrome Web Store dev console and create a new OAuth client against it; rebuild the zip with `VITE_GOOGLE_OAUTH_CLIENT_ID` pointing at the new client.
 
