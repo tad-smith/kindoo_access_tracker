@@ -11,8 +11,8 @@
 //   - Empty / malformed emails are rejected client-side without
 //     calling `sendMagicLink`.
 //   - A rejection from `sendMagicLink` surfaces in an accessible alert.
-//   - Footer links to Privacy and a contact target; Chrome extension
-//     link stays hidden while the Web Store URL is a placeholder.
+//   - Footer links to Privacy, the Chrome Web Store listing, and a
+//     contact target.
 //
 // The Tailwind v4 preflight regression (PR #12) is still covered: both
 // primary CTAs must carry the `.btn` chrome from `base.css`. The deeper
@@ -366,8 +366,14 @@ describe('SignInPage — both providers', () => {
     expect(contact.getAttribute('href')).toMatch(/^mailto:/);
   });
 
-  it('hides the Chrome extension link while the Web Store URL is the placeholder', () => {
+  it('links the footer Chrome extension entry to the Web Store listing', () => {
     render(<SignInPage />);
-    expect(screen.queryByRole('link', { name: /Chrome extension/i })).toBeNull();
+    const link = screen.getByRole('link', { name: /Chrome extension/i });
+    expect(link).toHaveAttribute(
+      'href',
+      'https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/klkkpfdafbjebccodmgkogdklachelpb',
+    );
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 });

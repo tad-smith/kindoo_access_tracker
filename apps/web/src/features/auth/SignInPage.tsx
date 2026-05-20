@@ -47,12 +47,8 @@ const SILENT_GOOGLE_ERROR_CODES: ReadonlySet<string> = new Set([
   'auth/cancelled-popup-request',
 ]);
 
-// Sentinel: until the extension's Web Store listing is published, this
-// stays pointed at the generic Web Store root. The footer link is
-// hidden in that case so visitors don't land on an unrelated page;
-// when the real listing URL replaces this constant, the link reappears.
-const CHROME_WEB_STORE_URL = 'https://chrome.google.com/webstore';
-const CHROME_WEB_STORE_PLACEHOLDER = 'https://chrome.google.com/webstore';
+const CHROME_WEB_STORE_URL =
+  'https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/klkkpfdafbjebccodmgkogdklachelpb';
 const CONTACT_MAILTO = 'mailto:support@stakebuildingaccess.org';
 
 // Verbatim copy from spec §4.1.
@@ -392,28 +388,23 @@ function HomeExplainer() {
 }
 
 function HomeFooter() {
-  const showChromeStoreLink = CHROME_WEB_STORE_URL !== CHROME_WEB_STORE_PLACEHOLDER;
   return (
     <footer className="border-t border-[color:var(--kd-chrome-border)] bg-white">
       <div className="mx-auto flex w-full max-w-5xl flex-col items-center justify-center gap-3 px-5 py-5 text-sm text-[color:var(--kd-chrome-fg-muted)] sm:flex-row sm:gap-6">
         <Link to="/privacy" className="text-[color:var(--kd-primary)] hover:underline">
           Privacy
         </Link>
-        {showChromeStoreLink ? (
-          <>
-            <span aria-hidden="true" className="hidden text-[color:var(--kd-border)] sm:inline">
-              ·
-            </span>
-            <a
-              href={CHROME_WEB_STORE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[color:var(--kd-primary)] hover:underline"
-            >
-              Chrome extension
-            </a>
-          </>
-        ) : null}
+        <span aria-hidden="true" className="hidden text-[color:var(--kd-border)] sm:inline">
+          ·
+        </span>
+        <a
+          href={CHROME_WEB_STORE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[color:var(--kd-primary)] hover:underline"
+        >
+          Chrome extension
+        </a>
         <span aria-hidden="true" className="hidden text-[color:var(--kd-border)] sm:inline">
           ·
         </span>
