@@ -238,11 +238,11 @@ export function navSectionsForPrincipal(
   if (settings.length > 0) {
     out.push({ key: 'settings', label: 'Settings', items: settings });
   }
+  if (superadmin.length > 0) {
+    out.push({ key: 'superadmin', label: 'Super Admin', items: superadmin });
+  }
   if (account.length > 0) {
     out.push({ key: 'account', label: 'Account', items: account });
-  }
-  if (superadmin.length > 0) {
-    out.push({ key: 'superadmin', label: 'Superadmin', items: superadmin });
   }
   return out;
 }

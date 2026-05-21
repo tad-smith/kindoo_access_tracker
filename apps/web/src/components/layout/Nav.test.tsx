@@ -135,16 +135,20 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     expect(sections.map((s) => s.key)).toContain('settings');
   });
 
-  it('Superadmin section appears for `isPlatformSuperadmin === true` with the Stake List entry', () => {
+  it('Super Admin section appears for `isPlatformSuperadmin === true` with the Stake List entry', () => {
     const sections = navSectionsForPrincipal(
       makePrincipal({ isPlatformSuperadmin: true }),
       STAKE_ID,
     );
     const superadmin = sections.find((s) => s.key === 'superadmin');
     expect(superadmin).toBeDefined();
+    expect(superadmin?.label).toBe('Super Admin');
     expect(superadmin?.items.map((i) => i.label)).toEqual(['Stake List']);
-    // Per `navigation-redesign.md` §8, Superadmin is the fifth (last) section.
-    expect(sections[sections.length - 1]?.key).toBe('superadmin');
+    // Per `navigation-redesign.md` §8, Super Admin sits between Settings and Account.
+    const keys = sections.map((s) => s.key);
+    const superIdx = keys.indexOf('superadmin');
+    expect(superIdx).toBeGreaterThan(keys.indexOf('settings'));
+    expect(superIdx).toBeLessThan(keys.indexOf('account'));
   });
 
   it('Superadmin section is hidden for a Kindoo Manager who is not a superadmin', () => {
