@@ -647,6 +647,67 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       );
       expect(result).toEqual({ success: false, error: 'seat not found' });
     });
+
+    it('rejects an empty newBuildingNames and leaves the seat unchanged', async () => {
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'manual',
+        callings: ['Ward Clerk'],
+        building_names: ['Lexington Building'],
+      });
+      await expect(
+        syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'buildings-mismatch',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  newBuildingNames: [],
+                },
+              },
+            },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      // Guardrail held — the seat's buildings are untouched.
+      expect(seat.building_names).toEqual(['Lexington Building']);
+    });
+
+    it('rejects newBuildingNames that clean to empty and leaves the seat unchanged', async () => {
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'manual',
+        callings: ['Ward Clerk'],
+        building_names: ['Lexington Building'],
+      });
+      await expect(
+        syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'buildings-mismatch',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  newBuildingNames: ['', '   ', '\t'],
+                },
+              },
+            },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      expect(seat.building_names).toEqual(['Lexington Building']);
+    });
   });
 
   // ----- Importer parity: sort_order + access-doc bookkeeping -----
