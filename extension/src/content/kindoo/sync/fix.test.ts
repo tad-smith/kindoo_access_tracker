@@ -244,7 +244,7 @@ describe('buildCallableInput', () => {
     expect(payload.buildingNames).toEqual(['Lexington']);
   });
 
-  it('kindoo-only manual carries all parsed callings + the free-text reason', () => {
+  it('kindoo-only manual records the calling in reason with empty callings[] (spec.md §13 shape)', () => {
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
@@ -264,9 +264,40 @@ describe('buildCallableInput', () => {
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload.callings).toEqual(['Building Greeter', 'Janitor']);
+    // Manual seat: callings[] stays empty; the calling text lives in reason.
+    expect(payload.callings).toEqual([]);
     expect(payload.reason).toBe('Building Greeter, Janitor');
     expect(payload.type).toBe('manual');
+  });
+
+  it('kindoo-only manual records the calling in reason even when the classifier matched it (no re-fire loop)', () => {
+    // Classifier matched the calling to a template (intendedFreeText
+    // empty) but the user is NOT church-backed → manual. The calling
+    // must still land in `reason` so the seat does not re-surface as
+    // extra-kindoo-calling on the next sync (the manual diff reads
+    // reason). Empty callings[] keeps the spec.md §13 shape.
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: 'kindoo-only',
+        kindoo: kb({
+          description: 'Maple Ward (Sunday School Teacher)',
+          memberName: 'Matched Manual',
+          intendedType: 'manual',
+          intendedCallings: ['Sunday School Teacher'],
+          intendedFreeText: '',
+          ruleIds: [6248],
+          buildingNames: ['Maple Building'],
+          derivedBuildings: ['Maple Building'],
+          directGrantBuildings: [],
+          grantTargetType: 'manual',
+        }),
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.type).toBe('manual');
+    expect(payload.callings).toEqual([]);
+    expect(payload.reason).toBe('Sunday School Teacher');
   });
 
   it('kindoo-only auto carries the full parsed calling list even when the classifier only matched a subset', () => {

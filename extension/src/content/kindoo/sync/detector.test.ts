@@ -928,6 +928,59 @@ describe('detect', () => {
     expect(result.discrepancies).toEqual([]);
   });
 
+  it('does NOT re-fire on a Sync-created manual seat (calling in reason, empty callings[])', () => {
+    // Regression: a kindoo-only manual seat is minted with `callings: []`
+    // and the calling text in `reason`. On the NEXT sync it must not
+    // re-surface as extra-kindoo-calling — the manual diff reads `reason`.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Sunday School Teacher',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('does NOT re-fire on a legacy/hybrid manual seat that carries the calling in callings[]', () => {
+    // Belt-and-suspenders: a manual seat that (legacy) holds its calling
+    // in `callings[]` with no `reason` is still recognised — the manual
+    // diff folds `callings[]` in defensively, so no re-fire.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: ['Building Greeter'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
   it('does NOT compare an auto seat against its reason — only against callings[]', () => {
     // An auto seat's `callings[]` is the source; even if some stray
     // reason text existed, the auto path ignores it. Here callings

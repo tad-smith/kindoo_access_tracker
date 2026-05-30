@@ -453,11 +453,16 @@ known (no doors the church must own). `null` direct set ⇒ not church-backed (c
 `kindoo-only` rows as the created-seat type). `fix.ts` sends THIS as the callable `newType`, never
 `intendedType`. `type-mismatch` throws in the payload builder if `grantTargetType` is absent.
 
-**`kindoo-only` created type (c).** Same rule: temp (`IsTempUser`) → temp; else church-backed
+**`kindoo-only` created type + shape (c).** Same rule: temp (`IsTempUser`) → temp; else church-backed
 (evaluated against the building set the new seat would carry — `derivedBuildings` when known, else
-the AccessSchedules fallback) → auto; else manual. The created seat's `callings[]` is the FULL
-parsed primary-segment calling list (matched ∪ unmatched), since type no longer gates which
-callings land on it.
+the AccessSchedules fallback) → auto; else manual. The seat is shaped to match the request flow /
+`markRequestComplete` (`docs/spec.md` §13): an **auto** seat carries the FULL parsed primary-segment
+calling list (matched ∪ unmatched) in `callings[]` and no `reason`; a **manual / temp** seat carries
+`callings: []` and the full parsed calling text in the single free-text `reason`. Writing the
+calling to a manual seat's `callings[]` would mint a hybrid seat that re-fires `extra-kindoo-calling`
+forever (the manual diff reads `reason`). The reason sources from the FULL parsed list, not
+`intendedFreeText` (the classifier's unmatched remainder, empty when the classifier matched
+everything — which would otherwise record the calling nowhere).
 
 **Detector check order (c + e).** Within the both-sides-present branch the order is
 scope-mismatch → type-mismatch (promote/demote) → buildings-mismatch → **extra-kindoo-calling
@@ -469,10 +474,13 @@ additive direction only, and **type-scoped to where the SBA seat records its cal
 `docs/spec.md` §13 + `markRequestComplete`):
 
 - **auto** seat → compare Kindoo's parsed callings against the roster `callings[]`.
-- **manual / temp** seat → `callings[]` is empty by construction; the calling lives in the single
-  free-text `reason`. Compare against `reason` (split on `,` for the rare multi-calling reason). A
-  manual seat whose `reason` reflects the Kindoo calling does NOT fire — this is what keeps the
-  review list from flooding with every manual seat.
+- **manual / temp** seat → the calling lives in the single free-text `reason` (`callings[]` is
+  empty by convention). Compare against `reason` (split on `,` for the rare multi-calling reason),
+  PLUS `callings[]` folded in defensively so a legacy / Sync-minted seat that carries the calling
+  in `callings[]` is still recognised and does not re-fire. A production manual seat
+  (`callings: []`) compares against `reason` alone, so the union never widens the false-positive
+  surface. A manual seat whose `reason` reflects the Kindoo calling does NOT fire — this is what
+  keeps the review list from flooding with every manual seat.
 
 The extras ride on `KindooBlock.extraKindooCallings`; `fix.ts` sends them as the callable
 `extraCallings`.

@@ -186,12 +186,21 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       // is the safe default. Classifier `intendedType` is no longer the
       // source of the created type (it's template-derived and drifts).
       const createdType = d.kindoo.grantTargetType ?? 'manual';
-      // Callings on the new seat = ALL calling names the parser found on
-      // the primary segment, independent of the type decision. The
-      // classifier's matched (`intendedCallings`) + unmatched
-      // (`intendedFreeText`) lists together reconstruct that full list;
-      // type no longer gates which callings land on the seat.
-      const callings = combineParsedCallings(d.kindoo.intendedCallings, d.kindoo.intendedFreeText);
+      // The full parsed calling list = classifier matched
+      // (`intendedCallings`) + unmatched (`intendedFreeText`), de-duped.
+      // Where it lands on the new seat depends on the type, matching how
+      // the request flow + `markRequestComplete` shape seats
+      // (`docs/spec.md` §13):
+      //   - auto  → roster `callings[]` (no `reason`).
+      //   - manual / temp → `callings: []`; the calling text lives in the
+      //     single free-text `reason`. Writing it to `callings[]` would
+      //     mint a hybrid seat that re-fires `extra-kindoo-calling` on the
+      //     next sync (the manual diff reads `reason`, not `callings[]`).
+      const parsedCallings = combineParsedCallings(
+        d.kindoo.intendedCallings,
+        d.kindoo.intendedFreeText,
+      );
+      const callings = createdType === 'auto' ? parsedCallings : [];
       // Prefer the door-grant-derived building set for ALL seat types
       // when available. The bulk listing's AccessSchedules (the source of
       // `buildingNames`) misses Church Access Automation's direct grants;
@@ -220,13 +229,14 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         buildingNames,
         isTempUser: d.kindoo.isTempUser,
       };
-      // Reason is the operator-typed parens free-text; keep it for
-      // manual / temp seats (an auto seat's calling drives it). Source
-      // from the full primary calling text so a grant-promoted seat
-      // doesn't silently drop the reason the classifier had stashed.
-      const reason = d.kindoo.intendedFreeText.trim();
-      if (reason.length > 0 && createdType !== 'auto') {
-        (payload as { reason?: string }).reason = reason;
+      // Manual / temp seats record their calling text in `reason` — the
+      // FULL parsed calling list (not just `intendedFreeText`, which is
+      // only the classifier's unmatched remainder and would be empty when
+      // the classifier matched everything, leaving the calling recorded
+      // nowhere). Auto seats carry the calling in `callings[]` instead.
+      if (createdType !== 'auto') {
+        const reason = parsedCallings.join(', ').trim();
+        if (reason.length > 0) (payload as { reason?: string }).reason = reason;
       }
       if (createdType === 'temp') {
         if (d.kindoo.startDate) (payload as { startDate?: string }).startDate = d.kindoo.startDate;

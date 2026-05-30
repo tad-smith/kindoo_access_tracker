@@ -448,16 +448,23 @@ export function missingCallings(parenText: string, seatCallings: string[]): stri
  * scoped to where the seat type records its calling(s) (per
  * `docs/spec.md` §13):
  *   - `auto` → roster `callings[]`.
- *   - `manual` / `temp` → the single free-text `reason` (`callings[]`
- *     is empty by construction); split on `,` for the rare
- *     multi-calling reason.
+ *   - `manual` / `temp` → the single free-text `reason` (`callings[]` is
+ *     empty by convention), PLUS any `callings[]` defensively. The
+ *     reason is the primary source; including `callings[]` too means a
+ *     legacy / Sync-minted manual seat that happens to carry the calling
+ *     in `callings[]` is still recognised as "known" and does not
+ *     re-fire `extra-kindoo-calling` indefinitely. Splitting `reason`
+ *     on `,` handles the rare multi-calling reason.
  * Scoping by type is what keeps a manual seat whose `reason` reflects
- * the Kindoo calling from false-firing as a missing extra.
+ * the Kindoo calling from false-firing as a missing extra; the
+ * production manual seat (`callings: []`) compares against `reason`
+ * alone, so the union never widens the false-positive surface.
  */
 function seatKnownCallings(sba: SbaBlock): string[] {
   if (sba.type === 'auto') return [...sba.callings];
-  // manual / temp — the calling lives in `reason`.
-  const out: string[] = [];
+  // manual / temp — the calling lives in `reason`; also fold in
+  // `callings[]` so a hybrid seat isn't re-flagged.
+  const out: string[] = [...sba.callings];
   if (sba.reason) {
     for (const part of sba.reason.split(',')) {
       const trimmed = part.trim();
