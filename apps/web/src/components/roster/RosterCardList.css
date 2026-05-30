@@ -63,6 +63,16 @@
   min-width: 0;
 }
 
+/* Two-line variant (per-grant roster card): badges + actions share the
+   first row; the member name/email drop to their own second row. Scoped
+   to the modifier so the AllSeats GrantRowCard single-row layout, which
+   reuses the same base classes, is untouched. */
+.roster-card--two-line .roster-card-member-line {
+  margin-top: 4px;
+  padding-left: 4px;
+  min-width: 0;
+}
+
 .roster-card-name {
   font-weight: 600;
   color: var(--kd-fg-1);

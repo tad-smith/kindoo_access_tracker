@@ -274,9 +274,9 @@ describe('<BishopricRosterPage />', () => {
     render(<BishopricRosterPage />);
     const cards = Array.from(document.querySelectorAll('.roster-card'));
     expect(cards.map((c) => c.className)).toEqual([
-      'roster-card type-auto',
-      'roster-card type-manual',
-      'roster-card type-temp',
+      'roster-card roster-card--two-line type-auto',
+      'roster-card roster-card--two-line type-manual',
+      'roster-card roster-card--two-line type-temp',
     ]);
   });
 
