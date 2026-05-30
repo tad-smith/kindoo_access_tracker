@@ -565,19 +565,24 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(cards).toHaveLength(3);
   });
 
-  // AC #2: same-scope within-site priority loser renders its own row.
-  it('AC #2: within-site priority loser (same scope as primary) renders a duplicate row', () => {
+  // Same-scope DuplicateGrants on a single seat collapse into ONE row
+  // (primary's row), with the union of their buildings and a "Duplicate"
+  // badge whose tooltip is operator-facing. Replaces the previous AC #2
+  // "renders its own row" behaviour — that surface confused operators.
+  it('collapses a same-scope within-site DuplicateGrant into the primary row with the Duplicate badge', () => {
     mockAll({
       seats: [
         makeSeat({
           scope: 'CO',
           kindoo_site_id: null,
+          building_names: ['Primary Building'],
           duplicate_grants: [
             {
               scope: 'CO',
               type: 'manual',
               kindoo_site_id: null,
               reason: 'extra',
+              building_names: ['Extra Building'],
               detected_at: NOW,
             },
           ],
@@ -588,7 +593,86 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);
-    const cards = document.querySelectorAll(`.roster-card[data-seat-id="${'alice@example.com'}"]`);
+    const cards = document.querySelectorAll('.roster-card[data-seat-id="alice@example.com"]');
+    expect(cards).toHaveLength(1);
+    // Buildings on the collapsed row are the union of the primary's
+    // and the same-scope duplicate's.
+    const row = cards[0] as HTMLElement;
+    expect(row.textContent).toContain('Primary Building');
+    expect(row.textContent).toContain('Extra Building');
+    // Duplicate badge present on the collapsed (primary) row with the
+    // operator-facing tooltip copy.
+    const badge = screen.getByTestId('grant-duplicate-badge-alice@example.com');
+    expect(badge.getAttribute('title')).toBe(
+      'This user was manually granted access to additional buildings.',
+    );
+  });
+
+  // Operator-reported repro (Corry Macfarlane): primary auto MH + manual
+  // MH DuplicateGrant with overlapping buildings. Pre-fix: two rows.
+  // Post-fix: one row with the union of buildings + Duplicate badge.
+  it("collapses Corry's auto-primary + manual-same-scope dup into one row with union buildings", () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'MH',
+          type: 'auto',
+          callings: ['Bishop'],
+          member_canonical: 'corry@corrymac.com',
+          member_email: 'corry@corrymac.com',
+          member_name: 'Corry Macfarlane',
+          kindoo_site_id: null,
+          building_names: ['Jamboree'],
+          duplicate_grants: [
+            {
+              scope: 'MH',
+              type: 'manual',
+              kindoo_site_id: null,
+              reason: 'Activities Committee Chair',
+              building_names: ['Lexington', 'Jamboree', 'Monument'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'MH', ward_name: 'Manitou' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const cards = document.querySelectorAll('.roster-card[data-seat-id="corry@corrymac.com"]');
+    expect(cards).toHaveLength(1);
+    const row = cards[0] as HTMLElement;
+    // Union, primary-first order: Jamboree, then Lexington, then Monument.
+    expect(row.textContent).toContain('Jamboree');
+    expect(row.textContent).toContain('Lexington');
+    expect(row.textContent).toContain('Monument');
+    // Duplicate badge + new operator-facing tooltip.
+    const badge = screen.getByTestId('grant-duplicate-badge-corry@corrymac.com');
+    expect(badge).toBeInTheDocument();
+    expect(badge.getAttribute('title')).toBe(
+      'This user was manually granted access to additional buildings.',
+    );
+  });
+
+  // Regression guard: cross-scope DuplicateGrants are out of scope for
+  // the collapse and continue to render as their own rows.
+  it('cross-scope DuplicateGrant still renders as its own row (collapse only fires within a scope)', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'cross-scope@x.com',
+          member_email: 'cross-scope@x.com',
+          duplicate_grants: [{ scope: 'CO', type: 'manual', reason: 'extra', detected_at: NOW }],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const cards = document.querySelectorAll('.roster-card[data-seat-id="cross-scope@x.com"]');
     expect(cards).toHaveLength(2);
   });
 
@@ -719,7 +803,11 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(dupEdit.getAttribute('title')).toMatch(/parallel-site changes require a new request/i);
   });
 
-  it('AC #7: Edit button on a within-site duplicate row carries the within-site tooltip', () => {
+  // The collapsed row IS the primary, so its Edit button is enabled
+  // (no longer disabled with the within-site tooltip — the within-
+  // site duplicate row no longer exists). The Duplicate badge still
+  // tells the operator the row covers extra buildings.
+  it('within-site DuplicateGrant collapses onto the primary row → Edit enabled, badge present', () => {
     mockAll({
       seats: [
         makeSeat({
@@ -745,9 +833,16 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);
-    const dupEdit = screen.getByTestId('seat-edit-w@x.com-dup-0');
-    expect(dupEdit).toBeDisabled();
-    expect(dupEdit.getAttribute('title')).toMatch(/covered by the primary's write/i);
+    // No standalone duplicate row.
+    expect(screen.queryByTestId('seat-edit-w@x.com-dup-0')).toBeNull();
+    // Edit on the primary (collapsed) row is enabled.
+    const primaryEdit = screen.getByTestId('seat-edit-w@x.com');
+    expect(primaryEdit).not.toBeDisabled();
+    // Duplicate badge carries the operator-facing tooltip.
+    const badge = screen.getByTestId('grant-duplicate-badge-w@x.com');
+    expect(badge.getAttribute('title')).toBe(
+      'This user was manually granted access to additional buildings.',
+    );
   });
 
   // AC #8 (RTL slice): Remove on a duplicate row submits a request
@@ -791,13 +886,13 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(payload.kindoo_site_id).toBe('foreign-1');
   });
 
-  // T-43 reviewer fix (4th pass): same-(scope, kindoo_site_id) non-
-  // auto duplicate under a non-auto primary is INFORMATIONAL ONLY.
-  // The Remove affordance is hidden because submitting would carry
-  // the same tuple as the primary; the trigger would target the
-  // primary (delete/promote), silently demoting/removing the wrong
-  // grant. Spec §15 §412 / §425.
-  it('within-site non-auto duplicate under non-auto primary: Remove hidden on the duplicate (spec §412 informational-only)', () => {
+  // Same-(scope, kindoo_site_id) non-auto duplicate under a non-auto
+  // primary now collapses into the primary row, so there is no
+  // duplicate row to carry a Remove affordance. The primary row's
+  // Remove still works (non-auto primary). Pre-collapse this guarded
+  // against the trigger demoting/removing the wrong grant (spec §412 /
+  // §425); post-collapse the surface simply doesn't exist.
+  it('within-site non-auto duplicate under non-auto primary: collapses into one row, primary Remove preserved', () => {
     mockAll({
       seats: [
         makeSeat({
@@ -834,14 +929,16 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(screen.queryByTestId('remove-btn-inform@x.com-dup-0')).toBeNull();
   });
 
-  // T-43 reviewer fix (Fix 3 / KS-9): within-site manual duplicate
-  // under an auto primary. Auto primary row: no Remove button (auto
-  // rows never render Remove). Manual duplicate row at the same
-  // (scope, site): Remove IS shown — only reachable when the primary
-  // is auto, because the trigger's auto-primary disambiguation in
-  // `planRemove` routes the splice to the non-auto duplicate.
-  it('Fix 3 / KS-9: within-site manual duplicate under auto primary renders Remove on the duplicate row, not the primary', async () => {
-    const user = userEvent.setup();
+  // KS-9 surface: within-site manual DuplicateGrant under an auto
+  // primary. Post-collapse there is no standalone duplicate row, so
+  // the previous duplicate-row Remove affordance is gone. The
+  // collapsed row IS the auto primary (Remove always hidden on auto),
+  // so this surface no longer offers a Remove path for the manual
+  // dup. Operator-accepted as part of the render-only collapse fix —
+  // the dup row was the only existing reachable surface. If a future
+  // need arises, the affordance can be promoted onto the collapsed
+  // row gated on `hasSameScopeDuplicates`.
+  it('Fix 3 / KS-9: auto primary + same-scope manual dup collapses to one row with the Duplicate badge, no Remove', () => {
     mockAll({
       seats: [
         makeSeat({
@@ -851,6 +948,7 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
           kindoo_site_id: null,
           member_canonical: 'ks9@x.com',
           member_email: 'ks9@x.com',
+          building_names: ['Primary Building'],
           duplicate_grants: [
             {
               scope: 'CO',
@@ -868,21 +966,20 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);
-    // Auto primary row: Remove hidden.
+    const cards = document.querySelectorAll('.roster-card[data-seat-id="ks9@x.com"]');
+    expect(cards).toHaveLength(1);
+    // Duplicate badge present with new tooltip copy.
+    const badge = screen.getByTestId('grant-duplicate-badge-ks9@x.com');
+    expect(badge.getAttribute('title')).toBe(
+      'This user was manually granted access to additional buildings.',
+    );
+    // Union of buildings rendered on the row.
+    const row = cards[0] as HTMLElement;
+    expect(row.textContent).toContain('Primary Building');
+    expect(row.textContent).toContain('CO Building');
+    // No Remove on the auto primary; no duplicate row.
     expect(screen.queryByTestId('remove-btn-ks9@x.com')).toBeNull();
-    // Manual duplicate row: Remove shown.
-    const dupRemove = screen.getByTestId('remove-btn-ks9@x.com-dup-0');
-    expect(dupRemove).toBeInTheDocument();
-    // Submitting from the duplicate row carries (CO, null) — the
-    // trigger disambiguates to the manual duplicate.
-    await user.click(dupRemove);
-    await user.type(screen.getByTestId('removal-reason'), 'no longer needed');
-    await user.click(screen.getByTestId('removal-confirm'));
-    expect(submitMutate).toHaveBeenCalled();
-    const payload = submitMutate.mock.calls[0]![0];
-    expect(payload.type).toBe('remove');
-    expect(payload.scope).toBe('CO');
-    expect(payload.kindoo_site_id).toBeNull();
+    expect(screen.queryByTestId('remove-btn-ks9@x.com-dup-0')).toBeNull();
   });
 
   // AC #12: Reconcile button + ReconcileDialog removed.

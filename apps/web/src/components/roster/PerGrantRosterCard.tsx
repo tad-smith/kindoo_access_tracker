@@ -106,6 +106,15 @@ export function PerGrantRosterCard({
               Pending Removal
             </Badge>
           ) : null}
+          {grant.hasSameScopeDuplicates ? (
+            <Badge
+              variant="manual"
+              data-testid={`grant-duplicate-badge-${seat.member_canonical}`}
+              title="This user was manually granted access to additional buildings."
+            >
+              duplicate
+            </Badge>
+          ) : null}
           {siteLabel ? (
             <Badge variant="info" data-testid={`kindoo-site-badge-${seat.member_canonical}`}>
               {siteLabel}
