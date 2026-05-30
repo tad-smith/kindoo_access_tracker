@@ -100,10 +100,10 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     // in full so the user can never silently remove an existing grant
     // through this dialog.
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
         makeBuilding({ building_id: 'prairie', building_name: 'Prairie Building' }),
       ],
     );
@@ -111,16 +111,16 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building', 'Genoa Building'],
+      building_names: ['Maple Building', 'Cedar Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
-    const genoaCb = screen.getByTestId('edit-seat-building-genoa') as HTMLInputElement;
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
+    const cedarCb = screen.getByTestId('edit-seat-building-cedar') as HTMLInputElement;
     const prairieCb = screen.getByTestId('edit-seat-building-prairie') as HTMLInputElement;
-    expect(corderaCb.checked).toBe(true);
-    expect(corderaCb.disabled).toBe(true);
-    expect(genoaCb.checked).toBe(true);
-    expect(genoaCb.disabled).toBe(true);
+    expect(mapleCb.checked).toBe(true);
+    expect(mapleCb.disabled).toBe(true);
+    expect(cedarCb.checked).toBe(true);
+    expect(cedarCb.disabled).toBe(true);
     expect(prairieCb.checked).toBe(false);
     expect(prairieCb.disabled).toBe(false);
   });
@@ -133,10 +133,10 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     // edit_auto submission wouldn't touch the dup; the change would
     // no-op silently). Manual dups and temp dups both qualify.
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
         makeBuilding({ building_id: 'prairie', building_name: 'Prairie Building' }),
       ],
     );
@@ -144,24 +144,24 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'CO',
           type: 'manual',
-          building_names: ['Genoa Building'],
+          building_names: ['Cedar Building'],
           detected_at: FAKE_TS,
         },
       ],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
-    const genoaCb = screen.getByTestId('edit-seat-building-genoa') as HTMLInputElement;
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
+    const cedarCb = screen.getByTestId('edit-seat-building-cedar') as HTMLInputElement;
     const prairieCb = screen.getByTestId('edit-seat-building-prairie') as HTMLInputElement;
-    expect(corderaCb.checked).toBe(true);
-    expect(corderaCb.disabled).toBe(true);
-    expect(genoaCb.checked).toBe(true);
-    expect(genoaCb.disabled).toBe(true);
+    expect(mapleCb.checked).toBe(true);
+    expect(mapleCb.disabled).toBe(true);
+    expect(cedarCb.checked).toBe(true);
+    expect(cedarCb.disabled).toBe(true);
     expect(prairieCb.checked).toBe(false);
     expect(prairieCb.disabled).toBe(false);
   });
@@ -174,22 +174,22 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     // touch DuplicateGrants), so allowing the user to uncheck would
     // no-op silently.
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
       ],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'CO',
           type: 'temp',
-          building_names: ['Genoa Building'],
+          building_names: ['Cedar Building'],
           start_date: '2026-06-01',
           end_date: '2026-06-15',
           detected_at: FAKE_TS,
@@ -197,12 +197,12 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       ],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
-    const genoaCb = screen.getByTestId('edit-seat-building-genoa') as HTMLInputElement;
-    expect(corderaCb.checked).toBe(true);
-    expect(corderaCb.disabled).toBe(true);
-    expect(genoaCb.checked).toBe(true);
-    expect(genoaCb.disabled).toBe(true);
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
+    const cedarCb = screen.getByTestId('edit-seat-building-cedar') as HTMLInputElement;
+    expect(mapleCb.checked).toBe(true);
+    expect(mapleCb.disabled).toBe(true);
+    expect(cedarCb.checked).toBe(true);
+    expect(cedarCb.disabled).toBe(true);
   });
 
   it('excludes same-scope non-auto DuplicateGrant buildings from the submit body even though they render locked (no-op submit, no data corruption)', async () => {
@@ -219,26 +219,26 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     //     auto-primary slot while the dup remained in place —
     //     double-credit on display, double-provision on Kindoo. The
     //     user just submits with no checkbox changes; the wire body
-    //     must be ['Cordera Building'], NOT
-    //     ['Cordera Building', 'Genoa Building'].
+    //     must be ['Maple Building'], NOT
+    //     ['Maple Building', 'Cedar Building'].
     const user = userEvent.setup();
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
       ],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'CO',
           type: 'manual',
-          building_names: ['Genoa Building'],
+          building_names: ['Cedar Building'],
           detected_at: FAKE_TS,
         },
       ],
@@ -251,10 +251,10 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       building_names: string[];
     };
     expect(arg.type).toBe('edit_auto');
-    expect(arg.building_names).toEqual(['Cordera Building']);
+    expect(arg.building_names).toEqual(['Maple Building']);
     // Explicit defense — the dup-only building must NOT appear in the
     // submit body.
-    expect(arg.building_names).not.toContain('Genoa Building');
+    expect(arg.building_names).not.toContain('Cedar Building');
   });
 
   it('with a non-auto dup present, adding a new building submits [auto-primary..., new-building] — dup buildings still excluded', async () => {
@@ -265,10 +265,10 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     // renders visually checked.
     const user = userEvent.setup();
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
         makeBuilding({ building_id: 'prairie', building_name: 'Prairie Building' }),
       ],
     );
@@ -276,12 +276,12 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'CO',
           type: 'manual',
-          building_names: ['Genoa Building'],
+          building_names: ['Cedar Building'],
           detected_at: FAKE_TS,
         },
       ],
@@ -295,27 +295,27 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       building_names: string[];
     };
     expect(arg.type).toBe('edit_auto');
-    expect([...arg.building_names].sort()).toEqual(['Cordera Building', 'Prairie Building']);
-    expect(arg.building_names).not.toContain('Genoa Building');
+    expect([...arg.building_names].sort()).toEqual(['Maple Building', 'Prairie Building']);
+    expect(arg.building_names).not.toContain('Cedar Building');
   });
 
   it('surfaces a tooltip on each disabled (locked) checkbox explaining why it cannot be unchecked', () => {
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
     // The title attribute is what the browser surfaces as a tooltip on
     // hover; for the disabled checkbox the same title goes on the
     // wrapping label too so the hover surface includes the text label.
-    expect(corderaCb.getAttribute('title')).toMatch(/already granted/i);
+    expect(mapleCb.getAttribute('title')).toMatch(/already granted/i);
   });
 
   it('omits the Calling / Reason field on edit_auto', () => {
