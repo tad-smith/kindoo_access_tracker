@@ -1,8 +1,8 @@
 // Happy-path E2E for the role-aware collapsible buildings selector
 // on /new. A single-ward bishopric submitter:
 //   - Lands on the form and sees the buildings widget collapsed with
-//     their ward's building (Cordera) listed in the header summary.
-//   - Expands the widget and ticks an additional building (Genoa).
+//     their ward's building (Maple) listed in the header summary.
+//   - Expands the widget and ticks an additional building (Cedar).
 //   - Submits the request.
 //   - The manager opens the Mark Complete dialog and sees BOTH
 //     buildings pre-checked from the requester's selection — proof
@@ -76,22 +76,22 @@ async function seedBaseStake(): Promise<void> {
     setup_complete: true,
     stake_seat_cap: 200,
   });
-  await writeDoc('stakes/csnorth/buildings/cordera-building', {
-    building_id: 'cordera-building',
-    building_name: 'Cordera Building',
+  await writeDoc('stakes/csnorth/buildings/maple-building', {
+    building_id: 'maple-building',
+    building_name: 'Maple Building',
     address: '123 Main',
     lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
   });
-  await writeDoc('stakes/csnorth/buildings/genoa-building', {
-    building_id: 'genoa-building',
-    building_name: 'Genoa Building',
+  await writeDoc('stakes/csnorth/buildings/cedar-building', {
+    building_id: 'cedar-building',
+    building_name: 'Cedar Building',
     address: '456 Main',
     lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
   });
   await writeDoc('stakes/csnorth/wards/CO', {
     ward_code: 'CO',
-    ward_name: 'Cordera',
-    building_name: 'Cordera Building',
+    ward_name: 'Maple',
+    building_name: 'Maple Building',
     seat_cap: 20,
     lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
   });
@@ -104,7 +104,7 @@ test.describe('New Request — collapsible buildings selector', () => {
     await seedBaseStake();
   });
 
-  test('ward submitter starts collapsed with the ward building, expands, adds Genoa, and the manager sees both pre-checked', async ({
+  test('ward submitter starts collapsed with the ward building, expands, adds Cedar, and the manager sees both pre-checked', async ({
     browser,
   }) => {
     const bishopricCtx = await browser.newContext();
@@ -124,19 +124,19 @@ test.describe('New Request — collapsible buildings selector', () => {
     const trigger = bishopricPage.getByTestId('new-request-buildings-trigger');
     await expect(trigger).toHaveAttribute('aria-expanded', 'false');
     await expect(bishopricPage.getByTestId('new-request-buildings-summary')).toContainText(
-      'Building: Cordera Building',
+      'Building: Maple Building',
     );
 
-    // Expand → tick Genoa as an additional building.
+    // Expand → tick Cedar as an additional building.
     await trigger.click();
     await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    await expect(bishopricPage.getByTestId('new-request-building-cordera-building')).toBeChecked();
-    await bishopricPage.getByTestId('new-request-building-genoa-building').click();
+    await expect(bishopricPage.getByTestId('new-request-building-maple-building')).toBeChecked();
+    await bishopricPage.getByTestId('new-request-building-cedar-building').click();
     await expect(bishopricPage.getByTestId('new-request-buildings-summary')).toContainText(
-      'Buildings: Cordera Building, Genoa Building',
+      'Buildings: Maple Building, Cedar Building',
     );
 
-    // Fill the rest of the form. The Genoa pick is cross-ward for a CO
+    // Fill the rest of the form. The Cedar pick is cross-ward for a CO
     // bishop, so the comment is required to clear the cross-ward gate.
     await bishopricPage.getByTestId('new-request-email').fill('multi@example.com');
     await bishopricPage.getByTestId('new-request-name').fill('Multi Member');
@@ -156,10 +156,10 @@ test.describe('New Request — collapsible buildings selector', () => {
     const completeButton = managerPage.locator('[data-testid^="queue-complete-"]').first();
     await completeButton.click();
     await expect(
-      managerPage.locator('[data-testid="complete-building-cordera-building"]'),
+      managerPage.locator('[data-testid="complete-building-maple-building"]'),
     ).toBeChecked();
     await expect(
-      managerPage.locator('[data-testid="complete-building-genoa-building"]'),
+      managerPage.locator('[data-testid="complete-building-cedar-building"]'),
     ).toBeChecked();
   });
 });

@@ -91,22 +91,22 @@ async function seedBaseStake(): Promise<void> {
     setup_complete: true,
     stake_seat_cap: 200,
   });
-  await writeDoc('stakes/csnorth/buildings/cordera-building', {
-    building_id: 'cordera-building',
-    building_name: 'Cordera Building',
+  await writeDoc('stakes/csnorth/buildings/maple-building', {
+    building_id: 'maple-building',
+    building_name: 'Maple Building',
     address: '123 Main',
     lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
   });
-  await writeDoc('stakes/csnorth/buildings/genoa-building', {
-    building_id: 'genoa-building',
-    building_name: 'Genoa Building',
+  await writeDoc('stakes/csnorth/buildings/cedar-building', {
+    building_id: 'cedar-building',
+    building_name: 'Cedar Building',
     address: '456 Main',
     lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
   });
   await writeDoc('stakes/csnorth/wards/CO', {
     ward_code: 'CO',
-    ward_name: 'Cordera',
-    building_name: 'Cordera Building',
+    ward_name: 'Maple',
+    building_name: 'Maple Building',
     seat_cap: 20,
     lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
   });
@@ -151,7 +151,7 @@ test.describe('Phase 6 — bishopric add_manual lifecycle', () => {
     // building_name on submit, so the building is already ticked in the
     // Mark Complete dialog. Confirm directly.
     await expect(
-      managerPage.locator('[data-testid="complete-building-cordera-building"]'),
+      managerPage.locator('[data-testid="complete-building-maple-building"]'),
     ).toBeChecked();
     await managerPage.getByTestId('complete-add-confirm').click();
 
@@ -190,11 +190,11 @@ test.describe('Phase 6 — stake add_temp with two buildings', () => {
     await stakePage.getByTestId('new-request-email').fill('alice@example.com');
     await stakePage.getByTestId('new-request-name').fill('Alice Example');
     await stakePage.getByTestId('new-request-reason').fill('Visiting authority');
-    // B-11 — stake-scope defaults every building checked; both Cordera
-    // and Genoa are pre-ticked, no manual clicks needed for a
+    // B-11 — stake-scope defaults every building checked; both Maple
+    // and Cedar are pre-ticked, no manual clicks needed for a
     // stake-wide grant.
-    await expect(stakePage.getByTestId('new-request-building-cordera-building')).toBeChecked();
-    await expect(stakePage.getByTestId('new-request-building-genoa-building')).toBeChecked();
+    await expect(stakePage.getByTestId('new-request-building-maple-building')).toBeChecked();
+    await expect(stakePage.getByTestId('new-request-building-cedar-building')).toBeChecked();
     await stakePage.getByTestId('new-request-submit').click();
 
     // Manager completes.
@@ -204,10 +204,10 @@ test.describe('Phase 6 — stake add_temp with two buildings', () => {
     await completeButton.click();
     // Both buildings should be pre-ticked from the requester's selection.
     await expect(
-      managerPage.locator('[data-testid="complete-building-cordera-building"]'),
+      managerPage.locator('[data-testid="complete-building-maple-building"]'),
     ).toBeChecked();
     await expect(
-      managerPage.locator('[data-testid="complete-building-genoa-building"]'),
+      managerPage.locator('[data-testid="complete-building-cedar-building"]'),
     ).toBeChecked();
     await managerPage.getByTestId('complete-add-confirm').click();
 
@@ -298,7 +298,7 @@ test.describe('Phase 6 — removal flow', () => {
       type: 'manual',
       callings: [],
       reason: 'sub teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [],
       granted_by_request: 'seed-req',
       lastActor: { email: 'manager@example.com', canonical: 'manager@example.com' },

@@ -186,16 +186,16 @@ test.describe('Bootstrap wizard gate', () => {
     await page.getByTestId('wizard-step-tab-2').click();
 
     // Add.
-    await page.getByLabel(/^Building name$/).fill('Cordera Building');
-    await page.getByLabel(/^Address$/).fill('1 Cordera Cir');
+    await page.getByLabel(/^Building name$/).fill('Maple Building');
+    await page.getByLabel(/^Address$/).fill('1 Maple Cir');
     await page.getByRole('button', { name: /^Add building$/ }).click();
 
     const list = page.getByTestId('bootstrap-buildings-list');
-    await expect(list.getByText('Cordera Building')).toBeVisible();
+    await expect(list.getByText('Maple Building')).toBeVisible();
 
     // Delete (uses the building_id slug derived from the name).
-    await page.getByTestId('bootstrap-building-delete-cordera-building').click();
-    await expect(list.getByText('Cordera Building')).toHaveCount(0);
+    await page.getByTestId('bootstrap-building-delete-maple-building').click();
+    await expect(list.getByText('Maple Building')).toHaveCount(0);
   });
 
   test('wizard add+delete cycle works for wards', async ({ page }) => {
@@ -241,15 +241,15 @@ test.describe('Bootstrap wizard gate', () => {
     // catching up after the Step 2 add).
     await expect(step3.getByRole('option', { name: 'Main Building' })).toHaveCount(1);
     await step3.getByLabel(/^Ward code$/).fill('CO');
-    await step3.getByLabel(/^Ward name$/).fill('Cordera Ward');
+    await step3.getByLabel(/^Ward name$/).fill('Maple Ward');
     await step3.locator('select').selectOption('Main Building');
     await step3.getByLabel(/^Seat cap$/).fill('20');
     await step3.getByRole('button', { name: /^Add ward$/ }).click();
 
     const list = page.getByTestId('bootstrap-wards-list');
-    await expect(list.getByText(/Cordera Ward \(CO\)/)).toBeVisible();
+    await expect(list.getByText(/Maple Ward \(CO\)/)).toBeVisible();
     await page.getByTestId('bootstrap-ward-delete-CO').click();
-    await expect(list.getByText(/Cordera Ward \(CO\)/)).toHaveCount(0);
+    await expect(list.getByText(/Maple Ward \(CO\)/)).toHaveCount(0);
   });
 
   test('wizard refuses to delete a building still referenced by a ward', async ({ page }) => {
@@ -277,35 +277,35 @@ test.describe('Bootstrap wizard gate', () => {
     // Step 2 — add a building.
     await page.getByTestId('wizard-step-tab-2').click();
     const step2 = page.getByTestId('wizard-step-2');
-    await step2.getByLabel(/^Building name$/).fill('Cordera Building');
-    await step2.getByLabel(/^Address$/).fill('1 Cordera Cir');
+    await step2.getByLabel(/^Building name$/).fill('Maple Building');
+    await step2.getByLabel(/^Address$/).fill('1 Maple Cir');
     await step2.getByRole('button', { name: /^Add building$/ }).click();
     await expect(
-      page.getByTestId('bootstrap-buildings-list').getByText('Cordera Building'),
+      page.getByTestId('bootstrap-buildings-list').getByText('Maple Building'),
     ).toBeVisible();
 
     // Step 3 — add a ward referencing that building.
     await page.getByTestId('wizard-step-tab-3').click();
     const step3 = page.getByTestId('wizard-step-3');
-    await expect(step3.getByRole('option', { name: 'Cordera Building' })).toHaveCount(1);
+    await expect(step3.getByRole('option', { name: 'Maple Building' })).toHaveCount(1);
     await step3.getByLabel(/^Ward code$/).fill('CO');
-    await step3.getByLabel(/^Ward name$/).fill('Cordera Ward');
-    await step3.locator('select').selectOption('Cordera Building');
+    await step3.getByLabel(/^Ward name$/).fill('Maple Ward');
+    await step3.locator('select').selectOption('Maple Building');
     await step3.getByLabel(/^Seat cap$/).fill('20');
     await step3.getByRole('button', { name: /^Add ward$/ }).click();
     await expect(
-      page.getByTestId('bootstrap-wards-list').getByText(/Cordera Ward \(CO\)/),
+      page.getByTestId('bootstrap-wards-list').getByText(/Maple Ward \(CO\)/),
     ).toBeVisible();
 
     // Step 2 — attempt to delete the referenced building.
     await page.getByTestId('wizard-step-tab-2').click();
-    await page.getByTestId('bootstrap-building-delete-cordera-building').click();
+    await page.getByTestId('bootstrap-building-delete-maple-building').click();
 
     // Toast surfaces the ref-guard message.
     await expect(page.getByText(/Cannot delete: referenced by/)).toBeVisible();
     // Building is still in the list (delete was aborted).
     await expect(
-      page.getByTestId('bootstrap-buildings-list').getByText('Cordera Building'),
+      page.getByTestId('bootstrap-buildings-list').getByText('Maple Building'),
     ).toBeVisible();
   });
 

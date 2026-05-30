@@ -82,16 +82,16 @@ async function seedBaseStake(): Promise<void> {
     setup_complete: true,
     stake_seat_cap: 200,
   });
-  await writeDoc('stakes/csnorth/buildings/cordera-building', {
-    building_id: 'cordera-building',
-    building_name: 'Cordera Building',
+  await writeDoc('stakes/csnorth/buildings/maple-building', {
+    building_id: 'maple-building',
+    building_name: 'Maple Building',
     address: '123 Main',
     lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
   });
   await writeDoc('stakes/csnorth/wards/CO', {
     ward_code: 'CO',
-    ward_name: 'Cordera',
-    building_name: 'Cordera Building',
+    ward_name: 'Maple',
+    building_name: 'Maple Building',
     seat_cap: 20,
     lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
   });
@@ -140,7 +140,7 @@ test.describe('Roster pending requests', () => {
       type: 'manual',
       callings: [],
       reason: 'sub teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [],
       granted_by_request: 'seed-req',
       lastActor: { email: 'manager@example.com', canonical: 'manager@example.com' },

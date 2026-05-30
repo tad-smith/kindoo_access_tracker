@@ -265,20 +265,19 @@ describe('pickGrantForScope', () => {
 });
 
 describe('collapseSameScopeGrants', () => {
-  // Operator-reported case (Corry Macfarlane): a seat with an auto
-  // primary at scope MH (buildings=['Jamboree']) and a manual
-  // DuplicateGrant at the SAME scope MH (buildings=['Lexington',
-  // 'Jamboree', 'Monument']) must render as ONE row whose buildings
-  // are the union of both, with `hasSameScopeDuplicates=true` so the
-  // caller can show the "Duplicate" badge with the operator-facing
-  // tooltip.
-  it("collapses Corry's same-scope different-type duplicate into one row with the union of buildings", () => {
+  // Operator-reported case: a seat with an auto primary at scope MH
+  // (buildings=['Jamboree']) and a manual DuplicateGrant at the SAME
+  // scope MH (buildings=['Lexington', 'Jamboree', 'Monument']) must
+  // render as ONE row whose buildings are the union of both, with
+  // `hasSameScopeDuplicates=true` so the caller can show the
+  // "Duplicate" badge with the operator-facing tooltip.
+  it('collapses a same-scope different-type duplicate into one row with the union of buildings', () => {
     const seat = makeSeat({
       scope: 'MH',
       type: 'auto',
-      member_canonical: 'corry@corrymac.com',
-      member_email: 'corry@corrymac.com',
-      member_name: 'Corry Macfarlane',
+      member_canonical: 'user2@example.com',
+      member_email: 'user2@example.com',
+      member_name: 'Test User Two',
       building_names: ['Jamboree'],
       duplicate_grants: [
         {

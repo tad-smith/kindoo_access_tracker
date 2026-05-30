@@ -62,7 +62,7 @@ async function seedSeat(opts: {
     type: opts.type ?? 'manual',
     callings: [],
     reason: opts.reason ?? 'helper',
-    building_names: opts.building_names ?? ['Cordera Building'],
+    building_names: opts.building_names ?? ['Maple Building'],
     duplicate_grants: opts.duplicate_grants ?? [],
     granted_by_request: opts.granted_by_request ?? 'r-original',
     created_at: Timestamp.now(),
@@ -661,7 +661,7 @@ describe.skipIf(!hasEmulators())('removeSeatOnRequestComplete', () => {
         scope: 'stake',
         type: 'manual',
         reason: 'pc-helper',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         duplicate_grants: [
           {
             scope: 'stake',

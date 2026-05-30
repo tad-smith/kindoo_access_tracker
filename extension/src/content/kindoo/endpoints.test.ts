@@ -40,8 +40,8 @@ function richUser(overrides: Record<string, unknown> = {}) {
     EUID: 'fcf38b4c-1111-1111-1111-111111111111',
     UserID: '85bea3c7-1c18-40f0-b514-c828e48bd983',
     Username: 'tad.e.smith@gmail.com',
-    DisplayName: 'Tad Smith',
-    Description: 'Cordera Ward (Sunday School Teacher)',
+    DisplayName: 'Test User',
+    Description: 'Maple Ward (Sunday School Teacher)',
     IsTempUser: false,
     StartAccessDoorsDate: '2026-05-13T14:00:00Z',
     StartAccessDoorsDateAtTimeZone: '2026-05-13T08:00',
@@ -101,13 +101,13 @@ describe('getEnvironmentRules', () => {
   it('parses a list of rules and narrows ID + Name from the wire shape', async () => {
     const fetchImpl = vi.fn(async () =>
       ok([
-        { ID: 6248, Name: 'Cordera Doors', SomeOtherField: 1 },
+        { ID: 6248, Name: 'Maple Doors', SomeOtherField: 1 },
         { ID: 6249, Name: 'Pine Creek Doors' },
       ]),
     );
     const result = await getEnvironmentRules(SESSION, 27994, fetchImpl);
     expect(result).toHaveLength(2);
-    expect(result[0]).toMatchObject({ RID: 6248, Name: 'Cordera Doors' });
+    expect(result[0]).toMatchObject({ RID: 6248, Name: 'Maple Doors' });
     expect(result[1]).toMatchObject({ RID: 6249, Name: 'Pine Creek Doors' });
   });
 
@@ -214,7 +214,7 @@ describe('inviteUser', () => {
 
 describe('editUser', () => {
   const payload = {
-    description: 'Cordera Ward (Sunday School Teacher)',
+    description: 'Maple Ward (Sunday School Teacher)',
     isTemp: false,
     startAccessDoorsDateTime: '',
     expiryDate: '',
@@ -309,7 +309,7 @@ describe('lookupUserByEmail', () => {
       euid: 'fcf38b4c-1111-1111-1111-111111111111',
       userId: '85bea3c7-1c18-40f0-b514-c828e48bd983',
       username: 'tad.e.smith@gmail.com',
-      description: 'Cordera Ward (Sunday School Teacher)',
+      description: 'Maple Ward (Sunday School Teacher)',
       isTempUser: false,
       startAccessDoorsDateAtTimeZone: '2026-05-13T08:00',
       expiryDateAtTimeZone: '2026-05-14T22:00',
@@ -677,8 +677,8 @@ describe('getEnvironmentRuleWithEntryPoints', () => {
   function door(over: Record<string, unknown> = {}) {
     return {
       ID: 12345,
-      Name: 'Cordera - North',
-      Description: 'Meetinghouse - 6700 Cordera Crest Ave',
+      Name: 'Maple - North',
+      Description: 'Meetinghouse - 6700 Maple Crest Ave',
       IsSelected: true,
       ...over,
     };
@@ -702,8 +702,8 @@ describe('getEnvironmentRuleWithEntryPoints', () => {
           door({ ID: 1001, Name: 'Jamboree - North', IsSelected: true }),
           door({ ID: 1002, Name: 'Jamboree - South', IsSelected: true }),
           door({ ID: 1003, Name: 'Jamboree - Cultural', IsSelected: true }),
-          door({ ID: 2001, Name: 'Cordera - North', IsSelected: false }),
-          door({ ID: 2002, Name: 'Cordera - South', IsSelected: false }),
+          door({ ID: 2001, Name: 'Maple - North', IsSelected: false }),
+          door({ ID: 2002, Name: 'Maple - South', IsSelected: false }),
         ],
       }),
     );

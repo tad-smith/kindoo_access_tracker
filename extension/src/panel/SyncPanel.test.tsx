@@ -79,12 +79,12 @@ function bundle() {
         site_name: 'CSN',
       },
     },
-    wards: [{ ward_code: 'CO', ward_name: 'Cordera Ward', building_name: 'Cordera Building' }],
+    wards: [{ ward_code: 'CO', ward_name: 'Maple Ward', building_name: 'Maple Building' }],
     buildings: [
       {
-        building_id: 'cordera',
-        building_name: 'Cordera Building',
-        kindoo_rule: { rule_id: 6248, rule_name: 'Cordera Doors' },
+        building_id: 'maple',
+        building_name: 'Maple Building',
+        kindoo_rule: { rule_id: 6248, rule_name: 'Maple Doors' },
       },
     ],
     seats: [],
@@ -211,7 +211,7 @@ describe('SyncPanel', () => {
       scope: 'CO',
       type: 'auto',
       callings: ['Sunday School Teacher'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [],
     } as never);
     getSyncDataMock.mockResolvedValue(b);
@@ -247,7 +247,7 @@ describe('SyncPanel', () => {
       scope: 'CO',
       type: 'auto',
       callings: [],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [],
     } as never);
     listAllEnvironmentUsersMock.mockResolvedValue([
@@ -344,7 +344,7 @@ describe('SyncPanel', () => {
       scope: 'CO',
       type: 'auto',
       callings,
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [],
     };
   }
@@ -356,7 +356,7 @@ describe('SyncPanel', () => {
       username: email,
       FirstName: 'First',
       LastName: 'Last',
-      description: 'Cordera Ward (Sunday School Teacher)',
+      description: 'Maple Ward (Sunday School Teacher)',
       isTempUser: false,
       startAccessDoorsDateAtTimeZone: null,
       expiryDateAtTimeZone: null,
@@ -412,7 +412,7 @@ describe('SyncPanel', () => {
     getSyncDataMock.mockResolvedValue(b);
     listAllEnvironmentUsersMock.mockResolvedValue([
       kuser('extra@example.com', {
-        description: 'Cordera Ward (Sunday School Teacher, Janitor)',
+        description: 'Maple Ward (Sunday School Teacher, Janitor)',
       }),
     ]);
     const user = userEvent.setup();
@@ -477,7 +477,7 @@ describe('SyncPanel', () => {
     getSyncDataMock.mockResolvedValue(b);
     listAllEnvironmentUsersMock.mockResolvedValue([
       kuser('tm@example.com', {
-        description: 'Cordera Ward (Sunday School Teacher)',
+        description: 'Maple Ward (Sunday School Teacher)',
       }),
     ]);
     const user = userEvent.setup();
@@ -508,12 +508,12 @@ describe('SyncPanel', () => {
       type: 'manual',
       callings: [],
       reason: 'Requested by bishop',
-      building_names: ['Cordera Building', 'Pine Creek Building'],
+      building_names: ['Maple Building', 'Pine Creek Building'],
     } as never);
     getSyncDataMock.mockResolvedValue(b);
     listAllEnvironmentUsersMock.mockResolvedValue([
       kuser('bm@example.com', {
-        description: 'Cordera Ward (Building Greeter)',
+        description: 'Maple Ward (Building Greeter)',
         accessSchedules: [{ ruleId: 6248 }],
       }),
     ]);
@@ -532,7 +532,7 @@ describe('SyncPanel', () => {
 
   it('buildings-mismatch on an auto seat disables Update Kindoo but keeps Update SBA enabled', async () => {
     // Auto seat in SBA with no buildings; Kindoo user's door-grant
-    // derivation produced ['Cordera Building'] → buildings-mismatch
+    // derivation produced ['Maple Building'] → buildings-mismatch
     // emitted for the auto seat. Update Kindoo is owned by Church
     // Access Automation; Update SBA writes `derivedBuildings`.
     const b = bundle();
@@ -547,7 +547,7 @@ describe('SyncPanel', () => {
     getSyncDataMock.mockResolvedValue(b);
     listAllEnvironmentUsersMock.mockResolvedValue([
       kuser('autobm@example.com', {
-        description: 'Cordera Ward (Sunday School Teacher)',
+        description: 'Maple Ward (Sunday School Teacher)',
         accessSchedules: [],
       }),
     ]);
@@ -555,7 +555,7 @@ describe('SyncPanel', () => {
     enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
       users.map((u: Record<string, unknown>) => ({
         ...u,
-        derivedBuildings: ['Cordera Building'],
+        derivedBuildings: ['Maple Building'],
       })),
     );
     const user = userEvent.setup();
@@ -596,10 +596,10 @@ describe('SyncPanel', () => {
                 scope: 'CO',
                 type: 'auto',
                 callings: ['Sunday School Teacher'],
-                buildingNames: ['Cordera Building'],
+                buildingNames: ['Maple Building'],
               },
               kindoo: {
-                description: 'Cordera Ward (Sunday School Teacher)',
+                description: 'Maple Ward (Sunday School Teacher)',
                 isTempUser: false,
                 memberName: 'A A',
                 primaryScope: 'CO',
@@ -726,7 +726,7 @@ describe('SyncPanel', () => {
         username: 'newbie@example.com',
         FirstName: 'New',
         LastName: 'Bie',
-        description: 'Cordera Ward (Sunday School Teacher)',
+        description: 'Maple Ward (Sunday School Teacher)',
         isTempUser: false,
         startAccessDoorsDateAtTimeZone: null,
         expiryDateAtTimeZone: null,
@@ -776,7 +776,7 @@ describe('SyncPanel', () => {
         username: 'newbie@example.com',
         FirstName: 'New',
         LastName: 'Bie',
-        description: 'Cordera Ward (Sunday School Teacher)',
+        description: 'Maple Ward (Sunday School Teacher)',
         isTempUser: false,
         startAccessDoorsDateAtTimeZone: null,
         expiryDateAtTimeZone: null,
@@ -928,9 +928,9 @@ describe('SyncPanel', () => {
     // Home building keeps the default kindoo_site_id (absent → home);
     // add a foreign building tagged to the east-stake site.
     (b.buildings as unknown[]).push({
-      building_id: 'foothills',
-      building_name: 'Foothills Building',
-      kindoo_rule: { rule_id: 9999, rule_name: 'Foothills Doors' },
+      building_id: 'pine',
+      building_name: 'Pine Building',
+      kindoo_rule: { rule_id: 9999, rule_name: 'Pine Doors' },
       kindoo_site_id: 'east-stake',
     } as never);
     getSyncDataMock.mockResolvedValue(b);
@@ -952,7 +952,7 @@ describe('SyncPanel', () => {
     const buildingsArg = enrichUsersWithDerivedBuildingsMock.mock.calls[0]![4] as Array<{
       building_id: string;
     }>;
-    expect(buildingsArg.map((x) => x.building_id)).toEqual(['foothills']);
+    expect(buildingsArg.map((x) => x.building_id)).toEqual(['pine']);
   });
 
   it('on home session, fetches only home rule_ids (excludes foreign buildings)', async () => {
@@ -966,9 +966,9 @@ describe('SyncPanel', () => {
       kindoo_eid: 30000,
     } as never);
     (b.buildings as unknown[]).push({
-      building_id: 'foothills',
-      building_name: 'Foothills Building',
-      kindoo_rule: { rule_id: 9999, rule_name: 'Foothills Doors' },
+      building_id: 'pine',
+      building_name: 'Pine Building',
+      kindoo_rule: { rule_id: 9999, rule_name: 'Pine Doors' },
       kindoo_site_id: 'east-stake',
     } as never);
     getSyncDataMock.mockResolvedValue(b);

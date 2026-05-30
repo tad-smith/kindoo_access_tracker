@@ -8,9 +8,9 @@ describe('wildcardToRegex', () => {
     expect(wildcardToRegex('Bishop').test('Bishop')).toBe(true);
     expect(wildcardToRegex('Bishop').test('Bishop ')).toBe(false);
     expect(wildcardToRegex('Stake High Councilor*').test('Stake High Councilor')).toBe(true);
-    expect(
-      wildcardToRegex('Stake High Councilor*').test('Stake High Councilor - Cordera Ward'),
-    ).toBe(true);
+    expect(wildcardToRegex('Stake High Councilor*').test('Stake High Councilor - Maple Ward')).toBe(
+      true,
+    );
     expect(wildcardToRegex('*').test('anything')).toBe(true);
     expect(wildcardToRegex('*').test('')).toBe(true);
     expect(wildcardToRegex('Second*Counselor').test('Second Counselor')).toBe(true);

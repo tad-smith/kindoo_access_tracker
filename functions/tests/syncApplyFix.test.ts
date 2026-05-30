@@ -47,7 +47,7 @@ async function seedSeat(opts: {
     scope: opts.scope ?? 'CO',
     type: opts.type ?? 'manual',
     callings: opts.callings ?? [],
-    building_names: opts.building_names ?? ['Cordera Building'],
+    building_names: opts.building_names ?? ['Maple Building'],
     duplicate_grants: [],
     created_at: Timestamp.now(),
     last_modified_at: Timestamp.now(),
@@ -246,7 +246,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                 scope: 'CO',
                 type: 'auto',
                 callings: ['Ward Clerk'],
-                buildingNames: ['Cordera Building'],
+                buildingNames: ['Maple Building'],
                 isTempUser: false,
               },
             },
@@ -260,7 +260,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.scope).toBe('CO');
       expect(seat.type).toBe('auto');
       expect(seat.callings).toEqual(['Ward Clerk']);
-      expect(seat.building_names).toEqual(['Cordera Building']);
+      expect(seat.building_names).toEqual(['Maple Building']);
       expect(seat.duplicate_grants).toEqual([]);
       // T-42 / T-43: server-maintained primitive mirror of
       // `duplicate_grants[].scope` is always set, even when empty.
@@ -288,7 +288,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                 scope: 'CO',
                 type: 'manual',
                 callings: [],
-                buildingNames: ['Cordera Building'],
+                buildingNames: ['Maple Building'],
                 isTempUser: false,
               },
             },
@@ -320,7 +320,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                 scope: 'stake',
                 type: 'manual',
                 callings: [],
-                buildingNames: ['Cordera Building'],
+                buildingNames: ['Maple Building'],
                 reason: 'sub teacher',
                 isTempUser: false,
               },
@@ -351,7 +351,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                 scope: 'CO',
                 type: 'temp',
                 callings: [],
-                buildingNames: ['Cordera Building'],
+                buildingNames: ['Maple Building'],
                 startDate: '2026-06-01',
                 endDate: '2026-06-30',
                 isTempUser: true,
@@ -383,7 +383,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   scope: 'CO',
                   type: 'bogus',
                   callings: [],
-                  buildingNames: ['Cordera Building'],
+                  buildingNames: ['Maple Building'],
                   isTempUser: false,
                 },
               },
@@ -486,7 +486,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         scope: 'CO',
         type: 'manual',
         callings: ['Ward Clerk'],
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       const result = await syncApplyFix.run(
         callableReq({
@@ -507,7 +507,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       // Untouched axes:
       expect(seat.type).toBe('manual');
       expect(seat.callings).toEqual(['Ward Clerk']);
-      expect(seat.building_names).toEqual(['Cordera Building']);
+      expect(seat.building_names).toEqual(['Maple Building']);
       expect(seat.lastActor).toEqual({
         email: 'SyncActor:scope-mismatch',
         canonical: 'SyncActor:scope-mismatch',
@@ -541,7 +541,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         scope: 'CO',
         type: 'manual',
         callings: ['Ward Clerk'],
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       const result = await syncApplyFix.run(
         callableReq({
@@ -561,7 +561,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.type).toBe('auto');
       expect(seat.scope).toBe('CO');
       expect(seat.callings).toEqual(['Ward Clerk']);
-      expect(seat.building_names).toEqual(['Cordera Building']);
+      expect(seat.building_names).toEqual(['Maple Building']);
       expect(seat.lastActor).toEqual({
         email: 'SyncActor:type-mismatch',
         canonical: 'SyncActor:type-mismatch',
@@ -597,7 +597,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         scope: 'CO',
         type: 'manual',
         callings: ['Ward Clerk'],
-        building_names: ['Cordera Building', 'Briargate Building'],
+        building_names: ['Maple Building', 'Briargate Building'],
       });
       const result = await syncApplyFix.run(
         callableReq({
@@ -696,7 +696,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   scope: 'CO',
                   type: 'auto',
                   callings: ['Bishop', 'Ward Clerk', 'Sunday School Teacher'],
-                  buildingNames: ['Cordera Building'],
+                  buildingNames: ['Maple Building'],
                   isTempUser: false,
                 },
               },
@@ -743,7 +743,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   scope: 'CO',
                   type: 'auto',
                   callings: ['Unknown Calling'],
-                  buildingNames: ['Cordera Building'],
+                  buildingNames: ['Maple Building'],
                   isTempUser: false,
                 },
               },
@@ -784,7 +784,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   scope: 'CO',
                   type: 'manual',
                   callings: [],
-                  buildingNames: ['Cordera Building'],
+                  buildingNames: ['Maple Building'],
                   isTempUser: false,
                 },
               },
@@ -823,7 +823,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   scope: 'CO',
                   type: 'temp',
                   callings: [],
-                  buildingNames: ['Cordera Building'],
+                  buildingNames: ['Maple Building'],
                   startDate: '2026-06-01',
                   endDate: '2026-06-30',
                   isTempUser: true,
@@ -1096,7 +1096,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                 scope: 'CO',
                 type: 'manual',
                 callings: [],
-                buildingNames: ['Cordera Building'],
+                buildingNames: ['Maple Building'],
                 isTempUser: false,
               },
             },

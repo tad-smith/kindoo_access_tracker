@@ -91,7 +91,7 @@ describe('useSubmitRequest payload shape', () => {
       member_name: 'Subject',
       reason: 'Visiting',
       comment: '',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
 
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
@@ -109,7 +109,7 @@ describe('useSubmitRequest payload shape', () => {
       member_email: 'subject@example.com',
       member_name: 'Subject',
       reason: 'Visiting',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     // serverTimestamp() sentinel; only the rules engine resolves it
     // to request.time. Asserting the value we minted, not a Date /
@@ -170,7 +170,7 @@ describe('useSubmitRequest payload shape', () => {
         member_name: 'S',
         reason: 'r',
         comment: '',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       }),
     ).rejects.toThrow(/Not signed in/i);
     expect(setDocMock).not.toHaveBeenCalled();
@@ -185,7 +185,7 @@ describe('useSubmitRequest payload shape', () => {
       member_name: 'Subject',
       reason: 'Sub teacher',
       comment: 'Out of town this weekend',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       urgent: true,
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
@@ -202,7 +202,7 @@ describe('useSubmitRequest payload shape', () => {
       member_name: 'Subject',
       reason: 'r',
       comment: '',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       urgent: false,
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
@@ -223,7 +223,7 @@ describe('useSubmitRequest payload shape', () => {
       member_name: 'S',
       reason: 'r',
       comment: '',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [, body] = setDocMock.mock.calls[0]!;

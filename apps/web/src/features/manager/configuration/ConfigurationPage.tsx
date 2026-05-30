@@ -379,7 +379,7 @@ function WardFormDialog({
         ) : null}
         <label>
           Ward name
-          <Input {...register('ward_name')} placeholder="Cordera Ward" />
+          <Input {...register('ward_name')} placeholder="Maple Ward" />
         </label>
         {formState.errors.ward_name ? (
           <p role="alert" className="kd-form-error">
@@ -585,7 +585,7 @@ function BuildingFormDialog({
       <form onSubmit={submit} className="kd-wizard-form" data-testid="config-building-form">
         <label>
           Name
-          <Input {...register('building_name')} placeholder="Cordera Building" />
+          <Input {...register('building_name')} placeholder="Maple Building" />
         </label>
         {formState.errors.building_name ? (
           <p role="alert" className="kd-form-error">
@@ -781,7 +781,7 @@ function KindooSiteFormDialog({ mode, isPending, onSubmit, onClose }: KindooSite
       <form onSubmit={submit} className="kd-wizard-form" data-testid="config-kindoo-site-form">
         <label>
           Display name
-          <Input {...register('display_name')} placeholder="East Stake (Foothills Building)" />
+          <Input {...register('display_name')} placeholder="East Stake (Pine Building)" />
         </label>
         {formState.errors.display_name ? (
           <p role="alert" className="kd-form-error">

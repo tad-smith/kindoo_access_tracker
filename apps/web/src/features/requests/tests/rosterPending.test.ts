@@ -130,8 +130,8 @@ describe('partitionPendingForRoster', () => {
     ).toBe('r-first');
   });
 
-  // T-43 Phase B AC #13 — a pending remove on the East-Stake-Cordera
-  // duplicate must not light up the home-Cordera row.
+  // T-43 Phase B AC #13 — a pending remove on the East-Stake-Maple
+  // duplicate must not light up the home-Maple row.
   it('discriminates pending removes by kindoo_site_id (Phase B AC #13)', () => {
     const homeRemove = makeRequest({
       request_id: 'r-home',

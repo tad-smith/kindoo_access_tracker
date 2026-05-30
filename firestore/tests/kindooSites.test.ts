@@ -33,7 +33,7 @@ const OTHER_PATH = `stakes/someother/kindooSites/${SITE_ID}`;
 function freshSiteDoc(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
   return {
     id: SITE_ID,
-    display_name: 'East Stake (Foothills Building)',
+    display_name: 'East Stake (Pine Building)',
     kindoo_expected_site_name: 'East Stake',
     kindoo_eid: 4321,
     created_at: new Date(),
@@ -114,9 +114,7 @@ describe('firestore.rules — stakes/{sid}/kindooSites/{kindooSiteId}', () => {
       });
       const db = managerContext(env, STAKE_ID).firestore();
       await assertSucceeds(
-        db
-          .doc(PATH)
-          .set(freshSiteDoc({ display_name: 'East Stake (Foothills Building, renamed)' })),
+        db.doc(PATH).set(freshSiteDoc({ display_name: 'East Stake (Pine Building, renamed)' })),
       );
     });
 
@@ -189,7 +187,7 @@ describe('firestore.rules — stakes/{sid}/kindooSites/{kindooSiteId}', () => {
       return {
         ward_code: '07',
         ward_name: '7th Ward',
-        building_name: 'Foothills Building',
+        building_name: 'Pine Building',
         seat_cap: 30,
         created_at: new Date(),
         last_modified_at: new Date(),
@@ -222,15 +220,15 @@ describe('firestore.rules — stakes/{sid}/kindooSites/{kindooSiteId}', () => {
   });
 
   describe('buildings.kindoo_site_id', () => {
-    const BUILDING_PATH = `stakes/${STAKE_ID}/buildings/foothills-building`;
+    const BUILDING_PATH = `stakes/${STAKE_ID}/buildings/pine-building`;
 
     function buildingDoc(
       overrides: Partial<Record<string, unknown>> = {},
     ): Record<string, unknown> {
       return {
-        building_id: 'foothills-building',
-        building_name: 'Foothills Building',
-        address: '4321 Foothills Pkwy',
+        building_id: 'pine-building',
+        building_name: 'Pine Building',
+        address: '4321 Pine Pkwy',
         created_at: new Date(),
         last_modified_at: new Date(),
         lastActor: lastActorOf(personas.manager),

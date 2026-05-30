@@ -87,7 +87,7 @@ async function seedSeat(opts: {
     type: opts.type ?? 'manual',
     callings: [],
     reason: opts.reason ?? 'existing-grant',
-    building_names: opts.building_names ?? ['Cordera Building'],
+    building_names: opts.building_names ?? ['Maple Building'],
     duplicate_grants: opts.duplicate_grants ?? [],
     granted_by_request: 'seed',
     created_at: Timestamp.now(),
@@ -308,7 +308,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
             stakeId: STAKE_ID,
             requestId: 'r1',
             kindooUid: 'kindoo-user-12345',
-            provisioningNote: 'Added Alice to Kindoo with access to Cordera Building.',
+            provisioningNote: 'Added Alice to Kindoo with access to Maple Building.',
           },
         }),
       );
@@ -317,9 +317,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       const after = (await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()).data() as AccessRequest;
       expect(after.status).toBe('complete');
       expect(after.kindoo_uid).toBe('kindoo-user-12345');
-      expect(after.provisioning_note).toBe(
-        'Added Alice to Kindoo with access to Cordera Building.',
-      );
+      expect(after.provisioning_note).toBe('Added Alice to Kindoo with access to Maple Building.');
     });
 
     it('regression: existing SPA path (no v2.2 fields) still works', async () => {
@@ -424,7 +422,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         status: 'pending',
         type: 'add_manual',
         scope: 'CO',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         reason: 'sub teacher',
       });
 
@@ -442,7 +440,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       expect(seat.scope).toBe('CO');
       expect(seat.type).toBe('manual');
       expect(seat.callings).toEqual([]);
-      expect(seat.building_names).toEqual(['Cordera Building']);
+      expect(seat.building_names).toEqual(['Maple Building']);
       expect(seat.duplicate_grants).toEqual([]);
       expect(seat.granted_by_request).toBe('r1');
       expect(seat.reason).toBe('sub teacher');
@@ -461,7 +459,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         status: 'pending',
         type: 'add_temp',
         scope: 'CO',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         reason: 'cleaning crew',
         start_date: '2026-06-01',
         end_date: '2026-06-30',
@@ -500,7 +498,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         });
         await seedRequest({
           requestId: 'r1',
@@ -523,7 +521,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         ).data() as Seat;
         expect(seat.scope).toBe('stake');
         expect(seat.type).toBe('manual');
-        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
         // No duplicate appended on a primary match.
         expect(seat.duplicate_grants).toEqual([]);
         const after = (
@@ -539,7 +537,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           reason: 'sub teacher',
         });
         await seedRequest({
@@ -547,7 +545,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           status: 'pending',
           type: 'add_manual',
           scope: 'CO',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           reason: 'second-ward helper',
         });
 
@@ -565,14 +563,14 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         // Primary stays as it was.
         expect(seat.scope).toBe('stake');
         expect(seat.type).toBe('manual');
-        expect(seat.building_names).toEqual(['Cordera Building']);
+        expect(seat.building_names).toEqual(['Maple Building']);
         expect(seat.reason).toBe('sub teacher');
         // New entry appended.
         expect(seat.duplicate_grants.length).toBe(1);
         const dup = seat.duplicate_grants[0]!;
         expect(dup.scope).toBe('CO');
         expect(dup.type).toBe('manual');
-        expect(dup.building_names).toEqual(['Cordera Building']);
+        expect(dup.building_names).toEqual(['Maple Building']);
         expect(dup.reason).toBe('second-ward helper');
         expect(dup.detected_at).toBeDefined();
       });
@@ -589,7 +587,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           reason: 'home helper',
         });
         await seedRequest({
@@ -631,7 +629,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         });
         await seedRequest({
           requestId: 'r1',
@@ -662,7 +660,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         // Foreign-site ward 'FT' bound to 'east-stake'.
         await seedWard({
           ward_code: 'FT',
-          building_name: 'Foothills Building',
+          building_name: 'Pine Building',
           kindoo_site_id: 'east-stake',
         });
         await seedRequest({
@@ -670,7 +668,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           status: 'pending',
           type: 'add_manual',
           scope: 'FT',
-          building_names: ['Foothills Building'],
+          building_names: ['Pine Building'],
           reason: 'first-time ward grant',
         });
 
@@ -734,7 +732,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         });
         await seedRequest({
           requestId: 'r1',
@@ -768,7 +766,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'temp',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         });
         await seedRequest({
           requestId: 'r1',
@@ -793,7 +791,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         ).data() as Seat;
         expect(seat.type).toBe('temp');
         expect(seat.scope).toBe('stake');
-        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
         expect(seat.duplicate_grants).toEqual([]);
       });
 
@@ -804,7 +802,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           reason: 'sub teacher',
         });
         await seedRequest({
@@ -832,7 +830,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         // Primary unchanged — same scope, type, building_names.
         expect(seat.type).toBe('manual');
         expect(seat.scope).toBe('stake');
-        expect(seat.building_names).toEqual(['Cordera Building']);
+        expect(seat.building_names).toEqual(['Maple Building']);
         expect(seat.reason).toBe('sub teacher');
         // New temp duplicate appended.
         expect(seat.duplicate_grants.length).toBe(1);
@@ -883,12 +881,12 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           duplicate_grants: [
             {
               scope: 'CO',
               type: 'manual',
-              building_names: ['Cordera Building'],
+              building_names: ['Maple Building'],
               detected_at: Timestamp.fromMillis(2_000),
               reason: 'prior-helper',
             },
@@ -915,13 +913,13 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         ).data() as Seat;
         // Primary unchanged.
         expect(seat.scope).toBe('stake');
-        expect(seat.building_names).toEqual(['Cordera Building']);
+        expect(seat.building_names).toEqual(['Maple Building']);
         // Existing duplicate extended; reason preserved.
         expect(seat.duplicate_grants.length).toBe(1);
         const dup = seat.duplicate_grants[0]!;
         expect(dup.scope).toBe('CO');
         expect(dup.type).toBe('manual');
-        expect(dup.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(dup.building_names).toEqual(['Maple Building', 'Briargate Building']);
         expect(dup.reason).toBe('prior-helper');
       });
 
@@ -941,7 +939,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         });
         await seedSeat({
           canonical: 'bob@gmail.com',
@@ -973,7 +971,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
         ).data() as Seat;
-        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
         const after = (
           await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()
         ).data() as AccessRequest;
@@ -993,14 +991,14 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building', 'Briargate Building'],
+          building_names: ['Maple Building', 'Briargate Building'],
         });
         await seedRequest({
           requestId: 'r1',
           status: 'pending',
           type: 'add_manual',
           scope: 'stake',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         });
 
         await markRequestComplete.run(
@@ -1014,7 +1012,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
         ).data() as Seat;
-        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
         const after = (
           await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()
         ).data() as AccessRequest;
@@ -1116,7 +1114,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         status: 'pending',
         type: 'add_manual',
         scope: 'stake',
-        building_names: ['Cordera Building', 'Briargate Building', 'Lexington Building'],
+        building_names: ['Maple Building', 'Briargate Building', 'Lexington Building'],
       });
 
       await markRequestComplete.run(
@@ -1129,7 +1127,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       const { db } = requireEmulators();
       const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
       expect(seat.building_names).toEqual([
-        'Cordera Building',
+        'Maple Building',
         'Briargate Building',
         'Lexington Building',
       ]);
@@ -1146,14 +1144,14 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'CO',
           type: 'auto',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         });
         await seedRequest({
           requestId: 'r1',
           status: 'pending',
           type: 'edit_auto',
           scope: 'CO',
-          building_names: ['Cordera Building', 'Briargate Building'],
+          building_names: ['Maple Building', 'Briargate Building'],
         });
 
         await markRequestComplete.run(
@@ -1169,7 +1167,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         ).data() as Seat;
         expect(seat.scope).toBe('CO');
         expect(seat.type).toBe('auto');
-        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
         expect(seat.lastActor).toEqual({ email: MANAGER_EMAIL, canonical: MANAGER_EMAIL });
         const after = (
           await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()
@@ -1183,14 +1181,14 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'auto',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         });
         await seedRequest({
           requestId: 'r1',
           status: 'pending',
           type: 'edit_auto',
           scope: 'stake',
-          building_names: ['Cordera Building', 'Briargate Building'],
+          building_names: ['Maple Building', 'Briargate Building'],
         });
 
         await expect(
@@ -1207,7 +1205,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
         ).data() as Seat;
-        expect(seat.building_names).toEqual(['Cordera Building']);
+        expect(seat.building_names).toEqual(['Maple Building']);
       });
 
       it('missing seat: rejects with failed-precondition', async () => {
@@ -1217,7 +1215,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           status: 'pending',
           type: 'edit_auto',
           scope: 'CO',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         });
 
         await expect(
@@ -1236,14 +1234,14 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           reason: 'Visiting authority',
           duplicate_grants: [
             {
               scope: 'CO',
               type: 'auto',
               callings: ['Bishop'],
-              building_names: ['Cordera Building'],
+              building_names: ['Maple Building'],
               detected_at: Timestamp.fromMillis(2_000),
             },
           ],
@@ -1253,7 +1251,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           status: 'pending',
           type: 'edit_auto',
           scope: 'CO',
-          building_names: ['Cordera Building', 'Briargate Building'],
+          building_names: ['Maple Building', 'Briargate Building'],
         });
 
         await markRequestComplete.run(
@@ -1270,14 +1268,14 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         // Primary untouched.
         expect(seat.scope).toBe('stake');
         expect(seat.type).toBe('manual');
-        expect(seat.building_names).toEqual(['Cordera Building']);
+        expect(seat.building_names).toEqual(['Maple Building']);
         expect(seat.reason).toBe('Visiting authority');
         // Duplicate's building_names replaced.
         expect(seat.duplicate_grants.length).toBe(1);
         const dup = seat.duplicate_grants[0]!;
         expect(dup.scope).toBe('CO');
         expect(dup.type).toBe('auto');
-        expect(dup.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(dup.building_names).toEqual(['Maple Building', 'Briargate Building']);
         // Callings on the duplicate are preserved (only building_names
         // is replaced for edit_auto).
         expect(dup.callings).toEqual(['Bishop']);
@@ -1291,7 +1289,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'manual',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           reason: 'Visiting authority',
         });
         await seedRequest({
@@ -1299,7 +1297,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           status: 'pending',
           type: 'edit_manual',
           scope: 'stake',
-          building_names: ['Cordera Building', 'Briargate Building'],
+          building_names: ['Maple Building', 'Briargate Building'],
           reason: 'Visiting authority (extended)',
         });
 
@@ -1314,7 +1312,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
         ).data() as Seat;
-        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
         expect(seat.reason).toBe('Visiting authority (extended)');
         // `seat.callings` is untouched — manual seats convention is
         // `callings: []` and the edit never touches it.
@@ -1328,7 +1326,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           status: 'pending',
           type: 'edit_manual',
           scope: 'stake',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         });
 
         await expect(
@@ -1349,7 +1347,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           canonical: 'alice@gmail.com',
           scope: 'stake',
           type: 'temp',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           reason: 'Visiting speaker',
         });
         await seedRequest({
@@ -1357,7 +1355,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           status: 'pending',
           type: 'edit_temp',
           scope: 'stake',
-          building_names: ['Cordera Building', 'Briargate Building'],
+          building_names: ['Maple Building', 'Briargate Building'],
           reason: 'Visiting speaker (extended)',
           start_date: '2026-06-01',
           end_date: '2026-06-30',
@@ -1375,7 +1373,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
         ).data() as Seat;
         expect(seat.type).toBe('temp');
-        expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
         expect(seat.reason).toBe('Visiting speaker (extended)');
         expect(seat.start_date).toBe('2026-06-01');
         expect(seat.end_date).toBe('2026-06-30');
@@ -1388,7 +1386,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           status: 'pending',
           type: 'edit_temp',
           scope: 'stake',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           start_date: '2026-06-01',
           end_date: '2026-06-30',
         });
@@ -1406,7 +1404,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
 
     it('add_manual ward-scope with empty building_names: falls back to ward.building_name', async () => {
       await seedManager();
-      await seedWard({ ward_code: 'CO', building_name: 'Cordera Building', seat_cap: 10 });
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building', seat_cap: 10 });
       await seedRequest({
         requestId: 'r1',
         status: 'pending',
@@ -1425,7 +1423,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       const { db } = requireEmulators();
       const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
       expect(seat.scope).toBe('CO');
-      expect(seat.building_names).toEqual(['Cordera Building']);
+      expect(seat.building_names).toEqual(['Maple Building']);
     });
   });
 
@@ -1450,20 +1448,20 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         canonical: 'bob@gmail.com',
         scope: 'stake',
         type: 'manual',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       await seedSeat({
         canonical: 'carol@gmail.com',
         scope: 'stake',
         type: 'manual',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       await seedRequest({
         requestId: 'r1',
         status: 'pending',
         type: 'add_manual',
         scope: 'stake',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
 
       const result = await markRequestComplete.run(
@@ -1484,19 +1482,19 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
     it('create that pushes a ward pool over cap: succeeds + ward entry in last_over_caps_json', async () => {
       await seedManager();
       await seedStake({ stake_seat_cap: 100 });
-      await seedWard({ ward_code: 'CO', building_name: 'Cordera Building', seat_cap: 1 });
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building', seat_cap: 1 });
       await seedSeat({
         canonical: 'bob@gmail.com',
         scope: 'CO',
         type: 'manual',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       await seedRequest({
         requestId: 'r1',
         status: 'pending',
         type: 'add_manual',
         scope: 'CO',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
 
       const result = await markRequestComplete.run(
@@ -1516,13 +1514,13 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
     it('completion that does not push any pool over cap: writes [] (clears any stale state)', async () => {
       await seedManager();
       await seedStake({ stake_seat_cap: 100 });
-      await seedWard({ ward_code: 'CO', building_name: 'Cordera Building', seat_cap: 10 });
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building', seat_cap: 10 });
       await seedRequest({
         requestId: 'r1',
         status: 'pending',
         type: 'add_manual',
         scope: 'CO',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
 
       const result = await markRequestComplete.run(
@@ -1547,31 +1545,31 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       // 2; CO unchanged at over_by 1. Two entries.
       await seedManager();
       await seedStake({ stake_seat_cap: 2 });
-      await seedWard({ ward_code: 'CO', building_name: 'Cordera Building', seat_cap: 1 });
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building', seat_cap: 1 });
       await seedSeat({
         canonical: 'bob@gmail.com',
         scope: 'stake',
         type: 'manual',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       await seedSeat({
         canonical: 'carol@gmail.com',
         scope: 'CO',
         type: 'manual',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       await seedSeat({
         canonical: 'dave@gmail.com',
         scope: 'CO',
         type: 'manual',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       await seedRequest({
         requestId: 'r1',
         status: 'pending',
         type: 'add_manual',
         scope: 'stake',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
 
       const result = await markRequestComplete.run(
@@ -1600,20 +1598,20 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         canonical: 'bob@gmail.com',
         scope: 'stake',
         type: 'manual',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       await seedSeat({
         canonical: 'carol@gmail.com',
         scope: 'stake',
         type: 'manual',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       await seedRequest({
         requestId: 'r1',
         status: 'pending',
         type: 'add_manual',
         scope: 'stake',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
 
       const result = await markRequestComplete.run(
@@ -1642,13 +1640,13 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         canonical: 'alice@gmail.com',
         scope: 'stake',
         type: 'manual',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       await seedSeat({
         canonical: 'bob@gmail.com',
         scope: 'stake',
         type: 'manual',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
       await seedRequest({
         requestId: 'r1',
@@ -1671,7 +1669,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       expect(stake.last_over_caps_json).toEqual([{ pool: 'stake', count: 2, cap: 1, over_by: 1 }]);
       // Seat write applied.
       const seat = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
-      expect(seat.building_names).toEqual(['Cordera Building', 'Briargate Building']);
+      expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
     });
 
     it('foreign-site ward seats do not subtract from the home stake portion-cap', async () => {
@@ -1700,7 +1698,7 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         status: 'pending',
         type: 'add_manual',
         scope: 'stake',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       });
 
       const result = await markRequestComplete.run(

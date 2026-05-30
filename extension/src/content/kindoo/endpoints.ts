@@ -42,7 +42,7 @@ export interface KindooEnvironment {
 export interface KindooAccessRule {
   /** Kindoo's rule id. Persisted on the building doc as `kindoo_rule.rule_id`. */
   RID: number;
-  /** Display name (e.g. `"Cordera Doors"`). */
+  /** Display name (e.g. `"Maple Doors"`). */
   Name: string;
   /** Anything else Kindoo returns — opaque to v2.1. */
   [k: string]: unknown;
@@ -142,7 +142,7 @@ export interface KindooInviteUserPayload {
   UserEmail: string;
   /** Hardcoded to 2 (Guest) for every SBA-provisioned seat. */
   UserRole: 2;
-  /** Free-text — "Cordera Ward (Sunday School President)" etc. */
+  /** Free-text — "Maple Ward (Sunday School President)" etc. */
   Description: string;
   CCInEmail: boolean;
   IsTempUser: boolean;
@@ -678,7 +678,7 @@ export async function listAllEnvironmentUsers(
 export interface KindooDoor {
   /** Kindoo's internal door id. */
   doorId: number;
-  /** Display name ("Cordera - North"). */
+  /** Display name ("Maple - North"). */
   name: string;
   /** Building address text ("Meetinghouse - 8295 Jamboree Circle"). */
   description: string;

@@ -8,7 +8,7 @@ import { buildingDeleteBlocker } from './hooks';
 function ward(overrides: Partial<Ward> = {}): Ward {
   return {
     ward_code: 'CO',
-    ward_name: 'Cordera',
+    ward_name: 'Maple',
     building_name: 'Main',
     seat_cap: 20,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,18 +23,18 @@ describe('buildingDeleteBlocker', () => {
 
   it('returns a friendly message listing referencing ward names + codes', () => {
     const msg = buildingDeleteBlocker([
-      ward({ ward_code: 'CO', ward_name: 'Cordera' }),
+      ward({ ward_code: 'CO', ward_name: 'Maple' }),
       ward({ ward_code: 'PR', ward_name: 'Prairie' }),
     ]);
     expect(msg).toMatch(/Cannot delete/);
     expect(msg).toContain('referenced by 2 ward(s)');
-    expect(msg).toContain('Cordera (CO)');
+    expect(msg).toContain('Maple (CO)');
     expect(msg).toContain('Prairie (PR)');
   });
 
   it('singular case still labels the count', () => {
-    const msg = buildingDeleteBlocker([ward({ ward_code: 'CO', ward_name: 'Cordera' })]);
+    const msg = buildingDeleteBlocker([ward({ ward_code: 'CO', ward_name: 'Maple' })]);
     expect(msg).toContain('1 ward(s)');
-    expect(msg).toContain('Cordera (CO)');
+    expect(msg).toContain('Maple (CO)');
   });
 });

@@ -18,7 +18,7 @@ export type KindooBuildingRule = {
 export type Building = {
   /** `= doc.id`. Slug derived from `building_name` via `buildingSlug()`. */
   building_id: string;
-  /** Display name (`'Cordera Building'`). The natural key wards reference by string. */
+  /** Display name (`'Maple Building'`). The natural key wards reference by string. */
   building_name: string;
   address: string;
 

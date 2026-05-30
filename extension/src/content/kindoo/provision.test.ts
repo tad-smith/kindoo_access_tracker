@@ -82,9 +82,9 @@ const STAKE: Stake = {
 
 const BUILDINGS: Building[] = [
   {
-    building_id: 'cordera',
-    building_name: 'Cordera Building',
-    kindoo_rule: { rule_id: 6248, rule_name: 'Cordera Doors' },
+    building_id: 'maple',
+    building_name: 'Maple Building',
+    kindoo_rule: { rule_id: 6248, rule_name: 'Maple Doors' },
   } as unknown as Building,
   {
     building_id: 'pine-creek',
@@ -101,8 +101,8 @@ const BUILDINGS: Building[] = [
 const WARDS: Ward[] = [
   {
     ward_code: 'CO',
-    ward_name: 'Cordera Ward',
-    building_name: 'Cordera Building',
+    ward_name: 'Maple Ward',
+    building_name: 'Maple Building',
   } as unknown as Ward,
   {
     ward_code: 'PC',
@@ -126,10 +126,10 @@ function addManualRequest(overrides: Partial<AccessRequest> = {}): AccessRequest
     scope: 'stake',
     member_email: 'tad.e.smith@gmail.com',
     member_canonical: 'tad.e.smith@gmail.com',
-    member_name: 'Tad Smith',
+    member_name: 'Test User',
     reason: 'Sunday School Teacher',
     comment: '',
-    building_names: ['Cordera Building', 'Pine Creek Building'],
+    building_names: ['Maple Building', 'Pine Creek Building'],
     status: 'pending',
     requester_email: 'requester@example.com',
     requester_canonical: 'requester@example.com',
@@ -152,7 +152,7 @@ function removeRequest(overrides: Partial<AccessRequest> = {}): AccessRequest {
   return addManualRequest({
     type: 'remove',
     reason: '',
-    member_name: 'Tad Smith',
+    member_name: 'Test User',
     ...overrides,
   });
 }
@@ -235,7 +235,7 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
     expect(result).toEqual({
       kindoo_uid: 'new-uid',
       action: 'invited',
-      note: 'Invited Tad Smith to Kindoo with access to Cordera Building, Pine Creek Building.',
+      note: 'Invited Test User to Kindoo with access to Maple Building, Pine Creek Building.',
     });
   });
 
@@ -248,7 +248,7 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
       request: addTempRequest({
         start_date: '2026-05-13',
         end_date: '2026-05-14',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       }),
       seat: null,
       stake: STAKE,
@@ -272,7 +272,7 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
     const req = addTempRequest({
       start_date: '2026-05-13',
       end_date: '2026-05-14',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     delete (req as { end_date?: string }).end_date;
     await expect(
@@ -300,7 +300,7 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
     } as unknown as Seat;
 
     await provisionAddOrChange({
-      request: addManualRequest({ building_names: ['Cordera Building'] }),
+      request: addManualRequest({ building_names: ['Maple Building'] }),
       seat,
       stake: STAKE,
       buildings: BUILDINGS,
@@ -309,12 +309,12 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
       session: SESSION,
     });
 
-    // Pine Creek (seat) ∪ Cordera (request) → both RIDs.
+    // Pine Creek (seat) ∪ Maple (request) → both RIDs.
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, 'new-uid', [6249, 6248], undefined);
   });
 
   it('add to user with existing duplicate-grants: target set unions primary + duplicate + request buildings', async () => {
-    // Seat primary = PC (Cordera + Pine Creek), one duplicate = MO ward
+    // Seat primary = PC (Maple + Pine Creek), one duplicate = MO ward
     // (Monument). New add request is KD scope adding Kings Deer. The
     // post-completion target RID set must cover ALL FOUR buildings —
     // not just the three the primary + request know about — so the
@@ -340,7 +340,7 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
       type: 'manual',
       callings: [],
       reason: 'Bishop',
-      building_names: ['Cordera Building', 'Pine Creek Building'],
+      building_names: ['Maple Building', 'Pine Creek Building'],
       duplicate_grants: [
         {
           scope: 'MO',
@@ -380,13 +380,13 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
     );
     // Note mentions all four buildings, not just three.
     expect(result.note).toBe(
-      'Invited Tad Smith to Kindoo with access to Cordera Building, Pine Creek Building, Monument Building, Kings Deer Building.',
+      'Invited Test User to Kindoo with access to Maple Building, Pine Creek Building, Monument Building, Kings Deer Building.',
     );
   });
 
   it('add to user with duplicate-grant overlapping the primary: dedups each building once', async () => {
-    // Seat primary = PC (Cordera + Pine Creek); duplicate = MO whose
-    // building_names overlap with the primary (Cordera) plus add
+    // Seat primary = PC (Maple + Pine Creek); duplicate = MO whose
+    // building_names overlap with the primary (Maple) plus add
     // Monument. New add of Pine Creek (already in primary). Target
     // should be the de-duplicated union — each building once.
     const buildings: Building[] = [
@@ -403,14 +403,14 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
       type: 'manual',
       callings: [],
       reason: 'Bishop',
-      building_names: ['Cordera Building', 'Pine Creek Building'],
+      building_names: ['Maple Building', 'Pine Creek Building'],
       duplicate_grants: [
         {
           scope: 'MO',
           type: 'manual',
           callings: [],
           reason: 'Stake Clerk',
-          building_names: ['Cordera Building', 'Monument Building'],
+          building_names: ['Maple Building', 'Monument Building'],
           detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
         },
       ],
@@ -433,7 +433,7 @@ describe('provisionAddOrChange — new user (lookup miss)', () => {
       session: SESSION,
     });
 
-    // Three distinct RIDs in stable order: Cordera, Pine Creek, Monument.
+    // Three distinct RIDs in stable order: Maple, Pine Creek, Monument.
     expect(saveAccessRuleMock).toHaveBeenCalledWith(
       SESSION,
       'new-uid',
@@ -457,7 +457,7 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
     saveAccessRuleMock.mockResolvedValue({ ok: true });
 
     const result = await provisionAddOrChange({
-      request: addManualRequest({ building_names: ['Cordera Building', 'Pine Creek Building'] }),
+      request: addManualRequest({ building_names: ['Maple Building', 'Pine Creek Building'] }),
       seat: null,
       stake: STAKE,
       buildings: BUILDINGS,
@@ -478,7 +478,7 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
       expiryDate: '',
       timeZone: 'Mountain Standard Time',
     });
-    // Additive MERGE diff: only the missing rule (Cordera = 6248) is
+    // Additive MERGE diff: only the missing rule (Maple = 6248) is
     // sent. Pine Creek (6249) already on the user; no need to
     // re-write it (saveAccessRule MERGEs, so the no-op rid would
     // be a wasted round-trip).
@@ -498,7 +498,7 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
     saveAccessRuleMock.mockResolvedValue({ ok: true });
 
     await provisionAddOrChange({
-      request: addManualRequest({ building_names: ['Cordera Building', 'Pine Creek Building'] }),
+      request: addManualRequest({ building_names: ['Maple Building', 'Pine Creek Building'] }),
       seat: null,
       stake: STAKE,
       buildings: BUILDINGS,
@@ -512,7 +512,7 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
       description: 'Colorado Springs North Stake (Sunday School Teacher)',
       isTemp: false,
     });
-    // Additive diff: only Cordera (6248) needs adding; Pine Creek
+    // Additive diff: only Maple (6248) needs adding; Pine Creek
     // (6249) already on the user.
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6248], undefined);
   });
@@ -533,7 +533,7 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
       request: addTempRequest({
         start_date: '2026-05-13',
         end_date: '2026-05-14',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
+        building_names: ['Maple Building', 'Pine Creek Building'],
       }),
       seat: null,
       stake: STAKE,
@@ -566,7 +566,7 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
       request: addTempRequest({
         start_date: '2026-05-13',
         end_date: '2026-05-14',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
+        building_names: ['Maple Building', 'Pine Creek Building'],
       }),
       seat: null,
       stake: STAKE,
@@ -578,7 +578,7 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
 
     // Description matches; user already permanent; no demote → no editUser.
     expect(editUserMock).not.toHaveBeenCalled();
-    // Additive diff: only Pine Creek (6249) needs adding; Cordera
+    // Additive diff: only Pine Creek (6249) needs adding; Maple
     // (6248) already on the user.
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6249], undefined);
   });
@@ -592,7 +592,7 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
     lookupUserByEmailMock.mockResolvedValue(existing);
 
     const result = await provisionAddOrChange({
-      request: addManualRequest({ building_names: ['Cordera Building', 'Pine Creek Building'] }),
+      request: addManualRequest({ building_names: ['Maple Building', 'Pine Creek Building'] }),
       seat: null,
       stake: STAKE,
       buildings: BUILDINGS,
@@ -605,7 +605,7 @@ describe('provisionAddOrChange — existing user (lookup hit)', () => {
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
     expect(result.action).toBe('updated');
     expect(result.kindoo_uid).toBe(existing.userId);
-    expect(result.note).toBe('No Kindoo changes needed for Tad Smith.');
+    expect(result.note).toBe('No Kindoo changes needed for Test User.');
   });
 });
 
@@ -613,7 +613,7 @@ describe('provisionAddOrChange — guards', () => {
   it('throws ProvisionBuildingsMissingRuleError when a requested building has no rule_id', async () => {
     await expect(
       provisionAddOrChange({
-        request: addManualRequest({ building_names: ['Cordera Building', 'Monument Building'] }),
+        request: addManualRequest({ building_names: ['Maple Building', 'Monument Building'] }),
         seat: null,
         stake: STAKE,
         buildings: BUILDINGS,
@@ -628,7 +628,7 @@ describe('provisionAddOrChange — guards', () => {
   it('throws ProvisionEnvironmentNotFoundError when no env matches the session EID', async () => {
     await expect(
       provisionAddOrChange({
-        request: addManualRequest({ building_names: ['Cordera Building'] }),
+        request: addManualRequest({ building_names: ['Maple Building'] }),
         seat: null,
         stake: STAKE,
         buildings: BUILDINGS,
@@ -664,7 +664,7 @@ describe('provisionAddOrChange — guards', () => {
       kindoo_expected_site_name: 'Colorado Springs North Stake',
     } as Stake;
     await provisionAddOrChange({
-      request: addManualRequest({ building_names: ['Cordera Building'] }),
+      request: addManualRequest({ building_names: ['Maple Building'] }),
       seat: null,
       stake: stakeWithOverride,
       buildings: BUILDINGS,
@@ -692,7 +692,7 @@ describe('provisionAddOrChange — guards', () => {
     });
 
     const invitePayload = inviteUserMock.mock.calls[0]![1];
-    expect(invitePayload.Description).toBe('Cordera Ward (Sunday School Teacher)');
+    expect(invitePayload.Description).toBe('Maple Ward (Sunday School Teacher)');
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, 'new-uid', [6248], undefined);
   });
 
@@ -708,7 +708,7 @@ describe('provisionAddOrChange — guards', () => {
     await provisionAddOrChange({
       request: addManualRequest({
         scope: 'CO',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
+        building_names: ['Maple Building', 'Pine Creek Building'],
       }),
       seat: null,
       stake: STAKE,
@@ -728,7 +728,7 @@ describe('provisionAddOrChange — guards', () => {
     saveAccessRuleMock.mockResolvedValue({ ok: true });
 
     const result = await provisionAddOrChange({
-      request: addManualRequest({ member_name: '', building_names: ['Cordera Building'] }),
+      request: addManualRequest({ member_name: '', building_names: ['Maple Building'] }),
       seat: null,
       stake: STAKE,
       buildings: BUILDINGS,
@@ -737,7 +737,7 @@ describe('provisionAddOrChange — guards', () => {
       session: SESSION,
     });
     expect(result.note).toBe(
-      'Invited tad.e.smith@gmail.com to Kindoo with access to Cordera Building.',
+      'Invited tad.e.smith@gmail.com to Kindoo with access to Maple Building.',
     );
   });
 });
@@ -747,12 +747,12 @@ function stakeSeat(overrides: Partial<Seat> = {}): Seat {
   return {
     member_canonical: 'tad.e.smith@gmail.com',
     member_email: 'tad.e.smith@gmail.com',
-    member_name: 'Tad Smith',
+    member_name: 'Test User',
     scope: 'stake',
     type: 'manual',
     callings: [],
     reason: 'Sunday School Teacher',
-    building_names: ['Cordera Building', 'Pine Creek Building'],
+    building_names: ['Maple Building', 'Pine Creek Building'],
     duplicate_grants: [],
     ...overrides,
   } as unknown as Seat;
@@ -779,7 +779,7 @@ describe('provisionRemove', () => {
     expect(result).toEqual({
       kindoo_uid: null,
       action: 'noop-remove',
-      note: 'Tad Smith was not in Kindoo (no-op).',
+      note: 'Test User was not in Kindoo (no-op).',
     });
   });
 
@@ -824,7 +824,7 @@ describe('provisionRemove', () => {
     expect(result).toEqual({
       kindoo_uid: existing.userId,
       action: 'removed',
-      note: 'Removed Tad Smith from Kindoo.',
+      note: 'Removed Test User from Kindoo.',
     });
   });
 
@@ -860,13 +860,13 @@ describe('provisionRemove', () => {
     expect(editUserMock).not.toHaveBeenCalled();
     expect(result.action).toBe('removed');
     expect(result.kindoo_uid).toBe(existing.userId);
-    expect(result.note).toBe('Removed Tad Smith from Kindoo.');
+    expect(result.note).toBe('Removed Test User from Kindoo.');
   });
 
   it('primary scope removal with one duplicate: revokes only the primary rules; description updated via editUser', async () => {
-    // Seat primary = stake (Cordera + Pine Creek); duplicate = CO ward
-    // (Cordera only). Removing the primary promotes the CO duplicate
-    // → post-removal buildings = [Cordera] → revoke Pine Creek rule
+    // Seat primary = stake (Maple + Pine Creek); duplicate = CO ward
+    // (Maple only). Removing the primary promotes the CO duplicate
+    // → post-removal buildings = [Maple] → revoke Pine Creek rule
     // only, editUser to resync description, action='updated'.
     const seat = stakeSeat({
       duplicate_grants: [
@@ -875,13 +875,13 @@ describe('provisionRemove', () => {
           type: 'manual',
           callings: [],
           reason: 'Bishop',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
         },
       ] as unknown as Seat['duplicate_grants'],
     });
     const existing = existingUser({
-      description: 'Colorado Springs North Stake (Sunday School Teacher) | Cordera Ward (Bishop)',
+      description: 'Colorado Springs North Stake (Sunday School Teacher) | Maple Ward (Bishop)',
       accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
     });
     lookupUserByEmailMock.mockResolvedValue(existing);
@@ -898,7 +898,7 @@ describe('provisionRemove', () => {
       session: SESSION,
     });
 
-    // Pine Creek rule revoked; Cordera survives.
+    // Pine Creek rule revoked; Maple survives.
     expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledTimes(1);
     expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledWith(
       SESSION,
@@ -908,23 +908,23 @@ describe('provisionRemove', () => {
     );
     expect(revokeUserMock).not.toHaveBeenCalled();
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
-    // Description drops the stake segment; only "Cordera Ward (Bishop)" remains.
+    // Description drops the stake segment; only "Maple Ward (Bishop)" remains.
     expect(editUserMock).toHaveBeenCalledTimes(1);
     expect(editUserMock.mock.calls[0]![1]).toBe(existing.euid);
     expect(editUserMock.mock.calls[0]![2]).toMatchObject({
-      description: 'Cordera Ward (Bishop)',
+      description: 'Maple Ward (Bishop)',
       isTemp: false,
       timeZone: 'Mountain Standard Time',
     });
     expect(result.action).toBe('updated');
     expect(result.kindoo_uid).toBe(existing.userId);
-    expect(result.note).toBe("Updated Tad Smith's Kindoo access to Cordera Building.");
+    expect(result.note).toBe("Updated Test User's Kindoo access to Maple Building.");
   });
 
   it('duplicate scope removal: revokes only the duplicate rules; primary untouched; description updated', async () => {
-    // Seat primary = stake (Cordera + Pine Creek). Duplicate = CO
-    // (Cordera Building). Removing the CO duplicate → target
-    // buildings stay at [Cordera, Pine Creek] (primary unchanged) →
+    // Seat primary = stake (Maple + Pine Creek). Duplicate = CO
+    // (Maple Building). Removing the CO duplicate → target
+    // buildings stay at [Maple, Pine Creek] (primary unchanged) →
     // no rule writes; description drops the duplicate segment.
     //
     // Note: target buildings == current building set, so toRevoke /
@@ -936,13 +936,13 @@ describe('provisionRemove', () => {
           type: 'manual',
           callings: [],
           reason: 'Bishop',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
         },
       ] as unknown as Seat['duplicate_grants'],
     });
     const existing = existingUser({
-      description: 'Colorado Springs North Stake (Sunday School Teacher) | Cordera Ward (Bishop)',
+      description: 'Colorado Springs North Stake (Sunday School Teacher) | Maple Ward (Bishop)',
       accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
     });
     lookupUserByEmailMock.mockResolvedValue(existing);
@@ -962,23 +962,23 @@ describe('provisionRemove', () => {
     expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
     expect(revokeUserMock).not.toHaveBeenCalled();
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
-    // Description drops Cordera Ward segment.
+    // Description drops Maple Ward segment.
     expect(editUserMock).toHaveBeenCalledTimes(1);
     expect(editUserMock.mock.calls[0]![2]).toMatchObject({
       description: 'Colorado Springs North Stake (Sunday School Teacher)',
     });
     expect(result.action).toBe('updated');
     expect(result.note).toBe(
-      "Updated Tad Smith's Kindoo access to Cordera Building, Pine Creek Building.",
+      "Updated Test User's Kindoo access to Maple Building, Pine Creek Building.",
     );
   });
 
   it('duplicate scope removal where the duplicate brought a building the primary lacks: revokes only the duplicate-only rule', async () => {
-    // Seat primary = stake-scope on Cordera only. Duplicate = PC ward
-    // on Pine Creek. Remove PC → primary keeps Cordera; Pine Creek
+    // Seat primary = stake-scope on Maple only. Duplicate = PC ward
+    // on Pine Creek. Remove PC → primary keeps Maple; Pine Creek
     // rule must be revoked.
     const seat = stakeSeat({
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'PC',
@@ -1036,7 +1036,7 @@ describe('provisionRemove', () => {
           type: 'manual',
           callings: [],
           reason: 'Bishop',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
         },
       ] as unknown as Seat['duplicate_grants'],
@@ -1095,12 +1095,12 @@ describe('provisionRemove', () => {
   });
 
   it('adds a newly-required rule when a promoted duplicate brings in a building not yet in Kindoo', async () => {
-    // Seat primary = stake (Cordera only); duplicate = PC ward on
+    // Seat primary = stake (Maple only); duplicate = PC ward on
     // Pine Creek. Remove the stake primary → PC promotes → target
-    // buildings = [Pine Creek]. Kindoo currently only has the Cordera
-    // rule → revoke Cordera + saveAccessRule([Pine Creek]).
+    // buildings = [Pine Creek]. Kindoo currently only has the Maple
+    // rule → revoke Maple + saveAccessRule([Pine Creek]).
     const seat = stakeSeat({
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'PC',
@@ -1132,7 +1132,7 @@ describe('provisionRemove', () => {
       session: SESSION,
     });
 
-    // Cordera revoked (no longer needed).
+    // Maple revoked (no longer needed).
     expect(revokeUserFromAccessScheduleMock).toHaveBeenCalledWith(
       SESSION,
       existing.euid,
@@ -1186,7 +1186,7 @@ function editAutoRequest(overrides: Partial<AccessRequest> = {}): AccessRequest 
     type: 'edit_auto',
     scope: 'CO',
     reason: '',
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     ...overrides,
   });
 }
@@ -1196,7 +1196,7 @@ function editManualRequest(overrides: Partial<AccessRequest> = {}): AccessReques
     type: 'edit_manual',
     scope: 'stake',
     reason: 'Sunday School Teacher',
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     ...overrides,
   });
 }
@@ -1208,7 +1208,7 @@ function editTempRequest(overrides: Partial<AccessRequest> = {}): AccessRequest 
     reason: 'Camp Director',
     start_date: '2026-05-13',
     end_date: '2026-05-14',
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     ...overrides,
   });
 }
@@ -1216,23 +1216,23 @@ function editTempRequest(overrides: Partial<AccessRequest> = {}): AccessRequest 
 describe('provisionEdit — edit_auto', () => {
   it('happy path (ward auto): computes add+revoke diff, calls saveAccessRule + revokeUserFromAccessSchedule + editUser', async () => {
     // Pre-edit: auto seat at CO ward, callings=['Primary President'],
-    // buildings=[Cordera]. Edit adds Pine Creek per Policy B (Cordera
-    // stays pre-checked + disabled). User in Kindoo already has Cordera
+    // buildings=[Maple]. Edit adds Pine Creek per Policy B (Maple
+    // stays pre-checked + disabled). User in Kindoo already has Maple
     // rule; needs Pine Creek added. Description text is callings-driven
     // for auto, so it stays the same — editUser should be skipped if no
     // other field differs.
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Primary President'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [],
     } as unknown as Seat;
     const existing = existingUser({
-      description: 'Cordera Ward (Primary President)',
+      description: 'Maple Ward (Primary President)',
       isTempUser: false,
       accessSchedules: [{ ruleId: 6248 }],
     });
@@ -1242,7 +1242,7 @@ describe('provisionEdit — edit_auto', () => {
     const result = await provisionEdit({
       request: editAutoRequest({
         scope: 'CO',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
+        building_names: ['Maple Building', 'Pine Creek Building'],
       }),
       seat,
       stake: STAKE,
@@ -1252,7 +1252,7 @@ describe('provisionEdit — edit_auto', () => {
       session: SESSION,
     });
 
-    // Add Pine Creek (6249); no revokes (Cordera stays).
+    // Add Pine Creek (6249); no revokes (Maple stays).
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6249], undefined);
     expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
     // Description unchanged for edit_auto (callings drive the text) → no editUser.
@@ -1260,26 +1260,26 @@ describe('provisionEdit — edit_auto', () => {
     expect(result.action).toBe('updated');
     expect(result.kindoo_uid).toBe(existing.userId);
     expect(result.note).toBe(
-      "Updated Tad Smith's Kindoo access to Cordera Building, Pine Creek Building.",
+      "Updated Test User's Kindoo access to Maple Building, Pine Creek Building.",
     );
   });
 
   it('happy path (ward auto, building narrowed): revokes the dropped rule, no add, no description diff', async () => {
-    // Pre-edit: auto seat at CO ward, Cordera+Pine Creek. Operator
-    // edits to remove Pine Creek (Cordera template stays pre-checked).
+    // Pre-edit: auto seat at CO ward, Maple+Pine Creek. Operator
+    // edits to remove Pine Creek (Maple template stays pre-checked).
     // Diff: revoke 6249, no add.
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Primary President'],
-      building_names: ['Cordera Building', 'Pine Creek Building'],
+      building_names: ['Maple Building', 'Pine Creek Building'],
       duplicate_grants: [],
     } as unknown as Seat;
     const existing = existingUser({
-      description: 'Cordera Ward (Primary President)',
+      description: 'Maple Ward (Primary President)',
       isTempUser: false,
       accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
     });
@@ -1289,7 +1289,7 @@ describe('provisionEdit — edit_auto', () => {
     await provisionEdit({
       request: editAutoRequest({
         scope: 'CO',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       }),
       seat,
       stake: STAKE,
@@ -1330,19 +1330,19 @@ describe('provisionEdit — edit_auto', () => {
 
 describe('provisionEdit — edit_manual', () => {
   it('happy path: replaces reason + buildings; description carries the new reason; rule diff applied', async () => {
-    // Pre-edit: manual stake seat reason='Old Reason' on Cordera. Edit
-    // sets reason='Sunday School Teacher' + buildings=[Cordera, Pine
+    // Pre-edit: manual stake seat reason='Old Reason' on Maple. Edit
+    // sets reason='Sunday School Teacher' + buildings=[Maple, Pine
     // Creek]. Description rewrites to the new reason; Pine Creek rule
     // added.
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'manual',
       callings: [],
       reason: 'Old Reason',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [],
     } as unknown as Seat;
     const existing = existingUser({
@@ -1358,7 +1358,7 @@ describe('provisionEdit — edit_manual', () => {
       request: editManualRequest({
         scope: 'stake',
         reason: 'Sunday School Teacher',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
+        building_names: ['Maple Building', 'Pine Creek Building'],
       }),
       seat,
       stake: STAKE,
@@ -1379,37 +1379,37 @@ describe('provisionEdit — edit_manual', () => {
     });
     expect(result.action).toBe('updated');
     expect(result.note).toBe(
-      "Updated Tad Smith's Kindoo access to Cordera Building, Pine Creek Building.",
+      "Updated Test User's Kindoo access to Maple Building, Pine Creek Building.",
     );
   });
 
   it('user has a duplicate-grants segment from another scope: description rewrites the edited segment only', async () => {
     // Primary stake (Sunday School Teacher), duplicate CO ward (Bishop
     // — manual). Edit the CO duplicate's reason to 'Counselor' and
-    // buildings to [Cordera, Pine Creek]. Description should keep the
+    // buildings to [Maple, Pine Creek]. Description should keep the
     // stake primary verbatim and rewrite only the CO segment.
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'manual',
       callings: [],
       reason: 'Sunday School Teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'CO',
           type: 'manual',
           callings: [],
           reason: 'Bishop',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
         },
       ],
     } as unknown as Seat;
     const existing = existingUser({
-      description: 'Colorado Springs North Stake (Sunday School Teacher) | Cordera Ward (Bishop)',
+      description: 'Colorado Springs North Stake (Sunday School Teacher) | Maple Ward (Bishop)',
       isTempUser: false,
       // User already has both rules from the stake primary.
       accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
@@ -1421,7 +1421,7 @@ describe('provisionEdit — edit_manual', () => {
       request: editManualRequest({
         scope: 'CO',
         reason: 'Counselor',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
+        building_names: ['Maple Building', 'Pine Creek Building'],
       }),
       seat,
       stake: STAKE,
@@ -1437,26 +1437,25 @@ describe('provisionEdit — edit_manual', () => {
     // Description: primary untouched; CO duplicate rewritten with the new reason.
     expect(editUserMock).toHaveBeenCalledTimes(1);
     expect(editUserMock.mock.calls[0]![2]).toMatchObject({
-      description:
-        'Colorado Springs North Stake (Sunday School Teacher) | Cordera Ward (Counselor)',
+      description: 'Colorado Springs North Stake (Sunday School Teacher) | Maple Ward (Counselor)',
     });
   });
 });
 
 describe('provisionEdit — edit_temp', () => {
   it('happy path: replaces buildings + dates; description rewrites with new reason', async () => {
-    // Pre-edit: temp stake seat reason='Old' on Cordera, dates A→B.
-    // Edit moves it to reason='Camp Director', buildings=[Cordera,
+    // Pre-edit: temp stake seat reason='Old' on Maple, dates A→B.
+    // Edit moves it to reason='Camp Director', buildings=[Maple,
     // Pine Creek], dates 2026-05-13→2026-05-14.
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'temp',
       callings: [],
       reason: 'Old',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       start_date: '2026-04-01',
       end_date: '2026-04-30',
       duplicate_grants: [],
@@ -1478,7 +1477,7 @@ describe('provisionEdit — edit_temp', () => {
         reason: 'Camp Director',
         start_date: '2026-05-13',
         end_date: '2026-05-14',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
+        building_names: ['Maple Building', 'Pine Creek Building'],
       }),
       seat,
       stake: STAKE,
@@ -1507,11 +1506,11 @@ describe('provisionEdit — edit_temp', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Primary President'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'stake',
@@ -1526,8 +1525,7 @@ describe('provisionEdit — edit_temp', () => {
       ],
     } as unknown as Seat;
     const existing = existingUser({
-      description:
-        'Cordera Ward (Primary President) | Colorado Springs North Stake (Camp Director)',
+      description: 'Maple Ward (Primary President) | Colorado Springs North Stake (Camp Director)',
       isTempUser: true,
       startAccessDoorsDateAtTimeZone: '2026-04-01T00:00',
       expiryDateAtTimeZone: '2026-04-30T23:59',
@@ -1542,7 +1540,7 @@ describe('provisionEdit — edit_temp', () => {
         reason: 'Stake Activity Lead',
         start_date: '2026-05-13',
         end_date: '2026-05-14',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
+        building_names: ['Maple Building', 'Pine Creek Building'],
       }),
       seat,
       stake: STAKE,
@@ -1559,7 +1557,7 @@ describe('provisionEdit — edit_temp', () => {
     expect(editUserMock).toHaveBeenCalledTimes(1);
     expect(editUserMock.mock.calls[0]![2]).toMatchObject({
       description:
-        'Cordera Ward (Primary President) | Colorado Springs North Stake (Stake Activity Lead)',
+        'Maple Ward (Primary President) | Colorado Springs North Stake (Stake Activity Lead)',
       isTemp: true,
       startAccessDoorsDateTime: '2026-05-13T00:00',
       expiryDate: '2026-05-14T23:59',
@@ -1572,7 +1570,7 @@ describe('provisionEdit — edit_temp', () => {
       reason: 'Camp Director',
       start_date: '2026-05-13',
       end_date: '2026-05-14',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     delete (req as { end_date?: string }).end_date;
     await expect(
@@ -1599,7 +1597,7 @@ describe('provisionEdit — guards + edge cases', () => {
         request: editManualRequest({
           scope: 'stake',
           reason: 'Sunday School Teacher',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         }),
         seat: null,
         stake: STAKE,
@@ -1618,12 +1616,12 @@ describe('provisionEdit — guards + edge cases', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'manual',
       callings: [],
       reason: 'Sunday School Teacher',
-      building_names: ['Cordera Building', 'Pine Creek Building'],
+      building_names: ['Maple Building', 'Pine Creek Building'],
       duplicate_grants: [],
     } as unknown as Seat;
     const existing = existingUser({
@@ -1637,7 +1635,7 @@ describe('provisionEdit — guards + edge cases', () => {
       request: editManualRequest({
         scope: 'stake',
         reason: 'Sunday School Teacher',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
+        building_names: ['Maple Building', 'Pine Creek Building'],
       }),
       seat,
       stake: STAKE,
@@ -1650,19 +1648,19 @@ describe('provisionEdit — guards + edge cases', () => {
     expect(saveAccessRuleMock).not.toHaveBeenCalled();
     expect(revokeUserFromAccessScheduleMock).not.toHaveBeenCalled();
     expect(editUserMock).not.toHaveBeenCalled();
-    expect(result.note).toBe('No Kindoo changes needed for Tad Smith.');
+    expect(result.note).toBe('No Kindoo changes needed for Test User.');
   });
 
   it('description-only edit (reason changed but buildings unchanged): calls editUser, skips rule writes', async () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'manual',
       callings: [],
       reason: 'Old Reason',
-      building_names: ['Cordera Building', 'Pine Creek Building'],
+      building_names: ['Maple Building', 'Pine Creek Building'],
       duplicate_grants: [],
     } as unknown as Seat;
     const existing = existingUser({
@@ -1677,7 +1675,7 @@ describe('provisionEdit — guards + edge cases', () => {
       request: editManualRequest({
         scope: 'stake',
         reason: 'New Reason',
-        building_names: ['Cordera Building', 'Pine Creek Building'],
+        building_names: ['Maple Building', 'Pine Creek Building'],
       }),
       seat,
       stake: STAKE,
@@ -1714,7 +1712,7 @@ describe('provisionEdit — guards + edge cases', () => {
       provisionEdit({
         request: editManualRequest({
           scope: 'stake',
-          building_names: ['Cordera Building', 'Monument Building'],
+          building_names: ['Maple Building', 'Monument Building'],
         }),
         seat: null,
         stake: STAKE,
@@ -1735,15 +1733,15 @@ describe('provisionEdit — cross-slot revoke regression', () => {
 
   it('primary stake-manual + duplicate ward-manual: edit on stake does NOT revoke the duplicate ward RID', async () => {
     // Reviewer's failing case verbatim:
-    //   primary = stake manual @ Cordera (rid 6248)
+    //   primary = stake manual @ Maple (rid 6248)
     //   duplicate = ward (PC) manual @ Pine Creek (rid 6249)
     //   Kindoo AccessSchedules = [6248, 6249]
-    //   edit_manual scope=stake, new building_names = [Cordera, Briargate]
+    //   edit_manual scope=stake, new building_names = [Maple, Briargate]
     // Before the fix: targetRids = [6248, 6250], ridsToRevoke = [6249]
     //   → Pine Creek (belonging to the unedited duplicate) was wrongly
     //   revoked.
-    // After the fix: post-edit primary = [Cordera, Briargate],
-    //   surviving duplicate = [Pine Creek], composite = [Cordera,
+    // After the fix: post-edit primary = [Maple, Briargate],
+    //   surviving duplicate = [Pine Creek], composite = [Maple,
     //   Briargate, Pine Creek] → targetRids = [6248, 6250, 6249] →
     //   toAdd = [6250], toRevoke = [].
     const buildings: Building[] = [
@@ -1757,12 +1755,12 @@ describe('provisionEdit — cross-slot revoke regression', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'stake',
       type: 'manual',
       callings: [],
       reason: 'Sunday School Teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'PC',
@@ -1788,7 +1786,7 @@ describe('provisionEdit — cross-slot revoke regression', () => {
       request: editManualRequest({
         scope: 'stake',
         reason: 'Sunday School Teacher',
-        building_names: ['Cordera Building', 'Briargate Building'],
+        building_names: ['Maple Building', 'Briargate Building'],
       }),
       seat,
       stake: STAKE,
@@ -1807,11 +1805,11 @@ describe('provisionEdit — cross-slot revoke regression', () => {
 
   it('edit on a duplicate slot that overlaps primary: no revokes, no adds (target already in Kindoo)', async () => {
     // Pre-edit:
-    //   primary = auto @ Cordera ward, buildings=[Cordera] (rid 6248)
-    //   duplicate = stake manual, buildings=[Cordera, Briargate] (rids 6248, 6250)
+    //   primary = auto @ Maple ward, buildings=[Maple] (rid 6248)
+    //   duplicate = stake manual, buildings=[Maple, Briargate] (rids 6248, 6250)
     //   Kindoo schedules = [6248, 6250]
     // Edit replaces the stake duplicate's buildings with [Briargate].
-    // Post-edit composite = [Cordera (primary), Briargate (duplicate)]
+    // Post-edit composite = [Maple (primary), Briargate (duplicate)]
     //   = rids [6248, 6250]. No diff against Kindoo → no rule writes.
     const buildings: Building[] = [
       ...BUILDINGS.filter((b) => b.building_name !== 'Monument Building'),
@@ -1824,25 +1822,25 @@ describe('provisionEdit — cross-slot revoke regression', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Primary President'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'stake',
           type: 'manual',
           callings: [],
           reason: 'Sunday School Teacher',
-          building_names: ['Cordera Building', 'Briargate Building'],
+          building_names: ['Maple Building', 'Briargate Building'],
           detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
         },
       ],
     } as unknown as Seat;
     const existing = existingUser({
       description:
-        'Cordera Ward (Primary President) | Colorado Springs North Stake (Sunday School Teacher)',
+        'Maple Ward (Primary President) | Colorado Springs North Stake (Sunday School Teacher)',
       isTempUser: false,
       accessSchedules: [{ ruleId: 6248 }, { ruleId: 6250 }],
     });
@@ -1884,7 +1882,7 @@ describe('provisionEdit — cross-slot revoke regression', () => {
 // layer.
 
 /** Sugar: stage Lexington (rule 6248) to own door 100, Monument
- *  (rule 6251) door 200, Cordera (6248 — see below) is reused
+ *  (rule 6251) door 200, Maple (6248 — see below) is reused
  *  for simplicity. Tests pick which rule IDs map to which doors. */
 function stageRuleDoors(map: Record<number, number[]>) {
   getEnvironmentRuleWithEntryPointsMock.mockImplementation(async (_session, ruleId: number) => ({
@@ -1935,7 +1933,7 @@ describe('provisionEdit — skip AccessSchedules already covered by direct grant
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'LX',
       type: 'auto',
       callings: ['Primary President'],
@@ -2003,7 +2001,7 @@ describe('provisionEdit — skip AccessSchedules already covered by direct grant
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'LX',
       type: 'auto',
       callings: ['Primary President'],
@@ -2075,7 +2073,7 @@ describe('provisionEdit — skip AccessSchedules already covered by direct grant
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'LX',
       type: 'auto',
       callings: ['Primary President'],
@@ -2133,13 +2131,13 @@ describe('provisionEdit — skip AccessSchedules already covered by direct grant
 });
 
 describe('provisionAddOrChange — skip AccessSchedules already covered by direct grants', () => {
-  it('analogous add_manual case: user has Lexington via direct grants + add_manual for Cordera writes Cordera only', async () => {
+  it('analogous add_manual case: user has Lexington via direct grants + add_manual for Maple writes Maple only', async () => {
     // Adapted to the operator's scenario for the add path: ward auto
     // seat at LX with Lexington access via direct grants (no
-    // AccessSchedules). New add_manual request adds Cordera under a
+    // AccessSchedules). New add_manual request adds Maple under a
     // different scope. After the seat-side union with the existing
     // auto seat's Lexington building, targetBuildings = [Lexington,
-    // Cordera]. Without the fix the orchestrator would write a
+    // Maple]. Without the fix the orchestrator would write a
     // redundant Lexington AccessSchedule; with the fix Lexington is
     // skipped because direct grants already cover it.
     const buildings: Building[] = [
@@ -2149,9 +2147,9 @@ describe('provisionAddOrChange — skip AccessSchedules already covered by direc
         kindoo_rule: { rule_id: 6248, rule_name: 'Lexington Doors' },
       } as unknown as Building,
       {
-        building_id: 'cordera',
-        building_name: 'Cordera Building',
-        kindoo_rule: { rule_id: 6300, rule_name: 'Cordera Doors' },
+        building_id: 'maple',
+        building_name: 'Maple Building',
+        kindoo_rule: { rule_id: 6300, rule_name: 'Maple Doors' },
       } as unknown as Building,
     ];
     const wards: Ward[] = [
@@ -2162,17 +2160,17 @@ describe('provisionAddOrChange — skip AccessSchedules already covered by direc
       } as unknown as Ward,
       {
         ward_code: 'CO',
-        ward_name: 'Cordera Ward',
-        building_name: 'Cordera Building',
+        ward_name: 'Maple Ward',
+        building_name: 'Maple Building',
       } as unknown as Ward,
     ];
     // Pre-existing SBA seat is the auto LX seat with Lexington
     // Building. The new add_manual under stake scope contributes
-    // Cordera. The merged target = [Lexington, Cordera].
+    // Maple. The merged target = [Lexington, Maple].
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'LX',
       type: 'auto',
       callings: ['Primary President'],
@@ -2194,7 +2192,7 @@ describe('provisionAddOrChange — skip AccessSchedules already covered by direc
       request: addManualRequest({
         scope: 'stake',
         reason: 'Sunday School Teacher',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       }),
       seat,
       stake: STAKE,
@@ -2204,7 +2202,7 @@ describe('provisionAddOrChange — skip AccessSchedules already covered by direc
       session: SESSION,
     });
 
-    // Cordera only — Lexington was already effectively held.
+    // Maple only — Lexington was already effectively held.
     expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, existing.userId, [6300], undefined);
   });
@@ -2224,17 +2222,17 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
       ...WARDS,
       {
         ward_code: 'FT',
-        ward_name: 'Foothills Ward',
-        building_name: 'Foothills Building',
+        ward_name: 'Pine Ward',
+        building_name: 'Pine Building',
         kindoo_site_id: 'east-stake',
       } as unknown as Ward,
     ];
     const buildings: Building[] = [
       ...BUILDINGS,
       {
-        building_id: 'foothills',
-        building_name: 'Foothills Building',
-        kindoo_rule: { rule_id: 6260, rule_name: 'Foothills Doors' },
+        building_id: 'pine',
+        building_name: 'Pine Building',
+        kindoo_rule: { rule_id: 6260, rule_name: 'Pine Doors' },
         kindoo_site_id: 'east-stake',
       } as unknown as Building,
     ];
@@ -2242,18 +2240,18 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Sunday School Teacher'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       kindoo_site_id: null,
       duplicate_grants: [
         {
           scope: 'FT',
           type: 'auto',
           callings: ['Sunday School Teacher'],
-          building_names: ['Foothills Building'],
+          building_names: ['Pine Building'],
           kindoo_site_id: 'east-stake',
           detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
         },
@@ -2267,7 +2265,7 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
     await provisionAddOrChange({
       request: addManualRequest({
         scope: 'CO',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       }),
       seat,
       stake: STAKE,
@@ -2277,8 +2275,8 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
       session: SESSION,
     });
 
-    // Foothills (foreign-site rule 6260) is NOT in the write target.
-    // Only Cordera (rule 6248) — the home-side grant.
+    // Pine (foreign-site rule 6260) is NOT in the write target.
+    // Only Maple (rule 6248) — the home-side grant.
     expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, 'new-uid', [6248], undefined);
   });
@@ -2290,35 +2288,35 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
       ...WARDS,
       {
         ward_code: 'FT',
-        ward_name: 'Foothills Ward',
-        building_name: 'Foothills Building',
+        ward_name: 'Pine Ward',
+        building_name: 'Pine Building',
         kindoo_site_id: 'east-stake',
       } as unknown as Ward,
     ];
     const buildings: Building[] = [
       ...BUILDINGS,
       {
-        building_id: 'foothills',
-        building_name: 'Foothills Building',
-        kindoo_rule: { rule_id: 6260, rule_name: 'Foothills Doors' },
+        building_id: 'pine',
+        building_name: 'Pine Building',
+        kindoo_rule: { rule_id: 6260, rule_name: 'Pine Doors' },
         kindoo_site_id: 'east-stake',
       } as unknown as Building,
     ];
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'auto',
       callings: ['Sunday School Teacher'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       kindoo_site_id: null,
       duplicate_grants: [
         {
           scope: 'FT',
           type: 'auto',
           callings: ['Sunday School Teacher'],
-          building_names: ['Foothills Building'],
+          building_names: ['Pine Building'],
           kindoo_site_id: 'east-stake',
           detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
         },
@@ -2342,7 +2340,7 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
     await provisionAddOrChange({
       request: addManualRequest({
         scope: 'FT',
-        building_names: ['Foothills Building'],
+        building_names: ['Pine Building'],
       }),
       seat,
       stake: STAKE,
@@ -2352,7 +2350,7 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
       session: FOREIGN_SESSION,
     });
 
-    // Foothills only (rule 6260) — Cordera (rule 6248) is on a
+    // Pine only (rule 6260) — Maple (rule 6248) is on a
     // different Kindoo site and does NOT contribute to the foreign
     // write.
     expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
@@ -2366,18 +2364,18 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
     // primary is on home + a within-site duplicate also on home
     // would only push the primary's buildings — missing the
     // duplicate's. Wards CO + PC are both home (no kindoo_site_id);
-    // primary CO with `building_names=['Cordera Building']` plus a
+    // primary CO with `building_names=['Maple Building']` plus a
     // within-site duplicate on PC with
     // `building_names=['Pine Creek Building']` should write BOTH.
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'manual',
       callings: [],
       reason: 'co-helper',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       kindoo_site_id: null,
       duplicate_grants: [
         {
@@ -2397,7 +2395,7 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
     await provisionAddOrChange({
       request: addManualRequest({
         scope: 'CO',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       }),
       seat,
       stake: STAKE,
@@ -2407,7 +2405,7 @@ describe('provisionAddOrChange — T-42 per-site union', () => {
       session: SESSION,
     });
 
-    // Union of primary + within-site duplicate: Cordera (6248) +
+    // Union of primary + within-site duplicate: Maple (6248) +
     // Pine Creek (6249). Within-site duplicate must NOT be silently
     // dropped.
     expect(saveAccessRuleMock).toHaveBeenCalledTimes(1);
@@ -2426,17 +2424,17 @@ describe('provisionRemove — T-42 per-site union', () => {
       ...WARDS,
       {
         ward_code: 'FT',
-        ward_name: 'Foothills Ward',
-        building_name: 'Foothills Building',
+        ward_name: 'Pine Ward',
+        building_name: 'Pine Building',
         kindoo_site_id: 'east-stake',
       } as unknown as Ward,
     ];
     const buildings: Building[] = [
       ...BUILDINGS,
       {
-        building_id: 'foothills',
-        building_name: 'Foothills Building',
-        kindoo_rule: { rule_id: 6260, rule_name: 'Foothills Doors' },
+        building_id: 'pine',
+        building_name: 'Pine Building',
+        kindoo_rule: { rule_id: 6260, rule_name: 'Pine Doors' },
         kindoo_site_id: 'east-stake',
       } as unknown as Building,
     ];
@@ -2446,12 +2444,12 @@ describe('provisionRemove — T-42 per-site union', () => {
     const seat: Seat = {
       member_canonical: 'tad.e.smith@gmail.com',
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad Smith',
+      member_name: 'Test User',
       scope: 'CO',
       type: 'manual',
       callings: [],
       reason: 'home helper',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       kindoo_site_id: null,
       duplicate_grants: [
         {
@@ -2464,7 +2462,7 @@ describe('provisionRemove — T-42 per-site union', () => {
         {
           scope: 'FT',
           type: 'manual',
-          building_names: ['Foothills Building'],
+          building_names: ['Pine Building'],
           kindoo_site_id: 'east-stake',
           detected_at: { seconds: 1, nanoseconds: 0 } as unknown as DuplicateGrant['detected_at'],
         },
@@ -2475,7 +2473,7 @@ describe('provisionRemove — T-42 per-site union', () => {
       euid: 'e1',
       userId: 'u1',
       username: 'tad.e.smith@gmail.com',
-      description: 'Cordera Ward (helper) | Pine Creek Ward (helper) | Foothills Ward (helper)',
+      description: 'Maple Ward (helper) | Pine Creek Ward (helper) | Pine Ward (helper)',
       isTempUser: false,
       startAccessDoorsDateAtTimeZone: null,
       expiryDateAtTimeZone: null,
@@ -2497,8 +2495,8 @@ describe('provisionRemove — T-42 per-site union', () => {
     });
 
     // Home target buildings = PC only (CO is being removed; FT is on
-    // a different site and excluded). Existing rules: 6248 (Cordera),
-    // 6249 (PC), 6260 (Foothills, foreign).
+    // a different site and excluded). Existing rules: 6248 (Maple),
+    // 6249 (PC), 6260 (Pine, foreign).
     //
     // T-42 per-site narrowing of the revoke set: the home session
     // revokes ONLY 6248 (CO — being removed, home-site). It must NOT

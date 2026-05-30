@@ -47,7 +47,7 @@ function pendingAddManualByStakeMember(
     member_name: 'Subject Person',
     reason: 'Visiting authority',
     comment: '',
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     status: 'pending',
     requester_email: personas.stakeMember.email,
     requester_canonical: personas.stakeMember.canonical,
@@ -74,7 +74,7 @@ function pendingAddTempByBishopric(
     end_date: '2026-05-08',
     // Every `add_*` / `edit_*` request must carry ≥ 1 building
     // (operator decision 2026-05-16, spec §5.1 / §6).
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     status: 'pending',
     requester_email: personas.bishopric.email,
     requester_canonical: personas.bishopric.canonical,
@@ -100,7 +100,7 @@ function pendingEditAutoByBishopric(
     // defaults provide one; tests below assert the rule fires when the
     // field is empty or missing.
     comment: 'Adding stake center for choir practice',
-    building_names: ['Cordera Building', 'Briargate Building'],
+    building_names: ['Maple Building', 'Briargate Building'],
     status: 'pending',
     requester_email: personas.bishopric.email,
     requester_canonical: personas.bishopric.canonical,
@@ -122,7 +122,7 @@ function pendingEditManualByStakeMember(
     member_name: 'Subject Person',
     reason: 'Visiting authority (extended)',
     comment: 'Extending visiting-authority assignment',
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     status: 'pending',
     requester_email: personas.stakeMember.email,
     requester_canonical: personas.stakeMember.canonical,
@@ -147,7 +147,7 @@ function pendingEditTempByBishopric(
     comment: 'Visit extended through May 15',
     start_date: '2026-05-01',
     end_date: '2026-05-15',
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     status: 'pending',
     requester_email: personas.bishopric.email,
     requester_canonical: personas.bishopric.canonical,
@@ -348,7 +348,7 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
         db.doc(PATH).set(
           pendingAddManualByStakeMember({
             scope: '01',
-            building_names: ['Cordera Building'],
+            building_names: ['Maple Building'],
             requester_email: personas.bishopric.email,
             requester_canonical: personas.bishopric.canonical,
             lastActor: lastActorOf(personas.bishopric),
@@ -524,7 +524,7 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
         member_name: 'New Member',
         reason: 'Visiting authority',
         comment: 'Some context',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         status: 'pending',
         requester_email: personas.manager.email,
         requester_canonical: personas.manager.canonical,
@@ -1169,7 +1169,7 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
             completer_canonical: personas.manager.canonical,
             completed_at: new Date(),
             kindoo_uid: 'kindoo-user-12345',
-            provisioning_note: 'Added Subject Person to Kindoo with access to Cordera Building.',
+            provisioning_note: 'Added Subject Person to Kindoo with access to Maple Building.',
             lastActor: lastActorOf(personas.manager),
           }),
         );

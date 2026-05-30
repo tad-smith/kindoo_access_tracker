@@ -22,7 +22,7 @@ import type { TimestampLike } from './userIndex.js';
 export type KindooSite = {
   /** `= doc.id`. Manager-chosen slug. */
   id: string;
-  /** Human-readable label rendered in the Configuration UI (e.g. `'East Stake (Foothills Building)'`). */
+  /** Human-readable label rendered in the Configuration UI (e.g. `'East Stake (Pine Building)'`). */
   display_name: string;
   /**
    * The site-name string Kindoo's admin UI surfaces for this site.

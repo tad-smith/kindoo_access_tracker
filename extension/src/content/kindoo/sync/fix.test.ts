@@ -38,7 +38,7 @@ function discrepancy(over: Partial<Discrepancy> = {}): Discrepancy {
     reason: 'r',
     sba: null,
     kindoo: {
-      description: 'Cordera Ward (Sunday School Teacher)',
+      description: 'Maple Ward (Sunday School Teacher)',
       isTempUser: false,
       memberName: 'Alice Person',
       primaryScope: 'CO',
@@ -46,7 +46,7 @@ function discrepancy(over: Partial<Discrepancy> = {}): Discrepancy {
       intendedCallings: ['Sunday School Teacher'],
       intendedFreeText: '',
       ruleIds: [6248],
-      buildingNames: ['Cordera Building'],
+      buildingNames: ['Maple Building'],
       derivedBuildings: null,
     },
     ...over,
@@ -57,8 +57,8 @@ function ctxWith(overrides: Partial<DispatchContext> = {}): DispatchContext {
   return {
     stakeId: 'csnorth',
     stake: stake(),
-    wards: [ward('CO', 'Cordera Ward', 'Cordera Building')],
-    buildings: [building('Cordera Building', 6248)],
+    wards: [ward('CO', 'Maple Ward', 'Maple Building')],
+    buildings: [building('Maple Building', 6248)],
     kindooSites: [],
     envs: [env()],
     session: { token: 't', eid: 27994 },
@@ -117,7 +117,7 @@ describe('buildCallableInput', () => {
     expect(payload.scope).toBe('CO');
     expect(payload.type).toBe('auto');
     expect(payload.callings).toEqual(['Sunday School Teacher']);
-    expect(payload.buildingNames).toEqual(['Cordera Building']);
+    expect(payload.buildingNames).toEqual(['Maple Building']);
     expect(payload.isTempUser).toBe(false);
     // No reason on auto.
     expect(payload.reason).toBeUndefined();
@@ -132,7 +132,7 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'kindoo-only',
         kindoo: {
-          description: 'Cordera Ward (Sunday School Teacher)',
+          description: 'Maple Ward (Sunday School Teacher)',
           isTempUser: false,
           memberName: 'Auto Person',
           primaryScope: 'CO',
@@ -141,12 +141,12 @@ describe('buildCallableInput', () => {
           intendedFreeText: '',
           ruleIds: [],
           buildingNames: [],
-          derivedBuildings: ['Cordera Building', 'Pine Creek Building'],
+          derivedBuildings: ['Maple Building', 'Pine Creek Building'],
         },
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload.buildingNames).toEqual(['Cordera Building', 'Pine Creek Building']);
+    expect(payload.buildingNames).toEqual(['Maple Building', 'Pine Creek Building']);
   });
 
   it('kindoo-only on an auto seat falls back to buildingNames when derivedBuildings is null', () => {
@@ -155,7 +155,7 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'kindoo-only',
         kindoo: {
-          description: 'Cordera Ward (Sunday School Teacher)',
+          description: 'Maple Ward (Sunday School Teacher)',
           isTempUser: false,
           memberName: 'Auto Person',
           primaryScope: 'CO',
@@ -163,13 +163,13 @@ describe('buildCallableInput', () => {
           intendedCallings: ['Sunday School Teacher'],
           intendedFreeText: '',
           ruleIds: [6248],
-          buildingNames: ['Cordera Building'],
+          buildingNames: ['Maple Building'],
           derivedBuildings: null,
         },
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload.buildingNames).toEqual(['Cordera Building']);
+    expect(payload.buildingNames).toEqual(['Maple Building']);
   });
 
   it('kindoo-only on a manual seat ignores derivedBuildings (manual path uses AccessSchedules buildingNames)', () => {
@@ -181,7 +181,7 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'kindoo-only',
         kindoo: {
-          description: 'Cordera Ward (Building Greeter)',
+          description: 'Maple Ward (Building Greeter)',
           isTempUser: false,
           memberName: 'M M',
           primaryScope: 'CO',
@@ -189,13 +189,13 @@ describe('buildCallableInput', () => {
           intendedCallings: [],
           intendedFreeText: 'Building Greeter',
           ruleIds: [6248],
-          buildingNames: ['Cordera Building'],
+          buildingNames: ['Maple Building'],
           derivedBuildings: ['Pine Creek Building'],
         },
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload.buildingNames).toEqual(['Cordera Building']);
+    expect(payload.buildingNames).toEqual(['Maple Building']);
   });
 
   it('kindoo-only on a manual seat splits intended free-text into callings + reason', () => {
@@ -204,7 +204,7 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'kindoo-only',
         kindoo: {
-          description: 'Cordera Ward (Building Greeter, Janitor)',
+          description: 'Maple Ward (Building Greeter, Janitor)',
           isTempUser: false,
           memberName: 'Mike Manual',
           primaryScope: 'CO',
@@ -212,7 +212,7 @@ describe('buildCallableInput', () => {
           intendedCallings: [],
           intendedFreeText: 'Building Greeter, Janitor',
           ruleIds: [6248],
-          buildingNames: ['Cordera Building'],
+          buildingNames: ['Maple Building'],
           derivedBuildings: null,
         },
       }),
@@ -229,7 +229,7 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'kindoo-only',
         kindoo: {
-          description: 'Cordera Ward (Visiting speaker)',
+          description: 'Maple Ward (Visiting speaker)',
           isTempUser: true,
           memberName: 'Tina Temp',
           primaryScope: 'CO',
@@ -237,7 +237,7 @@ describe('buildCallableInput', () => {
           intendedCallings: [],
           intendedFreeText: 'Visiting speaker',
           ruleIds: [6248],
-          buildingNames: ['Cordera Building'],
+          buildingNames: ['Maple Building'],
           derivedBuildings: null,
           startDate: '2026-05-13',
           endDate: '2026-05-20',
@@ -257,7 +257,7 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'extra-kindoo-calling',
         kindoo: {
-          description: 'Cordera Ward (Sunday School Teacher, Janitor, Greeter)',
+          description: 'Maple Ward (Sunday School Teacher, Janitor, Greeter)',
           isTempUser: false,
           memberName: 'Eric Extra',
           primaryScope: 'CO',
@@ -265,7 +265,7 @@ describe('buildCallableInput', () => {
           intendedCallings: ['Sunday School Teacher'],
           intendedFreeText: 'Janitor, Greeter',
           ruleIds: [6248],
-          buildingNames: ['Cordera Building'],
+          buildingNames: ['Maple Building'],
           derivedBuildings: null,
         },
       }),
@@ -282,7 +282,7 @@ describe('buildCallableInput', () => {
         code: 'scope-mismatch',
         sba: { scope: 'PC', type: 'auto', callings: [], buildingNames: [] },
         kindoo: {
-          description: 'Cordera Ward (Sunday School Teacher)',
+          description: 'Maple Ward (Sunday School Teacher)',
           isTempUser: false,
           memberName: 'S M',
           primaryScope: 'CO',
@@ -290,7 +290,7 @@ describe('buildCallableInput', () => {
           intendedCallings: ['Sunday School Teacher'],
           intendedFreeText: '',
           ruleIds: [6248],
-          buildingNames: ['Cordera Building'],
+          buildingNames: ['Maple Building'],
           derivedBuildings: null,
         },
       }),
@@ -306,7 +306,7 @@ describe('buildCallableInput', () => {
         code: 'type-mismatch',
         sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: [] },
         kindoo: {
-          description: 'Cordera Ward (Visiting speaker)',
+          description: 'Maple Ward (Visiting speaker)',
           isTempUser: true,
           memberName: 'T M',
           primaryScope: 'CO',
@@ -314,7 +314,7 @@ describe('buildCallableInput', () => {
           intendedCallings: [],
           intendedFreeText: 'Visiting speaker',
           ruleIds: [6248],
-          buildingNames: ['Cordera Building'],
+          buildingNames: ['Maple Building'],
           derivedBuildings: null,
           startDate: '2026-05-13',
           endDate: '2026-05-20',
@@ -330,9 +330,9 @@ describe('buildCallableInput', () => {
       'csnorth',
       discrepancy({
         code: 'buildings-mismatch',
-        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Cordera Building'] },
+        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
         kindoo: {
-          description: 'Cordera Ward (Building Greeter)',
+          description: 'Maple Ward (Building Greeter)',
           isTempUser: false,
           memberName: 'B M',
           primaryScope: 'CO',
@@ -359,9 +359,9 @@ describe('buildCallableInput', () => {
       'csnorth',
       discrepancy({
         code: 'buildings-mismatch',
-        sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Cordera Building'] },
+        sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
         kindoo: {
-          description: 'Cordera Ward (Sunday School Teacher)',
+          description: 'Maple Ward (Sunday School Teacher)',
           isTempUser: false,
           memberName: 'A A',
           primaryScope: 'CO',
@@ -370,12 +370,12 @@ describe('buildCallableInput', () => {
           intendedFreeText: '',
           ruleIds: [],
           buildingNames: [],
-          derivedBuildings: ['Cordera Building', 'Pine Creek Building'],
+          derivedBuildings: ['Maple Building', 'Pine Creek Building'],
         },
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload.newBuildingNames).toEqual(['Cordera Building', 'Pine Creek Building']);
+    expect(payload.newBuildingNames).toEqual(['Maple Building', 'Pine Creek Building']);
   });
 
   it('buildings-mismatch on an auto seat with null derivedBuildings throws (no valid source)', () => {
@@ -384,9 +384,9 @@ describe('buildCallableInput', () => {
         'csnorth',
         discrepancy({
           code: 'buildings-mismatch',
-          sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Cordera Building'] },
+          sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
           kindoo: {
-            description: 'Cordera Ward (Sunday School Teacher)',
+            description: 'Maple Ward (Sunday School Teacher)',
             isTempUser: false,
             memberName: 'A A',
             primaryScope: 'CO',
@@ -440,7 +440,7 @@ describe('applyFix', () => {
         scope: 'CO',
         type: 'auto',
         callings: ['Sunday School Teacher'],
-        buildingNames: ['Cordera Building'],
+        buildingNames: ['Maple Building'],
       },
       kindoo: null,
     });
@@ -481,7 +481,7 @@ describe('applyFix', () => {
         scope: 'CO',
         type: 'auto',
         callings: ['Sunday School Teacher'],
-        buildingNames: ['Cordera Building'],
+        buildingNames: ['Maple Building'],
       },
       kindoo: null,
     });
@@ -498,7 +498,7 @@ describe('applyFix', () => {
     });
     const d = discrepancy({
       code: 'sba-only',
-      sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Cordera Building'] },
+      sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
       kindoo: null,
     });
     const action = fixActionsFor(d)[0]!;
@@ -510,9 +510,9 @@ describe('applyFix', () => {
     const ctx = ctxWith();
     const d = discrepancy({
       code: 'buildings-mismatch',
-      sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Cordera Building'] },
+      sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
       kindoo: {
-        description: 'Cordera Ward (Sunday School Teacher)',
+        description: 'Maple Ward (Sunday School Teacher)',
         isTempUser: false,
         memberName: 'A A',
         primaryScope: 'CO',
@@ -537,7 +537,7 @@ describe('applyFix', () => {
     const ctx = ctxWith();
     const d = discrepancy({
       code: 'type-mismatch',
-      sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Cordera Building'] },
+      sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
     });
     const kindooAction = fixActionsFor(d).find((a) => a.side === 'kindoo')!;
     const outcome = await applyFix(d, kindooAction, ctx);

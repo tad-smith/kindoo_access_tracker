@@ -213,7 +213,7 @@ describe('useAddManualGrantMutation', () => {
 
   it('UPDATE payload omits member_* even when input typed values differ from the existing doc', async () => {
     // Operator's exact diagnostic-trace shape: the form passed
-    // member_email='tad.e.smith@gmail.com' / member_name='Tad' against
+    // member_email='tad.e.smith@gmail.com' / member_name='Test' against
     // an existing access doc. The hook must NOT propagate those into
     // the update.
     getDocMock.mockResolvedValue({
@@ -221,7 +221,7 @@ describe('useAddManualGrantMutation', () => {
       data: () => ({
         member_canonical: 'tadesmith@gmail.com',
         member_email: 'Tad.E.Smith@gmail.com',
-        member_name: 'Tad Smith',
+        member_name: 'Test User',
         importer_callings: {},
         manual_grants: {},
       }),
@@ -229,7 +229,7 @@ describe('useAddManualGrantMutation', () => {
     const { result } = renderHook(() => useAddManualGrantMutation(), { wrapper });
     await result.current.mutateAsync({
       member_email: 'tad.e.smith@gmail.com',
-      member_name: 'Tad',
+      member_name: 'Test',
       scope: 'stake',
       reason: 'Stake helper',
     });

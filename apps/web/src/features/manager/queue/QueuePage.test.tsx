@@ -79,8 +79,8 @@ function liveDocResult<T>(data: T | undefined) {
 function buildings(): Building[] {
   return [
     {
-      building_id: 'cordera',
-      building_name: 'Cordera Building',
+      building_id: 'maple',
+      building_name: 'Maple Building',
       address: '',
       created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
       last_modified_at: {
@@ -92,8 +92,8 @@ function buildings(): Building[] {
       lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
     },
     {
-      building_id: 'genoa',
-      building_name: 'Genoa Building',
+      building_id: 'cedar',
+      building_name: 'Cedar Building',
       address: '',
       created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
       last_modified_at: {
@@ -173,14 +173,14 @@ describe('<ManagerQueuePage />', () => {
         type: 'add_manual',
         scope: 'CO',
         member_email: 'tad.e.smith@gmail.com',
-        member_name: 'Tad Smith',
+        member_name: 'Test User',
       }),
     ];
     usePendingMock.mockReturnValue(liveResult(requests));
     render(<ManagerQueuePage />);
     const card = screen.getByTestId('queue-card-r1');
     expect(within(card).getByText(/Give Access To:/)).toBeInTheDocument();
-    expect(card.textContent).toMatch(/Tad Smith \(tad\.e\.smith@gmail\.com\)/);
+    expect(card.textContent).toMatch(/Test User \(tad\.e\.smith@gmail\.com\)/);
   });
 
   it('falls back to bare email on the Give Access To row when member_name is empty (add)', () => {
@@ -367,7 +367,7 @@ describe('<ManagerQueuePage />', () => {
     await user.click(screen.getByTestId('queue-complete-r1'));
     const confirmBtn = await screen.findByTestId('complete-add-confirm');
     expect(confirmBtn).toBeDisabled();
-    await user.click(screen.getByTestId('complete-building-cordera'));
+    await user.click(screen.getByTestId('complete-building-maple'));
     expect(confirmBtn).toBeEnabled();
   });
 
@@ -379,7 +379,7 @@ describe('<ManagerQueuePage />', () => {
         type: 'add_manual',
         scope: 'stake',
         member_email: 'a@x.com',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       }),
     ];
     usePendingMock.mockReturnValue(liveResult(requests));
@@ -404,7 +404,7 @@ describe('<ManagerQueuePage />', () => {
         type: 'add_manual',
         scope: 'stake',
         member_email: 'a@x.com',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       }),
     ];
     usePendingMock.mockReturnValue(liveResult(requests));
@@ -423,7 +423,7 @@ describe('<ManagerQueuePage />', () => {
     // react-hook-form ships the raw value; the hook trims server-side
     // before deciding whether to write the field.
     expect(arg.completion_note).toBe('  Granted; door system syncs overnight.  ');
-    expect(arg.building_names).toEqual(['Cordera Building']);
+    expect(arg.building_names).toEqual(['Maple Building']);
   });
 
   it('passes empty completion_note on the add-complete mutation when the textarea is blank', async () => {
@@ -434,7 +434,7 @@ describe('<ManagerQueuePage />', () => {
         type: 'add_manual',
         scope: 'stake',
         member_email: 'a@x.com',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
       }),
     ];
     usePendingMock.mockReturnValue(liveResult(requests));
@@ -842,7 +842,7 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
           scope: 'CO',
           member_email: 'auto@x.com',
           member_canonical: 'auto@x.com',
-          building_names: ['Cordera Building', 'Genoa Building'],
+          building_names: ['Maple Building', 'Cedar Building'],
         }),
       ];
       usePendingMock.mockReturnValue(liveResult(requests));
@@ -851,7 +851,7 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
       expect(within(card).getByText('Edit (auto)')).toBeInTheDocument();
       const buildingsRow = screen.getByTestId('queue-buildings-r1');
       expect(buildingsRow.textContent).toMatch(/→ Buildings:/);
-      expect(buildingsRow.textContent).toMatch(/Cordera Building, Genoa Building/);
+      expect(buildingsRow.textContent).toMatch(/Maple Building, Cedar Building/);
     });
 
     it('labels an edit_manual card "Edit (manual)" with the reason + buildings', () => {
@@ -863,7 +863,7 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
           member_email: 'manual@x.com',
           member_canonical: 'manual@x.com',
           reason: 'Primary Activity Days Leader',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         }),
       ];
       usePendingMock.mockReturnValue(liveResult(requests));
@@ -872,7 +872,7 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
       expect(within(card).getByText('Edit (manual)')).toBeInTheDocument();
       expect(within(card).getByText(/Primary Activity Days Leader/)).toBeInTheDocument();
       expect(screen.getByTestId('queue-buildings-r2').textContent).toMatch(
-        /→ Buildings:.*Cordera Building/,
+        /→ Buildings:.*Maple Building/,
       );
     });
 
@@ -885,7 +885,7 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
           member_email: 'temp@x.com',
           member_canonical: 'temp@x.com',
           reason: 'youth conference',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           start_date: '2026-05-01',
           end_date: '2026-05-15',
         }),
@@ -896,7 +896,7 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
       expect(within(card).getByText('Edit (temp)')).toBeInTheDocument();
       expect(card.textContent).toMatch(/2026-05-01.*2026-05-15/);
       expect(screen.getByTestId('queue-buildings-r3').textContent).toMatch(
-        /→ Buildings:.*Cordera Building/,
+        /→ Buildings:.*Maple Building/,
       );
     });
 
@@ -906,7 +906,7 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
           request_id: 'r-add',
           type: 'add_manual',
           scope: 'CO',
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
         }),
       ];
       usePendingMock.mockReturnValue(liveResult(requests));

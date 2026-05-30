@@ -244,8 +244,8 @@ describe('<ConfigurationPage />', () => {
       liveResult<Ward>([
         {
           ward_code: 'CO',
-          ward_name: 'Cordera',
-          building_name: 'Cordera Building',
+          ward_name: 'Maple',
+          building_name: 'Maple Building',
           seat_cap: 22,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any,
@@ -264,16 +264,16 @@ describe('<ConfigurationPage />', () => {
     useBuildingsMock.mockReturnValue(
       liveResult<Building>([
         {
-          building_id: 'cordera-building',
-          building_name: 'Cordera Building',
+          building_id: 'maple-building',
+          building_name: 'Maple Building',
           address: '123 Main',
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any,
       ]),
     );
     render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-building-edit-cordera-building'));
-    expect(screen.getByLabelText(/Name/i)).toHaveValue('Cordera Building');
+    await user.click(screen.getByTestId('config-building-edit-maple-building'));
+    expect(screen.getByLabelText(/Name/i)).toHaveValue('Maple Building');
     expect(screen.queryByLabelText(/building.?id/i)).toBeNull();
   });
 
@@ -581,15 +581,15 @@ describe('Kindoo Sites tab', () => {
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
     const blockingWard = {
       ward_code: 'CO',
-      ward_name: 'Cordera',
-      building_name: 'Cordera Building',
+      ward_name: 'Maple',
+      building_name: 'Maple Building',
       seat_cap: 20,
       kindoo_site_id: 'east-stake',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
     const blockingBuilding = {
-      building_id: 'foothills',
-      building_name: 'Foothills Stake Center',
+      building_id: 'pine',
+      building_name: 'Pine Stake Center',
       kindoo_site_id: 'east-stake',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
@@ -598,7 +598,7 @@ describe('Kindoo Sites tab', () => {
     // Mimic the real hook: throw the blocker string when refs exist.
     deleteKindooSiteMock.mockImplementation(async (input: { kindooSiteId: string }) => {
       throw new Error(
-        `Cannot delete Kindoo site "${input.kindooSiteId}". The following wards and buildings still reference this site: Wards: Cordera (CO) Buildings: Foothills Stake Center Unassign these wards / buildings from this site before deleting.`,
+        `Cannot delete Kindoo site "${input.kindooSiteId}". The following wards and buildings still reference this site: Wards: Maple (CO) Buildings: Pine Stake Center Unassign these wards / buildings from this site before deleting.`,
       );
     });
     render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
@@ -609,8 +609,8 @@ describe('Kindoo Sites tab', () => {
       const errorToasts = useToastStore.getState().toasts.filter((t) => t.kind === 'error');
       expect(errorToasts).toHaveLength(1);
       expect(errorToasts[0]!.message).toContain('Cannot delete Kindoo site "east-stake"');
-      expect(errorToasts[0]!.message).toContain('Cordera (CO)');
-      expect(errorToasts[0]!.message).toContain('Foothills Stake Center');
+      expect(errorToasts[0]!.message).toContain('Maple (CO)');
+      expect(errorToasts[0]!.message).toContain('Pine Stake Center');
     });
   });
 });
@@ -623,8 +623,8 @@ describe('Ward dialog Kindoo Site field', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ward = (overrides: Partial<Ward> = {}): Ward => ({
     ward_code: 'CO',
-    ward_name: 'Cordera',
-    building_name: 'Cordera Building',
+    ward_name: 'Maple',
+    building_name: 'Maple Building',
     seat_cap: 22,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ...(overrides as any),
@@ -674,8 +674,8 @@ describe('Ward dialog Kindoo Site field', () => {
     useBuildingsMock.mockReturnValue(
       liveResult<Building>([
         {
-          building_id: 'cordera-building',
-          building_name: 'Cordera Building',
+          building_id: 'maple-building',
+          building_name: 'Maple Building',
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any,
       ]),
@@ -689,8 +689,8 @@ describe('Ward dialog Kindoo Site field', () => {
     expect(upsertWardMock).toHaveBeenCalledWith(
       expect.objectContaining({
         ward_code: 'CO',
-        ward_name: 'Cordera',
-        building_name: 'Cordera Building',
+        ward_name: 'Maple',
+        building_name: 'Maple Building',
         seat_cap: 22,
         kindoo_site_id: 'east',
       }),
@@ -703,8 +703,8 @@ describe('Ward dialog Kindoo Site field', () => {
     useBuildingsMock.mockReturnValue(
       liveResult<Building>([
         {
-          building_id: 'cordera-building',
-          building_name: 'Cordera Building',
+          building_id: 'maple-building',
+          building_name: 'Maple Building',
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any,
       ]),
@@ -726,8 +726,8 @@ describe('Building dialog Kindoo Site field', () => {
   // into the Building create/edit dialog.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const building = (overrides: Partial<Building> = {}): Building => ({
-    building_id: 'cordera-building',
-    building_name: 'Cordera Building',
+    building_id: 'maple-building',
+    building_name: 'Maple Building',
     address: '123 Main',
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ...(overrides as any),
@@ -747,7 +747,7 @@ describe('Building dialog Kindoo Site field', () => {
     useBuildingsMock.mockReturnValue(liveResult<Building>([building()]));
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
     render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-    expect(screen.queryByTestId('config-building-kindoo-site-cordera-building')).toBeNull();
+    expect(screen.queryByTestId('config-building-kindoo-site-maple-building')).toBeNull();
   });
 
   it('Edit dialog defaults Kindoo Site to Home for a home-site building', async () => {
@@ -755,7 +755,7 @@ describe('Building dialog Kindoo Site field', () => {
     useBuildingsMock.mockReturnValue(liveResult<Building>([building()]));
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
     render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-building-edit-cordera-building'));
+    await user.click(screen.getByTestId('config-building-edit-maple-building'));
     const dd = screen.getByTestId('config-building-kindoo-site') as HTMLSelectElement;
     expect(Array.from(dd.options).map((o) => o.text)).toEqual(['Home', 'East']);
     expect(dd.value).toBe('__home__');
@@ -766,7 +766,7 @@ describe('Building dialog Kindoo Site field', () => {
     useBuildingsMock.mockReturnValue(liveResult<Building>([building({ kindoo_site_id: 'east' })]));
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
     render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-building-edit-cordera-building'));
+    await user.click(screen.getByTestId('config-building-edit-maple-building'));
     const dd = screen.getByTestId('config-building-kindoo-site') as HTMLSelectElement;
     expect(dd.value).toBe('east');
   });
@@ -777,12 +777,12 @@ describe('Building dialog Kindoo Site field', () => {
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
     upsertBuildingMock.mockResolvedValue(undefined);
     render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-building-edit-cordera-building'));
+    await user.click(screen.getByTestId('config-building-edit-maple-building'));
     await user.selectOptions(screen.getByTestId('config-building-kindoo-site'), 'east');
     await user.click(screen.getByTestId('config-building-submit'));
     expect(upsertBuildingMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        building_name: 'Cordera Building',
+        building_name: 'Maple Building',
         address: '123 Main',
         kindoo_site_id: 'east',
       }),
@@ -795,11 +795,11 @@ describe('Building dialog Kindoo Site field', () => {
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
     upsertBuildingMock.mockResolvedValue(undefined);
     render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-building-edit-cordera-building'));
+    await user.click(screen.getByTestId('config-building-edit-maple-building'));
     await user.selectOptions(screen.getByTestId('config-building-kindoo-site'), '__home__');
     await user.click(screen.getByTestId('config-building-submit'));
     expect(upsertBuildingMock).toHaveBeenCalledWith(
-      expect.objectContaining({ building_name: 'Cordera Building', kindoo_site_id: null }),
+      expect.objectContaining({ building_name: 'Maple Building', kindoo_site_id: null }),
     );
   });
 });
@@ -827,8 +827,8 @@ describe('Configuration Delete buttons gated on FK snapshots', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mkBuilding = (overrides: Partial<Building> = {}): Building =>
     ({
-      building_id: 'cordera-building',
-      building_name: 'Cordera Building',
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
       address: '123 Main',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ...(overrides as any),
@@ -879,7 +879,7 @@ describe('Configuration Delete buttons gated on FK snapshots', () => {
       useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
       useWardsMock.mockReturnValue(loadingResult());
       render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-      const btn = screen.getByTestId('config-building-delete-cordera-building');
+      const btn = screen.getByTestId('config-building-delete-maple-building');
       expect(btn).toBeDisabled();
       expect(btn).toHaveAttribute('title', 'Loading…');
     });
@@ -889,7 +889,7 @@ describe('Configuration Delete buttons gated on FK snapshots', () => {
       useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
       useWardsMock.mockReturnValue(loadingResult());
       render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-      const btn = screen.getByTestId('config-building-delete-cordera-building');
+      const btn = screen.getByTestId('config-building-delete-maple-building');
       await user.click(btn);
       // Button stays disabled; userEvent honours the disabled state by
       // not firing onClick, so the row is intact and no error surfaces.
@@ -900,7 +900,7 @@ describe('Configuration Delete buttons gated on FK snapshots', () => {
       useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
       useWardsMock.mockReturnValue(liveResult<Ward>([]));
       render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
-      const btn = screen.getByTestId('config-building-delete-cordera-building');
+      const btn = screen.getByTestId('config-building-delete-maple-building');
       expect(btn).not.toBeDisabled();
     });
   });

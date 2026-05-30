@@ -20,7 +20,7 @@ import {
 } from './lib/rules.js';
 
 const STAKE_ID = 'csnorth';
-const BUILDING_ID = 'cordera-building';
+const BUILDING_ID = 'maple-building';
 const PATH = `stakes/${STAKE_ID}/buildings/${BUILDING_ID}`;
 
 function freshBuildingDoc(
@@ -28,8 +28,8 @@ function freshBuildingDoc(
 ): Record<string, unknown> {
   return {
     building_id: BUILDING_ID,
-    building_name: 'Cordera Building',
-    address: '1234 Cordera Cir',
+    building_name: 'Maple Building',
+    address: '1234 Maple Cir',
     created_at: new Date(),
     last_modified_at: new Date(),
     lastActor: lastActorOf(personas.manager),
@@ -126,7 +126,7 @@ describe('firestore.rules — stakes/{sid}/buildings/{buildingId}', () => {
 
   // Extension v2.1 — `kindoo_rule` is manager-only and shape-checked.
   describe('kindoo_rule (extension v2.1)', () => {
-    const validKindooRule = { rule_id: 1234, rule_name: 'Cordera Bldg Access Schedule' };
+    const validKindooRule = { rule_id: 1234, rule_name: 'Maple Bldg Access Schedule' };
 
     it('manager can add kindoo_rule', async () => {
       const db = managerContext(env, STAKE_ID).firestore();
@@ -144,7 +144,7 @@ describe('firestore.rules — stakes/{sid}/buildings/{buildingId}', () => {
       await assertSucceeds(
         db.doc(PATH).set(
           freshBuildingDoc({
-            kindoo_rule: { rule_id: 5678, rule_name: 'Cordera Bldg Access Schedule (revised)' },
+            kindoo_rule: { rule_id: 5678, rule_name: 'Maple Bldg Access Schedule (revised)' },
           }),
         ),
       );

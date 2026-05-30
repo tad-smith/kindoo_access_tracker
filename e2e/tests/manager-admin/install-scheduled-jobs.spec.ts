@@ -134,24 +134,24 @@ test.describe('Bootstrap wizard install-scheduled-jobs (live Functions emulator)
     // Step 2 — add a building.
     await page.getByTestId('wizard-step-tab-2').click();
     const step2 = page.getByTestId('wizard-step-2');
-    await step2.getByLabel(/^Building name$/).fill('Cordera Building');
-    await step2.getByLabel(/^Address$/).fill('1 Cordera Cir');
+    await step2.getByLabel(/^Building name$/).fill('Maple Building');
+    await step2.getByLabel(/^Address$/).fill('1 Maple Cir');
     await step2.getByRole('button', { name: /^Add building$/ }).click();
     await expect(
-      page.getByTestId('bootstrap-buildings-list').getByText('Cordera Building'),
+      page.getByTestId('bootstrap-buildings-list').getByText('Maple Building'),
     ).toBeVisible();
 
     // Step 3 — add a ward referencing the building.
     await page.getByTestId('wizard-step-tab-3').click();
     const step3 = page.getByTestId('wizard-step-3');
-    await expect(step3.getByRole('option', { name: 'Cordera Building' })).toHaveCount(1);
+    await expect(step3.getByRole('option', { name: 'Maple Building' })).toHaveCount(1);
     await step3.getByLabel(/^Ward code$/).fill('CO');
-    await step3.getByLabel(/^Ward name$/).fill('Cordera Ward');
-    await step3.locator('select').selectOption('Cordera Building');
+    await step3.getByLabel(/^Ward name$/).fill('Maple Ward');
+    await step3.locator('select').selectOption('Maple Building');
     await step3.getByLabel(/^Seat cap$/).fill('20');
     await step3.getByRole('button', { name: /^Add ward$/ }).click();
     await expect(
-      page.getByTestId('bootstrap-wards-list').getByText(/Cordera Ward \(CO\)/),
+      page.getByTestId('bootstrap-wards-list').getByText(/Maple Ward \(CO\)/),
     ).toBeVisible();
 
     // Complete Setup is enabled once steps 1-3 are valid.

@@ -8,18 +8,18 @@ import type { CallingTemplateSets } from './classifier';
 
 const STAKE = { stake_name: 'Colorado Springs North Stake' };
 const WARDS = [
-  { ward_code: 'CO', ward_name: 'Cordera Ward' },
+  { ward_code: 'CO', ward_name: 'Maple Ward' },
   { ward_code: 'PC', ward_name: 'Pine Creek Ward' },
   { ward_code: 'MO', ward_name: 'Monument Ward' },
 ];
 
 describe('parseDescription', () => {
   it('parses a single ward segment with one calling', () => {
-    const parsed = parseDescription('Cordera Ward (Sunday School Teacher)', STAKE, WARDS);
+    const parsed = parseDescription('Maple Ward (Sunday School Teacher)', STAKE, WARDS);
     expect(parsed.unparseable).toBe(false);
     expect(parsed.segments).toHaveLength(1);
     expect(parsed.segments[0]).toMatchObject({
-      rawScopeName: 'Cordera Ward',
+      rawScopeName: 'Maple Ward',
       scope: 'CO',
       calling: 'Sunday School Teacher',
       resolvedScope: true,
@@ -38,7 +38,7 @@ describe('parseDescription', () => {
 
   it('parses two cross-scope segments separated by " | "', () => {
     const parsed = parseDescription(
-      'Cordera Ward (Elders Quorum President) | Pine Creek Ward (Sunday School Teacher)',
+      'Maple Ward (Elders Quorum President) | Pine Creek Ward (Sunday School Teacher)',
       STAKE,
       WARDS,
     );
@@ -50,7 +50,7 @@ describe('parseDescription', () => {
 
   it('parses three cross-scope segments', () => {
     const parsed = parseDescription(
-      'Cordera Ward (A) | Pine Creek Ward (B) | Monument Ward (C)',
+      'Maple Ward (A) | Pine Creek Ward (B) | Monument Ward (C)',
       STAKE,
       WARDS,
     );
@@ -60,7 +60,7 @@ describe('parseDescription', () => {
 
   it('preserves a multi-calling parens body as a single comma-separated string', () => {
     const parsed = parseDescription(
-      'Cordera Ward (Elders Quorum First Counselor, Accompanist)',
+      'Maple Ward (Elders Quorum First Counselor, Accompanist)',
       STAKE,
       WARDS,
     );
@@ -69,7 +69,7 @@ describe('parseDescription', () => {
   });
 
   it('matches scope names case-insensitively and ignores surrounding whitespace', () => {
-    const parsed = parseDescription('  CORDERA WARD  (Test)', STAKE, WARDS);
+    const parsed = parseDescription('  MAPLE WARD  (Test)', STAKE, WARDS);
     expect(parsed.unparseable).toBe(false);
     expect(parsed.segments[0]?.scope).toBe('CO');
   });
@@ -101,7 +101,7 @@ describe('parseDescription', () => {
 
   it('marks partial-match descriptions as parseable when at least one segment resolves', () => {
     const parsed = parseDescription(
-      'Cordera Ward (Elders Quorum President) | Unknown Ward (Whatever)',
+      'Maple Ward (Elders Quorum President) | Unknown Ward (Whatever)',
       STAKE,
       WARDS,
     );
@@ -111,13 +111,13 @@ describe('parseDescription', () => {
   });
 
   it('keeps the original raw input on the result', () => {
-    const input = 'Cordera Ward (Sunday School Teacher)';
+    const input = 'Maple Ward (Sunday School Teacher)';
     const parsed = parseDescription(input, STAKE, WARDS);
     expect(parsed.raw).toBe(input);
   });
 
   it('handles parens nested in calling text by greedy-matching to the last close paren', () => {
-    const parsed = parseDescription('Cordera Ward (Sunday School Teacher (Primary))', STAKE, WARDS);
+    const parsed = parseDescription('Maple Ward (Sunday School Teacher (Primary))', STAKE, WARDS);
     expect(parsed.segments).toHaveLength(1);
     expect(parsed.segments[0]?.calling).toBe('Sunday School Teacher (Primary)');
   });
@@ -230,7 +230,7 @@ describe('parseDescription', () => {
 describe('pickPrimarySegment', () => {
   it('picks the stake-scope segment when present', () => {
     const parsed = parseDescription(
-      'Cordera Ward (A) | Colorado Springs North Stake (B) | Pine Creek Ward (C)',
+      'Maple Ward (A) | Colorado Springs North Stake (B) | Pine Creek Ward (C)',
       STAKE,
       WARDS,
     );
@@ -240,7 +240,7 @@ describe('pickPrimarySegment', () => {
 
   it('picks the alphabetically-first ward when only wards resolve', () => {
     const parsed = parseDescription(
-      'Pine Creek Ward (A) | Cordera Ward (B) | Monument Ward (C)',
+      'Pine Creek Ward (A) | Maple Ward (B) | Monument Ward (C)',
       STAKE,
       WARDS,
     );
@@ -255,7 +255,7 @@ describe('pickPrimarySegment', () => {
   });
 
   it('returns the lone resolved segment when only one resolves', () => {
-    const parsed = parseDescription('Cordera Ward (A) | Springfield Ward (B)', STAKE, WARDS);
+    const parsed = parseDescription('Maple Ward (A) | Springfield Ward (B)', STAKE, WARDS);
     expect(pickPrimarySegment(parsed)?.scope).toBe('CO');
   });
 
@@ -273,14 +273,14 @@ describe('pickPrimarySegment', () => {
     };
   }
 
-  it('prefers an auto-matching ward over a non-auto stake segment (corry@corrymac.com shape)', () => {
+  it('prefers an auto-matching ward over a non-auto stake segment (two-segment ward-priority shape)', () => {
     // Stake "Technology Specialist" is non-auto; ward "Bishop" is auto.
     // The live false-positive scope-mismatch case: SBA seat lives on
     // the ward, but the alphabetical/stake-first rule would have
     // picked the stake segment as primary. With `sets` the auto ward
     // wins.
     const parsed = parseDescription(
-      'Colorado Springs North Stake (Technology Specialist) | Cordera Ward (Bishop)',
+      'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Bishop)',
       STAKE,
       WARDS,
     );
@@ -294,7 +294,7 @@ describe('pickPrimarySegment', () => {
     // Existing stake-first tiebreaker is preserved among auto-matching
     // segments.
     const parsed = parseDescription(
-      'Colorado Springs North Stake (Stake Clerk) | Cordera Ward (Bishop)',
+      'Colorado Springs North Stake (Stake Clerk) | Maple Ward (Bishop)',
       STAKE,
       WARDS,
     );
@@ -305,7 +305,7 @@ describe('pickPrimarySegment', () => {
 
   it('returns the alphabetically-first ward when multiple wards auto-match', () => {
     const parsed = parseDescription(
-      'Pine Creek Ward (Bishop) | Cordera Ward (Bishop) | Monument Ward (Bishop)',
+      'Pine Creek Ward (Bishop) | Maple Ward (Bishop) | Monument Ward (Bishop)',
       STAKE,
       WARDS,
     );
@@ -317,7 +317,7 @@ describe('pickPrimarySegment', () => {
   it('falls back to stake-first when no segment auto-matches', () => {
     // Original rule still applies when the auto-match pool is empty.
     const parsed = parseDescription(
-      'Colorado Springs North Stake (Technology Specialist) | Cordera Ward (Pianist)',
+      'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Pianist)',
       STAKE,
       WARDS,
     );
@@ -330,7 +330,7 @@ describe('pickPrimarySegment', () => {
     // Backward-compat guard: existing call sites that don't pass sets
     // continue to see the original behavior.
     const parsed = parseDescription(
-      'Colorado Springs North Stake (Technology Specialist) | Cordera Ward (Bishop)',
+      'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Bishop)',
       STAKE,
       WARDS,
     );

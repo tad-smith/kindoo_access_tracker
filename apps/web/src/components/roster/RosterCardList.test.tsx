@@ -47,7 +47,7 @@ describe('RosterCardList', () => {
       member_name: 'Alice Example',
       callings: ['Bishop'],
       type: 'auto',
-      building_names: ['Cordera Building', 'Genoa Building'],
+      building_names: ['Maple Building', 'Cedar Building'],
     });
     render(<RosterCardList seats={[seat]} />);
     const card = document.querySelector('.roster-card');

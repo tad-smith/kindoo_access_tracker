@@ -1,5 +1,5 @@
 // Tests for `buildingSlug`. The §4.3 example pins the canonical
-// transformation (`'Cordera Building'` → `'cordera-building'`); the
+// transformation (`'Maple Building'` → `'maple-building'`); the
 // remaining cases lock in determinism and the edges that decide
 // whether two slightly-different display names collide.
 import { describe, expect, it } from 'vitest';
@@ -7,7 +7,7 @@ import { buildingSlug } from './buildingSlug.js';
 
 describe('buildingSlug', () => {
   it('matches the firebase-schema.md §4.3 example', () => {
-    expect(buildingSlug('Cordera Building')).toBe('cordera-building');
+    expect(buildingSlug('Maple Building')).toBe('maple-building');
   });
 
   it('is deterministic across repeated calls', () => {
@@ -27,7 +27,7 @@ describe('buildingSlug', () => {
   });
 
   it('trims leading and trailing hyphens', () => {
-    expect(buildingSlug('  Cordera  ')).toBe('cordera');
+    expect(buildingSlug('  Maple  ')).toBe('maple');
     expect(buildingSlug('!!!Foo!!!')).toBe('foo');
   });
 

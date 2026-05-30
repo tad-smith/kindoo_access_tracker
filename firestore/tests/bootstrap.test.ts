@@ -42,7 +42,7 @@ const STAKE_ID = 'csnorth';
 const STAKE_PATH = `stakes/${STAKE_ID}`;
 const WARD_CODE = '01';
 const WARD_PATH = `${STAKE_PATH}/wards/${WARD_CODE}`;
-const BUILDING_ID = 'cordera-building';
+const BUILDING_ID = 'maple-building';
 const BUILDING_PATH = `${STAKE_PATH}/buildings/${BUILDING_ID}`;
 const BOOTSTRAP_CANONICAL = personas.bootstrapAdmin.canonical;
 const BOOTSTRAP_KM_PATH = `${STAKE_PATH}/kindooManagers/${BOOTSTRAP_CANONICAL}`;
@@ -88,7 +88,7 @@ function freshWardDoc(overrides: Partial<Record<string, unknown>> = {}): Record<
   return {
     ward_code: WARD_CODE,
     ward_name: '1st Ward',
-    building_name: 'Cordera Building',
+    building_name: 'Maple Building',
     seat_cap: 30,
     created_at: new Date(),
     last_modified_at: new Date(),
@@ -102,8 +102,8 @@ function freshBuildingDoc(
 ): Record<string, unknown> {
   return {
     building_id: BUILDING_ID,
-    building_name: 'Cordera Building',
-    address: '1234 Cordera Cir',
+    building_name: 'Maple Building',
+    address: '1234 Maple Cir',
     created_at: new Date(),
     last_modified_at: new Date(),
     lastActor: lastActorOf(personas.bootstrapAdmin),
@@ -481,7 +481,7 @@ describe('firestore.rules — bootstrap-admin gate', () => {
           type: 'manual',
           callings: [],
           duplicate_grants: [],
-          building_names: ['Cordera Building'],
+          building_names: ['Maple Building'],
           granted_by_request: 'fake-req',
           created_at: new Date(),
           created_by: lastActorOf(personas.bootstrapAdmin),

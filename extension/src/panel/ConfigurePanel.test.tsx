@@ -92,7 +92,7 @@ function bundle(overrides: BundleOpts = {}) {
   return {
     stake,
     buildings: overrides.buildings ?? [
-      { building_id: 'cordera', building_name: 'Cordera Building' },
+      { building_id: 'maple', building_name: 'Maple Building' },
       { building_id: 'pine-creek', building_name: 'Pine Creek Building' },
     ],
     wards: [],
@@ -144,7 +144,7 @@ describe('ConfigurePanel — active = home', () => {
       { EID: 4321, Name: 'East Stake' },
     ]);
     getEnvironmentRulesMock.mockResolvedValue([
-      { RID: 6248, Name: 'Cordera Doors' },
+      { RID: 6248, Name: 'Maple Doors' },
       { RID: 6249, Name: 'Pine Creek Doors' },
     ]);
     writeKindooConfigMock.mockResolvedValue(undefined);
@@ -158,7 +158,7 @@ describe('ConfigurePanel — active = home', () => {
 
     expect(screen.getByTestId('sba-configure-save')).toBeDisabled();
 
-    await user.selectOptions(screen.getByTestId('sba-configure-rule-cordera'), '6248');
+    await user.selectOptions(screen.getByTestId('sba-configure-rule-maple'), '6248');
     await user.selectOptions(screen.getByTestId('sba-configure-rule-pine-creek'), '6249');
     expect(screen.getByTestId('sba-configure-save')).toBeEnabled();
 
@@ -170,7 +170,7 @@ describe('ConfigurePanel — active = home', () => {
       siteId: 27994,
       siteName: 'Colorado Springs North Stake',
       buildingRules: [
-        { buildingId: 'cordera', ruleId: 6248, ruleName: 'Cordera Doors' },
+        { buildingId: 'maple', ruleId: 6248, ruleName: 'Maple Doors' },
         { buildingId: 'pine-creek', ruleId: 6249, ruleName: 'Pine Creek Doors' },
       ],
     });
@@ -185,10 +185,10 @@ describe('ConfigurePanel — active = home', () => {
       session: { token: 'tok', eid: 27994 },
     });
     getStakeConfigMock.mockResolvedValue(
-      bundle({ buildings: [{ building_id: 'cordera', building_name: 'Cordera Building' }] }),
+      bundle({ buildings: [{ building_id: 'maple', building_name: 'Maple Building' }] }),
     );
     getEnvironmentsMock.mockResolvedValue([{ EID: 27994, Name: 'Colorado Springs North Stake' }]);
-    getEnvironmentRulesMock.mockResolvedValue([{ RID: 6248, Name: 'Cordera Doors' }]);
+    getEnvironmentRulesMock.mockResolvedValue([{ RID: 6248, Name: 'Maple Doors' }]);
 
     await renderConfigure();
     await waitFor(() => expect(screen.getByTestId('sba-configure-rules')).toBeInTheDocument());
@@ -204,18 +204,18 @@ describe('ConfigurePanel — active = home', () => {
       bundle({
         kindoo_config: { site_id: 27994, site_name: 'Colorado Springs North Stake' },
         buildings: [
-          { building_id: 'cordera', building_name: 'Cordera Building' }, // home
+          { building_id: 'maple', building_name: 'Maple Building' }, // home
           { building_id: 'pine-creek', building_name: 'Pine Creek Building', kindoo_site_id: null }, // home
           {
-            building_id: 'foothills',
-            building_name: 'Foothills Building',
+            building_id: 'pine',
+            building_name: 'Pine Building',
             kindoo_site_id: 'east-stake',
           },
         ],
         kindooSites: [
           {
             id: 'east-stake',
-            display_name: 'East Stake (Foothills Building)',
+            display_name: 'East Stake (Pine Building)',
             kindoo_expected_site_name: 'East Stake',
             kindoo_eid: 4321,
           },
@@ -224,16 +224,16 @@ describe('ConfigurePanel — active = home', () => {
     );
     getEnvironmentsMock.mockResolvedValue([{ EID: 27994, Name: 'Colorado Springs North Stake' }]);
     getEnvironmentRulesMock.mockResolvedValue([
-      { RID: 6248, Name: 'Cordera Doors' },
+      { RID: 6248, Name: 'Maple Doors' },
       { RID: 6249, Name: 'Pine Creek Doors' },
     ]);
 
     await renderConfigure();
     await waitFor(() => expect(screen.getByTestId('sba-configure-rules')).toBeInTheDocument());
 
-    expect(screen.getByTestId('sba-configure-rule-cordera')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-configure-rule-maple')).toBeInTheDocument();
     expect(screen.getByTestId('sba-configure-rule-pine-creek')).toBeInTheDocument();
-    expect(screen.queryByTestId('sba-configure-rule-foothills')).toBeNull();
+    expect(screen.queryByTestId('sba-configure-rule-pine')).toBeNull();
   });
 
   it('uses kindoo_expected_site_name override in the header', async () => {
@@ -246,11 +246,11 @@ describe('ConfigurePanel — active = home', () => {
         stake_name: 'STAGING - Colorado Springs North Stake',
         kindoo_expected_site_name: 'Colorado Springs North Stake',
         kindoo_config: { site_id: 27994, site_name: 'Colorado Springs North Stake' },
-        buildings: [{ building_id: 'cordera', building_name: 'Cordera Building' }],
+        buildings: [{ building_id: 'maple', building_name: 'Maple Building' }],
       }),
     );
     getEnvironmentsMock.mockResolvedValue([{ EID: 27994, Name: 'Colorado Springs North Stake' }]);
-    getEnvironmentRulesMock.mockResolvedValue([{ RID: 6248, Name: 'Cordera Doors' }]);
+    getEnvironmentRulesMock.mockResolvedValue([{ RID: 6248, Name: 'Maple Doors' }]);
 
     await renderConfigure();
     await waitFor(() =>
@@ -282,17 +282,17 @@ describe('ConfigurePanel — active = foreign', () => {
       bundle({
         kindoo_config: { site_id: 27994, site_name: 'Colorado Springs North Stake' },
         buildings: [
-          { building_id: 'cordera', building_name: 'Cordera Building' }, // home
+          { building_id: 'maple', building_name: 'Maple Building' }, // home
           {
-            building_id: 'foothills',
-            building_name: 'Foothills Building',
+            building_id: 'pine',
+            building_name: 'Pine Building',
             kindoo_site_id: 'east-stake',
           },
         ],
         kindooSites: [
           {
             id: 'east-stake',
-            display_name: 'East Stake (Foothills Building)',
+            display_name: 'East Stake (Pine Building)',
             kindoo_expected_site_name: 'East Stake',
             kindoo_eid: 4321,
           },
@@ -300,20 +300,20 @@ describe('ConfigurePanel — active = foreign', () => {
       }),
     );
     getEnvironmentsMock.mockResolvedValue([{ EID: 4321, Name: 'East Stake' }]);
-    getEnvironmentRulesMock.mockResolvedValue([{ RID: 8001, Name: 'Foothills Doors' }]);
+    getEnvironmentRulesMock.mockResolvedValue([{ RID: 8001, Name: 'Pine Doors' }]);
     writeKindooConfigMock.mockResolvedValue(undefined);
 
     const user = userEvent.setup();
     await renderConfigure({ onComplete });
 
     await waitFor(() => expect(screen.getByTestId('sba-configure-rules')).toBeInTheDocument());
-    expect(screen.getByText('Configuring: East Stake (Foothills Building)')).toBeInTheDocument();
+    expect(screen.getByText('Configuring: East Stake (Pine Building)')).toBeInTheDocument();
 
     // Home building filtered out; foreign building present.
-    expect(screen.queryByTestId('sba-configure-rule-cordera')).toBeNull();
-    expect(screen.getByTestId('sba-configure-rule-foothills')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-configure-rule-maple')).toBeNull();
+    expect(screen.getByTestId('sba-configure-rule-pine')).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByTestId('sba-configure-rule-foothills'), '8001');
+    await user.selectOptions(screen.getByTestId('sba-configure-rule-pine'), '8001');
     await user.click(screen.getByTestId('sba-configure-save'));
 
     await waitFor(() => expect(writeKindooConfigMock).toHaveBeenCalledTimes(1));
@@ -321,7 +321,7 @@ describe('ConfigurePanel — active = foreign', () => {
       kindooSiteId: 'east-stake',
       siteId: 4321,
       siteName: 'East Stake',
-      buildingRules: [{ buildingId: 'foothills', ruleId: 8001, ruleName: 'Foothills Doors' }],
+      buildingRules: [{ buildingId: 'pine', ruleId: 8001, ruleName: 'Pine Doors' }],
     });
     expect(onComplete).toHaveBeenCalled();
   });
@@ -339,15 +339,15 @@ describe('ConfigurePanel — active = foreign', () => {
         kindoo_config: { site_id: 27994, site_name: 'Colorado Springs North Stake' },
         buildings: [
           {
-            building_id: 'foothills',
-            building_name: 'Foothills Building',
+            building_id: 'pine',
+            building_name: 'Pine Building',
             kindoo_site_id: 'east-stake',
           },
         ],
         kindooSites: [
           {
             id: 'east-stake',
-            display_name: 'East Stake (Foothills Building)',
+            display_name: 'East Stake (Pine Building)',
             kindoo_expected_site_name: 'East Stake',
             // kindoo_eid omitted — first-encounter path
           },
@@ -355,16 +355,16 @@ describe('ConfigurePanel — active = foreign', () => {
       }),
     );
     getEnvironmentsMock.mockResolvedValue([{ EID: 4321, Name: 'East Stake' }]);
-    getEnvironmentRulesMock.mockResolvedValue([{ RID: 8001, Name: 'Foothills Doors' }]);
+    getEnvironmentRulesMock.mockResolvedValue([{ RID: 8001, Name: 'Pine Doors' }]);
     writeKindooConfigMock.mockResolvedValue(undefined);
 
     const user = userEvent.setup();
     await renderConfigure();
 
     await waitFor(() => expect(screen.getByTestId('sba-configure-rules')).toBeInTheDocument());
-    expect(screen.getByText('Configuring: East Stake (Foothills Building)')).toBeInTheDocument();
+    expect(screen.getByText('Configuring: East Stake (Pine Building)')).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByTestId('sba-configure-rule-foothills'), '8001');
+    await user.selectOptions(screen.getByTestId('sba-configure-rule-pine'), '8001');
     await user.click(screen.getByTestId('sba-configure-save'));
 
     await waitFor(() => expect(writeKindooConfigMock).toHaveBeenCalledTimes(1));
@@ -372,7 +372,7 @@ describe('ConfigurePanel — active = foreign', () => {
       kindooSiteId: 'east-stake',
       siteId: 4321,
       siteName: 'East Stake',
-      buildingRules: [{ buildingId: 'foothills', ruleId: 8001, ruleName: 'Foothills Doors' }],
+      buildingRules: [{ buildingId: 'pine', ruleId: 8001, ruleName: 'Pine Doors' }],
     });
   });
 });
@@ -434,9 +434,9 @@ describe('ConfigurePanel — reconfigure prefill + save error', () => {
         kindoo_config: { site_id: 27994, site_name: 'Colorado Springs North Stake' },
         buildings: [
           {
-            building_id: 'cordera',
-            building_name: 'Cordera Building',
-            kindoo_rule: { rule_id: 6248, rule_name: 'Cordera Doors' },
+            building_id: 'maple',
+            building_name: 'Maple Building',
+            kindoo_rule: { rule_id: 6248, rule_name: 'Maple Doors' },
           },
           { building_id: 'pine-creek', building_name: 'Pine Creek Building' },
         ],
@@ -444,7 +444,7 @@ describe('ConfigurePanel — reconfigure prefill + save error', () => {
     );
     getEnvironmentsMock.mockResolvedValue([{ EID: 27994, Name: 'Colorado Springs North Stake' }]);
     getEnvironmentRulesMock.mockResolvedValue([
-      { RID: 6248, Name: 'Cordera Doors' },
+      { RID: 6248, Name: 'Maple Doors' },
       { RID: 6249, Name: 'Pine Creek Doors' },
     ]);
 
@@ -452,8 +452,8 @@ describe('ConfigurePanel — reconfigure prefill + save error', () => {
 
     await waitFor(() => expect(screen.getByTestId('sba-configure-rules')).toBeInTheDocument());
 
-    const corderaSelect = screen.getByTestId('sba-configure-rule-cordera') as HTMLSelectElement;
-    expect(corderaSelect.value).toBe('6248');
+    const mapleSelect = screen.getByTestId('sba-configure-rule-maple') as HTMLSelectElement;
+    expect(mapleSelect.value).toBe('6248');
     const pineSelect = screen.getByTestId('sba-configure-rule-pine-creek') as HTMLSelectElement;
     expect(pineSelect.value).toBe('');
     // Pine still missing → Save remains disabled.
@@ -468,11 +468,11 @@ describe('ConfigurePanel — reconfigure prefill + save error', () => {
     getStakeConfigMock.mockResolvedValue(
       bundle({
         kindoo_config: { site_id: 27994, site_name: 'Colorado Springs North Stake' },
-        buildings: [{ building_id: 'cordera', building_name: 'Cordera Building' }],
+        buildings: [{ building_id: 'maple', building_name: 'Maple Building' }],
       }),
     );
     getEnvironmentsMock.mockResolvedValue([{ EID: 27994, Name: 'Colorado Springs North Stake' }]);
-    getEnvironmentRulesMock.mockResolvedValue([{ RID: 6248, Name: 'Cordera Doors' }]);
+    getEnvironmentRulesMock.mockResolvedValue([{ RID: 6248, Name: 'Maple Doors' }]);
     writeKindooConfigMock.mockRejectedValue(new Error('permission-denied: not a manager'));
 
     const onComplete = vi.fn();
@@ -480,7 +480,7 @@ describe('ConfigurePanel — reconfigure prefill + save error', () => {
     await renderConfigure({ onComplete });
 
     await waitFor(() => expect(screen.getByTestId('sba-configure-rules')).toBeInTheDocument());
-    await user.selectOptions(screen.getByTestId('sba-configure-rule-cordera'), '6248');
+    await user.selectOptions(screen.getByTestId('sba-configure-rule-maple'), '6248');
     await user.click(screen.getByTestId('sba-configure-save'));
 
     await waitFor(() => expect(screen.getByTestId('sba-configure-save-error')).toBeInTheDocument());

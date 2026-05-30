@@ -25,7 +25,7 @@ describe('newRequestSchema', () => {
       comment: '',
       start_date: '',
       end_date: '',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       urgent: false,
     });
     expect(result.success).toBe(true);
@@ -93,7 +93,7 @@ describe('newRequestSchema', () => {
       comment: '',
       start_date: '2026-05-01',
       end_date: '2026-05-08',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       urgent: false,
     });
     expect(result.success).toBe(true);
@@ -141,7 +141,7 @@ describe('newRequestSchema', () => {
       comment: 'why this is urgent',
       start_date: '',
       end_date: '',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       urgent: true,
     });
     expect(result.success).toBe(true);
@@ -190,8 +190,8 @@ describe('makeNewRequestSchema(wards) — cross-ward comment-required gate', () 
   const wards: Ward[] = [
     {
       ward_code: 'CO',
-      ward_name: 'Cordera',
-      building_name: 'Cordera Building',
+      ward_name: 'Maple',
+      building_name: 'Maple Building',
       seat_cap: 20,
       created_at: stamp,
       last_modified_at: stamp,
@@ -199,8 +199,8 @@ describe('makeNewRequestSchema(wards) — cross-ward comment-required gate', () 
     } as unknown as Ward,
     {
       ward_code: 'GE',
-      ward_name: 'Genoa',
-      building_name: 'Genoa Building',
+      ward_name: 'Cedar',
+      building_name: 'Cedar Building',
       seat_cap: 20,
       created_at: stamp,
       last_modified_at: stamp,
@@ -219,7 +219,7 @@ describe('makeNewRequestSchema(wards) — cross-ward comment-required gate', () 
       comment: '',
       start_date: '',
       end_date: '',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       urgent: false,
     };
   }
@@ -232,7 +232,7 @@ describe('makeNewRequestSchema(wards) — cross-ward comment-required gate', () 
   it('rejects a ward submission carrying a non-default building with empty comment', () => {
     const result = schema.safeParse({
       ...base(),
-      building_names: ['Cordera Building', 'Genoa Building'],
+      building_names: ['Maple Building', 'Cedar Building'],
     });
     expect(result.success).toBe(false);
   });
@@ -240,7 +240,7 @@ describe('makeNewRequestSchema(wards) — cross-ward comment-required gate', () 
   it('rejects a ward submission carrying ONLY a non-default building with empty comment', () => {
     const result = schema.safeParse({
       ...base(),
-      building_names: ['Genoa Building'],
+      building_names: ['Cedar Building'],
     });
     expect(result.success).toBe(false);
   });
@@ -248,7 +248,7 @@ describe('makeNewRequestSchema(wards) — cross-ward comment-required gate', () 
   it('rejects a ward submission with whitespace-only comment when the selection is cross-ward', () => {
     const result = schema.safeParse({
       ...base(),
-      building_names: ['Cordera Building', 'Genoa Building'],
+      building_names: ['Maple Building', 'Cedar Building'],
       comment: '   ',
     });
     expect(result.success).toBe(false);
@@ -257,7 +257,7 @@ describe('makeNewRequestSchema(wards) — cross-ward comment-required gate', () 
   it('admits a ward submission with a non-default building and a non-empty comment', () => {
     const result = schema.safeParse({
       ...base(),
-      building_names: ['Cordera Building', 'Genoa Building'],
+      building_names: ['Maple Building', 'Cedar Building'],
       comment: 'Helping a member from the next ward over.',
     });
     expect(result.success).toBe(true);
@@ -267,7 +267,7 @@ describe('makeNewRequestSchema(wards) — cross-ward comment-required gate', () 
     const result = schema.safeParse({
       ...base(),
       scope: 'stake',
-      building_names: ['Cordera Building', 'Genoa Building'],
+      building_names: ['Maple Building', 'Cedar Building'],
       comment: '',
     });
     expect(result.success).toBe(true);
@@ -310,7 +310,7 @@ describe('completeAddRequestSchema', () => {
   it('accepts ≥1 building with an empty completion_note', () => {
     expect(
       completeAddRequestSchema.safeParse({
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         completion_note: '',
       }).success,
     ).toBe(true);
@@ -318,7 +318,7 @@ describe('completeAddRequestSchema', () => {
   it('accepts a free-text completion_note alongside the buildings list', () => {
     expect(
       completeAddRequestSchema.safeParse({
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         completion_note: 'Granted; door system syncs overnight.',
       }).success,
     ).toBe(true);
@@ -344,8 +344,8 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_auto',
         reason: '',
-        comment: 'adding Genoa for stake conference setup',
-        building_names: ['Cordera Building'],
+        comment: 'adding Cedar for stake conference setup',
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '',
       });
@@ -369,7 +369,7 @@ describe('editSeatSchema', () => {
         type: 'edit_auto',
         reason: '',
         comment: '',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '',
       });
@@ -385,7 +385,7 @@ describe('editSeatSchema', () => {
         type: 'edit_auto',
         reason: '',
         comment: '   ',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '',
       });
@@ -396,7 +396,7 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_auto',
         reason: '',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '',
       });
@@ -411,7 +411,7 @@ describe('editSeatSchema', () => {
         type: 'edit_manual',
         reason: 'Primary Activity Days Leader',
         comment: 'new ward calling',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '',
       });
@@ -423,7 +423,7 @@ describe('editSeatSchema', () => {
         type: 'edit_manual',
         reason: '',
         comment: 'why',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '',
       });
@@ -435,7 +435,7 @@ describe('editSeatSchema', () => {
         type: 'edit_manual',
         reason: '   ',
         comment: 'why',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '',
       });
@@ -459,7 +459,7 @@ describe('editSeatSchema', () => {
         type: 'edit_manual',
         reason: 'sub teacher',
         comment: '',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '',
       });
@@ -475,7 +475,7 @@ describe('editSeatSchema', () => {
         type: 'edit_manual',
         reason: 'sub teacher',
         comment: '   ',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '',
       });
@@ -486,7 +486,7 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_manual',
         reason: 'sub teacher',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '',
       });
@@ -501,7 +501,7 @@ describe('editSeatSchema', () => {
         type: 'edit_temp',
         reason: 'sub teacher',
         comment: 'covering while regular is travelling',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '2026-05-01',
         end_date: '2026-05-08',
       });
@@ -513,7 +513,7 @@ describe('editSeatSchema', () => {
         type: 'edit_temp',
         reason: 'sub teacher',
         comment: 'why',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '',
         end_date: '2026-05-08',
       });
@@ -525,7 +525,7 @@ describe('editSeatSchema', () => {
         type: 'edit_temp',
         reason: 'sub teacher',
         comment: 'why',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '2026-05-08',
         end_date: '2026-05-01',
       });
@@ -537,7 +537,7 @@ describe('editSeatSchema', () => {
         type: 'edit_temp',
         reason: 'sub teacher',
         comment: 'why',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '2026-05-01',
         end_date: '2026-05-01',
       });
@@ -549,7 +549,7 @@ describe('editSeatSchema', () => {
         type: 'edit_temp',
         reason: 'sub teacher',
         comment: '',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '2026-05-01',
         end_date: '2026-05-08',
       });
@@ -565,7 +565,7 @@ describe('editSeatSchema', () => {
         type: 'edit_temp',
         reason: 'sub teacher',
         comment: '   ',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '2026-05-01',
         end_date: '2026-05-08',
       });
@@ -576,7 +576,7 @@ describe('editSeatSchema', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_temp',
         reason: 'sub teacher',
-        building_names: ['Cordera Building'],
+        building_names: ['Maple Building'],
         start_date: '2026-05-01',
         end_date: '2026-05-08',
       });

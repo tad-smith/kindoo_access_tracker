@@ -34,8 +34,8 @@ const FAKE_ACTOR = { email: 'a@b.c', canonical: 'a@b.c' } as const;
 
 function makeBuilding(overrides: Partial<Building> = {}): Building {
   return {
-    building_id: 'cordera',
-    building_name: 'Cordera Building',
+    building_id: 'maple',
+    building_name: 'Maple Building',
     address: '',
     created_at: FAKE_TS,
     last_modified_at: FAKE_TS,
@@ -71,26 +71,26 @@ beforeEach(() => {
 describe('<EditSeatDialog /> — edit_auto sub-type', () => {
   it('renders every auto-granted building pre-checked AND disabled; non-granted buildings are unchecked + enabled', () => {
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
       ],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
-    const genoaCb = screen.getByTestId('edit-seat-building-genoa') as HTMLInputElement;
-    expect(corderaCb.checked).toBe(true);
-    expect(corderaCb.disabled).toBe(true);
-    expect(genoaCb.checked).toBe(false);
-    expect(genoaCb.disabled).toBe(false);
-    expect(screen.getByTestId('edit-seat-building-locked-cordera')).toBeInTheDocument();
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
+    const cedarCb = screen.getByTestId('edit-seat-building-cedar') as HTMLInputElement;
+    expect(mapleCb.checked).toBe(true);
+    expect(mapleCb.disabled).toBe(true);
+    expect(cedarCb.checked).toBe(false);
+    expect(cedarCb.disabled).toBe(false);
+    expect(screen.getByTestId('edit-seat-building-locked-maple')).toBeInTheDocument();
   });
 
   it('locks every building in seat.building_names (not just ward.building_name) — prior edit_auto adds stay locked too', () => {
@@ -100,10 +100,10 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     // in full so the user can never silently remove an existing grant
     // through this dialog.
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
         makeBuilding({ building_id: 'prairie', building_name: 'Prairie Building' }),
       ],
     );
@@ -111,16 +111,16 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building', 'Genoa Building'],
+      building_names: ['Maple Building', 'Cedar Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
-    const genoaCb = screen.getByTestId('edit-seat-building-genoa') as HTMLInputElement;
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
+    const cedarCb = screen.getByTestId('edit-seat-building-cedar') as HTMLInputElement;
     const prairieCb = screen.getByTestId('edit-seat-building-prairie') as HTMLInputElement;
-    expect(corderaCb.checked).toBe(true);
-    expect(corderaCb.disabled).toBe(true);
-    expect(genoaCb.checked).toBe(true);
-    expect(genoaCb.disabled).toBe(true);
+    expect(mapleCb.checked).toBe(true);
+    expect(mapleCb.disabled).toBe(true);
+    expect(cedarCb.checked).toBe(true);
+    expect(cedarCb.disabled).toBe(true);
     expect(prairieCb.checked).toBe(false);
     expect(prairieCb.disabled).toBe(false);
   });
@@ -133,10 +133,10 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     // edit_auto submission wouldn't touch the dup; the change would
     // no-op silently). Manual dups and temp dups both qualify.
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
         makeBuilding({ building_id: 'prairie', building_name: 'Prairie Building' }),
       ],
     );
@@ -144,24 +144,24 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'CO',
           type: 'manual',
-          building_names: ['Genoa Building'],
+          building_names: ['Cedar Building'],
           detected_at: FAKE_TS,
         },
       ],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
-    const genoaCb = screen.getByTestId('edit-seat-building-genoa') as HTMLInputElement;
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
+    const cedarCb = screen.getByTestId('edit-seat-building-cedar') as HTMLInputElement;
     const prairieCb = screen.getByTestId('edit-seat-building-prairie') as HTMLInputElement;
-    expect(corderaCb.checked).toBe(true);
-    expect(corderaCb.disabled).toBe(true);
-    expect(genoaCb.checked).toBe(true);
-    expect(genoaCb.disabled).toBe(true);
+    expect(mapleCb.checked).toBe(true);
+    expect(mapleCb.disabled).toBe(true);
+    expect(cedarCb.checked).toBe(true);
+    expect(cedarCb.disabled).toBe(true);
     expect(prairieCb.checked).toBe(false);
     expect(prairieCb.disabled).toBe(false);
   });
@@ -174,22 +174,22 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     // touch DuplicateGrants), so allowing the user to uncheck would
     // no-op silently.
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
       ],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'CO',
           type: 'temp',
-          building_names: ['Genoa Building'],
+          building_names: ['Cedar Building'],
           start_date: '2026-06-01',
           end_date: '2026-06-15',
           detected_at: FAKE_TS,
@@ -197,12 +197,12 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       ],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
-    const genoaCb = screen.getByTestId('edit-seat-building-genoa') as HTMLInputElement;
-    expect(corderaCb.checked).toBe(true);
-    expect(corderaCb.disabled).toBe(true);
-    expect(genoaCb.checked).toBe(true);
-    expect(genoaCb.disabled).toBe(true);
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
+    const cedarCb = screen.getByTestId('edit-seat-building-cedar') as HTMLInputElement;
+    expect(mapleCb.checked).toBe(true);
+    expect(mapleCb.disabled).toBe(true);
+    expect(cedarCb.checked).toBe(true);
+    expect(cedarCb.disabled).toBe(true);
   });
 
   it('excludes same-scope non-auto DuplicateGrant buildings from the submit body even though they render locked (no-op submit, no data corruption)', async () => {
@@ -219,26 +219,26 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     //     auto-primary slot while the dup remained in place —
     //     double-credit on display, double-provision on Kindoo. The
     //     user just submits with no checkbox changes; the wire body
-    //     must be ['Cordera Building'], NOT
-    //     ['Cordera Building', 'Genoa Building'].
+    //     must be ['Maple Building'], NOT
+    //     ['Maple Building', 'Cedar Building'].
     const user = userEvent.setup();
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
       ],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'CO',
           type: 'manual',
-          building_names: ['Genoa Building'],
+          building_names: ['Cedar Building'],
           detected_at: FAKE_TS,
         },
       ],
@@ -251,10 +251,10 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       building_names: string[];
     };
     expect(arg.type).toBe('edit_auto');
-    expect(arg.building_names).toEqual(['Cordera Building']);
+    expect(arg.building_names).toEqual(['Maple Building']);
     // Explicit defense — the dup-only building must NOT appear in the
     // submit body.
-    expect(arg.building_names).not.toContain('Genoa Building');
+    expect(arg.building_names).not.toContain('Cedar Building');
   });
 
   it('with a non-auto dup present, adding a new building submits [auto-primary..., new-building] — dup buildings still excluded', async () => {
@@ -265,10 +265,10 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     // renders visually checked.
     const user = userEvent.setup();
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
         makeBuilding({ building_id: 'prairie', building_name: 'Prairie Building' }),
       ],
     );
@@ -276,12 +276,12 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'CO',
           type: 'manual',
-          building_names: ['Genoa Building'],
+          building_names: ['Cedar Building'],
           detected_at: FAKE_TS,
         },
       ],
@@ -295,39 +295,39 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       building_names: string[];
     };
     expect(arg.type).toBe('edit_auto');
-    expect([...arg.building_names].sort()).toEqual(['Cordera Building', 'Prairie Building']);
-    expect(arg.building_names).not.toContain('Genoa Building');
+    expect([...arg.building_names].sort()).toEqual(['Maple Building', 'Prairie Building']);
+    expect(arg.building_names).not.toContain('Cedar Building');
   });
 
   it('surfaces a tooltip on each disabled (locked) checkbox explaining why it cannot be unchecked', () => {
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
     // The title attribute is what the browser surfaces as a tooltip on
     // hover; for the disabled checkbox the same title goes on the
     // wrapping label too so the hover surface includes the text label.
-    expect(corderaCb.getAttribute('title')).toMatch(/already granted/i);
+    expect(mapleCb.getAttribute('title')).toMatch(/already granted/i);
   });
 
   it('omits the Calling / Reason field on edit_auto', () => {
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [makeBuilding()],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     expect(screen.queryByTestId('edit-seat-reason')).toBeNull();
@@ -336,10 +336,10 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
   it('submits an edit_auto request whose building_names union includes the locked template building plus operator additions', async () => {
     const user = userEvent.setup();
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
       ],
     );
     const seat = makeSeat({
@@ -349,10 +349,10 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       member_canonical: 'auto@x.com',
       member_name: 'Auto Person',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    await user.click(screen.getByTestId('edit-seat-building-genoa'));
+    await user.click(screen.getByTestId('edit-seat-building-cedar'));
     await user.type(screen.getByTestId('edit-seat-comment'), 'note');
     await user.click(screen.getByTestId('edit-seat-confirm'));
     await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
@@ -363,7 +363,7 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     expect(arg.scope).toBe('CO');
     expect(arg.member_email).toBe('auto@x.com');
     expect(arg.member_name).toBe('Auto Person');
-    expect([...arg.building_names].sort()).toEqual(['Cordera Building', 'Genoa Building']);
+    expect([...arg.building_names].sort()).toEqual(['Cedar Building', 'Maple Building']);
     expect(arg.comment).toBe('note');
     // No dates on edit_auto.
     expect(arg.start_date).toBeUndefined();
@@ -372,14 +372,14 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
 
   it('renders a required Comment field in the dialog body', () => {
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     expect(screen.getByTestId('edit-seat-comment')).toBeInTheDocument();
@@ -389,14 +389,14 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
   it('blocks submit with an inline error when comment is empty', async () => {
     const user = userEvent.setup();
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     await user.click(screen.getByTestId('edit-seat-confirm'));
@@ -407,14 +407,14 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
   it('blocks submit with an inline error when comment is whitespace-only', async () => {
     const user = userEvent.setup();
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'auto',
       scope: 'CO',
       callings: ['Bishop'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     await user.type(screen.getByTestId('edit-seat-comment'), '   ');
@@ -429,8 +429,8 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
       ],
     );
     const seat = makeSeat({
@@ -438,14 +438,14 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
       scope: 'CO',
       callings: [],
       reason: 'sub teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
-    const genoaCb = screen.getByTestId('edit-seat-building-genoa') as HTMLInputElement;
-    expect(corderaCb.checked).toBe(true);
-    expect(corderaCb.disabled).toBe(false);
-    expect(genoaCb.checked).toBe(false);
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
+    const cedarCb = screen.getByTestId('edit-seat-building-cedar') as HTMLInputElement;
+    expect(mapleCb.checked).toBe(true);
+    expect(mapleCb.disabled).toBe(false);
+    expect(cedarCb.checked).toBe(false);
     // CallingCombobox puts data-testid directly on the underlying input.
     const reasonInput = screen.getByTestId('edit-seat-reason') as HTMLInputElement;
     expect(reasonInput.tagName.toLowerCase()).toBe('input');
@@ -457,8 +457,8 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
       [
-        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
-        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
       ],
     );
     const seat = makeSeat({
@@ -469,11 +469,11 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
       member_name: 'Manual Person',
       callings: [],
       reason: 'sub teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     // Add the second building.
-    await user.click(screen.getByTestId('edit-seat-building-genoa'));
+    await user.click(screen.getByTestId('edit-seat-building-cedar'));
     await user.type(screen.getByTestId('edit-seat-comment'), 'note');
     await user.click(screen.getByTestId('edit-seat-confirm'));
     await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
@@ -482,7 +482,7 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     };
     expect(arg.type).toBe('edit_manual');
     expect(arg.reason).toBe('sub teacher');
-    expect([...arg.building_names].sort()).toEqual(['Cordera Building', 'Genoa Building']);
+    expect([...arg.building_names].sort()).toEqual(['Cedar Building', 'Maple Building']);
     expect(arg.comment).toBe('note');
     expect(arg.start_date).toBeUndefined();
     expect(arg.end_date).toBeUndefined();
@@ -496,7 +496,7 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     const user = userEvent.setup();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'manual',
@@ -516,14 +516,14 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
   it('renders a required Comment field in the dialog body', () => {
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'manual',
       scope: 'CO',
       callings: [],
       reason: 'sub teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     expect(screen.getByTestId('edit-seat-comment')).toBeInTheDocument();
@@ -534,14 +534,14 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     const user = userEvent.setup();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'manual',
       scope: 'CO',
       callings: [],
       reason: 'sub teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     await user.click(screen.getByTestId('edit-seat-confirm'));
@@ -553,14 +553,14 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     const user = userEvent.setup();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'manual',
       scope: 'CO',
       callings: [],
       reason: 'sub teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     await user.type(screen.getByTestId('edit-seat-comment'), '   ');
@@ -574,14 +574,14 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
   it('renders date pickers pre-populated from the seat and a plain-text reason (no typeahead)', () => {
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'temp',
       scope: 'CO',
       callings: [],
       reason: 'youth conference',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       start_date: '2026-05-01',
       end_date: '2026-05-08',
     });
@@ -600,7 +600,7 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
     const user = userEvent.setup();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'temp',
@@ -610,7 +610,7 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
       member_name: 'Temp Person',
       callings: [],
       reason: 'youth conference',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       start_date: '2026-05-01',
       end_date: '2026-05-08',
     });
@@ -626,7 +626,7 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
     };
     expect(arg.type).toBe('edit_temp');
     expect(arg.reason).toBe('youth conference');
-    expect(arg.building_names).toEqual(['Cordera Building']);
+    expect(arg.building_names).toEqual(['Maple Building']);
     expect(arg.comment).toBe('note');
     expect(arg.start_date).toBe('2026-05-01');
     expect(arg.end_date).toBe('2026-05-15');
@@ -636,14 +636,14 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
     const user = userEvent.setup();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'temp',
       scope: 'CO',
       callings: [],
       reason: 'youth conference',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       start_date: '2026-05-08',
       end_date: '2026-05-01',
     });
@@ -658,14 +658,14 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
     const user = userEvent.setup();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'temp',
       scope: 'CO',
       callings: [],
       reason: '',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       start_date: '2026-05-01',
       end_date: '2026-05-08',
     });
@@ -679,14 +679,14 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
   it('renders a required Comment field in the dialog body', () => {
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'temp',
       scope: 'CO',
       callings: [],
       reason: 'youth conference',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       start_date: '2026-05-01',
       end_date: '2026-05-08',
     });
@@ -699,14 +699,14 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
     const user = userEvent.setup();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'temp',
       scope: 'CO',
       callings: [],
       reason: 'youth conference',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       start_date: '2026-05-01',
       end_date: '2026-05-08',
     });
@@ -720,14 +720,14 @@ describe('<EditSeatDialog /> — edit_temp sub-type', () => {
     const user = userEvent.setup();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'temp',
       scope: 'CO',
       callings: [],
       reason: 'youth conference',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       start_date: '2026-05-01',
       end_date: '2026-05-08',
     });
@@ -753,19 +753,19 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
       [
         makeWard({
           ward_code: 'FN',
-          building_name: 'Foothills Building',
+          building_name: 'Pine Building',
           kindoo_site_id: 'foreign-1',
         }),
       ],
       [
         makeBuilding({
-          building_id: 'cordera',
-          building_name: 'Cordera Building',
+          building_id: 'maple',
+          building_name: 'Maple Building',
           kindoo_site_id: null,
         }),
         makeBuilding({
-          building_id: 'foothills',
-          building_name: 'Foothills Building',
+          building_id: 'pine',
+          building_name: 'Pine Building',
           kindoo_site_id: 'foreign-1',
         }),
       ],
@@ -775,25 +775,25 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
       scope: 'FN',
       callings: [],
       reason: 'sub teacher',
-      building_names: ['Foothills Building'],
+      building_names: ['Pine Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    expect(screen.getByTestId('edit-seat-building-foothills')).toBeInTheDocument();
-    expect(screen.queryByTestId('edit-seat-building-cordera')).toBeNull();
+    expect(screen.getByTestId('edit-seat-building-pine')).toBeInTheDocument();
+    expect(screen.queryByTestId('edit-seat-building-maple')).toBeNull();
   });
 
   it('shows ONLY home-site buildings on a home ward seat', () => {
     mockCatalogue(
-      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [
         makeBuilding({
-          building_id: 'cordera',
-          building_name: 'Cordera Building',
+          building_id: 'maple',
+          building_name: 'Maple Building',
           kindoo_site_id: null,
         }),
         makeBuilding({
-          building_id: 'foothills',
-          building_name: 'Foothills Building',
+          building_id: 'pine',
+          building_name: 'Pine Building',
           kindoo_site_id: 'foreign-1',
         }),
       ],
@@ -803,16 +803,16 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
       scope: 'CO',
       callings: [],
       reason: 'sub teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
-    expect(screen.getByTestId('edit-seat-building-cordera')).toBeInTheDocument();
-    expect(screen.queryByTestId('edit-seat-building-foothills')).toBeNull();
+    expect(screen.getByTestId('edit-seat-building-maple')).toBeInTheDocument();
+    expect(screen.queryByTestId('edit-seat-building-pine')).toBeNull();
   });
 
   it('drops a seat building_name outside the visible set from the form defaults (Risk 2 clamp)', () => {
     // Ward FN is foreign-1; seat's `building_names` carries a stale
-    // home building ('Cordera Building'). The home building is hidden
+    // home building ('Maple Building'). The home building is hidden
     // by the site filter; the form must NOT pre-check it (which would
     // be invisible and impossible to uncheck) and must NOT ship it on
     // submit. With no foreign building also ticked, the dialog renders
@@ -821,19 +821,19 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
       [
         makeWard({
           ward_code: 'FN',
-          building_name: 'Foothills Building',
+          building_name: 'Pine Building',
           kindoo_site_id: 'foreign-1',
         }),
       ],
       [
         makeBuilding({
-          building_id: 'cordera',
-          building_name: 'Cordera Building',
+          building_id: 'maple',
+          building_name: 'Maple Building',
           kindoo_site_id: null,
         }),
         makeBuilding({
-          building_id: 'foothills',
-          building_name: 'Foothills Building',
+          building_id: 'pine',
+          building_name: 'Pine Building',
           kindoo_site_id: 'foreign-1',
         }),
       ],
@@ -844,13 +844,13 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
       callings: [],
       reason: 'sub teacher',
       // Stale home building only — nothing in the foreign-1 set.
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     // Hidden home building's checkbox is not rendered at all.
-    expect(screen.queryByTestId('edit-seat-building-cordera')).toBeNull();
+    expect(screen.queryByTestId('edit-seat-building-maple')).toBeNull();
     // Visible foreign building is rendered but NOT pre-checked.
-    expect(screen.getByTestId('edit-seat-building-foothills')).not.toBeChecked();
+    expect(screen.getByTestId('edit-seat-building-pine')).not.toBeChecked();
   });
 
   it('renders an empty-state when the site filter narrows the catalogue to zero', () => {
@@ -867,8 +867,8 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
       ],
       [
         makeBuilding({
-          building_id: 'cordera',
-          building_name: 'Cordera Building',
+          building_id: 'maple',
+          building_name: 'Maple Building',
           kindoo_site_id: null,
         }),
       ],
@@ -882,7 +882,7 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     expect(screen.getByTestId('edit-seat-buildings-empty-for-scope')).toBeInTheDocument();
-    expect(screen.queryByTestId('edit-seat-building-cordera')).toBeNull();
+    expect(screen.queryByTestId('edit-seat-building-maple')).toBeNull();
   });
 });
 
@@ -892,14 +892,14 @@ describe('<EditSeatDialog /> — dialog lifecycle', () => {
     const onOpenChange = vi.fn();
     mockCatalogue(
       [makeWard({ ward_code: 'CO' })],
-      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
     );
     const seat = makeSeat({
       type: 'manual',
       scope: 'CO',
       callings: [],
       reason: 'sub teacher',
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
     });
     render(<EditSeatDialog seat={seat} onOpenChange={onOpenChange} />);
     await user.type(screen.getByTestId('edit-seat-comment'), 'note');

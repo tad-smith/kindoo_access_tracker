@@ -211,7 +211,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 
 ### 4.3 `stakes/{stakeId}/buildings/{buildingId}`
 
-**Doc ID:** URL-safe slug derived from `building_name` (e.g. `Cordera Building` → `cordera-building`).
+**Doc ID:** URL-safe slug derived from `building_name` (e.g. `Maple Building` → `maple-building`).
 
 **Fields:**
 
@@ -518,7 +518,7 @@ Multi-Kindoo-site management for a single SBA stake. A doc here represents a **f
 ```typescript
 {
   id: string;                          // = doc.id
-  display_name: string;                // human-readable label (e.g. 'East Stake (Foothills Building)')
+  display_name: string;                // human-readable label (e.g. 'East Stake (Pine Building)')
   kindoo_expected_site_name: string;   // matches the site-name string Kindoo's admin UI surfaces;
                                        //   the extension's active-session validation compares this
                                        //   against the live Kindoo session's site name

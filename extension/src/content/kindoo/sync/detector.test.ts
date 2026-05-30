@@ -78,7 +78,7 @@ function seat(overrides: Partial<Seat>): Seat {
     scope: 'CO',
     type: 'auto',
     callings: ['Sunday School Teacher'],
-    building_names: ['Cordera Building'],
+    building_names: ['Maple Building'],
     duplicate_grants: [],
     created_at: ts(),
     last_modified_at: ts(),
@@ -93,7 +93,7 @@ function kuser(overrides: Partial<KindooEnvironmentUser>): KindooEnvironmentUser
     euid: 'e1',
     userId: 'u1',
     username: 'someone@example.com',
-    description: 'Cordera Ward (Sunday School Teacher)',
+    description: 'Maple Ward (Sunday School Teacher)',
     isTempUser: false,
     startAccessDoorsDateAtTimeZone: null,
     expiryDateAtTimeZone: null,
@@ -105,11 +105,11 @@ function kuser(overrides: Partial<KindooEnvironmentUser>): KindooEnvironmentUser
 
 const STAKE = stake();
 const WARDS = [
-  ward('CO', 'Cordera Ward', 'Cordera Building'),
+  ward('CO', 'Maple Ward', 'Maple Building'),
   ward('PC', 'Pine Creek Ward', 'Pine Creek Building'),
 ];
 const BUILDINGS = [
-  building('cordera', 'Cordera Building', 6248),
+  building('maple', 'Maple Building', 6248),
   building('pinecreek', 'Pine Creek Building', 6249),
 ];
 const WARD_TEMPLATES = [template('Sunday School Teacher'), template('Elders Quorum President')];
@@ -191,7 +191,7 @@ describe('detect', () => {
     const result = detect(
       baseInputs({
         seats: [seat({ scope: 'CO', type: 'manual', callings: [], reason: 'Requested by bishop' })],
-        kindooUsers: [kuser({ description: 'Cordera Ward (Sunday School Teacher)' })],
+        kindooUsers: [kuser({ description: 'Maple Ward (Sunday School Teacher)' })],
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
@@ -206,12 +206,12 @@ describe('detect', () => {
             type: 'manual',
             callings: [],
             reason: 'Requested by bishop',
-            building_names: ['Cordera Building', 'Pine Creek Building'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
           }),
         ],
         kindooUsers: [
           kuser({
-            description: 'Cordera Ward (Building Greeter)',
+            description: 'Maple Ward (Building Greeter)',
             accessSchedules: [{ ruleId: 6248 }],
           }),
         ],
@@ -237,13 +237,13 @@ describe('detect', () => {
             scope: 'CO',
             type: 'auto',
             callings: ['Sunday School Teacher'],
-            building_names: ['Cordera Building'],
+            building_names: ['Maple Building'],
           }),
         ],
         kindooUsers: [
           kuser({
             username: 'auto-user@example.com',
-            description: 'Cordera Ward (Sunday School Teacher)',
+            description: 'Maple Ward (Sunday School Teacher)',
             accessSchedules: [],
             derivedBuildings: null,
           }),
@@ -270,15 +270,15 @@ describe('detect', () => {
             scope: 'CO',
             type: 'auto',
             callings: ['Sunday School Teacher'],
-            building_names: ['Cordera Building'],
+            building_names: ['Maple Building'],
           }),
         ],
         kindooUsers: [
           kuser({
             username: 'auto-match@example.com',
-            description: 'Cordera Ward (Sunday School Teacher)',
+            description: 'Maple Ward (Sunday School Teacher)',
             accessSchedules: [],
-            derivedBuildings: ['Cordera Building'],
+            derivedBuildings: ['Maple Building'],
           }),
         ],
       }),
@@ -296,26 +296,26 @@ describe('detect', () => {
             scope: 'CO',
             type: 'auto',
             callings: ['Sunday School Teacher'],
-            building_names: ['Cordera Building'],
+            building_names: ['Maple Building'],
           }),
         ],
         kindooUsers: [
           kuser({
             username: 'auto-diff@example.com',
-            description: 'Cordera Ward (Sunday School Teacher)',
+            description: 'Maple Ward (Sunday School Teacher)',
             accessSchedules: [],
-            derivedBuildings: ['Cordera Building', 'Pine Creek Building'],
+            derivedBuildings: ['Maple Building', 'Pine Creek Building'],
           }),
         ],
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
     expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
-    expect(result.discrepancies[0]?.reason).toContain('Cordera Building, Pine Creek Building');
+    expect(result.discrepancies[0]?.reason).toContain('Maple Building, Pine Creek Building');
     // KindooBlock surfaces derivedBuildings so the fix dispatcher and
     // the row UI can use it.
     expect(result.discrepancies[0]?.kindoo?.derivedBuildings).toEqual([
-      'Cordera Building',
+      'Maple Building',
       'Pine Creek Building',
     ]);
   });
@@ -330,13 +330,13 @@ describe('detect', () => {
             scope: 'CO',
             type: 'auto',
             callings: ['Sunday School Teacher'],
-            building_names: ['Cordera Building'],
+            building_names: ['Maple Building'],
           }),
         ],
         kindooUsers: [
           kuser({
             username: 'auto-empty@example.com',
-            description: 'Cordera Ward (Sunday School Teacher)',
+            description: 'Maple Ward (Sunday School Teacher)',
             accessSchedules: [],
             derivedBuildings: [],
           }),
@@ -355,13 +355,13 @@ describe('detect', () => {
             type: 'temp',
             callings: [],
             reason: 'Visiting speaker',
-            building_names: ['Cordera Building', 'Pine Creek Building'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
           }),
         ],
         kindooUsers: [
           kuser({
             isTempUser: true,
-            description: 'Cordera Ward (Visiting speaker)',
+            description: 'Maple Ward (Visiting speaker)',
             accessSchedules: [{ ruleId: 6248 }],
           }),
         ],
@@ -376,7 +376,7 @@ describe('detect', () => {
       baseInputs({
         seats: [seat({ scope: 'CO', type: 'auto', callings: ['Sunday School Teacher'] })],
         kindooUsers: [
-          kuser({ description: 'Cordera Ward (Sunday School Teacher, Building Janitor)' }),
+          kuser({ description: 'Maple Ward (Sunday School Teacher, Building Janitor)' }),
         ],
       }),
     );
@@ -400,12 +400,12 @@ describe('detect', () => {
             scope: 'CO',
             type: 'auto',
             callings: ['Sunday School Teacher'],
-            building_names: ['Cordera Building'],
+            building_names: ['Maple Building'],
           }),
         ],
         kindooUsers: [
           kuser({
-            description: 'Cordera Ward (Sunday School Teacher, Accompanist)',
+            description: 'Maple Ward (Sunday School Teacher, Accompanist)',
             accessSchedules: [{ ruleId: 6248 }],
           }),
         ],
@@ -453,7 +453,7 @@ describe('detect', () => {
           // extra-kindoo-calling → review
           kuser({
             username: 'z@example.com',
-            description: 'Cordera Ward (Sunday School Teacher, Janitor)',
+            description: 'Maple Ward (Sunday School Teacher, Janitor)',
           }),
           // matches SBA on a@example.com → no row
           kuser({ username: 'a@example.com' }),
@@ -471,7 +471,7 @@ describe('detect', () => {
       kindooUsers: [
         kuser({
           username: 'z@example.com',
-          description: 'Cordera Ward (Sunday School Teacher, Janitor)',
+          description: 'Maple Ward (Sunday School Teacher, Janitor)',
         }),
         kuser({ username: 'a@example.com' }),
       ],
@@ -505,12 +505,12 @@ describe('detect', () => {
             type: 'manual',
             callings: [],
             reason: 'Requested by bishop',
-            building_names: ['Cordera Building'],
+            building_names: ['Maple Building'],
           }),
         ],
         kindooUsers: [
           kuser({
-            description: 'Cordera Ward (Building Greeter)',
+            description: 'Maple Ward (Building Greeter)',
             accessSchedules: [{ ruleId: 99999 }],
           }),
         ],
@@ -529,12 +529,12 @@ describe('detect', () => {
             type: 'manual',
             callings: [],
             reason: 'Requested by bishop',
-            building_names: ['Cordera Building', 'Pine Creek Building'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
           }),
         ],
         kindooUsers: [
           kuser({
-            description: 'Cordera Ward (Building Greeter)',
+            description: 'Maple Ward (Building Greeter)',
             accessSchedules: [{ ruleId: 6249 }, { ruleId: 6248 }],
           }),
         ],
@@ -543,7 +543,7 @@ describe('detect', () => {
     expect(result.discrepancies).toEqual([]);
   });
 
-  it('emits no scope-mismatch when stake segment is non-auto but ward segment auto-matches the seat (corry@corrymac.com shape)', () => {
+  it('emits no scope-mismatch when stake segment is non-auto but ward segment auto-matches the seat (two-segment ward-priority shape)', () => {
     // Live false-positive case before the auto-preference primary
     // pick: SBA seat is scope=CO/auto/Sunday School Teacher; Kindoo
     // description carries a non-auto stake calling alongside the auto
@@ -554,8 +554,8 @@ describe('detect', () => {
       baseInputs({
         seats: [
           seat({
-            member_canonical: 'corry@corrymac.com',
-            member_email: 'corry@corrymac.com',
+            member_canonical: 'user2@example.com',
+            member_email: 'user2@example.com',
             scope: 'CO',
             type: 'auto',
             callings: ['Sunday School Teacher'],
@@ -563,15 +563,15 @@ describe('detect', () => {
         ],
         kindooUsers: [
           kuser({
-            username: 'corry@corrymac.com',
+            username: 'user2@example.com',
             description:
-              'Colorado Springs North Stake (Technology Specialist)  |  Cordera Ward (Sunday School Teacher)',
+              'Colorado Springs North Stake (Technology Specialist)  |  Maple Ward (Sunday School Teacher)',
             accessSchedules: [{ ruleId: 6248 }],
           }),
         ],
       }),
     );
-    const rowsForEmail = result.discrepancies.filter((d) => d.canonical === 'corry@corrymac.com');
+    const rowsForEmail = result.discrepancies.filter((d) => d.canonical === 'user2@example.com');
     expect(rowsForEmail).toEqual([]);
   });
 
@@ -592,13 +592,13 @@ describe('detect', () => {
   // `content/kindoo/sync/activeSite.ts` + `docs/spec.md` §15.
   // --------------------------------------------------------------------
 
-  // Mixed home + foreign fixture. Two wards: Cordera (home) and Foothills
+  // Mixed home + foreign fixture. Two wards: Maple (home) and Pine
   // (foreign-site 'east-stake'). Plus stake-scope seats and Kindoo users
   // on each side.
   const WARDS_MIXED: Ward[] = [
-    ward('CO', 'Cordera Ward', 'Cordera Building'),
+    ward('CO', 'Maple Ward', 'Maple Building'),
     {
-      ...ward('FT', 'Foothills Ward', 'Foothills Building'),
+      ...ward('FT', 'Pine Ward', 'Pine Building'),
       kindoo_site_id: 'east-stake',
     },
   ];
@@ -705,11 +705,11 @@ describe('detect', () => {
         kindooUsers: [
           kuser({
             username: 'home-user@example.com',
-            description: 'Cordera Ward (Sunday School Teacher)',
+            description: 'Maple Ward (Sunday School Teacher)',
           }),
           kuser({
             username: 'foreign-user@example.com',
-            description: 'Foothills Ward (Sunday School Teacher)',
+            description: 'Pine Ward (Sunday School Teacher)',
           }),
         ],
         activeSite: { kind: 'foreign', siteId: 'east-stake' },
@@ -733,7 +733,7 @@ describe('detect', () => {
         kindooUsers: [
           kuser({
             username: 'k@example.com',
-            description: 'Cordera Ward (Sunday School Teacher)',
+            description: 'Maple Ward (Sunday School Teacher)',
           }),
         ],
         activeSite: { kind: 'unknown' },
@@ -753,8 +753,8 @@ describe('detect', () => {
   // expected (scope, type, callings, buildings).
 
   it('T-42: ward+foreign-ward Description appears on both home and foreign sync views with no spurious drift', () => {
-    // Multi-site user: Bishop in Cordera (home) + Sunday School Teacher
-    // in Foothills (foreign). Seat carries the home primary + a foreign
+    // Multi-site user: Bishop in Maple (home) + Sunday School Teacher
+    // in Pine (foreign). Seat carries the home primary + a foreign
     // duplicate. Description carries both segments.
     const multiSeat = seat({
       member_canonical: 'multi@example.com',
@@ -763,14 +763,14 @@ describe('detect', () => {
       scope: 'CO',
       type: 'auto',
       callings: ['Sunday School Teacher'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       kindoo_site_id: null,
       duplicate_grants: [
         {
           scope: 'FT',
           type: 'auto',
           callings: ['Sunday School Teacher'],
-          building_names: ['Foothills Building'],
+          building_names: ['Pine Building'],
           kindoo_site_id: 'east-stake',
           detected_at: ts(),
         },
@@ -780,11 +780,11 @@ describe('detect', () => {
       euid: 'e-multi',
       userId: 'u-multi',
       username: 'multi@example.com',
-      description: 'Cordera Ward (Sunday School Teacher) | Foothills Ward (Sunday School Teacher)',
+      description: 'Maple Ward (Sunday School Teacher) | Pine Ward (Sunday School Teacher)',
       accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
     });
 
-    // Home view: expects Cordera (rule 6248). The home segment matches
+    // Home view: expects Maple (rule 6248). The home segment matches
     // the seat's home primary; no drift.
     const homeResult = detect(
       mixedInputs({
@@ -797,7 +797,7 @@ describe('detect', () => {
     expect(homeResult.seatCount).toBe(1);
     expect(homeResult.kindooCount).toBe(1);
 
-    // Foreign view: expects Foothills (rule 6249). The foreign segment
+    // Foreign view: expects Pine (rule 6249). The foreign segment
     // matches the seat's foreign duplicate; no drift.
     const foreignResult = detect(
       mixedInputs({
@@ -812,7 +812,7 @@ describe('detect', () => {
   });
 
   it('T-42: stake+foreign-ward Description appears on both home (stake) and foreign-ward views', () => {
-    // Stake Clerk + Sunday School Teacher in Foothills (foreign). Seat:
+    // Stake Clerk + Sunday School Teacher in Pine (foreign). Seat:
     // stake primary + foreign duplicate. Description carries both. Per
     // operator-locked decision 2, stake-scope is home-only — so the
     // home view sees the stake segment, the foreign view sees the
@@ -824,14 +824,14 @@ describe('detect', () => {
       scope: 'stake',
       type: 'auto',
       callings: ['Stake Clerk'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       kindoo_site_id: null,
       duplicate_grants: [
         {
           scope: 'FT',
           type: 'auto',
           callings: ['Sunday School Teacher'],
-          building_names: ['Foothills Building'],
+          building_names: ['Pine Building'],
           kindoo_site_id: 'east-stake',
           detected_at: ts(),
         },
@@ -841,8 +841,7 @@ describe('detect', () => {
       euid: 'e-sc',
       userId: 'u-sc',
       username: 'sc@example.com',
-      description:
-        'Colorado Springs North Stake (Stake Clerk) | Foothills Ward (Sunday School Teacher)',
+      description: 'Colorado Springs North Stake (Stake Clerk) | Pine Ward (Sunday School Teacher)',
       accessSchedules: [{ ruleId: 6248 }, { ruleId: 6249 }],
     });
 
@@ -859,7 +858,7 @@ describe('detect', () => {
     expect(homeResult.seatCount).toBe(1);
     expect(homeResult.kindooCount).toBe(1);
 
-    // Foreign view: picks the Foothills segment and matches the seat's
+    // Foreign view: picks the Pine segment and matches the seat's
     // foreign duplicate. No drift.
     const foreignResult = detect(
       mixedInputs({
@@ -884,13 +883,13 @@ describe('detect', () => {
       scope: 'CO',
       kindoo_site_id: null,
       callings: ['Sunday School Teacher'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'FT',
           type: 'auto',
           callings: ['Sunday School Teacher'],
-          building_names: ['Foothills Building'],
+          building_names: ['Pine Building'],
           kindoo_site_id: 'east-stake',
           detected_at: ts(),
         },
@@ -909,21 +908,21 @@ describe('detect', () => {
     // The projected SBA block reflects the foreign side, not the
     // home-side primary.
     expect(result.discrepancies[0]!.sba?.scope).toBe('FT');
-    expect(result.discrepancies[0]!.sba?.buildingNames).toEqual(['Foothills Building']);
+    expect(result.discrepancies[0]!.sba?.buildingNames).toEqual(['Pine Building']);
   });
 
   it('T-42: two foreign wards on the same foreign site → projection unions both building_names', () => {
     // Spec §15 line 373: "Two foreign wards on the same foreign site
     // produce two `duplicate_grants[]` entries… the sync detector
     // unions their `building_names` per-site when computing expected
-    // buildings." Fixture: a seat with the home primary on Cordera
-    // plus TWO foreign-site duplicates (Foothills + Mountain View),
+    // buildings." Fixture: a seat with the home primary on Maple
+    // plus TWO foreign-site duplicates (Pine + Mountain View),
     // both bound to 'east-stake'. The foreign-view projection must
     // include BOTH foreign buildings, not just one.
     const wardsTwoForeign: Ward[] = [
-      ward('CO', 'Cordera Ward', 'Cordera Building'),
+      ward('CO', 'Maple Ward', 'Maple Building'),
       {
-        ...ward('FT', 'Foothills Ward', 'Foothills Building'),
+        ...ward('FT', 'Pine Ward', 'Pine Building'),
         kindoo_site_id: 'east-stake',
       },
       {
@@ -937,13 +936,13 @@ describe('detect', () => {
       scope: 'CO',
       kindoo_site_id: null,
       callings: ['Sunday School Teacher'],
-      building_names: ['Cordera Building'],
+      building_names: ['Maple Building'],
       duplicate_grants: [
         {
           scope: 'FT',
           type: 'auto',
           callings: ['Sunday School Teacher'],
-          building_names: ['Foothills Building'],
+          building_names: ['Pine Building'],
           kindoo_site_id: 'east-stake',
           detected_at: ts(),
         },
@@ -968,11 +967,11 @@ describe('detect', () => {
       activeSite: { kind: 'foreign', siteId: 'east-stake' },
     });
     // Foreign view: sba-only with the union of BOTH foreign duplicates'
-    // buildings (Foothills + Mountain View).
+    // buildings (Pine + Mountain View).
     expect(result.discrepancies).toHaveLength(1);
     expect(result.discrepancies[0]!.code).toBe('sba-only');
     expect(result.discrepancies[0]!.sba?.buildingNames.sort()).toEqual(
-      ['Foothills Building', 'Mountain View Building'].sort(),
+      ['Pine Building', 'Mountain View Building'].sort(),
     );
   });
 });
