@@ -56,6 +56,11 @@ functions/.tsbuild-tests/
 # on `pnpm install`, overwritten by infra/scripts/stamp-version.js on deploy.
 apps/web/src/version.gen.ts
 functions/src/version.gen.ts
+# TanStack Router generated route tree — emitted by @tanstack/router-plugin
+# on `pnpm dev` / `pnpm build` and by `apps/web/scripts/generate-route-tree.mjs`
+# (run as the `pretypecheck` / `pretest` hook). Committing it produces
+# cosmetic-only diffs every time anyone runs dev.
+apps/web/src/routeTree.gen.ts
 # Firebase CLI local state (emulator data, hosting cache, etc.)
 .firebase/
 firebase-debug.log
