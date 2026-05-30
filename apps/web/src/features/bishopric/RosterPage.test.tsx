@@ -718,10 +718,13 @@ describe('<BishopricRosterPage />', () => {
     // Operator-reported same-scope collapse on the ward roster: a
     // primary at scope CO with a same-scope DuplicateGrant naming
     // additional buildings renders ONE row whose `building_names` is
-    // the union, with the "Duplicate" badge and the operator-facing
-    // tooltip copy. Pre-fix this row showed only the primary's
-    // buildings.
-    it('collapses a same-scope DuplicateGrant into the row, unions buildings, and shows the Duplicate badge', () => {
+    // the union. On the Bishopric Roster an auto-primary that absorbed
+    // same-scope duplicates renders the "edited" badge variant —
+    // bishopric operators read the row as "this person's
+    // calling-derived access was edited beyond the LCR-derived set."
+    // (Pre-edit the badge was "duplicate" with the manual-grant
+    // tooltip; AllSeats / stake roster surfaces still show that.)
+    it('collapses a same-scope DuplicateGrant into the row, unions buildings, and shows the Edited badge (auto primary)', () => {
       usePrincipalMock.mockReturnValue(principal(['MH']));
       const NOW = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
       mockSeats([
@@ -755,9 +758,50 @@ describe('<BishopricRosterPage />', () => {
       expect(row.textContent).toContain('Jamboree');
       expect(row.textContent).toContain('Lexington');
       expect(row.textContent).toContain('Monument');
-      // Duplicate badge with operator-facing tooltip.
+      // Edited badge (auto-primary variant) + new bishopric tooltip copy.
       const badge = screen.getByTestId('grant-duplicate-badge-user2@example.com');
       expect(badge).toBeInTheDocument();
+      expect(badge.textContent).toBe('edited');
+      expect(badge.getAttribute('title')).toBe(
+        'This user was granted access to additional buildings beyond their calling.',
+      );
+    });
+
+    // Regression guard: a manual primary with a same-scope DuplicateGrant
+    // keeps the old "duplicate" label + tooltip on the Bishopric Roster.
+    // The "Edited" variant is auto-primary only — manual primaries don't
+    // carry an LCR-derived "calling" baseline to be edited against.
+    it('keeps the Duplicate badge (not Edited) when a manual primary has same-scope duplicates', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      const NOW = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          member_canonical: 'manprim@x.com',
+          member_email: 'manprim@x.com',
+          member_name: 'Manual Primary',
+          kindoo_site_id: null,
+          reason: 'Activities chair',
+          building_names: ['Primary Bldg'],
+          duplicate_grants: [
+            {
+              scope: 'CO',
+              type: 'manual',
+              kindoo_site_id: null,
+              reason: 'Extra access',
+              building_names: ['Extra Bldg'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage initialWard="CO" />);
+      const badge = screen.getByTestId('grant-duplicate-badge-manprim@x.com');
+      expect(badge).toBeInTheDocument();
+      expect(badge.textContent).toBe('duplicate');
       expect(badge.getAttribute('title')).toBe(
         'This user was manually granted access to additional buildings.',
       );

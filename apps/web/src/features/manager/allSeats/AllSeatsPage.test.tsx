@@ -968,8 +968,11 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     render(<AllSeatsPage />);
     const cards = document.querySelectorAll('.roster-card[data-seat-id="ks9@x.com"]');
     expect(cards).toHaveLength(1);
-    // Duplicate badge present with new tooltip copy.
+    // Duplicate badge present with tooltip copy. AllSeats keeps the
+    // "duplicate" label even on auto-primary + same-scope-dup; the
+    // Bishopric Roster's "edited" variant does not apply here.
     const badge = screen.getByTestId('grant-duplicate-badge-ks9@x.com');
+    expect(badge.textContent).toBe('duplicate');
     expect(badge.getAttribute('title')).toBe(
       'This user was manually granted access to additional buildings.',
     );
