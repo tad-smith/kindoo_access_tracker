@@ -1,11 +1,13 @@
 // Pure unit tests for the roster / All Seats sort logic.
 //
-// Sort is now derived from the seat's callings via the compiled
-// churchwide `calling → order` table (@kindoo/shared), NOT the
-// denormalised `seat.sort_order` (which the comparator ignores). Auto
-// and manual bands share the calling-order comparator; temp keeps its
-// expiry-descending order. See `extension/docs/sync-design.md` Stage
-// 1(a).
+// Sort is derived from the seat's callings (auto) / reason (manual)
+// against the compiled churchwide `calling → order` table
+// (@kindoo/shared), NOT the denormalised `seat.sort_order` (which the
+// comparator ignores). Manual seats carry `callings: []` and store the
+// calling in free-text `seat.reason` (spec §13) — so the manual band
+// matches `seat.reason`, the auto band matches `seat.callings` (MIN).
+// temp keeps its expiry-descending order. See
+// `extension/docs/sync-design.md` Stage 1(a).
 
 import type { TimestampLike } from '@kindoo/shared';
 import { describe, expect, it } from 'vitest';
@@ -38,7 +40,8 @@ describe('sortSeatsWithinScope', () => {
       member_email: 'b@x.com',
       member_name: 'B',
       type: 'manual',
-      callings: ['Bishop'],
+      callings: [],
+      reason: 'Bishop',
     });
     const c = makeSeat({
       member_canonical: 'c@x.com',
@@ -83,30 +86,119 @@ describe('sortSeatsWithinScope', () => {
     expect(sorted.map((s) => s.member_name)).toEqual(['Stake Pres', 'Bishop', 'EQ Pres']);
   });
 
-  it('within manual, sorts by calling order ascending (changed from name)', () => {
-    // Names are deliberately reverse-alpha to the calling order: a
-    // name sort would yield ['Aaron', 'Zach']; the calling sort must
+  it('within manual, sorts by reason→calling order (production shape: callings [], reason set)', () => {
+    // Manual seats carry callings: [] and store the calling in reason.
+    // Names are deliberately reverse-alpha to the calling order: a name
+    // sort would yield ['Aaron', 'Zach']; the reason-calling sort must
     // put the Bishop (Zach) first.
     const eqPres = makeSeat({
       member_canonical: 'a@x.com',
       member_email: 'a@x.com',
       member_name: 'Aaron',
       type: 'manual',
-      callings: ['Elders Quorum President'], // order 41
+      callings: [],
+      reason: 'Elders Quorum President', // order 41
     });
     const bishop = makeSeat({
       member_canonical: 'z@x.com',
       member_email: 'z@x.com',
       member_name: 'Zach',
       type: 'manual',
-      callings: ['Bishop'], // order 31
+      callings: [],
+      reason: 'Bishop', // order 31
     });
     const sorted = sortSeatsWithinScope([eqPres, bishop]);
     expect(sorted.map((s) => s.member_name)).toEqual(['Zach', 'Aaron']);
   });
 
-  it('auto + manual share the calling-order comparator within their bands', () => {
-    // Two auto + two manual; each band independently calling-ordered.
+  it('manual band ignores seat.callings; only seat.reason drives order', () => {
+    // Regression for the masked bug: a manual seat's `callings` is []
+    // in production, so reading callings sorts every manual seat as
+    // "unknown". Even if callings were somehow populated, the manual
+    // band must key on reason. Here callings is deliberately mismatched
+    // to reason to prove reason wins.
+    const a = makeSeat({
+      member_canonical: 'a@x.com',
+      member_email: 'a@x.com',
+      member_name: 'Reason Bishop',
+      type: 'manual',
+      callings: ['Primary Secretary'], // would be order 65 if read
+      reason: 'Bishop', // order 31 — this must win
+      created_at: ts('2026-05-10T00:00:00Z'),
+    });
+    const b = makeSeat({
+      member_canonical: 'b@x.com',
+      member_email: 'b@x.com',
+      member_name: 'Reason EQ Pres',
+      type: 'manual',
+      callings: ['Bishop'], // would be order 31 if read
+      reason: 'Elders Quorum President', // order 41
+      created_at: ts('2026-05-01T00:00:00Z'),
+    });
+    const sorted = sortSeatsWithinScope([b, a]);
+    // By reason: Bishop (31) < EQ Pres (41). If callings were read, the
+    // order would flip (b's callings=Bishop would lead).
+    expect(sorted.map((s) => s.member_name)).toEqual(['Reason Bishop', 'Reason EQ Pres']);
+  });
+
+  it('a manual seat with no reason / empty reason is unknown → band bottom by created_at asc', () => {
+    const namedBishop = makeSeat({
+      member_canonical: 'b@x.com',
+      member_email: 'b@x.com',
+      member_name: 'Has Reason',
+      type: 'manual',
+      callings: [],
+      reason: 'Bishop', // order 31
+      created_at: ts('2026-05-20T00:00:00Z'),
+    });
+    const noReasonNewer = makeSeat({
+      member_canonical: 'n@x.com',
+      member_email: 'n@x.com',
+      member_name: 'No Reason Newer',
+      type: 'manual',
+      callings: [],
+      // reason absent → unknown
+      created_at: ts('2026-05-15T00:00:00Z'),
+    });
+    const noReasonOlder = makeSeat({
+      member_canonical: 'o@x.com',
+      member_email: 'o@x.com',
+      member_name: 'No Reason Older',
+      type: 'manual',
+      callings: [],
+      reason: '', // empty → unknown
+      created_at: ts('2026-05-02T00:00:00Z'),
+    });
+    const sorted = sortSeatsWithinScope([noReasonNewer, namedBishop, noReasonOlder]);
+    expect(sorted.map((s) => s.member_name)).toEqual([
+      'Has Reason',
+      'No Reason Older',
+      'No Reason Newer',
+    ]);
+  });
+
+  it('manual band matches reason case-insensitively / with surrounding whitespace', () => {
+    const messy = makeSeat({
+      member_canonical: 'm@x.com',
+      member_email: 'm@x.com',
+      member_name: 'Messy Bishop',
+      type: 'manual',
+      callings: [],
+      reason: '  bIsHoP ', // normalises to Bishop (order 31)
+    });
+    const eqPres = makeSeat({
+      member_canonical: 'e@x.com',
+      member_email: 'e@x.com',
+      member_name: 'EQ Pres',
+      type: 'manual',
+      callings: [],
+      reason: 'Elders Quorum President', // 41
+    });
+    const sorted = sortSeatsWithinScope([eqPres, messy]);
+    expect(sorted.map((s) => s.member_name)).toEqual(['Messy Bishop', 'EQ Pres']);
+  });
+
+  it('auto + manual each calling-order their own band (auto via callings, manual via reason)', () => {
     const autoBishop = makeSeat({
       member_canonical: 'ab@x.com',
       member_email: 'ab@x.com',
@@ -126,14 +218,16 @@ describe('sortSeatsWithinScope', () => {
       member_email: 'mb@x.com',
       member_name: 'Manual Bishop',
       type: 'manual',
-      callings: ['Bishop'], // 31
+      callings: [],
+      reason: 'Bishop', // 31
     });
     const manualEq = makeSeat({
       member_canonical: 'me@x.com',
       member_email: 'me@x.com',
       member_name: 'Manual EQ',
       type: 'manual',
-      callings: ['Elders Quorum President'], // 41
+      callings: [],
+      reason: 'Elders Quorum President', // 41
     });
     const sorted = sortSeatsWithinScope([manualEq, autoEq, manualBishop, autoBishop]);
     expect(sorted.map((s) => s.member_name)).toEqual([
@@ -144,7 +238,7 @@ describe('sortSeatsWithinScope', () => {
     ]);
   });
 
-  it('uses the MIN calling order for a multi-calling seat', () => {
+  it('uses the MIN calling order for a multi-calling auto seat', () => {
     // Seat A holds EQ Pres (41) + Bishop (31) → effective order 31.
     // Seat B holds only Bishopric First Counselor (33). A wins.
     const multi = makeSeat({
@@ -165,7 +259,7 @@ describe('sortSeatsWithinScope', () => {
     expect(sorted.map((s) => s.member_name)).toEqual(['Multi', 'Single']);
   });
 
-  it('unknown-calling seats sort to the bottom of the band, then by created_at ascending', () => {
+  it('unknown-calling auto seats sort to the bottom of the band, then by created_at ascending', () => {
     const bishop = makeSeat({
       member_canonical: 'b@x.com',
       member_email: 'b@x.com',
@@ -195,26 +289,26 @@ describe('sortSeatsWithinScope', () => {
     expect(sorted.map((s) => s.member_name)).toEqual(['Bishop', 'Unknown Older', 'Unknown Newer']);
   });
 
-  it('a seat with no callings is treated as unknown (band bottom)', () => {
+  it('an auto seat with no callings is treated as unknown (band bottom)', () => {
     const bishop = makeSeat({
       member_canonical: 'b@x.com',
       member_email: 'b@x.com',
       member_name: 'Bishop',
-      type: 'manual',
+      type: 'auto',
       callings: ['Bishop'],
     });
     const noCallings = makeSeat({
       member_canonical: 'n@x.com',
       member_email: 'n@x.com',
       member_name: 'No Callings',
-      type: 'manual',
+      type: 'auto',
       callings: [],
     });
     const sorted = sortSeatsWithinScope([noCallings, bishop]);
     expect(sorted.map((s) => s.member_name)).toEqual(['Bishop', 'No Callings']);
   });
 
-  it('among unknown-calling seats, missing created_at sorts to the very bottom', () => {
+  it('among unknown auto seats, missing created_at sorts to the very bottom', () => {
     const unknownDated = makeSeat({
       member_canonical: 'd@x.com',
       member_email: 'd@x.com',
@@ -260,25 +354,6 @@ describe('sortSeatsWithinScope', () => {
     expect(sorted.map((s) => s.member_name)).toEqual(['Older Bishop', 'Newer Bishop']);
   });
 
-  it('matches callings case-insensitively / with surrounding whitespace', () => {
-    const messy = makeSeat({
-      member_canonical: 'm@x.com',
-      member_email: 'm@x.com',
-      member_name: 'Messy Bishop',
-      type: 'auto',
-      callings: ['  bIsHoP '], // normalises to Bishop (order 31)
-    });
-    const eqPres = makeSeat({
-      member_canonical: 'e@x.com',
-      member_email: 'e@x.com',
-      member_name: 'EQ Pres',
-      type: 'auto',
-      callings: ['Elders Quorum President'], // 41
-    });
-    const sorted = sortSeatsWithinScope([eqPres, messy]);
-    expect(sorted.map((s) => s.member_name)).toEqual(['Messy Bishop', 'EQ Pres']);
-  });
-
   it('within temp, sorts by end_date descending (soonest-expiring at the bottom)', () => {
     const earlier = makeSeat({
       member_canonical: 'e@x.com',
@@ -300,15 +375,16 @@ describe('sortSeatsWithinScope', () => {
     expect(sorted.map((s) => s.member_name)).toEqual(['Later', 'Earlier']);
   });
 
-  it('within temp, calling order does NOT apply (callings ignored for temp)', () => {
-    // Even if a temp carried a calling-table name, the temp band sorts
-    // by expiry, not calling order. Later-expiring sorts ahead.
-    const soonBishopName = makeSeat({
+  it('within temp, calling order does NOT apply (reason / callings ignored for temp)', () => {
+    // Even if a temp carried a calling-table name in reason, the temp
+    // band sorts by expiry, not calling order. Later-expiring leads.
+    const soonNamed = makeSeat({
       member_canonical: 's@x.com',
       member_email: 's@x.com',
       member_name: 'Soon Expiring',
       type: 'temp',
-      callings: ['Bishop'], // order 31 — must be ignored
+      callings: [],
+      reason: 'Bishop', // order 31 — must be ignored for temp
       end_date: '2026-05-01',
     });
     const lateUnknown = makeSeat({
@@ -317,9 +393,10 @@ describe('sortSeatsWithinScope', () => {
       member_name: 'Late Expiring',
       type: 'temp',
       callings: [],
+      reason: 'Covering nursery',
       end_date: '2026-12-31',
     });
-    const sorted = sortSeatsWithinScope([soonBishopName, lateUnknown]);
+    const sorted = sortSeatsWithinScope([soonNamed, lateUnknown]);
     expect(sorted.map((s) => s.member_name)).toEqual(['Late Expiring', 'Soon Expiring']);
   });
 
@@ -402,7 +479,7 @@ describe('sortSeatsAcrossScopes', () => {
     expect(sorted.map((s) => s.scope)).toEqual(['stake', 'CO']);
   });
 
-  it('within a scope, applies the same type-banded calling-order sort', () => {
+  it('within a scope, applies the type-banded calling-order sort (auto via callings, manual via reason)', () => {
     const stakeAutoLow = makeSeat({
       member_canonical: 'sa@x.com',
       member_email: 'sa@x.com',
@@ -425,7 +502,8 @@ describe('sortSeatsAcrossScopes', () => {
       member_name: 'Stake Manual',
       scope: 'stake',
       type: 'manual',
-      callings: ['Stake Clerk'],
+      callings: [],
+      reason: 'Stake Clerk', // order 3
     });
     const coAuto = makeSeat({
       member_canonical: 'ca@x.com',

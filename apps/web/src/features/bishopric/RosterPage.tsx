@@ -87,10 +87,10 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
 
   // Sort by the matched grant's fields. Synthesise a `Seat` shim by
   // overlaying the grant's columns so `sortSeatsWithinScope` keys off
-  // the matched-grant band rather than the primary's. The auto + manual
-  // intra-band sort keys on the seat's `callings` (calling-order table);
-  // the shim doesn't override `callings`, so a duplicate-matched row
-  // sorts at the primary's calling rank. See spec §15 Phase B
+  // the matched-grant band rather than the primary's. The intra-band
+  // calling-order sort keys on the seat's `callings` (auto) / `reason`
+  // (manual); the shim doesn't override those, so a duplicate-matched
+  // row sorts at the primary's calling rank. See spec §15 Phase B
   // (roster-pages subsection) for the operator-accepted limitation.
   const sortedRows = useMemo(() => {
     const shims = seatsWithGrant.map(({ seat, grant }) => ({

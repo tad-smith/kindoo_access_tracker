@@ -76,9 +76,9 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
     return rows;
   }, [seats.data, selected]);
 
-  // Sort by the matched grant's fields. The auto + manual intra-band
-  // sort keys on the seat's `callings` (calling-order table); the shim
-  // doesn't override `callings`, so a duplicate-matched row sorts at
+  // Sort by the matched grant's fields. The intra-band calling-order
+  // sort keys on the seat's `callings` (auto) / `reason` (manual); the
+  // shim doesn't override those, so a duplicate-matched row sorts at
   // the primary's calling rank. See spec §15 Phase B (roster-pages
   // subsection) for the operator-accepted limitation.
   const sortedRows = useMemo(() => {

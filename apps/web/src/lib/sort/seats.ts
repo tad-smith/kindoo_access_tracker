@@ -3,23 +3,19 @@
 //   - features/bishopric/RosterPage.tsx       (single-ward sort)
 //   - features/stake/RosterPage.tsx            (stake-scope sort)
 //   - features/stake/WardRostersPage.tsx       (any-ward sort)
-//   - features/manager/allSeats/AllSeatsPage.tsx
 //
 // Within a single scope the ordering is type-banded:
 //
-//   1. auto   ┐  Both bands sort by CALLING ORDER, computed at render
-//   2. manual ┘  time from the seat's callings via the compiled
-//                churchwide `calling → order` table in @kindoo/shared
-//                (`seatCallingOrder` = MIN order across the seat's
-//                callings). Lower order sorts first. A seat whose
-//                callings don't match the table ("unknown") sorts to
-//                the bottom of its band, ordered by `created_at`
-//                ascending (oldest first), then `member_name`. We no
-//                longer read the denormalised `seat.sort_order` — sort
-//                is derived from observed callings. (Per
-//                `extension/docs/sync-design.md` Stage 1(a). The auto
-//                and manual bands share one comparator; only the type
-//                band differs.)
+//   1. auto    — by CALLING ORDER. Auto seats carry the matched
+//                calling(s) in `seat.callings`; order = MIN across them
+//                via the compiled churchwide `calling → order` table in
+//                @kindoo/shared (`seatCallingOrder`). Lower order first.
+//   2. manual  — by CALLING ORDER too, but manual seats store the
+//                calling in the free-text `seat.reason` (convention:
+//                `seat.callings` stays `[]` — spec §13). So the manual
+//                band matches `seat.reason` against the same table via
+//                `callingSortOrder` (single value, trimmed + case-
+//                insensitive).
 //   3. temp    — by `end_date` descending; soonest-expiring at the
 //                bottom of the band (per the operator brief). Temps
 //                carry a free-text reason, not a roster calling, so
@@ -28,11 +24,18 @@
 //                end_date for add_temp once the rules tightening lands;
 //                a null in transit shouldn't crash the sort).
 //
+// In both the auto and manual bands a row that doesn't match the table
+// ("unknown") sorts to the bottom of its band, ordered by `created_at`
+// ascending (oldest first), then `member_name`. We no longer read the
+// denormalised `seat.sort_order` — sort is derived from the seat's
+// observed callings / reason. (Per `extension/docs/sync-design.md`
+// Stage 1(a).)
+//
 // For All Seats (cross-scope), an outer sort runs first: Stake band,
 // then ward bands alpha by ward_code; within each band the same
 // type-banded ordering applies.
 
-import { seatCallingOrder, type Seat } from '@kindoo/shared';
+import { callingSortOrder, seatCallingOrder, type Seat } from '@kindoo/shared';
 
 const TYPE_BAND: Record<Seat['type'], number> = {
   auto: 0,
@@ -66,23 +69,35 @@ function createdAtMillis(seat: Seat): number {
 }
 
 /**
- * Comparator for the auto + manual bands (they share it). Order:
- *   1. calling order ascending (MIN across the seat's callings);
- *      unknown (no calling matches the table) → bottom of the band;
- *   2. within the unknown tail, `created_at` ascending (oldest first;
- *      missing → very bottom);
- *   3. `member_name` alpha tiebreak.
+ * Resolve a seat's calling order for the auto / manual bands:
+ *   - auto:   MIN over `seat.callings` (auto seats record matched callings);
+ *   - manual: `seat.reason` (manual seats store the calling there, with
+ *             `callings: []` — spec §13);
+ *   - other:  null (unknown).
+ * `null` ("unknown") → bottom of the band.
+ */
+function seatBandOrder(seat: Seat): number | null {
+  if (seat.type === 'auto') return seatCallingOrder(seat.callings);
+  if (seat.type === 'manual') return seat.reason ? callingSortOrder(seat.reason) : null;
+  return null;
+}
+
+/**
+ * Comparator for the auto + manual bands. Both order by calling order
+ * (resolved per `seatBandOrder` — `callings` for auto, `reason` for
+ * manual), then fall through to a shared tiebreak. Order:
+ *   1. calling order ascending; unknown (no match) → bottom of the band;
+ *   2. `created_at` ascending (oldest first; missing → very bottom);
+ *   3. `member_name` alpha.
  *
  * The `created_at` key only separates rows the calling order leaves
- * tied. Known-calling rows almost always differ on order; equal orders
- * (e.g. two seats sharing the top calling, or two unknown rows) fall
- * through to `created_at` then name.
+ * tied (two rows sharing the same calling, or two unknown rows).
  */
 function callingOrderCompare(a: Seat, b: Seat): number {
   // null (unknown) → bottom of the band. POSITIVE_INFINITY so any
   // matched order wins.
-  const aOrder = seatCallingOrder(a.callings) ?? Number.POSITIVE_INFINITY;
-  const bOrder = seatCallingOrder(b.callings) ?? Number.POSITIVE_INFINITY;
+  const aOrder = seatBandOrder(a) ?? Number.POSITIVE_INFINITY;
+  const bOrder = seatBandOrder(b) ?? Number.POSITIVE_INFINITY;
   if (aOrder !== bOrder) return aOrder - bOrder;
   const aCreated = createdAtMillis(a);
   const bCreated = createdAtMillis(b);
@@ -110,7 +125,8 @@ function tempCompare(a: Seat, b: Seat): number {
 /** Intra-band comparator dispatch once both seats share a type band. */
 function withinBandCompare(a: Seat, b: Seat): number {
   if (a.type === 'temp') return tempCompare(a, b);
-  // auto + manual share the calling-order comparator.
+  // auto + manual share the calling-order comparator (different source
+  // field, same ordering — see `seatBandOrder`).
   return callingOrderCompare(a, b);
 }
 
