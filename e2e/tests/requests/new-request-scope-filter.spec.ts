@@ -45,7 +45,12 @@ interface Claims {
   wards?: string[];
 }
 
-async function createSignedInUser(page: Page, email: string, claims: Claims): Promise<void> {
+async function createSignedInUser(
+  page: Page,
+  email: string,
+  claims: Claims,
+  startUrl = '/',
+): Promise<void> {
   const { uid } = await createAuthUser({ email });
   await setCustomClaims(uid, {
     canonical: email,
@@ -57,7 +62,7 @@ async function createSignedInUser(page: Page, email: string, claims: Claims): Pr
       },
     },
   });
-  await page.goto('/');
+  await page.goto(startUrl);
   await signInViaTestHatch(page, email, TEST_PASSWORD);
 }
 
@@ -103,7 +108,7 @@ test.describe('B-3 — New Request scope filter mirrors the principal role union
   test('stake-only user: scope dropdown is suppressed; form shows "Requesting for: Stake"', async ({
     page,
   }) => {
-    await createSignedInUser(page, 'stake-only@example.com', { stake: true });
+    await createSignedInUser(page, 'stake-only@example.com', { stake: true }, '/?p=new');
     await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
     // Static label rather than a dropdown. The "Requesting for:" prefix
@@ -125,7 +130,7 @@ test.describe('B-3 — New Request scope filter mirrors the principal role union
   test('single-ward bishopric user: scope dropdown is suppressed; only the held ward is offered', async ({
     page,
   }) => {
-    await createSignedInUser(page, 'bishop-co@example.com', { wards: ['CO'] });
+    await createSignedInUser(page, 'bishop-co@example.com', { wards: ['CO'] }, '/?p=new');
     await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
     await expect(page.getByTestId('new-request-scope')).toHaveCount(0);

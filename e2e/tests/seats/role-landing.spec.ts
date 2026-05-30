@@ -1,9 +1,12 @@
 // End-to-end specs: every role lands on its default page and can
 // click through to its other pages.
 //
-// Per `spec.md` §5: manager → /manager/dashboard, stake → /stake/new,
-// bishopric → /bishopric/new (the leftmost-tab rule places New
-// Request first for both bishopric and stake from Phase 6 on).
+// Per `spec.md` §5: manager → /manager/dashboard, stake →
+// /stake/roster, bishopric → /bishopric/roster. Non-Kindoo-Manager
+// roles land on the Roster (not the leftmost-nav New Request) so the
+// first surface those users see is the current seat list for their
+// scope; the bishopric Roster header carries a "New Request" button
+// for the previously-default `/new` form.
 //
 // We exercise:
 //   - Default landing for each role.
@@ -83,18 +86,30 @@ test.describe('Phase 5 default landings', () => {
     await expect(page.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
   });
 
-  test('stake principal lands on /new', async ({ page }) => {
+  test('stake principal lands on /stake/roster', async ({ page }) => {
     await signInWithClaims(page, 'stake@example.com', {
       stakes: { csnorth: { manager: false, stake: true, wards: [] } },
     });
-    await expect(page).toHaveURL(/\/new$/);
-    await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
+    await expect(page).toHaveURL(/\/stake\/roster$/);
+    await expect(page.getByRole('heading', { name: /^Stake Roster$/ })).toBeVisible();
   });
 
-  test('bishopric principal lands on /new', async ({ page }) => {
+  test('bishopric principal lands on /bishopric/roster with a "New Request" header button', async ({
+    page,
+  }) => {
     await signInWithClaims(page, 'bishop@example.com', {
       stakes: { csnorth: { manager: false, stake: false, wards: ['CO'] } },
     });
+    await expect(page).toHaveURL(/\/bishopric\/roster$/);
+    await expect(page.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
+    // The header carries the previously-default `/new` form as a
+    // one-click affordance. Scope to the page-header button via testid
+    // so we don't accidentally exercise the nav-rail Quick Link (which
+    // also reads "New Request" for bishopric principals).
+    const newRequestLink = page.getByTestId('bishopric-roster-new-request');
+    await expect(newRequestLink).toBeVisible();
+    await expect(newRequestLink).toHaveText('New Request');
+    await newRequestLink.click();
     await expect(page).toHaveURL(/\/new$/);
     await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
   });
@@ -127,16 +142,20 @@ test.describe('Phase 5 nav click-through', () => {
     await expect(page.getByRole('heading', { name: /^Access$/ })).toBeVisible();
   });
 
-  test('stake can click through New Request → Stake Roster → Ward Roster → My Requests', async ({
+  test('stake can click through Stake Roster → New Request → Ward Roster → My Requests', async ({
     page,
   }) => {
     await signInWithClaims(page, 'stake-nav@example.com', {
       stakes: { csnorth: { manager: false, stake: true, wards: [] } },
     });
-    await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
-
-    await page.getByRole('link', { name: /^Stake Roster$/ }).click();
+    // Stake principals default-land on /stake/roster (spec §5).
     await expect(page.getByRole('heading', { name: /^Stake Roster$/ })).toBeVisible();
+
+    await page
+      .getByRole('link', { name: /^New Request$/ })
+      .first()
+      .click();
+    await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
     // Phase 10.1: single "Ward Roster" nav entry; for stake users it
     // routes to the all-wards picker, whose page H1 is "Ward Rosters".

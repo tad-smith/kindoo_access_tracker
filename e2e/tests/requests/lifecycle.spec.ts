@@ -62,7 +62,12 @@ interface Claims {
   wards?: string[];
 }
 
-async function createSignedInUser(page: Page, email: string, claims: Claims): Promise<void> {
+async function createSignedInUser(
+  page: Page,
+  email: string,
+  claims: Claims,
+  startUrl = '/',
+): Promise<void> {
   const { uid } = await createAuthUser({ email });
   await setCustomClaims(uid, {
     canonical: email,
@@ -74,7 +79,7 @@ async function createSignedInUser(page: Page, email: string, claims: Claims): Pr
       },
     },
   });
-  await page.goto('/');
+  await page.goto(startUrl);
   await signInViaTestHatch(page, email, TEST_PASSWORD);
 }
 
@@ -122,7 +127,7 @@ test.describe('Phase 6 — bishopric add_manual lifecycle', () => {
     const managerCtx = await browser.newContext();
     const managerPage = await managerCtx.newPage();
 
-    await createSignedInUser(bishopricPage, 'bishop@example.com', { wards: ['CO'] });
+    await createSignedInUser(bishopricPage, 'bishop@example.com', { wards: ['CO'] }, '/?p=new');
     await expect(bishopricPage.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
     // Submit the request.
@@ -176,7 +181,7 @@ test.describe('Phase 6 — stake add_temp with two buildings', () => {
     const managerCtx = await browser.newContext();
     const managerPage = await managerCtx.newPage();
 
-    await createSignedInUser(stakePage, 'sp@example.com', { stake: true });
+    await createSignedInUser(stakePage, 'sp@example.com', { stake: true }, '/?p=new');
     await expect(stakePage.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
     await stakePage.getByTestId('new-request-type').selectOption('add_temp');
@@ -222,7 +227,7 @@ test.describe('Phase 6 — cancel + reject', () => {
   test('bishopric submits → cancels from MyRequests → status flips to cancelled live', async ({
     page,
   }) => {
-    await createSignedInUser(page, 'bishop2@example.com', { wards: ['CO'] });
+    await createSignedInUser(page, 'bishop2@example.com', { wards: ['CO'] }, '/?p=new');
 
     await page.getByTestId('new-request-email').fill('bob2@example.com');
     await page.getByTestId('new-request-name').fill('Bob 2');
@@ -249,7 +254,7 @@ test.describe('Phase 6 — cancel + reject', () => {
     const managerCtx = await browser.newContext();
     const managerPage = await managerCtx.newPage();
 
-    await createSignedInUser(bishopricPage, 'bishop3@example.com', { wards: ['CO'] });
+    await createSignedInUser(bishopricPage, 'bishop3@example.com', { wards: ['CO'] }, '/?p=new');
     await bishopricPage.getByTestId('new-request-email').fill('bob3@example.com');
     await bishopricPage.getByTestId('new-request-name').fill('Bob 3');
     await bishopricPage.getByTestId('new-request-reason').fill('reason');

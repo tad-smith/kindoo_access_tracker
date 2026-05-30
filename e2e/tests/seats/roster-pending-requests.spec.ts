@@ -53,7 +53,12 @@ interface Claims {
   wards?: string[];
 }
 
-async function createSignedInUser(page: Page, email: string, claims: Claims): Promise<void> {
+async function createSignedInUser(
+  page: Page,
+  email: string,
+  claims: Claims,
+  startUrl = '/',
+): Promise<void> {
   const { uid } = await createAuthUser({ email });
   await setCustomClaims(uid, {
     canonical: email,
@@ -65,7 +70,7 @@ async function createSignedInUser(page: Page, email: string, claims: Claims): Pr
       },
     },
   });
-  await page.goto('/');
+  await page.goto(startUrl);
   await signInViaTestHatch(page, email, TEST_PASSWORD);
 }
 
@@ -105,7 +110,7 @@ test.describe('Roster pending requests', () => {
     const bishopricCtx = await browser.newContext();
     const bishopricPage = await bishopricCtx.newPage();
 
-    await createSignedInUser(bishopricPage, 'bishop-add@example.com', { wards: ['CO'] });
+    await createSignedInUser(bishopricPage, 'bishop-add@example.com', { wards: ['CO'] }, '/?p=new');
     // Submit the pending add via the New Request page.
     await expect(bishopricPage.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
     await bishopricPage.getByTestId('new-request-email').fill('newhire@example.com');

@@ -60,6 +60,20 @@ vi.mock('../../lib/data', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
+  // Match the public Link API enough to render an `<a>` with the
+  // `to` prop turned into an `href` for accessible-name queries.
+  Link: ({
+    to,
+    children,
+    ...rest
+  }: {
+    to: string;
+    children?: React.ReactNode;
+  } & Record<string, unknown>) => (
+    <a href={to} {...rest}>
+      {children}
+    </a>
+  ),
 }));
 
 vi.mock('../requests/hooks', () => ({
@@ -272,6 +286,36 @@ describe('<BishopricRosterPage />', () => {
     mockWardDoc(undefined);
     render(<BishopricRosterPage />);
     expect(screen.getByText(/no bishopric wards/i)).toBeInTheDocument();
+  });
+
+  describe('New Request header action', () => {
+    it('renders a "New Request" link in the page header that targets /new', () => {
+      // Bishopric Roster is the post-login default for bishopric
+      // principals (per `routing.defaultLandingFor`). The header
+      // carries a quick affordance back to the New Request form.
+      // The `bishopric-roster-new-request` testid lets the E2E suite
+      // disambiguate this button from the nav-rail "New Request" Quick
+      // Link (both read identically by accessible name).
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      const link = screen.getByTestId('bishopric-roster-new-request');
+      expect(link).toBeInTheDocument();
+      expect(link).toHaveTextContent('New Request');
+      expect(link).toHaveAttribute('href', '/new');
+    });
+
+    it('does not render the New Request action when the principal has no bishopric wards', () => {
+      // The zero-ward early return path has no header to attach an
+      // action to, and the bishopric-with-no-wards copy is the
+      // operator-facing message — no New Request button there.
+      usePrincipalMock.mockReturnValue(principal([]));
+      mockSeats([]);
+      mockWardDoc(undefined);
+      render(<BishopricRosterPage />);
+      expect(screen.queryByTestId('bishopric-roster-new-request')).toBeNull();
+    });
   });
 
   describe('pending requests surfaced inline', () => {

@@ -19,7 +19,7 @@
 //                        principal isn't in that ward.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import type { Seat } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { useActiveStake } from '../../lib/useActiveStake';
@@ -31,6 +31,7 @@ import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../lib/render/EmptyState';
+import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { PerGrantRosterCard } from '../../components/roster/PerGrantRosterCard';
 import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
@@ -136,13 +137,20 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
   return (
     <section>
       <h1>Roster</h1>
-      <p className="kd-page-subtitle">
-        {wardDoc
-          ? `${wardDoc.ward_name} (${activeWard ?? ''})`
-          : activeWard
-            ? activeWard
-            : 'Select a ward'}
-      </p>
+      <div className="kd-page-header-row">
+        <p className="kd-page-subtitle">
+          {wardDoc
+            ? `${wardDoc.ward_name} (${activeWard ?? ''})`
+            : activeWard
+              ? activeWard
+              : 'Select a ward'}
+        </p>
+        <Button asChild variant="default">
+          <Link to="/new" data-testid="bishopric-roster-new-request">
+            New Request
+          </Link>
+        </Button>
+      </div>
 
       {wards.length > 1 ? (
         <div className="kd-ward-select-row">
