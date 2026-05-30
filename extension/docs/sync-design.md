@@ -110,9 +110,9 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 | seat | Kindoo user, unparseable | `kindoo-unparseable` (flag for review) |
 | seat | Kindoo user, parsed primary scope ≠ seat.scope | `scope-mismatch` |
 | seat | Kindoo user, intended type ≠ seat.type | `type-mismatch` |
-| seat (manual/temp) | Kindoo user, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` |
-| seat (auto) | Kindoo user, `derivedBuildings` ≠ seat.building_names | `buildings-mismatch` |
-| seat (auto) | Kindoo user, `derivedBuildings === null` (per-user derivation failed) | (buildings check skipped — Phase 1 fallback) |
+| seat (any type) | Kindoo user, `derivedBuildings` ≠ seat.building_names | `buildings-mismatch` |
+| seat (manual/temp) | Kindoo user, `derivedBuildings === null`, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` (AccessSchedules fallback) |
+| seat (auto) | Kindoo user, `derivedBuildings === null` (per-user derivation failed) | (buildings check skipped — fallback) |
 | seat (auto) | Kindoo user lists auto calling + additional non-auto calling(s) | `extra-kindoo-calling` (flag for review — operator adds the extras to the SBA seat) |
 | seat | Kindoo user, all-good | (no row) |
 
@@ -129,12 +129,12 @@ To reconcile auto users, the Sync run derives each user's effective building set
 3. **`deriveEffectiveRuleIds`** — pure function. A user "effectively holds" a rule iff EVERY DoorID in that rule's door set is present in the user's door set. Strict subset; partial overlap does not claim the rule. Empty rule door sets are explicitly guarded against (would otherwise vacuously match every empty rule).
 4. **`derivedBuildingNames`** — pure function. Map effective RuleIDs to SBA building names via `building.kindoo_rule.rule_id`. Returns a deduplicated, alphabetically-sorted array.
 
-The `SyncPanel` orchestrates the per-user loop with a concurrency cap (4 in flight) and a throttled progress text ("Reading Kindoo user N of M…", updated every 10 users so the React reconciler stays responsive). Each user's `KindooEnvironmentUser` is enriched with `derivedBuildings: string[] | null` BEFORE the detector runs. On per-user failure the field is set to `null` and the loop continues — one user's network blip does not fail the whole sync.
+The `SyncPanel` orchestrates the per-user loop with a concurrency cap (4 in flight) and a throttled progress text ("Reading Kindoo user N of M…", updated every 10 users so the React reconciler stays responsive). Each user's `KindooEnvironmentUser` is enriched with `derivedBuildings: string[] | null` BEFORE the detector runs. On per-user failure the field is set to `null` and the loop continues — one user's network blip does not fail the whole sync. Consequence: a `null` (per-user door-read blip) can surface a manual/temp `buildings-mismatch` row whose "Update SBA" button is disabled (it refuses to source from the AccessSchedules fallback); the resolution is to re-run Sync.
 
-The detector's `buildings-mismatch` rule then:
-- Manual / temp seats: compare against AccessSchedules-derived `buildingNames` (unchanged).
-- Auto seats with `derivedBuildings: string[]`: compare against `derivedBuildings`.
-- Auto seats with `derivedBuildings: null`: skip the check (Phase 1 fallback — when derivation failed, we'd rather show nothing than false drift).
+The detector's `buildings-mismatch` rule then, for ALL seat types:
+- `derivedBuildings: string[]` (direct + rule grants): the authoritative Kindoo door-access signal — compare against it. Applies to auto, manual, and temp alike.
+- `derivedBuildings: null`, manual / temp: fall back to the AccessSchedules-derived `buildingNames`.
+- `derivedBuildings: null`, auto: skip the check (fallback — when derivation failed, we'd rather show nothing than false drift).
 
 Wall-time estimate: ~313 per-user calls at concurrency 4 and ~150 ms median latency → ~12 s. The summary header still surfaces seat / user counts; the operator sees the per-user progress while the loop runs.
 
@@ -250,7 +250,7 @@ Each discrepancy row gains one or two specific-action buttons. Per-row only — 
 | `extra-kindoo-calling` | "Add to SBA seat" | SBA-side: `syncApplyFix` with `code: 'extra-kindoo-calling'`; backend de-dupes + appends to `callings[]`. |
 | `scope-mismatch` | "Update Kindoo" / "Update SBA" | Update Kindoo: rewrite Description to SBA scope via `syncProvisionFromSeat`. Update SBA: `syncApplyFix` with `code: 'scope-mismatch'` carrying Kindoo's parsed primary scope. |
 | `type-mismatch` | "Update Kindoo" / "Update SBA" | Same pattern. Update Kindoo is disabled (with a tooltip) when either side is `auto` — Church Access Automation owns direct door grants for auto seats; the extension can't write them. |
-| `buildings-mismatch` | "Update Kindoo" / "Update SBA" | Manual/temp seats: Update Kindoo reconciles AccessSchedules to SBA's building set (per-rule revoke + saveAccessRule merge); Update SBA sends Kindoo's AccessSchedules-derived `buildingNames`. Auto seats: Update Kindoo is disabled (Church Access Automation owns direct door grants); Update SBA sends `derivedBuildings` (the door-grant strict-subset chain) — never `buildingNames`, which is empty for ~all auto users and would wipe the seat's buildings. If `derivedBuildings === null` (door-grant read failed for the user) both buttons are disabled. |
+| `buildings-mismatch` | "Update Kindoo" / "Update SBA" | Update SBA sources from `derivedBuildings` (the direct + rule-grant strict-subset chain) for ALL seat types — never the AccessSchedules-derived `buildingNames`, which misses direct grants and would wipe buildings for auto users. Update SBA refuses (button disabled) when `derivedBuildings === null` (per-user door read failed). Update Kindoo: manual/temp reconciles AccessSchedules to SBA's building set (per-rule revoke + saveAccessRule merge); auto is disabled (Church Access Automation owns direct door grants). |
 | `kindoo-unparseable` | none | Operator handles in Kindoo's admin UI. |
 
 ### Audit + SyncActor
@@ -274,13 +274,13 @@ No detector re-run on success: the in-memory list edits forward. The operator cl
 
 Most payload fields come straight off the `Discrepancy` row's `kindoo` block (`KindooBlock`). The detector's Phase 2 work expanded that block to carry `memberName`, `intendedCallings`, `intendedFreeText`, `buildingNames`, `derivedBuildings`, and (for temp users) `startDate` / `endDate` — derived from Kindoo's `FirstName` / `LastName` + the classifier output + the rule-id-to-building-name lookup + the door-grant derivation. `KindooEnvironmentUser`'s `startAccessDoorsDateAtTimeZone` / `expiryDateAtTimeZone` are stripped to ISO `YYYY-MM-DD` for the temp date fields.
 
-`kindoo-only` payload edge cases:
-- `intendedType === 'auto'` → callings = `intendedCallings`; buildings = `derivedBuildings` (when non-null; falls back to `buildingNames` if the per-user door read failed); no reason.
-- `intendedType === 'manual'` → callings = comma-split `intendedFreeText`; reason = full `intendedFreeText`; buildings = `buildingNames` (AccessSchedules-derived).
-- `intendedType === 'temp'` → callings = `[]`; reason = `intendedFreeText`; `startDate` / `endDate` set when present; buildings = `buildingNames`.
+`kindoo-only` seat creation prefers `derivedBuildings` for ALL seat types when non-null, falling back to the AccessSchedules-derived `buildingNames` only when the per-user door read failed (`null`). Unlike the buildings-mismatch "Update SBA" path (which refuses when `derivedBuildings === null`), creating a fresh seat with whatever building data the sync had is acceptable — the seat isn't being destroyed, and the operator can repair it later via Update SBA. Edge cases:
+- `intendedType === 'auto'` → callings = `intendedCallings`; no reason.
+- `intendedType === 'manual'` → callings = comma-split `intendedFreeText`; reason = full `intendedFreeText`.
+- `intendedType === 'temp'` → callings = `[]`; reason = `intendedFreeText`; `startDate` / `endDate` set when present.
 - `intendedType === null` (couldn't classify) → fall through as `manual` with the free text as reason.
 
-The auto-type building source matters because the bulk listing's AccessSchedules excludes Church Access Automation direct grants. `derivedBuildings` is the truth for auto users (covers BOTH grant kinds via the door-set strict-subset chain); only the auto branch uses it.
+The building source matters because the bulk listing's AccessSchedules excludes Church Access Automation direct grants. `derivedBuildings` is the authoritative Kindoo door-access signal (covers BOTH direct and rule-based grants via the door-set strict-subset chain), so it is preferred for every seat type, not just auto.
 
 ### Files
 

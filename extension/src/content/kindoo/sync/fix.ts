@@ -167,18 +167,20 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         d.kindoo.intendedType === 'auto'
           ? d.kindoo.intendedCallings
           : splitFreeText(d.kindoo.intendedFreeText);
-      // Auto seats: prefer the door-grant-derived building set when
-      // available. The bulk listing's AccessSchedules (the source of
-      // `buildingNames`) misses Church Access Automation's direct
-      // grants; `derivedBuildings` is the strict-subset chain that
-      // covers BOTH grant kinds. Fall back to `buildingNames` if
-      // derivation failed (null) so the seat still gets created with
-      // whatever building data the sync had — the operator can repair
-      // later via Update SBA on a buildings-mismatch row.
+      // Prefer the door-grant-derived building set for ALL intended seat
+      // types when available. The bulk listing's AccessSchedules (the
+      // source of `buildingNames`) misses Church Access Automation's
+      // direct grants; `derivedBuildings` is the strict-subset chain that
+      // covers BOTH direct and rule-based grants, so it is the
+      // authoritative Kindoo door-access signal. Fall back to
+      // `buildingNames` only when derivation failed (null/undefined) so
+      // the seat still gets created with whatever building data the sync
+      // had — unlike the buildings-mismatch fix (which refuses when
+      // derivedBuildings is null), creating a fresh seat with partial
+      // building data is acceptable here, and the operator can repair
+      // later via Update SBA.
       const buildingNames =
-        d.kindoo.intendedType === 'auto' &&
-        d.kindoo.derivedBuildings !== null &&
-        d.kindoo.derivedBuildings !== undefined
+        d.kindoo.derivedBuildings !== null && d.kindoo.derivedBuildings !== undefined
           ? d.kindoo.derivedBuildings
           : d.kindoo.buildingNames;
       // intended scope falls back to the parsed primary scope; without
@@ -249,26 +251,18 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
     }
     case 'buildings-mismatch': {
       if (!d.kindoo) throw new Error('buildings-mismatch row missing Kindoo block');
-      // Auto seats: the bulk listing's AccessSchedules-derived
-      // `buildingNames` is empty for ~310 of ~313 users because Church
-      // Access Automation grants are direct (per-door) not rule-based.
-      // `derivedBuildings` (door-grant strict-subset chain) is the
-      // truth. Sending `buildingNames` here would wipe the seat's
-      // correct buildings server-side (`applyBuildingsMismatch`
-      // replaces unconditionally). For manual/temp seats the
-      // AccessSchedules-derived `buildingNames` is the truth.
-      const isAuto = (d.sba?.type ?? null) === 'auto' || d.kindoo.intendedType === 'auto';
-      let newBuildingNames: string[];
-      if (isAuto) {
-        if (d.kindoo.derivedBuildings === null || d.kindoo.derivedBuildings === undefined) {
-          throw new Error(
-            'auto seat door-grant derivation failed; cannot update SBA buildings — re-run Sync.',
-          );
-        }
-        newBuildingNames = d.kindoo.derivedBuildings;
-      } else {
-        newBuildingNames = d.kindoo.buildingNames;
+      // `derivedBuildings` (the door-grant strict-subset chain) is the
+      // authoritative Kindoo door-access truth for ALL seat types — it
+      // sees both Church Access Automation direct grants and rule-based
+      // grants. The bulk listing's AccessSchedules-derived `buildingNames`
+      // misses direct grants (empty for ~310 of ~313 users), so it must
+      // never be the source: `applyBuildingsMismatch` replaces
+      // unconditionally, and an empty list would wipe a seat that truly
+      // has access. When derivation failed, refuse rather than wipe.
+      if (d.kindoo.derivedBuildings === null || d.kindoo.derivedBuildings === undefined) {
+        throw new Error('door-grant derivation failed; cannot update SBA buildings — re-run Sync.');
       }
+      const newBuildingNames = d.kindoo.derivedBuildings;
       return {
         stakeId,
         fix: {

@@ -347,6 +347,101 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
   });
 
+  it('emits no row for a manual seat whose derivedBuildings matches the SBA seat even with empty AccessSchedules', () => {
+    // Regression: a member with church-auto DIRECT door grants for
+    // Lexington, then a manual SBA seat (building_names=[Lexington]).
+    // SBA skipped writing an AccessSchedule rule because Lexington was
+    // already effective via the direct grants, so AccessSchedules is
+    // empty — but `derivedBuildings` (the door-grant chain) sees it.
+    // Comparing against `derivedBuildings` (not AccessSchedules) yields
+    // no mismatch, so "Update SBA" never wipes the seat.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'manual-direct@example.com',
+            member_email: 'manual-direct@example.com',
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Requested by bishop',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'manual-direct@example.com',
+            description: 'Maple Ward (Building Greeter)',
+            accessSchedules: [],
+            derivedBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('emits buildings-mismatch for a manual seat when derivedBuildings differs from the SBA seat', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'manual-diff@example.com',
+            member_email: 'manual-diff@example.com',
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Requested by bishop',
+            building_names: [],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'manual-diff@example.com',
+            description: 'Maple Ward (Building Greeter)',
+            accessSchedules: [],
+            derivedBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
+    expect(result.discrepancies[0]?.kindoo?.derivedBuildings).toEqual(['Maple Building']);
+  });
+
+  it('falls back to AccessSchedules for a manual seat when derivedBuildings is null', () => {
+    // When door-grant derivation failed (`derivedBuildings === null`),
+    // manual/temp seats compare against the AccessSchedules-derived set.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'manual-fallback@example.com',
+            member_email: 'manual-fallback@example.com',
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Requested by bishop',
+            building_names: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'manual-fallback@example.com',
+            description: 'Maple Ward (Building Greeter)',
+            accessSchedules: [{ ruleId: 6248 }],
+            derivedBuildings: null,
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
+    // Reason reflects the AccessSchedules-derived Maple set, not derived.
+    expect(result.discrepancies[0]?.reason).toContain('Kindoo=[Maple Building]');
+  });
+
   it('emits buildings-mismatch for temp seats when rule set differs', () => {
     const result = detect(
       baseInputs({

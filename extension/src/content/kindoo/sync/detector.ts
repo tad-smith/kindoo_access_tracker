@@ -545,32 +545,24 @@ export function detect(inputs: DetectInputs): DetectResult {
       continue;
     }
 
-    // 7. buildings-mismatch — Kindoo rule set vs SBA building → RID mapping.
+    // 7. buildings-mismatch — Kindoo door-access truth vs SBA building set.
     //
-    // Manual / temp seats: SBA's v2.2 provision flow writes via
-    // `saveAccessRule`, so AccessSchedules is the authoritative
-    // building-access signal. Compare directly.
-    //
-    // Auto seats: door access lands via Church Access Automation's
-    // direct grants (keyed by VidName), which the bulk listing's
-    // AccessSchedules array does NOT expose. The sync orchestrator
-    // derives the effective building set via per-user door-grant calls
-    // (`sync/buildingsFromDoors.ts`) and stamps it onto
-    // `kuser.derivedBuildings` BEFORE detect(). When derivation
-    // succeeded (non-null), compare against it; when it failed
-    // (`null`), skip the check — same Phase 1 fallback as before.
+    // `derivedBuildings` (the per-door grant strict-subset chain, stamped
+    // onto `kuser` by `sync/buildingsFromDoors.ts` BEFORE detect()) is the
+    // authoritative Kindoo door-access signal for ALL seat types: it sees
+    // both Church Access Automation direct grants AND rule-based grants.
+    // The bulk listing's AccessSchedules array misses direct grants, so it
+    // is only a fallback for manual/temp when derivation failed (`null`).
+    // For auto when derivation failed, leave the compare set `null` so the
+    // check is skipped — unchanged auto behavior.
     let kindooBuildingsForCompare: string[] | null = null;
-    if (intended.type === 'manual' || intended.type === 'temp') {
+    if (kuser.derivedBuildings !== null && kuser.derivedBuildings !== undefined) {
+      kindooBuildingsForCompare = kuser.derivedBuildings;
+    } else if (intended.type === 'manual' || intended.type === 'temp') {
       kindooBuildingsForCompare = ruleIdsToBuildingNames(
         kuser.accessSchedules.map((s) => s.ruleId),
         inputs.buildings,
       );
-    } else if (
-      intended.type === 'auto' &&
-      kuser.derivedBuildings !== null &&
-      kuser.derivedBuildings !== undefined
-    ) {
-      kindooBuildingsForCompare = kuser.derivedBuildings;
     }
     if (kindooBuildingsForCompare !== null) {
       const expectedBuildings = sbaBlock.buildingNames;

@@ -336,11 +336,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
         </div>
       )}
 
-      <SeatEditDialog
-        seat={editingSeat}
-        buildings={buildingsList.map((b) => b.building_name)}
-        onClose={() => setEditingSeat(null)}
-      />
+      <SeatEditDialog seat={editingSeat} onClose={() => setEditingSeat(null)} />
     </section>
   );
 }
@@ -546,7 +542,6 @@ const seatEditSchema = z
   .object({
     member_name: z.string().trim().min(1, 'Member name is required.'),
     reason: z.string(),
-    building_names_csv: z.string(),
     start_date: z.string(),
     end_date: z.string(),
   })
@@ -571,18 +566,16 @@ type SeatEditForm = z.infer<typeof seatEditSchema>;
 
 interface SeatEditDialogProps {
   seat: Seat | null;
-  buildings: readonly string[];
   onClose: () => void;
 }
 
-function SeatEditDialog({ seat, buildings, onClose }: SeatEditDialogProps) {
+function SeatEditDialog({ seat, onClose }: SeatEditDialogProps) {
   const mutation = useInlineSeatEditMutation();
   const form = useForm<SeatEditForm>({
     resolver: zodResolver(seatEditSchema),
     defaultValues: {
       member_name: '',
       reason: '',
-      building_names_csv: '',
       start_date: '',
       end_date: '',
     },
@@ -591,7 +584,6 @@ function SeatEditDialog({ seat, buildings, onClose }: SeatEditDialogProps) {
           values: {
             member_name: seat.member_name,
             reason: seat.reason ?? '',
-            building_names_csv: seat.building_names.join(', '),
             start_date: seat.start_date ?? '',
             end_date: seat.end_date ?? '',
           },
@@ -605,15 +597,10 @@ function SeatEditDialog({ seat, buildings, onClose }: SeatEditDialogProps) {
   async function onSubmit(input: SeatEditForm) {
     if (!seat) return;
     try {
-      const buildingNames = input.building_names_csv
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
       const payload: Parameters<typeof mutation.mutateAsync>[0] = {
         member_canonical: seat.member_canonical,
         member_name: input.member_name,
         reason: input.reason,
-        building_names: buildingNames,
       };
       if (seat.type === 'temp') {
         if (input.start_date) payload.start_date = input.start_date;
@@ -649,10 +636,6 @@ function SeatEditDialog({ seat, buildings, onClose }: SeatEditDialogProps) {
         <label>
           Reason
           <Input {...register('reason')} />
-        </label>
-        <label>
-          Buildings (comma-separated; choose from: {buildings.join(', ')})
-          <Input {...register('building_names_csv')} placeholder={buildings.join(', ')} />
         </label>
         {seat.type === 'temp' ? (
           <>
