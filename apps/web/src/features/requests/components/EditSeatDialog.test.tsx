@@ -128,8 +128,8 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
   it('locks same-scope manual DuplicateGrant buildings alongside the auto-primary set (collapsed-row buildings stay locked)', () => {
     // After PR #166, AllSeats / rosters collapse a same-scope manual
     // DuplicateGrant into the auto-primary row; the displayed buildings
-    // are the union. The edit dialog mirrors that union into the locked
-    // set so the user cannot silently uncheck a manual-dup building
+    // are the union. The edit dialog mirrors that union into the VISUAL
+    // lock so the user cannot silently uncheck a manual-dup building
     // (an edit_auto submission wouldn't touch the dup; the change would
     // no-op silently).
     mockCatalogue(
@@ -164,6 +164,99 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     expect(genoaCb.disabled).toBe(true);
     expect(prairieCb.checked).toBe(false);
     expect(prairieCb.disabled).toBe(false);
+  });
+
+  it('excludes same-scope manual DuplicateGrant buildings from the submit body even though they render locked (no-op submit, no data corruption)', async () => {
+    // Load-bearing regression. The visual lock and the submit-body
+    // are intentionally split:
+    //   - VISUAL: auto-primary `building_names` ∪ same-scope manual dup
+    //     `building_names` — render all of them checked + disabled so
+    //     the operator sees what they see on the collapsed roster row.
+    //   - SUBMIT: ONLY the auto-primary `building_names`. The
+    //     `edit_auto` request type replaces the auto-primary's
+    //     `building_names` and DOES NOT touch the manual dup. Conflating
+    //     manual-dup buildings into the submit would absorb them onto
+    //     the auto-primary slot while the manual dup remained in
+    //     place — double-credit on display, double-provision on
+    //     Kindoo. The user just submits with no checkbox changes; the
+    //     wire body must be ['Cordera Building'], NOT
+    //     ['Cordera Building', 'Genoa Building'].
+    const user = userEvent.setup();
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [
+        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
+        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+      ],
+    );
+    const seat = makeSeat({
+      type: 'auto',
+      scope: 'CO',
+      callings: ['Bishop'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [
+        {
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['Genoa Building'],
+          detected_at: FAKE_TS,
+        },
+      ],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
+    const arg = submitMutateAsync.mock.calls[0]?.[0] as Record<string, unknown> & {
+      building_names: string[];
+    };
+    expect(arg.type).toBe('edit_auto');
+    expect(arg.building_names).toEqual(['Cordera Building']);
+    // Explicit defense — the manual-dup-only building must NOT appear
+    // in the submit body.
+    expect(arg.building_names).not.toContain('Genoa Building');
+  });
+
+  it('with a manual dup present, adding a new building submits [auto-primary..., new-building] — manual-dup buildings still excluded', async () => {
+    // Same separation as above, exercising the add path. The operator
+    // ticks Prairie Building (not part of either the auto-primary set
+    // or the manual dup). The submit body must include the
+    // auto-primary + the new add, and MUST NOT include the manual-dup
+    // building even though it renders visually checked.
+    const user = userEvent.setup();
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [
+        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
+        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'prairie', building_name: 'Prairie Building' }),
+      ],
+    );
+    const seat = makeSeat({
+      type: 'auto',
+      scope: 'CO',
+      callings: ['Bishop'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [
+        {
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['Genoa Building'],
+          detected_at: FAKE_TS,
+        },
+      ],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.click(screen.getByTestId('edit-seat-building-prairie'));
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
+    const arg = submitMutateAsync.mock.calls[0]?.[0] as Record<string, unknown> & {
+      building_names: string[];
+    };
+    expect(arg.type).toBe('edit_auto');
+    expect([...arg.building_names].sort()).toEqual(['Cordera Building', 'Prairie Building']);
+    expect(arg.building_names).not.toContain('Genoa Building');
   });
 
   it('surfaces a tooltip on each disabled (locked) checkbox explaining why it cannot be unchecked', () => {
