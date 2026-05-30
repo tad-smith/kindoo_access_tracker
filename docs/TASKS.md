@@ -893,3 +893,14 @@ Status: done (2026-05-05 — closed by PR #58)
 Owner: @web-engineer
 
 Closed by the Firebase-era roster work in PR #58 (`feat/roster-pending-requests`): bishopric Roster, stake Roster, stake WardRosters, and manager AllSeats all render a per-row Remove button on manual / temp seats, gated by symmetric ADD-equals-REMOVE authority (the `allowedScopesFor` helper from PR #52). Auto seats are correctly excluded (LCR-managed). The original Apps Script roster's broken remove button has been superseded by the post-cutover Firebase implementation.
+
+## [T-57] Sync Stage 1 (c) — `applyTypeMismatch` seat-shape migration on promote / demote
+Status: in progress
+Owner: @backend-engineer
+Phase: Sync Stage 1 (grant-derived seat type)
+
+`functions/src/callable/syncApplyFix.ts` `applyTypeMismatch` now reshapes the seat to the §13 convention on the type flip, not just flips `type`. Promote (`manual`/`temp` → `auto`): sets `seat.callings` from the new `TypeMismatchPayload.callings` (fallback `[seat.reason]` when the payload omits/empties it, else `[]`) and clears `seat.reason`; the existing `sort_order` + access-doc parity now derives from the reshaped callings. Demote (`auto` → `manual`/`temp`): folds `seat.callings` into free-text `seat.reason` (joined `', '`) and clears `callings` to `[]`. Audit/actor semantics unchanged (`SyncActor:type-mismatch`).
+
+**Shared-type change:** `packages/shared/src/types/syncApplyFix.ts` `TypeMismatchPayload` gains optional `callings?: string[]`. **Extension coordination (@extension-engineer):** the detector-branch (#179) `fix.ts` `type-mismatch` dispatch must send this `callings` field on **promote** — source it from the parsed calling(s) (e.g. `d.kindoo.intendedCallings`). Field name is exactly `callings`. Demote may omit it.
+
+Separate PR/branch from #178 (sort) and #179 (detector). Backend half is self-contained — falls back to `[seat.reason]` if the extension hasn't wired `callings` yet, so it is safe to land first.

@@ -535,13 +535,17 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
   // ----- type-mismatch -----
 
   describe("code='type-mismatch'", () => {
-    it('updates only type; other fields untouched', async () => {
+    it('promote (manual → auto): scope + buildings untouched, type flips, lastActor stamped', async () => {
       await seedManager();
+      // Well-formed manual seat: callings empty, calling in reason (§13).
       await seedSeat({
         scope: 'CO',
         type: 'manual',
-        callings: ['Ward Clerk'],
+        callings: [],
         building_names: ['Maple Building'],
+      });
+      await requireEmulators().db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+        reason: 'Ward Clerk',
       });
       const result = await syncApplyFix.run(
         callableReq({
@@ -550,7 +554,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
             stakeId: STAKE_ID,
             fix: {
               code: 'type-mismatch',
-              payload: { memberEmail: MEMBER_EMAIL, newType: 'auto' },
+              payload: { memberEmail: MEMBER_EMAIL, newType: 'auto', callings: ['Ward Clerk'] },
             },
           },
         }),
@@ -560,12 +564,182 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
       expect(seat.type).toBe('auto');
       expect(seat.scope).toBe('CO');
-      expect(seat.callings).toEqual(['Ward Clerk']);
+      // Untouched axes:
       expect(seat.building_names).toEqual(['Maple Building']);
       expect(seat.lastActor).toEqual({
         email: 'SyncActor:type-mismatch',
         canonical: 'SyncActor:type-mismatch',
       });
+    });
+
+    // ----- Seat reshape on the type flip (§13 convention) -----
+    //
+    // Auto seats carry the calling in `callings[]` with empty `reason`;
+    // manual / temp seats carry `callings: []` with the calling in
+    // free-text `reason`. The flip reshapes the seat so it never lands
+    // in a spec-violating hybrid state.
+
+    it('promote: shapes a clean auto seat — callings from payload, reason cleared', async () => {
+      await seedManager();
+      // Well-formed manual seat: callings empty, calling in reason.
+      await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: 'Building Sub' });
+
+      await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'type-mismatch',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                newType: 'auto',
+                // Kindoo-parsed calling(s) the extension sends on promote;
+                // duplicate proves server-side dedupe.
+                callings: ['Bishop', 'Bishop', 'Ward Clerk'],
+              },
+            },
+          },
+        }),
+      );
+
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & {
+        reason?: unknown;
+      };
+      expect(seat.type).toBe('auto');
+      // callings sourced from the payload, deduped, order preserved.
+      expect(seat.callings).toEqual(['Bishop', 'Ward Clerk']);
+      // stale manual reason cleared so the seat is a well-formed auto seat.
+      expect(seat.reason).toBeUndefined();
+    });
+
+    it('promote: falls back to [seat.reason] when the payload omits callings', async () => {
+      await seedManager();
+      await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+      const { db } = requireEmulators();
+      await db
+        .doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`)
+        .update({ reason: 'Stake Technology Specialist' });
+
+      await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            // No `callings` on the payload — fall back to the reason.
+            fix: { code: 'type-mismatch', payload: { memberEmail: MEMBER_EMAIL, newType: 'auto' } },
+          },
+        }),
+      );
+
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & {
+        reason?: unknown;
+      };
+      expect(seat.type).toBe('auto');
+      expect(seat.callings).toEqual(['Stake Technology Specialist']);
+      expect(seat.reason).toBeUndefined();
+    });
+
+    it('promote: empty callings + empty reason yields callings: [] (orphan auto seat)', async () => {
+      await seedManager();
+      // No reason at all on the seat.
+      await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+
+      await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'type-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, newType: 'auto', callings: [] },
+            },
+          },
+        }),
+      );
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & {
+        reason?: unknown;
+      };
+      expect(seat.type).toBe('auto');
+      expect(seat.callings).toEqual([]);
+      expect(seat.reason).toBeUndefined();
+    });
+
+    it('demote (auto → manual): shapes a clean manual seat — reason from callings, callings cleared', async () => {
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Bishop', 'Ward Clerk'],
+        sort_order: 5,
+      });
+
+      await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'type-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, newType: 'manual' },
+            },
+          },
+        }),
+      );
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & {
+        reason?: unknown;
+        sort_order?: unknown;
+      };
+      expect(seat.type).toBe('manual');
+      // reason folds the joined callings; callings cleared (manual convention).
+      expect(seat.reason).toBe('Bishop, Ward Clerk');
+      expect(seat.callings).toEqual([]);
+      // sort_order removed (manual seats carry none).
+      expect(seat.sort_order).toBeUndefined();
+    });
+
+    it('demote (auto → temp): folds callings into reason and clears callings', async () => {
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Sunday School Teacher'],
+        sort_order: 9,
+      });
+
+      await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: { code: 'type-mismatch', payload: { memberEmail: MEMBER_EMAIL, newType: 'temp' } },
+          },
+        }),
+      );
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & {
+        reason?: unknown;
+      };
+      expect(seat.type).toBe('temp');
+      expect(seat.reason).toBe('Sunday School Teacher');
+      expect(seat.callings).toEqual([]);
     });
 
     it('rejects an invalid newType with invalid-argument', async () => {
@@ -989,7 +1163,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
     });
 
     describe("code='type-mismatch' flipping to auto", () => {
-      it('manual → auto: stamps sort_order from existing callings, writes access doc for give_app_access matches', async () => {
+      it('manual → auto: stamps sort_order from the payload callings, writes access doc for give_app_access matches', async () => {
         await seedManager();
         await seedTemplate({
           scope: 'CO',
@@ -997,7 +1171,10 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
           give_app_access: true,
           sheet_order: 5,
         });
-        await seedSeat({ scope: 'CO', type: 'manual', callings: ['Bishop'] });
+        // Well-formed manual seat: callings empty, calling in reason.
+        await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: 'Bishop' });
 
         await syncApplyFix.run(
           callableReq({
@@ -1006,17 +1183,20 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
               stakeId: STAKE_ID,
               fix: {
                 code: 'type-mismatch',
-                payload: { memberEmail: MEMBER_EMAIL, newType: 'auto' },
+                payload: { memberEmail: MEMBER_EMAIL, newType: 'auto', callings: ['Bishop'] },
               },
             },
           }),
         );
 
-        const { db } = requireEmulators();
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
-        ).data() as Seat;
+        ).data() as Seat & { reason?: unknown };
         expect(seat.type).toBe('auto');
+        // Reshaped to a well-formed auto seat: callings populated, reason gone.
+        expect(seat.callings).toEqual(['Bishop']);
+        expect(seat.reason).toBeUndefined();
+        // sort_order derived from the (reshaped) callings.
         expect(seat.sort_order).toBe(5);
 
         const access = (
@@ -1024,6 +1204,86 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         ).data() as Access;
         expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
         expect(access.sort_order).toBe(5);
+      });
+
+      it('manual → auto with no payload callings: sort_order + access doc derive from the reason fallback', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 7,
+        });
+        await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: 'Bishop' });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              // No payload callings — fall back to [reason] = ['Bishop'].
+              fix: {
+                code: 'type-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, newType: 'auto' },
+              },
+            },
+          }),
+        );
+
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.callings).toEqual(['Bishop']);
+        expect(seat.sort_order).toBe(7);
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
+      });
+
+      it('idempotent: re-applying the same promote yields the same seat + access shape', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 5,
+        });
+        await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: 'Bishop' });
+
+        const payload = { memberEmail: MEMBER_EMAIL, newType: 'auto', callings: ['Bishop'] };
+        const first = await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, fix: { code: 'type-mismatch', payload } },
+          }),
+        );
+        // Second apply — seat is already auto; reshape is a no-op-equivalent.
+        const second = await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, fix: { code: 'type-mismatch', payload } },
+          }),
+        );
+        expect(first).toEqual({ success: true, seatId: MEMBER_EMAIL });
+        expect(second).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat & { reason?: unknown };
+        expect(seat.type).toBe('auto');
+        expect(seat.callings).toEqual(['Bishop']);
+        expect(seat.reason).toBeUndefined();
+        expect(seat.sort_order).toBe(5);
+
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
       });
     });
 
@@ -1063,10 +1323,13 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         const { db } = requireEmulators();
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
-        ).data() as Seat & { sort_order?: unknown };
+        ).data() as Seat & { sort_order?: unknown; reason?: unknown };
         expect(seat.type).toBe('manual');
         // FieldValue.delete() removed sort_order entirely.
         expect(seat.sort_order).toBeUndefined();
+        // Reshaped to a well-formed manual seat: reason folded, callings cleared.
+        expect(seat.reason).toBe('Bishop');
+        expect(seat.callings).toEqual([]);
 
         const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
         expect(accessSnap.exists).toBe(false);

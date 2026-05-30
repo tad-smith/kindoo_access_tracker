@@ -32,6 +32,16 @@
 // and upsert the corresponding access doc with `give_app_access` from
 // the template. `applyScopeMismatch` / `applyBuildingsMismatch` don't
 // touch type or callings, so that bookkeeping doesn't apply to them.
+//
+// Seat shape on type flip (`applyTypeMismatch`, grant-derived
+// promote / demote — see `extension/docs/sync-design.md` "Grant-derived
+// seat type"): the §13 convention is auto seats carry the calling in
+// `callings[]` (empty `reason`), manual / temp seats carry
+// `callings: []` with the calling in free-text `reason`. Promote sets
+// `callings[]` from the payload (fallback `[reason]`) and clears
+// `reason`; demote folds `callings[]` into `reason` and clears
+// `callings[]`. Without this the flip would leave a spec-violating
+// hybrid seat.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
@@ -380,6 +390,10 @@ async function applyTypeMismatch(
   }
   const memberEmail = requireString(payload.memberEmail, 'memberEmail');
   const newType = requireSeatType(payload.newType, 'newType');
+  // Promote-only: the Kindoo-parsed calling(s) the extension sends so
+  // the resulting auto seat carries a populated `callings[]`. Ignored
+  // on demote (the calling is sourced from the seat's own callings).
+  const payloadCallings = cleanStringArray(payload.callings ?? [], 'callings');
   const canonical = canonicalEmail(memberEmail);
   if (canonical === '') {
     throw new HttpsError('invalid-argument', 'memberEmail did not canonicalize');
@@ -403,17 +417,30 @@ async function applyTypeMismatch(
       lastActor: actor,
     };
 
-    // Auto seats carry a template-driven `sort_order` and drive
-    // `access` doc creation for `give_app_access` templates.
-    // - manual / temp → auto: stamp sort_order, write access doc(s).
-    // - auto → manual / temp: clear sort_order, drop importer_callings
-    //   for the seat's scope; if both importer_callings and
-    //   manual_grants end up empty, the access doc is deleted.
+    // Reshape the seat to the §13 convention on the type flip, then run
+    // the auto-seat `sort_order` + access-doc bookkeeping off the
+    // reshaped callings. §13: auto seats carry the calling in
+    // `callings[]` (empty `reason`); manual / temp seats carry
+    // `callings: []` with the calling in free-text `reason`.
+    // - manual / temp → auto (promote): set `callings[]` from the
+    //   payload (fallback `[seat.reason]`), clear `reason`, stamp
+    //   sort_order, write access doc(s).
+    // - auto → manual / temp (demote): set `reason` from the joined
+    //   existing callings, clear `callings[]`, clear sort_order, drop
+    //   importer_callings for the seat's scope; if both importer_callings
+    //   and manual_grants end up empty, the access doc is deleted.
     if (newType === 'auto' && seat.type !== 'auto') {
+      const reason = typeof seat.reason === 'string' ? seat.reason.trim() : '';
+      const autoCallings = dedupePreserveOrder(
+        payloadCallings.length > 0 ? payloadCallings : reason.length > 0 ? [reason] : [],
+      );
+      update.callings = autoCallings;
+      update.reason = FieldValue.delete();
+
       const idx = await loadTemplateIndex(db, tx, stakeId, seat.scope);
-      const newSortOrder = minSheetOrder(idx, seat.callings ?? []);
+      const newSortOrder = minSheetOrder(idx, autoCallings);
       update.sort_order = newSortOrder;
-      const accessCallings = filterByGiveAppAccess(idx, seat.callings ?? []);
+      const accessCallings = filterByGiveAppAccess(idx, autoCallings);
       if (accessCallings.length > 0) {
         const accessSnap = await tx.get(accessRef);
         const priorAccess = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
@@ -429,6 +456,15 @@ async function applyTypeMismatch(
         });
       }
     } else if (newType !== 'auto' && seat.type === 'auto') {
+      // Demote: fold the auto calling(s) into the free-text reason and
+      // clear `callings[]` (manual / temp convention). Preserve an
+      // existing non-empty reason if the seat somehow already had one.
+      const existingReason = typeof seat.reason === 'string' ? seat.reason.trim() : '';
+      const reasonFromCallings = (seat.callings ?? []).join(', ').trim();
+      const reason = existingReason.length > 0 ? existingReason : reasonFromCallings;
+      if (reason.length > 0) update.reason = reason;
+      update.callings = [];
+
       update.sort_order = FieldValue.delete();
       const accessSnap = await tx.get(accessRef);
       if (accessSnap.exists) {
