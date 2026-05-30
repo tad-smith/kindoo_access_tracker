@@ -105,7 +105,7 @@ export function PerGrantRosterCard({
 
   return (
     <div
-      className={`roster-card type-${grant.type}${isPendingRemoval ? ' has-removal-pending' : ''}`}
+      className={`roster-card roster-card--two-line type-${grant.type}${isPendingRemoval ? ' has-removal-pending' : ''}`}
       data-seat-id={seat.member_canonical}
       data-grant-kind={grant.isPrimary ? 'primary' : 'duplicate'}
     >
@@ -141,7 +141,6 @@ export function PerGrantRosterCard({
             </Badge>
           ) : null}
         </span>
-        <span className="roster-card-member">{memberInner}</span>
         {canEdit || canRemove ? (
           <span className="roster-card-actions" style={{ display: 'inline-flex', gap: 8 }}>
             {canEdit ? <EditSeatAffordance seat={seat} /> : null}
@@ -157,6 +156,9 @@ export function PerGrantRosterCard({
             ) : null}
           </span>
         ) : null}
+      </div>
+      <div className="roster-card-member-line">
+        <span className="roster-card-member">{memberInner}</span>
       </div>
       {callingLine}
       {buildingsLine}
