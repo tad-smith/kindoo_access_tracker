@@ -426,6 +426,34 @@ describe('SyncPanel', () => {
     expect((applyFixMock.mock.calls[0]![0] as { code: string }).code).toBe('extra-kindoo-calling');
   });
 
+  it('does NOT surface extra-kindoo-calling on a MANUAL seat (auto-only; no row at all)', async () => {
+    // Operator decision 2026-05-30: extra-kindoo-calling is auto-only. A
+    // manual seat whose Kindoo description names an extra calling produces
+    // NO row — manual reasons are frequently operator prose and would
+    // flood the review list. Buildings + scope agree here, so the manual
+    // seat is fully clean.
+    const b = bundle();
+    b.seats.push({
+      ...autoSeat('manualextra@example.com'),
+      type: 'manual',
+      callings: [],
+      reason: 'After-hours access',
+      building_names: ['Maple Building'],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      kuser('manualextra@example.com', {
+        description: 'Maple Ward (Building Greeter)',
+      }),
+    ]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    // Both sides agree (manual seat, scope + buildings match) → empty report.
+    await waitFor(() => expect(screen.getByTestId('sba-sync-empty')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-sync-row-manualextra@example.com')).toBeNull();
+  });
+
   it('scope-mismatch renders Update Kindoo + Update SBA buttons', async () => {
     const b = bundle();
     b.wardCallingTemplates.push({
@@ -462,17 +490,18 @@ describe('SyncPanel', () => {
     expect(screen.getByTestId('sba-sync-fix-update-sba-scope@example.com')).toBeInTheDocument();
   });
 
-  it('type-mismatch disables Update Kindoo when SBA seat is auto', async () => {
+  it('type-mismatch (promote) renders only Update SBA — no Update Kindoo', async () => {
+    // Grant-based promote: a manual SBA seat whose building doors are
+    // all direct-granted. Grants own the type decision, so the only
+    // action is Update SBA (flip to auto). There is no Update Kindoo —
+    // the extension can't write church grants.
     const b = bundle();
-    b.wardCallingTemplates.push({
-      calling_name: 'Sunday School Teacher',
-      auto_kindoo_access: true,
-    } as never);
     b.seats.push({
       ...autoSeat('tm@example.com'),
       type: 'manual',
       callings: [],
-      reason: 'Requested by bishop',
+      reason: 'Sunday School Teacher',
+      building_names: ['Maple Building'],
     } as never);
     getSyncDataMock.mockResolvedValue(b);
     listAllEnvironmentUsersMock.mockResolvedValue([
@@ -480,15 +509,25 @@ describe('SyncPanel', () => {
         description: 'Maple Ward (Sunday School Teacher)',
       }),
     ]);
+    // Stamp direct grants so the seat is church-backed → promote fires.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
+      users.map((u: Record<string, unknown>) => ({
+        ...u,
+        derivedBuildings: ['Maple Building'],
+        directGrantBuildings: ['Maple Building'],
+      })),
+    );
     const user = userEvent.setup();
     await renderSync();
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    const kindooBtn = screen.getByTestId('sba-sync-fix-update-kindoo-tm@example.com');
-    expect(kindooBtn).toBeDisabled();
+    // The row is a type-mismatch.
+    expect(screen.getByTestId('sba-sync-row-tm@example.com')).toHaveTextContent('type-mismatch');
+    // Only Update SBA — no Update Kindoo button at all.
     const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-tm@example.com');
     expect(sbaBtn).not.toBeDisabled();
+    expect(screen.queryByTestId('sba-sync-fix-update-kindoo-tm@example.com')).toBeNull();
   });
 
   it('buildings-mismatch on a manual seat renders both fix buttons enabled when derivedBuildings is present', async () => {

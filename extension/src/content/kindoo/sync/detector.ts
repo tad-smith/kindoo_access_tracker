@@ -11,6 +11,7 @@ import type {
   Building,
   DuplicateGrant,
   Seat,
+  SeatType,
   Stake,
   StakeCallingTemplate,
   Ward,
@@ -97,6 +98,33 @@ export interface KindooBlock {
    * truth when creating an SBA seat from a kindoo-only auto user.
    */
   derivedBuildings: string[] | null;
+  /**
+   * Buildings the user holds via Church Access Automation **direct
+   * grants only** (`AccessScheduleID === 0`). Drives the grant-based
+   * seat-type (church-backed) decision. `null` when door-grant
+   * derivation was skipped or failed — promote / demote is skipped.
+   */
+  directGrantBuildings: string[] | null;
+  /**
+   * Grant-derived seat type. Set on:
+   *   - `type-mismatch` rows — the promote/demote target (PROMOTE →
+   *     `'auto'`, DEMOTE → `'manual'`); the fix dispatcher sends it as
+   *     the callable's `newType`.
+   *   - `kindoo-only` rows — the type the created seat should be born
+   *     as (temp → `'temp'`, grant-backed → `'auto'`, else `'manual'`).
+   * Undefined on every other code. Always preferred over the
+   * template-derived `intendedType`, which is no longer authoritative
+   * for type.
+   */
+  grantTargetType?: SeatType;
+  /**
+   * Callings Kindoo's primary segment names that the SBA seat's
+   * `callings[]` lacks (trimmed, case-insensitive diff). Set ONLY on
+   * `extra-kindoo-calling` rows; undefined elsewhere. The fix
+   * dispatcher sends THIS as the callable's `extraCallings`. Sourced
+   * from the parser, not the retired auto-calling classifier.
+   */
+  extraKindooCallings?: string[];
   /** ISO date `YYYY-MM-DD` derived from Kindoo's `startAccessDoorsDateAtTimeZone`. Only set when the user is temp. */
   startDate?: string;
   /** ISO date `YYYY-MM-DD` derived from Kindoo's `expiryDateAtTimeZone`. Only set when the user is temp. */
@@ -342,6 +370,79 @@ function setsEqual(a: string[], b: string[]): boolean {
   return true;
 }
 
+/**
+ * Grant-based provenance predicate: a seat is "church-backed" iff
+ * EVERY one of its building names is present in the member's
+ * direct-grant building set. Conservative — partial coverage on a
+ * multi-building seat is NOT church-backed (surface for review rather
+ * than guess). Returns `false` when `directGrantBuildings === null`
+ * (derivation failed — caller treats that as "can't determine").
+ *
+ * A seat with no building names is vacuously church-backed when the
+ * direct-grant set is known: there are no doors the church must own,
+ * so provenance can't argue against `auto`. (In practice a typed seat
+ * always carries at least one building.)
+ *
+ * Pure function — no I/O.
+ */
+export function isChurchBacked(
+  seatBuildingNames: string[],
+  directGrantBuildings: string[] | null,
+): boolean {
+  if (directGrantBuildings === null) return false;
+  const direct = new Set(directGrantBuildings);
+  return seatBuildingNames.every((b) => direct.has(b));
+}
+
+/**
+ * The seat-type decision: a seat is `auto` (church-owned provisioning)
+ * iff it has **at least one building** AND every building is
+ * direct-granted. The non-empty guard is the difference from
+ * `isChurchBacked`'s raw set-subset (which is vacuously true for a
+ * zero-building seat): a seat with no doors has no church-owned grant
+ * to justify `auto`, so it stays `manual` (the born-manual default). A
+ * zero-grant Kindoo user (newly added, access revoked) therefore is NOT
+ * minted as an empty-building auto seat.
+ *
+ * Pure function — no I/O.
+ */
+export function grantsBackAuto(
+  seatBuildingNames: string[],
+  directGrantBuildings: string[] | null,
+): boolean {
+  return seatBuildingNames.length > 0 && isChurchBacked(seatBuildingNames, directGrantBuildings);
+}
+
+/**
+ * Callings present in the Kindoo parens text (`Calling A, Calling B`)
+ * but absent from the SBA seat's `callings[]`. Conservative,
+ * false-positive-averse:
+ *   - split on `,`, trim each, drop empties;
+ *   - compare case-insensitively;
+ *   - additive direction ONLY — a calling the seat HAS but Kindoo
+ *     omits does not surface here (that's not an `extra-kindoo-calling`
+ *     case);
+ *   - de-dupe so a calling repeated in the parens reports once.
+ * The returned strings preserve Kindoo's original casing / spelling so
+ * the operator sees exactly what would be added.
+ *
+ * Pure function — no I/O.
+ */
+export function missingCallings(parenText: string, seatCallings: string[]): string[] {
+  const seatSet = new Set(seatCallings.map((c) => c.trim().toLowerCase()));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of parenText.split(',')) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) continue;
+    const key = trimmed.toLowerCase();
+    if (seatSet.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 /** Sort comparator for the final report. */
 function compareDiscrepancies(a: Discrepancy, b: Discrepancy): number {
   // drift first, then review.
@@ -448,6 +549,27 @@ export function detect(inputs: DetectInputs): DetectResult {
       const parsed = parseDescription(kuser.description, inputs.stake, inputs.wards);
       const primary = pickRelevantSegment(parsed);
       const intended = primary ? classifySegment(primary, kuser.isTempUser, sets) : null;
+      // Grant-derived type for the seat we'd create: temp wins
+      // (`IsTempUser`-driven); otherwise grant-backed → auto, else
+      // manual. Evaluated against the building set the new seat would
+      // carry — `derivedBuildings` when known, else the AccessSchedules
+      // fallback (matches the fix dispatcher's building source). A null
+      // derivation or a zero-building set can't be grant-backed
+      // (`grantsBackAuto` requires ≥1 building), so a zero-grant Kindoo
+      // user falls through to the born-manual default rather than
+      // minting an empty-building auto seat.
+      const newSeatBuildings =
+        kuser.derivedBuildings !== null && kuser.derivedBuildings !== undefined
+          ? kuser.derivedBuildings
+          : ruleIdsToBuildingNames(
+              kuser.accessSchedules.map((s) => s.ruleId),
+              inputs.buildings,
+            );
+      const createdType: SeatType = kuser.isTempUser
+        ? 'temp'
+        : grantsBackAuto(newSeatBuildings, kuser.directGrantBuildings ?? null)
+          ? 'auto'
+          : 'manual';
       discrepancies.push({
         canonical: canon,
         displayEmail,
@@ -455,7 +577,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'drift',
         reason: 'Kindoo has a user for this email, but SBA has no seat for them.',
         sba: null,
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
+        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, createdType),
       });
       continue;
     }
@@ -497,26 +619,6 @@ export function detect(inputs: DetectInputs): DetectResult {
     }
     const intended = classifySegment(primary, kuser.isTempUser, sets);
 
-    // 4. extra-kindoo-calling — Kindoo's parens list at least one auto
-    // calling plus additional non-auto calling(s). The auto calling
-    // drives the seat type (the user IS an auto seat); the extras are
-    // detail Kindoo records but SBA's seat does not. Surface as a
-    // review so the operator can add the extras to the SBA seat.
-    if (intended.reviewMixed) {
-      const extras = intended.freeText || 'non-auto';
-      const sbaCallings = sbaBlock.callings.length > 0 ? sbaBlock.callings.join(', ') : '(none)';
-      discrepancies.push({
-        canonical: canon,
-        displayEmail,
-        code: 'extra-kindoo-calling',
-        severity: 'review',
-        reason: `Kindoo lists additional calling(s) [${extras}] beyond SBA's auto seat callings [${sbaCallings}]; add the extra calling(s) to the SBA seat.`,
-        sba: sbaBlock,
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
-      });
-      continue;
-    }
-
     // 5. scope-mismatch — parsed primary scope differs from seat.scope.
     if (intended.scope !== sbaBlock.scope) {
       discrepancies.push({
@@ -531,18 +633,57 @@ export function detect(inputs: DetectInputs): DetectResult {
       continue;
     }
 
-    // 6. type-mismatch — intended type differs from seat.type.
-    if (intended.type !== sbaBlock.type) {
-      discrepancies.push({
-        canonical: canon,
-        displayEmail,
-        code: 'type-mismatch',
-        severity: 'drift',
-        reason: `Seat type differs: SBA=${sbaBlock.type}, Kindoo intends=${intended.type}.`,
-        sba: sbaBlock,
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
-      });
-      continue;
+    // 6. type-mismatch — grant-based PROMOTE / DEMOTE.
+    //
+    // `type` is a provenance label: who owns the Kindoo grant — the
+    // church (`auto`, SBA writes no rule) or SBA (`manual`). We observe
+    // provenance from the member's Church Access Automation DIRECT
+    // grants (`directGrantBuildings`), NOT from the calling-template
+    // classifier (which is a guess at churchwide behaviour and drifts).
+    //
+    //   - manual seat + church-backed → PROMOTE to `auto`.
+    //   - auto seat + NOT church-backed → DEMOTE to `manual`.
+    //   - directGrantBuildings === null (derivation failed) → skip;
+    //     can't determine provenance, same as the buildings-null skip.
+    //   - temp seats are never promoted / demoted — `temp` is
+    //     `IsTempUser`-driven, orthogonal to grant provenance.
+    const directGrant = kuser.directGrantBuildings ?? null;
+    if (sbaBlock.type !== 'temp' && directGrant !== null) {
+      // PROMOTE requires a real grant-backed building (`grantsBackAuto`
+      // is false for a zero-building seat). DEMOTE keys off the raw
+      // subset (`!isChurchBacked`) so a degenerate zero-building auto
+      // seat — vacuously church-backed — does NOT spuriously demote.
+      const promoteToAuto = grantsBackAuto(sbaBlock.buildingNames, directGrant);
+      const stillChurchBacked = isChurchBacked(sbaBlock.buildingNames, directGrant);
+      if (sbaBlock.type === 'manual' && promoteToAuto) {
+        // PROMOTE — the church grants every door of this seat's
+        // buildings, so the church owns provisioning ⇒ auto.
+        discrepancies.push({
+          canonical: canon,
+          displayEmail,
+          code: 'type-mismatch',
+          severity: 'drift',
+          reason: `Promote to auto: the church directly grants every door for this seat's building(s) [${sbaBlock.buildingNames.join(', ') || '(none)'}], so Kindoo provisioning is church-owned.`,
+          sba: sbaBlock,
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, 'auto'),
+        });
+        continue;
+      }
+      if (sbaBlock.type === 'auto' && !stillChurchBacked) {
+        // DEMOTE — the church no longer grants all of this seat's
+        // doors, so SBA must own them ⇒ manual.
+        const directList = directGrant.length > 0 ? directGrant.join(', ') : '(none)';
+        discrepancies.push({
+          canonical: canon,
+          displayEmail,
+          code: 'type-mismatch',
+          severity: 'drift',
+          reason: `Demote to manual: the church no longer directly grants all of this seat's building(s) [${sbaBlock.buildingNames.join(', ') || '(none)'}] (direct grants cover [${directList}]); SBA must own the access.`,
+          sba: sbaBlock,
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, 'manual'),
+        });
+        continue;
+      }
     }
 
     // 7. buildings-mismatch — Kindoo door-access truth vs SBA building set.
@@ -575,6 +716,47 @@ export function detect(inputs: DetectInputs): DetectResult {
           reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].`,
           sba: sbaBlock,
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
+        });
+        continue;
+      }
+    }
+
+    // 8. extra-kindoo-calling — AUTO seats only. When Kindoo's parsed
+    // primary segment names calling(s) the auto seat's roster
+    // `callings[]` lacks, propose adding the missing one(s). Conservative
+    // to avoid false positives: compare trimmed + case-insensitively,
+    // additive direction only (Kindoo has callings the seat lacks);
+    // never fire on ordering / formatting differences.
+    //
+    // Manual / temp seats are deliberately NOT checked: they record their
+    // calling in the free-text `reason`, which is frequently operator
+    // prose ("Requested by bishop", "Visiting speaker") rather than a
+    // calling name — comparing against it would flood the review list
+    // with non-actionable rows on every existing manual seat (operator
+    // decision 2026-05-30). The `syncApplyFix` extra-kindoo-calling path
+    // appends to `callings[]`, which is the auto-seat shape anyway.
+    // Supersedes the old `intended.reviewMixed` trigger (tied to the
+    // retired auto-calling classifier).
+    if (sbaBlock.type === 'auto') {
+      const extraCallings = missingCallings(primary.calling, sbaBlock.callings);
+      if (extraCallings.length > 0) {
+        const knownLabel = sbaBlock.callings.length > 0 ? sbaBlock.callings.join(', ') : '(none)';
+        discrepancies.push({
+          canonical: canon,
+          displayEmail,
+          code: 'extra-kindoo-calling',
+          severity: 'review',
+          reason: `Kindoo lists calling(s) [${extraCallings.join(', ')}] beyond SBA's seat callings [${knownLabel}]; add the missing calling(s) to the SBA seat.`,
+          sba: sbaBlock,
+          kindoo: buildKindooBlock(
+            kuser,
+            parsed,
+            intended,
+            inputs.buildings,
+            sets,
+            undefined,
+            extraCallings,
+          ),
         });
         continue;
       }
@@ -640,6 +822,13 @@ function buildKindooBlock(
   intended: IntendedSeatShape | null,
   buildings: Building[],
   sets: CallingTemplateSets,
+  /** Grant-derived target type for promote / demote `type-mismatch`
+   * rows; carried onto the block so the fix dispatcher sends the
+   * observed-provenance target, not the template-derived `intendedType`. */
+  grantTargetType?: SeatType,
+  /** Missing-calling diff for `extra-kindoo-calling` rows; carried so
+   * the fix dispatcher sources `extraCallings` from the parser diff. */
+  extraKindooCallings?: string[],
 ): KindooBlock {
   const primary = pickPrimarySegment(parsed, sets);
   const ruleIds = kuser.accessSchedules.map((s) => s.ruleId);
@@ -654,7 +843,10 @@ function buildKindooBlock(
     ruleIds,
     buildingNames: ruleIdsToBuildingNames(ruleIds, buildings),
     derivedBuildings: kuser.derivedBuildings ?? null,
+    directGrantBuildings: kuser.directGrantBuildings ?? null,
   };
+  if (grantTargetType !== undefined) block.grantTargetType = grantTargetType;
+  if (extraKindooCallings !== undefined) block.extraKindooCallings = extraKindooCallings;
   if (kuser.isTempUser) {
     const start = toIsoDate(kuser.startAccessDoorsDateAtTimeZone);
     const end = toIsoDate(kuser.expiryDateAtTimeZone);

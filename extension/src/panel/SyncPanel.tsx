@@ -13,10 +13,11 @@
 //     Automation direct grants).
 //
 // After the bulk listing returns, the panel walks the users with a
-// small concurrency cap, calling `getUserDoorIds` per user, and stamps
-// `derivedBuildings` onto each one. Progress text updates as users
-// complete. With ~313 users + concurrency=4 and ~100-200ms per Kindoo
-// call this lands at ~10-15s.
+// small concurrency cap, fetching each user's door grants once and
+// stamping both `derivedBuildings` (all doors) and `directGrantBuildings`
+// (direct-grant doors only — the grant-based seat-type signal) onto each
+// one. Progress text updates as users complete. With ~313 users +
+// concurrency=4 and ~100-200ms per Kindoo call this lands at ~10-15s.
 //
 // Once enrichment is done, `detect()` runs and the report renders.
 // Per-row Fix buttons (Phase 2) dispatch the appropriate action;
@@ -536,22 +537,19 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
   const severityClass = discrepancy.severity === 'drift' ? 'sba-badge-remove' : 'sba-badge-temp';
   const actions = fixActionsFor(discrepancy);
   // Auto seats: Church Access Automation owns direct door grants — the
-  // extension can't write them. The Kindoo-side button is disabled on:
-  //   - type-mismatch when either side is auto
-  //   - buildings-mismatch when the SBA seat is auto
+  // extension can't write them. The Kindoo-side button is disabled on a
+  // buildings-mismatch when the SBA seat is auto. (type-mismatch no
+  // longer surfaces a Kindoo-side button at all — grants are the source
+  // of truth for type, so the only action is "Update SBA".)
   // The SBA-side button is disabled on ANY buildings-mismatch where
   // `derivedBuildings` is null/undefined OR empty — door-grant derivation is
   // the only valid source, so without a non-empty result there's nothing to
   // write (null/undefined would wipe the seat; `[]` is rejected server-side).
   // Operators should steer to "Update Kindoo" or seat removal instead.
   // (Independent of seat type.)
-  const isAutoBuildingsMismatch =
+  const autoLockedKindoo =
     discrepancy.code === 'buildings-mismatch' &&
     (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto');
-  const autoLockedKindoo =
-    (discrepancy.code === 'type-mismatch' &&
-      (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto')) ||
-    isAutoBuildingsMismatch;
   const autoLockedSba =
     discrepancy.code === 'buildings-mismatch' &&
     (discrepancy.kindoo?.derivedBuildings === null ||
@@ -614,9 +612,18 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
                 <div>
                   <em>tempUser:</em> {discrepancy.kindoo.isTempUser ? 'yes' : 'no'}
                 </div>
-                <div>
-                  <em>intended type:</em> {discrepancy.kindoo.intendedType ?? '(unresolved)'}
-                </div>
+                {discrepancy.kindoo.grantTargetType !== undefined ? (
+                  // Grant-derived rows (type-mismatch promote/demote,
+                  // kindoo-only): show the observed-provenance type, not
+                  // the vestigial template-derived `intendedType`.
+                  <div>
+                    <em>grant-derived type:</em> {discrepancy.kindoo.grantTargetType}
+                  </div>
+                ) : (
+                  <div>
+                    <em>intended type:</em> {discrepancy.kindoo.intendedType ?? '(unresolved)'}
+                  </div>
+                )}
                 <div>
                   <em>rule IDs:</em>{' '}
                   {discrepancy.kindoo.ruleIds.length > 0
