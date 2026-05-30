@@ -60,12 +60,13 @@ export function isScopeAllowed(principal: Principal, stakeId: string, scope: str
 /**
  * "Can this principal submit an edit for this seat?" Two gates:
  *
- *   1. **Stake-scope auto seats are non-editable.** Church-granted
- *      access to every stake building; nothing to add or constrain.
- *      Hidden everywhere; no UI affordance. (Partial retirement of the
- *      original Policy 1: ward-scope auto seats ARE editable — see
- *      `EditSeatDialog` for the constrained edit_auto sub-mode that
- *      locks the auto-granted buildings and allows additions only.)
+ *   1. **Policy 1 — stake-scope auto seats are non-editable.** Church-
+ *      granted access to every stake building; nothing to add or
+ *      constrain. Hidden everywhere; no UI affordance. Ward-scope auto
+ *      seats ARE editable from the roster pages via `EditSeatDialog`'s
+ *      constrained `edit_auto` sub-mode (currently-granted buildings
+ *      locked; additions only) — Policy 1 covers the stake-scope case
+ *      only.
  *
  *   2. **Role-for-scope.** Same `isScopeAllowed` predicate as the per-
  *      row Remove button — if you can Remove, you can Edit. A bishopric

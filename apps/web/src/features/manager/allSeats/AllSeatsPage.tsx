@@ -13,12 +13,8 @@
 // the multi-row layout subsumes its surface (AC #12).
 //
 // Mutations:
-//   - Inline-edit dialog on manual / temp primary rows (direct
-//     Firestore update via the rules' update-allowlist).
-//   - Request-based edit dialog on ward-scope auto primary rows
-//     (`EditSeatDialog`'s `edit_auto` sub-mode — auto-granted
-//     buildings are locked, operator can only add). Stake-scope auto
-//     seats stay non-editable (the affordance is hidden).
+//   - Inline-edit dialog on manual / temp primary rows (auto rows
+//     are importer-owned and have no edit affordance).
 //   - Remove via the shared <RemovalAffordance>, grant-aware on
 //     duplicate rows.
 
@@ -49,8 +45,7 @@ import { Badge } from '../../../components/ui/Badge';
 import { Dialog } from '../../../components/ui/Dialog';
 import { toast } from '../../../lib/store/toast';
 import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
-import { EditSeatDialog } from '../../requests/components/EditSeatDialog';
-import { canEditSeat, isScopeAllowed } from '../../requests/scopeOptions';
+import { isScopeAllowed } from '../../requests/scopeOptions';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
 
@@ -168,12 +163,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   const kindooSites = useKindooSites();
   const stake = useStakeDoc();
   const navigate = useNavigate();
-  // Two edit dialogs — inline (direct Firestore update) for manual /
-  // temp primary rows, request-based (`EditSeatDialog`) for ward-scope
-  // auto primary rows. The row's Edit click routes to one or the other
-  // by inspecting `seat.type`; only one dialog can be open at a time.
-  const [inlineEditingSeat, setInlineEditingSeat] = useState<Seat | null>(null);
-  const [autoEditingSeat, setAutoEditingSeat] = useState<Seat | null>(null);
+  const [editingSeat, setEditingSeat] = useState<Seat | null>(null);
 
   const ward = initialWard ?? '';
   const building = initialBuilding ?? '';
@@ -340,37 +330,16 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
               sites={sitesList}
               principal={principal}
               activeStakeId={activeStakeId}
-              onEdit={() => {
-                // Route to the right dialog based on seat type:
-                //   - auto (ward-scope, by the time the Edit button is
-                //     surfaced — stake-scope auto is hidden): the
-                //     request-based `EditSeatDialog`. The auto-granted
-                //     buildings render checked + disabled; the manager's
-                //     edit composes an `edit_auto` request that the
-                //     backend's `markRequestComplete` applies.
-                //   - manual / temp: the inline `SeatEditDialog`. Direct
-                //     Firestore update through the rules' allowlist.
-                if (row.seat.type === 'auto') {
-                  setAutoEditingSeat(row.seat);
-                } else {
-                  setInlineEditingSeat(row.seat);
-                }
-              }}
+              onEdit={() => setEditingSeat(row.seat)}
             />
           ))}
         </div>
       )}
 
       <SeatEditDialog
-        seat={inlineEditingSeat}
+        seat={editingSeat}
         buildings={buildingsList.map((b) => b.building_name)}
-        onClose={() => setInlineEditingSeat(null)}
-      />
-      <EditSeatDialog
-        seat={autoEditingSeat}
-        onOpenChange={(open) => {
-          if (!open) setAutoEditingSeat(null);
-        }}
+        onClose={() => setEditingSeat(null)}
       />
     </section>
   );
@@ -392,21 +361,12 @@ function GrantRowCard({ row, wards, sites, principal, activeStakeId, onEdit }: G
   const siteLabel = siteLabelForGrant(grant, wards, sites);
   const canRemoveScope =
     activeStakeId !== null && isScopeAllowed(principal, activeStakeId, grant.scope);
-  // Edit affordance gate. Two paths:
-  //
-  //   - manual / temp seats: shown on every row (primary + duplicates,
-  //     latter disabled-with-tooltip for action-column rhythm). Manager
-  //     can inline-edit via the rules' update-allowlist — no role gate.
-  //   - auto seats: shown ONLY on ward-scope primary rows where the
-  //     principal has authority (`canEditSeat` returns true). Stake-
-  //     scope auto seats are non-editable for anyone; ward-scope auto
-  //     edits compose an `edit_auto` request which the rules require
-  //     ward authority to submit, so the gate matches what the rosters
-  //     show (B-3 / T-36).
-  const showEdit =
-    grant.type === 'auto'
-      ? activeStakeId !== null && grant.isPrimary && canEditSeat(principal, activeStakeId, seat)
-      : true;
+  // Edit affordance: shown only on the primary row of manual / temp
+  // seats (auto seats are importer-owned). On every duplicate row
+  // the button renders disabled with a tooltip — preserves the
+  // action-column rhythm and tells the user the primary is the edit
+  // surface (AC #7).
+  const showEdit = grant.type !== 'auto';
   const editTooltip = grant.isPrimary
     ? undefined
     : grant.isParallelSite
