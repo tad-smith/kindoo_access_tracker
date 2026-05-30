@@ -594,10 +594,12 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
   });
 
   // Same-scope DuplicateGrants on a single seat collapse into ONE row
-  // (primary's row), with the union of their buildings and a "Duplicate"
-  // badge whose tooltip is operator-facing. Replaces the previous AC #2
-  // "renders its own row" behaviour — that surface confused operators.
-  it('collapses a same-scope within-site DuplicateGrant into the primary row with the Duplicate badge', () => {
+  // (primary's row), with the union of their buildings and the
+  // same-scope-duplicate badge whose tooltip is operator-facing. The
+  // label follows the primary's type: auto → "edited" (this seat),
+  // manual/temp → "duplicate". Replaces the previous AC #2 "renders its
+  // own row" behaviour — that surface confused operators.
+  it('collapses a same-scope within-site DuplicateGrant into the primary row with the Edited badge (auto primary)', () => {
     mockAll({
       seats: [
         makeSeat({
@@ -628,9 +630,10 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     const row = cards[0] as HTMLElement;
     expect(row.textContent).toContain('Primary Building');
     expect(row.textContent).toContain('Extra Building');
-    // Duplicate badge present on the collapsed (primary) row with the
-    // operator-facing tooltip copy.
+    // Edited badge (auto primary) present on the collapsed row with the
+    // unified operator-facing tooltip copy.
     const badge = screen.getByTestId('grant-duplicate-badge-alice@example.com');
+    expect(badge.textContent).toBe('edited');
     expect(badge.getAttribute('title')).toBe(
       'This user was manually granted access to additional buildings.',
     );
@@ -638,7 +641,7 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
 
   // Operator-reported repro: primary auto MH + manual MH DuplicateGrant
   // with overlapping buildings. Pre-fix: two rows. Post-fix: one row
-  // with the union of buildings + Duplicate badge.
+  // with the union of buildings + the Edited badge (auto primary).
   it('collapses an auto-primary + manual-same-scope dup into one row with union buildings', () => {
     mockAll({
       seats: [
@@ -675,9 +678,10 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(row.textContent).toContain('Jamboree');
     expect(row.textContent).toContain('Lexington');
     expect(row.textContent).toContain('Monument');
-    // Duplicate badge + new operator-facing tooltip.
+    // Edited badge (auto primary) + unified operator-facing tooltip.
     const badge = screen.getByTestId('grant-duplicate-badge-user2@example.com');
     expect(badge).toBeInTheDocument();
+    expect(badge.textContent).toBe('edited');
     expect(badge.getAttribute('title')).toBe(
       'This user was manually granted access to additional buildings.',
     );
@@ -866,8 +870,9 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     // Edit on the primary (collapsed) row is enabled.
     const primaryEdit = screen.getByTestId('seat-edit-w@x.com');
     expect(primaryEdit).not.toBeDisabled();
-    // Duplicate badge carries the operator-facing tooltip.
+    // Duplicate badge (manual primary → "duplicate") with the unified tooltip.
     const badge = screen.getByTestId('grant-duplicate-badge-w@x.com');
+    expect(badge.textContent).toBe('duplicate');
     expect(badge.getAttribute('title')).toBe(
       'This user was manually granted access to additional buildings.',
     );
@@ -966,7 +971,7 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
   // the dup row was the only existing reachable surface. If a future
   // need arises, the affordance can be promoted onto the collapsed
   // row gated on `hasSameScopeDuplicates`.
-  it('Fix 3 / KS-9: auto primary + same-scope manual dup collapses to one row with the Duplicate badge, no Remove', () => {
+  it('Fix 3 / KS-9: auto primary + same-scope manual dup collapses to one row with the Edited badge, no Remove', () => {
     mockAll({
       seats: [
         makeSeat({
@@ -996,11 +1001,10 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     render(<AllSeatsPage />);
     const cards = document.querySelectorAll('.roster-card[data-seat-id="ks9@x.com"]');
     expect(cards).toHaveLength(1);
-    // Duplicate badge present with tooltip copy. AllSeats keeps the
-    // "duplicate" label even on auto-primary + same-scope-dup; the
-    // Bishopric Roster's "edited" variant does not apply here.
+    // Edited badge present with the unified tooltip copy. The per-type
+    // rule (auto → "edited") applies on every surface, AllSeats included.
     const badge = screen.getByTestId('grant-duplicate-badge-ks9@x.com');
-    expect(badge.textContent).toBe('duplicate');
+    expect(badge.textContent).toBe('edited');
     expect(badge.getAttribute('title')).toBe(
       'This user was manually granted access to additional buildings.',
     );

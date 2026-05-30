@@ -10,7 +10,7 @@
 // only the card's row grouping is under test here.
 
 import { describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { PerGrantRosterCard } from './PerGrantRosterCard';
 import type { GrantView } from '../../lib/grants';
 import type { Seat } from '@kindoo/shared';
@@ -93,5 +93,45 @@ describe('PerGrantRosterCard layout', () => {
     const line1 = container.querySelector('.roster-card-line1');
     expect(line1?.querySelector('.roster-card-actions')).toBeNull();
     expect(container.querySelector('.roster-card-member-line .roster-card-member')).not.toBeNull();
+  });
+});
+
+// Same-scope-duplicate badge: label follows the primary grant's type
+// (auto → "edited", manual/temp → "duplicate") on every surface, with a
+// single unified tooltip. The badge only renders when the collapsed row
+// absorbed same-scope duplicates (`hasSameScopeDuplicates`).
+describe('PerGrantRosterCard same-scope-duplicate badge', () => {
+  const UNIFIED_TOOLTIP = 'This user was manually granted access to additional buildings.';
+
+  it('reads "edited" for an auto primary with same-scope duplicates', () => {
+    renderCard({
+      grant: { ...grant, type: 'auto', callings: ['Bishop'], hasSameScopeDuplicates: true },
+    });
+    const badge = screen.getByTestId('grant-duplicate-badge-memberone@example.com');
+    expect(badge.textContent).toBe('edited');
+    expect(badge.getAttribute('title')).toBe(UNIFIED_TOOLTIP);
+  });
+
+  it('reads "duplicate" for a manual primary with same-scope duplicates', () => {
+    renderCard({
+      grant: { ...grant, type: 'manual', hasSameScopeDuplicates: true },
+    });
+    const badge = screen.getByTestId('grant-duplicate-badge-memberone@example.com');
+    expect(badge.textContent).toBe('duplicate');
+    expect(badge.getAttribute('title')).toBe(UNIFIED_TOOLTIP);
+  });
+
+  it('reads "duplicate" for a temp primary with same-scope duplicates', () => {
+    renderCard({
+      grant: { ...grant, type: 'temp', hasSameScopeDuplicates: true },
+    });
+    const badge = screen.getByTestId('grant-duplicate-badge-memberone@example.com');
+    expect(badge.textContent).toBe('duplicate');
+    expect(badge.getAttribute('title')).toBe(UNIFIED_TOOLTIP);
+  });
+
+  it('renders no badge when the row has no same-scope duplicates', () => {
+    renderCard({ grant: { ...grant, hasSameScopeDuplicates: false } });
+    expect(screen.queryByTestId('grant-duplicate-badge-memberone@example.com')).toBeNull();
   });
 });

@@ -484,7 +484,7 @@ function GrantRowCard({ row, wards, sites, principal, activeStakeId, onEdit }: G
                     : 'Within-site priority loser — covered by the primary write.'
               }
             >
-              duplicate
+              {grant.hasSameScopeDuplicates && grant.type === 'auto' ? 'edited' : 'duplicate'}
             </Badge>
           )}
           {siteLabel ? (
