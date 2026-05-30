@@ -42,6 +42,11 @@ import './styles/tokens.css';
 import './styles/tailwind.css';
 import './styles/base.css';
 import './styles/pages.css';
+// Roster-card rules are shared by AllSeats, Queue, Access, MyRequests, and
+// the roster pages. Imported eagerly here (not per-component) so the rules
+// ship in the global CSS chunk and land on first paint on every route —
+// avoids the route-code-split FOUC that per-component imports caused.
+import './components/roster/RosterCardList.css';
 
 const router = createRouter({
   routeTree,

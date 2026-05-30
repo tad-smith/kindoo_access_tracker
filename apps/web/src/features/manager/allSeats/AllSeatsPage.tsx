@@ -48,7 +48,6 @@ import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
 import { isScopeAllowed } from '../../requests/scopeOptions';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
-import '../../../components/roster/RosterCardList.css';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

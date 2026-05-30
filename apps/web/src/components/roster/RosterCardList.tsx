@@ -37,7 +37,6 @@ import type { ReactNode } from 'react';
 import type { Seat } from '@kindoo/shared';
 import { Badge } from '../ui/Badge';
 import { EmptyState } from '../../lib/render/EmptyState';
-import './RosterCardList.css';
 
 export interface RosterCardListProps {
   seats: readonly Seat[];
