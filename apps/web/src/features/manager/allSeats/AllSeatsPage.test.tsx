@@ -49,6 +49,33 @@ vi.mock('../../requests/hooks', () => ({
     fetchStatus: 'idle',
   }),
   useSubmitRequest: () => ({ mutateAsync: submitMutate, isPending: false }),
+  // The request-based EditSeatDialog (opened for ward-scope auto seat
+  // edits) reads the stake ward + building catalogues to compose its
+  // building checklist. Mock them as empty live-result shapes so the
+  // dialog renders without blowing up; tests that exercise the dialog
+  // contents seed the dialog mocks separately.
+  useStakeWards: () => ({
+    data: [],
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  }),
+  useStakeBuildings: () => ({
+    data: [],
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  }),
 }));
 
 vi.mock('../../../lib/principal', () => ({
@@ -277,15 +304,93 @@ describe('<AllSeatsPage />', () => {
     expect(host).toHaveTextContent(/cap unset/i);
   });
 
-  it('hides the Edit affordance on auto seats', () => {
+  it('hides the Edit affordance on stake-scope auto seats (Church-managed)', () => {
     mockAll({
-      seats: [makeSeat({ type: 'auto', member_canonical: 'a@x.com' })],
+      seats: [
+        makeSeat({
+          type: 'auto',
+          scope: 'stake',
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          callings: ['Stake President'],
+        }),
+      ],
       wards: [],
       buildings: [],
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);
     expect(screen.queryByTestId('seat-edit-a@x.com')).toBeNull();
+  });
+
+  it('shows the Edit affordance on ward-scope auto seats (constrained edit_auto via request)', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'auto',
+          scope: 'CO',
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          callings: ['Bishop'],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const edit = screen.getByTestId('seat-edit-a@x.com');
+    expect(edit).toBeInTheDocument();
+    expect(edit).not.toBeDisabled();
+  });
+
+  it('hides the Edit affordance on ward-scope auto seats when the principal lacks ward authority', () => {
+    // Manager with stake authority but no bishopric claim — cannot
+    // submit edit_auto requests for ward-scope seats, so the affordance
+    // is hidden even though the manager can SEE the page.
+    usePrincipalMock.mockReturnValue(principal({ stake: true }));
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'auto',
+          scope: 'CO',
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          callings: ['Bishop'],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('seat-edit-a@x.com')).toBeNull();
+  });
+
+  it('clicking Edit on a ward-scope auto seat opens the request-based EditSeatDialog (not the inline dialog)', async () => {
+    // Auto seats edit through the request flow (edit_auto sub-mode)
+    // so the auto-granted buildings render locked. The inline dialog
+    // is for manual / temp only — clicking Edit on an auto row must
+    // open `EditSeatDialog` (identified by its `edit-seat-dialog-form`
+    // testid), not `SeatEditDialog`.
+    const u = userEvent.setup();
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'auto',
+          scope: 'CO',
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          callings: ['Bishop'],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    await u.click(screen.getByTestId('seat-edit-a@x.com'));
+    expect(screen.getByTestId('edit-seat-dialog-form')).toBeInTheDocument();
   });
 
   it('shows the Edit affordance on manual seats (primary row enabled)', () => {

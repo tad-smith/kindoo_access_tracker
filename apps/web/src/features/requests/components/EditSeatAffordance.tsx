@@ -1,15 +1,18 @@
 // Per-row "Edit" affordance for roster pages (bishopric Roster, stake
 // Roster, stake Ward Rosters, manager All Seats). Two layers of gating:
 //
-//   1. **Policy 1 — stake-scope auto seats are non-editable.** The
-//      affordance renders nothing for those rows (Church-granted access
-//      to every stake building; no editable surface).
+//   1. **Stake-scope auto seats are non-editable.** The affordance
+//      renders nothing for those rows (Church-granted access to every
+//      stake building; no editable surface). Ward-scope auto seats ARE
+//      editable — the constrained edit_auto sub-mode in `EditSeatDialog`
+//      locks auto-granted buildings and allows additions only. (Partial
+//      retirement of the original Policy 1.)
 //
 //   2. **Role-for-scope.** Mirrors `RemovalAffordance`: same
-//      `canEditSeat` predicate (which composes the Policy 1 check with
-//      `isScopeAllowed`). A bishopric of CO sees the button on CO rows;
-//      a stake user sees it on stake rows; a manager-only user without
-//      a stake / ward claim sees nothing (B-3 / T-36).
+//      `canEditSeat` predicate (which composes the stake-auto carve-out
+//      with `isScopeAllowed`). A bishopric of CO sees the button on CO
+//      rows; a stake user sees it on stake rows; a manager-only user
+//      without a stake / ward claim sees nothing (B-3 / T-36).
 //
 // Caller-side note: pages already filter the row list to scopes the
 // viewer can see, but the affordance ALSO checks `canEditSeat` so a

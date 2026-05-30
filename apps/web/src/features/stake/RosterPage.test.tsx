@@ -467,7 +467,7 @@ describe('<StakeRosterPage />', () => {
   });
 
   describe('per-row Edit affordance', () => {
-    it('hides the Edit button on stake-scope auto seats (Policy 1 — not editable for anyone)', () => {
+    it('hides the Edit button on stake-scope auto seats (Church-managed — not editable for anyone)', () => {
       mockSeats([
         makeSeat({
           scope: 'stake',

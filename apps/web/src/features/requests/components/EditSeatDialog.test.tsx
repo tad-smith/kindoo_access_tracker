@@ -69,7 +69,7 @@ beforeEach(() => {
 });
 
 describe('<EditSeatDialog /> — edit_auto sub-type', () => {
-  it('renders the ward template building pre-checked AND disabled with a Church-managed note', () => {
+  it('renders every auto-granted building pre-checked AND disabled; non-granted buildings are unchecked + enabled', () => {
     mockCatalogue(
       [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
       [
@@ -91,6 +91,98 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     expect(genoaCb.checked).toBe(false);
     expect(genoaCb.disabled).toBe(false);
     expect(screen.getByTestId('edit-seat-building-locked-cordera')).toBeInTheDocument();
+  });
+
+  it('locks every building in seat.building_names (not just ward.building_name) — prior edit_auto adds stay locked too', () => {
+    // Regression: a previous interpretation locked only the ward's
+    // template building, which left "operator-added extras from a prior
+    // edit_auto" as uncheckable. The locked set is now seat.building_names
+    // in full so the user can never silently remove an existing grant
+    // through this dialog.
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [
+        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
+        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'prairie', building_name: 'Prairie Building' }),
+      ],
+    );
+    const seat = makeSeat({
+      type: 'auto',
+      scope: 'CO',
+      callings: ['Bishop'],
+      building_names: ['Cordera Building', 'Genoa Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
+    const genoaCb = screen.getByTestId('edit-seat-building-genoa') as HTMLInputElement;
+    const prairieCb = screen.getByTestId('edit-seat-building-prairie') as HTMLInputElement;
+    expect(corderaCb.checked).toBe(true);
+    expect(corderaCb.disabled).toBe(true);
+    expect(genoaCb.checked).toBe(true);
+    expect(genoaCb.disabled).toBe(true);
+    expect(prairieCb.checked).toBe(false);
+    expect(prairieCb.disabled).toBe(false);
+  });
+
+  it('locks same-scope manual DuplicateGrant buildings alongside the auto-primary set (collapsed-row buildings stay locked)', () => {
+    // After PR #166, AllSeats / rosters collapse a same-scope manual
+    // DuplicateGrant into the auto-primary row; the displayed buildings
+    // are the union. The edit dialog mirrors that union into the locked
+    // set so the user cannot silently uncheck a manual-dup building
+    // (an edit_auto submission wouldn't touch the dup; the change would
+    // no-op silently).
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [
+        makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' }),
+        makeBuilding({ building_id: 'genoa', building_name: 'Genoa Building' }),
+        makeBuilding({ building_id: 'prairie', building_name: 'Prairie Building' }),
+      ],
+    );
+    const seat = makeSeat({
+      type: 'auto',
+      scope: 'CO',
+      callings: ['Bishop'],
+      building_names: ['Cordera Building'],
+      duplicate_grants: [
+        {
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['Genoa Building'],
+          detected_at: FAKE_TS,
+        },
+      ],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
+    const genoaCb = screen.getByTestId('edit-seat-building-genoa') as HTMLInputElement;
+    const prairieCb = screen.getByTestId('edit-seat-building-prairie') as HTMLInputElement;
+    expect(corderaCb.checked).toBe(true);
+    expect(corderaCb.disabled).toBe(true);
+    expect(genoaCb.checked).toBe(true);
+    expect(genoaCb.disabled).toBe(true);
+    expect(prairieCb.checked).toBe(false);
+    expect(prairieCb.disabled).toBe(false);
+  });
+
+  it('surfaces a tooltip on each disabled (locked) checkbox explaining why it cannot be unchecked', () => {
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Cordera Building' })],
+      [makeBuilding({ building_id: 'cordera', building_name: 'Cordera Building' })],
+    );
+    const seat = makeSeat({
+      type: 'auto',
+      scope: 'CO',
+      callings: ['Bishop'],
+      building_names: ['Cordera Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    const corderaCb = screen.getByTestId('edit-seat-building-cordera') as HTMLInputElement;
+    // The title attribute is what the browser surfaces as a tooltip on
+    // hover; for the disabled checkbox the same title goes on the
+    // wrapping label too so the hover surface includes the text label.
+    expect(corderaCb.getAttribute('title')).toMatch(/already granted/i);
   });
 
   it('omits the Calling / Reason field on edit_auto', () => {
