@@ -167,18 +167,20 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         d.kindoo.intendedType === 'auto'
           ? d.kindoo.intendedCallings
           : splitFreeText(d.kindoo.intendedFreeText);
-      // Auto seats: prefer the door-grant-derived building set when
-      // available. The bulk listing's AccessSchedules (the source of
-      // `buildingNames`) misses Church Access Automation's direct
-      // grants; `derivedBuildings` is the strict-subset chain that
-      // covers BOTH grant kinds. Fall back to `buildingNames` if
-      // derivation failed (null) so the seat still gets created with
-      // whatever building data the sync had — the operator can repair
-      // later via Update SBA on a buildings-mismatch row.
+      // Prefer the door-grant-derived building set for ALL intended seat
+      // types when available. The bulk listing's AccessSchedules (the
+      // source of `buildingNames`) misses Church Access Automation's
+      // direct grants; `derivedBuildings` is the strict-subset chain that
+      // covers BOTH direct and rule-based grants, so it is the
+      // authoritative Kindoo door-access signal. Fall back to
+      // `buildingNames` only when derivation failed (null/undefined) so
+      // the seat still gets created with whatever building data the sync
+      // had — unlike the buildings-mismatch fix (which refuses when
+      // derivedBuildings is null), creating a fresh seat with partial
+      // building data is acceptable here, and the operator can repair
+      // later via Update SBA.
       const buildingNames =
-        d.kindoo.intendedType === 'auto' &&
-        d.kindoo.derivedBuildings !== null &&
-        d.kindoo.derivedBuildings !== undefined
+        d.kindoo.derivedBuildings !== null && d.kindoo.derivedBuildings !== undefined
           ? d.kindoo.derivedBuildings
           : d.kindoo.buildingNames;
       // intended scope falls back to the parsed primary scope; without

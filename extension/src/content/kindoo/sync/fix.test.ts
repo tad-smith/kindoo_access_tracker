@@ -172,10 +172,34 @@ describe('buildCallableInput', () => {
     expect(payload.buildingNames).toEqual(['Maple Building']);
   });
 
-  it('kindoo-only on a manual seat ignores derivedBuildings (manual path uses AccessSchedules buildingNames)', () => {
-    // Manual seats have authoritative AccessSchedules → buildingNames;
-    // derivedBuildings is only the truth for auto. Even if both are
-    // populated, the manual branch sticks with buildingNames.
+  it('kindoo-only on a manual seat prefers derivedBuildings over buildingNames when available', () => {
+    // derivedBuildings (direct + rule grants) is the authoritative Kindoo
+    // door-access signal for ALL seat types, not just auto. A Kindoo user
+    // with direct door grants but empty AccessSchedules would otherwise
+    // seed the new seat with empty buildings.
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: 'kindoo-only',
+        kindoo: {
+          description: 'Maple Ward (Building Greeter)',
+          isTempUser: false,
+          memberName: 'M M',
+          primaryScope: 'CO',
+          intendedType: 'manual',
+          intendedCallings: [],
+          intendedFreeText: 'Building Greeter',
+          ruleIds: [6248],
+          buildingNames: [],
+          derivedBuildings: ['Lexington'],
+        },
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.buildingNames).toEqual(['Lexington']);
+  });
+
+  it('kindoo-only on a manual seat falls back to buildingNames when derivedBuildings is null', () => {
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
@@ -190,7 +214,7 @@ describe('buildCallableInput', () => {
           intendedFreeText: 'Building Greeter',
           ruleIds: [6248],
           buildingNames: ['Maple Building'],
-          derivedBuildings: ['Pine Creek Building'],
+          derivedBuildings: null,
         },
       }),
     );
