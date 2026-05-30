@@ -453,7 +453,18 @@ async function applyBuildingsMismatch(
     throw new HttpsError('invalid-argument', 'payload required');
   }
   const memberEmail = requireString(payload.memberEmail, 'memberEmail');
-  const newBuildingNames = cleanStringArray(payload.newBuildingNames ?? [], 'newBuildingNames');
+  const newBuildingNames = dedupePreserveOrder(
+    cleanStringArray(payload.newBuildingNames ?? [], 'newBuildingNames'),
+  );
+  // Guardrail: never clear all buildings from a seat. A drift fix that
+  // resolves to an empty building list is a malformed reconciliation
+  // request, not a valid "remove every building" instruction.
+  if (newBuildingNames.length === 0) {
+    throw new HttpsError(
+      'invalid-argument',
+      'newBuildingNames must not be empty — refusing to clear all buildings from the seat',
+    );
+  }
   const canonical = canonicalEmail(memberEmail);
   if (canonical === '') {
     throw new HttpsError('invalid-argument', 'memberEmail did not canonicalize');
@@ -469,7 +480,7 @@ async function applyBuildingsMismatch(
       return { success: false, error: 'seat not found' };
     }
     tx.update(seatRef, {
-      building_names: dedupePreserveOrder(newBuildingNames),
+      building_names: newBuildingNames,
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,
