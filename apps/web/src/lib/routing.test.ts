@@ -32,13 +32,15 @@ describe('defaultLandingFor', () => {
     );
   });
 
-  it('returns /new for a stake-member principal', () => {
-    expect(defaultLandingFor(principal({ stakeMemberStakes: [STAKE_ID] }), STAKE_ID)).toBe('/new');
+  it('returns /stake/roster for a stake-member principal', () => {
+    expect(defaultLandingFor(principal({ stakeMemberStakes: [STAKE_ID] }), STAKE_ID)).toBe(
+      '/stake/roster',
+    );
   });
 
-  it('returns /new for a bishopric principal', () => {
+  it('returns /bishopric/roster for a bishopric principal', () => {
     expect(defaultLandingFor(principal({ bishopricWards: { [STAKE_ID]: ['CO'] } }), STAKE_ID)).toBe(
-      '/new',
+      '/bishopric/roster',
     );
   });
 
@@ -61,7 +63,7 @@ describe('defaultLandingFor', () => {
         }),
         STAKE_ID,
       ),
-    ).toBe('/new');
+    ).toBe('/stake/roster');
   });
 
   it('prefers manager when the principal is a platform superadmin in an accessible stake', () => {

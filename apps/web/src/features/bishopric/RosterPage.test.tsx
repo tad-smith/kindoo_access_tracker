@@ -60,6 +60,20 @@ vi.mock('../../lib/data', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
+  // Match the public Link API enough to render an `<a>` with the
+  // `to` prop turned into an `href` for accessible-name queries.
+  Link: ({
+    to,
+    children,
+    ...rest
+  }: {
+    to: string;
+    children?: React.ReactNode;
+  } & Record<string, unknown>) => (
+    <a href={to} {...rest}>
+      {children}
+    </a>
+  ),
 }));
 
 vi.mock('../requests/hooks', () => ({
@@ -272,6 +286,32 @@ describe('<BishopricRosterPage />', () => {
     mockWardDoc(undefined);
     render(<BishopricRosterPage />);
     expect(screen.getByText(/no bishopric wards/i)).toBeInTheDocument();
+  });
+
+  describe('New Request header action', () => {
+    it('renders a "New Request" link in the page header that targets /new', () => {
+      // Bishopric Roster is the post-login default for bishopric
+      // principals (per `routing.defaultLandingFor`). The header
+      // carries a quick affordance back to the New Request form.
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      const link = screen.getByRole('link', { name: 'New Request' });
+      expect(link).toBeInTheDocument();
+      expect(link).toHaveAttribute('href', '/new');
+    });
+
+    it('does not render the New Request action when the principal has no bishopric wards', () => {
+      // The zero-ward early return path has no header to attach an
+      // action to, and the bishopric-with-no-wards copy is the
+      // operator-facing message — no New Request button there.
+      usePrincipalMock.mockReturnValue(principal([]));
+      mockSeats([]);
+      mockWardDoc(undefined);
+      render(<BishopricRosterPage />);
+      expect(screen.queryByRole('link', { name: 'New Request' })).toBeNull();
+    });
   });
 
   describe('pending requests surfaced inline', () => {
