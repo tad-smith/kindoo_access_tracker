@@ -335,7 +335,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
   end_date?: string;           // temp only, ISO date
   building_names: string[];
   kindoo_site_id?: string | null; // T-42. null / absent ⇒ home site; otherwise doc ID under kindooSites/. Mirrors the ward / building convention. Derived from primary scope + ward → kindoo_site_id lookup; stake-scope ⇒ home. Pre-migration seats may have the field absent — the ward-fallback resolver handles classification at read time.
-  sort_order: number | null;   // see "Sort order" below
+  sort_order: number | null;   // vestigial — still stamped by syncApplyFix, NOT read by the web (render-time calling-order sort). See "Sort order" below.
 
   // Manual/temp linkage
   granted_by_request?: string; // request_id; absent for auto seats
@@ -378,10 +378,13 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
 - Auto seats have `callings.length >= 1` and `type='auto'`. Removing the last calling deletes the seat (or promotes a manual/temp duplicate to primary, see Sync's `syncApplyFix` logic).
 - Manual/temp seats have `granted_by_request` set; auto seats do not.
 
-**Sort order:**
-- **Auto seats:** denormalized at `syncApplyFix` write time as the **MIN** of `sheet_order` across the seat's `callings[]` (the matched calling templates' `sheet_order` values). Multi-calling collapsed seats get the lowest-priority template's order.
-- **Manual / temp seats:** always `null`. These seats are created by request completion, never by Sync.
-- **Orphaned auto seats** (calling no longer matches any template): `null`.
+**Sort order:** The denormalized `sort_order` field is **no longer read by the web** (Sync Stage 1a — see `extension/docs/sync-design.md` "Grant-derived seat type" part (a)). Roster / All Seats sort is computed **at render time** from a compiled churchwide `calling → order` table (`packages/shared/src/callingSortOrder.ts`; 85 entries — stake callings 1–42, ward 43–85; exact trimmed case-insensitive match, no wildcards):
+- **Auto seats:** order = **MIN** of the table order across the seat's `callings[]`.
+- **Manual seats:** order = the table order of the free-text `seat.reason` (manual seats carry `callings: []` and store the calling in `reason` — see §13/spec). No match ⇒ unknown.
+- **Temp seats:** not calling-ordered — sorted by `end_date` descending (soonest-expiring at the band bottom).
+- **Unknown** (no calling/reason match) within the auto / manual bands ⇒ band bottom, then `created_at` ascending (oldest first), then `member_name`.
+
+The `sort_order` field itself is retained on the doc and is still stamped by `syncApplyFix` (the **MIN** of `sheet_order` across `callings[]` for auto; `null` for manual / temp / orphaned auto) — vestigial; the client ignores it. `sheet_order` still drives `give_app_access` wildcard precedence and the Access-page (`access/`) doc sort, which are unchanged.
 
 ### 4.7 `stakes/{stakeId}/requests/{requestId}`
 
