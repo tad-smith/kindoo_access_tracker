@@ -570,6 +570,43 @@ describe('SyncPanel', () => {
     expect(sbaBtn).toHaveAttribute('title', expect.stringContaining('derivation'));
   });
 
+  it('buildings-mismatch with empty derivedBuildings disables Update SBA but keeps Update Kindoo enabled', async () => {
+    // A member with no effective Kindoo grants derives to []. Update SBA
+    // would send [] — rejected server-side — so it must be disabled, the
+    // same as the null case. Update Kindoo stays enabled: pushing SBA's
+    // buildings to Kindoo (re-granting) is still a valid action.
+    const b = bundle();
+    b.seats.push({
+      ...autoSeat('bmempty@example.com'),
+      type: 'manual',
+      callings: [],
+      reason: 'Requested by bishop',
+      building_names: ['Maple Building'],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      kuser('bmempty@example.com', {
+        description: 'Maple Ward (Building Greeter)',
+        accessSchedules: [{ ruleId: 6248 }],
+      }),
+    ]);
+    // Derivation succeeded but produced no buildings → []. Detector
+    // compares SBA=[Maple] vs Kindoo=[] → buildings-mismatch, but the
+    // SBA side has no valid non-empty source to write.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
+      users.map((u: Record<string, unknown>) => ({ ...u, derivedBuildings: [] })),
+    );
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-bmempty@example.com');
+    const kindooBtn = screen.getByTestId('sba-sync-fix-update-kindoo-bmempty@example.com');
+    expect(sbaBtn).toBeDisabled();
+    expect(kindooBtn).not.toBeDisabled();
+  });
+
   it('buildings-mismatch on an auto seat disables Update Kindoo but keeps Update SBA enabled', async () => {
     // Auto seat in SBA with no buildings; Kindoo user's door-grant
     // derivation produced ['Maple Building'] → buildings-mismatch

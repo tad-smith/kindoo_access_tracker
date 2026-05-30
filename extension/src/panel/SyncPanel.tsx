@@ -540,8 +540,11 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
   //   - type-mismatch when either side is auto
   //   - buildings-mismatch when the SBA seat is auto
   // The SBA-side button is disabled on ANY buildings-mismatch where
-  // `derivedBuildings` is null — door-grant derivation is the only valid
-  // source, so without it we'd wipe the seat. (Independent of seat type.)
+  // `derivedBuildings` is null/undefined OR empty — door-grant derivation is
+  // the only valid source, so without a non-empty result there's nothing to
+  // write (null/undefined would wipe the seat; `[]` is rejected server-side).
+  // Operators should steer to "Update Kindoo" or seat removal instead.
+  // (Independent of seat type.)
   const isAutoBuildingsMismatch =
     discrepancy.code === 'buildings-mismatch' &&
     (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto');
@@ -552,7 +555,8 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
   const autoLockedSba =
     discrepancy.code === 'buildings-mismatch' &&
     (discrepancy.kindoo?.derivedBuildings === null ||
-      discrepancy.kindoo?.derivedBuildings === undefined);
+      discrepancy.kindoo?.derivedBuildings === undefined ||
+      discrepancy.kindoo.derivedBuildings.length === 0);
 
   return (
     <div
