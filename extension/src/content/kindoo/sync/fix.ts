@@ -61,9 +61,18 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
     case 'kindoo-only':
       return [{ side: 'sba', label: 'Create SBA seat', testId: 'create-sba' }];
     case 'extra-kindoo-calling':
+      // Auto seats only by construction (the detector suppresses this
+      // code for manual / temp). The `syncApplyFix` path appends to the
+      // roster `callings[]`, which is the auto-seat shape.
       return [{ side: 'sba', label: 'Add to SBA seat', testId: 'add-callings-sba' }];
-    case 'scope-mismatch':
     case 'type-mismatch':
+      // Grant-derived type: Kindoo's observed direct grants are now the
+      // source of truth for `type`, so the only sensible action is to
+      // flip the SBA seat to match (PROMOTE → auto, DEMOTE → manual).
+      // There's no "Update Kindoo" — the extension can't write church
+      // grants, and revoke-on-promote is Stage 2.
+      return [{ side: 'sba', label: 'Update SBA', testId: 'update-sba' }];
+    case 'scope-mismatch':
       return [
         { side: 'kindoo', label: 'Update Kindoo', testId: 'update-kindoo' },
         { side: 'sba', label: 'Update SBA', testId: 'update-sba' },
@@ -163,47 +172,65 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
   switch (d.code) {
     case 'kindoo-only': {
       if (!d.kindoo) throw new Error('kindoo-only row missing Kindoo block');
-      const callings =
-        d.kindoo.intendedType === 'auto'
-          ? d.kindoo.intendedCallings
-          : splitFreeText(d.kindoo.intendedFreeText);
-      // Prefer the door-grant-derived building set for ALL intended seat
-      // types when available. The bulk listing's AccessSchedules (the
-      // source of `buildingNames`) misses Church Access Automation's
-      // direct grants; `derivedBuildings` is the strict-subset chain that
-      // covers BOTH direct and rule-based grants, so it is the
-      // authoritative Kindoo door-access signal. Fall back to
-      // `buildingNames` only when derivation failed (null/undefined) so
-      // the seat still gets created with whatever building data the sync
-      // had — unlike the buildings-mismatch fix (which refuses when
-      // derivedBuildings is null), creating a fresh seat with partial
-      // building data is acceptable here, and the operator can repair
-      // later via Update SBA.
+      // Grant-derived seat type. The detector carries the church-backed
+      // decision via `grantTargetType` (temp → temp, church-backed →
+      // auto, else manual). Fall back to manual when absent — born-manual
+      // is the safe default. Classifier `intendedType` is no longer the
+      // source of the created type (it's template-derived and drifts).
+      const createdType = d.kindoo.grantTargetType ?? 'manual';
+      // The full parsed calling list = classifier matched
+      // (`intendedCallings`) + unmatched (`intendedFreeText`), de-duped.
+      // Where it lands on the new seat depends on the type, matching how
+      // the request flow + `markRequestComplete` shape seats
+      // (`docs/spec.md` §13):
+      //   - auto  → roster `callings[]` (no `reason`).
+      //   - manual / temp → `callings: []`; the calling text lives in the
+      //     single free-text `reason`. Writing it to `callings[]` would
+      //     mint a hybrid seat that re-fires `extra-kindoo-calling` on the
+      //     next sync (the manual diff reads `reason`, not `callings[]`).
+      const parsedCallings = combineParsedCallings(
+        d.kindoo.intendedCallings,
+        d.kindoo.intendedFreeText,
+      );
+      const callings = createdType === 'auto' ? parsedCallings : [];
+      // Prefer the door-grant-derived building set for ALL seat types
+      // when available. The bulk listing's AccessSchedules (the source of
+      // `buildingNames`) misses Church Access Automation's direct grants;
+      // `derivedBuildings` is the strict-subset chain that covers BOTH
+      // direct and rule-based grants, so it is the authoritative Kindoo
+      // door-access signal. Fall back to `buildingNames` only when
+      // derivation failed (null/undefined) so the seat still gets created
+      // with whatever building data the sync had — unlike the
+      // buildings-mismatch fix (which refuses when derivedBuildings is
+      // null), creating a fresh seat with partial building data is
+      // acceptable here, and the operator can repair later via Update SBA.
       const buildingNames =
         d.kindoo.derivedBuildings !== null && d.kindoo.derivedBuildings !== undefined
           ? d.kindoo.derivedBuildings
           : d.kindoo.buildingNames;
-      // intended scope falls back to the parsed primary scope; without
-      // either the seat can't be written. Use the raw email canonical as
-      // a last-ditch fallback (server validates anyway).
-      const scope =
-        (d.kindoo.intendedType !== null ? d.kindoo.primaryScope : null) ??
-        d.kindoo.primaryScope ??
-        'stake';
+      // Scope falls back to the parsed primary scope; without either the
+      // seat can't be written. Use stake as a last-ditch fallback (server
+      // validates anyway).
+      const scope = d.kindoo.primaryScope ?? 'stake';
       const payload: SyncApplyFixInput['fix']['payload'] = {
         memberEmail: d.displayEmail,
         memberName: d.kindoo.memberName,
         scope,
-        type: d.kindoo.intendedType ?? 'manual',
+        type: createdType,
         callings,
         buildingNames,
         isTempUser: d.kindoo.isTempUser,
       };
-      const reason = d.kindoo.intendedFreeText.trim();
-      if (reason.length > 0 && d.kindoo.intendedType !== 'auto') {
-        (payload as { reason?: string }).reason = reason;
+      // Manual / temp seats record their calling text in `reason` — the
+      // FULL parsed calling list (not just `intendedFreeText`, which is
+      // only the classifier's unmatched remainder and would be empty when
+      // the classifier matched everything, leaving the calling recorded
+      // nowhere). Auto seats carry the calling in `callings[]` instead.
+      if (createdType !== 'auto') {
+        const reason = parsedCallings.join(', ').trim();
+        if (reason.length > 0) (payload as { reason?: string }).reason = reason;
       }
-      if (d.kindoo.intendedType === 'temp') {
+      if (createdType === 'temp') {
         if (d.kindoo.startDate) (payload as { startDate?: string }).startDate = d.kindoo.startDate;
         if (d.kindoo.endDate) (payload as { endDate?: string }).endDate = d.kindoo.endDate;
       }
@@ -214,13 +241,18 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
     }
     case 'extra-kindoo-calling': {
       if (!d.kindoo) throw new Error('extra-kindoo-calling row missing Kindoo block');
+      // Source the extras from the detector's callings-set diff
+      // (`extraKindooCallings`), NOT the retired auto-calling
+      // classifier's `intendedFreeText`. The diff is the set of
+      // Kindoo-named callings the SBA seat lacks.
+      const extraCallings = d.kindoo.extraKindooCallings ?? [];
       return {
         stakeId,
         fix: {
           code: 'extra-kindoo-calling',
           payload: {
             memberEmail: d.displayEmail,
-            extraCallings: splitFreeText(d.kindoo.intendedFreeText),
+            extraCallings,
           },
         },
       };
@@ -238,15 +270,32 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       };
     }
     case 'type-mismatch': {
-      if (!d.kindoo || d.kindoo.intendedType === null) {
-        throw new Error('type-mismatch row missing resolved Kindoo type');
+      // Grant-based promote / demote. The target type is the
+      // observed-provenance decision the detector carries via
+      // `grantTargetType` (PROMOTE → auto, DEMOTE → manual), NOT the
+      // template-derived `intendedType` (no longer authoritative).
+      if (!d.kindoo || d.kindoo.grantTargetType === undefined) {
+        throw new Error('type-mismatch row missing grant-derived target type');
+      }
+      const payload: SyncApplyFixInput['fix']['payload'] = {
+        memberEmail: d.displayEmail,
+        newType: d.kindoo.grantTargetType,
+      };
+      // PROMOTE (manual/temp → auto): send the Kindoo-parsed calling(s)
+      // (matched ∪ unmatched = the full parsed primary-segment list) so
+      // the backend sets the promoted auto seat's `callings[]` from them
+      // and clears `reason`. DEMOTE (→ manual) omits `callings`; the
+      // backend derives `reason` from the seat's existing callings.
+      if (d.kindoo.grantTargetType === 'auto') {
+        const callings = combineParsedCallings(
+          d.kindoo.intendedCallings,
+          d.kindoo.intendedFreeText,
+        );
+        if (callings.length > 0) (payload as { callings?: string[] }).callings = callings;
       }
       return {
         stakeId,
-        fix: {
-          code: 'type-mismatch',
-          payload: { memberEmail: d.displayEmail, newType: d.kindoo.intendedType },
-        },
+        fix: { code: 'type-mismatch', payload: payload as never },
       };
     }
     case 'buildings-mismatch': {
@@ -289,19 +338,38 @@ function splitFreeText(s: string): string[] {
 }
 
 /**
+ * Reconstruct the full primary-segment calling list from the
+ * classifier's matched (`intendedCallings`) + unmatched
+ * (`intendedFreeText`) outputs, de-duped case-insensitively. Together
+ * they cover every calling the parser found; type no longer gates which
+ * land on the created seat, so the kindoo-only fix sends them all.
+ */
+function combineParsedCallings(intendedCallings: string[], intendedFreeText: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const c of [...intendedCallings, ...splitFreeText(intendedFreeText)]) {
+    const key = c.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+  return out;
+}
+
+/**
  * Kindoo-side fix paths. Synthesises a `Seat` shape from the row's SBA
  * block when needed (for `sba-only` we use the SBA block as the
  * truth; for `*-mismatch` Update Kindoo we also use SBA as truth) and
  * hands it to `syncProvisionFromSeat`.
+ *
+ * Only `sba-only`, `scope-mismatch`, and `buildings-mismatch` reach
+ * here — `type-mismatch` no longer surfaces a Kindoo-side action
+ * (grants own type; the extension can't write church grants), so there
+ * is no auto-seat guard to apply.
  */
 async function dispatchKindooFix(d: Discrepancy, ctx: DispatchContext): Promise<ProvisionResult> {
   if (!d.sba) {
     throw new Error(`${d.code} has no SBA seat to drive Kindoo from`);
-  }
-  if (d.code === 'type-mismatch' && d.sba.type === 'auto') {
-    throw new Error(
-      'auto seats provisioned by Church Access Automation; not modifiable from the extension.',
-    );
   }
   const provision = ctx.syncProvisionFromSeat ?? syncProvisionFromSeat;
   const seat = synthesizeSeatFromBlocks(d);

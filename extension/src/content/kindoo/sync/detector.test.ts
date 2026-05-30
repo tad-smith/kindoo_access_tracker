@@ -4,7 +4,60 @@
 import { describe, expect, it } from 'vitest';
 import type { Building, CallingTemplate, Seat, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
-import { detect } from './detector';
+import { detect, grantsBackAuto, isChurchBacked, missingCallings } from './detector';
+
+describe('isChurchBacked', () => {
+  it('true when every seat building is direct-granted', () => {
+    expect(isChurchBacked(['A', 'B'], ['A', 'B', 'C'])).toBe(true);
+  });
+  it('false when one seat building is not direct-granted (conservative)', () => {
+    expect(isChurchBacked(['A', 'B'], ['A'])).toBe(false);
+  });
+  it('false when directGrantBuildings is null (cannot determine)', () => {
+    expect(isChurchBacked(['A'], null)).toBe(false);
+  });
+  it('true (vacuously) for a seat with no buildings when the set is known', () => {
+    expect(isChurchBacked([], [])).toBe(true);
+    expect(isChurchBacked([], ['A'])).toBe(true);
+  });
+});
+
+describe('grantsBackAuto', () => {
+  it('true when the seat has buildings and all are direct-granted', () => {
+    expect(grantsBackAuto(['A'], ['A', 'B'])).toBe(true);
+  });
+  it('false for a zero-building seat (NOT vacuously auto — born manual)', () => {
+    expect(grantsBackAuto([], [])).toBe(false);
+    expect(grantsBackAuto([], ['A'])).toBe(false);
+  });
+  it('false when a building is not direct-granted', () => {
+    expect(grantsBackAuto(['A', 'B'], ['A'])).toBe(false);
+  });
+  it('false when directGrantBuildings is null', () => {
+    expect(grantsBackAuto(['A'], null)).toBe(false);
+  });
+});
+
+describe('missingCallings', () => {
+  it('returns Kindoo callings the seat lacks (additive direction)', () => {
+    expect(missingCallings('Bishop, Clerk', ['Bishop'])).toEqual(['Clerk']);
+  });
+  it('returns [] when the seat has all Kindoo callings', () => {
+    expect(missingCallings('Bishop, Clerk', ['Clerk', 'Bishop'])).toEqual([]);
+  });
+  it('ignores case + surrounding whitespace', () => {
+    expect(missingCallings(' bishop ,  CLERK ', ['Bishop', 'clerk'])).toEqual([]);
+  });
+  it('does not report a calling the seat has but Kindoo omits (additive only)', () => {
+    expect(missingCallings('Bishop', ['Bishop', 'Clerk'])).toEqual([]);
+  });
+  it('de-dupes a calling repeated in the parens', () => {
+    expect(missingCallings('Clerk, clerk', ['Bishop'])).toEqual(['Clerk']);
+  });
+  it('drops empty segments', () => {
+    expect(missingCallings('Bishop, , ', ['Bishop'])).toEqual([]);
+  });
+});
 
 function ts(): CallingTemplate['created_at'] {
   return {
@@ -159,6 +212,95 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.kindoo).not.toBeNull();
   });
 
+  it('kindoo-only carries grantTargetType=auto when the user is church-backed', () => {
+    // The created seat would carry derivedBuildings=[Maple], and every
+    // one of those is direct-granted → church-backed → auto.
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('auto');
+  });
+
+  it('kindoo-only carries grantTargetType=manual when the user is not church-backed', () => {
+    // Effective access exists (derivedBuildings=[Maple]) but not via a
+    // direct grant → not church-backed → manual.
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('manual');
+  });
+
+  it('kindoo-only carries grantTargetType=manual when door derivation failed (null)', () => {
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: null,
+            directGrantBuildings: null,
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('manual');
+  });
+
+  it('kindoo-only carries grantTargetType=temp for an IsTempUser regardless of grants', () => {
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            isTempUser: true,
+            description: 'Maple Ward (Visiting speaker)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('temp');
+  });
+
+  it('kindoo-only with ZERO door grants is born manual, not vacuously auto', () => {
+    // A Kindoo user that exists in the env list but holds no doors
+    // (newly added, access revoked) derives to empty building sets.
+    // grantsBackAuto requires ≥1 building, so the created seat is manual
+    // — never an empty-building auto seat.
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Building Greeter)',
+            accessSchedules: [],
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('manual');
+  });
+
   it('emits kindoo-unparseable on a Kindoo Manager-style description', () => {
     const result = detect(
       baseInputs({
@@ -187,15 +329,175 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.code).toBe('scope-mismatch');
   });
 
-  it('emits type-mismatch when intended type differs from seat.type', () => {
+  it('promotes manual → auto (type-mismatch) when the seat is church-backed via direct grants', () => {
+    // Grant-based promote: a manual seat whose building doors are all
+    // direct-granted by Church Access Automation. The church owns
+    // provisioning ⇒ auto. The target type rides on the KindooBlock as
+    // `grantTargetType`.
     const result = detect(
       baseInputs({
-        seats: [seat({ scope: 'CO', type: 'manual', callings: [], reason: 'Requested by bishop' })],
-        kindooUsers: [kuser({ description: 'Maple Ward (Sunday School Teacher)' })],
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Sunday School Teacher',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
-    expect(result.discrepancies[0]?.code).toBe('type-mismatch');
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('type-mismatch');
+    expect(row.kindoo?.grantTargetType).toBe('auto');
+    expect(row.reason).toContain('Promote to auto');
+  });
+
+  it('demotes auto → manual (type-mismatch) when the seat is no longer church-backed', () => {
+    // Grant-based demote: an auto seat whose direct grants no longer
+    // cover all of its building doors (the church removed access). SBA
+    // must own the grant ⇒ manual.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            // Effective access still present (rule-derived), but NOT via
+            // a direct grant — so demote fires.
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('type-mismatch');
+    expect(row.kindoo?.grantTargetType).toBe('manual');
+    expect(row.reason).toContain('Demote to manual');
+  });
+
+  it('does not promote/demote when directGrantBuildings is null (cannot determine)', () => {
+    // Derivation failed → directGrantBuildings null → skip the type
+    // decision entirely, same fallback as the buildings-null skip.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Sunday School Teacher',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: null,
+          }),
+        ],
+      }),
+    );
+    const typeRows = result.discrepancies.filter((d) => d.code === 'type-mismatch');
+    expect(typeRows).toEqual([]);
+  });
+
+  it('does not fire type-mismatch when the seat type already agrees with grants', () => {
+    // auto seat that IS church-backed → no demote; manual seat that is
+    // NOT church-backed → no promote. Neither fires.
+    const churchBackedAuto = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'auto-ok@example.com',
+            member_email: 'auto-ok@example.com',
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'auto-ok@example.com',
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(churchBackedAuto.discrepancies.filter((d) => d.code === 'type-mismatch')).toEqual([]);
+
+    const manualNotBacked = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'manual-ok@example.com',
+            member_email: 'manual-ok@example.com',
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Building Greeter',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'manual-ok@example.com',
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(manualNotBacked.discrepancies.filter((d) => d.code === 'type-mismatch')).toEqual([]);
+  });
+
+  it('never promotes/demotes a temp seat (temp is IsTempUser-driven)', () => {
+    // A temp seat whose doors are fully direct-granted must NOT promote
+    // to auto — temp is orthogonal to grant provenance.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'temp',
+            callings: [],
+            reason: 'Visiting speaker',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            isTempUser: true,
+            description: 'Maple Ward (Visiting speaker)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies.filter((d) => d.code === 'type-mismatch')).toEqual([]);
   });
 
   it('emits buildings-mismatch when manual seat rule set vs SBA building set differs', () => {
@@ -364,7 +666,10 @@ describe('detect', () => {
             scope: 'CO',
             type: 'manual',
             callings: [],
-            reason: 'Requested by bishop',
+            // Reason matches the Kindoo parens so the (separate)
+            // extra-kindoo-calling diff stays quiet — this test is
+            // strictly about buildings not drifting.
+            reason: 'Building Greeter',
             building_names: ['Maple Building'],
           }),
         ],
@@ -374,6 +679,9 @@ describe('detect', () => {
             description: 'Maple Ward (Building Greeter)',
             accessSchedules: [],
             derivedBuildings: ['Maple Building'],
+            // No direct grant → not church-backed → stays manual (no
+            // type-mismatch). Buildings match → no row at all.
+            directGrantBuildings: [],
           }),
         ],
       }),
@@ -466,12 +774,17 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
   });
 
-  it('emits extra-kindoo-calling when Kindoo parens add non-auto callings to an auto seat', () => {
+  it('emits extra-kindoo-calling when Kindoo names a calling the SBA seat lacks', () => {
     const result = detect(
       baseInputs({
         seats: [seat({ scope: 'CO', type: 'auto', callings: ['Sunday School Teacher'] })],
         kindooUsers: [
-          kuser({ description: 'Maple Ward (Sunday School Teacher, Building Janitor)' }),
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher, Building Janitor)',
+            // Church-backed auto so no type-mismatch preempts the row.
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
         ],
       }),
     );
@@ -479,9 +792,139 @@ describe('detect', () => {
     const row = result.discrepancies[0]!;
     expect(row.code).toBe('extra-kindoo-calling');
     expect(row.severity).toBe('review');
+    // Only the calling the seat lacks is the extra; the one it already
+    // has is not re-proposed.
+    expect(row.kindoo?.extraKindooCallings).toEqual(['Building Janitor']);
     expect(row.reason).toContain('[Building Janitor]');
     expect(row.reason).toContain('[Sunday School Teacher]');
-    expect(row.reason).toContain('add the extra calling(s) to the SBA seat');
+    expect(row.reason).toContain('add the missing calling(s) to the SBA seat');
+  });
+
+  it('does NOT emit extra-kindoo-calling when the seat already has every Kindoo calling', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher', 'Building Janitor'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher, Building Janitor)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies.filter((d) => d.code === 'extra-kindoo-calling')).toEqual([]);
+  });
+
+  it('does NOT emit extra-kindoo-calling on case / whitespace-only differences', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            // Different casing + padding than the Kindoo parens.
+            callings: ['sunday school teacher', '  Building Janitor  '],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher,  Building Janitor )',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies.filter((d) => d.code === 'extra-kindoo-calling')).toEqual([]);
+  });
+
+  it('NEVER emits extra-kindoo-calling for a manual seat, regardless of reason content', () => {
+    // Operator decision 2026-05-30: extra-kindoo-calling is auto-only.
+    // Manual seats record their calling in the free-text `reason`, which
+    // is frequently operator prose (not a calling name); surfacing the
+    // diff on them would flood the review list. So a manual seat — even
+    // one whose `reason` is unrelated to the Kindoo parens — never fires.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'After-hours building access',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('NEVER emits extra-kindoo-calling for a temp seat, regardless of reason content', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'temp',
+            callings: [],
+            reason: 'Visiting speaker',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            isTempUser: true,
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('does NOT compare an auto seat against its reason — only against callings[]', () => {
+    // An auto seat's `callings[]` is the source; even if some stray
+    // reason text existed, the auto path ignores it. Here callings
+    // already covers the Kindoo parens → no row.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
   });
 
   it('extra-kindoo-calling is the only row emitted when scope and type otherwise agree', () => {
@@ -508,17 +951,6 @@ describe('detect', () => {
     );
     expect(result.discrepancies).toHaveLength(1);
     expect(result.discrepancies[0]?.code).toBe('extra-kindoo-calling');
-  });
-
-  it('respects temp override and emits type-mismatch (auto seat vs temp kindoo)', () => {
-    const result = detect(
-      baseInputs({
-        seats: [seat({ type: 'auto' })],
-        kindooUsers: [kuser({ isTempUser: true })],
-      }),
-    );
-    expect(result.discrepancies).toHaveLength(1);
-    expect(result.discrepancies[0]?.code).toBe('type-mismatch');
   });
 
   it('reports counts independent of discrepancies emitted', () => {
@@ -623,7 +1055,10 @@ describe('detect', () => {
           seat({
             type: 'manual',
             callings: [],
-            reason: 'Requested by bishop',
+            // Reason matches the Kindoo parens so the callings diff
+            // stays quiet — this test is strictly about building-set
+            // order-insensitivity.
+            reason: 'Building Greeter',
             building_names: ['Maple Building', 'Pine Creek Building'],
           }),
         ],

@@ -894,13 +894,36 @@ Owner: @web-engineer
 
 Closed by the Firebase-era roster work in PR #58 (`feat/roster-pending-requests`): bishopric Roster, stake Roster, stake WardRosters, and manager AllSeats all render a per-row Remove button on manual / temp seats, gated by symmetric ADD-equals-REMOVE authority (the `allowedScopesFor` helper from PR #52). Auto seats are correctly excluded (LCR-managed). The original Apps Script roster's broken remove button has been superseded by the post-cutover Firebase implementation.
 
-## [T-57] Sync Stage 1 (c) — `applyTypeMismatch` seat-shape migration on promote / demote
-Status: in progress
-Owner: @backend-engineer
-Phase: Sync Stage 1 (grant-derived seat type)
+## [T-57] Sync grant-derived seat type — Stage 1
+Status: in progress (PRs #178 sort, #179 detector, #180 backend shaping — merging 2026-05-30)
+Owner: @web-engineer (sort) · @extension-engineer (detector) · @backend-engineer (shaping)
+Phase: extension Sync — "Grant-derived seat type (Stage 1 + Stage 2)", locked 2026-05-30
 
-`functions/src/callable/syncApplyFix.ts` `applyTypeMismatch` now reshapes the seat to the §13 convention on the type flip, not just flips `type`. Promote (`manual`/`temp` → `auto`): sets `seat.callings` from the new `TypeMismatchPayload.callings` (fallback `[seat.reason]` when the payload omits/empties it, else `[]`) and clears `seat.reason`; the existing `sort_order` + access-doc parity now derives from the reshaped callings. Demote (`auto` → `manual`/`temp`): folds `seat.callings` into free-text `seat.reason` (joined `', '`) and clears `callings` to `[]`. Audit/actor semantics unchanged (`SyncActor:type-mismatch`).
+Stage 1 of the Sync grant-derived-seat-type feature (`extension/docs/sync-design.md` §"Grant-derived seat type (Stage 1 + Stage 2)"). Three tracks, shipped together:
 
-**Shared-type change:** `packages/shared/src/types/syncApplyFix.ts` `TypeMismatchPayload` gains optional `callings?: string[]`. **Extension coordination (@extension-engineer):** the detector-branch (#179) `fix.ts` `type-mismatch` dispatch must send this `callings` field on **promote** — source it from the parsed calling(s) (e.g. `d.kindoo.intendedCallings`). Field name is exactly `callings`. Demote may omit it.
+**(a) Sort — render-time calling-order (PR #178, @web-engineer).** Roster / All Seats sort decoupled from calling templates: the web computes seat order at render time against a compiled churchwide `calling → order` table instead of the denormalised `seat.sort_order`.
+- `packages/shared/src/callingSortOrder.ts` (+ test, exported) — authoritative 85-entry table (operator-locked; stake 1–42, ward 43–85). `callingSortOrder(calling)` / `seatCallingOrder(callings[])` (MIN; null = no match); exact, trimmed, case-insensitive; no wildcards.
+- `apps/web/src/lib/sort/seats.ts` (+ test) — bands auto/manual/temp; auto → `seatCallingOrder(seat.callings)`, manual → `callingSortOrder(seat.reason)` (manual seats carry `callings: []`, calling in free-text `reason` per spec §13), temp → `end_date` desc. Unknown → band bottom by `created_at` asc then `member_name`. Stops reading `seat.sort_order`. Cross-scope scope-primary (stake first, wards alpha) preserved.
+- `apps/web/src/features/manager/allSeats/AllSeatsPage.tsx` — bespoke grant-row sort replaced by a shim feeding the shared comparator, so AllSeats and per-ward rosters order identically.
+- `apps/web/src/features/requests/standardCallings.ts` — rewritten to the authoritative 85-entry list verbatim, split at `Bishop` (STAKE 1–42, WARD 43–85), operator spellings exact.
+- Spec lockstep: `docs/spec.md` + `docs/firebase-schema.md` §4.6 describe the render-time sort; `sort_order` no longer read client-side (functions' stamping left vestigial; field retained).
 
-Separate PR/branch from #178 (sort) and #179 (detector). Backend half is self-contained — falls back to `[seat.reason]` if the extension hasn't wired `callings` yet, so it is safe to land first.
+**(b/c/e) Detector — grant-based type (PR #179, @extension-engineer).** Extension-only; the `applyTypeMismatch` path carries the grant-derived target.
+- (b) Direct-grant detection (`buildingsFromDoors.ts` + `endpoints.ts`): `directGrantBuildings` per user from `AccessScheduleID === 0` rows; per-door dedup prefers the direct grant so the overlap/lag case stays observable.
+- (c) Grant-based `type-mismatch`: promote (manual + church-backed → auto) / demote (auto + not church-backed → manual) via `isChurchBacked` / `grantsBackAuto`; temp never promoted/demoted; null `directGrantBuildings` skips. Promote payload carries `callings: string[]` (Kindoo-parsed); SyncPanel shows only "Update SBA".
+- (e) `extra-kindoo-calling` AUTO-only (operator decision 2026-05-30): fires only for `seat.type === 'auto'` vs `seat.callings`; manual/temp never checked.
+
+**Backend — seat-shape on flip + `callings` consume (PR #180, @backend-engineer).** `applyTypeMismatch` reshapes the seat to the §13 convention: promote sets `callings[]` from `payload.callings` (fallback `[reason]`) and clears `reason`; demote folds `callings` into `reason` and clears `callings`. Shared `TypeMismatchPayload.callings?: string[]` (append-only).
+
+Pending sibling tracks (NOT in this batch):
+- **Web deprecation (Stage 1 d)** — soft-deprecate `auto_kindoo_access` (leave the field + Configuration "Auto Callings" tab dormant as the validation fallback). Owner: @web-engineer.
+- **Stage 2** — auto-applied promote, revoke-on-promote, provision-time grant check.
+
+## [T-58] Sync: temp-vs-non-temp divergence no longer detected (deferred)
+Status: open
+Owner: @extension-engineer
+Phase: extension Sync — Grant-derived seat type (Stage 1)
+
+The grant-derived `type-mismatch` (T-57) intentionally skips temp seats (`sbaBlock.type === 'temp'`) and any row where `directGrantBuildings === null`. Consequence: a divergence between Kindoo's `IsTempUser` flag and the SBA seat's `temp` type — in either direction (SBA-temp vs Kindoo-permanent, or SBA-auto/manual vs Kindoo-temp) — is no longer surfaced. The pre-Stage-1 classifier-based check (`intended.type !== sbaBlock.type`) caught these.
+
+**Accepted as a known Stage-1 limitation** (operator decision, 2026-05-30): temp is an `IsTempUser` + expiry concept orthogonal to grant provenance, so folding it into the grant-based promote/demote would conflate two axes. Deferred rather than fixed. If temp drift becomes a real operational gap, add a dedicated `temp-mismatch` discrepancy row keyed on `seat.type === 'temp'` XOR `kuser.isTempUser` (independent of the grant-based type check), with its own fix semantics (Kindoo `IsTempUser` + expiry-date reconcile vs SBA seat-type change). Not in scope for Stage 1.

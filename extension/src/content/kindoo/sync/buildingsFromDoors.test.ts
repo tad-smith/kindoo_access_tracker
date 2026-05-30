@@ -11,6 +11,7 @@ import {
   derivedBuildingNames,
   deriveEffectiveRuleIds,
   enrichUsersWithDerivedBuildings,
+  getUserDoorGrants,
   getUserDoorIds,
 } from './buildingsFromDoors';
 
@@ -208,15 +209,16 @@ describe('enrichUsersWithDerivedBuildings', () => {
     };
   }
 
-  function pageResp(rows: Array<{ DoorID: number }>, total: number) {
+  function pageResp(rows: Array<{ DoorID: number; AccessScheduleID?: number }>, total: number) {
     return ok({
       CurrentNumberOfRows: rows.length,
       TotalRecordNumber: total,
+      // Default AccessScheduleID 0 (direct grant) when a row omits it.
       RulesList: rows.map((r) => ({ AccessScheduleID: 0, ...r })),
     });
   }
 
-  it('populates derivedBuildings for each user based on their door grants', async () => {
+  it('populates derivedBuildings + directGrantBuildings for each user based on their door grants', async () => {
     const users = [
       ku({ euid: 'e1', userId: 'u1', username: 'alice@example.com' }),
       ku({ euid: 'e2', userId: 'u2', username: 'bob@example.com' }),
@@ -227,7 +229,8 @@ describe('enrichUsersWithDerivedBuildings', () => {
     ]);
     const buildings = [building('Maple Building', 6248), building('Pine Creek Building', 6249)];
 
-    // alice → doors [1, 2] (claims Maple); bob → doors [10, 11] (claims Pine Creek).
+    // alice → doors [1, 2] all direct (claims Maple via both derived +
+    // direct); bob → doors [10, 11] all direct (claims Pine Creek).
     const responses = new Map<string, ReturnType<typeof pageResp>>();
     responses.set('u1', pageResp([{ DoorID: 1 }, { DoorID: 2 }], 2));
     responses.set('u2', pageResp([{ DoorID: 10 }, { DoorID: 11 }], 2));
@@ -248,10 +251,122 @@ describe('enrichUsersWithDerivedBuildings', () => {
       { concurrency: 2, fetchImpl: fetchImpl as unknown as typeof fetch },
     );
     expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
+    expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
     expect(enriched[1]?.derivedBuildings).toEqual(['Pine Creek Building']);
+    expect(enriched[1]?.directGrantBuildings).toEqual(['Pine Creek Building']);
   });
 
-  it('sets derivedBuildings to null when a per-user call throws', async () => {
+  it('a rule-only door is in derivedBuildings but NOT directGrantBuildings', async () => {
+    // Maple's doors [1,2] come via a granting rule (AccessScheduleID
+    // nonzero), not a direct grant. derivedBuildings claims Maple (the
+    // doors are present); directGrantBuildings does not (none direct).
+    const users = [ku({ userId: 'u1', username: 'rule@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () =>
+      pageResp(
+        [
+          { DoorID: 1, AccessScheduleID: 6248 },
+          { DoorID: 2, AccessScheduleID: 6248 },
+        ],
+        2,
+      ),
+    );
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
+    expect(enriched[0]?.directGrantBuildings).toEqual([]);
+  });
+
+  it('a direct-only door is in BOTH derivedBuildings and directGrantBuildings', async () => {
+    const users = [ku({ userId: 'u1', username: 'direct@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () =>
+      pageResp(
+        [
+          { DoorID: 1, AccessScheduleID: 0 },
+          { DoorID: 2, AccessScheduleID: 0 },
+        ],
+        2,
+      ),
+    );
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
+    expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
+  });
+
+  it('an overlap door (both rule + direct rows) lands in directGrantBuildings', async () => {
+    // Door 1 emits two rows — one direct, one via rule. Door 2 direct
+    // only. Both are direct-covered, so directGrantBuildings claims
+    // Maple (the overlap/lag case the design calls out).
+    const users = [ku({ userId: 'u1', username: 'overlap@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () =>
+      pageResp(
+        [
+          { DoorID: 1, AccessScheduleID: 0 },
+          { DoorID: 1, AccessScheduleID: 6248 },
+          { DoorID: 2, AccessScheduleID: 0 },
+        ],
+        3,
+      ),
+    );
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
+    expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
+  });
+
+  it('partial direct coverage does NOT claim the rule for directGrantBuildings (strict subset)', async () => {
+    // Maple needs doors [1,2]. The user holds door 1 direct + door 2
+    // via rule only. derivedBuildings claims Maple (both doors present);
+    // directGrantBuildings does NOT (door 2 is not direct).
+    const users = [ku({ userId: 'u1', username: 'partial@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () =>
+      pageResp(
+        [
+          { DoorID: 1, AccessScheduleID: 0 },
+          { DoorID: 2, AccessScheduleID: 6248 },
+        ],
+        2,
+      ),
+    );
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
+    expect(enriched[0]?.directGrantBuildings).toEqual([]);
+  });
+
+  it('sets BOTH derivedBuildings and directGrantBuildings to null when a per-user call throws', async () => {
     const users = [ku({ userId: 'u1', username: 'fail@example.com' })];
     const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1])]]);
     const buildings = [building('Maple Building', 6248)];
@@ -267,6 +382,7 @@ describe('enrichUsersWithDerivedBuildings', () => {
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     );
     expect(enriched[0]?.derivedBuildings).toBeNull();
+    expect(enriched[0]?.directGrantBuildings).toBeNull();
   });
 
   it('reports progress after each completed user', async () => {
@@ -332,5 +448,68 @@ describe('getUserDoorIds', () => {
     const fetchImpl = vi.fn(async () => pageResp([], 0));
     const result = await getUserDoorIds(SESSION, 'user-1', 27994, fetchImpl);
     expect(result).toEqual(new Set());
+  });
+});
+
+describe('getUserDoorGrants', () => {
+  function pageResp(rows: Array<{ DoorID: number; AccessScheduleID?: number }>, total: number) {
+    return ok({
+      CurrentNumberOfRows: rows.length,
+      TotalRecordNumber: total,
+      RulesList: rows.map((r) => ({ AccessScheduleID: 0, ...r })),
+    });
+  }
+
+  it('partitions rows into all-doors and direct-only door sets', async () => {
+    const fetchImpl = vi.fn(async () =>
+      pageResp(
+        [
+          { DoorID: 1, AccessScheduleID: 0 }, // direct
+          { DoorID: 2, AccessScheduleID: 6248 }, // rule-derived
+          { DoorID: 3, AccessScheduleID: 0 }, // direct
+        ],
+        3,
+      ),
+    );
+    const { all, direct } = await getUserDoorGrants(SESSION, 'user-1', 27994, fetchImpl);
+    expect(all).toEqual(new Set([1, 2, 3]));
+    expect(direct).toEqual(new Set([1, 3]));
+  });
+
+  it('counts an overlap door (both direct + rule rows) as direct', async () => {
+    const fetchImpl = vi.fn(async () =>
+      pageResp(
+        [
+          { DoorID: 1, AccessScheduleID: 6248 },
+          { DoorID: 1, AccessScheduleID: 0 },
+        ],
+        2,
+      ),
+    );
+    const { all, direct } = await getUserDoorGrants(SESSION, 'user-1', 27994, fetchImpl);
+    expect(all).toEqual(new Set([1]));
+    expect(direct).toEqual(new Set([1]));
+  });
+
+  it('returns empty sets when the user has no grants', async () => {
+    const fetchImpl = vi.fn(async () => pageResp([], 0));
+    const { all, direct } = await getUserDoorGrants(SESSION, 'user-1', 27994, fetchImpl);
+    expect(all).toEqual(new Set());
+    expect(direct).toEqual(new Set());
+  });
+
+  it('direct set is empty when every row is rule-derived', async () => {
+    const fetchImpl = vi.fn(async () =>
+      pageResp(
+        [
+          { DoorID: 1, AccessScheduleID: 6248 },
+          { DoorID: 2, AccessScheduleID: 6249 },
+        ],
+        2,
+      ),
+    );
+    const { all, direct } = await getUserDoorGrants(SESSION, 'user-1', 27994, fetchImpl);
+    expect(all).toEqual(new Set([1, 2]));
+    expect(direct).toEqual(new Set());
   });
 });

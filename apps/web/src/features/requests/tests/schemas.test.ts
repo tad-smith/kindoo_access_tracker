@@ -409,7 +409,7 @@ describe('editSeatSchema', () => {
     it('admits reason + ≥1 building + non-empty comment', () => {
       const result = editSeatSchema.safeParse({
         type: 'edit_manual',
-        reason: 'Primary Activity Days Leader',
+        reason: 'Valiant Activities Leader',
         comment: 'new ward calling',
         building_names: ['Maple Building'],
         start_date: '',

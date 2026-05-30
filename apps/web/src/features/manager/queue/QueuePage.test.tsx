@@ -862,7 +862,7 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
           scope: 'CO',
           member_email: 'manual@x.com',
           member_canonical: 'manual@x.com',
-          reason: 'Primary Activity Days Leader',
+          reason: 'Valiant Activities Leader',
           building_names: ['Maple Building'],
         }),
       ];
@@ -870,7 +870,7 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
       render(<ManagerQueuePage />);
       const card = screen.getByTestId('queue-card-r2');
       expect(within(card).getByText('Edit (manual)')).toBeInTheDocument();
-      expect(within(card).getByText(/Primary Activity Days Leader/)).toBeInTheDocument();
+      expect(within(card).getByText(/Valiant Activities Leader/)).toBeInTheDocument();
       expect(screen.getByTestId('queue-buildings-r2').textContent).toMatch(
         /→ Buildings:.*Maple Building/,
       );

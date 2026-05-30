@@ -789,7 +789,7 @@ describe('getUserAccessRulesWithEntryPoints', () => {
 
   it('dedupes rows that share a DoorID across rules', async () => {
     // Same door granted by two rules → emits two rows in the response;
-    // we want one row out, accessScheduleId = first occurrence.
+    // we want one row out per door.
     const fetchImpl = vi.fn(async () =>
       page(
         [
@@ -803,6 +803,41 @@ describe('getUserAccessRulesWithEntryPoints', () => {
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
     expect(result).toHaveLength(2);
     expect(result.map((r) => r.doorId).sort()).toEqual([1001, 1002]);
+    // Door 1001 had only rule rows → stays rule-derived.
+    expect(result.find((r) => r.doorId === 1001)?.accessScheduleId).not.toBe(0);
+  });
+
+  it('prefers the direct grant when a door has both a rule row and a direct row', async () => {
+    // Overlap/lag case: the rule row arrives BEFORE the direct row. The
+    // collapsed row must still carry accessScheduleId 0 so the
+    // grant-based seat-type detector sees the direct grant.
+    const fetchImpl = vi.fn(async () =>
+      page(
+        [
+          row({ DoorID: 1001, AccessScheduleID: 6248 }), // rule first
+          row({ DoorID: 1001, AccessScheduleID: 0 }), // direct second
+        ],
+        2,
+      ),
+    );
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.accessScheduleId).toBe(0);
+  });
+
+  it('keeps a direct grant when the direct row arrives first', async () => {
+    const fetchImpl = vi.fn(async () =>
+      page(
+        [
+          row({ DoorID: 1001, AccessScheduleID: 0 }), // direct first
+          row({ DoorID: 1001, AccessScheduleID: 6248 }), // rule second
+        ],
+        2,
+      ),
+    );
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.accessScheduleId).toBe(0);
   });
 
   it('pages with start += 40 until a short page terminates', async () => {

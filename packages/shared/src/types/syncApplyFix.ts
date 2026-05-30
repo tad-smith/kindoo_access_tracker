@@ -80,8 +80,15 @@ export type ScopeMismatchPayload = {
 export type TypeMismatchPayload = {
   memberEmail: string;
   newType: SeatType;
-  /** Kindoo-parsed calling(s) for the seat. Used to populate
-   * `callings[]` on promote (`→ auto`); ignored on demote. */
+  /**
+   * Kindoo-parsed calling(s) for the seat. Sent on PROMOTE
+   * (`newType: 'auto'`) — the calling(s) the promoted auto seat should
+   * carry in its roster `callings[]`; the backend sets `callings[]` from
+   * this and clears `reason`. Omitted on DEMOTE (`newType: 'manual'`),
+   * where the backend derives `reason` from the seat's existing
+   * `callings[]`. Absent / empty ⇒ the backend leaves `callings[]`
+   * untouched.
+   */
   callings?: string[];
 };
 

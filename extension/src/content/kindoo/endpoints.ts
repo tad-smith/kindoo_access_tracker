@@ -217,6 +217,21 @@ export interface KindooEnvironmentUser {
    *     comparison for auto seats).
    */
   derivedBuildings?: string[] | null;
+  /**
+   * Buildings whose rule the user holds via Church Access Automation
+   * **direct grants only** (`AccessScheduleID === 0` door rows). Set by
+   * the Sync orchestrator BEFORE `detect()`, computed alongside
+   * `derivedBuildings` from the same per-user fetch. Drives the
+   * grant-based seat-type decision (a seat is church-backed iff every
+   * one of its buildings is direct-granted). Distinct from
+   * `derivedBuildings`, which counts BOTH direct and rule-derived
+   * grants:
+   *   - `string[]` — derivation succeeded; the direct-granted subset.
+   *   - `[]` — derived; the user holds no building via a direct grant.
+   *   - `null` / `undefined` — derivation skipped or failed; the
+   *     detector skips the promote/demote decision (can't determine).
+   */
+  directGrantBuildings?: string[] | null;
   /** Anything else Kindoo returns. */
   [k: string]: unknown;
 }
@@ -765,9 +780,16 @@ export interface UserDoorGrantRow {
  * Wraps
  * `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints`.
  * Loops `start = 0, 40, 80, …` (Kindoo's per-user page size) until a
- * short page or `TotalRecordNumber` terminates. The flattened list is
- * deduplicated by `doorId` — the same door can appear once per rule
- * that grants it; we only care about the unique door set.
+ * short page or `TotalRecordNumber` terminates.
+ *
+ * **One row per door, preferring the direct grant.** A door granted by
+ * both a rule and a Church Access Automation direct grant emits two
+ * rows; we collapse to one per `doorId`, but if ANY of a door's rows is
+ * direct (`AccessScheduleID === 0`) the collapsed row carries
+ * `accessScheduleId: 0`. This keeps the door SET correct for
+ * `getUserDoorIds` while making the direct-grant signal
+ * order-independent for the grant-based seat-type detector (a rule row
+ * arriving before the direct row must not mask the direct grant).
  */
 export async function getUserAccessRulesWithEntryPoints(
   session: KindooSession,
@@ -779,8 +801,10 @@ export async function getUserAccessRulesWithEntryPoints(
   // Safety cap. A user with hundreds of doors would be an outlier; the
   // cap stops a wire mismatch from spinning forever.
   const MAX_PAGES = 100;
-  const seen = new Set<number>();
-  const out: UserDoorGrantRow[] = [];
+  // Keyed by doorId so a second row for the same door can upgrade the
+  // stored row to direct (prefer-direct dedup); insertion order is
+  // preserved by the Map for stable output.
+  const byDoor = new Map<number, UserDoorGrantRow>();
   let start = 0;
   let total: number | null = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
@@ -820,16 +844,21 @@ export async function getUserAccessRulesWithEntryPoints(
       const r = entry as Record<string, unknown>;
       const did = r.DoorID;
       if (typeof did !== 'number') continue;
-      if (seen.has(did)) continue;
-      seen.add(did);
       const asid = typeof r.AccessScheduleID === 'number' ? r.AccessScheduleID : 0;
-      out.push({ doorId: did, accessScheduleId: asid });
+      const existing = byDoor.get(did);
+      if (existing === undefined) {
+        byDoor.set(did, { doorId: did, accessScheduleId: asid });
+      } else if (asid === 0 && existing.accessScheduleId !== 0) {
+        // A direct grant for a door first seen via a rule — upgrade so
+        // the direct signal survives regardless of row order.
+        existing.accessScheduleId = 0;
+      }
     }
     if (list.length < PAGE_SIZE) break;
     start += PAGE_SIZE;
     if (total !== null && start >= total) break;
   }
-  return out;
+  return Array.from(byDoor.values());
 }
 
 /**

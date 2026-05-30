@@ -33,6 +33,7 @@ import {
 } from './hooks';
 import { siteLabelForGrant } from '../../../lib/kindooSites';
 import { collapseSameScopeGrants, grantsForDisplay, type GrantView } from '../../../lib/grants';
+import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
 import { useStakeDoc } from '../dashboard/hooks';
 import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
 import { UtilizationBar } from '../../../lib/render/UtilizationBar';
@@ -85,70 +86,52 @@ function expandSeats(seats: readonly Seat[]): GrantRow[] {
   return rows;
 }
 
-/** Match seat's type-band rank used by the legacy sort. */
-const TYPE_BAND: Record<Seat['type'], number> = { auto: 0, manual: 1, temp: 2 };
-
-function scopeRank(scope: string): number {
-  return scope === 'stake' ? 0 : 1;
-}
-
-function nameKey(seat: Seat): string {
-  return (seat.member_name || seat.member_email || '').toLowerCase();
-}
-
 /**
- * Sort grant-rows for AllSeats cross-scope view. Per spec §15 Phase B
- * AC #9: each row sorts independently by its own grant's fields; no
- * special grouping by seat. Order:
- *   1. Stake band first, then ward bands alpha by grant scope.
- *   2. Within each scope band: auto → manual → temp (type-banded).
- *   3. Within type band: name alpha; temp by end_date desc.
+ * Sort grant-rows by overlaying each grant's discriminating fields onto
+ * a `Seat` shim and reusing the shared roster comparators so AllSeats
+ * and the roster pages order identically (per spec §15 Phase B AC #9:
+ * each row sorts by its own grant's fields). The shim carries the
+ * grant's `scope` / `type` / `callings` / `reason` / dates; the seat's
+ * `member_name` + `created_at` ride along for the tiebreak. Manual
+ * rows order by the grant's `reason` (manual seats store the calling
+ * there, with `callings: []`), auto by `callings`, temp by expiry —
+ * exactly the shared comparator's contract.
  */
-function sortGrantRowsAcrossScopes(rows: readonly GrantRow[]): GrantRow[] {
-  const sorted = [...rows];
-  sorted.sort((a, b) => {
-    const ra = scopeRank(a.grant.scope);
-    const rb = scopeRank(b.grant.scope);
-    if (ra !== rb) return ra - rb;
-    if (a.grant.scope !== b.grant.scope) return a.grant.scope.localeCompare(b.grant.scope);
-    const ba = TYPE_BAND[a.grant.type];
-    const bb = TYPE_BAND[b.grant.type];
-    if (ba !== bb) return ba - bb;
-    if (a.grant.type === 'temp' && b.grant.type === 'temp') {
-      const am = !a.grant.end_date;
-      const bm = !b.grant.end_date;
-      if (am && !bm) return 1;
-      if (!am && bm) return -1;
-      if (!am && !bm) {
-        const cmp = (b.grant.end_date ?? '').localeCompare(a.grant.end_date ?? '');
-        if (cmp !== 0) return cmp;
-      }
-    }
-    return nameKey(a.seat).localeCompare(nameKey(b.seat));
-  });
-  return sorted;
+function grantRowShim(row: GrantRow): Seat {
+  // Identity + tiebreak fields ride from the seat; the grant's own
+  // fields (scope / type / callings / reason / dates) are overlaid.
+  // Conditional spreads keep optional fields absent (not `undefined`)
+  // to satisfy `exactOptionalPropertyTypes`. `member_canonical` is the
+  // rowKey so the sort round-trips uniquely across a seat's duplicates.
+  return {
+    ...row.seat,
+    member_canonical: row.rowKey,
+    scope: row.grant.scope,
+    type: row.grant.type,
+    callings: [...row.grant.callings],
+    ...(row.grant.reason !== undefined ? { reason: row.grant.reason } : {}),
+    ...(row.grant.start_date !== undefined ? { start_date: row.grant.start_date } : {}),
+    ...(row.grant.end_date !== undefined ? { end_date: row.grant.end_date } : {}),
+  };
 }
 
-/** Within-scope sort (no scope key; used when the Scope filter pins to a single value). */
+function sortGrantRowsBy(
+  rows: readonly GrantRow[],
+  sortShims: (shims: readonly Seat[]) => Seat[],
+): GrantRow[] {
+  const byKey = new Map(rows.map((r) => [r.rowKey, r]));
+  const shims = rows.map(grantRowShim);
+  return sortShims(shims)
+    .map((s) => byKey.get(s.member_canonical))
+    .filter((r): r is GrantRow => r !== undefined);
+}
+
+function sortGrantRowsAcrossScopes(rows: readonly GrantRow[]): GrantRow[] {
+  return sortGrantRowsBy(rows, sortSeatsAcrossScopes);
+}
+
 function sortGrantRowsWithinScope(rows: readonly GrantRow[]): GrantRow[] {
-  const sorted = [...rows];
-  sorted.sort((a, b) => {
-    const ba = TYPE_BAND[a.grant.type];
-    const bb = TYPE_BAND[b.grant.type];
-    if (ba !== bb) return ba - bb;
-    if (a.grant.type === 'temp' && b.grant.type === 'temp') {
-      const am = !a.grant.end_date;
-      const bm = !b.grant.end_date;
-      if (am && !bm) return 1;
-      if (!am && bm) return -1;
-      if (!am && !bm) {
-        const cmp = (b.grant.end_date ?? '').localeCompare(a.grant.end_date ?? '');
-        if (cmp !== 0) return cmp;
-      }
-    }
-    return nameKey(a.seat).localeCompare(nameKey(b.seat));
-  });
-  return sorted;
+  return sortGrantRowsBy(rows, sortSeatsWithinScope);
 }
 
 export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllSeatsPageProps) {

@@ -3,27 +3,39 @@
 //   - features/bishopric/RosterPage.tsx       (single-ward sort)
 //   - features/stake/RosterPage.tsx            (stake-scope sort)
 //   - features/stake/WardRostersPage.tsx       (any-ward sort)
-//   - features/manager/allSeats/AllSeatsPage.tsx
 //
 // Within a single scope the ordering is type-banded:
 //
-//   1. auto    — sorted by `sort_order` ascending; null `sort_order`
-//                (orphan auto seats whose calling no longer matches a
-//                template) lands at the bottom of the auto band.
-//                Ties broken by `member_name` alpha.
-//   2. manual  — alpha by `member_name`.
+//   1. auto    — by CALLING ORDER. Auto seats carry the matched
+//                calling(s) in `seat.callings`; order = MIN across them
+//                via the compiled churchwide `calling → order` table in
+//                @kindoo/shared (`seatCallingOrder`). Lower order first.
+//   2. manual  — by CALLING ORDER too, but manual seats store the
+//                calling in the free-text `seat.reason` (convention:
+//                `seat.callings` stays `[]` — spec §13). So the manual
+//                band matches `seat.reason` against the same table via
+//                `callingSortOrder` (single value, trimmed + case-
+//                insensitive).
 //   3. temp    — by `end_date` descending; soonest-expiring at the
-//                bottom of the band (per the operator brief). Missing
-//                end_date sorts to the very bottom (the request
-//                lifecycle requires end_date for add_temp once the
-//                rules tightening lands; a null in transit shouldn't
-//                crash the sort).
+//                bottom of the band (per the operator brief). Temps
+//                carry a free-text reason, not a roster calling, so
+//                calling order does NOT apply. Missing end_date sorts
+//                to the very bottom (the request lifecycle requires
+//                end_date for add_temp once the rules tightening lands;
+//                a null in transit shouldn't crash the sort).
+//
+// In both the auto and manual bands a row that doesn't match the table
+// ("unknown") sorts to the bottom of its band, ordered by `created_at`
+// ascending (oldest first), then `member_name`. We no longer read the
+// denormalised `seat.sort_order` — sort is derived from the seat's
+// observed callings / reason. (Per `extension/docs/sync-design.md`
+// Stage 1(a).)
 //
 // For All Seats (cross-scope), an outer sort runs first: Stake band,
 // then ward bands alpha by ward_code; within each band the same
 // type-banded ordering applies.
 
-import type { Seat } from '@kindoo/shared';
+import { callingSortOrder, seatCallingOrder, type Seat } from '@kindoo/shared';
 
 const TYPE_BAND: Record<Seat['type'], number> = {
   auto: 0,
@@ -41,16 +53,55 @@ function nameKey(seat: Seat): string {
   return (seat.member_name || seat.member_email || '').toLowerCase();
 }
 
-function autoCompare(a: Seat, b: Seat): number {
-  // null / missing sort_order → bottom of the auto band per operator
-  // decision. Use POSITIVE_INFINITY so any number wins.
-  const aOrder = typeof a.sort_order === 'number' ? a.sort_order : Number.POSITIVE_INFINITY;
-  const bOrder = typeof b.sort_order === 'number' ? b.sort_order : Number.POSITIVE_INFINITY;
-  if (aOrder !== bOrder) return aOrder - bOrder;
-  return nameKey(a).localeCompare(nameKey(b));
+/**
+ * `created_at` in millis for the tiebreak among unknown-calling seats.
+ * `created_at` is a structural `TimestampLike` (has `toMillis()`), but
+ * we guard defensively: a missing / malformed value sorts to the very
+ * bottom (POSITIVE_INFINITY) so a row in transit can't crash the sort.
+ */
+function createdAtMillis(seat: Seat): number {
+  const ts = seat.created_at as { toMillis?: () => number } | null | undefined;
+  if (ts && typeof ts.toMillis === 'function') {
+    const ms = ts.toMillis();
+    return typeof ms === 'number' && Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+  }
+  return Number.POSITIVE_INFINITY;
 }
 
-function manualCompare(a: Seat, b: Seat): number {
+/**
+ * Resolve a seat's calling order for the auto / manual bands:
+ *   - auto:   MIN over `seat.callings` (auto seats record matched callings);
+ *   - manual: `seat.reason` (manual seats store the calling there, with
+ *             `callings: []` — spec §13);
+ *   - other:  null (unknown).
+ * `null` ("unknown") → bottom of the band.
+ */
+function seatBandOrder(seat: Seat): number | null {
+  if (seat.type === 'auto') return seatCallingOrder(seat.callings);
+  if (seat.type === 'manual') return seat.reason ? callingSortOrder(seat.reason) : null;
+  return null;
+}
+
+/**
+ * Comparator for the auto + manual bands. Both order by calling order
+ * (resolved per `seatBandOrder` — `callings` for auto, `reason` for
+ * manual), then fall through to a shared tiebreak. Order:
+ *   1. calling order ascending; unknown (no match) → bottom of the band;
+ *   2. `created_at` ascending (oldest first; missing → very bottom);
+ *   3. `member_name` alpha.
+ *
+ * The `created_at` key only separates rows the calling order leaves
+ * tied (two rows sharing the same calling, or two unknown rows).
+ */
+function callingOrderCompare(a: Seat, b: Seat): number {
+  // null (unknown) → bottom of the band. POSITIVE_INFINITY so any
+  // matched order wins.
+  const aOrder = seatBandOrder(a) ?? Number.POSITIVE_INFINITY;
+  const bOrder = seatBandOrder(b) ?? Number.POSITIVE_INFINITY;
+  if (aOrder !== bOrder) return aOrder - bOrder;
+  const aCreated = createdAtMillis(a);
+  const bCreated = createdAtMillis(b);
+  if (aCreated !== bCreated) return aCreated - bCreated;
   return nameKey(a).localeCompare(nameKey(b));
 }
 
@@ -71,6 +122,14 @@ function tempCompare(a: Seat, b: Seat): number {
   return nameKey(a).localeCompare(nameKey(b));
 }
 
+/** Intra-band comparator dispatch once both seats share a type band. */
+function withinBandCompare(a: Seat, b: Seat): number {
+  if (a.type === 'temp') return tempCompare(a, b);
+  // auto + manual share the calling-order comparator (different source
+  // field, same ordering — see `seatBandOrder`).
+  return callingOrderCompare(a, b);
+}
+
 /**
  * Sort one scope's seats: type-banded auto / manual / temp; intra-band
  * sort per the rules above. Pure — caller passes the slice already
@@ -82,9 +141,7 @@ export function sortSeatsWithinScope(seats: readonly Seat[]): Seat[] {
     const bandA = TYPE_BAND[a.type];
     const bandB = TYPE_BAND[b.type];
     if (bandA !== bandB) return bandA - bandB;
-    if (a.type === 'auto' && b.type === 'auto') return autoCompare(a, b);
-    if (a.type === 'manual' && b.type === 'manual') return manualCompare(a, b);
-    return tempCompare(a, b);
+    return withinBandCompare(a, b);
   });
   return sorted;
 }
@@ -104,9 +161,7 @@ export function sortSeatsAcrossScopes(seats: readonly Seat[]): Seat[] {
     const bandA = TYPE_BAND[a.type];
     const bandB = TYPE_BAND[b.type];
     if (bandA !== bandB) return bandA - bandB;
-    if (a.type === 'auto' && b.type === 'auto') return autoCompare(a, b);
-    if (a.type === 'manual' && b.type === 'manual') return manualCompare(a, b);
-    return tempCompare(a, b);
+    return withinBandCompare(a, b);
   });
   return sorted;
 }
