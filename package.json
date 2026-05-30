@@ -14,6 +14,7 @@
     "test:e2e": "pnpm -r --if-present test:e2e",
     "build": "pnpm -r --if-present build",
     "lint": "pnpm -r --if-present lint && prettier --check .",
+    "pretypecheck": "pnpm --filter @kindoo/web generate-route-tree",
     "typecheck": "tsc -b",
     "deploy:staging": "bash infra/scripts/deploy-staging.sh",
     "deploy:prod": "bash infra/scripts/deploy-prod.sh",
