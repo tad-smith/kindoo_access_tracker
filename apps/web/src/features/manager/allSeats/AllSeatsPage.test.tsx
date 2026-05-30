@@ -608,19 +608,19 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     );
   });
 
-  // Operator-reported repro (Corry Macfarlane): primary auto MH + manual
-  // MH DuplicateGrant with overlapping buildings. Pre-fix: two rows.
-  // Post-fix: one row with the union of buildings + Duplicate badge.
-  it("collapses Corry's auto-primary + manual-same-scope dup into one row with union buildings", () => {
+  // Operator-reported repro: primary auto MH + manual MH DuplicateGrant
+  // with overlapping buildings. Pre-fix: two rows. Post-fix: one row
+  // with the union of buildings + Duplicate badge.
+  it('collapses an auto-primary + manual-same-scope dup into one row with union buildings', () => {
     mockAll({
       seats: [
         makeSeat({
           scope: 'MH',
           type: 'auto',
           callings: ['Bishop'],
-          member_canonical: 'corry@corrymac.com',
-          member_email: 'corry@corrymac.com',
-          member_name: 'Corry Macfarlane',
+          member_canonical: 'user2@example.com',
+          member_email: 'user2@example.com',
+          member_name: 'Test User Two',
           kindoo_site_id: null,
           building_names: ['Jamboree'],
           duplicate_grants: [
@@ -640,7 +640,7 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);
-    const cards = document.querySelectorAll('.roster-card[data-seat-id="corry@corrymac.com"]');
+    const cards = document.querySelectorAll('.roster-card[data-seat-id="user2@example.com"]');
     expect(cards).toHaveLength(1);
     const row = cards[0] as HTMLElement;
     // Union, primary-first order: Jamboree, then Lexington, then Monument.
@@ -648,7 +648,7 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(row.textContent).toContain('Lexington');
     expect(row.textContent).toContain('Monument');
     // Duplicate badge + new operator-facing tooltip.
-    const badge = screen.getByTestId('grant-duplicate-badge-corry@corrymac.com');
+    const badge = screen.getByTestId('grant-duplicate-badge-user2@example.com');
     expect(badge).toBeInTheDocument();
     expect(badge.getAttribute('title')).toBe(
       'This user was manually granted access to additional buildings.',

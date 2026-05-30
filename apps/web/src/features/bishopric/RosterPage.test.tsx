@@ -729,9 +729,9 @@ describe('<BishopricRosterPage />', () => {
           scope: 'MH',
           type: 'auto',
           callings: ['Bishop'],
-          member_canonical: 'corry@corrymac.com',
-          member_email: 'corry@corrymac.com',
-          member_name: 'Corry Macfarlane',
+          member_canonical: 'user2@example.com',
+          member_email: 'user2@example.com',
+          member_name: 'Test User Two',
           kindoo_site_id: null,
           building_names: ['Jamboree'],
           duplicate_grants: [
@@ -748,7 +748,7 @@ describe('<BishopricRosterPage />', () => {
       ]);
       mockWardDoc(makeWard({ ward_code: 'MH', seat_cap: 20 }));
       render(<BishopricRosterPage initialWard="MH" />);
-      const cards = document.querySelectorAll('[data-seat-id="corry@corrymac.com"]');
+      const cards = document.querySelectorAll('[data-seat-id="user2@example.com"]');
       expect(cards).toHaveLength(1);
       const row = cards[0] as HTMLElement;
       // Union of buildings, primary-first order.
@@ -756,7 +756,7 @@ describe('<BishopricRosterPage />', () => {
       expect(row.textContent).toContain('Lexington');
       expect(row.textContent).toContain('Monument');
       // Duplicate badge with operator-facing tooltip.
-      const badge = screen.getByTestId('grant-duplicate-badge-corry@corrymac.com');
+      const badge = screen.getByTestId('grant-duplicate-badge-user2@example.com');
       expect(badge).toBeInTheDocument();
       expect(badge.getAttribute('title')).toBe(
         'This user was manually granted access to additional buildings.',
