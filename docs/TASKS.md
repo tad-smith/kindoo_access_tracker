@@ -893,3 +893,19 @@ Status: done (2026-05-05 — closed by PR #58)
 Owner: @web-engineer
 
 Closed by the Firebase-era roster work in PR #58 (`feat/roster-pending-requests`): bishopric Roster, stake Roster, stake WardRosters, and manager AllSeats all render a per-row Remove button on manual / temp seats, gated by symmetric ADD-equals-REMOVE authority (the `allowedScopesFor` helper from PR #52). Auto seats are correctly excluded (LCR-managed). The original Apps Script roster's broken remove button has been superseded by the post-cutover Firebase implementation.
+
+## [T-57] Sync grant-derived seat type — Stage 1(a) render-time calling-order sort
+Status: in progress
+Owner: @web-engineer
+Branch / PR: `feat/sync-grant-derived-type-sort`
+
+Sort track of the grant-derived-seat-type feature (`extension/docs/sync-design.md` "Grant-derived seat type (Stage 1 + Stage 2)" part (a)). Decouples the roster / All Seats sort from calling templates: the web computes seat order at render time from the seat's callings against a compiled churchwide `calling → order` table instead of reading the denormalised `seat.sort_order`.
+
+Changes:
+- `packages/shared/src/callingSortOrder.ts` (+ test, exported from the package index) — the canonical 72-entry table. `callingSortOrder(calling)` and `seatCallingOrder(callings[])` (MIN over the seat's callings; null = no match). Exact, trimmed, case-insensitive match; no wildcards. **`packages/shared` is co-owned** — a parallel detector-track PR may also touch shared; this entry exists so the change is visible to `@backend-engineer`. No backend consumer change needed (the table is web-render-only; functions still stamp `sort_order` vestigially).
+- `apps/web/src/lib/sort/seats.ts` (+ test) — auto + manual bands now share one comparator: calling order ascending; unknown (no calling matches) → band bottom by `created_at` ascending then `member_name`. temp band unchanged (by `end_date` desc). Stops reading `seat.sort_order`. Cross-scope scope-primary (stake first, wards alpha) preserved. **Manual band changed from name-sort to calling-order-sort** (intended per the brief).
+
+Notes / decisions:
+- `apps/web/src/features/manager/access/sort.ts` left untouched — it sorts `Access` docs (the app-access page), not `Seat` docs, and its `sort_order` is the importer's `sheet_order`-derived doc-level value tied to `give_app_access`, which the design doc explicitly leaves in place. The brief's "if it sorts seats" conditional resolves to no.
+- `apps/web/src/features/manager/allSeats/AllSeatsPage.tsx` has its own per-grant-row sort (`sortGrantRowsWithinScope` / `…AcrossScopes`) that does NOT read `seat.sort_order` (already name-keyed within band). Not named in the brief or the design doc part (a); left as-is (changing it to calling-order would be its own behavioural change). Flagged for the operator.
+- Functions' `syncApplyFix` `sort_order` stamping left vestigial (deferred cleanup per the design doc); the `Seat.sort_order` field is retained on the type/schema.

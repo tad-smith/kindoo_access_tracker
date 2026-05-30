@@ -7,23 +7,32 @@
 //
 // Within a single scope the ordering is type-banded:
 //
-//   1. auto    — sorted by `sort_order` ascending; null `sort_order`
-//                (orphan auto seats whose calling no longer matches a
-//                template) lands at the bottom of the auto band.
-//                Ties broken by `member_name` alpha.
-//   2. manual  — alpha by `member_name`.
+//   1. auto   ┐  Both bands sort by CALLING ORDER, computed at render
+//   2. manual ┘  time from the seat's callings via the compiled
+//                churchwide `calling → order` table in @kindoo/shared
+//                (`seatCallingOrder` = MIN order across the seat's
+//                callings). Lower order sorts first. A seat whose
+//                callings don't match the table ("unknown") sorts to
+//                the bottom of its band, ordered by `created_at`
+//                ascending (oldest first), then `member_name`. We no
+//                longer read the denormalised `seat.sort_order` — sort
+//                is derived from observed callings. (Per
+//                `extension/docs/sync-design.md` Stage 1(a). The auto
+//                and manual bands share one comparator; only the type
+//                band differs.)
 //   3. temp    — by `end_date` descending; soonest-expiring at the
-//                bottom of the band (per the operator brief). Missing
-//                end_date sorts to the very bottom (the request
-//                lifecycle requires end_date for add_temp once the
-//                rules tightening lands; a null in transit shouldn't
-//                crash the sort).
+//                bottom of the band (per the operator brief). Temps
+//                carry a free-text reason, not a roster calling, so
+//                calling order does NOT apply. Missing end_date sorts
+//                to the very bottom (the request lifecycle requires
+//                end_date for add_temp once the rules tightening lands;
+//                a null in transit shouldn't crash the sort).
 //
 // For All Seats (cross-scope), an outer sort runs first: Stake band,
 // then ward bands alpha by ward_code; within each band the same
 // type-banded ordering applies.
 
-import type { Seat } from '@kindoo/shared';
+import { seatCallingOrder, type Seat } from '@kindoo/shared';
 
 const TYPE_BAND: Record<Seat['type'], number> = {
   auto: 0,
@@ -41,16 +50,43 @@ function nameKey(seat: Seat): string {
   return (seat.member_name || seat.member_email || '').toLowerCase();
 }
 
-function autoCompare(a: Seat, b: Seat): number {
-  // null / missing sort_order → bottom of the auto band per operator
-  // decision. Use POSITIVE_INFINITY so any number wins.
-  const aOrder = typeof a.sort_order === 'number' ? a.sort_order : Number.POSITIVE_INFINITY;
-  const bOrder = typeof b.sort_order === 'number' ? b.sort_order : Number.POSITIVE_INFINITY;
-  if (aOrder !== bOrder) return aOrder - bOrder;
-  return nameKey(a).localeCompare(nameKey(b));
+/**
+ * `created_at` in millis for the tiebreak among unknown-calling seats.
+ * `created_at` is a structural `TimestampLike` (has `toMillis()`), but
+ * we guard defensively: a missing / malformed value sorts to the very
+ * bottom (POSITIVE_INFINITY) so a row in transit can't crash the sort.
+ */
+function createdAtMillis(seat: Seat): number {
+  const ts = seat.created_at as { toMillis?: () => number } | null | undefined;
+  if (ts && typeof ts.toMillis === 'function') {
+    const ms = ts.toMillis();
+    return typeof ms === 'number' && Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+  }
+  return Number.POSITIVE_INFINITY;
 }
 
-function manualCompare(a: Seat, b: Seat): number {
+/**
+ * Comparator for the auto + manual bands (they share it). Order:
+ *   1. calling order ascending (MIN across the seat's callings);
+ *      unknown (no calling matches the table) → bottom of the band;
+ *   2. within the unknown tail, `created_at` ascending (oldest first;
+ *      missing → very bottom);
+ *   3. `member_name` alpha tiebreak.
+ *
+ * The `created_at` key only separates rows the calling order leaves
+ * tied. Known-calling rows almost always differ on order; equal orders
+ * (e.g. two seats sharing the top calling, or two unknown rows) fall
+ * through to `created_at` then name.
+ */
+function callingOrderCompare(a: Seat, b: Seat): number {
+  // null (unknown) → bottom of the band. POSITIVE_INFINITY so any
+  // matched order wins.
+  const aOrder = seatCallingOrder(a.callings) ?? Number.POSITIVE_INFINITY;
+  const bOrder = seatCallingOrder(b.callings) ?? Number.POSITIVE_INFINITY;
+  if (aOrder !== bOrder) return aOrder - bOrder;
+  const aCreated = createdAtMillis(a);
+  const bCreated = createdAtMillis(b);
+  if (aCreated !== bCreated) return aCreated - bCreated;
   return nameKey(a).localeCompare(nameKey(b));
 }
 
@@ -71,6 +107,13 @@ function tempCompare(a: Seat, b: Seat): number {
   return nameKey(a).localeCompare(nameKey(b));
 }
 
+/** Intra-band comparator dispatch once both seats share a type band. */
+function withinBandCompare(a: Seat, b: Seat): number {
+  if (a.type === 'temp') return tempCompare(a, b);
+  // auto + manual share the calling-order comparator.
+  return callingOrderCompare(a, b);
+}
+
 /**
  * Sort one scope's seats: type-banded auto / manual / temp; intra-band
  * sort per the rules above. Pure — caller passes the slice already
@@ -82,9 +125,7 @@ export function sortSeatsWithinScope(seats: readonly Seat[]): Seat[] {
     const bandA = TYPE_BAND[a.type];
     const bandB = TYPE_BAND[b.type];
     if (bandA !== bandB) return bandA - bandB;
-    if (a.type === 'auto' && b.type === 'auto') return autoCompare(a, b);
-    if (a.type === 'manual' && b.type === 'manual') return manualCompare(a, b);
-    return tempCompare(a, b);
+    return withinBandCompare(a, b);
   });
   return sorted;
 }
@@ -104,9 +145,7 @@ export function sortSeatsAcrossScopes(seats: readonly Seat[]): Seat[] {
     const bandA = TYPE_BAND[a.type];
     const bandB = TYPE_BAND[b.type];
     if (bandA !== bandB) return bandA - bandB;
-    if (a.type === 'auto' && b.type === 'auto') return autoCompare(a, b);
-    if (a.type === 'manual' && b.type === 'manual') return manualCompare(a, b);
-    return tempCompare(a, b);
+    return withinBandCompare(a, b);
   });
   return sorted;
 }
