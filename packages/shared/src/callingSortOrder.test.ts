@@ -13,15 +13,31 @@ describe('callingSortOrder', () => {
     expect(callingSortOrder('Stake President')).toBe(0);
   });
 
-  it('maps the stake-band tail and ward-band head to adjacent indices', () => {
-    // 'Stake Technology Specialist' is the 31st entry (index 30);
-    // 'Bishop' is the 32nd (index 31) — the stake → ward boundary.
-    expect(callingSortOrder('Stake Technology Specialist')).toBe(30);
-    expect(callingSortOrder('Bishop')).toBe(31);
+  it('maps the stake-band tail and ward-band head across the boundary', () => {
+    // 'Patriarch' is the 42nd entry (index 41) — the stake-band tail;
+    // 'Bishop' is the 43rd (index 42) — the ward-band head.
+    expect(callingSortOrder('Patriarch')).toBe(41);
+    expect(callingSortOrder('Bishop')).toBe(42);
   });
 
-  it('maps the final ward calling to the last index (71)', () => {
-    expect(callingSortOrder('Technology Specialist')).toBe(71);
+  it('maps the final ward calling to the last index (84)', () => {
+    expect(callingSortOrder('Technology Specialist')).toBe(84);
+  });
+
+  it('places the operator-added stake callings in order', () => {
+    // New 85-entry stake-band additions (unprefixed spellings used
+    // verbatim per the operator's authoritative list).
+    expect(callingSortOrder('Stake Building Representative')).toBe(30);
+    expect(callingSortOrder('Stake Technology Specialist')).toBe(32);
+    expect(callingSortOrder('Stake Young Single Adult Advisor')).toBe(35);
+    expect(callingSortOrder('Audit Committee Chairman')).toBe(38);
+    expect(callingSortOrder('Audit Committee Member')).toBe(39);
+    expect(callingSortOrder('Auditor')).toBe(40);
+  });
+
+  it('places the operator-added ward callings in order', () => {
+    expect(callingSortOrder('Valiant Activities Leader')).toBe(76);
+    expect(callingSortOrder('Building Representative')).toBe(81);
   });
 
   it('orders Bishop ahead of Elders Quorum President ahead of Primary President', () => {
@@ -45,12 +61,12 @@ describe('callingSortOrder', () => {
   });
 
   it('matches a mixed case + whitespace variant to the canonical index', () => {
-    expect(callingSortOrder('  bIsHoP ')).toBe(31);
+    expect(callingSortOrder('  bIsHoP ')).toBe(42);
   });
 
   it('preserves the double-hyphen calling names verbatim', () => {
     expect(callingSortOrder('Stake Assistant Clerk--Membership')).toBe(7);
-    expect(callingSortOrder('Ward Assistant Clerk--Finance')).toBe(39);
+    expect(callingSortOrder('Ward Assistant Clerk--Finance')).toBe(50);
   });
 
   it('returns null for a calling not in the table', () => {
@@ -77,7 +93,7 @@ describe('seatCallingOrder', () => {
   });
 
   it('returns the MIN order across multiple callings', () => {
-    // Bishop (31) wins over Primary President (62).
+    // Bishop (42) wins over Primary President (72).
     expect(seatCallingOrder(['Primary President', 'Bishop'])).toBe(callingSortOrder('Bishop'));
   });
 

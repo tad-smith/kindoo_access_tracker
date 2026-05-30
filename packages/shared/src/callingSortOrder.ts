@@ -6,8 +6,8 @@
 // time from the seat's callings against this canonical, churchwide
 // ordering table.
 //
-// The table is a fixed 72-entry hierarchy (stake callings 1–31, ward
-// callings 32–72). The array index is the priority — lower index sorts
+// The table is a fixed 85-entry hierarchy (stake callings 1–42, ward
+// callings 43–85). The array index is the priority — lower index sorts
 // first. The ordering is global: the calling hierarchy is churchwide,
 // so there is no per-stake customisation (see Stage 1 open question #3).
 //
@@ -20,7 +20,7 @@
  * Treated as the source of truth; the lookup map is derived from it.
  */
 const CALLING_ORDER: readonly string[] = [
-  // ----- Stake callings (1–31) -----
+  // ----- Stake callings (1–42) -----
   'Stake President',
   'Stake Presidency First Counselor',
   'Stake Presidency Second Counselor',
@@ -51,8 +51,19 @@ const CALLING_ORDER: readonly string[] = [
   'Stake Primary First Counselor',
   'Stake Primary Second Counselor',
   'Stake Primary Secretary',
+  'Stake Building Representative',
+  'Stake Building Specialist',
   'Stake Technology Specialist',
-  // ----- Ward callings (32–72) -----
+  'Stake Single Adult Adviser',
+  'Stake Single Adult Representative',
+  'Stake Young Single Adult Advisor',
+  'Stake Young Single Adult Representative',
+  'Stake Music Chairman',
+  'Audit Committee Chairman',
+  'Audit Committee Member',
+  'Auditor',
+  'Patriarch',
+  // ----- Ward callings (43–85) -----
   'Bishop',
   'Bishopric First Counselor',
   'Bishopric Second Counselor',
@@ -87,10 +98,12 @@ const CALLING_ORDER: readonly string[] = [
   'Primary First Counselor',
   'Primary Second Counselor',
   'Primary Secretary',
+  'Valiant Activities Leader',
   'Ward Mission Leader',
   'Assistant Ward Mission Leader',
   'Ward Temple and Family History Leader',
   'Young Single Adult Adviser',
+  'Building Representative',
   'History Specialist',
   'Email Communication Specialist',
   'Technology Specialist',
