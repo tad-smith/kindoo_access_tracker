@@ -1,8 +1,9 @@
 // Layout coverage for <PerGrantRosterCard>. The per-grant roster card
 // renders a two-line header: badges + actions on the first row, the
 // member name/email on its own second row. The AllSeats GrantRowCard
-// keeps its single-row layout (covered by AllSeatsPage.test.tsx); the
-// two-line variant is scoped to this card via `roster-card--two-line`.
+// uses the same two-line header (covered by AllSeatsPage.test.tsx),
+// sharing the `roster-card--two-line` modifier so the two surfaces
+// stay visually consistent.
 //
 // The Edit / Removal affordances subscribe to Firestore + principal +
 // active-stake context; this test stubs them to plain markers because
