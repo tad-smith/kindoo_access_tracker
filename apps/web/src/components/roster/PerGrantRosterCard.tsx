@@ -13,6 +13,7 @@ import type { GrantView } from '../../lib/grants';
 import { siteLabelForGrant } from '../../lib/kindooSites';
 import { EditSeatAffordance } from '../../features/requests/components/EditSeatAffordance';
 import { RemovalAffordance } from '../../features/requests/components/RemovalAffordance';
+import './RosterCardList.css';
 
 export interface PerGrantRosterCardProps {
   seat: Seat;

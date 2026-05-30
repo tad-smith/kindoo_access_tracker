@@ -195,6 +195,34 @@ describe('<AllSeatsPage />', () => {
     expect(document.querySelector('.roster-card')).toHaveClass('type-manual');
   });
 
+  it('lays the card header out over two lines: badges + actions on line 1, member on its own line', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          type: 'manual',
+          callings: [],
+          reason: 'r',
+          scope: 'CO',
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const card = document.querySelector('.roster-card');
+    expect(card).toHaveClass('roster-card--two-line');
+    // The member name/email lives in its own line below line1, not inside it.
+    const memberLine = card?.querySelector('.roster-card-member-line');
+    expect(memberLine).not.toBeNull();
+    expect(memberLine?.querySelector('.roster-card-member')).not.toBeNull();
+    expect(card?.querySelector('.roster-card-line1 .roster-card-member')).toBeNull();
+    // The Edit action button stays on line 1, right of the badges.
+    expect(
+      card?.querySelector('.roster-card-line1 .roster-card-actions [data-testid^="seat-edit-"]'),
+    ).not.toBeNull();
+  });
+
   it('renders the contextual utilization bar against stake_seat_cap when scope is "All"', () => {
     mockAll({
       seats: [makeSeat({ scope: 'stake' })],

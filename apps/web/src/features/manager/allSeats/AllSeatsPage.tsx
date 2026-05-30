@@ -48,6 +48,7 @@ import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
 import { isScopeAllowed } from '../../requests/scopeOptions';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
+import '../../../components/roster/RosterCardList.css';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -468,7 +469,7 @@ function GrantRowCard({ row, wards, sites, principal, activeStakeId, onEdit }: G
 
   return (
     <div
-      className={`roster-card type-${grant.type}`}
+      className={`roster-card roster-card--two-line type-${grant.type}`}
       data-seat-id={seat.member_canonical}
       data-row-key={row.rowKey}
       data-grant-kind={grant.isPrimary ? 'primary' : 'duplicate'}
@@ -500,7 +501,6 @@ function GrantRowCard({ row, wards, sites, principal, activeStakeId, onEdit }: G
             <code>{grant.scope}</code>
           </span>
         </span>
-        <span className="roster-card-member">{memberInner}</span>
         <span className="roster-card-actions" style={{ display: 'inline-flex', gap: 8 }}>
           {showEdit ? (
             <Button
@@ -525,6 +525,9 @@ function GrantRowCard({ row, wards, sites, principal, activeStakeId, onEdit }: G
             />
           ) : null}
         </span>
+      </div>
+      <div className="roster-card-member-line">
+        <span className="roster-card-member">{memberInner}</span>
       </div>
       {callingLine}
       {buildingsLine}
