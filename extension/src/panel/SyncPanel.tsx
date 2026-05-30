@@ -13,10 +13,11 @@
 //     Automation direct grants).
 //
 // After the bulk listing returns, the panel walks the users with a
-// small concurrency cap, calling `getUserDoorIds` per user, and stamps
-// `derivedBuildings` onto each one. Progress text updates as users
-// complete. With ~313 users + concurrency=4 and ~100-200ms per Kindoo
-// call this lands at ~10-15s.
+// small concurrency cap, fetching each user's door grants once and
+// stamping both `derivedBuildings` (all doors) and `directGrantBuildings`
+// (direct-grant doors only — the grant-based seat-type signal) onto each
+// one. Progress text updates as users complete. With ~313 users +
+// concurrency=4 and ~100-200ms per Kindoo call this lands at ~10-15s.
 //
 // Once enrichment is done, `detect()` runs and the report renders.
 // Per-row Fix buttons (Phase 2) dispatch the appropriate action;
