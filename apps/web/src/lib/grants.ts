@@ -55,6 +55,14 @@ export interface GrantView {
    * render.
    */
   duplicateIndex: number;
+  /**
+   * `true` when the seat carries one or more same-scope DuplicateGrants
+   * that were folded into this view's `building_names`. Drives the
+   * "Duplicate" badge on the collapsed row. Always `false` on a raw
+   * (uncollapsed) `grantsForDisplay` view; only set by
+   * `collapseSameScopeGrants` and `pickGrantForScope`.
+   */
+  hasSameScopeDuplicates: boolean;
 }
 
 /**
@@ -101,6 +109,7 @@ export function grantsForDisplay(seat: Seat): GrantView[] {
     isPrimary: true,
     isParallelSite: false,
     duplicateIndex: -1,
+    hasSameScopeDuplicates: false,
   };
   const dupes = (seat.duplicate_grants ?? []).map((d, i): GrantView => {
     const site = normalise(d.kindoo_site_id);
@@ -122,9 +131,80 @@ export function grantsForDisplay(seat: Seat): GrantView[] {
       isPrimary: false,
       isParallelSite,
       duplicateIndex: i,
+      hasSameScopeDuplicates: false,
     };
   });
   return [primary, ...dupes];
+}
+
+/**
+ * Stable union of building names — order preserved (`first` then any
+ * names in `rest` that weren't already present). Used by the same-scope
+ * collapse so the union renders in a deterministic order that matches
+ * "what was already there first."
+ */
+function unionBuildingNames(
+  first: readonly string[],
+  rest: readonly (readonly string[])[],
+): readonly string[] {
+  const seen = new Set<string>(first);
+  const out = [...first];
+  for (const names of rest) {
+    for (const name of names) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      out.push(name);
+    }
+  }
+  return out;
+}
+
+/**
+ * Collapse same-scope grants on a single seat into one view per scope.
+ *
+ * A seat may carry a primary grant plus zero-or-more DuplicateGrants
+ * with the same `scope` as the primary (e.g. an importer-driven auto
+ * primary plus a manager-added manual DuplicateGrant naming additional
+ * buildings). Rendering each as its own row confuses operators — the
+ * primary already covers the user's access, and the duplicates are
+ * additive metadata. This helper folds them into a single row whose
+ * `building_names` is the union of every same-scope grant's buildings
+ * and whose `hasSameScopeDuplicates` flag drives the "Duplicate" badge.
+ *
+ * Cross-scope grants (a DuplicateGrant whose scope differs from the
+ * primary's) keep their own rows — rendering them collapsed onto a
+ * different scope's row would be wrong (the duplicate's scope is what
+ * earns its row on a roster). The collapse rule applies only WITHIN a
+ * single scope.
+ *
+ * Order: the chosen view per scope is the first grant in the input
+ * sequence at that scope (so the primary wins if it matches, else the
+ * first duplicate at that scope). Subsequent same-scope duplicates
+ * contribute their `building_names` to the union but are not emitted
+ * as standalone views. Scope-emission order mirrors input order (so
+ * AllSeats keeps its existing sort behaviour).
+ */
+export function collapseSameScopeGrants(views: readonly GrantView[]): GrantView[] {
+  const byScope = new Map<string, { view: GrantView; extras: GrantView[] }>();
+  const order: string[] = [];
+  for (const v of views) {
+    const existing = byScope.get(v.scope);
+    if (existing) {
+      existing.extras.push(v);
+    } else {
+      byScope.set(v.scope, { view: v, extras: [] });
+      order.push(v.scope);
+    }
+  }
+  return order.map((scope) => {
+    const { view, extras } = byScope.get(scope)!;
+    if (extras.length === 0) return view;
+    const building_names = unionBuildingNames(
+      view.building_names,
+      extras.map((e) => e.building_names),
+    );
+    return { ...view, building_names, hasSameScopeDuplicates: true };
+  });
 }
 
 /**
@@ -156,13 +236,26 @@ export function pickGrantForScope(seat: Seat, scope: string): GrantView | null {
   const matches = grantsForDisplay(seat).filter((g) => g.scope === scope);
   if (matches.length === 0) return null;
   // Primary always wins (it's a row's home record by definition).
+  // Otherwise prefer home-site (`kindoo_site_id === null`), else the
+  // lowest-`kindoo_site_id` for stability.
   const primary = matches.find((g) => g.isPrimary);
-  if (primary) return primary;
-  // Among duplicates: prefer home-site (`kindoo_site_id === null`),
-  // else lowest-`kindoo_site_id` for stability.
-  const homeSite = matches.find((g) => g.kindoo_site_id === null);
-  if (homeSite) return homeSite;
-  return [...matches].sort((a, b) =>
-    (a.kindoo_site_id ?? '').localeCompare(b.kindoo_site_id ?? ''),
-  )[0]!;
+  const chosen =
+    primary ??
+    matches.find((g) => g.kindoo_site_id === null) ??
+    [...matches].sort((a, b) => (a.kindoo_site_id ?? '').localeCompare(b.kindoo_site_id ?? ''))[0]!;
+  // Same-scope collapse: union the building_names from every other
+  // same-scope grant on the seat into the chosen view. Roster pages
+  // show one row per (member, scope); a same-scope DuplicateGrant adds
+  // buildings to that row rather than rendering a duplicate row that
+  // doesn't exist on roster surfaces.
+  const others = matches.filter((g) => g !== chosen);
+  if (others.length === 0) return chosen;
+  return {
+    ...chosen,
+    building_names: unionBuildingNames(
+      chosen.building_names,
+      others.map((g) => g.building_names),
+    ),
+    hasSameScopeDuplicates: true,
+  };
 }

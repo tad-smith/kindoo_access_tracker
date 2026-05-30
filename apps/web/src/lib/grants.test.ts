@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DuplicateGrant } from '@kindoo/shared';
 import { makeSeat } from '../../test/fixtures';
-import { grantsForDisplay, pickGrantForScope } from './grants';
+import { collapseSameScopeGrants, grantsForDisplay, pickGrantForScope } from './grants';
 
 const NOW: DuplicateGrant['detected_at'] = {
   seconds: 0,
@@ -233,5 +233,171 @@ describe('pickGrantForScope', () => {
     });
     const grant = pickGrantForScope(seat, 'CO');
     expect(grant?.isPrimary).toBe(true);
+  });
+
+  // Same-scope collapse on roster pages: a same-scope DuplicateGrant
+  // contributes its buildings to the picked grant's row rather than
+  // rendering a separate row (which roster pages don't do anyway).
+  it('unions building_names from same-scope duplicates into the picked row', () => {
+    const seat = makeSeat({
+      scope: 'MH',
+      type: 'auto',
+      building_names: ['Jamboree'],
+      duplicate_grants: [
+        {
+          scope: 'MH',
+          type: 'manual',
+          building_names: ['Lexington', 'Jamboree', 'Monument'],
+          detected_at: NOW,
+        },
+      ],
+    });
+    const grant = pickGrantForScope(seat, 'MH');
+    expect(grant?.isPrimary).toBe(true);
+    expect(grant?.hasSameScopeDuplicates).toBe(true);
+    expect(grant?.building_names).toEqual(['Jamboree', 'Lexington', 'Monument']);
+  });
+
+  it('flags hasSameScopeDuplicates=false when no same-scope duplicates exist', () => {
+    const seat = makeSeat({ scope: 'CO', duplicate_grants: [] });
+    expect(pickGrantForScope(seat, 'CO')?.hasSameScopeDuplicates).toBe(false);
+  });
+});
+
+describe('collapseSameScopeGrants', () => {
+  // Operator-reported case (Corry Macfarlane): a seat with an auto
+  // primary at scope MH (buildings=['Jamboree']) and a manual
+  // DuplicateGrant at the SAME scope MH (buildings=['Lexington',
+  // 'Jamboree', 'Monument']) must render as ONE row whose buildings
+  // are the union of both, with `hasSameScopeDuplicates=true` so the
+  // caller can show the "Duplicate" badge with the operator-facing
+  // tooltip.
+  it("collapses Corry's same-scope different-type duplicate into one row with the union of buildings", () => {
+    const seat = makeSeat({
+      scope: 'MH',
+      type: 'auto',
+      member_canonical: 'corry@corrymac.com',
+      member_email: 'corry@corrymac.com',
+      member_name: 'Corry Macfarlane',
+      building_names: ['Jamboree'],
+      duplicate_grants: [
+        {
+          scope: 'MH',
+          type: 'manual',
+          building_names: ['Lexington', 'Jamboree', 'Monument'],
+          detected_at: NOW,
+        },
+      ],
+    });
+    const views = collapseSameScopeGrants(grantsForDisplay(seat));
+    expect(views).toHaveLength(1);
+    const [row] = views;
+    expect(row!.scope).toBe('MH');
+    expect(row!.isPrimary).toBe(true);
+    expect(row!.hasSameScopeDuplicates).toBe(true);
+    expect(row!.building_names).toEqual(['Jamboree', 'Lexington', 'Monument']);
+  });
+
+  it('primary only → one view, primary buildings, no same-scope flag', () => {
+    const seat = makeSeat({
+      scope: 'CO',
+      building_names: ['Primary Building'],
+      duplicate_grants: [],
+    });
+    const views = collapseSameScopeGrants(grantsForDisplay(seat));
+    expect(views).toHaveLength(1);
+    expect(views[0]!.isPrimary).toBe(true);
+    expect(views[0]!.building_names).toEqual(['Primary Building']);
+    expect(views[0]!.hasSameScopeDuplicates).toBe(false);
+  });
+
+  it('primary + same-scope same-type duplicate → one row, union, flag set', () => {
+    const seat = makeSeat({
+      scope: 'CO',
+      type: 'manual',
+      callings: [],
+      reason: 'primary reason',
+      building_names: ['A Building'],
+      duplicate_grants: [
+        {
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['B Building'],
+          reason: 'dup reason',
+          detected_at: NOW,
+        },
+      ],
+    });
+    const views = collapseSameScopeGrants(grantsForDisplay(seat));
+    expect(views).toHaveLength(1);
+    expect(views[0]!.isPrimary).toBe(true);
+    expect(views[0]!.building_names).toEqual(['A Building', 'B Building']);
+    expect(views[0]!.hasSameScopeDuplicates).toBe(true);
+    // The chosen view keeps the primary's reason — collapse merges
+    // buildings, not free-text fields.
+    expect(views[0]!.reason).toBe('primary reason');
+  });
+
+  it('primary + cross-scope duplicate → two rows unchanged (collapse only fires within a scope)', () => {
+    const seat = makeSeat({
+      scope: 'stake',
+      kindoo_site_id: null,
+      duplicate_grants: [
+        { scope: 'CO', type: 'auto', building_names: ['CO Building'], detected_at: NOW },
+      ],
+    });
+    const views = collapseSameScopeGrants(grantsForDisplay(seat));
+    expect(views.map((v) => v.scope)).toEqual(['stake', 'CO']);
+    expect(views[0]!.isPrimary).toBe(true);
+    expect(views[1]!.isPrimary).toBe(false);
+    expect(views[0]!.hasSameScopeDuplicates).toBe(false);
+    expect(views[1]!.hasSameScopeDuplicates).toBe(false);
+  });
+
+  it('two same-scope duplicates with primary at a different scope → one row at the duplicate scope with union', () => {
+    const seat = makeSeat({
+      scope: 'stake',
+      kindoo_site_id: null,
+      building_names: ['Stake Building'],
+      duplicate_grants: [
+        {
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['CO Building A'],
+          detected_at: NOW,
+        },
+        {
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['CO Building B'],
+          detected_at: NOW,
+        },
+      ],
+    });
+    const views = collapseSameScopeGrants(grantsForDisplay(seat));
+    expect(views).toHaveLength(2);
+    // Stake row unchanged.
+    expect(views[0]!.scope).toBe('stake');
+    expect(views[0]!.building_names).toEqual(['Stake Building']);
+    expect(views[0]!.hasSameScopeDuplicates).toBe(false);
+    // CO row collapses the two duplicates into one.
+    expect(views[1]!.scope).toBe('CO');
+    expect(views[1]!.isPrimary).toBe(false);
+    expect(views[1]!.hasSameScopeDuplicates).toBe(true);
+    expect(views[1]!.building_names).toEqual(['CO Building A', 'CO Building B']);
+  });
+
+  it('union dedupes shared building names and preserves the primary-first order', () => {
+    const seat = makeSeat({
+      scope: 'CO',
+      building_names: ['B1', 'B2'],
+      duplicate_grants: [
+        { scope: 'CO', type: 'manual', building_names: ['B2', 'B3'], detected_at: NOW },
+        { scope: 'CO', type: 'manual', building_names: ['B1', 'B4'], detected_at: NOW },
+      ],
+    });
+    const views = collapseSameScopeGrants(grantsForDisplay(seat));
+    expect(views).toHaveLength(1);
+    expect(views[0]!.building_names).toEqual(['B1', 'B2', 'B3', 'B4']);
   });
 });

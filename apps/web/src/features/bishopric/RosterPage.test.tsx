@@ -671,6 +671,71 @@ describe('<BishopricRosterPage />', () => {
     // CO duplicate alongside a stake primary). The per-scope picker
     // is deterministic: home-site beats foreign-site so Cordera's
     // roster renders the local grant.
+    // Operator-reported same-scope collapse on the ward roster: a
+    // primary at scope CO with a same-scope DuplicateGrant naming
+    // additional buildings renders ONE row whose `building_names` is
+    // the union, with the "Duplicate" badge and the operator-facing
+    // tooltip copy. Pre-fix this row showed only the primary's
+    // buildings.
+    it('collapses a same-scope DuplicateGrant into the row, unions buildings, and shows the Duplicate badge', () => {
+      usePrincipalMock.mockReturnValue(principal(['MH']));
+      const NOW = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+      mockSeats([
+        makeSeat({
+          scope: 'MH',
+          type: 'auto',
+          callings: ['Bishop'],
+          member_canonical: 'corry@corrymac.com',
+          member_email: 'corry@corrymac.com',
+          member_name: 'Corry Macfarlane',
+          kindoo_site_id: null,
+          building_names: ['Jamboree'],
+          duplicate_grants: [
+            {
+              scope: 'MH',
+              type: 'manual',
+              kindoo_site_id: null,
+              reason: 'Activities Committee Chair',
+              building_names: ['Lexington', 'Jamboree', 'Monument'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'MH', seat_cap: 20 }));
+      render(<BishopricRosterPage initialWard="MH" />);
+      const cards = document.querySelectorAll('[data-seat-id="corry@corrymac.com"]');
+      expect(cards).toHaveLength(1);
+      const row = cards[0] as HTMLElement;
+      // Union of buildings, primary-first order.
+      expect(row.textContent).toContain('Jamboree');
+      expect(row.textContent).toContain('Lexington');
+      expect(row.textContent).toContain('Monument');
+      // Duplicate badge with operator-facing tooltip.
+      const badge = screen.getByTestId('grant-duplicate-badge-corry@corrymac.com');
+      expect(badge).toBeInTheDocument();
+      expect(badge.getAttribute('title')).toBe(
+        'This user was manually granted access to additional buildings.',
+      );
+    });
+
+    // Regression guard: a row without same-scope duplicates does NOT
+    // render the Duplicate badge (the badge is gated on
+    // `hasSameScopeDuplicates`).
+    it('does not render the Duplicate badge on rows without same-scope duplicates', () => {
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          member_canonical: 'plain@x.com',
+          member_email: 'plain@x.com',
+        }),
+      ]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage initialWard="CO" />);
+      expect(screen.queryByTestId('grant-duplicate-badge-plain@x.com')).toBeNull();
+    });
+
     it('renders the home-site duplicate (not the foreign-site one) when both share the same scope', () => {
       usePrincipalMock.mockReturnValue(principal(['CO']));
       const NOW = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };

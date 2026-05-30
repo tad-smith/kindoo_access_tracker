@@ -32,7 +32,7 @@ import {
   useWards,
 } from './hooks';
 import { siteLabelForGrant } from '../../../lib/kindooSites';
-import { grantsForDisplay, type GrantView } from '../../../lib/grants';
+import { collapseSameScopeGrants, grantsForDisplay, type GrantView } from '../../../lib/grants';
 import { useStakeDoc } from '../dashboard/hooks';
 import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
 import { UtilizationBar } from '../../../lib/render/UtilizationBar';
@@ -66,11 +66,18 @@ interface GrantRow {
   rowKey: string;
 }
 
-/** Pure: expand every seat into grant-rows. */
+/**
+ * Pure: expand every seat into grant-rows, collapsing same-scope
+ * DuplicateGrants into the row that owns that scope (primary if it
+ * matches, else the first duplicate at that scope). The collapsed
+ * row's `building_names` is the union of every same-scope grant's
+ * buildings; `grant.hasSameScopeDuplicates` flags the badge state.
+ * Cross-scope duplicates remain their own rows.
+ */
 function expandSeats(seats: readonly Seat[]): GrantRow[] {
   const rows: GrantRow[] = [];
   for (const seat of seats) {
-    for (const grant of grantsForDisplay(seat)) {
+    for (const grant of collapseSameScopeGrants(grantsForDisplay(seat))) {
       const suffix = grant.isPrimary ? 'pri' : `dup-${grant.duplicateIndex}`;
       rows.push({ seat, grant, rowKey: `${seat.member_canonical}/${suffix}` });
     }
@@ -469,14 +476,16 @@ function GrantRowCard({ row, wards, sites, principal, activeStakeId, onEdit }: G
       <div className="roster-card-line1">
         <span className="roster-card-badges">
           <Badge variant={grant.type}>{grant.type}</Badge>
-          {grant.isPrimary ? null : (
+          {grant.isPrimary && !grant.hasSameScopeDuplicates ? null : (
             <Badge
               variant="manual"
               data-testid={`grant-duplicate-badge-${testIdSuffix}`}
               title={
-                grant.isParallelSite
-                  ? 'Parallel-site grant — needs its own Kindoo write.'
-                  : 'Within-site priority loser — covered by the primary write.'
+                grant.hasSameScopeDuplicates
+                  ? 'This user was manually granted access to additional buildings.'
+                  : grant.isParallelSite
+                    ? 'Parallel-site grant — needs its own Kindoo write.'
+                    : 'Within-site priority loser — covered by the primary write.'
               }
             >
               duplicate
