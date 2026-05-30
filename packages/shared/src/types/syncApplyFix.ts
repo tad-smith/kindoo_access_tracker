@@ -61,7 +61,22 @@ export type ScopeMismatchPayload = {
   newScope: string;
 };
 
-/** Payload for the `type-mismatch` fix (sync direction: kindoo-to-sba). */
+/** Payload for the `type-mismatch` fix (sync direction: kindoo-to-sba).
+ *
+ * Grant-derived promote (`manual`/`temp` → `auto`) / demote (`auto` →
+ * `manual`/`temp`). Beyond flipping `type`, the callable reshapes the
+ * seat to the spec §13 convention for the target type: an `auto` seat
+ * carries its calling(s) in `callings[]` with an empty `reason`; a
+ * `manual` seat carries `callings: []` with the calling in free-text
+ * `reason`.
+ *
+ * `callings` is the Kindoo-parsed calling(s) for the seat, sent by the
+ * extension on **promote** so the resulting auto seat is well-formed
+ * (populated `callings[]`, no stale `reason`). Optional / may be empty:
+ * on demote it is ignored (the calling is sourced from the seat's
+ * existing `callings[]`); on promote an empty / absent value falls back
+ * to `[seat.reason]` when the seat carries a non-empty reason, else
+ * `[]`. */
 export type TypeMismatchPayload = {
   memberEmail: string;
   newType: SeatType;
