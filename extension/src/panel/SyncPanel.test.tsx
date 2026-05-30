@@ -426,6 +426,38 @@ describe('SyncPanel', () => {
     expect((applyFixMock.mock.calls[0]![0] as { code: string }).code).toBe('extra-kindoo-calling');
   });
 
+  it('extra-kindoo-calling on a MANUAL seat renders review-only (no Add to SBA button)', async () => {
+    // Manual seats record their calling in `reason`; the callable
+    // appends to `callings[]`, so a one-click fix is wrong-shaped — the
+    // row surfaces for review with no fix button.
+    const b = bundle();
+    b.seats.push({
+      ...autoSeat('manualextra@example.com'),
+      type: 'manual',
+      callings: [],
+      reason: 'After-hours access',
+      building_names: ['Maple Building'],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      kuser('manualextra@example.com', {
+        description: 'Maple Ward (Building Greeter)',
+      }),
+    ]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    // Row present + classified extra-kindoo-calling, but no fix button.
+    expect(screen.getByTestId('sba-sync-row-manualextra@example.com')).toHaveTextContent(
+      'extra-kindoo-calling',
+    );
+    expect(
+      screen.queryByTestId('sba-sync-fix-add-callings-sba-manualextra@example.com'),
+    ).toBeNull();
+  });
+
   it('scope-mismatch renders Update Kindoo + Update SBA buttons', async () => {
     const b = bundle();
     b.wardCallingTemplates.push({

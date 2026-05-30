@@ -464,15 +464,38 @@ scope-mismatch → type-mismatch (promote/demote) → buildings-mismatch → **e
 (last)**. Each `continue`s, so at most one row per email; a genuine type/scope/buildings drift
 preempts a calling addition.
 
-**`extra-kindoo-calling` false-positive guard (e).** The diff compares Kindoo's parsed callings
-against the seat's **`callings[]` PLUS the comma-split `reason`**, trimmed + case-insensitive,
-additive direction only. Manual seats store their calling in `reason` (empty `callings[]`), so
-comparing against `callings[]` alone would false-fire on every manual seat. The extras ride on
-`KindooBlock.extraKindooCallings`; `fix.ts` sends them as the callable `extraCallings`.
+**`extra-kindoo-calling` false-positive guard (e).** The diff is trimmed + case-insensitive,
+additive direction only, and **type-scoped to where the SBA seat records its calling** (per
+`docs/spec.md` §13 + `markRequestComplete`):
+
+- **auto** seat → compare Kindoo's parsed callings against the roster `callings[]`.
+- **manual / temp** seat → `callings[]` is empty by construction; the calling lives in the single
+  free-text `reason`. Compare against `reason` (split on `,` for the rare multi-calling reason). A
+  manual seat whose `reason` reflects the Kindoo calling does NOT fire — this is what keeps the
+  review list from flooding with every manual seat.
+
+The extras ride on `KindooBlock.extraKindooCallings`; `fix.ts` sends them as the callable
+`extraCallings`.
+
+**`extra-kindoo-calling` fix action (e) — awkward for manual seats.** The `syncApplyFix`
+`extra-kindoo-calling` path appends to the roster `callings[]`. That's correct for an **auto** seat,
+so it gets the one-click **"Add to SBA seat"** button. A **manual / temp** seat records its calling
+in the single free-text `reason`, not a `callings[]` list — appending would mint a hybrid seat
+(`callings: [X]` + `reason: "Y"`), the wrong shape. So `fixActionsFor` returns **no fix button** for
+a manual / temp `extra-kindoo-calling` row: the drift still surfaces (review severity) but the
+operator reconciles `reason` in the web app. The seam is the backend's `callings[]`-only append; a
+future `reason`-aware `syncApplyFix` variant could close it (out of scope here — extension-only).
 
 **`type-mismatch` fix UI (c).** Kindoo grants are the source of truth for type, so the row exposes
 **only "Update SBA"** — no "Update Kindoo" (the extension can't write church grants; revoke-on-
 promote is Stage 2). `fixActionsFor('type-mismatch')` returns the single SBA action.
+
+**Zero-grant seats never auto (b/c).** The seat-type decision uses `grantsBackAuto` (church-backed
+AND ≥1 building), not the raw `isChurchBacked` (which is vacuously true for a zero-building seat).
+A `kindoo-only` user with no door grants (newly added, access revoked) is therefore born **manual**,
+not an empty-building auto seat, and a zero-building `manual` seat is not spuriously promoted.
+Demote keys off `!isChurchBacked` so a degenerate zero-building `auto` seat is not spuriously
+demoted either.
 
 ### Stage 2 — automate promote (after Stage 1 validates the detector in production)
 

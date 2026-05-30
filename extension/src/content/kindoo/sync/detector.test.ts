@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Building, CallingTemplate, Seat, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
-import { detect, isChurchBacked, missingCallings } from './detector';
+import { detect, grantsBackAuto, isChurchBacked, missingCallings } from './detector';
 
 describe('isChurchBacked', () => {
   it('true when every seat building is direct-granted', () => {
@@ -19,6 +19,22 @@ describe('isChurchBacked', () => {
   it('true (vacuously) for a seat with no buildings when the set is known', () => {
     expect(isChurchBacked([], [])).toBe(true);
     expect(isChurchBacked([], ['A'])).toBe(true);
+  });
+});
+
+describe('grantsBackAuto', () => {
+  it('true when the seat has buildings and all are direct-granted', () => {
+    expect(grantsBackAuto(['A'], ['A', 'B'])).toBe(true);
+  });
+  it('false for a zero-building seat (NOT vacuously auto — born manual)', () => {
+    expect(grantsBackAuto([], [])).toBe(false);
+    expect(grantsBackAuto([], ['A'])).toBe(false);
+  });
+  it('false when a building is not direct-granted', () => {
+    expect(grantsBackAuto(['A', 'B'], ['A'])).toBe(false);
+  });
+  it('false when directGrantBuildings is null', () => {
+    expect(grantsBackAuto(['A'], null)).toBe(false);
   });
 });
 
@@ -262,6 +278,27 @@ describe('detect', () => {
     );
     expect(result.discrepancies[0]?.code).toBe('kindoo-only');
     expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('temp');
+  });
+
+  it('kindoo-only with ZERO door grants is born manual, not vacuously auto', () => {
+    // A Kindoo user that exists in the env list but holds no doors
+    // (newly added, access revoked) derives to empty building sets.
+    // grantsBackAuto requires ≥1 building, so the created seat is manual
+    // — never an empty-building auto seat.
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Building Greeter)',
+            accessSchedules: [],
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('manual');
   });
 
   it('emits kindoo-unparseable on a Kindoo Manager-style description', () => {
@@ -811,9 +848,10 @@ describe('detect', () => {
   });
 
   it('does NOT emit extra-kindoo-calling when a manual seat records the calling in its reason', () => {
-    // Manual seats carry the calling in `reason`, not `callings[]`.
-    // Comparing only against callings[] would false-fire on every
-    // manual seat; the diff compares against callings ∪ reason.
+    // Production-shaped manual seat: `callings: []`, calling in `reason`.
+    // The diff is type-scoped — for manual seats it compares the Kindoo
+    // parens against `reason`, so a reason that reflects the Kindoo
+    // calling stays quiet (no review-list flood).
     const result = detect(
       baseInputs({
         seats: [
@@ -830,6 +868,85 @@ describe('detect', () => {
             description: 'Maple Ward (Building Greeter)',
             derivedBuildings: ['Maple Building'],
             directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('emits extra-kindoo-calling for a manual seat whose reason does NOT reflect the Kindoo calling', () => {
+    // Manual seat with a generic reason; Kindoo names a specific calling
+    // the reason doesn't reflect → genuine review row.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'After-hours building access',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('extra-kindoo-calling');
+    expect(row.kindoo?.extraKindooCallings).toEqual(['Building Greeter']);
+  });
+
+  it('does NOT emit extra-kindoo-calling for a manual seat with a multi-calling reason that covers the Kindoo callings', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Building Greeter, Janitor',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Building Greeter, Janitor)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('does NOT compare an auto seat against its reason — only against callings[]', () => {
+    // An auto seat's `callings[]` is the source; even if some stray
+    // reason text existed, the auto path ignores it. Here callings
+    // already covers the Kindoo parens → no row.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
           }),
         ],
       }),

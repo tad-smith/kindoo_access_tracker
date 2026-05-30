@@ -106,11 +106,15 @@ export interface KindooBlock {
    */
   directGrantBuildings: string[] | null;
   /**
-   * Grant-derived target type for a promote / demote `type-mismatch`
-   * row. Set ONLY on `type-mismatch` rows (PROMOTE → `'auto'`, DEMOTE →
-   * `'manual'`); undefined on every other code. The fix dispatcher
-   * sends THIS as the callable's `newType`, never `intendedType`
-   * (which is template-derived and no longer authoritative for type).
+   * Grant-derived seat type. Set on:
+   *   - `type-mismatch` rows — the promote/demote target (PROMOTE →
+   *     `'auto'`, DEMOTE → `'manual'`); the fix dispatcher sends it as
+   *     the callable's `newType`.
+   *   - `kindoo-only` rows — the type the created seat should be born
+   *     as (temp → `'temp'`, grant-backed → `'auto'`, else `'manual'`).
+   * Undefined on every other code. Always preferred over the
+   * template-derived `intendedType`, which is no longer authoritative
+   * for type.
    */
   grantTargetType?: SeatType;
   /**
@@ -391,6 +395,25 @@ export function isChurchBacked(
 }
 
 /**
+ * The seat-type decision: a seat is `auto` (church-owned provisioning)
+ * iff it has **at least one building** AND every building is
+ * direct-granted. The non-empty guard is the difference from
+ * `isChurchBacked`'s raw set-subset (which is vacuously true for a
+ * zero-building seat): a seat with no doors has no church-owned grant
+ * to justify `auto`, so it stays `manual` (the born-manual default). A
+ * zero-grant Kindoo user (newly added, access revoked) therefore is NOT
+ * minted as an empty-building auto seat.
+ *
+ * Pure function — no I/O.
+ */
+export function grantsBackAuto(
+  seatBuildingNames: string[],
+  directGrantBuildings: string[] | null,
+): boolean {
+  return seatBuildingNames.length > 0 && isChurchBacked(seatBuildingNames, directGrantBuildings);
+}
+
+/**
  * Callings present in the Kindoo parens text (`Calling A, Calling B`)
  * but absent from the SBA seat's `callings[]`. Conservative,
  * false-positive-averse:
@@ -421,13 +444,20 @@ export function missingCallings(parenText: string, seatCallings: string[]): stri
 }
 
 /**
- * The seat's full known-calling text for the `extra-kindoo-calling`
- * diff: `callings[]` plus the comma-split `reason`. Manual seats record
- * their calling in `reason` (callings[] empty), so a calling named
- * there is "known" and must not surface as a missing extra.
+ * The seat's known-calling text for the `extra-kindoo-calling` diff,
+ * scoped to where the seat type records its calling(s) (per
+ * `docs/spec.md` §13):
+ *   - `auto` → roster `callings[]`.
+ *   - `manual` / `temp` → the single free-text `reason` (`callings[]`
+ *     is empty by construction); split on `,` for the rare
+ *     multi-calling reason.
+ * Scoping by type is what keeps a manual seat whose `reason` reflects
+ * the Kindoo calling from false-firing as a missing extra.
  */
 function seatKnownCallings(sba: SbaBlock): string[] {
-  const out = [...sba.callings];
+  if (sba.type === 'auto') return [...sba.callings];
+  // manual / temp — the calling lives in `reason`.
+  const out: string[] = [];
   if (sba.reason) {
     for (const part of sba.reason.split(',')) {
       const trimmed = part.trim();
@@ -544,12 +574,14 @@ export function detect(inputs: DetectInputs): DetectResult {
       const primary = pickRelevantSegment(parsed);
       const intended = primary ? classifySegment(primary, kuser.isTempUser, sets) : null;
       // Grant-derived type for the seat we'd create: temp wins
-      // (`IsTempUser`-driven); otherwise church-backed → auto, else
-      // manual. Church-backed is evaluated against the building set the
-      // new seat would carry — `derivedBuildings` when known, else the
-      // AccessSchedules fallback (matches the fix dispatcher's building
-      // source). A null derivation can't be church-backed, so it falls
-      // through to the born-manual default.
+      // (`IsTempUser`-driven); otherwise grant-backed → auto, else
+      // manual. Evaluated against the building set the new seat would
+      // carry — `derivedBuildings` when known, else the AccessSchedules
+      // fallback (matches the fix dispatcher's building source). A null
+      // derivation or a zero-building set can't be grant-backed
+      // (`grantsBackAuto` requires ≥1 building), so a zero-grant Kindoo
+      // user falls through to the born-manual default rather than
+      // minting an empty-building auto seat.
       const newSeatBuildings =
         kuser.derivedBuildings !== null && kuser.derivedBuildings !== undefined
           ? kuser.derivedBuildings
@@ -559,7 +591,7 @@ export function detect(inputs: DetectInputs): DetectResult {
             );
       const createdType: SeatType = kuser.isTempUser
         ? 'temp'
-        : isChurchBacked(newSeatBuildings, kuser.directGrantBuildings ?? null)
+        : grantsBackAuto(newSeatBuildings, kuser.directGrantBuildings ?? null)
           ? 'auto'
           : 'manual';
       discrepancies.push({
@@ -641,8 +673,13 @@ export function detect(inputs: DetectInputs): DetectResult {
     //     `IsTempUser`-driven, orthogonal to grant provenance.
     const directGrant = kuser.directGrantBuildings ?? null;
     if (sbaBlock.type !== 'temp' && directGrant !== null) {
-      const churchBacked = isChurchBacked(sbaBlock.buildingNames, directGrant);
-      if (sbaBlock.type === 'manual' && churchBacked) {
+      // PROMOTE requires a real grant-backed building (`grantsBackAuto`
+      // is false for a zero-building seat). DEMOTE keys off the raw
+      // subset (`!isChurchBacked`) so a degenerate zero-building auto
+      // seat — vacuously church-backed — does NOT spuriously demote.
+      const promoteToAuto = grantsBackAuto(sbaBlock.buildingNames, directGrant);
+      const stillChurchBacked = isChurchBacked(sbaBlock.buildingNames, directGrant);
+      if (sbaBlock.type === 'manual' && promoteToAuto) {
         // PROMOTE — the church grants every door of this seat's
         // buildings, so the church owns provisioning ⇒ auto.
         discrepancies.push({
@@ -656,7 +693,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         });
         continue;
       }
-      if (sbaBlock.type === 'auto' && !churchBacked) {
+      if (sbaBlock.type === 'auto' && !stillChurchBacked) {
         // DEMOTE — the church no longer grants all of this seat's
         // doors, so SBA must own them ⇒ manual.
         const directList = directGrant.length > 0 ? directGrant.join(', ') : '(none)';
@@ -708,18 +745,23 @@ export function detect(inputs: DetectInputs): DetectResult {
       }
     }
 
-    // 8. extra-kindoo-calling — a plain callings-set diff, independent
-    // of seat type. When Kindoo's parsed primary segment names
-    // calling(s) the SBA seat has NO record of, propose adding the
-    // missing one(s). Conservative to avoid false positives:
-    //   - compare trimmed + case-insensitively, additive direction only
-    //     (Kindoo has callings the seat lacks); never fire on ordering /
-    //     formatting differences;
-    //   - compare against the seat's FULL known-calling text —
-    //     `callings[]` PLUS the comma-split `reason`. Manual seats store
-    //     their calling in `reason` (callings[] is empty), so comparing
-    //     against callings[] alone would false-fire on every manual
-    //     seat. A calling already named in the reason is "known".
+    // 8. extra-kindoo-calling — a callings-set diff, independent of the
+    // seat's grant type but SCOPED to where the SBA seat records its
+    // calling(s). When Kindoo's parsed primary segment names calling(s)
+    // the SBA seat has NO record of, propose adding the missing one(s).
+    // Conservative to avoid false positives: compare trimmed +
+    // case-insensitively, additive direction only (Kindoo has callings
+    // the seat lacks); never fire on ordering / formatting differences.
+    //
+    // Where the seat records its calling depends on its type (per
+    // `docs/spec.md` §13 + `markRequestComplete`):
+    //   - auto seat → roster `callings[]`. Compare against that.
+    //   - manual / temp seat → `callings[]` is empty; the calling lives
+    //     in the single free-text `reason`. Compare against `reason`
+    //     (split on `,` for the rare multi-calling reason). A manual
+    //     seat whose `reason` reflects the Kindoo calling does NOT fire
+    //     — that is the false-positive guard against flooding the review
+    //     list with every manual seat.
     // Supersedes the old `intended.reviewMixed` trigger (tied to the
     // retired auto-calling classifier).
     const knownCallings = seatKnownCallings(sbaBlock);

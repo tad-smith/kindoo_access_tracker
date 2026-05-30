@@ -97,10 +97,39 @@ describe('fixActionsFor', () => {
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'create-sba' });
   });
 
-  it('extra-kindoo-calling returns one Add to SBA seat action', () => {
-    const actions = fixActionsFor(discrepancy({ code: 'extra-kindoo-calling' }));
+  it('extra-kindoo-calling on an AUTO seat returns one Add to SBA seat action', () => {
+    // The callable appends to roster `callings[]`, correct for auto.
+    const actions = fixActionsFor(
+      discrepancy({
+        code: 'extra-kindoo-calling',
+        sba: { scope: 'CO', type: 'auto', callings: ['Sunday School Teacher'], buildingNames: [] },
+      }),
+    );
     expect(actions).toHaveLength(1);
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'add-callings-sba' });
+  });
+
+  it('extra-kindoo-calling on a MANUAL seat returns no action (review-only)', () => {
+    // Manual seats record their calling in `reason`, not `callings[]`;
+    // appending to `callings[]` would mint a hybrid seat, so no
+    // one-click fix — the operator reconciles `reason` in the web app.
+    const actions = fixActionsFor(
+      discrepancy({
+        code: 'extra-kindoo-calling',
+        sba: { scope: 'CO', type: 'manual', callings: [], reason: 'Greeter', buildingNames: [] },
+      }),
+    );
+    expect(actions).toEqual([]);
+  });
+
+  it('extra-kindoo-calling on a TEMP seat returns no action (review-only)', () => {
+    const actions = fixActionsFor(
+      discrepancy({
+        code: 'extra-kindoo-calling',
+        sba: { scope: 'CO', type: 'temp', callings: [], reason: 'Visiting', buildingNames: [] },
+      }),
+    );
+    expect(actions).toEqual([]);
   });
 
   it('scope-mismatch / buildings-mismatch each return two actions (Update Kindoo + Update SBA)', () => {

@@ -909,3 +909,12 @@ Pending sibling tracks (NOT in this PR):
 - **Backend sort track** (Stage 1 a) — the compiled `calling → order` table in `packages/shared` + `syncApplyFix` `sort_order` stamping. Owner: @backend-engineer. Blocked on the operator's canonical sort list.
 - **Web deprecation track** (Stage 1 d) — soft-deprecate `auto_kindoo_access` (leave the field + Configuration "Auto Callings" tab dormant as the validation fallback). Owner: @web-engineer.
 - **Stage 2** — auto-applied promote, revoke-on-promote, provision-time grant check.
+
+## [T-58] Sync: temp-vs-non-temp divergence no longer detected (deferred)
+Status: open
+Owner: @extension-engineer
+Phase: extension Sync — Grant-derived seat type (Stage 1)
+
+The grant-derived `type-mismatch` (T-57) intentionally skips temp seats (`sbaBlock.type === 'temp'`) and any row where `directGrantBuildings === null`. Consequence: a divergence between Kindoo's `IsTempUser` flag and the SBA seat's `temp` type — in either direction (SBA-temp vs Kindoo-permanent, or SBA-auto/manual vs Kindoo-temp) — is no longer surfaced. The pre-Stage-1 classifier-based check (`intended.type !== sbaBlock.type`) caught these.
+
+**Accepted as a known Stage-1 limitation** (operator decision, 2026-05-30): temp is an `IsTempUser` + expiry concept orthogonal to grant provenance, so folding it into the grant-based promote/demote would conflate two axes. Deferred rather than fixed. If temp drift becomes a real operational gap, add a dedicated `temp-mismatch` discrepancy row keyed on `seat.type === 'temp'` XOR `kuser.isTempUser` (independent of the grant-based type check), with its own fix semantics (Kindoo `IsTempUser` + expiry-date reconcile vs SBA seat-type change). Not in scope for Stage 1.

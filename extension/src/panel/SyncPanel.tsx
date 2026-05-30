@@ -612,9 +612,18 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
                 <div>
                   <em>tempUser:</em> {discrepancy.kindoo.isTempUser ? 'yes' : 'no'}
                 </div>
-                <div>
-                  <em>intended type:</em> {discrepancy.kindoo.intendedType ?? '(unresolved)'}
-                </div>
+                {discrepancy.kindoo.grantTargetType !== undefined ? (
+                  // Grant-derived rows (type-mismatch promote/demote,
+                  // kindoo-only): show the observed-provenance type, not
+                  // the vestigial template-derived `intendedType`.
+                  <div>
+                    <em>grant-derived type:</em> {discrepancy.kindoo.grantTargetType}
+                  </div>
+                ) : (
+                  <div>
+                    <em>intended type:</em> {discrepancy.kindoo.intendedType ?? '(unresolved)'}
+                  </div>
+                )}
                 <div>
                   <em>rule IDs:</em>{' '}
                   {discrepancy.kindoo.ruleIds.length > 0
