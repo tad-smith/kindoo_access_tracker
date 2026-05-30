@@ -30,6 +30,7 @@ const plugin = tanstackRouterGenerator({
   routesDirectory: './src/routes',
   generatedRouteTree: './src/routeTree.gen.ts',
   autoCodeSplitting: true,
+  routeFileIgnorePattern: '\\.test\\.',
 });
 
 // The unplugin Vite shape exposes `configResolved` at the top level
