@@ -304,6 +304,140 @@ Modified:
 - Sync-driven Firestore writes that bypass the callable. Every SBA write goes through `syncApplyFix`.
 - Writing auto-user door grants from the extension (Church Access Automation territory). Auto seats can't be type-changed and can't have their Kindoo-side buildings written via Update Kindoo in Phase 2 — Update SBA on `buildings-mismatch` is allowed and reconciles SBA to `derivedBuildings`.
 
+## Grant-derived seat type (Stage 1 + Stage 2 — locked 2026-05-30)
+
+> Supersedes the template-based half of the **Classifier** section above. Motivated by a
+> real incident: a `manual` seat whose building door access came entirely from Church
+> Access Automation **direct grants**, invisible to every existing drift check. Per
+> `docs/architecture.md` D14 / T-45 the LCR importer is gone and Sync is now the **sole
+> auto-seat source**, so changing how Sync decides `type` changes how every auto seat is born.
+
+### The principle
+
+`auto` vs `manual` is a **provenance** label — *who owns provisioning the Kindoo grant*:
+the church (`auto`, SBA writes no rule) or SBA (`manual`, SBA writes/revokes an AccessRule).
+Today that's *predicted* from per-stake `auto_kindoo_access` calling templates. A per-stake
+template is a guess at a churchwide, church-controlled behaviour, so it drifts (the incident).
+We replace the prediction with **observation**: a seat is `auto` iff the member actually holds
+the seat's building doors via direct grants.
+
+Two axes that look correlated but aren't (the root of the bug):
+
+- *Door-access state* — does the member hold the doors? (**observable**)
+- *Provenance* — should SBA or the church own the grant? (**what `type` means**)
+
+Grants are authoritative for the first; `type` encodes the second. We let observed grants
+*drive* the second under the policy "church grants the doors ⇒ the church owns them ⇒ `auto`."
+
+### Lifecycle (self-healing convergence)
+
+- **Birth:** every seat is born `manual`. (Already true — the request path only mints
+  `add_manual` / `add_temp`; `markRequestComplete` never sets `auto`.) `temp` is unchanged
+  throughout — it's `IsTempUser` + expiry, never grant-derived.
+- **Promote `manual → auto`:** when Sync observes the member holds the seat's building doors
+  via direct grants. Flip `type`; if SBA had written its own rule for those doors, revoke it
+  (else it orphans — auto-seat removal won't revoke it later). **Stage 1: operator-clicked.
+  Stage 2: auto-applied, silent.**
+- **Demote `auto → manual`:** when an `auto` seat's expected direct grants are gone (church
+  removed access). **Always surfaced, never automated** — it decides whether the member keeps
+  or loses access (release vs. reprovision-as-manual), which observation alone can't disambiguate.
+
+The asymmetry is the safety model: promote preserves access (the church grant remains); demote
+risks it.
+
+### The detector (the load-bearing piece)
+
+The current `derivedBuildings` signal is a **set-difference** (`derivedBuildings ⊋ rule-backed
+buildings`) and is **insufficient**: it only fires when the church grants doors *beyond* what
+SBA's rules explain. In the overlap/lag case — SBA wrote a rule **and** the church grants the
+same doors — the door sets coincide, the signal is silent, and the seat never promotes.
+
+The authoritative signal is **direct-grant coverage**: the church's grants are the per-door
+rows with **`AccessScheduleID === 0`** (Church Access Automation). A seat is church-backed iff
+every door of its building's rule is present among the member's `AccessScheduleID === 0` rows —
+true even when an SBA rule covers the same doors.
+
+**Confirmed — the data is already in hand, no fresh capture needed.**
+
+- The per-user door endpoint
+  (`KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints`) returns one row
+  **per (door, granting source)**: `AccessScheduleID === 0` is a direct church grant; a non-zero
+  value is the granting rule. A door granted by both a rule and a direct grant therefore emits
+  **both** rows — so the overlap/lag case is observable. (`v2-kindoo-api-capture.md:781–820`.)
+- The endpoint parser **already surfaces it**: `endpoints.ts` returns
+  `UserDoorGrantRow { doorId, accessScheduleId }` (`:756,:825`). Only `getUserDoorIds` in
+  `buildingsFromDoors.ts` collapses it (`new Set(rows.map((r) => r.doorId))`). The detector work
+  is to *stop collapsing it* and partition direct (`accessScheduleId === 0`) from rule-derived.
+
+**Algorithm** (mirrors the existing strict-subset `deriveEffectiveRuleIds`, restricted to direct
+doors):
+
+1. `directDoorIds = { r.doorId | r.accessScheduleId === 0 }` for the member.
+2. A building X (→ rule `R_X`, door set from `buildRuleDoorMap`) is **direct-granted** iff
+   **every** door of `R_X` ∈ `directDoorIds` (strict subset; partial coverage ⇒ not
+   church-backed — conservative, matches the existing rule-derivation convention).
+3. A seat is **church-backed** iff every one of its `building_names` is direct-granted. Partial
+   coverage on a multi-building seat ⇒ not auto (surface for review rather than guess).
+
+### Stage 1 — grant classification + sort + soft-deprecation (operator-clicked)
+
+Internal order: (a) can land independently; (b)→(c)→(d) are sequential — you cannot retire
+`auto_kindoo_access` until grants classify.
+
+(a) **Compiled sort table** (`packages/shared`). A canonical `calling → order` module.
+Decouples `sort_order` from `auto_kindoo_access`. `syncApplyFix` stamps `sort_order` from it
+instead of `loadTemplateIndex` / `minSheetOrder` (`syncApplyFix.ts:218,315,414`). Web sort
+(`lib/sort/seats.ts`) is unchanged — still reads `seat.sort_order`; a calling absent from the
+table → null → bottom of the auto band (existing orphan-auto behaviour).
+
+(b) **Direct-grant detector** (extension). Extend `buildingsFromDoors.ts` to track
+`AccessScheduleID === 0` coverage per building; add a per-seat "church-backed?" predicate.
+Plus the prerequisite capture above.
+
+(c) **Switch classification** (extension). `detector.ts` `type-mismatch` (`:535`) becomes
+promote/demote rows driven by the predicate, not `intended.type` vs stored type.
+`classifier.ts`'s auto-set role (`buildCallingTemplateSets`; the `auto_kindoo_access` lookups at
+`:84,:88`) retires; the **parser stays** (still need the calling name for `callings[]` + the
+sort lookup). Promote/demote are operator-clicked via the existing `SyncPanel` fix UI — the
+`applyTypeMismatch` write path (`syncApplyFix.ts:391`) already flips type + handles `sort_order`
++ access-doc parity, so no new write path is needed.
+
+(d) **Soft-deprecate `auto_kindoo_access`.** Once (b)+(c) land, nothing reads it for
+classification and nothing reads template `sheet_order` for sort. Stop reading it; **leave the
+field and the Configuration "Auto Callings" tab in place, dormant** — it is the validation
+fallback (promote/demote are operator-approved in Stage 1; there is no template safety net
+otherwise). `give_app_access` and `sheet_order` are untouched — `sheet_order` still drives
+`give_app_access` wildcard precedence, and the access-doc parity (`filterByGiveAppAccess`) is
+unchanged. The request path is untouched (already born-manual).
+
+(e) **Redefine `extra-kindoo-calling`.** Currently keyed on the auto-calling concept (mixed
+auto/non-auto in `classifier.ts`); that trigger disappears. Redefine as a plain callings-set
+diff — Kindoo's parsed callings vs `seat.callings`, independent of type — so "Kindoo records a
+calling the SBA seat doesn't" still surfaces.
+
+### Stage 2 — automate promote (after Stage 1 validates the detector in production)
+
+- Promote auto-applies (no click); demote stays surfaced.
+- Conditional SBA-rule revoke on promote (only when an `AccessSchedule` exists for the seat's
+  doors); optionally a **provision-time** grant check in the RequestCard flow so a member who
+  already holds church grants is created `auto` and SBA never writes a redundant rule.
+- Hard-remove `auto_kindoo_access` (field + Configuration tab) once promote has run cleanly in
+  production.
+
+### Open questions
+
+1. **Web-app access during the manual window.** The `access/{canonical}` doc (→ web-app custom
+   claims) is written for `give_app_access` callings but **gated on `type === 'auto'`**
+   (`syncApplyFix.ts:251`, `needsTemplates`). Under born-manual a `give_app_access` holder has
+   no access doc until promoted. Confirm that's acceptable, or decouple access-doc writing from
+   auto-type (web-app access is orthogonal to door provenance).
+2. **Revoke-on-promote vs. leave-rule.** Revoking is clean (matches the auto contract) but
+   creates a dependency on the church grant persisting; leaving it risks orphan grants on
+   removal. Stage 2 decision.
+3. **Multi-stake compiled table.** The `calling → order` table is global (calling hierarchy is
+   churchwide). This removes per-stake ordering customisation — acceptable, and consistent with
+   "reality is churchwide."
+
 ## Out of scope for Sync entirely (any phase)
 
 - Reconciling SBA's seat data against the LCR Sheet — that's the importer's job.
