@@ -419,6 +419,42 @@ describe('<AllSeatsPage />', () => {
     expect(order).toEqual(['st@x.com', 'co-a@x.com', 'co-m@x.com', 'ge@x.com']);
   });
 
+  it('orders the manual band by reason→calling (consistent with the roster comparator)', () => {
+    // Within a single ward scope so scope-banding does not dominate.
+    // Manual seats carry callings: [] and store the calling in reason.
+    // Names are reverse-alpha to the calling order to prove the sort is
+    // by reason-calling, not by name.
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          reason: 'Elders Quorum President', // order 41
+          member_canonical: 'aaron@x.com',
+          member_email: 'aaron@x.com',
+          member_name: 'Aaron Manual',
+        }),
+        makeSeat({
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          reason: 'Bishop', // order 31 — leads
+          member_canonical: 'zach@x.com',
+          member_email: 'zach@x.com',
+          member_name: 'Zach Manual',
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage initialWard="CO" />);
+    const cards = Array.from(document.querySelectorAll('.roster-card'));
+    const order = cards.map((c) => c.getAttribute('data-seat-id'));
+    expect(order).toEqual(['zach@x.com', 'aaron@x.com']);
+  });
+
   it('updates the URL when a filter changes', async () => {
     const u = userEvent.setup();
     mockAll({

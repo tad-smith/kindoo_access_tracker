@@ -893,3 +893,21 @@ Status: done (2026-05-05 — closed by PR #58)
 Owner: @web-engineer
 
 Closed by the Firebase-era roster work in PR #58 (`feat/roster-pending-requests`): bishopric Roster, stake Roster, stake WardRosters, and manager AllSeats all render a per-row Remove button on manual / temp seats, gated by symmetric ADD-equals-REMOVE authority (the `allowedScopesFor` helper from PR #52). Auto seats are correctly excluded (LCR-managed). The original Apps Script roster's broken remove button has been superseded by the post-cutover Firebase implementation.
+
+## [T-57] Sync grant-derived seat type — Stage 1(a) render-time calling-order sort
+Status: in progress
+Owner: @web-engineer
+Branch / PR: `feat/sync-grant-derived-type-sort`
+
+Sort track of the grant-derived-seat-type feature (`extension/docs/sync-design.md` "Grant-derived seat type (Stage 1 + Stage 2)" part (a)). Decouples the roster / All Seats sort from calling templates: the web computes seat order at render time against a compiled churchwide `calling → order` table instead of reading the denormalised `seat.sort_order`.
+
+Changes:
+- `packages/shared/src/callingSortOrder.ts` (+ test, exported from the package index) — the canonical 85-entry table (operator-locked, authoritative; stake callings 1–42, ward 43–85). `callingSortOrder(calling)` and `seatCallingOrder(callings[])` (MIN over the seat's callings; null = no match). Exact, trimmed, case-insensitive match; no wildcards. **`packages/shared` is co-owned** — a parallel detector-track PR may also touch shared; this entry exists so the change is visible to `@backend-engineer`. No backend consumer change needed (the table is web-render-only; functions still stamp `sort_order` vestigially).
+- `apps/web/src/lib/sort/seats.ts` (+ test) — type bands auto/manual/temp; within auto + manual sort by calling order, within temp by `end_date` desc (unchanged). **auto → `seatCallingOrder(seat.callings)`; manual → `callingSortOrder(seat.reason)`** (manual seats carry `callings: []` and store the calling in free-text `seat.reason` per spec §6.1/§13 — the first cut wrongly read `seat.callings` for manual, which silently fell through to `created_at`). Unknown (no match) → band bottom by `created_at` asc then `member_name`. Stops reading `seat.sort_order`. Cross-scope scope-primary (stake first, wards alpha) preserved.
+- `apps/web/src/features/manager/allSeats/AllSeatsPage.tsx` — replaced the bespoke `sortGrantRowsWithinScope` / `…AcrossScopes` (which sorted manual by name) with a grant-overlay shim that feeds the shared `sortSeatsWithinScope` / `sortSeatsAcrossScopes`, so AllSeats and the per-ward rosters order identically (manual by the grant's `reason`, auto by `callings`).
+- `apps/web/src/features/requests/standardCallings.ts` — rewritten in full to match the authoritative 85-entry list verbatim (names + order + coverage), split at the `Bishop` boundary: `STAKE_CALLINGS` = entries 1–42 (`Stake President` … `Patriarch`); `WARD_CALLINGS` = entries 43–85 (`Bishop` … `Technology Specialist`). Operator's chosen spellings used exactly (unprefixed `Patriarch` / `Auditor` / `Audit Committee Chairman`/`Member`; `Valiant Activities Leader`; `Young Women Class Adviser`). (standardCallings is suggestion-only per its header.) Two test fixtures that used the now-removed `Primary Activity Days Leader` free-text reason swapped to `Valiant Activities Leader`.
+- Spec lockstep: `docs/spec.md` (§3.2, §5.3 Configuration, §8 new "Roster sort order" block, §15 roster passage) and `docs/firebase-schema.md` §4.6 "Sort order" now describe the render-time calling-order sort and that `sort_order` is no longer read client-side.
+
+Notes / decisions:
+- `apps/web/src/features/manager/access/sort.ts` left untouched — it sorts `Access` docs (the app-access page), not `Seat` docs, and its `sort_order` is the importer's `sheet_order`-derived doc-level value tied to `give_app_access`, which the design doc explicitly leaves in place. The brief's "if it sorts seats" conditional resolves to no.
+- Functions' `syncApplyFix` `sort_order` stamping left vestigial (deferred cleanup per the design doc); the `Seat.sort_order` field is retained on the type/schema.
