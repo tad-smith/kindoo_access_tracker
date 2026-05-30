@@ -335,15 +335,15 @@ function combineParsedCallings(intendedCallings: string[], intendedFreeText: str
  * block when needed (for `sba-only` we use the SBA block as the
  * truth; for `*-mismatch` Update Kindoo we also use SBA as truth) and
  * hands it to `syncProvisionFromSeat`.
+ *
+ * Only `sba-only`, `scope-mismatch`, and `buildings-mismatch` reach
+ * here — `type-mismatch` no longer surfaces a Kindoo-side action
+ * (grants own type; the extension can't write church grants), so there
+ * is no auto-seat guard to apply.
  */
 async function dispatchKindooFix(d: Discrepancy, ctx: DispatchContext): Promise<ProvisionResult> {
   if (!d.sba) {
     throw new Error(`${d.code} has no SBA seat to drive Kindoo from`);
-  }
-  if (d.code === 'type-mismatch' && d.sba.type === 'auto') {
-    throw new Error(
-      'auto seats provisioned by Church Access Automation; not modifiable from the extension.',
-    );
   }
   const provision = ctx.syncProvisionFromSeat ?? syncProvisionFromSeat;
   const seat = synthesizeSeatFromBlocks(d);
