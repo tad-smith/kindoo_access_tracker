@@ -1,7 +1,7 @@
 // Shared routing helpers. Two responsibilities:
 //
-//   - `defaultLandingFor(principal, stakeId)` — picks the leftmost
-//     nav tab for the principal's highest-priority role in the active
+//   - `defaultLandingFor(principal, stakeId)` — picks the post-login
+//     default for the principal's highest-priority role in the active
 //     stake (manager > stake > bishopric). For a zero-role platform
 //     superadmin (no accessible stake) returns `/superadmin/stakes`
 //     per spec §2.1. Used by `routes/index.tsx`.
@@ -10,9 +10,15 @@
 //     param deep-link form to the SPA route. Kept so external
 //     bookmarks from the pre-cutover UI keep working.
 //
-// The leftmost nav tab for stake + bishopric is "New Kindoo Request"
-// per spec §5; manager's leftmost is the Dashboard. Multi-role users
-// resolve to the highest-priority role's leftmost tab.
+// Defaults per spec §5:
+//   - manager   → `/manager/dashboard`
+//   - stake     → `/stake/roster`
+//   - bishopric → `/bishopric/roster`
+// Multi-role principals resolve to the highest-priority role's default.
+// Non-Kindoo-Manager roles intentionally land on the Roster rather
+// than the leftmost-nav `/new` so the first thing those users see is
+// the current ward (or stake) seat list; a "New Request" button in
+// the Roster header surfaces the previously-default `/new` form.
 
 import type { Principal } from './principal';
 
@@ -59,9 +65,9 @@ export function deepLinkPath(p: string | undefined): string | null {
  * Per-principal default landing route. Resolved against the active
  * stake (or null for a zero-role platform superadmin):
  *   - zero-role superadmin (stakeId === null) → `/superadmin/stakes`
- *   - manager in stakeId  → `/manager/dashboard` (leftmost tab)
- *   - stake in stakeId    → `/new`
- *   - bishopric in stakeId → `/new`
+ *   - manager in stakeId  → `/manager/dashboard`
+ *   - stake in stakeId    → `/stake/roster`
+ *   - bishopric in stakeId → `/bishopric/roster`
  *   - multi-role → highest-priority role wins (manager > stake > bishopric)
  *   - no role in stakeId → `/`; the route gate surfaces NotAuthorizedPage.
  */
@@ -75,11 +81,11 @@ export function defaultLandingFor(principal: Principal, stakeId: string | null):
     return '/manager/dashboard';
   }
   if (principal.stakeMemberStakes.includes(stakeId)) {
-    return '/new';
+    return '/stake/roster';
   }
   const wards = principal.bishopricWards[stakeId];
   if (Array.isArray(wards) && wards.length > 0) {
-    return '/new';
+    return '/bishopric/roster';
   }
   // Authenticated principal with no role in this stake. Falls through
   // to the route-tree's auth gate which surfaces NotAuthorizedPage.

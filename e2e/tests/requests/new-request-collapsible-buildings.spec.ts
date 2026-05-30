@@ -47,7 +47,12 @@ interface Claims {
   wards?: string[];
 }
 
-async function createSignedInUser(page: Page, email: string, claims: Claims): Promise<void> {
+async function createSignedInUser(
+  page: Page,
+  email: string,
+  claims: Claims,
+  startUrl = '/',
+): Promise<void> {
   const { uid } = await createAuthUser({ email });
   await setCustomClaims(uid, {
     canonical: email,
@@ -59,7 +64,7 @@ async function createSignedInUser(page: Page, email: string, claims: Claims): Pr
       },
     },
   });
-  await page.goto('/');
+  await page.goto(startUrl);
   await signInViaTestHatch(page, email, TEST_PASSWORD);
 }
 
@@ -107,7 +112,12 @@ test.describe('New Request — collapsible buildings selector', () => {
     const managerCtx = await browser.newContext();
     const managerPage = await managerCtx.newPage();
 
-    await createSignedInUser(bishopricPage, 'bishop-multi@example.com', { wards: ['CO'] });
+    await createSignedInUser(
+      bishopricPage,
+      'bishop-multi@example.com',
+      { wards: ['CO'] },
+      '/?p=new',
+    );
     await expect(bishopricPage.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
 
     // Header summary shows the default ward building, panel collapsed.
