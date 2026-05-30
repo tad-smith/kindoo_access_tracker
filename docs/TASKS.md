@@ -895,29 +895,29 @@ Owner: @web-engineer
 Closed by the Firebase-era roster work in PR #58 (`feat/roster-pending-requests`): bishopric Roster, stake Roster, stake WardRosters, and manager AllSeats all render a per-row Remove button on manual / temp seats, gated by symmetric ADD-equals-REMOVE authority (the `allowedScopesFor` helper from PR #52). Auto seats are correctly excluded (LCR-managed). The original Apps Script roster's broken remove button has been superseded by the post-cutover Firebase implementation.
 
 ## [T-57] Sync grant-derived seat type — Stage 1
-Status: in progress (PRs #178 sort, #179 detector, #180 backend shaping — merging 2026-05-30)
-Owner: @web-engineer (sort) · @extension-engineer (detector) · @backend-engineer (shaping)
+Status: in progress (tracks a/b/c/e DONE 2026-05-30 — PRs #178 sort, #179 detector, #180 backend shaping merged to main; track d PENDING)
+Owner: @web-engineer (sort, d) · @extension-engineer (detector) · @backend-engineer (shaping)
 Phase: extension Sync — "Grant-derived seat type (Stage 1 + Stage 2)", locked 2026-05-30
 
-Stage 1 of the Sync grant-derived-seat-type feature (`extension/docs/sync-design.md` §"Grant-derived seat type (Stage 1 + Stage 2)"). Three tracks, shipped together:
+Stage 1 of the Sync grant-derived-seat-type feature (`extension/docs/sync-design.md` §"Grant-derived seat type (Stage 1 + Stage 2)"). Tracks a/b/c/e shipped to main 2026-05-30; track (d) is the only unshipped Stage-1 piece.
 
-**(a) Sort — render-time calling-order (PR #178, @web-engineer).** Roster / All Seats sort decoupled from calling templates: the web computes seat order at render time against a compiled churchwide `calling → order` table instead of the denormalised `seat.sort_order`.
+**(a) Sort — render-time calling-order (PR #178, @web-engineer) — DONE (2026-05-30).** Roster / All Seats sort decoupled from calling templates: the web computes seat order at render time against a compiled churchwide `calling → order` table instead of the denormalised `seat.sort_order`.
 - `packages/shared/src/callingSortOrder.ts` (+ test, exported) — authoritative 85-entry table (operator-locked; stake 1–42, ward 43–85). `callingSortOrder(calling)` / `seatCallingOrder(callings[])` (MIN; null = no match); exact, trimmed, case-insensitive; no wildcards.
 - `apps/web/src/lib/sort/seats.ts` (+ test) — bands auto/manual/temp; auto → `seatCallingOrder(seat.callings)`, manual → `callingSortOrder(seat.reason)` (manual seats carry `callings: []`, calling in free-text `reason` per spec §13), temp → `end_date` desc. Unknown → band bottom by `created_at` asc then `member_name`. Stops reading `seat.sort_order`. Cross-scope scope-primary (stake first, wards alpha) preserved.
 - `apps/web/src/features/manager/allSeats/AllSeatsPage.tsx` — bespoke grant-row sort replaced by a shim feeding the shared comparator, so AllSeats and per-ward rosters order identically.
 - `apps/web/src/features/requests/standardCallings.ts` — rewritten to the authoritative 85-entry list verbatim, split at `Bishop` (STAKE 1–42, WARD 43–85), operator spellings exact.
 - Spec lockstep: `docs/spec.md` + `docs/firebase-schema.md` §4.6 describe the render-time sort; `sort_order` no longer read client-side (functions' stamping left vestigial; field retained).
 
-**(b/c/e) Detector — grant-based type (PR #179, @extension-engineer).** Extension-only; the `applyTypeMismatch` path carries the grant-derived target.
+**(b/c/e) Detector — grant-based type (PR #179, @extension-engineer) — DONE (2026-05-30).** Extension-only; the `applyTypeMismatch` path carries the grant-derived target.
 - (b) Direct-grant detection (`buildingsFromDoors.ts` + `endpoints.ts`): `directGrantBuildings` per user from `AccessScheduleID === 0` rows; per-door dedup prefers the direct grant so the overlap/lag case stays observable.
 - (c) Grant-based `type-mismatch`: promote (manual + church-backed → auto) / demote (auto + not church-backed → manual) via `isChurchBacked` / `grantsBackAuto`; temp never promoted/demoted; null `directGrantBuildings` skips. Promote payload carries `callings: string[]` (Kindoo-parsed); SyncPanel shows only "Update SBA".
 - (e) `extra-kindoo-calling` AUTO-only (operator decision 2026-05-30): fires only for `seat.type === 'auto'` vs `seat.callings`; manual/temp never checked.
 
-**Backend — seat-shape on flip + `callings` consume (PR #180, @backend-engineer).** `applyTypeMismatch` reshapes the seat to the §13 convention: promote sets `callings[]` from `payload.callings` (fallback `[reason]`) and clears `reason`; demote folds `callings` into `reason` and clears `callings`. Shared `TypeMismatchPayload.callings?: string[]` (append-only).
+**Backend — seat-shape on flip + `callings` consume (PR #180, @backend-engineer) — DONE (2026-05-30).** `applyTypeMismatch` reshapes the seat to the §13 convention: promote sets `callings[]` from `payload.callings` (fallback `[reason]`) and clears `reason`; demote folds `callings` into `reason` and clears `callings`. Shared `TypeMismatchPayload.callings?: string[]` (append-only).
 
-Pending sibling tracks (NOT in this batch):
-- **Web deprecation (Stage 1 d)** — soft-deprecate `auto_kindoo_access` (leave the field + Configuration "Auto Callings" tab dormant as the validation fallback). Owner: @web-engineer.
-- **Stage 2** — auto-applied promote, revoke-on-promote, provision-time grant check.
+Remaining (umbrella stays open until d ships):
+- **(d) Soft-deprecate `auto_kindoo_access`'s seat-type role (Stage 1 d) — PENDING.** Code-only: stop the web reading `auto_kindoo_access` for seat-type classification (the detector now derives type from church direct grants). NOT a UI task — the **Auto Ward Callings** / **Auto Stake Callings** Configuration tabs and BOTH per-row toggles stay fully functional. The two toggles are independent: **"Can Request Access"** (`give_app_access`) is an active, essential feature (SBA web-app access) and is untouched; only **"Auto Kindoo Access"** (`auto_kindoo_access`) is dormant **for type classification** (flag + toggle remain; minor internal uses + validation fallback). Also reconcile the spec §13 prose that still says Sync "classifies each Kindoo user's Description against `wardCallingTemplates` / `stakeCallingTemplates`" — post-(b/c) `type` is grant-derived, not template-derived. Owner: @web-engineer.
+- **Stage 2 (separate)** — auto-applied promote, revoke-on-promote, provision-time grant check.
 
 ## [T-58] Sync: temp-vs-non-temp divergence no longer detected (deferred)
 Status: open

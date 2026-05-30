@@ -74,6 +74,15 @@ Multi-calling within a single segment (`Maple Ward (Elders Quorum First Counselo
 
 ### Classifier (`sync/classifier.ts`)
 
+> **Superseded for `type` classification** by the "Grant-derived seat type (Stage 1 + Stage 2)"
+> section below (shipped 2026-05-30, PRs #178–#180). The detector no longer derives a seat's
+> `type` from this classifier's template match — `type` is observed from Church Access Automation
+> direct grants (`isChurchBacked` / `grantsBackAuto`). The classifier still runs to extract the
+> **calling name(s)** (for `callings[]` + the sort lookup) and the parsed scope; its `type` /
+> `reviewMixed` outputs are no longer authoritative. `extra-kindoo-calling` is now an AUTO-only
+> `seat.callings` diff, not the `reviewMixed` path described in step 6. Read this section for the
+> parser/calling-extraction mechanics; read the Grant-derived section for how `type` is decided.
+
 For each parsed segment + the user's `IsTempUser` flag, compute the intended seat shape:
 
 ```ts
@@ -357,7 +366,8 @@ rows with **`AccessScheduleID === 0`** (Church Access Automation). A seat is chu
 every door of its building's rule is present among the member's `AccessScheduleID === 0` rows —
 true even when an SBA rule covers the same doors.
 
-**Confirmed — the data is already in hand, no fresh capture needed.**
+**Confirmed — the data was already in hand, no fresh capture needed.** (b)+(c) shipped against the
+existing capture; nothing was pending.
 
 - The per-user door endpoint
   (`KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints`) returns one row
@@ -365,9 +375,9 @@ true even when an SBA rule covers the same doors.
   value is the granting rule. A door granted by both a rule and a direct grant therefore emits
   **both** rows — so the overlap/lag case is observable. (`v2-kindoo-api-capture.md:781–820`.)
 - The endpoint parser **already surfaces it**: `endpoints.ts` returns
-  `UserDoorGrantRow { doorId, accessScheduleId }` (`:756,:825`). Only `getUserDoorIds` in
-  `buildingsFromDoors.ts` collapses it (`new Set(rows.map((r) => r.doorId))`). The detector work
-  is to *stop collapsing it* and partition direct (`accessScheduleId === 0`) from rule-derived.
+  `UserDoorGrantRow { doorId, accessScheduleId }`. The detector partitions direct
+  (`accessScheduleId === 0`) from rule-derived rather than collapsing to `doorId` alone — see the
+  "Prefer-direct door dedup" implementation note below for the as-built dedup.
 
 **Algorithm** (mirrors the existing strict-subset `deriveEffectiveRuleIds`, restricted to direct
 doors):
@@ -384,17 +394,35 @@ doors):
 Internal order: (a) can land independently; (b)→(c)→(d) are sequential — you cannot retire
 `auto_kindoo_access` until grants classify.
 
-(a) **Compiled sort table + render-time sort** (`packages/shared` + `apps/web`). A canonical
-72-entry `calling → order` module in `packages/shared` (stake callings 1–31, ward 32–72; exact
-names, trimmed + case-insensitive match; no wildcards). The web sort
-(`apps/web/src/lib/sort/seats.ts`, plus `features/manager/access/sort.ts` if it sorts) computes
-order from the seat's callings **at render time** and no longer reads the denormalized
-`seat.sort_order`. Resolved sort (operator-locked 2026-05-30):
+**Status (2026-05-30): (a), (b), (c), (e) SHIPPED** to `main` via PR #178 (sort), PR #179
+(detector), PR #180 (backend seat-shape). **(d) — soft-deprecation of the `auto_kindoo_access`
+flag's seat-type-classification role — is PENDING** (the only unshipped Stage-1 piece). (d) is NOT
+a UI change: the Configuration calling-template tabs (**Auto Ward Callings** / **Auto Stake
+Callings**, each a `wardCallingTemplates` / `stakeCallingTemplates` table) and both per-row toggles
+stay fully functional — see the (d) note below for the flags distinction. Stage 2 remains. The
+shipped pieces are described in the present tense below; the as-built contract for the detector
+track (b + c + e) is pinned in the "Implementation notes" subsection that follows.
+
+(a) **Compiled sort table + render-time sort** (`packages/shared` + `apps/web`) — **SHIPPED
+(PR #178)**. The operator-authoritative `calling → order` module is
+`packages/shared/src/callingSortOrder.ts` (the **source of truth**): **85 entries — stake
+callings 1–42, ward callings 43–85**; exact names, trimmed + case-insensitive match; no
+wildcards. The roster / All Seats web sort (`apps/web/src/lib/sort/seats.ts`, consumed by the
+bishopric Roster, stake Roster, Ward Rosters, and the manager All Seats page) computes order from
+the seat's callings **at render time** and no longer reads the denormalized `seat.sort_order`. The
+manager **App Access** page (`features/manager/access/sort.ts`) is a separate surface and was NOT
+touched — it still sorts the `access/` collection by the doc-level `sort_order` / template
+`sheet_order`. Resolved sort (operator-locked 2026-05-30):
 
 - **Type bands unchanged**: auto, then manual, then temp.
-- **auto + manual bands**: by calling order — a multi-calling seat uses the **MIN** order across
-  its callings. **Unknown** (no calling matches the table) → bottom of the band, by `created_at`
-  ascending (oldest first).
+- **auto band**: by calling order — `seatCallingOrder(seat.callings)`; a multi-calling seat uses
+  the **MIN** order across its callings.
+- **manual band**: by calling order too, but sourced from `seat.reason`, not `seat.callings` —
+  manual seats carry `callings: []` and store the calling in the free-text `reason` (spec §13), so
+  the comparator matches `callingSortOrder(seat.reason)` (single value, trimmed +
+  case-insensitive) against the same table.
+- **auto + manual unknown** (no calling matches the table) → bottom of the band, by `created_at`
+  ascending (oldest first), then `member_name`.
 - **temp band**: unchanged — by `end_date` (soonest-expiring at the band bottom), per the prior
   operator brief. (Temps carry a free-text reason, not a roster calling, so calling-order
   doesn't apply.)
@@ -405,31 +433,47 @@ order from the seat's callings **at render time** and no longer reads the denorm
 it)**; removing it is a deferred cleanup, not required for Stage 1. This keeps the sort track
 independent of the detector track (which reuses `applyTypeMismatch`).
 
-(b) **Direct-grant detector** (extension). Extend `buildingsFromDoors.ts` to track
-`AccessScheduleID === 0` coverage per building; add a per-seat "church-backed?" predicate.
-Plus the prerequisite capture above.
+(b) **Direct-grant detector** (extension) — **SHIPPED (PR #179)**. `buildingsFromDoors.ts` tracks
+`AccessScheduleID === 0` coverage per building (`directGrantBuildings`); `isChurchBacked` /
+`grantsBackAuto` in `detector.ts` are the per-seat predicates. No fresh capture was needed — the
+`AccessScheduleID === 0` direct-grant signal is already surfaced by `endpoints.ts`
+(`UserDoorGrantRow.accessScheduleId`); the detector work was to stop collapsing it and partition
+direct from rule-derived (see "Confirmed — the data is already in hand" above).
 
-(c) **Switch classification** (extension). `detector.ts` `type-mismatch` (`:535`) becomes
-promote/demote rows driven by the predicate, not `intended.type` vs stored type.
-`classifier.ts`'s auto-set role (`buildCallingTemplateSets`; the `auto_kindoo_access` lookups at
-`:84,:88`) retires; the **parser stays** (still need the calling name for `callings[]` + the
-sort lookup). Promote/demote are operator-clicked via the existing `SyncPanel` fix UI — the
-`applyTypeMismatch` write path (`syncApplyFix.ts:391`) already flips type + handles `sort_order`
-+ access-doc parity, so no new write path is needed.
+(c) **Switch classification** (extension) — **SHIPPED (PR #179)**. `detector.ts` `type-mismatch`
+emits promote/demote rows driven by the grant predicate, not `intended.type` vs stored type.
+`classifier.ts`'s auto-set lookups against `auto_kindoo_access` no longer drive type; the **parser
+stays** (still need the calling name for `callings[]` + the sort lookup). Promote/demote are
+operator-clicked via the existing `SyncPanel` fix UI — the `applyTypeMismatch` write path
+(`syncApplyFix.ts`) flips type **and reshapes the seat to the §13 convention** (PR #180; see
+"Implementation notes" + the Stage 1c backend note below), so no new write path is needed.
 
-(d) **Soft-deprecate `auto_kindoo_access`.** Once (b)+(c) land, nothing reads it for
-classification; once (a) lands the web sort no longer reads `sort_order` (functions' template
-`sheet_order` stamping is left vestigial). Stop reading it for type; **leave the
-field and the Configuration "Auto Callings" tab in place, dormant** — it is the validation
-fallback (promote/demote are operator-approved in Stage 1; there is no template safety net
-otherwise). `give_app_access` and `sheet_order` are untouched — `sheet_order` still drives
-`give_app_access` wildcard precedence, and the access-doc parity (`filterByGiveAppAccess`) is
-unchanged. The request path is untouched (already born-manual).
+(d) **Soft-deprecate the `auto_kindoo_access` flag's seat-type role** — **PENDING (not yet
+shipped).** Scope is narrow: `auto_kindoo_access` no longer classifies seat `type` (the detector
+derives type from church direct grants, (b)+(c)). The field, the per-row **"Auto Kindoo Access"**
+toggle, and the **Auto Ward Callings** / **Auto Stake Callings** Configuration tabs all **stay in
+place and fully functional** — this is NOT a UI-removal task; `auto_kindoo_access` retains minor
+internal uses and remains the validation fallback (promote/demote are operator-approved in Stage 1;
+there is no other template safety net).
 
-(e) **Redefine `extra-kindoo-calling`.** Currently keyed on the auto-calling concept (mixed
-auto/non-auto in `classifier.ts`); that trigger disappears. Redefine as a plain callings-set
-diff — Kindoo's parsed callings vs `seat.callings`, independent of type — so "Kindoo records a
-calling the SBA seat doesn't" still surfaces.
+The two per-row toggles are **independent and must not be conflated**:
+
+- **"Can Request Access"** (`give_app_access`) — ACTIVE, essential: it is how managers grant SBA
+  web-app access. NOT deprecated, NOT touched. `sheet_order` still drives its wildcard precedence,
+  and the access-doc parity (`filterByGiveAppAccess`) is unchanged.
+- **"Auto Kindoo Access"** (`auto_kindoo_access`) — its **role in door auto-seat-type
+  classification** is what's soft-deprecated; the flag/toggle stays.
+
+The remaining (d) work is therefore code-only (stop the web reading `auto_kindoo_access` for type)
+plus reconciling the spec §13 prose that still describes Sync classifying type against the
+templates. The request path is untouched (already born-manual). Tracked as T-57 (d).
+
+(e) **Redefine `extra-kindoo-calling`** (extension) — **SHIPPED (PR #179).** The old auto-calling
+trigger (mixed auto/non-auto in `classifier.ts`) is gone. The redefinition landed **AUTO-only**
+(operator decision 2026-05-30, narrower than the interim "independent of type" sketch): the diff
+fires only when the SBA seat `type === 'auto'`, comparing Kindoo's parsed callings against the
+seat's `callings[]`. Manual / temp seats are never checked — see the "Implementation notes" entry
+below for the rationale.
 
 #### Implementation notes — detector track (b + c + e), landed
 
@@ -485,10 +529,20 @@ exposes **only "Update SBA"** — no "Update Kindoo" (the extension can't write 
 revoke-on-promote is Stage 2). `fixActionsFor('type-mismatch')` returns the single SBA action. The
 callable payload carries `newType` (grant-derived target) and, **on PROMOTE only (`newType:
 'auto'`), `callings: string[]`** — the full Kindoo-parsed primary-segment calling list (matched ∪
-unmatched). A parallel backend PR consumes it to set the promoted auto seat's `callings[]` and clear
-`reason`, avoiding the hybrid `callings:[X] + reason:"X"` shape that an unaided `applyTypeMismatch`
-(which only flips `type`) would leave. **DEMOTE (`newType: 'manual'`) omits `callings`** — the
-backend derives `reason` from the seat's existing callings.
+unmatched). **DEMOTE (`newType: 'manual'`) omits `callings`** — the backend derives `reason` from
+the seat's existing callings.
+
+**Backend seat-shape on flip (PR #180, landed).** `applyTypeMismatch` (`syncApplyFix.ts`) reshapes
+the seat to the §13 convention as it flips `type` — the earlier "until the backend PR lands the
+field is sent but ignored" caveat is resolved. **Promote** (`manual`/`temp` → `auto`): set
+`callings[]` from the payload's `callings` (fallback `[seat.reason]` when the payload is
+empty/absent and the seat carries a non-empty reason, else `[]`), clear `reason`, stamp `sort_order`
+from the matched template, write the access doc(s) for `give_app_access` callings. **Demote**
+(`auto` → `manual`/`temp`): fold the existing `callings[]` into the free-text `reason`, clear
+`callings[]`, clear `sort_order`, and clear `importer_callings` for the seat's scope (deleting the
+access doc if both `importer_callings` and `manual_grants` end up empty). The shared
+`TypeMismatchPayload.callings?: string[]` field carries the promote calling list (append-only type
+change).
 
 **Zero-grant seats never auto (b/c).** The seat-type decision uses `grantsBackAuto` (church-backed
 AND ≥1 building), not the raw `isChurchBacked` (which is vacuously true for a zero-building seat).
@@ -503,8 +557,10 @@ demoted either.
 - Conditional SBA-rule revoke on promote (only when an `AccessSchedule` exists for the seat's
   doors); optionally a **provision-time** grant check in the RequestCard flow so a member who
   already holds church grants is created `auto` and SBA never writes a redundant rule.
-- Hard-remove `auto_kindoo_access` (field + Configuration tab) once promote has run cleanly in
-  production.
+- Hard-remove the `auto_kindoo_access` field + its per-row **"Auto Kindoo Access"** toggle once
+  promote has run cleanly in production. The **Auto Ward Callings** / **Auto Stake Callings** tabs
+  and the **"Can Request Access"** (`give_app_access`) toggle stay — they're an active, essential
+  feature (web-app access), not part of the door auto-seat machinery.
 
 ### Open questions
 
