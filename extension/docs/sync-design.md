@@ -384,11 +384,26 @@ doors):
 Internal order: (a) can land independently; (b)→(c)→(d) are sequential — you cannot retire
 `auto_kindoo_access` until grants classify.
 
-(a) **Compiled sort table** (`packages/shared`). A canonical `calling → order` module.
-Decouples `sort_order` from `auto_kindoo_access`. `syncApplyFix` stamps `sort_order` from it
-instead of `loadTemplateIndex` / `minSheetOrder` (`syncApplyFix.ts:218,315,414`). Web sort
-(`lib/sort/seats.ts`) is unchanged — still reads `seat.sort_order`; a calling absent from the
-table → null → bottom of the auto band (existing orphan-auto behaviour).
+(a) **Compiled sort table + render-time sort** (`packages/shared` + `apps/web`). A canonical
+72-entry `calling → order` module in `packages/shared` (stake callings 1–31, ward 32–72; exact
+names, trimmed + case-insensitive match; no wildcards). The web sort
+(`apps/web/src/lib/sort/seats.ts`, plus `features/manager/access/sort.ts` if it sorts) computes
+order from the seat's callings **at render time** and no longer reads the denormalized
+`seat.sort_order`. Resolved sort (operator-locked 2026-05-30):
+
+- **Type bands unchanged**: auto, then manual, then temp.
+- **auto + manual bands**: by calling order — a multi-calling seat uses the **MIN** order across
+  its callings. **Unknown** (no calling matches the table) → bottom of the band, by `created_at`
+  ascending (oldest first).
+- **temp band**: unchanged — by `end_date` (soonest-expiring at the band bottom), per the prior
+  operator brief. (Temps carry a free-text reason, not a roster calling, so calling-order
+  doesn't apply.)
+- **Cross-scope (All Seats)**: scope-primary (stake first, then wards alpha) is preserved; the
+  banding above applies within each scope.
+
+`syncApplyFix`'s template-based `sort_order` stamping is **left in place (vestigial — web ignores
+it)**; removing it is a deferred cleanup, not required for Stage 1. This keeps the sort track
+independent of the detector track (which reuses `applyTypeMismatch`).
 
 (b) **Direct-grant detector** (extension). Extend `buildingsFromDoors.ts` to track
 `AccessScheduleID === 0` coverage per building; add a per-seat "church-backed?" predicate.
@@ -403,7 +418,8 @@ sort lookup). Promote/demote are operator-clicked via the existing `SyncPanel` f
 + access-doc parity, so no new write path is needed.
 
 (d) **Soft-deprecate `auto_kindoo_access`.** Once (b)+(c) land, nothing reads it for
-classification and nothing reads template `sheet_order` for sort. Stop reading it; **leave the
+classification; once (a) lands the web sort no longer reads `sort_order` (functions' template
+`sheet_order` stamping is left vestigial). Stop reading it for type; **leave the
 field and the Configuration "Auto Callings" tab in place, dormant** — it is the validation
 fallback (promote/demote are operator-approved in Stage 1; there is no template safety net
 otherwise). `give_app_access` and `sheet_order` are untouched — `sheet_order` still drives
