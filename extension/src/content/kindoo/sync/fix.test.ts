@@ -97,8 +97,9 @@ describe('fixActionsFor', () => {
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'create-sba' });
   });
 
-  it('extra-kindoo-calling on an AUTO seat returns one Add to SBA seat action', () => {
-    // The callable appends to roster `callings[]`, correct for auto.
+  it('extra-kindoo-calling returns one Add to SBA seat action (auto-only by construction)', () => {
+    // The detector only emits extra-kindoo-calling for auto seats; the
+    // callable appends to roster `callings[]`, the auto-seat shape.
     const actions = fixActionsFor(
       discrepancy({
         code: 'extra-kindoo-calling',
@@ -107,29 +108,6 @@ describe('fixActionsFor', () => {
     );
     expect(actions).toHaveLength(1);
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'add-callings-sba' });
-  });
-
-  it('extra-kindoo-calling on a MANUAL seat returns no action (review-only)', () => {
-    // Manual seats record their calling in `reason`, not `callings[]`;
-    // appending to `callings[]` would mint a hybrid seat, so no
-    // one-click fix — the operator reconciles `reason` in the web app.
-    const actions = fixActionsFor(
-      discrepancy({
-        code: 'extra-kindoo-calling',
-        sba: { scope: 'CO', type: 'manual', callings: [], reason: 'Greeter', buildingNames: [] },
-      }),
-    );
-    expect(actions).toEqual([]);
-  });
-
-  it('extra-kindoo-calling on a TEMP seat returns no action (review-only)', () => {
-    const actions = fixActionsFor(
-      discrepancy({
-        code: 'extra-kindoo-calling',
-        sba: { scope: 'CO', type: 'temp', callings: [], reason: 'Visiting', buildingNames: [] },
-      }),
-    );
-    expect(actions).toEqual([]);
   });
 
   it('scope-mismatch / buildings-mismatch each return two actions (Update Kindoo + Update SBA)', () => {
@@ -395,9 +373,11 @@ describe('buildCallableInput', () => {
     expect(payload.newScope).toBe('CO');
   });
 
-  it('type-mismatch promote sends grantTargetType=auto (NOT intendedType)', () => {
+  it('type-mismatch promote sends grantTargetType=auto + the Kindoo-parsed callings', () => {
     // intendedType is template-derived (manual here); the payload must
-    // carry the grant-derived target (auto).
+    // carry the grant-derived target (auto) AND the Kindoo-parsed
+    // calling(s) the promoted auto seat should carry. Here the classifier
+    // matched nothing, so the calling rides in intendedFreeText.
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
@@ -415,15 +395,44 @@ describe('buildCallableInput', () => {
     );
     const payload = input.fix.payload as Record<string, unknown>;
     expect(payload.newType).toBe('auto');
+    expect(payload.callings).toEqual(['Sunday School Teacher']);
   });
 
-  it('type-mismatch demote sends grantTargetType=manual', () => {
+  it('type-mismatch promote carries the FULL parsed calling list (matched ∪ unmatched)', () => {
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
         code: 'type-mismatch',
-        sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
+        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
         kindoo: kb({
+          description: 'Maple Ward (Sunday School Teacher, Accompanist)',
+          intendedType: 'auto',
+          intendedCallings: ['Sunday School Teacher'],
+          intendedFreeText: 'Accompanist',
+          derivedBuildings: ['Maple Building'],
+          directGrantBuildings: ['Maple Building'],
+          grantTargetType: 'auto',
+        }),
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.newType).toBe('auto');
+    expect(payload.callings).toEqual(['Sunday School Teacher', 'Accompanist']);
+  });
+
+  it('type-mismatch demote sends grantTargetType=manual and OMITS callings', () => {
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: 'type-mismatch',
+        sba: {
+          scope: 'CO',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          buildingNames: ['Maple Building'],
+        },
+        kindoo: kb({
+          intendedCallings: ['Sunday School Teacher'],
           derivedBuildings: ['Maple Building'],
           directGrantBuildings: [],
           grantTargetType: 'manual',
@@ -432,6 +441,9 @@ describe('buildCallableInput', () => {
     );
     const payload = input.fix.payload as Record<string, unknown>;
     expect(payload.newType).toBe('manual');
+    // Demote derives reason from existing callings server-side; no
+    // callings in the payload.
+    expect(payload.callings).toBeUndefined();
   });
 
   it('type-mismatch throws when grantTargetType is absent', () => {

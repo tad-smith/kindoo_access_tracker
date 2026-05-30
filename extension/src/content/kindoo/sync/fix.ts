@@ -61,18 +61,10 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
     case 'kindoo-only':
       return [{ side: 'sba', label: 'Create SBA seat', testId: 'create-sba' }];
     case 'extra-kindoo-calling':
-      // The `syncApplyFix` extra-kindoo-calling path appends to the
-      // seat's roster `callings[]`. That's correct for an AUTO seat. A
-      // MANUAL / temp seat records its calling in the single free-text
-      // `reason`, not `callings[]`, so a one-click append would mint a
-      // hybrid seat (`callings: [X]` + `reason: "Y"`) — wrong shape.
-      // For those, surface the drift as review-only (no fix button); the
-      // operator reconciles `reason` in the web app. See
-      // `extension/docs/sync-design.md` Stage 1 (e) implementation note.
-      if (d.sba?.type === 'auto') {
-        return [{ side: 'sba', label: 'Add to SBA seat', testId: 'add-callings-sba' }];
-      }
-      return [];
+      // Auto seats only by construction (the detector suppresses this
+      // code for manual / temp). The `syncApplyFix` path appends to the
+      // roster `callings[]`, which is the auto-seat shape.
+      return [{ side: 'sba', label: 'Add to SBA seat', testId: 'add-callings-sba' }];
     case 'type-mismatch':
       // Grant-derived type: Kindoo's observed direct grants are now the
       // source of truth for `type`, so the only sensible action is to
@@ -285,12 +277,25 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       if (!d.kindoo || d.kindoo.grantTargetType === undefined) {
         throw new Error('type-mismatch row missing grant-derived target type');
       }
+      const payload: SyncApplyFixInput['fix']['payload'] = {
+        memberEmail: d.displayEmail,
+        newType: d.kindoo.grantTargetType,
+      };
+      // PROMOTE (manual/temp → auto): send the Kindoo-parsed calling(s)
+      // (matched ∪ unmatched = the full parsed primary-segment list) so
+      // the backend sets the promoted auto seat's `callings[]` from them
+      // and clears `reason`. DEMOTE (→ manual) omits `callings`; the
+      // backend derives `reason` from the seat's existing callings.
+      if (d.kindoo.grantTargetType === 'auto') {
+        const callings = combineParsedCallings(
+          d.kindoo.intendedCallings,
+          d.kindoo.intendedFreeText,
+        );
+        if (callings.length > 0) (payload as { callings?: string[] }).callings = callings;
+      }
       return {
         stakeId,
-        fix: {
-          code: 'type-mismatch',
-          payload: { memberEmail: d.displayEmail, newType: d.kindoo.grantTargetType },
-        },
+        fix: { code: 'type-mismatch', payload: payload as never },
       };
     }
     case 'buildings-mismatch': {

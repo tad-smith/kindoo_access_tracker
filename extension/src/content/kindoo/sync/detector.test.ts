@@ -847,37 +847,12 @@ describe('detect', () => {
     expect(result.discrepancies.filter((d) => d.code === 'extra-kindoo-calling')).toEqual([]);
   });
 
-  it('does NOT emit extra-kindoo-calling when a manual seat records the calling in its reason', () => {
-    // Production-shaped manual seat: `callings: []`, calling in `reason`.
-    // The diff is type-scoped — for manual seats it compares the Kindoo
-    // parens against `reason`, so a reason that reflects the Kindoo
-    // calling stays quiet (no review-list flood).
-    const result = detect(
-      baseInputs({
-        seats: [
-          seat({
-            scope: 'CO',
-            type: 'manual',
-            callings: [],
-            reason: 'Building Greeter',
-            building_names: ['Maple Building'],
-          }),
-        ],
-        kindooUsers: [
-          kuser({
-            description: 'Maple Ward (Building Greeter)',
-            derivedBuildings: ['Maple Building'],
-            directGrantBuildings: [],
-          }),
-        ],
-      }),
-    );
-    expect(result.discrepancies).toEqual([]);
-  });
-
-  it('emits extra-kindoo-calling for a manual seat whose reason does NOT reflect the Kindoo calling', () => {
-    // Manual seat with a generic reason; Kindoo names a specific calling
-    // the reason doesn't reflect → genuine review row.
+  it('NEVER emits extra-kindoo-calling for a manual seat, regardless of reason content', () => {
+    // Operator decision 2026-05-30: extra-kindoo-calling is auto-only.
+    // Manual seats record their calling in the free-text `reason`, which
+    // is frequently operator prose (not a calling name); surfacing the
+    // diff on them would flood the review list. So a manual seat — even
+    // one whose `reason` is unrelated to the Kindoo parens — never fires.
     const result = detect(
       baseInputs({
         seats: [
@@ -898,82 +873,27 @@ describe('detect', () => {
         ],
       }),
     );
-    expect(result.discrepancies).toHaveLength(1);
-    const row = result.discrepancies[0]!;
-    expect(row.code).toBe('extra-kindoo-calling');
-    expect(row.kindoo?.extraKindooCallings).toEqual(['Building Greeter']);
-  });
-
-  it('does NOT emit extra-kindoo-calling for a manual seat with a multi-calling reason that covers the Kindoo callings', () => {
-    const result = detect(
-      baseInputs({
-        seats: [
-          seat({
-            scope: 'CO',
-            type: 'manual',
-            callings: [],
-            reason: 'Building Greeter, Janitor',
-            building_names: ['Maple Building'],
-          }),
-        ],
-        kindooUsers: [
-          kuser({
-            description: 'Maple Ward (Building Greeter, Janitor)',
-            derivedBuildings: ['Maple Building'],
-            directGrantBuildings: [],
-          }),
-        ],
-      }),
-    );
     expect(result.discrepancies).toEqual([]);
   });
 
-  it('does NOT re-fire on a Sync-created manual seat (calling in reason, empty callings[])', () => {
-    // Regression: a kindoo-only manual seat is minted with `callings: []`
-    // and the calling text in `reason`. On the NEXT sync it must not
-    // re-surface as extra-kindoo-calling — the manual diff reads `reason`.
+  it('NEVER emits extra-kindoo-calling for a temp seat, regardless of reason content', () => {
     const result = detect(
       baseInputs({
         seats: [
           seat({
             scope: 'CO',
-            type: 'manual',
+            type: 'temp',
             callings: [],
-            reason: 'Sunday School Teacher',
+            reason: 'Visiting speaker',
             building_names: ['Maple Building'],
           }),
         ],
         kindooUsers: [
           kuser({
-            description: 'Maple Ward (Sunday School Teacher)',
-            derivedBuildings: ['Maple Building'],
-            directGrantBuildings: [],
-          }),
-        ],
-      }),
-    );
-    expect(result.discrepancies).toEqual([]);
-  });
-
-  it('does NOT re-fire on a legacy/hybrid manual seat that carries the calling in callings[]', () => {
-    // Belt-and-suspenders: a manual seat that (legacy) holds its calling
-    // in `callings[]` with no `reason` is still recognised — the manual
-    // diff folds `callings[]` in defensively, so no re-fire.
-    const result = detect(
-      baseInputs({
-        seats: [
-          seat({
-            scope: 'CO',
-            type: 'manual',
-            callings: ['Building Greeter'],
-            building_names: ['Maple Building'],
-          }),
-        ],
-        kindooUsers: [
-          kuser({
+            isTempUser: true,
             description: 'Maple Ward (Building Greeter)',
             derivedBuildings: ['Maple Building'],
-            directGrantBuildings: [],
+            directGrantBuildings: ['Maple Building'],
           }),
         ],
       }),

@@ -443,37 +443,6 @@ export function missingCallings(parenText: string, seatCallings: string[]): stri
   return out;
 }
 
-/**
- * The seat's known-calling text for the `extra-kindoo-calling` diff,
- * scoped to where the seat type records its calling(s) (per
- * `docs/spec.md` §13):
- *   - `auto` → roster `callings[]`.
- *   - `manual` / `temp` → the single free-text `reason` (`callings[]` is
- *     empty by convention), PLUS any `callings[]` defensively. The
- *     reason is the primary source; including `callings[]` too means a
- *     legacy / Sync-minted manual seat that happens to carry the calling
- *     in `callings[]` is still recognised as "known" and does not
- *     re-fire `extra-kindoo-calling` indefinitely. Splitting `reason`
- *     on `,` handles the rare multi-calling reason.
- * Scoping by type is what keeps a manual seat whose `reason` reflects
- * the Kindoo calling from false-firing as a missing extra; the
- * production manual seat (`callings: []`) compares against `reason`
- * alone, so the union never widens the false-positive surface.
- */
-function seatKnownCallings(sba: SbaBlock): string[] {
-  if (sba.type === 'auto') return [...sba.callings];
-  // manual / temp — the calling lives in `reason`; also fold in
-  // `callings[]` so a hybrid seat isn't re-flagged.
-  const out: string[] = [...sba.callings];
-  if (sba.reason) {
-    for (const part of sba.reason.split(',')) {
-      const trimmed = part.trim();
-      if (trimmed.length > 0) out.push(trimmed);
-    }
-  }
-  return out;
-}
-
 /** Sort comparator for the final report. */
 function compareDiscrepancies(a: Discrepancy, b: Discrepancy): number {
   // drift first, then review.
@@ -752,47 +721,45 @@ export function detect(inputs: DetectInputs): DetectResult {
       }
     }
 
-    // 8. extra-kindoo-calling — a callings-set diff, independent of the
-    // seat's grant type but SCOPED to where the SBA seat records its
-    // calling(s). When Kindoo's parsed primary segment names calling(s)
-    // the SBA seat has NO record of, propose adding the missing one(s).
-    // Conservative to avoid false positives: compare trimmed +
-    // case-insensitively, additive direction only (Kindoo has callings
-    // the seat lacks); never fire on ordering / formatting differences.
+    // 8. extra-kindoo-calling — AUTO seats only. When Kindoo's parsed
+    // primary segment names calling(s) the auto seat's roster
+    // `callings[]` lacks, propose adding the missing one(s). Conservative
+    // to avoid false positives: compare trimmed + case-insensitively,
+    // additive direction only (Kindoo has callings the seat lacks);
+    // never fire on ordering / formatting differences.
     //
-    // Where the seat records its calling depends on its type (per
-    // `docs/spec.md` §13 + `markRequestComplete`):
-    //   - auto seat → roster `callings[]`. Compare against that.
-    //   - manual / temp seat → `callings[]` is empty; the calling lives
-    //     in the single free-text `reason`. Compare against `reason`
-    //     (split on `,` for the rare multi-calling reason). A manual
-    //     seat whose `reason` reflects the Kindoo calling does NOT fire
-    //     — that is the false-positive guard against flooding the review
-    //     list with every manual seat.
+    // Manual / temp seats are deliberately NOT checked: they record their
+    // calling in the free-text `reason`, which is frequently operator
+    // prose ("Requested by bishop", "Visiting speaker") rather than a
+    // calling name — comparing against it would flood the review list
+    // with non-actionable rows on every existing manual seat (operator
+    // decision 2026-05-30). The `syncApplyFix` extra-kindoo-calling path
+    // appends to `callings[]`, which is the auto-seat shape anyway.
     // Supersedes the old `intended.reviewMixed` trigger (tied to the
     // retired auto-calling classifier).
-    const knownCallings = seatKnownCallings(sbaBlock);
-    const extraCallings = missingCallings(primary.calling, knownCallings);
-    if (extraCallings.length > 0) {
-      const knownLabel = knownCallings.length > 0 ? knownCallings.join(', ') : '(none)';
-      discrepancies.push({
-        canonical: canon,
-        displayEmail,
-        code: 'extra-kindoo-calling',
-        severity: 'review',
-        reason: `Kindoo lists calling(s) [${extraCallings.join(', ')}] beyond SBA's seat callings [${knownLabel}]; add the missing calling(s) to the SBA seat.`,
-        sba: sbaBlock,
-        kindoo: buildKindooBlock(
-          kuser,
-          parsed,
-          intended,
-          inputs.buildings,
-          sets,
-          undefined,
-          extraCallings,
-        ),
-      });
-      continue;
+    if (sbaBlock.type === 'auto') {
+      const extraCallings = missingCallings(primary.calling, sbaBlock.callings);
+      if (extraCallings.length > 0) {
+        const knownLabel = sbaBlock.callings.length > 0 ? sbaBlock.callings.join(', ') : '(none)';
+        discrepancies.push({
+          canonical: canon,
+          displayEmail,
+          code: 'extra-kindoo-calling',
+          severity: 'review',
+          reason: `Kindoo lists calling(s) [${extraCallings.join(', ')}] beyond SBA's seat callings [${knownLabel}]; add the missing calling(s) to the SBA seat.`,
+          sba: sbaBlock,
+          kindoo: buildKindooBlock(
+            kuser,
+            parsed,
+            intended,
+            inputs.buildings,
+            sets,
+            undefined,
+            extraCallings,
+          ),
+        });
+        continue;
+      }
     }
     // No discrepancy — skip.
   }

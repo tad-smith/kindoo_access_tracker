@@ -426,10 +426,12 @@ describe('SyncPanel', () => {
     expect((applyFixMock.mock.calls[0]![0] as { code: string }).code).toBe('extra-kindoo-calling');
   });
 
-  it('extra-kindoo-calling on a MANUAL seat renders review-only (no Add to SBA button)', async () => {
-    // Manual seats record their calling in `reason`; the callable
-    // appends to `callings[]`, so a one-click fix is wrong-shaped — the
-    // row surfaces for review with no fix button.
+  it('does NOT surface extra-kindoo-calling on a MANUAL seat (auto-only; no row at all)', async () => {
+    // Operator decision 2026-05-30: extra-kindoo-calling is auto-only. A
+    // manual seat whose Kindoo description names an extra calling produces
+    // NO row — manual reasons are frequently operator prose and would
+    // flood the review list. Buildings + scope agree here, so the manual
+    // seat is fully clean.
     const b = bundle();
     b.seats.push({
       ...autoSeat('manualextra@example.com'),
@@ -447,15 +449,9 @@ describe('SyncPanel', () => {
     const user = userEvent.setup();
     await renderSync();
     await user.click(screen.getByTestId('sba-sync-run'));
-    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
-
-    // Row present + classified extra-kindoo-calling, but no fix button.
-    expect(screen.getByTestId('sba-sync-row-manualextra@example.com')).toHaveTextContent(
-      'extra-kindoo-calling',
-    );
-    expect(
-      screen.queryByTestId('sba-sync-fix-add-callings-sba-manualextra@example.com'),
-    ).toBeNull();
+    // Both sides agree (manual seat, scope + buildings match) → empty report.
+    await waitFor(() => expect(screen.getByTestId('sba-sync-empty')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-sync-row-manualextra@example.com')).toBeNull();
   });
 
   it('scope-mismatch renders Update Kindoo + Update SBA buttons', async () => {

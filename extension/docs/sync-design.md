@@ -113,7 +113,7 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 | seat (any type) | Kindoo user, `derivedBuildings` ≠ seat.building_names | `buildings-mismatch` |
 | seat (manual/temp) | Kindoo user, `derivedBuildings === null`, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` (AccessSchedules fallback) |
 | seat (auto) | Kindoo user, `derivedBuildings === null` (per-user derivation failed) | (buildings check skipped — fallback) |
-| seat | Kindoo parsed callings ⊋ seat `callings[]` ∪ `reason` — see Stage 1 (e) | `extra-kindoo-calling` (flag for review — operator adds the missing calling(s) to the SBA seat) |
+| seat (auto only) | Kindoo parsed callings ⊋ seat `callings[]` — see Stage 1 (e) | `extra-kindoo-calling` (flag for review — operator adds the missing calling(s) to the SBA seat) |
 | seat | Kindoo user, all-good | (no row) |
 
 Severity:
@@ -469,34 +469,26 @@ scope-mismatch → type-mismatch (promote/demote) → buildings-mismatch → **e
 (last)**. Each `continue`s, so at most one row per email; a genuine type/scope/buildings drift
 preempts a calling addition.
 
-**`extra-kindoo-calling` false-positive guard (e).** The diff is trimmed + case-insensitive,
-additive direction only, and **type-scoped to where the SBA seat records its calling** (per
-`docs/spec.md` §13 + `markRequestComplete`):
-
-- **auto** seat → compare Kindoo's parsed callings against the roster `callings[]`.
-- **manual / temp** seat → the calling lives in the single free-text `reason` (`callings[]` is
-  empty by convention). Compare against `reason` (split on `,` for the rare multi-calling reason),
-  PLUS `callings[]` folded in defensively so a legacy / Sync-minted seat that carries the calling
-  in `callings[]` is still recognised and does not re-fire. A production manual seat
-  (`callings: []`) compares against `reason` alone, so the union never widens the false-positive
-  surface. A manual seat whose `reason` reflects the Kindoo calling does NOT fire — this is what
-  keeps the review list from flooding with every manual seat.
-
+**`extra-kindoo-calling` is AUTO-only (e — operator decision 2026-05-30).** The diff fires only
+when the SBA seat `type === 'auto'`: compare Kindoo's parsed callings against the roster
+`callings[]`, trimmed + case-insensitive, additive direction only. **Manual / temp seats are not
+checked at all.** They record their calling in the free-text `reason`, which is frequently operator
+prose (`"Requested by bishop"`, `"Visiting speaker"`) rather than a calling name; surfacing the
+diff on them would flood the review list with non-actionable rows on every existing manual seat.
+(This also moots the manual fix-action question — there are no manual `extra-kindoo-calling` rows.)
 The extras ride on `KindooBlock.extraKindooCallings`; `fix.ts` sends them as the callable
-`extraCallings`.
+`extraCallings`. The `syncApplyFix` path appends to `callings[]`, which is the auto-seat shape, so
+the one-click **"Add to SBA seat"** button applies to every (auto-only) row.
 
-**`extra-kindoo-calling` fix action (e) — awkward for manual seats.** The `syncApplyFix`
-`extra-kindoo-calling` path appends to the roster `callings[]`. That's correct for an **auto** seat,
-so it gets the one-click **"Add to SBA seat"** button. A **manual / temp** seat records its calling
-in the single free-text `reason`, not a `callings[]` list — appending would mint a hybrid seat
-(`callings: [X]` + `reason: "Y"`), the wrong shape. So `fixActionsFor` returns **no fix button** for
-a manual / temp `extra-kindoo-calling` row: the drift still surfaces (review severity) but the
-operator reconciles `reason` in the web app. The seam is the backend's `callings[]`-only append; a
-future `reason`-aware `syncApplyFix` variant could close it (out of scope here — extension-only).
-
-**`type-mismatch` fix UI (c).** Kindoo grants are the source of truth for type, so the row exposes
-**only "Update SBA"** — no "Update Kindoo" (the extension can't write church grants; revoke-on-
-promote is Stage 2). `fixActionsFor('type-mismatch')` returns the single SBA action.
+**`type-mismatch` fix UI + payload (c).** Kindoo grants are the source of truth for type, so the row
+exposes **only "Update SBA"** — no "Update Kindoo" (the extension can't write church grants;
+revoke-on-promote is Stage 2). `fixActionsFor('type-mismatch')` returns the single SBA action. The
+callable payload carries `newType` (grant-derived target) and, **on PROMOTE only (`newType:
+'auto'`), `callings: string[]`** — the full Kindoo-parsed primary-segment calling list (matched ∪
+unmatched). A parallel backend PR consumes it to set the promoted auto seat's `callings[]` and clear
+`reason`, avoiding the hybrid `callings:[X] + reason:"X"` shape that an unaided `applyTypeMismatch`
+(which only flips `type`) would leave. **DEMOTE (`newType: 'manual'`) omits `callings`** — the
+backend derives `reason` from the seat's existing callings.
 
 **Zero-grant seats never auto (b/c).** The seat-type decision uses `grantsBackAuto` (church-backed
 AND ≥1 building), not the raw `isChurchBacked` (which is vacuously true for a zero-building seat).
