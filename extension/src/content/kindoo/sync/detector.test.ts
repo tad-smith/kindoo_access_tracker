@@ -4,7 +4,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Building, CallingTemplate, Seat, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
-import { detect, grantsBackAuto, isChurchBacked, missingCallings } from './detector';
+import {
+  detect,
+  grantsBackAuto,
+  isChurchBacked,
+  missingCallings,
+  skipGrantReconciliation,
+} from './detector';
 
 describe('isChurchBacked', () => {
   it('true when every seat building is direct-granted', () => {
@@ -35,6 +41,40 @@ describe('grantsBackAuto', () => {
   });
   it('false when directGrantBuildings is null', () => {
     expect(grantsBackAuto(['A'], null)).toBe(false);
+  });
+});
+
+describe('skipGrantReconciliation', () => {
+  // Primary signal: the Kindoo seat role (Guest === 2).
+  it('does NOT skip a Guest (userRole === 2) — in scope for grant reconciliation', () => {
+    expect(skipGrantReconciliation({ userRole: 2 })).toBe(false);
+  });
+  it('skips a non-Guest (userRole === 0 — Manager/admin) regardless of footprint', () => {
+    // Role is the primary signal; a known non-Guest is skipped even with
+    // a door footprint present (hasNoDoorFootprint false).
+    expect(skipGrantReconciliation({ userRole: 0 })).toBe(true);
+    expect(skipGrantReconciliation({ userRole: 0, hasNoDoorFootprint: false })).toBe(true);
+    expect(skipGrantReconciliation({ userRole: 1 })).toBe(true);
+  });
+  it('role wins over footprint: a known Guest with no footprint is still in scope', () => {
+    // When the role IS known to be Guest, the footprint heuristic must
+    // NOT override it — door derivation can still surface drift.
+    expect(skipGrantReconciliation({ userRole: 2, hasNoDoorFootprint: true })).toBe(false);
+  });
+  // Fallback signal (role unknown): the door footprint.
+  it('falls back to hasNoDoorFootprint when the role is unknown — skips when true', () => {
+    expect(skipGrantReconciliation({ hasNoDoorFootprint: true })).toBe(true);
+  });
+  it('falls back to hasNoDoorFootprint when the role is unknown — does NOT skip when false', () => {
+    expect(skipGrantReconciliation({ hasNoDoorFootprint: false })).toBe(false);
+  });
+  it('does NOT skip when BOTH role and footprint are unset (omitted) — in scope', () => {
+    // Role unknown + footprint unknown → "has footprint" → in scope; the
+    // per-check null guards handle an actual fetch-failure skip
+    // separately. The fetch-failure path deletes the footprint key, so
+    // an omitted property models it exactly (exactOptionalPropertyTypes
+    // forbids an explicit `undefined` literal here).
+    expect(skipGrantReconciliation({})).toBe(false);
   });
 });
 
@@ -498,6 +538,191 @@ describe('detect', () => {
       }),
     );
     expect(result.discrepancies.filter((d) => d.code === 'type-mismatch')).toEqual([]);
+  });
+
+  it('NO type-mismatch AND NO buildings-mismatch for a non-Guest (userRole=0) with an auto seat (Kindoo Manager)', () => {
+    // Staging repro shape (placeholder email/name): a Kindoo Manager
+    // whose Description parses cleanly (stake-scope, Stake Clerk) and
+    // matches an auto SBA seat. The role lookup returns userRole=0 (the
+    // staging manager's value); grant-based reconciliation applies only
+    // to Guests (2). Guard BOTH checks — skipping only the demote would
+    // flip this to a spurious buildings-mismatch ([Maple, Pine Creek] vs
+    // the manager's door truth). No row at all.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'stake',
+            type: 'auto',
+            callings: ['Stake Clerk'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Colorado Springs North Stake (Stake Clerk)',
+            userRole: 0,
+            accessSchedules: [],
+            // A manager has no door footprint, but role alone decides the
+            // skip — these would be elided by the orchestrator anyway.
+            derivedBuildings: [],
+            directGrantBuildings: [],
+            hasNoDoorFootprint: true,
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('skips a non-Guest by role even when it HAS a door footprint (role wins)', () => {
+    // A non-Guest (userRole=0) that somehow holds doors must still be
+    // skipped — role is the primary signal, not the footprint. Without
+    // the role gate this church-backed-divergent shape would demote.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            userRole: 0,
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+            hasNoDoorFootprint: false,
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('still demotes a Guest (userRole=2) with shrunk grants', () => {
+    // The role gate must NOT swallow a real demote. This Guest still
+    // holds rule-derived doors (derivedBuildings=[Maple]) but they are no
+    // longer direct-granted (directGrantBuildings=[]) → the church
+    // stopped owning the seat → demote fires exactly as before.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            userRole: 2,
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+            hasNoDoorFootprint: false,
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('type-mismatch');
+    expect(row.kindoo?.grantTargetType).toBe('manual');
+  });
+
+  it('FALLBACK: skips a zero-footprint user when the role is UNKNOWN (lookup failed)', () => {
+    // Role lookup couldn't resolve this user (userRole omitted). We do
+    // NOT promote/demote on an unknown role — fall back to the
+    // door-footprint heuristic. Fetch succeeded with zero doors
+    // (hasNoDoorFootprint=true) → skip both checks. No row.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'stake',
+            type: 'auto',
+            callings: ['Stake Clerk'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Colorado Springs North Stake (Stake Clerk)',
+            // userRole intentionally omitted (role lookup failed).
+            accessSchedules: [],
+            derivedBuildings: [],
+            directGrantBuildings: [],
+            hasNoDoorFootprint: true,
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('still skips a fetch-failure (null) auto seat as before, role unknown + footprint unset', () => {
+    // Distinct from both the role skip and the footprint skip: here the
+    // per-user door fetch FAILED (derivedBuildings / directGrantBuildings
+    // null) AND the role is unknown, so hasNoDoorFootprint is unset. The
+    // pre-existing null guards skip both the promote/demote decision and
+    // the auto buildings compare — unchanged behaviour. No row.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: null,
+            directGrantBuildings: null,
+            // userRole + hasNoDoorFootprint both omitted (fetch failed).
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('still emits buildings-mismatch for a Guest (userRole=2) when doors differ from the SBA seat', () => {
+    // Boundary check the other way: a Guest with a real footprint must
+    // NOT be suppressed. The seat building [Maple] is fully direct-granted
+    // so the seat stays auto (no demote preempts), but the Kindoo door
+    // truth (derivedBuildings=[Maple, Pine Creek]) carries an extra
+    // building → buildings-mismatch.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            userRole: 2,
+            derivedBuildings: ['Maple Building', 'Pine Creek Building'],
+            directGrantBuildings: ['Maple Building'],
+            hasNoDoorFootprint: false,
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
   });
 
   it('emits buildings-mismatch when manual seat rule set vs SBA building set differs', () => {

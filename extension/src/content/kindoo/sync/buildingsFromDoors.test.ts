@@ -254,6 +254,53 @@ describe('enrichUsersWithDerivedBuildings', () => {
     expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
     expect(enriched[1]?.derivedBuildings).toEqual(['Pine Creek Building']);
     expect(enriched[1]?.directGrantBuildings).toEqual(['Pine Creek Building']);
+    // Both users hold ≥1 door → they have a footprint.
+    expect(enriched[0]?.hasNoDoorFootprint).toBe(false);
+    expect(enriched[1]?.hasNoDoorFootprint).toBe(false);
+  });
+
+  it('flags hasNoDoorFootprint=true when the fetch succeeds with zero door rows', async () => {
+    // A Kindoo Manager / non-door-access account: the per-user fetch
+    // succeeds but returns no doors of any kind. derivedBuildings and
+    // directGrantBuildings are both [] (derived, not null), and the
+    // raw-door-count signal `hasNoDoorFootprint` is true.
+    const users = [ku({ userId: 'u1', username: 'manager@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () => pageResp([], 0));
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.derivedBuildings).toEqual([]);
+    expect(enriched[0]?.directGrantBuildings).toEqual([]);
+    expect(enriched[0]?.hasNoDoorFootprint).toBe(true);
+  });
+
+  it('flags hasNoDoorFootprint=false when doors exist but map to no SBA building', async () => {
+    // The user holds a door, but it belongs to no SBA-tracked rule →
+    // derivedBuildings === [] EVEN THOUGH the user has a footprint.
+    // hasNoDoorFootprint must distinguish this from the zero-door case
+    // (it keys off the raw door count, not derivedBuildings).
+    const users = [ku({ userId: 'u1', username: 'untracked@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    const buildings = [building('Maple Building', 6248)];
+    // Door 99 is not in any tracked rule's door set.
+    const fetchImpl = vi.fn(async () => pageResp([{ DoorID: 99 }], 1));
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.derivedBuildings).toEqual([]);
+    expect(enriched[0]?.hasNoDoorFootprint).toBe(false);
   });
 
   it('a rule-only door is in derivedBuildings but NOT directGrantBuildings', async () => {
@@ -383,6 +430,9 @@ describe('enrichUsersWithDerivedBuildings', () => {
     );
     expect(enriched[0]?.derivedBuildings).toBeNull();
     expect(enriched[0]?.directGrantBuildings).toBeNull();
+    // Fetch FAILED — we can't tell whether the user has a footprint, so
+    // the flag is left unset (the null derivation guard handles the skip).
+    expect(enriched[0]?.hasNoDoorFootprint).toBeUndefined();
   });
 
   it('reports progress after each completed user', async () => {
@@ -410,6 +460,64 @@ describe('enrichUsersWithDerivedBuildings', () => {
     });
     expect(enriched).toEqual([]);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('skipDoorFetchForNonGuests elides the fetch for known non-Guests but not Guests/unknowns', async () => {
+    // Three users: a Guest (role 2 — fetched), a Manager (role 0 —
+    // elided), and an unknown-role user (role unset — fetched for the
+    // footprint fallback). Only the Guest + unknown trigger a door call.
+    const users = [
+      ku({ userId: 'guest', username: 'guest@example.com', userRole: 2 }),
+      ku({ userId: 'mgr', username: 'mgr@example.com', userRole: 0 }),
+      ku({ userId: 'unknown', username: 'unknown@example.com' }),
+    ];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchedUids: string[] = [];
+    const fetchImpl = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const form = await new Request('https://test.invalid/', init).formData();
+      fetchedUids.push(String(form.get('UID') ?? ''));
+      return pageResp([{ DoorID: 1 }], 1);
+    });
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      {
+        concurrency: 1,
+        skipDoorFetchForNonGuests: true,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      },
+    );
+    // Manager's door fetch was elided.
+    expect(fetchedUids.sort()).toEqual(['guest', 'unknown']);
+    // Manager keeps unset door fields (the detector skips it by role).
+    expect(enriched[1]?.derivedBuildings).toBeUndefined();
+    expect(enriched[1]?.hasNoDoorFootprint).toBeUndefined();
+    // Guest + unknown were derived normally.
+    expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
+    expect(enriched[2]?.derivedBuildings).toEqual(['Maple Building']);
+  });
+
+  it('without skipDoorFetchForNonGuests, every user (incl. non-Guests) is fetched', async () => {
+    // The flag is off by default — backward-compatible: a non-Guest is
+    // still fetched.
+    const users = [ku({ userId: 'mgr', username: 'mgr@example.com', userRole: 0 })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () => pageResp([{ DoorID: 1 }], 1));
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
   });
 });
 

@@ -11,6 +11,7 @@ const getSyncDataMock = vi.fn();
 const readKindooSessionMock = vi.fn();
 const listAllEnvironmentUsersMock = vi.fn();
 const getEnvironmentsMock = vi.fn();
+const fetchUserRolesMock = vi.fn();
 const applyFixMock = vi.fn();
 const buildRuleDoorMapMock = vi.fn();
 const enrichUsersWithDerivedBuildingsMock = vi.fn();
@@ -35,6 +36,7 @@ vi.mock('../content/kindoo/endpoints', async () => {
     ...actual,
     listAllEnvironmentUsers: (...args: unknown[]) => listAllEnvironmentUsersMock(...args),
     getEnvironments: (...args: unknown[]) => getEnvironmentsMock(...args),
+    fetchUserRoles: (...args: unknown[]) => fetchUserRolesMock(...args),
   };
 });
 
@@ -100,6 +102,7 @@ describe('SyncPanel', () => {
     readKindooSessionMock.mockReset();
     listAllEnvironmentUsersMock.mockReset();
     getEnvironmentsMock.mockReset();
+    fetchUserRolesMock.mockReset();
     applyFixMock.mockReset();
     buildRuleDoorMapMock.mockReset();
     enrichUsersWithDerivedBuildingsMock.mockReset();
@@ -107,6 +110,10 @@ describe('SyncPanel', () => {
       ok: true,
       session: { token: 'sess', eid: 27994 },
     });
+    // Default: role lookup returns an empty map (every user's role
+    // unknown → detector falls back to the footprint heuristic). Tests
+    // that exercise role-based scoping override.
+    fetchUserRolesMock.mockResolvedValue(new Map());
     getEnvironmentsMock.mockResolvedValue([
       { EID: 27994, Name: 'CSN', TimeZone: 'Mountain Standard Time' },
     ]);
@@ -190,6 +197,52 @@ describe('SyncPanel', () => {
     // immediately into report — assert on the report instead.
     await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
     expect(enrichUsersWithDerivedBuildingsMock).toHaveBeenCalledTimes(1);
+    // Role lookup runs before enrichment, batched over the user emails.
+    expect(fetchUserRolesMock).toHaveBeenCalledTimes(1);
+    expect(fetchUserRolesMock.mock.calls[0]?.[1]).toEqual(['a@example.com', 'b@example.com']);
+    // Enrichment is asked to elide the door fetch for known non-Guests.
+    const enrichOpts = enrichUsersWithDerivedBuildingsMock.mock.calls[0]?.[5];
+    expect(enrichOpts?.skipDoorFetchForNonGuests).toBe(true);
+  });
+
+  it('stamps fetched roles onto users so a non-Guest with an auto seat surfaces NO row', async () => {
+    // End-to-end through the orchestrator: a Kindoo Manager (UserRole 0)
+    // whose Description matches an auto SBA seat must NOT produce a
+    // type-mismatch / buildings-mismatch row. The role map drives the
+    // detector's skip. Placeholder email/name.
+    const user = userEvent.setup();
+    const b = bundle();
+    b.stakeCallingTemplates.push({ calling_name: 'Stake Clerk' } as never);
+    b.seats.push({
+      member_canonical: 'manager@example.com',
+      member_email: 'manager@example.com',
+      member_name: 'Placeholder Manager',
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Stake Clerk'],
+      building_names: ['Maple Building'],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      {
+        euid: 'e1',
+        userId: 'u1',
+        username: 'manager@example.com',
+        description: 'Colorado Springs North Stake (Stake Clerk)',
+        isTempUser: false,
+        accessSchedules: [],
+      },
+    ]);
+    fetchUserRolesMock.mockResolvedValue(new Map([['manager@example.com', 0]]));
+    // Enrichment leaves derived fields untouched (as the real fn would
+    // for an elided non-Guest). The detector skips by role anyway.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) => users);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+    // No discrepancy row rendered for the manager.
+    expect(screen.queryByTestId('sba-sync-row-manager@example.com')).not.toBeInTheDocument();
   });
 
   it('renders an empty-report message when both sides agree', async () => {

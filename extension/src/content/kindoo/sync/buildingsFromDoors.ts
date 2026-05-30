@@ -14,13 +14,19 @@
 // door set is present in the user's door set. Strict subset; partial
 // overlap doesn't claim the rule.
 //
-// Two building sets come out of the same per-user door fetch:
+// Two building sets (plus a footprint flag) come out of the same
+// per-user door fetch:
 //   - `derivedBuildings` — strict-subset over ALL of the user's doors
 //     (direct + rule-derived). The authoritative effective-access set.
 //   - `directGrantBuildings` — strict-subset over only the doors held
 //     via a Church Access Automation DIRECT grant (`accessScheduleId
 //     === 0`). Drives the grant-based seat-type decision: a seat is
 //     church-backed iff every one of its buildings is direct-granted.
+//   - `hasNoDoorFootprint` — `true` when the fetch returned zero door
+//     rows of any kind. Keyed off the raw total door set, not the
+//     derived buildings (a user can hold doors that map to no SBA
+//     building, yielding empty `derivedBuildings` yet a real footprint).
+//     The detector skips grant-based reconciliation for these users.
 //
 // `buildRuleDoorMap` + `getUserDoorGrants` do the I/O;
 // `deriveEffectiveRuleIds` + `derivedBuildingNames` are pure and
@@ -31,6 +37,7 @@ import type { KindooSession } from '../auth';
 import {
   getEnvironmentRuleWithEntryPoints,
   getUserAccessRulesWithEntryPoints,
+  KINDOO_GUEST_ROLE,
   type KindooEnvironmentUser,
 } from '../endpoints';
 
@@ -173,6 +180,16 @@ export function derivedBuildingNames(
  * "Reading Kindoo user N of M…" text. Throttle in the caller — every
  * user firing a React state update for a 313-user run thrashes the
  * reconciler.
+ *
+ * `skipDoorFetchForNonGuests` (default `false`): when `true`, the
+ * per-user door fetch is ELIDED for any user whose `userRole` is a known
+ * non-Guest (managers / admins hold no SBA door grants, and the detector
+ * already skips grant-based reconciliation for them by role — so the
+ * fetch would be wasted). Skipped users keep their (unset) door fields;
+ * `onProgress` still ticks for them so the count stays truthful. Users
+ * with an unknown role (lookup failed) are NEVER skipped — they still
+ * need a door read for the footprint fallback. Off by default so
+ * existing callers / tests that don't pass roles are unaffected.
  */
 export async function enrichUsersWithDerivedBuildings(
   session: KindooSession,
@@ -184,6 +201,7 @@ export async function enrichUsersWithDerivedBuildings(
     concurrency?: number;
     onProgress?: (completed: number, total: number) => void;
     fetchImpl?: typeof fetch;
+    skipDoorFetchForNonGuests?: boolean;
   } = {},
 ): Promise<KindooEnvironmentUser[]> {
   const concurrency = options.concurrency ?? 4;
@@ -197,6 +215,20 @@ export async function enrichUsersWithDerivedBuildings(
       const i = nextIndex++;
       if (i >= total) return;
       const user = enriched[i]!;
+      // Elide the door fetch for a KNOWN non-Guest when asked: managers /
+      // admins hold no SBA door grants and the detector skips them by
+      // role anyway, so the round-trip is pure waste. Unknown role
+      // (undefined) is never skipped — it still needs the footprint
+      // fallback. Leave the door fields unset; still tick progress.
+      if (
+        options.skipDoorFetchForNonGuests &&
+        typeof user.userRole === 'number' &&
+        user.userRole !== KINDOO_GUEST_ROLE
+      ) {
+        completed += 1;
+        options.onProgress?.(completed, total);
+        continue;
+      }
       try {
         // Fetch rows once; derive both the all-doors and direct-only
         // building sets so the seat-type decision and the effective-
@@ -215,6 +247,15 @@ export async function enrichUsersWithDerivedBuildings(
           deriveEffectiveRuleIds(direct, ruleDoorMap),
           buildings,
         );
+        // No-footprint signal: the fetch SUCCEEDED and the user holds
+        // zero doors of any kind. Keyed off the raw total door-row count
+        // (`all`), NOT the derived building sets — a user with doors that
+        // map to no SBA-tracked building still has a footprint even though
+        // `derivedBuildings` would be `[]`. The detector uses this to skip
+        // grant-based type / buildings reconciliation for Kindoo Managers
+        // and other non-door-access accounts whose grant absence is not
+        // "the church revoked this seat."
+        user.hasNoDoorFootprint = all.size === 0;
       } catch (err) {
         console.log(
           `[sba-ext] enrichUsersWithDerivedBuildings: ${user.username} failed; falling back to null. ${
@@ -223,6 +264,13 @@ export async function enrichUsersWithDerivedBuildings(
         );
         user.derivedBuildings = null;
         user.directGrantBuildings = null;
+        // Fetch failed — we can't tell whether the user has a footprint.
+        // Leave `hasNoDoorFootprint` unset (undefined → "has footprint"):
+        // the `derivedBuildings === null` guards already skip grant-based
+        // reconciliation on a failed fetch. `delete` rather than assign
+        // `undefined` (exactOptionalPropertyTypes rejects the explicit
+        // assignment), clearing any value a prior pass may have stamped.
+        delete user.hasNoDoorFootprint;
       }
       completed += 1;
       options.onProgress?.(completed, total);

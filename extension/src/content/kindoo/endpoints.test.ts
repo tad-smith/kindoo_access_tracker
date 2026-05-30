@@ -8,11 +8,14 @@ import { KindooApiError } from './client';
 import {
   checkUserType,
   editUser,
+  extractRolesFromBody,
+  fetchUserRoles,
   getEnvironmentRuleWithEntryPoints,
   getEnvironments,
   getEnvironmentRules,
   getUserAccessRulesWithEntryPoints,
   inviteUser,
+  KINDOO_GUEST_ROLE,
   listAllEnvironmentUsers,
   lookupUserByEmail,
   revokeUser,
@@ -161,6 +164,121 @@ describe('checkUserType', () => {
     const fetchImpl = vi.fn(async () => ok([{ Foo: 'Bar' }]));
     const result = await checkUserType(SESSION, 'nothing@example.com', fetchImpl);
     expect(result).toEqual({ exists: false, uid: null });
+  });
+});
+
+/** One `KindooCheckUserTypeInKindoo` array entry (placeholder data). */
+function roleEntry(email: string, role: number, over: Record<string, unknown> = {}) {
+  return {
+    EU: 'eu-id',
+    InviteType: 1,
+    UserEmail: email,
+    User: { UserRole: role, Username: email, ...over },
+  };
+}
+
+describe('extractRolesFromBody', () => {
+  it('maps canonical email → UserRole for each entry', () => {
+    const pairs = extractRolesFromBody([
+      roleEntry('guest@example.com', 2),
+      roleEntry('manager@example.com', 0),
+    ]);
+    expect(new Map(pairs)).toEqual(
+      new Map([
+        ['guest@example.com', 2],
+        ['manager@example.com', 0],
+      ]),
+    );
+  });
+
+  it('canonicalizes the keyed email (gmail dots/plus stripped)', () => {
+    const pairs = extractRolesFromBody([roleEntry('First.Last+kindoo@gmail.com', 2)]);
+    expect(pairs).toEqual([['firstlast@gmail.com', 2]]);
+  });
+
+  it('falls back to User.Username when UserEmail is absent', () => {
+    const entry = roleEntry('fallback@example.com', 2);
+    delete (entry as Record<string, unknown>).UserEmail;
+    expect(extractRolesFromBody([entry])).toEqual([['fallback@example.com', 2]]);
+  });
+
+  it('skips entries with a non-numeric or missing UserRole', () => {
+    expect(extractRolesFromBody([{ UserEmail: 'x@example.com', User: { Username: 'x' } }])).toEqual(
+      [],
+    );
+    expect(
+      extractRolesFromBody([
+        { UserEmail: 'x@example.com', User: { UserRole: '2', Username: 'x' } },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('skips entries with no resolvable email', () => {
+    expect(extractRolesFromBody([{ User: { UserRole: 2 } }])).toEqual([]);
+  });
+
+  it('returns [] for a non-array body (defensive)', () => {
+    expect(extractRolesFromBody(null)).toEqual([]);
+    expect(extractRolesFromBody({ d: [] })).toEqual([]);
+  });
+});
+
+describe('fetchUserRoles', () => {
+  it('returns a canonical-email → role map for a single chunk', async () => {
+    const fetchImpl = vi.fn(async () =>
+      ok([roleEntry('guest@example.com', 2), roleEntry('manager@example.com', 0)]),
+    );
+    const roles = await fetchUserRoles(
+      SESSION,
+      ['guest@example.com', 'manager@example.com'],
+      fetchImpl,
+    );
+    expect(roles.get('guest@example.com')).toBe(KINDOO_GUEST_ROLE);
+    expect(roles.get('manager@example.com')).toBe(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('chunks emails into batches of 50 (one call per chunk)', async () => {
+    const emails = Array.from({ length: 120 }, (_, i) => `u${i}@example.com`);
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const form = await new Request('https://test.invalid/', init).formData();
+      const chunk = JSON.parse(String(form.get('UsersEmail'))) as string[];
+      return ok(chunk.map((e) => roleEntry(e, 2)));
+    });
+    const roles = await fetchUserRoles(SESSION, emails, fetchImpl);
+    // 120 → 50 + 50 + 20 = 3 calls.
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(roles.size).toBe(120);
+  });
+
+  it('unwraps the `{ d: [...] }` envelope', async () => {
+    const fetchImpl = vi.fn(async () => ok({ d: [roleEntry('guest@example.com', 2)] }));
+    const roles = await fetchUserRoles(SESSION, ['guest@example.com'], fetchImpl);
+    expect(roles.get('guest@example.com')).toBe(2);
+  });
+
+  it('a failing chunk leaves those roles unknown (absent) without failing the others', async () => {
+    // First chunk (50) throws; second chunk (1) succeeds. The 50 stay
+    // unknown (absent from the map); the survivor is present.
+    const emails = Array.from({ length: 51 }, (_, i) => `u${i}@example.com`);
+    let call = 0;
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      call += 1;
+      if (call === 1) throw new Error('chunk boom');
+      const form = await new Request('https://test.invalid/', init).formData();
+      const chunk = JSON.parse(String(form.get('UsersEmail'))) as string[];
+      return ok(chunk.map((e) => roleEntry(e, 2)));
+    });
+    const roles = await fetchUserRoles(SESSION, emails, fetchImpl);
+    expect(roles.has('u0@example.com')).toBe(false); // in the failed chunk
+    expect(roles.get('u50@example.com')).toBe(2); // in the surviving chunk
+  });
+
+  it('returns an empty map for no emails (no calls)', async () => {
+    const fetchImpl = vi.fn();
+    const roles = await fetchUserRoles(SESSION, [], fetchImpl as unknown as typeof fetch);
+    expect(roles.size).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
