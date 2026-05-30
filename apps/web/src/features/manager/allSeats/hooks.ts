@@ -4,7 +4,8 @@
 // completion writes a row.
 //
 // Mutations: inline edit touches only the rules' update-allowlist
-// (member_name, reason, building_names, start_date, end_date).
+// (member_name, reason, start_date, end_date). Buildings are edited
+// through the request flow (EditSeatDialog), not inline.
 // Reconcile was removed in Phase B (T-43) — multi-row rendering
 // surfaces every grant visually, so picking one to promote is no
 // longer needed.
@@ -65,16 +66,18 @@ export interface InlineSeatEditInput {
   member_canonical: string;
   member_name: string;
   reason?: string;
-  building_names: string[];
   start_date?: string;
   end_date?: string;
 }
 
 /**
  * Inline edit a manual/temp seat — manager-only, touches only the
- * rules-allowlisted fields (`member_name`, `reason`, `building_names`,
- * `start_date`, `end_date`). The rule blocks edits on auto seats; we
- * also gate the affordance in the UI.
+ * rules-allowlisted fields (`member_name`, `reason`, `start_date`,
+ * `end_date`). Buildings are intentionally NOT editable here: changing
+ * a seat's buildings goes through the request flow (EditSeatDialog),
+ * which validates a non-empty set and creates an audited edit request.
+ * The rule blocks edits on auto seats; we also gate the affordance in
+ * the UI.
  */
 export function useInlineSeatEditMutation() {
   const principal = usePrincipal();
@@ -92,7 +95,6 @@ export function useInlineSeatEditMutation() {
       // keys. Empty/undefined fields fall through unchanged.
       const update: Record<string, unknown> = {
         member_name: input.member_name.trim(),
-        building_names: input.building_names,
         last_modified_at: serverTimestamp(),
         last_modified_by: actor,
         lastActor: actor,
