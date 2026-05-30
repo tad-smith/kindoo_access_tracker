@@ -491,7 +491,7 @@ describe('SyncPanel', () => {
     expect(sbaBtn).not.toBeDisabled();
   });
 
-  it('buildings-mismatch on a manual seat renders both fix buttons enabled', async () => {
+  it('buildings-mismatch on a manual seat renders both fix buttons enabled when derivedBuildings is present', async () => {
     const b = bundle();
     b.wards.push({
       ward_code: 'PC',
@@ -517,6 +517,11 @@ describe('SyncPanel', () => {
         accessSchedules: [{ ruleId: 6248 }],
       }),
     ]);
+    // Door-grant derivation succeeded with a single building → mismatch
+    // against the two-building SBA seat, both sides have a valid source.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
+      users.map((u: Record<string, unknown>) => ({ ...u, derivedBuildings: ['Maple Building'] })),
+    );
     const user = userEvent.setup();
     await renderSync();
     await user.click(screen.getByTestId('sba-sync-run'));
@@ -528,6 +533,78 @@ describe('SyncPanel', () => {
     expect(sbaBtn).toBeInTheDocument();
     expect(kindooBtn).not.toBeDisabled();
     expect(sbaBtn).not.toBeDisabled();
+  });
+
+  it('buildings-mismatch on a manual seat with null derivedBuildings disables Update SBA', async () => {
+    // Regression: a manual seat whose door-grant derivation failed has no
+    // trustworthy Kindoo source. Update SBA must be disabled so we never
+    // wipe the seat to the (possibly empty) AccessSchedules-derived set.
+    const b = bundle();
+    b.seats.push({
+      ...autoSeat('bmnull@example.com'),
+      type: 'manual',
+      callings: [],
+      reason: 'Requested by bishop',
+      building_names: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      kuser('bmnull@example.com', {
+        description: 'Maple Ward (Building Greeter)',
+        accessSchedules: [{ ruleId: 6248 }],
+      }),
+    ]);
+    // Derivation failed → null. Detector falls back to AccessSchedules
+    // ([Maple]) vs SBA ([]) → buildings-mismatch emitted, but the SBA
+    // side has no valid source.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
+      users.map((u: Record<string, unknown>) => ({ ...u, derivedBuildings: null })),
+    );
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-bmnull@example.com');
+    expect(sbaBtn).toBeDisabled();
+    expect(sbaBtn).toHaveAttribute('title', expect.stringContaining('derivation'));
+  });
+
+  it('buildings-mismatch with empty derivedBuildings disables Update SBA but keeps Update Kindoo enabled', async () => {
+    // A member with no effective Kindoo grants derives to []. Update SBA
+    // would send [] — rejected server-side — so it must be disabled, the
+    // same as the null case. Update Kindoo stays enabled: pushing SBA's
+    // buildings to Kindoo (re-granting) is still a valid action.
+    const b = bundle();
+    b.seats.push({
+      ...autoSeat('bmempty@example.com'),
+      type: 'manual',
+      callings: [],
+      reason: 'Requested by bishop',
+      building_names: ['Maple Building'],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      kuser('bmempty@example.com', {
+        description: 'Maple Ward (Building Greeter)',
+        accessSchedules: [{ ruleId: 6248 }],
+      }),
+    ]);
+    // Derivation succeeded but produced no buildings → []. Detector
+    // compares SBA=[Maple] vs Kindoo=[] → buildings-mismatch, but the
+    // SBA side has no valid non-empty source to write.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
+      users.map((u: Record<string, unknown>) => ({ ...u, derivedBuildings: [] })),
+    );
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-bmempty@example.com');
+    const kindooBtn = screen.getByTestId('sba-sync-fix-update-kindoo-bmempty@example.com');
+    expect(sbaBtn).toBeDisabled();
+    expect(kindooBtn).not.toBeDisabled();
   });
 
   it('buildings-mismatch on an auto seat disables Update Kindoo but keeps Update SBA enabled', async () => {

@@ -172,10 +172,34 @@ describe('buildCallableInput', () => {
     expect(payload.buildingNames).toEqual(['Maple Building']);
   });
 
-  it('kindoo-only on a manual seat ignores derivedBuildings (manual path uses AccessSchedules buildingNames)', () => {
-    // Manual seats have authoritative AccessSchedules → buildingNames;
-    // derivedBuildings is only the truth for auto. Even if both are
-    // populated, the manual branch sticks with buildingNames.
+  it('kindoo-only on a manual seat prefers derivedBuildings over buildingNames when available', () => {
+    // derivedBuildings (direct + rule grants) is the authoritative Kindoo
+    // door-access signal for ALL seat types, not just auto. A Kindoo user
+    // with direct door grants but empty AccessSchedules would otherwise
+    // seed the new seat with empty buildings.
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: 'kindoo-only',
+        kindoo: {
+          description: 'Maple Ward (Building Greeter)',
+          isTempUser: false,
+          memberName: 'M M',
+          primaryScope: 'CO',
+          intendedType: 'manual',
+          intendedCallings: [],
+          intendedFreeText: 'Building Greeter',
+          ruleIds: [6248],
+          buildingNames: [],
+          derivedBuildings: ['Lexington'],
+        },
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.buildingNames).toEqual(['Lexington']);
+  });
+
+  it('kindoo-only on a manual seat falls back to buildingNames when derivedBuildings is null', () => {
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
@@ -190,7 +214,7 @@ describe('buildCallableInput', () => {
           intendedFreeText: 'Building Greeter',
           ruleIds: [6248],
           buildingNames: ['Maple Building'],
-          derivedBuildings: ['Pine Creek Building'],
+          derivedBuildings: null,
         },
       }),
     );
@@ -325,12 +349,17 @@ describe('buildCallableInput', () => {
     expect(payload.newType).toBe('temp');
   });
 
-  it('buildings-mismatch on a manual seat sends AccessSchedules-derived buildingNames', () => {
+  it('buildings-mismatch on a manual seat sends derivedBuildings, NOT AccessSchedules buildingNames', () => {
+    // `derivedBuildings` (the door-grant chain) is the authoritative
+    // Kindoo door-access truth for ALL seat types — it sees both direct
+    // grants and rule-based grants. The AccessSchedules-derived
+    // `buildingNames` misses direct grants, so it must never be the
+    // source even on a manual seat.
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
         code: 'buildings-mismatch',
-        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: [] },
         kindoo: {
           description: 'Maple Ward (Building Greeter)',
           isTempUser: false,
@@ -339,14 +368,41 @@ describe('buildCallableInput', () => {
           intendedType: 'manual',
           intendedCallings: [],
           intendedFreeText: 'Building Greeter',
-          ruleIds: [6249],
-          buildingNames: ['Pine Creek Building'],
-          derivedBuildings: null,
+          ruleIds: [],
+          buildingNames: [],
+          derivedBuildings: ['Maple Building'],
         },
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload.newBuildingNames).toEqual(['Pine Creek Building']);
+    expect(payload.newBuildingNames).toEqual(['Maple Building']);
+  });
+
+  it('buildings-mismatch on a manual seat with null derivedBuildings throws (no valid source — never wipe)', () => {
+    // Regression guard: without door-grant derivation there is no
+    // trustworthy source. Falling back to the empty AccessSchedules
+    // `buildingNames` would wipe a seat that truly has access.
+    expect(() =>
+      buildCallableInput(
+        'csnorth',
+        discrepancy({
+          code: 'buildings-mismatch',
+          sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+          kindoo: {
+            description: 'Maple Ward (Building Greeter)',
+            isTempUser: false,
+            memberName: 'B M',
+            primaryScope: 'CO',
+            intendedType: 'manual',
+            intendedCallings: [],
+            intendedFreeText: 'Building Greeter',
+            ruleIds: [6249],
+            buildingNames: ['Pine Creek Building'],
+            derivedBuildings: null,
+          },
+        }),
+      ),
+    ).toThrow(/derivation/i);
   });
 
   it('buildings-mismatch on an auto seat sends derivedBuildings, NOT buildingNames', () => {
