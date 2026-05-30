@@ -109,11 +109,11 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 | no seat | Kindoo user present | `kindoo-only` |
 | seat | Kindoo user, unparseable | `kindoo-unparseable` (flag for review) |
 | seat | Kindoo user, parsed primary scope ≠ seat.scope | `scope-mismatch` |
-| seat | Kindoo user, intended type ≠ seat.type | `type-mismatch` |
+| seat (manual/auto, not temp) | grant-based promote/demote — see Stage 1 (c) | `type-mismatch` |
 | seat (any type) | Kindoo user, `derivedBuildings` ≠ seat.building_names | `buildings-mismatch` |
 | seat (manual/temp) | Kindoo user, `derivedBuildings === null`, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` (AccessSchedules fallback) |
 | seat (auto) | Kindoo user, `derivedBuildings === null` (per-user derivation failed) | (buildings check skipped — fallback) |
-| seat (auto) | Kindoo user lists auto calling + additional non-auto calling(s) | `extra-kindoo-calling` (flag for review — operator adds the extras to the SBA seat) |
+| seat | Kindoo parsed callings ⊋ seat `callings[]` ∪ `reason` — see Stage 1 (e) | `extra-kindoo-calling` (flag for review — operator adds the missing calling(s) to the SBA seat) |
 | seat | Kindoo user, all-good | (no row) |
 
 Severity:
@@ -249,7 +249,7 @@ Each discrepancy row gains one or two specific-action buttons. Per-row only — 
 | `kindoo-only` | "Create SBA seat" | SBA-side: `syncApplyFix` with `code: 'kindoo-only'`. Server-side stamps the seat write with `SyncActor:kindoo-only`. |
 | `extra-kindoo-calling` | "Add to SBA seat" | SBA-side: `syncApplyFix` with `code: 'extra-kindoo-calling'`; backend de-dupes + appends to `callings[]`. |
 | `scope-mismatch` | "Update Kindoo" / "Update SBA" | Update Kindoo: rewrite Description to SBA scope via `syncProvisionFromSeat`. Update SBA: `syncApplyFix` with `code: 'scope-mismatch'` carrying Kindoo's parsed primary scope. |
-| `type-mismatch` | "Update Kindoo" / "Update SBA" | Same pattern. Update Kindoo is disabled (with a tooltip) when either side is `auto` — Church Access Automation owns direct door grants for auto seats; the extension can't write them. |
+| `type-mismatch` | "Update SBA" only | **Superseded by Stage 1 (c).** Grants own the type decision (promote/demote), so the only action is Update SBA, which flips the seat to the grant-derived target (`grantTargetType`) via `syncApplyFix` with `code: 'type-mismatch'`. No "Update Kindoo" — the extension can't write church grants; revoke-on-promote is Stage 2. |
 | `buildings-mismatch` | "Update Kindoo" / "Update SBA" | Update SBA sources from `derivedBuildings` (the direct + rule-grant strict-subset chain) for ALL seat types — never the AccessSchedules-derived `buildingNames`, which misses direct grants and would wipe buildings for auto users. Update SBA refuses (button disabled) when `derivedBuildings === null` (per-user door read failed). Update Kindoo: manual/temp reconciles AccessSchedules to SBA's building set (per-rule revoke + saveAccessRule merge); auto is disabled (Church Access Automation owns direct door grants). |
 | `kindoo-unparseable` | none | Operator handles in Kindoo's admin UI. |
 
@@ -430,6 +430,49 @@ unchanged. The request path is untouched (already born-manual).
 auto/non-auto in `classifier.ts`); that trigger disappears. Redefine as a plain callings-set
 diff — Kindoo's parsed callings vs `seat.callings`, independent of type — so "Kindoo records a
 calling the SBA seat doesn't" still surfaces.
+
+#### Implementation notes — detector track (b + c + e), landed
+
+These pin down details the design above glossed; they are the as-built contract.
+
+**Prefer-direct door dedup (b).** `getUserAccessRulesWithEntryPoints` (`endpoints.ts`) returns one
+`UserDoorGrantRow` per (door, source). It collapses to one row per `doorId` but **prefers the
+direct grant**: if ANY row for a door is direct (`AccessScheduleID === 0`), the collapsed row
+carries `accessScheduleId: 0`. Without this, a rule row arriving before the direct row would mask
+the direct grant (the overlap/lag case) since the old dedup kept first-seen. `directGrantBuildings`
+is then `derivedBuildingNames(deriveEffectiveRuleIds(directDoorIds, ruleDoorMap), buildings)` over
+the direct-only door subset; `enrichUsersWithDerivedBuildings` computes both sets from a single
+fetch (`getUserDoorGrants`) and nulls BOTH on a per-user error.
+
+**`isChurchBacked` (c).** `directGrantBuildings !== null && every seat building ∈
+directGrantBuildings`. A seat with no buildings is vacuously church-backed when the direct set is
+known (no doors the church must own). `null` direct set ⇒ not church-backed (can't determine).
+
+**Promote/demote target carrier (c).** The grant-derived target type rides on
+`KindooBlock.grantTargetType` (`'auto'` for promote, `'manual'` for demote; also set on
+`kindoo-only` rows as the created-seat type). `fix.ts` sends THIS as the callable `newType`, never
+`intendedType`. `type-mismatch` throws in the payload builder if `grantTargetType` is absent.
+
+**`kindoo-only` created type (c).** Same rule: temp (`IsTempUser`) → temp; else church-backed
+(evaluated against the building set the new seat would carry — `derivedBuildings` when known, else
+the AccessSchedules fallback) → auto; else manual. The created seat's `callings[]` is the FULL
+parsed primary-segment calling list (matched ∪ unmatched), since type no longer gates which
+callings land on it.
+
+**Detector check order (c + e).** Within the both-sides-present branch the order is
+scope-mismatch → type-mismatch (promote/demote) → buildings-mismatch → **extra-kindoo-calling
+(last)**. Each `continue`s, so at most one row per email; a genuine type/scope/buildings drift
+preempts a calling addition.
+
+**`extra-kindoo-calling` false-positive guard (e).** The diff compares Kindoo's parsed callings
+against the seat's **`callings[]` PLUS the comma-split `reason`**, trimmed + case-insensitive,
+additive direction only. Manual seats store their calling in `reason` (empty `callings[]`), so
+comparing against `callings[]` alone would false-fire on every manual seat. The extras ride on
+`KindooBlock.extraKindooCallings`; `fix.ts` sends them as the callable `extraCallings`.
+
+**`type-mismatch` fix UI (c).** Kindoo grants are the source of truth for type, so the row exposes
+**only "Update SBA"** — no "Update Kindoo" (the extension can't write church grants; revoke-on-
+promote is Stage 2). `fixActionsFor('type-mismatch')` returns the single SBA action.
 
 ### Stage 2 — automate promote (after Stage 1 validates the detector in production)
 

@@ -536,22 +536,19 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
   const severityClass = discrepancy.severity === 'drift' ? 'sba-badge-remove' : 'sba-badge-temp';
   const actions = fixActionsFor(discrepancy);
   // Auto seats: Church Access Automation owns direct door grants — the
-  // extension can't write them. The Kindoo-side button is disabled on:
-  //   - type-mismatch when either side is auto
-  //   - buildings-mismatch when the SBA seat is auto
+  // extension can't write them. The Kindoo-side button is disabled on a
+  // buildings-mismatch when the SBA seat is auto. (type-mismatch no
+  // longer surfaces a Kindoo-side button at all — grants are the source
+  // of truth for type, so the only action is "Update SBA".)
   // The SBA-side button is disabled on ANY buildings-mismatch where
   // `derivedBuildings` is null/undefined OR empty — door-grant derivation is
   // the only valid source, so without a non-empty result there's nothing to
   // write (null/undefined would wipe the seat; `[]` is rejected server-side).
   // Operators should steer to "Update Kindoo" or seat removal instead.
   // (Independent of seat type.)
-  const isAutoBuildingsMismatch =
+  const autoLockedKindoo =
     discrepancy.code === 'buildings-mismatch' &&
     (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto');
-  const autoLockedKindoo =
-    (discrepancy.code === 'type-mismatch' &&
-      (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto')) ||
-    isAutoBuildingsMismatch;
   const autoLockedSba =
     discrepancy.code === 'buildings-mismatch' &&
     (discrepancy.kindoo?.derivedBuildings === null ||

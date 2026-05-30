@@ -9,7 +9,27 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Building, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironment } from '../endpoints';
 import { applyFix, buildCallableInput, fixActionsFor, type DispatchContext } from './fix';
-import type { Discrepancy } from './detector';
+import type { Discrepancy, KindooBlock } from './detector';
+
+/** Build a KindooBlock with sensible defaults so each test only states
+ * the fields it exercises. `directGrantBuildings` defaults to null
+ * (derivation skipped) — tests that drive promote / demote set it. */
+function kb(over: Partial<KindooBlock> = {}): KindooBlock {
+  return {
+    description: 'Maple Ward (Sunday School Teacher)',
+    isTempUser: false,
+    memberName: 'Alice Person',
+    primaryScope: 'CO',
+    intendedType: 'auto',
+    intendedCallings: ['Sunday School Teacher'],
+    intendedFreeText: '',
+    ruleIds: [6248],
+    buildingNames: ['Maple Building'],
+    derivedBuildings: null,
+    directGrantBuildings: null,
+    ...over,
+  };
+}
 
 function stake(): Stake {
   return { stake_id: 'csnorth', stake_name: 'CSN' } as Stake;
@@ -37,18 +57,8 @@ function discrepancy(over: Partial<Discrepancy> = {}): Discrepancy {
     severity: 'drift',
     reason: 'r',
     sba: null,
-    kindoo: {
-      description: 'Maple Ward (Sunday School Teacher)',
-      isTempUser: false,
-      memberName: 'Alice Person',
-      primaryScope: 'CO',
-      intendedType: 'auto',
-      intendedCallings: ['Sunday School Teacher'],
-      intendedFreeText: '',
-      ruleIds: [6248],
-      buildingNames: ['Maple Building'],
-      derivedBuildings: null,
-    },
+    // Default kindoo-only fixture: church-backed auto (the common case).
+    kindoo: kb({ grantTargetType: 'auto' }),
     ...over,
   };
 }
@@ -93,12 +103,18 @@ describe('fixActionsFor', () => {
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'add-callings-sba' });
   });
 
-  it('scope-mismatch / type-mismatch / buildings-mismatch each return two actions', () => {
-    for (const code of ['scope-mismatch', 'type-mismatch', 'buildings-mismatch'] as const) {
+  it('scope-mismatch / buildings-mismatch each return two actions (Update Kindoo + Update SBA)', () => {
+    for (const code of ['scope-mismatch', 'buildings-mismatch'] as const) {
       const actions = fixActionsFor(discrepancy({ code }));
       expect(actions).toHaveLength(2);
       expect(actions.map((a) => a.side)).toEqual(['kindoo', 'sba']);
     }
+  });
+
+  it('type-mismatch returns only an Update SBA action (grants own type; no Update Kindoo)', () => {
+    const actions = fixActionsFor(discrepancy({ code: 'type-mismatch' }));
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({ side: 'sba', testId: 'update-sba' });
   });
 
   it('kindoo-unparseable returns no actions', () => {
@@ -123,122 +139,99 @@ describe('buildCallableInput', () => {
     expect(payload.reason).toBeUndefined();
   });
 
-  it('kindoo-only on an auto seat uses derivedBuildings over buildingNames when available', () => {
-    // The bulk-listing AccessSchedules-derived `buildingNames` misses
-    // Church Access Automation direct grants; `derivedBuildings`
-    // (from the door-grant chain) is the truth for auto seats.
+  it('kindoo-only church-backed creates an auto seat with derivedBuildings over buildingNames', () => {
+    // Church-backed → auto (grantTargetType). The bulk-listing
+    // AccessSchedules-derived `buildingNames` misses direct grants;
+    // `derivedBuildings` is the truth.
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
         code: 'kindoo-only',
-        kindoo: {
-          description: 'Maple Ward (Sunday School Teacher)',
-          isTempUser: false,
+        kindoo: kb({
           memberName: 'Auto Person',
-          primaryScope: 'CO',
-          intendedType: 'auto',
-          intendedCallings: ['Sunday School Teacher'],
-          intendedFreeText: '',
           ruleIds: [],
           buildingNames: [],
           derivedBuildings: ['Maple Building', 'Pine Creek Building'],
-        },
+          directGrantBuildings: ['Maple Building', 'Pine Creek Building'],
+          grantTargetType: 'auto',
+        }),
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.type).toBe('auto');
     expect(payload.buildingNames).toEqual(['Maple Building', 'Pine Creek Building']);
   });
 
-  it('kindoo-only on an auto seat falls back to buildingNames when derivedBuildings is null', () => {
+  it('kindoo-only falls back to buildingNames when derivedBuildings is null (born manual)', () => {
+    // Null derivation → not church-backed → manual; buildings fall back
+    // to the AccessSchedules-derived set.
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
         code: 'kindoo-only',
-        kindoo: {
-          description: 'Maple Ward (Sunday School Teacher)',
-          isTempUser: false,
+        kindoo: kb({
+          description: 'Maple Ward (Building Greeter)',
           memberName: 'Auto Person',
-          primaryScope: 'CO',
-          intendedType: 'auto',
-          intendedCallings: ['Sunday School Teacher'],
-          intendedFreeText: '',
+          intendedType: 'manual',
+          intendedCallings: [],
+          intendedFreeText: 'Building Greeter',
           ruleIds: [6248],
           buildingNames: ['Maple Building'],
           derivedBuildings: null,
-        },
+          directGrantBuildings: null,
+          grantTargetType: 'manual',
+        }),
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.type).toBe('manual');
     expect(payload.buildingNames).toEqual(['Maple Building']);
   });
 
-  it('kindoo-only on a manual seat prefers derivedBuildings over buildingNames when available', () => {
-    // derivedBuildings (direct + rule grants) is the authoritative Kindoo
-    // door-access signal for ALL seat types, not just auto. A Kindoo user
-    // with direct door grants but empty AccessSchedules would otherwise
-    // seed the new seat with empty buildings.
+  it('kindoo-only NOT church-backed creates a manual seat preferring derivedBuildings', () => {
+    // Effective access exists (derivedBuildings=[Lexington]) but not via
+    // a direct grant → manual. A Kindoo user with direct door grants but
+    // empty AccessSchedules would otherwise seed an empty building set.
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
         code: 'kindoo-only',
-        kindoo: {
+        kindoo: kb({
           description: 'Maple Ward (Building Greeter)',
-          isTempUser: false,
           memberName: 'M M',
-          primaryScope: 'CO',
           intendedType: 'manual',
           intendedCallings: [],
           intendedFreeText: 'Building Greeter',
           ruleIds: [6248],
           buildingNames: [],
           derivedBuildings: ['Lexington'],
-        },
+          directGrantBuildings: [],
+          grantTargetType: 'manual',
+        }),
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.type).toBe('manual');
     expect(payload.buildingNames).toEqual(['Lexington']);
   });
 
-  it('kindoo-only on a manual seat falls back to buildingNames when derivedBuildings is null', () => {
+  it('kindoo-only manual carries all parsed callings + the free-text reason', () => {
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
         code: 'kindoo-only',
-        kindoo: {
-          description: 'Maple Ward (Building Greeter)',
-          isTempUser: false,
-          memberName: 'M M',
-          primaryScope: 'CO',
-          intendedType: 'manual',
-          intendedCallings: [],
-          intendedFreeText: 'Building Greeter',
-          ruleIds: [6248],
-          buildingNames: ['Maple Building'],
-          derivedBuildings: null,
-        },
-      }),
-    );
-    const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload.buildingNames).toEqual(['Maple Building']);
-  });
-
-  it('kindoo-only on a manual seat splits intended free-text into callings + reason', () => {
-    const input = buildCallableInput(
-      'csnorth',
-      discrepancy({
-        code: 'kindoo-only',
-        kindoo: {
+        kindoo: kb({
           description: 'Maple Ward (Building Greeter, Janitor)',
-          isTempUser: false,
           memberName: 'Mike Manual',
-          primaryScope: 'CO',
           intendedType: 'manual',
           intendedCallings: [],
           intendedFreeText: 'Building Greeter, Janitor',
           ruleIds: [6248],
           buildingNames: ['Maple Building'],
           derivedBuildings: null,
-        },
+          directGrantBuildings: null,
+          grantTargetType: 'manual',
+        }),
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
@@ -247,25 +240,52 @@ describe('buildCallableInput', () => {
     expect(payload.type).toBe('manual');
   });
 
-  it('kindoo-only on a temp seat carries startDate/endDate', () => {
+  it('kindoo-only auto carries the full parsed calling list even when the classifier only matched a subset', () => {
+    // Type is grant-derived (auto); callings = matched + unmatched =
+    // the full parsed list, so a grant-promoted seat keeps every calling
+    // Kindoo named rather than only the auto-template matches.
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
         code: 'kindoo-only',
-        kindoo: {
+        kindoo: kb({
+          description: 'Maple Ward (Sunday School Teacher, Accompanist)',
+          intendedType: 'auto',
+          intendedCallings: ['Sunday School Teacher'],
+          intendedFreeText: 'Accompanist',
+          derivedBuildings: ['Maple Building'],
+          directGrantBuildings: ['Maple Building'],
+          grantTargetType: 'auto',
+        }),
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.type).toBe('auto');
+    expect(payload.callings).toEqual(['Sunday School Teacher', 'Accompanist']);
+    // Auto → no reason.
+    expect(payload.reason).toBeUndefined();
+  });
+
+  it('kindoo-only temp carries startDate/endDate', () => {
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: 'kindoo-only',
+        kindoo: kb({
           description: 'Maple Ward (Visiting speaker)',
           isTempUser: true,
           memberName: 'Tina Temp',
-          primaryScope: 'CO',
           intendedType: 'temp',
           intendedCallings: [],
           intendedFreeText: 'Visiting speaker',
           ruleIds: [6248],
           buildingNames: ['Maple Building'],
           derivedBuildings: null,
+          directGrantBuildings: null,
+          grantTargetType: 'temp',
           startDate: '2026-05-13',
           endDate: '2026-05-20',
-        },
+        }),
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
@@ -275,28 +295,31 @@ describe('buildCallableInput', () => {
     expect(payload.isTempUser).toBe(true);
   });
 
-  it('extra-kindoo-calling splits free text into extraCallings', () => {
+  it('extra-kindoo-calling sends the detector-supplied extraKindooCallings', () => {
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
         code: 'extra-kindoo-calling',
-        kindoo: {
+        kindoo: kb({
           description: 'Maple Ward (Sunday School Teacher, Janitor, Greeter)',
-          isTempUser: false,
           memberName: 'Eric Extra',
-          primaryScope: 'CO',
-          intendedType: 'auto',
-          intendedCallings: ['Sunday School Teacher'],
-          intendedFreeText: 'Janitor, Greeter',
-          ruleIds: [6248],
-          buildingNames: ['Maple Building'],
-          derivedBuildings: null,
-        },
+          intendedFreeText: '',
+          extraKindooCallings: ['Janitor', 'Greeter'],
+        }),
       }),
     );
     expect(input.fix.code).toBe('extra-kindoo-calling');
     const payload = input.fix.payload as Record<string, unknown>;
     expect(payload.extraCallings).toEqual(['Janitor', 'Greeter']);
+  });
+
+  it('extra-kindoo-calling sends [] when the detector set no extras', () => {
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({ code: 'extra-kindoo-calling', kindoo: kb({}) }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.extraCallings).toEqual([]);
   });
 
   it('scope-mismatch sends Kindoo primary scope', () => {
@@ -305,48 +328,64 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'scope-mismatch',
         sba: { scope: 'PC', type: 'auto', callings: [], buildingNames: [] },
-        kindoo: {
-          description: 'Maple Ward (Sunday School Teacher)',
-          isTempUser: false,
-          memberName: 'S M',
-          primaryScope: 'CO',
-          intendedType: 'auto',
-          intendedCallings: ['Sunday School Teacher'],
-          intendedFreeText: '',
-          ruleIds: [6248],
-          buildingNames: ['Maple Building'],
-          derivedBuildings: null,
-        },
+        kindoo: kb({ memberName: 'S M' }),
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
     expect(payload.newScope).toBe('CO');
   });
 
-  it('type-mismatch sends Kindoo intended type', () => {
+  it('type-mismatch promote sends grantTargetType=auto (NOT intendedType)', () => {
+    // intendedType is template-derived (manual here); the payload must
+    // carry the grant-derived target (auto).
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
         code: 'type-mismatch',
-        sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: [] },
-        kindoo: {
-          description: 'Maple Ward (Visiting speaker)',
-          isTempUser: true,
-          memberName: 'T M',
-          primaryScope: 'CO',
-          intendedType: 'temp',
+        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+        kindoo: kb({
+          intendedType: 'manual',
           intendedCallings: [],
-          intendedFreeText: 'Visiting speaker',
-          ruleIds: [6248],
-          buildingNames: ['Maple Building'],
-          derivedBuildings: null,
-          startDate: '2026-05-13',
-          endDate: '2026-05-20',
-        },
+          intendedFreeText: 'Sunday School Teacher',
+          derivedBuildings: ['Maple Building'],
+          directGrantBuildings: ['Maple Building'],
+          grantTargetType: 'auto',
+        }),
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload.newType).toBe('temp');
+    expect(payload.newType).toBe('auto');
+  });
+
+  it('type-mismatch demote sends grantTargetType=manual', () => {
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: 'type-mismatch',
+        sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
+        kindoo: kb({
+          derivedBuildings: ['Maple Building'],
+          directGrantBuildings: [],
+          grantTargetType: 'manual',
+        }),
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.newType).toBe('manual');
+  });
+
+  it('type-mismatch throws when grantTargetType is absent', () => {
+    // kb() leaves grantTargetType unset by default.
+    expect(() =>
+      buildCallableInput(
+        'csnorth',
+        discrepancy({
+          code: 'type-mismatch',
+          sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: [] },
+          kindoo: kb({}),
+        }),
+      ),
+    ).toThrow(/grant-derived target type/i);
   });
 
   it('buildings-mismatch on a manual seat sends derivedBuildings, NOT AccessSchedules buildingNames', () => {
@@ -360,18 +399,16 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'buildings-mismatch',
         sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: [] },
-        kindoo: {
+        kindoo: kb({
           description: 'Maple Ward (Building Greeter)',
-          isTempUser: false,
           memberName: 'B M',
-          primaryScope: 'CO',
           intendedType: 'manual',
           intendedCallings: [],
           intendedFreeText: 'Building Greeter',
           ruleIds: [],
           buildingNames: [],
           derivedBuildings: ['Maple Building'],
-        },
+        }),
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
@@ -388,18 +425,16 @@ describe('buildCallableInput', () => {
         discrepancy({
           code: 'buildings-mismatch',
           sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
-          kindoo: {
+          kindoo: kb({
             description: 'Maple Ward (Building Greeter)',
-            isTempUser: false,
             memberName: 'B M',
-            primaryScope: 'CO',
             intendedType: 'manual',
             intendedCallings: [],
             intendedFreeText: 'Building Greeter',
             ruleIds: [6249],
             buildingNames: ['Pine Creek Building'],
             derivedBuildings: null,
-          },
+          }),
         }),
       ),
     ).toThrow(/derivation/i);
@@ -416,18 +451,12 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'buildings-mismatch',
         sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
-        kindoo: {
-          description: 'Maple Ward (Sunday School Teacher)',
-          isTempUser: false,
+        kindoo: kb({
           memberName: 'A A',
-          primaryScope: 'CO',
-          intendedType: 'auto',
-          intendedCallings: ['Sunday School Teacher'],
-          intendedFreeText: '',
           ruleIds: [],
           buildingNames: [],
           derivedBuildings: ['Maple Building', 'Pine Creek Building'],
-        },
+        }),
       }),
     );
     const payload = input.fix.payload as Record<string, unknown>;
@@ -441,18 +470,7 @@ describe('buildCallableInput', () => {
         discrepancy({
           code: 'buildings-mismatch',
           sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
-          kindoo: {
-            description: 'Maple Ward (Sunday School Teacher)',
-            isTempUser: false,
-            memberName: 'A A',
-            primaryScope: 'CO',
-            intendedType: 'auto',
-            intendedCallings: ['Sunday School Teacher'],
-            intendedFreeText: '',
-            ruleIds: [],
-            buildingNames: [],
-            derivedBuildings: null,
-          },
+          kindoo: kb({ memberName: 'A A', ruleIds: [], buildingNames: [], derivedBuildings: null }),
         }),
       ),
     ).toThrow(/derivation/i);
@@ -567,18 +585,7 @@ describe('applyFix', () => {
     const d = discrepancy({
       code: 'buildings-mismatch',
       sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
-      kindoo: {
-        description: 'Maple Ward (Sunday School Teacher)',
-        isTempUser: false,
-        memberName: 'A A',
-        primaryScope: 'CO',
-        intendedType: 'auto',
-        intendedCallings: ['Sunday School Teacher'],
-        intendedFreeText: '',
-        ruleIds: [],
-        buildingNames: [],
-        derivedBuildings: null,
-      },
+      kindoo: kb({ memberName: 'A A', ruleIds: [], buildingNames: [], derivedBuildings: null }),
     });
     const sbaAction = fixActionsFor(d).find((a) => a.side === 'sba')!;
     const outcome = await applyFix(d, sbaAction, ctx);
@@ -589,18 +596,47 @@ describe('applyFix', () => {
     expect(ctx.callSyncApplyFix).not.toHaveBeenCalled();
   });
 
-  it('Update Kindoo on a type-mismatch with an auto SBA seat is rejected with a clear error', async () => {
+  it('type-mismatch exposes only an Update SBA action (no Update Kindoo)', async () => {
+    // Grants are the source of truth for type; the extension cannot
+    // write church grants, so there is no Kindoo-side action.
+    const d = discrepancy({
+      code: 'type-mismatch',
+      sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+      kindoo: kb({
+        intendedType: 'manual',
+        intendedCallings: [],
+        intendedFreeText: 'Sunday School Teacher',
+        derivedBuildings: ['Maple Building'],
+        directGrantBuildings: ['Maple Building'],
+        grantTargetType: 'auto',
+      }),
+    });
+    const actions = fixActionsFor(d);
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({ side: 'sba', testId: 'update-sba' });
+  });
+
+  it('type-mismatch Update SBA dispatches the callable with the grant target', async () => {
     const ctx = ctxWith();
     const d = discrepancy({
       code: 'type-mismatch',
-      sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
+      sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+      kindoo: kb({
+        intendedType: 'manual',
+        intendedCallings: [],
+        intendedFreeText: 'Sunday School Teacher',
+        derivedBuildings: ['Maple Building'],
+        directGrantBuildings: ['Maple Building'],
+        grantTargetType: 'auto',
+      }),
     });
-    const kindooAction = fixActionsFor(d).find((a) => a.side === 'kindoo')!;
-    const outcome = await applyFix(d, kindooAction, ctx);
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) {
-      expect(outcome.error).toContain('Church Access Automation');
-    }
+    const action = fixActionsFor(d).find((a) => a.side === 'sba')!;
+    const outcome = await applyFix(d, action, ctx);
+    expect(outcome).toEqual({ ok: true });
+    expect(ctx.callSyncApplyFix).toHaveBeenCalledTimes(1);
+    const sent = (ctx.callSyncApplyFix as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(sent.fix.code).toBe('type-mismatch');
+    expect(sent.fix.payload.newType).toBe('auto');
     expect(ctx.syncProvisionFromSeat).not.toHaveBeenCalled();
   });
 });

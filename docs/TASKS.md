@@ -893,3 +893,19 @@ Status: done (2026-05-05 — closed by PR #58)
 Owner: @web-engineer
 
 Closed by the Firebase-era roster work in PR #58 (`feat/roster-pending-requests`): bishopric Roster, stake Roster, stake WardRosters, and manager AllSeats all render a per-row Remove button on manual / temp seats, gated by symmetric ADD-equals-REMOVE authority (the `allowedScopesFor` helper from PR #52). Auto seats are correctly excluded (LCR-managed). The original Apps Script roster's broken remove button has been superseded by the post-cutover Firebase implementation.
+
+## [T-57] Sync grant-derived seat type — detector track (Stage 1 b+c+e)
+Status: in progress
+Owner: @extension-engineer
+Phase: extension Sync — "Grant-derived seat type" (Stage 1), locked 2026-05-30
+
+Stage 1 DETECTOR TRACK of the Sync grant-derived-seat-type feature (`extension/docs/sync-design.md` §"Grant-derived seat type (Stage 1 + Stage 2)"). Extension-only; no `functions/` or `apps/web/` change — the existing `applyTypeMismatch` callable path carries the grant-derived target. Parts shipped:
+
+- **(b) Direct-grant detection** (`content/kindoo/sync/buildingsFromDoors.ts` + `endpoints.ts`): a new `directGrantBuildings: string[] | null` is computed per user alongside `derivedBuildings` from the same per-user door fetch (`AccessScheduleID === 0` rows). `getUserAccessRulesWithEntryPoints`'s per-door dedup now prefers the direct grant so the overlap/lag case stays observable.
+- **(c) Grant-based type classification** (`detector.ts` + `fix.ts` + `SyncPanel.tsx`): `type-mismatch` is now grant-based promote (manual + church-backed → auto) / demote (auto + not church-backed → manual) via the new `isChurchBacked` predicate; temp seats are never promoted/demoted; null `directGrantBuildings` skips. Fix payload + `kindoo-only` created type both source the grant-derived target. SyncPanel renders only "Update SBA" for `type-mismatch`.
+- **(e) `extra-kindoo-calling`** redefined as a plain callings-set diff (Kindoo parsed callings vs seat `callings[]` ∪ `reason`, additive + case/whitespace-insensitive), independent of type.
+
+Pending sibling tracks (NOT in this PR):
+- **Backend sort track** (Stage 1 a) — the compiled `calling → order` table in `packages/shared` + `syncApplyFix` `sort_order` stamping. Owner: @backend-engineer. Blocked on the operator's canonical sort list.
+- **Web deprecation track** (Stage 1 d) — soft-deprecate `auto_kindoo_access` (leave the field + Configuration "Auto Callings" tab dormant as the validation fallback). Owner: @web-engineer.
+- **Stage 2** — auto-applied promote, revoke-on-promote, provision-time grant check.

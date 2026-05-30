@@ -14,8 +14,17 @@
 // door set is present in the user's door set. Strict subset; partial
 // overlap doesn't claim the rule.
 //
-// `buildRuleDoorMap` + `getUserDoorIds` do the I/O; `deriveEffectiveRuleIds`
-// + `derivedBuildingNames` are pure and test-friendly.
+// Two building sets come out of the same per-user door fetch:
+//   - `derivedBuildings` — strict-subset over ALL of the user's doors
+//     (direct + rule-derived). The authoritative effective-access set.
+//   - `directGrantBuildings` — strict-subset over only the doors held
+//     via a Church Access Automation DIRECT grant (`accessScheduleId
+//     === 0`). Drives the grant-based seat-type decision: a seat is
+//     church-backed iff every one of its buildings is direct-granted.
+//
+// `buildRuleDoorMap` + `getUserDoorGrants` do the I/O;
+// `deriveEffectiveRuleIds` + `derivedBuildingNames` are pure and
+// test-friendly and run twice (once per door subset).
 
 import type { Building } from '@kindoo/shared';
 import type { KindooSession } from '../auth';
@@ -59,6 +68,35 @@ export async function getUserDoorIds(
 ): Promise<Set<number>> {
   const rows = await getUserAccessRulesWithEntryPoints(session, userId, eid, fetchImpl);
   return new Set(rows.map((r) => r.doorId));
+}
+
+/**
+ * Partition a user's door-grant rows into two door sets in a SINGLE
+ * fetch:
+ *   - `all` — every DoorID the user can open (direct + rule-derived).
+ *   - `direct` — only the DoorIDs the user holds via a Church Access
+ *     Automation **direct grant** (`accessScheduleId === 0` rows).
+ *
+ * Rows are one-per-(door, source), so a door granted by both a rule
+ * AND a direct grant appears in both forms; it lands in `all` (always)
+ * and in `direct` (because at least one of its rows is direct). The
+ * enrichment worker uses `all` for `derivedBuildings` and `direct` for
+ * `directGrantBuildings` (the grant-based seat-type decision).
+ */
+export async function getUserDoorGrants(
+  session: KindooSession,
+  userId: string,
+  eid: number,
+  fetchImpl?: typeof fetch,
+): Promise<{ all: Set<number>; direct: Set<number> }> {
+  const rows = await getUserAccessRulesWithEntryPoints(session, userId, eid, fetchImpl);
+  const all = new Set<number>();
+  const direct = new Set<number>();
+  for (const r of rows) {
+    all.add(r.doorId);
+    if (r.accessScheduleId === 0) direct.add(r.doorId);
+  }
+  return { all, direct };
 }
 
 /**
@@ -114,13 +152,22 @@ export function derivedBuildingNames(
 }
 
 /**
- * Enrich every Kindoo env-user with a `derivedBuildings` field. Walks
- * the user list with a small concurrency limit so wall time stays
- * tolerable for 313-user sync runs without hammering Kindoo's API.
+ * Enrich every Kindoo env-user with `derivedBuildings` AND
+ * `directGrantBuildings`, both computed from a SINGLE per-user door
+ * fetch. Walks the user list with a small concurrency limit so wall
+ * time stays tolerable for 313-user sync runs without hammering
+ * Kindoo's API.
  *
- * On per-user error: log with the `[sba-ext]` prefix, set
- * `derivedBuildings = null`, continue. One user's network blip never
- * fails the whole sync.
+ *   - `derivedBuildings` — strict-subset over the user's full door set
+ *     (direct + rule-derived). The effective-access signal.
+ *   - `directGrantBuildings` — strict-subset over the user's
+ *     direct-granted door subset only. The provenance signal that
+ *     drives promote / demote.
+ *
+ * On per-user error: log with the `[sba-ext]` prefix, set BOTH fields
+ * to `null`, continue. One user's network blip never fails the whole
+ * sync, and a partial fetch must not produce a half-populated
+ * (and therefore misclassified) result.
  *
  * `onProgress` fires as users complete; the panel uses it to update
  * "Reading Kindoo user N of M…" text. Throttle in the caller — every
@@ -151,9 +198,23 @@ export async function enrichUsersWithDerivedBuildings(
       if (i >= total) return;
       const user = enriched[i]!;
       try {
-        const userDoorIds = await getUserDoorIds(session, user.userId, eid, options.fetchImpl);
-        const effectiveRuleIds = deriveEffectiveRuleIds(userDoorIds, ruleDoorMap);
-        user.derivedBuildings = derivedBuildingNames(effectiveRuleIds, buildings);
+        // Fetch rows once; derive both the all-doors and direct-only
+        // building sets so the seat-type decision and the effective-
+        // access check share a single network round-trip.
+        const { all, direct } = await getUserDoorGrants(
+          session,
+          user.userId,
+          eid,
+          options.fetchImpl,
+        );
+        user.derivedBuildings = derivedBuildingNames(
+          deriveEffectiveRuleIds(all, ruleDoorMap),
+          buildings,
+        );
+        user.directGrantBuildings = derivedBuildingNames(
+          deriveEffectiveRuleIds(direct, ruleDoorMap),
+          buildings,
+        );
       } catch (err) {
         console.log(
           `[sba-ext] enrichUsersWithDerivedBuildings: ${user.username} failed; falling back to null. ${
@@ -161,6 +222,7 @@ export async function enrichUsersWithDerivedBuildings(
           }`,
         );
         user.derivedBuildings = null;
+        user.directGrantBuildings = null;
       }
       completed += 1;
       options.onProgress?.(completed, total);

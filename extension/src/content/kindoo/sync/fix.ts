@@ -62,8 +62,14 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
       return [{ side: 'sba', label: 'Create SBA seat', testId: 'create-sba' }];
     case 'extra-kindoo-calling':
       return [{ side: 'sba', label: 'Add to SBA seat', testId: 'add-callings-sba' }];
-    case 'scope-mismatch':
     case 'type-mismatch':
+      // Grant-derived type: Kindoo's observed direct grants are now the
+      // source of truth for `type`, so the only sensible action is to
+      // flip the SBA seat to match (PROMOTE → auto, DEMOTE → manual).
+      // There's no "Update Kindoo" — the extension can't write church
+      // grants, and revoke-on-promote is Stage 2.
+      return [{ side: 'sba', label: 'Update SBA', testId: 'update-sba' }];
+    case 'scope-mismatch':
       return [
         { side: 'kindoo', label: 'Update Kindoo', testId: 'update-kindoo' },
         { side: 'sba', label: 'Update SBA', testId: 'update-sba' },
@@ -163,47 +169,55 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
   switch (d.code) {
     case 'kindoo-only': {
       if (!d.kindoo) throw new Error('kindoo-only row missing Kindoo block');
-      const callings =
-        d.kindoo.intendedType === 'auto'
-          ? d.kindoo.intendedCallings
-          : splitFreeText(d.kindoo.intendedFreeText);
-      // Prefer the door-grant-derived building set for ALL intended seat
-      // types when available. The bulk listing's AccessSchedules (the
-      // source of `buildingNames`) misses Church Access Automation's
-      // direct grants; `derivedBuildings` is the strict-subset chain that
-      // covers BOTH direct and rule-based grants, so it is the
-      // authoritative Kindoo door-access signal. Fall back to
-      // `buildingNames` only when derivation failed (null/undefined) so
-      // the seat still gets created with whatever building data the sync
-      // had — unlike the buildings-mismatch fix (which refuses when
-      // derivedBuildings is null), creating a fresh seat with partial
-      // building data is acceptable here, and the operator can repair
-      // later via Update SBA.
+      // Grant-derived seat type. The detector carries the church-backed
+      // decision via `grantTargetType` (temp → temp, church-backed →
+      // auto, else manual). Fall back to manual when absent — born-manual
+      // is the safe default. Classifier `intendedType` is no longer the
+      // source of the created type (it's template-derived and drifts).
+      const createdType = d.kindoo.grantTargetType ?? 'manual';
+      // Callings on the new seat = ALL calling names the parser found on
+      // the primary segment, independent of the type decision. The
+      // classifier's matched (`intendedCallings`) + unmatched
+      // (`intendedFreeText`) lists together reconstruct that full list;
+      // type no longer gates which callings land on the seat.
+      const callings = combineParsedCallings(d.kindoo.intendedCallings, d.kindoo.intendedFreeText);
+      // Prefer the door-grant-derived building set for ALL seat types
+      // when available. The bulk listing's AccessSchedules (the source of
+      // `buildingNames`) misses Church Access Automation's direct grants;
+      // `derivedBuildings` is the strict-subset chain that covers BOTH
+      // direct and rule-based grants, so it is the authoritative Kindoo
+      // door-access signal. Fall back to `buildingNames` only when
+      // derivation failed (null/undefined) so the seat still gets created
+      // with whatever building data the sync had — unlike the
+      // buildings-mismatch fix (which refuses when derivedBuildings is
+      // null), creating a fresh seat with partial building data is
+      // acceptable here, and the operator can repair later via Update SBA.
       const buildingNames =
         d.kindoo.derivedBuildings !== null && d.kindoo.derivedBuildings !== undefined
           ? d.kindoo.derivedBuildings
           : d.kindoo.buildingNames;
-      // intended scope falls back to the parsed primary scope; without
-      // either the seat can't be written. Use the raw email canonical as
-      // a last-ditch fallback (server validates anyway).
-      const scope =
-        (d.kindoo.intendedType !== null ? d.kindoo.primaryScope : null) ??
-        d.kindoo.primaryScope ??
-        'stake';
+      // Scope falls back to the parsed primary scope; without either the
+      // seat can't be written. Use stake as a last-ditch fallback (server
+      // validates anyway).
+      const scope = d.kindoo.primaryScope ?? 'stake';
       const payload: SyncApplyFixInput['fix']['payload'] = {
         memberEmail: d.displayEmail,
         memberName: d.kindoo.memberName,
         scope,
-        type: d.kindoo.intendedType ?? 'manual',
+        type: createdType,
         callings,
         buildingNames,
         isTempUser: d.kindoo.isTempUser,
       };
+      // Reason is the operator-typed parens free-text; keep it for
+      // manual / temp seats (an auto seat's calling drives it). Source
+      // from the full primary calling text so a grant-promoted seat
+      // doesn't silently drop the reason the classifier had stashed.
       const reason = d.kindoo.intendedFreeText.trim();
-      if (reason.length > 0 && d.kindoo.intendedType !== 'auto') {
+      if (reason.length > 0 && createdType !== 'auto') {
         (payload as { reason?: string }).reason = reason;
       }
-      if (d.kindoo.intendedType === 'temp') {
+      if (createdType === 'temp') {
         if (d.kindoo.startDate) (payload as { startDate?: string }).startDate = d.kindoo.startDate;
         if (d.kindoo.endDate) (payload as { endDate?: string }).endDate = d.kindoo.endDate;
       }
@@ -214,13 +228,18 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
     }
     case 'extra-kindoo-calling': {
       if (!d.kindoo) throw new Error('extra-kindoo-calling row missing Kindoo block');
+      // Source the extras from the detector's callings-set diff
+      // (`extraKindooCallings`), NOT the retired auto-calling
+      // classifier's `intendedFreeText`. The diff is the set of
+      // Kindoo-named callings the SBA seat lacks.
+      const extraCallings = d.kindoo.extraKindooCallings ?? [];
       return {
         stakeId,
         fix: {
           code: 'extra-kindoo-calling',
           payload: {
             memberEmail: d.displayEmail,
-            extraCallings: splitFreeText(d.kindoo.intendedFreeText),
+            extraCallings,
           },
         },
       };
@@ -238,14 +257,18 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       };
     }
     case 'type-mismatch': {
-      if (!d.kindoo || d.kindoo.intendedType === null) {
-        throw new Error('type-mismatch row missing resolved Kindoo type');
+      // Grant-based promote / demote. The target type is the
+      // observed-provenance decision the detector carries via
+      // `grantTargetType` (PROMOTE → auto, DEMOTE → manual), NOT the
+      // template-derived `intendedType` (no longer authoritative).
+      if (!d.kindoo || d.kindoo.grantTargetType === undefined) {
+        throw new Error('type-mismatch row missing grant-derived target type');
       }
       return {
         stakeId,
         fix: {
           code: 'type-mismatch',
-          payload: { memberEmail: d.displayEmail, newType: d.kindoo.intendedType },
+          payload: { memberEmail: d.displayEmail, newType: d.kindoo.grantTargetType },
         },
       };
     }
@@ -286,6 +309,25 @@ function splitFreeText(s: string): string[] {
     .split(/,\s*/)
     .map((x) => x.trim())
     .filter((x) => x.length > 0);
+}
+
+/**
+ * Reconstruct the full primary-segment calling list from the
+ * classifier's matched (`intendedCallings`) + unmatched
+ * (`intendedFreeText`) outputs, de-duped case-insensitively. Together
+ * they cover every calling the parser found; type no longer gates which
+ * land on the created seat, so the kindoo-only fix sends them all.
+ */
+function combineParsedCallings(intendedCallings: string[], intendedFreeText: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const c of [...intendedCallings, ...splitFreeText(intendedFreeText)]) {
+    const key = c.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+  return out;
 }
 
 /**
