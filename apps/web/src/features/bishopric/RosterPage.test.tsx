@@ -293,12 +293,16 @@ describe('<BishopricRosterPage />', () => {
       // Bishopric Roster is the post-login default for bishopric
       // principals (per `routing.defaultLandingFor`). The header
       // carries a quick affordance back to the New Request form.
+      // The `bishopric-roster-new-request` testid lets the E2E suite
+      // disambiguate this button from the nav-rail "New Request" Quick
+      // Link (both read identically by accessible name).
       usePrincipalMock.mockReturnValue(principal(['CO']));
       mockSeats([]);
       mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
       render(<BishopricRosterPage />);
-      const link = screen.getByRole('link', { name: 'New Request' });
+      const link = screen.getByTestId('bishopric-roster-new-request');
       expect(link).toBeInTheDocument();
+      expect(link).toHaveTextContent('New Request');
       expect(link).toHaveAttribute('href', '/new');
     });
 
@@ -310,7 +314,7 @@ describe('<BishopricRosterPage />', () => {
       mockSeats([]);
       mockWardDoc(undefined);
       render(<BishopricRosterPage />);
-      expect(screen.queryByRole('link', { name: 'New Request' })).toBeNull();
+      expect(screen.queryByTestId('bishopric-roster-new-request')).toBeNull();
     });
   });
 

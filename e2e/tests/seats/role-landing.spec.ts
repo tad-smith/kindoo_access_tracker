@@ -103,9 +103,12 @@ test.describe('Phase 5 default landings', () => {
     await expect(page).toHaveURL(/\/bishopric\/roster$/);
     await expect(page.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
     // The header carries the previously-default `/new` form as a
-    // one-click affordance.
-    const newRequestLink = page.getByRole('link', { name: 'New Request' }).first();
+    // one-click affordance. Scope to the page-header button via testid
+    // so we don't accidentally exercise the nav-rail Quick Link (which
+    // also reads "New Request" for bishopric principals).
+    const newRequestLink = page.getByTestId('bishopric-roster-new-request');
     await expect(newRequestLink).toBeVisible();
+    await expect(newRequestLink).toHaveText('New Request');
     await newRequestLink.click();
     await expect(page).toHaveURL(/\/new$/);
     await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();

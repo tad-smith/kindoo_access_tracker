@@ -146,7 +146,9 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
               : 'Select a ward'}
         </p>
         <Button asChild variant="default">
-          <Link to="/new">New Request</Link>
+          <Link to="/new" data-testid="bishopric-roster-new-request">
+            New Request
+          </Link>
         </Button>
       </div>
 
