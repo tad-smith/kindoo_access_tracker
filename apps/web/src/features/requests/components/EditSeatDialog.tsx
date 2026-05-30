@@ -1,14 +1,20 @@
 // Edit-seat request modal — opened by the per-row Edit affordance on
-// roster pages (bishopric Roster, stake Roster, stake Ward Rosters,
-// manager All Seats). Three sub-modes keyed off the seat being edited:
+// roster pages (bishopric Roster, stake Roster, stake Ward Rosters).
+// Three sub-modes keyed off the seat being edited:
 //
-//   - `edit_auto` (ward-scope auto): buildings checklist only. The
-//     "template-allowed" buildings (currently == the ward's
-//     `building_name`, the importer's seed for auto seats) render
-//     pre-checked AND disabled per Policy B (spec §6.1). Operator can
-//     only ADD extras; cannot remove template buildings. Stake-auto
-//     seats never reach this dialog (Policy 1 — the affordance is
-//     hidden upstream).
+//   - `edit_auto` (ward-scope auto): buildings checklist only. Every
+//     building currently granted to this person at this scope renders
+//     pre-checked AND disabled — the union of the auto-primary's
+//     `building_names` and any same-scope non-auto DuplicateGrant's
+//     `building_names` (manual or temp). Operator can only ADD extras
+//     from the ward's site catalogue; cannot remove existing grants.
+//     Stake-scope auto seats never reach this dialog (the affordance
+//     is hidden upstream — Church-granted access to every stake
+//     building, nothing editable). Submit replaces the auto-primary's
+//     `building_names` with `autoOwnedBuildings ∪ additions`; same-
+//     scope non-auto dups remain untouched. The dup buildings render
+//     visually locked but are NOT included in the wire body — see
+//     `autoOwnedBuildingsFor` for the data-corruption rationale.
 //
 //   - `edit_manual`: `reason` (the manual seat's calling name; uses
 //     the same `CallingCombobox` typeahead the New Request form uses)
@@ -27,7 +33,7 @@
 import { useMemo } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import type { Building, Seat, Ward } from '@kindoo/shared';
+import type { Building, Seat } from '@kindoo/shared';
 import { CallingCombobox } from './CallingCombobox';
 import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
@@ -41,20 +47,66 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * Resolve which buildings are "template / Church-managed" for an auto
- * seat — these render pre-checked AND disabled per Policy B. The
- * importer seeds an auto seat's `building_names` from the ward's
- * `building_name` (a single building); anything beyond that on the
- * seat today is an operator-added extra from a prior edit. The
- * returned list is therefore the ward's default building, or empty
- * when the ward has no building bound or the ward isn't in the
- * catalogue. Stake-scope auto seats never reach the dialog (Policy 1).
+ * Buildings owned by the auto-primary slot — the subset that an
+ * `edit_auto` request can (and must) re-state on the wire. The
+ * `markRequestComplete` callable applies `building_names` from the
+ * request as a REPLACEMENT for the auto-primary's `seat.building_names`;
+ * therefore the submit MUST union the auto-primary's current buildings
+ * with the operator's additions, and nothing else. Conflating dup
+ * (manual or temp) buildings into this set would cause data
+ * corruption: the `edit_auto` write would absorb the dup buildings
+ * onto the auto-primary slot AND the same-scope DuplicateGrant would
+ * remain in place, leaving the user double-credited on display +
+ * double-provisioned on Kindoo.
+ *
+ * Stake-scope auto seats never reach the dialog (`canEditSeat` hides
+ * the affordance — Church-granted access to every stake building,
+ * nothing to edit). Returns empty for any non-ward-auto seat as a
+ * defense in depth.
  */
-function templateBuildingsFor(seat: Seat, wards: readonly Ward[]): string[] {
+function autoOwnedBuildingsFor(seat: Seat): string[] {
   if (seat.type !== 'auto' || seat.scope === 'stake') return [];
-  const ward = wards.find((w) => w.ward_code === seat.scope);
-  if (!ward || !ward.building_name) return [];
-  return [ward.building_name];
+  return [...seat.building_names];
+}
+
+/**
+ * Buildings that render pre-checked AND disabled in the `edit_auto`
+ * sub-mode. The visual lock spans:
+ *
+ *   - the auto-primary seat's `building_names` (the importer seeded
+ *     these from `ward.building_name`; prior edit_auto edits may have
+ *     added to them), AND
+ *   - any same-scope non-auto DuplicateGrant's `building_names` —
+ *     manual OR temp. Both kinds get collapsed into the displayed
+ *     buildings on AllSeats / roster pages (PR #166); the edit dialog
+ *     mirrors that union so the user sees the same set they see on
+ *     the row. Auto DuplicateGrants are excluded because a same-scope
+ *     auto dup would shadow the auto primary's slot (never legitimate;
+ *     defense-in-depth filter).
+ *
+ * Locking the full union keeps the UI honest: the user sees exactly
+ * what they see on the collapsed row, with no surprise gaps. But the
+ * submit-side does NOT include the dup buildings — see
+ * `autoOwnedBuildingsFor` above for the load-bearing rationale.
+ * Future work could decompose the submit into multi-request
+ * coordination (edit_auto + edit_manual / edit_temp / remove) to
+ * actually let the user prune dup buildings from this dialog; until
+ * then the conservative lock is the honest UX.
+ */
+function lockedAutoBuildingsFor(seat: Seat): string[] {
+  if (seat.type !== 'auto' || seat.scope === 'stake') return [];
+  const fromPrimary = seat.building_names;
+  const fromSameScopeNonAutoDups = (seat.duplicate_grants ?? [])
+    .filter((d) => d.scope === seat.scope && d.type !== 'auto')
+    .flatMap((d) => d.building_names ?? []);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of [...fromPrimary, ...fromSameScopeNonAutoDups]) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
 }
 
 export interface EditSeatDialogProps {
@@ -73,9 +125,9 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
 
   // Visible buildings — site-filtered by the seat's scope per spec §15
   // Phase 2. Ward-scope seats see only their site's buildings; stake-
-  // scope (which only auto seats reach via this dialog's templateBuildings
-  // path, see Policy 1) sees home buildings only. Legacy buildings
-  // without `kindoo_site_id` are treated as home.
+  // scope manual / temp seats see home buildings only (stake-scope auto
+  // seats never reach this dialog — the affordance is hidden upstream).
+  // Legacy buildings without `kindoo_site_id` are treated as home.
   const visibleBuildings = useMemo(
     () => filterBuildingsBySite(buildings, siteIdForScope(seat?.scope ?? '', wards)),
     [buildings, wards, seat?.scope],
@@ -83,15 +135,28 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
 
   // Forced-checked buildings — applied to the rendered checkbox list as
   // both `checked` AND `disabled`. Empty for manual/temp seats. Clamped
-  // to the visible set so a template building hidden by the site filter
+  // to the visible set so a locked building hidden by the site filter
   // (a legacy auto seat whose ward.building_name disagrees with
   // ward.kindoo_site_id) is silently dropped from the locked set rather
-  // than rendered as an invisible-and-uncheckable pre-check.
+  // than rendered as an invisible-and-uncheckable pre-check. The VISUAL
+  // lock spans the auto-primary + same-scope non-auto dup union — see
+  // `lockedAutoBuildingsFor` for why.
   const lockedBuildings = useMemo(() => {
-    const raw = seat ? templateBuildingsFor(seat, wards) : [];
+    const raw = seat ? lockedAutoBuildingsFor(seat) : [];
     const visibleNames = new Set(visibleBuildings.map((b) => b.building_name));
     return raw.filter((n) => visibleNames.has(n));
-  }, [seat, wards, visibleBuildings]);
+  }, [seat, visibleBuildings]);
+
+  // Submit-side auto-owned set — the subset of the visual lock that
+  // the `edit_auto` request can re-state on the wire. NEVER includes
+  // dup (manual or temp) buildings (see `autoOwnedBuildingsFor` for
+  // the data-corruption rationale). Also clamped to the visible set
+  // so a hidden auto-primary building doesn't ship on submit.
+  const autoOwnedBuildings = useMemo(() => {
+    const raw = seat ? autoOwnedBuildingsFor(seat) : [];
+    const visibleNames = new Set(visibleBuildings.map((b) => b.building_name));
+    return raw.filter((n) => visibleNames.has(n));
+  }, [seat, visibleBuildings]);
 
   // Initial form values are derived from the seat. `values` (not
   // `defaultValues`) re-syncs when the prop changes, so opening for a
@@ -142,13 +207,33 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
 
   const onSubmit = handleSubmit(async (input) => {
     if (!seat) return;
-    // Defense-in-depth: re-apply the locked-template-buildings union so
-    // a hand-tampered DOM cannot drop a Church-managed building from an
-    // `edit_auto` submission. The disabled checkbox already enforces
-    // this; this is the second layer.
+    // `edit_auto` submit-body construction. The wire shape is the
+    // REPLACEMENT for the auto-primary's `building_names`; the backend
+    // does not touch same-scope DuplicateGrants in this path.
+    // Therefore:
+    //   - Union in `autoOwnedBuildings` (the auto-primary's current set,
+    //     clamped to visible) so the auto-primary keeps everything it
+    //     already had. Disabled checkboxes enforce this in the UI; this
+    //     is the second layer against a hand-tampered DOM.
+    //   - Filter out anything from `input.building_names` that's in the
+    //     visual lock but NOT in the auto-primary's set — i.e., reject
+    //     any dup (manual or temp) building. In practice
+    //     `watchedBuildings` is seeded from `seat.building_names`
+    //     (auto-primary only) and the user can only add non-locked
+    //     buildings, so dup-only buildings never slip in via the UI;
+    //     this is belt-and-braces against the rare race where a dup
+    //     was added between the dialog open and submit.
+    const dupOnlyBuildings = new Set(
+      lockedBuildings.filter((n) => !autoOwnedBuildings.includes(n)),
+    );
     const finalBuildings =
       editType === 'edit_auto'
-        ? Array.from(new Set([...lockedBuildings, ...input.building_names]))
+        ? Array.from(
+            new Set([
+              ...autoOwnedBuildings,
+              ...input.building_names.filter((n) => !dupOnlyBuildings.has(n)),
+            ]),
+          )
         : input.building_names;
     try {
       await submit.mutateAsync({
@@ -269,14 +354,24 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
               {visibleBuildings.map((b: Building) => {
                 const isLocked = lockedBuildings.includes(b.building_name);
                 const checked = isLocked || watchedBuildings.includes(b.building_name);
+                // Tooltip on the disabled checkbox + a visible note next
+                // to the label. Auto seats lock both the calling-template
+                // buildings AND any same-scope manual DuplicateGrant
+                // buildings (collapsed into the displayed set on
+                // AllSeats / rosters); the note copy matches.
+                const lockedTooltip = isLocked
+                  ? 'Already granted to this user at this scope. Add new buildings here; ' +
+                    'remove existing access via a separate request.'
+                  : undefined;
                 return (
                   <li key={b.building_id}>
-                    <label>
+                    <label {...(lockedTooltip ? { title: lockedTooltip } : {})}>
                       <input
                         type="checkbox"
                         value={b.building_name}
                         checked={checked}
                         disabled={isLocked}
+                        {...(lockedTooltip ? { title: lockedTooltip } : {})}
                         onChange={(e) => {
                           if (isLocked) return;
                           const next = e.target.checked
@@ -296,7 +391,7 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
                           data-testid={`edit-seat-building-locked-${b.building_id}`}
                         >
                           {' '}
-                          (from calling template — Church-managed)
+                          (already granted — locked)
                         </small>
                       ) : null}
                     </label>

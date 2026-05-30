@@ -146,7 +146,7 @@ describe('isScopeAllowed — symmetric authority gate for the per-row Remove but
 });
 
 describe('canEditSeat — per-row Edit affordance gate', () => {
-  it('stake-scope auto seat: never editable, even for a stake user (Policy 1)', () => {
+  it('stake-scope auto seat: never editable, even for a stake user (Church-managed)', () => {
     const principal = makePrincipal({ stakeMemberStakes: [STAKE_ID] });
     const seat = makeSeat({ type: 'auto', scope: 'stake' });
     expect(canEditSeat(principal, STAKE_ID, seat)).toBe(false);
