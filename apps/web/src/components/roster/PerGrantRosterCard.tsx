@@ -25,16 +25,6 @@ export interface PerGrantRosterCardProps {
   isPendingRemoval: boolean;
   wards: readonly Ward[];
   sites: readonly KindooSite[];
-  /**
-   * Bishopric Roster opt-in: when an auto-primary row has same-scope
-   * duplicates, render the badge as "edited" (with the "granted access
-   * to additional buildings beyond their calling" tooltip) instead of
-   * the generic "duplicate" label. Bishopric operators read the row as
-   * "this person's calling-derived access was edited"; the generic
-   * label is correct on AllSeats / stake roster surfaces. Default
-   * `false` preserves the current behaviour for non-bishopric callers.
-   */
-  autoEditedBadge?: boolean;
 }
 
 export function PerGrantRosterCard({
@@ -45,7 +35,6 @@ export function PerGrantRosterCard({
   isPendingRemoval,
   wards,
   sites,
-  autoEditedBadge = false,
 }: PerGrantRosterCardProps) {
   const siteLabel = siteLabelForGrant(grant, wards, sites);
 
@@ -117,24 +106,15 @@ export function PerGrantRosterCard({
               Pending Removal
             </Badge>
           ) : null}
-          {grant.hasSameScopeDuplicates
-            ? (() => {
-                const showEdited = autoEditedBadge && grant.type === 'auto';
-                return (
-                  <Badge
-                    variant="manual"
-                    data-testid={`grant-duplicate-badge-${seat.member_canonical}`}
-                    title={
-                      showEdited
-                        ? 'This user was granted access to additional buildings beyond their calling.'
-                        : 'This user was manually granted access to additional buildings.'
-                    }
-                  >
-                    {showEdited ? 'edited' : 'duplicate'}
-                  </Badge>
-                );
-              })()
-            : null}
+          {grant.hasSameScopeDuplicates ? (
+            <Badge
+              variant="manual"
+              data-testid={`grant-duplicate-badge-${seat.member_canonical}`}
+              title="This user was manually granted access to additional buildings."
+            >
+              {grant.type === 'auto' ? 'edited' : 'duplicate'}
+            </Badge>
+          ) : null}
           {siteLabel ? (
             <Badge variant="info" data-testid={`kindoo-site-badge-${seat.member_canonical}`}>
               {siteLabel}

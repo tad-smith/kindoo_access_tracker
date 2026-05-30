@@ -209,7 +209,6 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
                     isPendingRemoval={isPendingRemoval}
                     wards={wardsCatalogue.data ?? []}
                     sites={kindooSites.data ?? []}
-                    autoEditedBadge
                   />
                 );
               })}
