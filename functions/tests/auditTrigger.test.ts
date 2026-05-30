@@ -8,7 +8,7 @@
 // `entity_id` / `member_canonical` / `actor_*` fields, derives the
 // right action enum, and skips no-op updates.
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
 import {
   auditAccessWrites,
@@ -23,7 +23,19 @@ import {
 } from '../src/triggers/auditTrigger.js';
 import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.js';
 
-const STAKE_ID = 'csnorth';
+// Dedicated stake id for this suite — NOT 'csnorth'. The CI integration
+// run boots the functions emulator (`--only firestore,auth,functions`),
+// so every sibling file that writes a real seat/request/access doc under
+// `stakes/csnorth/...` fires the DEPLOYED auditXxxWrites triggers, which
+// asynchronously fan rows into `stakes/csnorth/auditLog`. Those async
+// writes can land AFTER the writing file's teardown and bleed into this
+// file, which reads the whole `auditLog` collection and asserts exact
+// counts ("expected 1, got 2" flake). This file drives the trigger
+// handlers directly via `.run()` and never writes an audited entity doc,
+// so no deployed trigger ever targets this stake's auditLog — the only
+// writer is this suite's own awaited emitAuditRow. Scoping to a private
+// stake id makes the suite order-independent regardless of sibling files.
+const STAKE_ID = 'audit-trigger-suite';
 
 /**
  * Build an event payload that satisfies the v2 onDocumentWritten
@@ -58,6 +70,15 @@ const lastActor = (canonical: string) => ({ email: canonical, canonical });
 
 describe.skipIf(!hasEmulators())('audit trigger', () => {
   beforeAll(async () => {
+    await clearEmulators();
+  });
+  // Clear BEFORE each test, not only after: a test starts from a verified
+  // clean slate regardless of leftover or late-arriving rows from a prior
+  // test or sibling file. `clearEmulators` hits the emulator's REST
+  // blow-away (synchronous + atomic) so the slate is empty when the body
+  // runs. afterEach retained so the collection is also clean for whatever
+  // file runs next.
+  beforeEach(async () => {
     await clearEmulators();
   });
   afterEach(async () => {

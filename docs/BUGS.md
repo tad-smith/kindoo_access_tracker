@@ -6,6 +6,22 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-14] auditTrigger.test.ts flakes CI with "expected 1, got 2" audit-row count
+Status: closed (fixed on branch `fix/audit-trigger-test-isolation`)
+Owner: @backend-engineer
+Phase: post Phase 12
+Severity: low (CI-only; no runtime impact)
+
+`functions/tests/auditTrigger.test.ts` intermittently failed in CI's integration step, a different test each run, always with the same shape — one more `auditLog` row than expected (`AssertionError: expected [ … ] to have a length of 1 but got 2`). Seen on "creates and deletes are not classified as out-of-band", the "same-actor in-band write (B-5 follow-up)" regression, and others.
+
+**Root cause:** cross-FILE audit-row bleed. CI runs the integration suite with the functions emulator connected (`emulators:exec --only firestore,auth,functions`), so the DEPLOYED `auditXxxWrites` triggers are live. Nearly every sibling integration file (`markRequestComplete`, `syncApplyFix`, `removeSeatOnRequestComplete`, `Expiry`, …) uses `STAKE_ID = 'csnorth'` and writes real seat/request/access docs under `stakes/csnorth/...`; each such write fires the deployed audit trigger asynchronously, fanning a row into `stakes/csnorth/auditLog`. Those async writes can land AFTER the writing file's teardown and bleed into `auditTrigger.test.ts`, which also used `'csnorth'` and reads the whole `auditLog` collection to assert exact counts. The trigger itself is correct — this is purely test isolation. (`auditTrigger.test.ts` drives the handlers directly via `.run()`, which is fully awaited, so there is no late async delivery WITHIN the file; the stray row always originates from another file.)
+
+**Fix:** `auditTrigger.test.ts` now uses a dedicated `STAKE_ID = 'audit-trigger-suite'` that no other file writes audited entities to, so no deployed trigger ever fans a row into this suite's `auditLog`. Added a `beforeEach(clearEmulators)` (alongside the existing `afterEach`) so each test starts from a verified-empty slate via the emulator's synchronous REST blow-away regardless of leftover or late rows. Verified by running the suite 5× back-to-back inside one functions-emulator session (the CI config): 5/5 green, 34/34 tests each, plus a full integration-suite pass to confirm no sibling regressed.
+
+**Branch / PR:** `fix/audit-trigger-test-isolation`.
+
+---
+
 ## [B-13] mount.test.tsx flakes CI with "ReferenceError: window is not defined" unhandled errors
 Status: closed (fixed in PR — branch `fix/b-13-mount-test-unhandled-error`)
 Owner: @extension-engineer
