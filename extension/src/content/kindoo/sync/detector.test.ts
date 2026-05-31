@@ -625,10 +625,13 @@ describe('detect', () => {
     expect(row.kindoo?.grantTargetType).toBe('manual');
   });
 
-  it('demotes a Guest (userRole=2) with ZERO current grants (church revoked access)', () => {
-    // The deliberate trade-off of role-only gating: a real Guest whose
-    // church grants are entirely gone now correctly demotes — we do NOT
-    // suppress it. directGrantBuildings=[] vs an auto seat ⇒ demote.
+  it('LIMITATION: a Guest whose church access was ENTIRELY revoked (zero door rows) is NOT demoted', () => {
+    // Documented trade-off of role-from-door-rows: userRole is read off
+    // the door grants, so a Guest with zero rows has no role to read →
+    // userRole unset (modeled by kuserRoleUnknown, the production state) →
+    // skip. The seat-type label lags at `auto`; the member already has no
+    // Kindoo access. A fallback role source would be needed to demote
+    // here, which the manager-fix doesn't warrant.
     const result = detect(
       baseInputs({
         seats: [
@@ -640,18 +643,15 @@ describe('detect', () => {
           }),
         ],
         kindooUsers: [
-          kuser({
+          kuserRoleUnknown({
             description: 'Maple Ward (Sunday School Teacher)',
-            userRole: 2,
             derivedBuildings: [],
             directGrantBuildings: [],
           }),
         ],
       }),
     );
-    expect(result.discrepancies).toHaveLength(1);
-    expect(result.discrepancies[0]?.code).toBe('type-mismatch');
-    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('manual');
+    expect(result.discrepancies).toEqual([]);
   });
 
   it('skips when the role is UNKNOWN (omitted) — even with grants present', () => {

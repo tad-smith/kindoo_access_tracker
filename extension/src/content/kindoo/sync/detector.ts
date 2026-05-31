@@ -437,17 +437,26 @@ export function grantsBackAuto(
  * would falsely demote — then, if only the demote were guarded, falsely
  * flag a `buildings-mismatch`.
  *
- * **`undefined` role → skip** (the safe default): an empty `RulesList`
- * or a failed door fetch leaves `userRole` unset, and `undefined !== 2`
- * skips. This avoids the false-demote on a user we can't classify and is
- * consistent with the per-check `directGrantBuildings === null` /
- * `derivedBuildings === null` skips. The trade-off — a brand-new Guest
- * with zero grants yet to be read won't surface a row until the role
- * resolves — is acceptable; re-running Sync resolves it.
+ * **`undefined` role → skip** (the safe default): `userRole` is read
+ * from the door-grant rows (`endpoints.ts`), so a user with an EMPTY
+ * `RulesList` — including a Guest whose church access was entirely
+ * revoked — has no row to read it from and stays `undefined` ⇒ skip
+ * (`undefined !== 2`). A failed door fetch is the same. This avoids the
+ * false-demote on a user we can't classify and is consistent with the
+ * per-check `directGrantBuildings === null` / `derivedBuildings === null`
+ * skips.
  *
- * A real Guest (`UserRole === 2`) with zero CURRENT grants correctly
- * demotes (the church revoked access) — we do NOT suppress that. Only
- * non-Guests are out of scope.
+ * **Known trade-off (the role-from-door-rows limitation).** A real Guest
+ * who has had ALL church access removed (zero door rows) is therefore
+ * NOT demoted — the seat-type label stays `auto` even though SBA should
+ * now own it. We accept this: the member already has no Kindoo door
+ * access (only the label lags), and the alternative — a fallback role
+ * source (a per-user `checkUserType`, or `UserRole` off the bulk
+ * listing) for every zero-row seated user — is cost the manager-demote
+ * fix doesn't warrant. A Guest with ANY remaining grant still carries
+ * the role on its rows and demotes normally when those grants no longer
+ * back the seat. Re-running Sync after the member is re-granted (or the
+ * fallback is added later) resolves the lag.
  *
  * Pure function — no I/O.
  */

@@ -584,15 +584,19 @@ detector has it on every user before `detect()` runs.
 **`undefined` role → skip** (the safe default): an empty `RulesList` or a failed door fetch leaves
 `userRole` unset, and `undefined !== 2` skips. We never promote/demote a user we can't classify.
 This is consistent with the per-check `directGrantBuildings === null` / `derivedBuildings === null`
-skips (a failed fetch can't determine the building set either). The trade-off — a brand-new Guest
-with no door rows yet won't surface a row until the role resolves — is acceptable; re-running Sync
-resolves it.
+skips (a failed fetch can't determine the building set either).
 
-**A real Guest (`UserRole === 2`) with zero CURRENT grants correctly demotes** (the church revoked
-access) — we do NOT suppress that. Only non-Guests / unreadable-role users are out of scope. There
-is no door-footprint heuristic: the role is a clean, authoritative signal, so the earlier
-"`hasNoDoorFootprint`" fallback was removed (operator decision 2026-05-30) in favour of the simpler
-role gate.
+**Known limitation — entirely-revoked Guests are NOT demoted.** Because `userRole` is read off the
+door-grant rows, a Guest whose church access was completely removed has zero rows → no role to read
+→ `userRole` unset → skip. The seat-type label lags at `auto` even though SBA should now own it. We
+accept this: the member already has no Kindoo door access (only the label is stale), and the
+alternative — a fallback role source (a per-user `checkUserType`, or `UserRole` off the bulk listing
+if it carries it) for every zero-row seated user — is cost this manager-demote fix doesn't warrant.
+A Guest with ANY remaining grant still carries the role on its rows and demotes normally when those
+grants no longer back the seat (`directGrantBuildings` shrinks). If the lag ever matters, the
+fallback is a localized follow-up. There is no door-footprint heuristic either: the role is a clean
+signal, so the earlier "`hasNoDoorFootprint`" fallback was removed (operator decision 2026-05-30) in
+favour of the simpler role gate.
 
 ### Stage 2 — automate promote (after Stage 1 validates the detector in production)
 
