@@ -195,7 +195,9 @@ beforeEach(() => {
     allDoors: [],
   }));
   getUserAccessRulesWithEntryPointsMock.mockReset();
-  getUserAccessRulesWithEntryPointsMock.mockResolvedValue([]); // no direct grants
+  // No door rows; `userRole` is irrelevant to the provision flow (which
+  // only consumes the door set via getUserDoorIds).
+  getUserAccessRulesWithEntryPointsMock.mockResolvedValue({ rows: [], userRole: null });
 });
 afterEach(() => {
   vi.resetModules();
@@ -1894,9 +1896,10 @@ function stageRuleDoors(map: Record<number, number[]>) {
 }
 
 function stageUserDoors(doorIds: number[]) {
-  getUserAccessRulesWithEntryPointsMock.mockResolvedValue(
-    doorIds.map((id) => ({ doorId: id, accessScheduleId: 0 })),
-  );
+  getUserAccessRulesWithEntryPointsMock.mockResolvedValue({
+    rows: doorIds.map((id) => ({ doorId: id, accessScheduleId: 0 })),
+    userRole: null,
+  });
 }
 
 describe('provisionEdit — skip AccessSchedules already covered by direct grants', () => {

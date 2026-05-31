@@ -192,6 +192,47 @@ describe('SyncPanel', () => {
     expect(enrichUsersWithDerivedBuildingsMock).toHaveBeenCalledTimes(1);
   });
 
+  it('a non-Guest (userRole stamped by enrichment) with an auto seat surfaces NO row', async () => {
+    // End-to-end through the orchestrator: a Kindoo Manager (UserRole 0)
+    // whose Description matches an auto SBA seat must NOT produce a
+    // type-mismatch / buildings-mismatch row. The role is carried on the
+    // per-user door fetch and stamped during enrichment (mocked here);
+    // the detector skips by role. Placeholder email/name.
+    const user = userEvent.setup();
+    const b = bundle();
+    b.stakeCallingTemplates.push({ calling_name: 'Stake Clerk' } as never);
+    b.seats.push({
+      member_canonical: 'manager@example.com',
+      member_email: 'manager@example.com',
+      member_name: 'Placeholder Manager',
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Stake Clerk'],
+      building_names: ['Maple Building'],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      {
+        euid: 'e1',
+        userId: 'u1',
+        username: 'manager@example.com',
+        description: 'Colorado Springs North Stake (Stake Clerk)',
+        isTempUser: false,
+        accessSchedules: [],
+      },
+    ]);
+    // Enrichment stamps userRole=0 (non-Guest) from the door fetch.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
+      users.map((u: Record<string, unknown>) => ({ ...u, userRole: 0 })),
+    );
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+    // No discrepancy row rendered for the manager.
+    expect(screen.queryByTestId('sba-sync-row-manager@example.com')).not.toBeInTheDocument();
+  });
+
   it('renders an empty-report message when both sides agree', async () => {
     const user = userEvent.setup();
     getSyncDataMock.mockResolvedValue(bundle());
@@ -362,6 +403,11 @@ describe('SyncPanel', () => {
       expiryDateAtTimeZone: null,
       expiryTimeZone: 'Mountain Standard Time',
       accessSchedules: [{ ruleId: 6248 }],
+      // Guest by default → in scope for grant-based reconciliation, so
+      // the *-mismatch fix-action tests below surface their rows. Tests
+      // for non-Guests / unknown role stamp userRole via the enrichment
+      // mock instead (it spreads this user, so an explicit value wins).
+      userRole: 2,
       ...overrides,
     };
   }

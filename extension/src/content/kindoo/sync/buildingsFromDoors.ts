@@ -14,13 +14,18 @@
 // door set is present in the user's door set. Strict subset; partial
 // overlap doesn't claim the rule.
 //
-// Two building sets come out of the same per-user door fetch:
+// Two building sets and the seat role come out of the same per-user
+// door fetch:
 //   - `derivedBuildings` — strict-subset over ALL of the user's doors
 //     (direct + rule-derived). The authoritative effective-access set.
 //   - `directGrantBuildings` — strict-subset over only the doors held
 //     via a Church Access Automation DIRECT grant (`accessScheduleId
 //     === 0`). Drives the grant-based seat-type decision: a seat is
 //     church-backed iff every one of its buildings is direct-granted.
+//   - `userRole` — the Kindoo seat role denormalized on every door row
+//     (Guest === 2). The scope signal for grant-based reconciliation:
+//     it applies only to Guests; non-Guests (managers / admins) are
+//     skipped. `null` when the user has no door rows (→ detector skips).
 //
 // `buildRuleDoorMap` + `getUserDoorGrants` do the I/O;
 // `deriveEffectiveRuleIds` + `derivedBuildingNames` are pure and
@@ -66,7 +71,7 @@ export async function getUserDoorIds(
   eid: number,
   fetchImpl?: typeof fetch,
 ): Promise<Set<number>> {
-  const rows = await getUserAccessRulesWithEntryPoints(session, userId, eid, fetchImpl);
+  const { rows } = await getUserAccessRulesWithEntryPoints(session, userId, eid, fetchImpl);
   return new Set(rows.map((r) => r.doorId));
 }
 
@@ -82,21 +87,32 @@ export async function getUserDoorIds(
  * and in `direct` (because at least one of its rows is direct). The
  * enrichment worker uses `all` for `derivedBuildings` and `direct` for
  * `directGrantBuildings` (the grant-based seat-type decision).
+ *
+ * Also passes through the user's Kindoo seat role (`userRole`, Guest ===
+ * 2) read off the same response — the enrichment worker stamps it so the
+ * detector can scope grant-based reconciliation to Guests. `null` when
+ * the user has no door rows (role couldn't be read) → the detector skips
+ * (the safe default; `undefined !== 2`).
  */
 export async function getUserDoorGrants(
   session: KindooSession,
   userId: string,
   eid: number,
   fetchImpl?: typeof fetch,
-): Promise<{ all: Set<number>; direct: Set<number> }> {
-  const rows = await getUserAccessRulesWithEntryPoints(session, userId, eid, fetchImpl);
+): Promise<{ all: Set<number>; direct: Set<number>; userRole: number | null }> {
+  const { rows, userRole } = await getUserAccessRulesWithEntryPoints(
+    session,
+    userId,
+    eid,
+    fetchImpl,
+  );
   const all = new Set<number>();
   const direct = new Set<number>();
   for (const r of rows) {
     all.add(r.doorId);
     if (r.accessScheduleId === 0) direct.add(r.doorId);
   }
-  return { all, direct };
+  return { all, direct, userRole };
 }
 
 /**
@@ -200,13 +216,20 @@ export async function enrichUsersWithDerivedBuildings(
       try {
         // Fetch rows once; derive both the all-doors and direct-only
         // building sets so the seat-type decision and the effective-
-        // access check share a single network round-trip.
-        const { all, direct } = await getUserDoorGrants(
+        // access check share a single network round-trip. The same
+        // response also carries the user's seat role.
+        const { all, direct, userRole } = await getUserDoorGrants(
           session,
           user.userId,
           eid,
           options.fetchImpl,
         );
+        // Stamp the seat role — the scope signal for grant-based
+        // reconciliation (Guest === 2). `null` (no door rows → role
+        // couldn't be read) leaves `userRole` unset, which the detector
+        // treats as "skip" (the safe default — never demote a user we
+        // can't classify).
+        if (userRole !== null) user.userRole = userRole;
         user.derivedBuildings = derivedBuildingNames(
           deriveEffectiveRuleIds(all, ruleDoorMap),
           buildings,
@@ -223,6 +246,9 @@ export async function enrichUsersWithDerivedBuildings(
         );
         user.derivedBuildings = null;
         user.directGrantBuildings = null;
+        // `userRole` stays unset on a failed fetch → the detector skips
+        // grant-based reconciliation (consistent with the
+        // `derivedBuildings === null` skips).
       }
       completed += 1;
       options.onProgress?.(completed, total);

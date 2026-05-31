@@ -745,6 +745,8 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       AccessScheduleID: 0,
       EUID: 'eu1',
       UserID: 'u1',
+      // Guest by default; every RulesList row carries the denormalized role.
+      UserRole: 2,
       ...over,
     };
   }
@@ -783,7 +785,8 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       ),
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result.map((r) => r.doorId).sort()).toEqual([1001, 1002, 2001]);
+    expect(result.rows.map((r) => r.doorId).sort()).toEqual([1001, 1002, 2001]);
+    expect(result.userRole).toBe(2);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -801,10 +804,10 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       ),
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(2);
-    expect(result.map((r) => r.doorId).sort()).toEqual([1001, 1002]);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows.map((r) => r.doorId).sort()).toEqual([1001, 1002]);
     // Door 1001 had only rule rows → stays rule-derived.
-    expect(result.find((r) => r.doorId === 1001)?.accessScheduleId).not.toBe(0);
+    expect(result.rows.find((r) => r.doorId === 1001)?.accessScheduleId).not.toBe(0);
   });
 
   it('prefers the direct grant when a door has both a rule row and a direct row', async () => {
@@ -821,8 +824,8 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       ),
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.accessScheduleId).toBe(0);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.accessScheduleId).toBe(0);
   });
 
   it('keeps a direct grant when the direct row arrives first', async () => {
@@ -836,8 +839,8 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       ),
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.accessScheduleId).toBe(0);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.accessScheduleId).toBe(0);
   });
 
   it('pages with start += 40 until a short page terminates', async () => {
@@ -857,7 +860,7 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       return page(rows, 50);
     });
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(50);
+    expect(result.rows).toHaveLength(50);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     const calls = fetchImpl.mock.calls as unknown as Array<[unknown, RequestInit]>;
     const starts = await Promise.all(
@@ -879,21 +882,36 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       return page(rows, 40);
     });
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(40);
+    expect(result.rows).toHaveLength(40);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to a bare-array response shape', async () => {
     const fetchImpl = vi.fn(async () => ok([row({ DoorID: 9999 })]));
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.doorId).toBe(9999);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.doorId).toBe(9999);
   });
 
-  it('returns empty when first page is empty', async () => {
+  it('returns empty rows when first page is empty', async () => {
     const fetchImpl = vi.fn(async () => page([], 0));
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toEqual([]);
+    expect(result.rows).toEqual([]);
+    expect(result.userRole).toBeNull();
+  });
+
+  it('reads UserRole off the first row that carries one (manager === 0)', async () => {
+    const fetchImpl = vi.fn(async () =>
+      page([row({ DoorID: 1001, UserRole: 0 }), row({ DoorID: 1002, UserRole: 0 })], 2),
+    );
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result.userRole).toBe(0);
+  });
+
+  it('leaves userRole null when no row carries a numeric UserRole', async () => {
+    const fetchImpl = vi.fn(async () => page([row({ DoorID: 1001, UserRole: undefined })], 1));
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result.userRole).toBeNull();
   });
 });
 

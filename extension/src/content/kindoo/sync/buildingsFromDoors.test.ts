@@ -209,7 +209,10 @@ describe('enrichUsersWithDerivedBuildings', () => {
     };
   }
 
-  function pageResp(rows: Array<{ DoorID: number; AccessScheduleID?: number }>, total: number) {
+  function pageResp(
+    rows: Array<{ DoorID: number; AccessScheduleID?: number; UserRole?: number }>,
+    total: number,
+  ) {
     return ok({
       CurrentNumberOfRows: rows.length,
       TotalRecordNumber: total,
@@ -254,6 +257,43 @@ describe('enrichUsersWithDerivedBuildings', () => {
     expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
     expect(enriched[1]?.derivedBuildings).toEqual(['Pine Creek Building']);
     expect(enriched[1]?.directGrantBuildings).toEqual(['Pine Creek Building']);
+  });
+
+  it('stamps userRole from the door-grant rows (Guest === 2)', async () => {
+    const users = [ku({ userId: 'u1', username: 'guest@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () => pageResp([{ DoorID: 1, UserRole: 2 }], 1));
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.userRole).toBe(2);
+  });
+
+  it('leaves userRole unset when the user has no door rows (role unreadable)', async () => {
+    // A Kindoo Manager / non-door-access account: the fetch succeeds but
+    // returns no rows, so no UserRole is carried. userRole stays
+    // undefined → the detector skips grant-based reconciliation.
+    const users = [ku({ userId: 'u1', username: 'manager@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () => pageResp([], 0));
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.derivedBuildings).toEqual([]);
+    expect(enriched[0]?.directGrantBuildings).toEqual([]);
+    expect(enriched[0]?.userRole).toBeUndefined();
   });
 
   it('a rule-only door is in derivedBuildings but NOT directGrantBuildings', async () => {
@@ -383,6 +423,9 @@ describe('enrichUsersWithDerivedBuildings', () => {
     );
     expect(enriched[0]?.derivedBuildings).toBeNull();
     expect(enriched[0]?.directGrantBuildings).toBeNull();
+    // Fetch FAILED — userRole stays unset, so the detector skips
+    // grant-based reconciliation (consistent with the null derivation guard).
+    expect(enriched[0]?.userRole).toBeUndefined();
   });
 
   it('reports progress after each completed user', async () => {
