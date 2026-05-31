@@ -192,14 +192,31 @@ describe('SyncPanel', () => {
     expect(enrichUsersWithDerivedBuildingsMock).toHaveBeenCalledTimes(1);
   });
 
-  it('a non-Guest (userRole stamped by enrichment) with an auto seat surfaces NO row', async () => {
+  it('a non-Guest (userRole=0 stamped by enrichment) with an auto seat surfaces NO row', async () => {
     // End-to-end through the orchestrator: a Kindoo Manager (UserRole 0)
     // whose Description matches an auto SBA seat must NOT produce a
     // type-mismatch / buildings-mismatch row. The role is carried on the
-    // per-user door fetch and stamped during enrichment (mocked here);
-    // the detector skips by role. Placeholder email/name.
+    // per-user door fetch and stamped during enrichment (mocked here).
+    //
+    // The mock models a production-reachable non-Guest that the ROLE GATE
+    // (not the null guard) is what skips: the manager holds a door row
+    // (so userRole=0 IS readable) AND derives a building. With
+    // derivedBuildings=[Maple] differing from the auto seat's [Maple,
+    // Pine Creek], the buildings-mismatch check WOULD fire if the role
+    // gate were removed — so this test fails if the gate regresses.
+    // Placeholder email/name.
     const user = userEvent.setup();
     const b = bundle();
+    b.wards.push({
+      ward_code: 'PC',
+      ward_name: 'Pine Creek Ward',
+      building_name: 'Pine Creek Building',
+    } as never);
+    b.buildings.push({
+      building_id: 'pinecreek',
+      building_name: 'Pine Creek Building',
+      kindoo_rule: { rule_id: 6249, rule_name: 'Pine Creek Doors' },
+    } as never);
     b.stakeCallingTemplates.push({ calling_name: 'Stake Clerk' } as never);
     b.seats.push({
       member_canonical: 'manager@example.com',
@@ -208,7 +225,7 @@ describe('SyncPanel', () => {
       scope: 'stake',
       type: 'auto',
       callings: ['Stake Clerk'],
-      building_names: ['Maple Building'],
+      building_names: ['Maple Building', 'Pine Creek Building'],
       duplicate_grants: [],
     } as never);
     getSyncDataMock.mockResolvedValue(b);
@@ -222,9 +239,16 @@ describe('SyncPanel', () => {
         accessSchedules: [],
       },
     ]);
-    // Enrichment stamps userRole=0 (non-Guest) from the door fetch.
+    // Realistic non-Guest enrichment: userRole=0 read off a door row, a
+    // derived building present (differs from the seat → would be a
+    // buildings-mismatch but for the role gate).
     enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
-      users.map((u: Record<string, unknown>) => ({ ...u, userRole: 0 })),
+      users.map((u: Record<string, unknown>) => ({
+        ...u,
+        userRole: 0,
+        derivedBuildings: ['Maple Building'],
+        directGrantBuildings: [],
+      })),
     );
     await renderSync();
     await user.click(screen.getByTestId('sba-sync-run'));
