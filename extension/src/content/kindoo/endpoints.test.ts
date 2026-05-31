@@ -8,14 +8,11 @@ import { KindooApiError } from './client';
 import {
   checkUserType,
   editUser,
-  extractRolesFromBody,
-  fetchUserRoles,
   getEnvironmentRuleWithEntryPoints,
   getEnvironments,
   getEnvironmentRules,
   getUserAccessRulesWithEntryPoints,
   inviteUser,
-  KINDOO_GUEST_ROLE,
   listAllEnvironmentUsers,
   lookupUserByEmail,
   revokeUser,
@@ -164,121 +161,6 @@ describe('checkUserType', () => {
     const fetchImpl = vi.fn(async () => ok([{ Foo: 'Bar' }]));
     const result = await checkUserType(SESSION, 'nothing@example.com', fetchImpl);
     expect(result).toEqual({ exists: false, uid: null });
-  });
-});
-
-/** One `KindooCheckUserTypeInKindoo` array entry (placeholder data). */
-function roleEntry(email: string, role: number, over: Record<string, unknown> = {}) {
-  return {
-    EU: 'eu-id',
-    InviteType: 1,
-    UserEmail: email,
-    User: { UserRole: role, Username: email, ...over },
-  };
-}
-
-describe('extractRolesFromBody', () => {
-  it('maps canonical email → UserRole for each entry', () => {
-    const pairs = extractRolesFromBody([
-      roleEntry('guest@example.com', 2),
-      roleEntry('manager@example.com', 0),
-    ]);
-    expect(new Map(pairs)).toEqual(
-      new Map([
-        ['guest@example.com', 2],
-        ['manager@example.com', 0],
-      ]),
-    );
-  });
-
-  it('canonicalizes the keyed email (gmail dots/plus stripped)', () => {
-    const pairs = extractRolesFromBody([roleEntry('First.Last+kindoo@gmail.com', 2)]);
-    expect(pairs).toEqual([['firstlast@gmail.com', 2]]);
-  });
-
-  it('falls back to User.Username when UserEmail is absent', () => {
-    const entry = roleEntry('fallback@example.com', 2);
-    delete (entry as Record<string, unknown>).UserEmail;
-    expect(extractRolesFromBody([entry])).toEqual([['fallback@example.com', 2]]);
-  });
-
-  it('skips entries with a non-numeric or missing UserRole', () => {
-    expect(extractRolesFromBody([{ UserEmail: 'x@example.com', User: { Username: 'x' } }])).toEqual(
-      [],
-    );
-    expect(
-      extractRolesFromBody([
-        { UserEmail: 'x@example.com', User: { UserRole: '2', Username: 'x' } },
-      ]),
-    ).toEqual([]);
-  });
-
-  it('skips entries with no resolvable email', () => {
-    expect(extractRolesFromBody([{ User: { UserRole: 2 } }])).toEqual([]);
-  });
-
-  it('returns [] for a non-array body (defensive)', () => {
-    expect(extractRolesFromBody(null)).toEqual([]);
-    expect(extractRolesFromBody({ d: [] })).toEqual([]);
-  });
-});
-
-describe('fetchUserRoles', () => {
-  it('returns a canonical-email → role map for a single chunk', async () => {
-    const fetchImpl = vi.fn(async () =>
-      ok([roleEntry('guest@example.com', 2), roleEntry('manager@example.com', 0)]),
-    );
-    const roles = await fetchUserRoles(
-      SESSION,
-      ['guest@example.com', 'manager@example.com'],
-      fetchImpl,
-    );
-    expect(roles.get('guest@example.com')).toBe(KINDOO_GUEST_ROLE);
-    expect(roles.get('manager@example.com')).toBe(0);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-  });
-
-  it('chunks emails into batches of 50 (one call per chunk)', async () => {
-    const emails = Array.from({ length: 120 }, (_, i) => `u${i}@example.com`);
-    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
-      const form = await new Request('https://test.invalid/', init).formData();
-      const chunk = JSON.parse(String(form.get('UsersEmail'))) as string[];
-      return ok(chunk.map((e) => roleEntry(e, 2)));
-    });
-    const roles = await fetchUserRoles(SESSION, emails, fetchImpl);
-    // 120 → 50 + 50 + 20 = 3 calls.
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
-    expect(roles.size).toBe(120);
-  });
-
-  it('unwraps the `{ d: [...] }` envelope', async () => {
-    const fetchImpl = vi.fn(async () => ok({ d: [roleEntry('guest@example.com', 2)] }));
-    const roles = await fetchUserRoles(SESSION, ['guest@example.com'], fetchImpl);
-    expect(roles.get('guest@example.com')).toBe(2);
-  });
-
-  it('a failing chunk leaves those roles unknown (absent) without failing the others', async () => {
-    // First chunk (50) throws; second chunk (1) succeeds. The 50 stay
-    // unknown (absent from the map); the survivor is present.
-    const emails = Array.from({ length: 51 }, (_, i) => `u${i}@example.com`);
-    let call = 0;
-    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
-      call += 1;
-      if (call === 1) throw new Error('chunk boom');
-      const form = await new Request('https://test.invalid/', init).formData();
-      const chunk = JSON.parse(String(form.get('UsersEmail'))) as string[];
-      return ok(chunk.map((e) => roleEntry(e, 2)));
-    });
-    const roles = await fetchUserRoles(SESSION, emails, fetchImpl);
-    expect(roles.has('u0@example.com')).toBe(false); // in the failed chunk
-    expect(roles.get('u50@example.com')).toBe(2); // in the surviving chunk
-  });
-
-  it('returns an empty map for no emails (no calls)', async () => {
-    const fetchImpl = vi.fn();
-    const roles = await fetchUserRoles(SESSION, [], fetchImpl as unknown as typeof fetch);
-    expect(roles.size).toBe(0);
-    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
@@ -863,6 +745,8 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       AccessScheduleID: 0,
       EUID: 'eu1',
       UserID: 'u1',
+      // Guest by default; every RulesList row carries the denormalized role.
+      UserRole: 2,
       ...over,
     };
   }
@@ -901,7 +785,8 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       ),
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result.map((r) => r.doorId).sort()).toEqual([1001, 1002, 2001]);
+    expect(result.rows.map((r) => r.doorId).sort()).toEqual([1001, 1002, 2001]);
+    expect(result.userRole).toBe(2);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -919,10 +804,10 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       ),
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(2);
-    expect(result.map((r) => r.doorId).sort()).toEqual([1001, 1002]);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows.map((r) => r.doorId).sort()).toEqual([1001, 1002]);
     // Door 1001 had only rule rows → stays rule-derived.
-    expect(result.find((r) => r.doorId === 1001)?.accessScheduleId).not.toBe(0);
+    expect(result.rows.find((r) => r.doorId === 1001)?.accessScheduleId).not.toBe(0);
   });
 
   it('prefers the direct grant when a door has both a rule row and a direct row', async () => {
@@ -939,8 +824,8 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       ),
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.accessScheduleId).toBe(0);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.accessScheduleId).toBe(0);
   });
 
   it('keeps a direct grant when the direct row arrives first', async () => {
@@ -954,8 +839,8 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       ),
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.accessScheduleId).toBe(0);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.accessScheduleId).toBe(0);
   });
 
   it('pages with start += 40 until a short page terminates', async () => {
@@ -975,7 +860,7 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       return page(rows, 50);
     });
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(50);
+    expect(result.rows).toHaveLength(50);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     const calls = fetchImpl.mock.calls as unknown as Array<[unknown, RequestInit]>;
     const starts = await Promise.all(
@@ -997,21 +882,36 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       return page(rows, 40);
     });
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(40);
+    expect(result.rows).toHaveLength(40);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to a bare-array response shape', async () => {
     const fetchImpl = vi.fn(async () => ok([row({ DoorID: 9999 })]));
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.doorId).toBe(9999);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.doorId).toBe(9999);
   });
 
-  it('returns empty when first page is empty', async () => {
+  it('returns empty rows when first page is empty', async () => {
     const fetchImpl = vi.fn(async () => page([], 0));
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result).toEqual([]);
+    expect(result.rows).toEqual([]);
+    expect(result.userRole).toBeNull();
+  });
+
+  it('reads UserRole off the first row that carries one (manager === 0)', async () => {
+    const fetchImpl = vi.fn(async () =>
+      page([row({ DoorID: 1001, UserRole: 0 }), row({ DoorID: 1002, UserRole: 0 })], 2),
+    );
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result.userRole).toBe(0);
+  });
+
+  it('leaves userRole null when no row carries a numeric UserRole', async () => {
+    const fetchImpl = vi.fn(async () => page([row({ DoorID: 1001, UserRole: undefined })], 1));
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result.userRole).toBeNull();
   });
 });
 

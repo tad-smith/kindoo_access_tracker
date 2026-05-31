@@ -25,7 +25,6 @@
 // by the v2.2 scope-aware remove flow alongside `revokeUser` (full
 // wipe when the seat has no buildings left).
 
-import { canonicalEmail } from '@kindoo/shared';
 import { postKindoo, KindooApiError } from './client';
 import type { KindooSession } from './auth';
 
@@ -234,53 +233,28 @@ export interface KindooEnvironmentUser {
    */
   directGrantBuildings?: string[] | null;
   /**
-   * Kindoo seat role from the batched `KindooCheckUserTypeInKindoo`
-   * lookup (`fetchUserRoles`), stamped onto each user by the Sync
-   * orchestrator BEFORE `detect()`. **Guest === 2** (the role SBA
-   * provisions seats as, and the invite dropdown's "Guest"); managers /
-   * admins are other values (the staging manager came back `0`).
+   * Kindoo seat role, stamped onto each user before `detect()` from a
+   * per-user call the sync ALREADY makes (no extra request — see
+   * `KINDOO_GUEST_ROLE`). **Guest === 2** (the role SBA provisions seats
+   * as, and the invite dropdown's "Guest"); managers / admins are other
+   * values (the staging manager came back `0`).
    *
-   * This is the PRIMARY scope signal for grant-based reconciliation:
-   * the grant-derived `type-mismatch` (promote/demote) and
+   * This is THE scope signal for grant-based reconciliation: the
+   * grant-derived `type-mismatch` (promote/demote) and
    * `buildings-mismatch` apply ONLY to Guests. A non-Guest (Manager /
-   * admin) is skipped entirely — they have no guest door footprint, so
+   * admin) is skipped entirely — they are not SBA-owned door grants, so
    * the church-direct-grant chain would misread absence of grants as a
    * revoked seat (a real staging false-positive: a Stake Clerk manager
    * whose Description parsed and matched an auto seat).
    *
    *   - `2`         — Guest; in scope for grant-based reconciliation.
    *   - other value — non-Guest; skip both grant-based checks, no row.
-   *   - `undefined` — role lookup failed / chunk errored / pre-Phase-2
-   *     caller. The detector falls back to the `hasNoDoorFootprint`
-   *     heuristic rather than promote/demote on an unknown role.
+   *   - `undefined` — role couldn't be read (empty `RulesList` / failed
+   *     fetch), or a pre-Phase-2 caller. The detector SKIPS
+   *     (`undefined !== 2`) — the safe default; never promote/demote a
+   *     user we can't classify.
    */
   userRole?: number;
-  /**
-   * `true` when the per-user door fetch SUCCEEDED but returned zero
-   * doors of ANY kind (no rule-derived AND no direct grants). Set by the
-   * Sync orchestrator alongside `derivedBuildings` from the same fetch.
-   * Distinct from `derivedBuildings === null` (the fetch FAILED — we
-   * can't tell): here the fetch succeeded and the user simply holds no
-   * Kindoo doors.
-   *
-   * FALLBACK-only signal for the grant-reconciliation skip: `userRole`
-   * is the primary discriminator, but when the role lookup couldn't
-   * resolve a user (`userRole === undefined`) the detector uses this
-   * door-footprint heuristic instead of promote/demoting on an unknown
-   * role. Not inferable from `directGrantBuildings === []` alone (a
-   * guest with only rule-derived doors has `directGrantBuildings === []`
-   * yet a real footprint), nor from `derivedBuildings === []` (the user
-   * may hold doors that map to no SBA-tracked building); only the raw
-   * door-row count distinguishes the two, so it rides as its own flag.
-   *
-   *   - `true`  — fetch succeeded, zero door rows. Skip (fallback path).
-   *   - `false` — fetch succeeded, ≥1 door row.
-   *   - `undefined` — fetch was skipped (non-Guest — door fetch elided
-   *     since role already decided the skip) or failed (`derivedBuildings`
-   *     null), or the user was never enriched (pre-Phase-2 callers /
-   *     tests). Treated as "has footprint" in the fallback path.
-   */
-  hasNoDoorFootprint?: boolean;
   /** Anything else Kindoo returns. */
   [k: string]: unknown;
 }
@@ -385,91 +359,15 @@ export async function checkUserType(
 /**
  * Kindoo seat role: **Guest === 2** (the role SBA provisions seats as,
  * and the invite dropdown's "Guest"). Managers / admins are other
- * values. Grant-based reconciliation applies only to Guests.
+ * values (the staging manager came back `0`). Grant-based reconciliation
+ * applies only to Guests — see `detector.ts` `skipGrantReconciliation`.
+ *
+ * The role rides on a per-user call the sync ALREADY makes (the door
+ * grants response, denormalized on every `RulesList` row), so no extra
+ * request is needed; `getUserAccessRulesWithEntryPoints` surfaces it and
+ * the enrichment loop stamps `KindooEnvironmentUser.userRole`.
  */
 export const KINDOO_GUEST_ROLE = 2;
-
-/** One email→role chunk; Kindoo's per-page size for the listing too. */
-const ROLE_LOOKUP_CHUNK_SIZE = 50;
-
-/**
- * Batched seat-role lookup. Wraps `KindooCheckUserTypeInKindoo` — the
- * SAME endpoint as `checkUserType`, but `UsersEmail` is a JSON ARRAY, so
- * we send up to `ROLE_LOOKUP_CHUNK_SIZE` emails per call and read the
- * `UserRole` out of each entry. ~313 users → ~7 calls, not per-user.
- *
- * Response (unwrapped) is an ARRAY, one entry per queried email:
- * `[{ EU, InviteType, User: { UserRole, Username, … }, UserEmail }, …]`.
- * Role = `entry.User.UserRole`; we key by `entry.UserEmail` (canonical),
- * falling back to `entry.User.Username` when `UserEmail` is absent.
- *
- * Returns a `Map<canonicalEmail, UserRole>`. An email missing from the
- * map = role unknown (entry absent, or its chunk errored) — the caller
- * MUST treat unknown as "don't promote/demote" (the detector falls back
- * to the door-footprint heuristic). On a chunk error we log with the
- * `[sba-ext]` prefix and continue; one chunk's blip never fails sync and
- * never silently downgrades the surviving chunks.
- *
- * Pure I/O over the chunked endpoint; the role-extraction parse
- * (`extractRolesFromBody`) is split out and unit-tested.
- */
-export async function fetchUserRoles(
-  session: KindooSession,
-  emails: string[],
-  fetchImpl?: typeof fetch,
-): Promise<Map<string, number>> {
-  const roles = new Map<string, number>();
-  for (let i = 0; i < emails.length; i += ROLE_LOOKUP_CHUNK_SIZE) {
-    const chunk = emails.slice(i, i + ROLE_LOOKUP_CHUNK_SIZE);
-    if (chunk.length === 0) continue;
-    try {
-      const raw = await postKindoo(
-        'KindooCheckUserTypeInKindoo',
-        session,
-        { UsersEmail: JSON.stringify(chunk) },
-        fetchImpl,
-      );
-      for (const [canon, role] of extractRolesFromBody(unwrapAspNet(raw))) {
-        roles.set(canon, role);
-      }
-    } catch (err) {
-      console.log(
-        `[sba-ext] fetchUserRoles: chunk of ${chunk.length} failed; those roles stay unknown. ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  }
-  return roles;
-}
-
-/**
- * Parse the `KindooCheckUserTypeInKindoo` array body into
- * canonical-email → `UserRole` pairs. Tolerant of shape drift: skips
- * entries with no numeric `User.UserRole` or no resolvable email, and
- * accepts a bare array or the `{ d: [...] }` envelope (caller unwraps
- * the envelope; this just iterates an array). Pure — no I/O.
- */
-export function extractRolesFromBody(body: unknown): Array<[string, number]> {
-  if (!Array.isArray(body)) return [];
-  const out: Array<[string, number]> = [];
-  for (const entry of body) {
-    if (typeof entry !== 'object' || entry === null) continue;
-    const e = entry as Record<string, unknown>;
-    const user =
-      typeof e.User === 'object' && e.User !== null ? (e.User as Record<string, unknown>) : null;
-    const role = user?.UserRole;
-    if (typeof role !== 'number') continue;
-    const rawEmail =
-      (typeof e.UserEmail === 'string' && e.UserEmail.length > 0 ? e.UserEmail : null) ??
-      (user && typeof user.Username === 'string' && user.Username.length > 0
-        ? user.Username
-        : null);
-    if (!rawEmail) continue;
-    out.push([canonicalEmail(rawEmail), role]);
-  }
-  return out;
-}
 
 /**
  * Invite a single user to the site. Wraps
@@ -928,13 +826,22 @@ export interface UserDoorGrantRow {
  * `getUserDoorIds` while making the direct-grant signal
  * order-independent for the grant-based seat-type detector (a rule row
  * arriving before the direct row must not mask the direct grant).
+ *
+ * **Also surfaces the user's Kindoo seat role.** Every `RulesList` row
+ * carries a denormalized `UserRole` (Guest === 2; managers / admins are
+ * other values, e.g. 0). We return the first numeric one seen across all
+ * pages — no extra request. `null` when the user has no door rows (the
+ * `RulesList` is empty), which the Sync detector treats as "skip"
+ * (`undefined !== 2`) — never demote a user it can't classify. The role
+ * rides alongside the door rows in the return object rather than on each
+ * `UserDoorGrantRow` (it's per-user, not per-door).
  */
 export async function getUserAccessRulesWithEntryPoints(
   session: KindooSession,
   userId: string,
   eid: number,
   fetchImpl?: typeof fetch,
-): Promise<UserDoorGrantRow[]> {
+): Promise<{ rows: UserDoorGrantRow[]; userRole: number | null }> {
   const PAGE_SIZE = 40;
   // Safety cap. A user with hundreds of doors would be an outlier; the
   // cap stops a wire mismatch from spinning forever.
@@ -945,6 +852,8 @@ export async function getUserAccessRulesWithEntryPoints(
   const byDoor = new Map<number, UserDoorGrantRow>();
   let start = 0;
   let total: number | null = null;
+  // First numeric `UserRole` seen on any row (denormalized per-user).
+  let userRole: number | null = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const raw = await postKindoo(
       'KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints',
@@ -980,6 +889,11 @@ export async function getUserAccessRulesWithEntryPoints(
     for (const entry of list) {
       if (typeof entry !== 'object' || entry === null) continue;
       const r = entry as Record<string, unknown>;
+      // Capture the denormalized per-user role off the first row that
+      // carries a numeric one (every row repeats it).
+      if (userRole === null && typeof r.UserRole === 'number') {
+        userRole = r.UserRole;
+      }
       const did = r.DoorID;
       if (typeof did !== 'number') continue;
       const asid = typeof r.AccessScheduleID === 'number' ? r.AccessScheduleID : 0;
@@ -996,7 +910,7 @@ export async function getUserAccessRulesWithEntryPoints(
     start += PAGE_SIZE;
     if (total !== null && start >= total) break;
   }
-  return Array.from(byDoor.values());
+  return { rows: Array.from(byDoor.values()), userRole };
 }
 
 /**

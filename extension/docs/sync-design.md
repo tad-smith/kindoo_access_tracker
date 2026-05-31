@@ -18,7 +18,7 @@ This doc covers Phase 1 in detail. Phase 2 is outlined and gets its own design p
 3. **Trigger:** explicit operator click only. No periodic/background sync.
 4. **Performance:** batch read all data, render the report in one shot when reads complete. Show a spinner during the read. No streaming.
 5. **Unparseable descriptions** (don't match `Scope (Calling)[ | Scope (Calling)]`): assume **manual seat with unknown scope** and **flag for review**. Operator decides what to do.
-6. **Kindoo Manager accounts** (manager's own account + any other Kindoo Manager): their descriptions *often* don't fit the convention (e.g. `Kindoo Manager - Stake Clerk account`), so they typically fall through to "unparseable" + flagged for review naturally. **But this is not guaranteed** — a manager whose Description happens to parse (e.g. `Colorado Springs North Stake (Stake Clerk)`, a real staging case) and matches an SBA seat would otherwise be subjected to grant-based type / buildings reconciliation and falsely demoted (a manager has no guest door footprint, so the church-direct-grant chain reads as "access revoked"). **Managers are now detected by their Kindoo seat role, not assumed-unparseable.** Grant-based reconciliation (`type-mismatch` promote/demote AND `buildings-mismatch`) applies ONLY to **Guests** (`UserRole === 2` — the role SBA provisions seats as); every non-Guest (Manager / admin, e.g. the staging manager's `UserRole: 0`) is skipped entirely, no row. The role comes from a **batched** `KindooCheckUserTypeInKindoo` lookup (`fetchUserRoles`) — `UsersEmail` is a JSON array, so ~313 users resolve in ~7 chunked calls, not per-user. The door-footprint heuristic is retained only as the **fallback for users whose role couldn't be fetched** (we never promote/demote on an unknown role). See the "Role-based grant-reconciliation scope" implementation note under Stage 1.
+6. **Kindoo Manager accounts** (manager's own account + any other Kindoo Manager): their descriptions *often* don't fit the convention (e.g. `Kindoo Manager - Stake Clerk account`), so they typically fall through to "unparseable" + flagged for review naturally. **But this is not guaranteed** — a manager whose Description happens to parse (e.g. `Colorado Springs North Stake (Stake Clerk)`, a real staging case) and matches an SBA seat would otherwise be subjected to grant-based type / buildings reconciliation and falsely demoted (a manager has no guest door grants, so the church-direct-grant chain reads as "access revoked"). **Managers are now detected by their Kindoo seat role, not assumed-unparseable.** Grant-based reconciliation (`type-mismatch` promote/demote AND `buildings-mismatch`) applies ONLY to **Guests** (`UserRole === 2` — the role SBA provisions seats as); every non-Guest (Manager / admin, e.g. the staging manager's `UserRole: 0`) is skipped entirely, no row. The role rides on a **per-user call the sync already makes** (no extra request — it's denormalized on every `RulesList` row of the door-grants response) and is stamped onto `KindooEnvironmentUser.userRole`. An unreadable role (empty `RulesList` / failed fetch → `userRole` unset) also skips (`undefined !== 2`) — the safe default; we never promote/demote a user we can't classify. See the "Role-based grant-reconciliation scope" implementation note under Stage 1.
 7. **No backend changes in Phase 1.** All reads go through existing collection-level Firestore reads (already allowed for managers) + the existing paginated Kindoo `GetEnvironmentUsersLight` endpoint.
 
 ## Phase 1 — Read-only sync report
@@ -118,7 +118,7 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 | no seat | Kindoo user present | `kindoo-only` |
 | seat | Kindoo user, unparseable | `kindoo-unparseable` (flag for review) |
 | seat | Kindoo user, parsed primary scope ≠ seat.scope | `scope-mismatch` |
-| seat (any type) | Kindoo user, non-Guest (`UserRole !== 2`), OR role unknown + `hasNoDoorFootprint` | (both type-mismatch AND buildings-mismatch skipped — not an SBA-owned Guest seat, see "Role-based grant-reconciliation scope") |
+| seat (any type) | Kindoo user, `userRole !== 2` (non-Guest, OR role unreadable) | (both type-mismatch AND buildings-mismatch skipped — not a confirmed SBA-owned Guest seat, see "Role-based grant-reconciliation scope") |
 | seat (manual/auto, not temp) | grant-based promote/demote — see Stage 1 (c) | `type-mismatch` |
 | seat (any type) | Kindoo user, `derivedBuildings` ≠ seat.building_names | `buildings-mismatch` |
 | seat (manual/temp) | Kindoo user, `derivedBuildings === null`, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` (AccessSchedules fallback) |
@@ -441,9 +441,8 @@ independent of the detector track (which reuses `applyTypeMismatch`).
 (`UserDoorGrantRow.accessScheduleId`); the detector work was to stop collapsing it and partition
 direct from rule-derived (see "Confirmed — the data is already in hand" above). **Follow-up:** the
 demote false-fired on Kindoo Managers whose Description parsed; the detector now scopes both grant
-checks to Guests (`UserRole === 2`) via a batched `fetchUserRoles` lookup, with the door-footprint
-flag (`hasNoDoorFootprint`) as the role-unknown fallback — see the "Role-based grant-reconciliation
-scope" implementation note below.
+checks to Guests (`UserRole === 2`), reading the role off a per-user call the sync already makes —
+see the "Role-based grant-reconciliation scope" implementation note below.
 
 (c) **Switch classification** (extension) — **SHIPPED (PR #179)**. `detector.ts` `type-mismatch`
 emits promote/demote rows driven by the grant predicate, not `intended.type` vs stored type.
@@ -560,46 +559,40 @@ demoted either.
 shipped in #179 read "auto seat + church direct grants gone ⇒ demote" off `directGrantBuildings`.
 That false-fires on a Kindoo **Manager** whose Description *parses* (so Locked-in decision #6's
 unparseable fall-through doesn't save them — real staging case: `Colorado Springs North Stake (Stake
-Clerk)`, `UserRole: 0`, matching a stake-scope auto seat). A manager legitimately has **no guest
-door footprint**, so the per-user door fetch returns zero doors → `directGrantBuildings === []` →
-`!isChurchBacked` → a spurious demote; guarding only the demote then flips them to a spurious
-`buildings-mismatch` (`derivedBuildings === []` vs the seat's buildings).
+Clerk)`, `UserRole: 0`, matching a stake-scope auto seat). A manager has no guest door grants, so
+the per-user door fetch returns nothing → `directGrantBuildings === []` → `!isChurchBacked` → a
+spurious demote; guarding only the demote then flips them to a spurious `buildings-mismatch`
+(`derivedBuildings === []` vs the seat's buildings).
 
-**Both grant checks consult ONE predicate, `skipGrantReconciliation(kuser)`**, so they can never
-disagree (guarding only one flips the user to the other's spurious row). The detector skips **both**
-`type-mismatch` (promote/demote) and `buildings-mismatch` when it returns `true`, surfacing **no
-row** for these accounts (a `scope-mismatch` or the additive AUTO-only `extra-kindoo-calling` can
-still fire, since neither is grant-provenance reconciliation).
+**The fix is one predicate, `skipGrantReconciliation(kuser)`**, that both grant checks consult — so
+they can never disagree (guarding only one flips the user to the other's spurious row). The detector
+skips **both** `type-mismatch` (promote/demote) and `buildings-mismatch` when it returns `true`,
+surfacing **no row** (a `scope-mismatch` or the additive AUTO-only `extra-kindoo-calling` can still
+fire, since neither is grant-provenance reconciliation).
 
-**Primary signal: the Kindoo seat role.** Grant-based reconciliation applies ONLY to **Guests**
-(`UserRole === KINDOO_GUEST_ROLE`, i.e. 2 — the role SBA provisions seats as, and the invite
-dropdown's "Guest"). Any known non-Guest (`UserRole !== 2` — Manager / admin) is skipped outright;
-managers / admins are not SBA-owned door grants. The role comes from `fetchUserRoles`
-(`endpoints.ts`), a **batched** wrapper over `KindooCheckUserTypeInKindoo` — the same endpoint as
-`checkUserType`, but `UsersEmail` is a JSON **array**, so we chunk emails (**50 per call**, matching
-the listing pagination) and read `entry.User.UserRole` keyed by `entry.UserEmail`. ~313 users → ~7
-calls, not per-user. The orchestrator (`SyncPanel`) runs it after the user list and stamps
-`userRole` onto each user before `detect()`. A chunk that errors leaves those emails out of the map
-(role unknown) and logs `[sba-ext]`; it never fails the sync.
+**The predicate is the Kindoo seat role, and only that:** `kuser.userRole !== KINDOO_GUEST_ROLE`
+(Guest === 2 — the role SBA provisions seats as, and the invite dropdown's "Guest"). Grant-based
+reconciliation applies ONLY to Guests; any non-Guest (Manager / admin, e.g. the staging manager's
+`0`) is skipped — managers / admins are not SBA-owned door grants, so their grant shape is none of
+our business. **The role rides on a per-user call the sync already makes — no extra request:** it is
+denormalized on every `RulesList` row of the door-grants response
+(`KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints` →
+`getUserAccessRulesWithEntryPoints`, which returns the first numeric `UserRole` it sees alongside the
+door rows). `enrichUsersWithDerivedBuildings` stamps `KindooEnvironmentUser.userRole` so the
+detector has it on every user before `detect()` runs.
 
-**Fallback signal (role unknown): the door footprint.** When the role lookup couldn't resolve a
-user (`userRole === undefined` — chunk errored / entry absent), we do NOT promote/demote on an
-unknown role; we fall back to `hasNoDoorFootprint`, set by `enrichUsersWithDerivedBuildings` as
-`(all.size === 0)` from the per-user door fetch — `true` iff the fetch SUCCEEDED and returned zero
-door rows of any kind. The footprint flag keys off the raw total door-row count, NOT an empty
-derived set, because two empty-derived shapes still have a real footprint and MUST still be in scope:
-a guest holding only **rule-derived** doors has `directGrantBuildings === []`, and a user holding
-doors that map to no SBA building has `derivedBuildings === []`. Only `all.size` distinguishes "zero
-doors" from "doors that don't map."
+**`undefined` role → skip** (the safe default): an empty `RulesList` or a failed door fetch leaves
+`userRole` unset, and `undefined !== 2` skips. We never promote/demote a user we can't classify.
+This is consistent with the per-check `directGrantBuildings === null` / `derivedBuildings === null`
+skips (a failed fetch can't determine the building set either). The trade-off — a brand-new Guest
+with no door rows yet won't surface a row until the role resolves — is acceptable; re-running Sync
+resolves it.
 
-**Door-fetch optimization.** `enrichUsersWithDerivedBuildings` takes `skipDoorFetchForNonGuests`
-(the orchestrator passes `true`): it elides the per-user door fetch for any user whose `userRole` is
-a known non-Guest — they hold no SBA door grants and are skipped by role anyway, so the round-trip
-would be wasted. Unknown-role users are still fetched (they need the footprint fallback).
-
-These skip causes stay distinct from the per-check `null` guards (`directGrantBuildings === null` /
-`derivedBuildings === null`), which cover a **failed door fetch** ("can't determine the building
-set") and apply independently inside each check.
+**A real Guest (`UserRole === 2`) with zero CURRENT grants correctly demotes** (the church revoked
+access) — we do NOT suppress that. Only non-Guests / unreadable-role users are out of scope. There
+is no door-footprint heuristic: the role is a clean, authoritative signal, so the earlier
+"`hasNoDoorFootprint`" fallback was removed (operator decision 2026-05-30) in favour of the simpler
+role gate.
 
 ### Stage 2 — automate promote (after Stage 1 validates the detector in production)
 

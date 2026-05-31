@@ -31,14 +31,9 @@
 // Design doc: `extension/docs/sync-design.md`.
 
 import { useCallback, useMemo, useState } from 'react';
-import { canonicalEmail } from '@kindoo/shared';
 import { ExtensionApiError, getSyncData, type SyncDataBundle } from '../lib/extensionApi';
 import { readKindooSession, type KindooSessionError } from '../content/kindoo/auth';
-import {
-  fetchUserRoles,
-  getEnvironments,
-  listAllEnvironmentUsers,
-} from '../content/kindoo/endpoints';
+import { getEnvironments, listAllEnvironmentUsers } from '../content/kindoo/endpoints';
 import type { KindooEnvironment } from '../content/kindoo/endpoints';
 import { KindooApiError } from '../content/kindoo/client';
 import {
@@ -175,27 +170,12 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
       const ruleIds = collectRuleIds(siteBuildings);
       const ruleDoorMap = await buildRuleDoorMap(session, session.eid, ruleIds);
 
-      // Phase B.5: batched seat-role lookup. ~313 emails → ~7 chunked
-      // `KindooCheckUserTypeInKindoo` calls. Grant-based reconciliation
-      // (promote/demote + buildings-mismatch) applies only to Guests
-      // (UserRole === 2); stamping the role lets the detector skip
-      // non-Guests (Kindoo Managers / admins) and lets the door fetch
-      // below elide them. An email missing from the map = unknown role
-      // → the detector falls back to the door-footprint heuristic.
-      const roleByEmail = await fetchUserRoles(
-        session,
-        kindooUsers.map((u) => u.username),
-      );
-      for (const user of kindooUsers) {
-        const role = roleByEmail.get(canonicalEmail(user.username));
-        if (role !== undefined) user.userRole = role;
-      }
-
       // Phase C: enrich each user with derivedBuildings. ~313 calls
       // at concurrency=4; the operator sees "Reading Kindoo user N of
-      // M…" tick along. `skipDoorFetchForNonGuests` elides the fetch for
-      // known non-Guests — they hold no SBA door grants and the detector
-      // skips them by role, so the round-trip would be wasted.
+      // M…" tick along. The same per-user door fetch also carries the
+      // user's Kindoo seat role (`userRole`); enrichment stamps it so
+      // the detector can scope grant-based reconciliation to Guests
+      // (`UserRole === 2`) — see `skipGrantReconciliation`.
       const enriched = await enrichUsersWithDerivedBuildings(
         session,
         session.eid,
@@ -204,7 +184,6 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
         siteBuildings,
         {
           concurrency: 4,
-          skipDoorFetchForNonGuests: true,
           onProgress: (completed, total) => {
             if (completed === total || completed === 1 || completed % PROGRESS_UPDATE_EVERY === 0) {
               setStep({

@@ -421,55 +421,38 @@ export function grantsBackAuto(
  * spurious row). Returning `true` means: emit neither grant-based row
  * for this user.
  *
+ * **The signal is the Kindoo seat role, and only that.** Grant-based
+ * reconciliation applies ONLY to **Guests** (`UserRole ===
+ * KINDOO_GUEST_ROLE`, i.e. 2 — the role SBA provisions seats as). Any
+ * non-Guest is skipped: managers / admins are not SBA-owned door grants,
+ * so their grant shape is none of our business. `userRole` is stamped
+ * onto each user before `detect()` from a per-user call the sync already
+ * makes (no extra request — see `KINDOO_GUEST_ROLE` in `endpoints.ts`).
+ *
  * The motivating case is a Kindoo **Manager** whose Description parses
  * cleanly and matches an SBA auto seat (so Locked-in decision #6's
  * unparseable fall-through doesn't catch them — real staging case: a
  * Stake Clerk manager, `UserRole: 0`). A manager has no guest door
- * footprint, so the church-direct-grant chain reads as "access revoked"
- * and would falsely demote — then, if only the demote were guarded,
- * falsely flag a `buildings-mismatch`.
+ * grants, so the church-direct-grant chain reads as "access revoked" and
+ * would falsely demote — then, if only the demote were guarded, falsely
+ * flag a `buildings-mismatch`.
  *
- * **Primary signal: the Kindoo seat role.** Grant-based reconciliation
- * applies ONLY to Guests (`UserRole === KINDOO_GUEST_ROLE`, i.e. 2 — the
- * role SBA provisions seats as). Any known non-Guest is skipped outright
- * — managers / admins are not SBA-owned door grants, so their grant
- * shape is none of our business. `userRole` is stamped onto each user by
- * the orchestrator from the batched `fetchUserRoles` lookup BEFORE
- * `detect()`.
+ * **`undefined` role → skip** (the safe default): an empty `RulesList`
+ * or a failed door fetch leaves `userRole` unset, and `undefined !== 2`
+ * skips. This avoids the false-demote on a user we can't classify and is
+ * consistent with the per-check `directGrantBuildings === null` /
+ * `derivedBuildings === null` skips. The trade-off — a brand-new Guest
+ * with zero grants yet to be read won't surface a row until the role
+ * resolves — is acceptable; re-running Sync resolves it.
  *
- * **Fallback signal (role unknown): the door footprint.** When the role
- * lookup couldn't resolve a user (`userRole === undefined` — chunk
- * errored, entry absent, or a pre-Phase-2 caller), we do NOT
- * promote/demote on an unknown role; instead we fall back to
- * `hasNoDoorFootprint` (the door fetch succeeded but returned zero doors
- * of any kind ⇒ no guest footprint ⇒ skip). This keeps the original
- * heuristic as a safety net without it overriding a known role.
- *
- * NOT the same as the per-check `null` guards (`directGrantBuildings ===
- * null` / `derivedBuildings === null`), which cover a FAILED door fetch
- * ("can't determine" the building set). Those still apply independently
- * inside each check.
- *
- * `hasNoDoorFootprint` is keyed off the raw door-row count, NOT an empty
- * derived set: a guest holding only rule-derived doors has
- * `directGrantBuildings === []` yet a real footprint and MUST still
- * demote; a user holding doors that map to no SBA building has
- * `derivedBuildings === []` yet a real footprint. The flag (set in
- * `buildingsFromDoors.ts`) is the only signal that distinguishes "zero
- * doors" from "doors that don't map."
+ * A real Guest (`UserRole === 2`) with zero CURRENT grants correctly
+ * demotes (the church revoked access) — we do NOT suppress that. Only
+ * non-Guests are out of scope.
  *
  * Pure function — no I/O.
  */
-export function skipGrantReconciliation(
-  kuser: Pick<KindooEnvironmentUser, 'userRole' | 'hasNoDoorFootprint'>,
-): boolean {
-  // Primary: role known → in scope iff Guest.
-  if (typeof kuser.userRole === 'number') {
-    return kuser.userRole !== KINDOO_GUEST_ROLE;
-  }
-  // Fallback: role unknown → use the door-footprint heuristic; never
-  // promote/demote when we can't tell the role.
-  return kuser.hasNoDoorFootprint === true;
+export function skipGrantReconciliation(kuser: Pick<KindooEnvironmentUser, 'userRole'>): boolean {
+  return kuser.userRole !== KINDOO_GUEST_ROLE;
 }
 
 /**
@@ -694,11 +677,11 @@ export function detect(inputs: DetectInputs): DetectResult {
 
     // The single out-of-scope decision for BOTH grant-based checks
     // (type-mismatch + buildings-mismatch). True ⇒ emit neither: a
-    // Kindoo Manager / non-door-access account with no guest door
-    // footprint, whose grant absence is not a revoked church seat.
+    // non-Guest (Kindoo Manager / admin, `userRole !== 2`) is not an
+    // SBA-owned door grant, so its grant shape is none of our business.
     // Scope-mismatch and the additive AUTO-only extra-kindoo-calling can
     // still fire — neither is grant-provenance reconciliation. See
-    // `skipGrantReconciliation` for the full rationale + the swap point.
+    // `skipGrantReconciliation` for the full rationale.
     const skipGrantBased = skipGrantReconciliation(kuser);
 
     // 6. type-mismatch — grant-based PROMOTE / DEMOTE.
@@ -713,8 +696,8 @@ export function detect(inputs: DetectInputs): DetectResult {
     //   - auto seat + NOT church-backed → DEMOTE to `manual`.
     //   - directGrantBuildings === null (derivation failed) → skip;
     //     can't determine provenance, same as the buildings-null skip.
-    //   - skipGrantReconciliation → skip; no guest door footprint, so
-    //     grant absence isn't a revoked church seat (see that predicate).
+    //   - skipGrantReconciliation → skip; non-Guest (or role unknown),
+    //     out of scope for grant-based reconciliation (see that predicate).
     //   - temp seats are never promoted / demoted — `temp` is
     //     `IsTempUser`-driven, orthogonal to grant provenance.
     const directGrant = kuser.directGrantBuildings ?? null;
@@ -767,12 +750,12 @@ export function detect(inputs: DetectInputs): DetectResult {
     // For auto when derivation failed, leave the compare set `null` so the
     // check is skipped — unchanged auto behavior.
     //
-    // The grant-reconciliation skip short-circuits FIRST: a user with
-    // zero doors (Kindoo Manager, non-door-access account) would
-    // otherwise compare `derivedBuildings === []` against the seat's
-    // buildings and flag a spurious `[buildings] vs []` mismatch — the
-    // exact false positive guarding only the demote above would create.
-    // Their empty footprint is not "SBA's buildings are wrong"; skip.
+    // The grant-reconciliation skip short-circuits FIRST: a non-Guest
+    // (Kindoo Manager, `userRole !== 2`) would otherwise compare
+    // `derivedBuildings === []` against the seat's buildings and flag a
+    // spurious `[buildings] vs []` mismatch — the exact false positive
+    // guarding only the demote above would create. Their grant shape is
+    // not "SBA's buildings are wrong"; skip.
     let kindooBuildingsForCompare: string[] | null = null;
     if (skipGrantBased) {
       kindooBuildingsForCompare = null;

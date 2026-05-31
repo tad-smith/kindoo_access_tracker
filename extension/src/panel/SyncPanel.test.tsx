@@ -11,7 +11,6 @@ const getSyncDataMock = vi.fn();
 const readKindooSessionMock = vi.fn();
 const listAllEnvironmentUsersMock = vi.fn();
 const getEnvironmentsMock = vi.fn();
-const fetchUserRolesMock = vi.fn();
 const applyFixMock = vi.fn();
 const buildRuleDoorMapMock = vi.fn();
 const enrichUsersWithDerivedBuildingsMock = vi.fn();
@@ -36,7 +35,6 @@ vi.mock('../content/kindoo/endpoints', async () => {
     ...actual,
     listAllEnvironmentUsers: (...args: unknown[]) => listAllEnvironmentUsersMock(...args),
     getEnvironments: (...args: unknown[]) => getEnvironmentsMock(...args),
-    fetchUserRoles: (...args: unknown[]) => fetchUserRolesMock(...args),
   };
 });
 
@@ -102,7 +100,6 @@ describe('SyncPanel', () => {
     readKindooSessionMock.mockReset();
     listAllEnvironmentUsersMock.mockReset();
     getEnvironmentsMock.mockReset();
-    fetchUserRolesMock.mockReset();
     applyFixMock.mockReset();
     buildRuleDoorMapMock.mockReset();
     enrichUsersWithDerivedBuildingsMock.mockReset();
@@ -110,10 +107,6 @@ describe('SyncPanel', () => {
       ok: true,
       session: { token: 'sess', eid: 27994 },
     });
-    // Default: role lookup returns an empty map (every user's role
-    // unknown → detector falls back to the footprint heuristic). Tests
-    // that exercise role-based scoping override.
-    fetchUserRolesMock.mockResolvedValue(new Map());
     getEnvironmentsMock.mockResolvedValue([
       { EID: 27994, Name: 'CSN', TimeZone: 'Mountain Standard Time' },
     ]);
@@ -197,19 +190,14 @@ describe('SyncPanel', () => {
     // immediately into report — assert on the report instead.
     await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
     expect(enrichUsersWithDerivedBuildingsMock).toHaveBeenCalledTimes(1);
-    // Role lookup runs before enrichment, batched over the user emails.
-    expect(fetchUserRolesMock).toHaveBeenCalledTimes(1);
-    expect(fetchUserRolesMock.mock.calls[0]?.[1]).toEqual(['a@example.com', 'b@example.com']);
-    // Enrichment is asked to elide the door fetch for known non-Guests.
-    const enrichOpts = enrichUsersWithDerivedBuildingsMock.mock.calls[0]?.[5];
-    expect(enrichOpts?.skipDoorFetchForNonGuests).toBe(true);
   });
 
-  it('stamps fetched roles onto users so a non-Guest with an auto seat surfaces NO row', async () => {
+  it('a non-Guest (userRole stamped by enrichment) with an auto seat surfaces NO row', async () => {
     // End-to-end through the orchestrator: a Kindoo Manager (UserRole 0)
     // whose Description matches an auto SBA seat must NOT produce a
-    // type-mismatch / buildings-mismatch row. The role map drives the
-    // detector's skip. Placeholder email/name.
+    // type-mismatch / buildings-mismatch row. The role is carried on the
+    // per-user door fetch and stamped during enrichment (mocked here);
+    // the detector skips by role. Placeholder email/name.
     const user = userEvent.setup();
     const b = bundle();
     b.stakeCallingTemplates.push({ calling_name: 'Stake Clerk' } as never);
@@ -234,10 +222,10 @@ describe('SyncPanel', () => {
         accessSchedules: [],
       },
     ]);
-    fetchUserRolesMock.mockResolvedValue(new Map([['manager@example.com', 0]]));
-    // Enrichment leaves derived fields untouched (as the real fn would
-    // for an elided non-Guest). The detector skips by role anyway.
-    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) => users);
+    // Enrichment stamps userRole=0 (non-Guest) from the door fetch.
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
+      users.map((u: Record<string, unknown>) => ({ ...u, userRole: 0 })),
+    );
     await renderSync();
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
@@ -415,6 +403,11 @@ describe('SyncPanel', () => {
       expiryDateAtTimeZone: null,
       expiryTimeZone: 'Mountain Standard Time',
       accessSchedules: [{ ruleId: 6248 }],
+      // Guest by default → in scope for grant-based reconciliation, so
+      // the *-mismatch fix-action tests below surface their rows. Tests
+      // for non-Guests / unknown role stamp userRole via the enrichment
+      // mock instead (it spreads this user, so an explicit value wins).
+      userRole: 2,
       ...overrides,
     };
   }
