@@ -200,11 +200,13 @@ describe('SyncPanel', () => {
     //
     // The mock models a production-reachable non-Guest that the ROLE GATE
     // (not the null guard) is what skips: the manager holds a door row
-    // (so userRole=0 IS readable) AND derives a building. With
-    // derivedBuildings=[Maple] differing from the auto seat's [Maple,
-    // Pine Creek], the buildings-mismatch check WOULD fire if the role
-    // gate were removed — so this test fails if the gate regresses.
-    // Placeholder email/name.
+    // (so userRole=0 IS readable) AND derives a building. With an auto
+    // seat and directGrantBuildings=[], removing the role gate fires the
+    // type-mismatch DEMOTE branch (the seat is no longer church-backed),
+    // which short-circuits before the buildings-mismatch check — so a row
+    // appears and this test fails if the gate regresses. (derivedBuildings
+    // also differs from the seat's two buildings, but the demote preempts
+    // that comparison.) Placeholder email/name.
     const user = userEvent.setup();
     const b = bundle();
     b.wards.push({
