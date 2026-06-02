@@ -927,3 +927,10 @@ Phase: extension Sync — Grant-derived seat type (Stage 1)
 The grant-derived `type-mismatch` (T-57) intentionally skips temp seats (`sbaBlock.type === 'temp'`) and any row where `directGrantBuildings === null`. Consequence: a divergence between Kindoo's `IsTempUser` flag and the SBA seat's `temp` type — in either direction (SBA-temp vs Kindoo-permanent, or SBA-auto/manual vs Kindoo-temp) — is no longer surfaced. The pre-Stage-1 classifier-based check (`intended.type !== sbaBlock.type`) caught these.
 
 **Accepted as a known Stage-1 limitation** (operator decision, 2026-05-30): temp is an `IsTempUser` + expiry concept orthogonal to grant provenance, so folding it into the grant-based promote/demote would conflate two axes. Deferred rather than fixed. If temp drift becomes a real operational gap, add a dedicated `temp-mismatch` discrepancy row keyed on `seat.type === 'temp'` XOR `kuser.isTempUser` (independent of the grant-based type check), with its own fix semantics (Kindoo `IsTempUser` + expiry-date reconcile vs SBA seat-type change). Not in scope for Stage 1.
+
+## [T-59] Sync Kindoo-authoritative — shared-type `SbaOnlyRemovePayload` (cross-workspace)
+Status: done (2026-06-02 — PR #183)
+Owner: @backend-engineer
+Phase: extension Sync — Kindoo-authoritative
+
+Cross-workspace shared-type change landed alongside the Kindoo-authoritative Sync shift (PR #183). `packages/shared/src/types/syncApplyFix.ts` gains `SbaOnlyRemovePayload` (`{ memberEmail: string }`) and a `{ code: 'sba-only'; payload: SbaOnlyRemovePayload }` member on the `SyncApplyFixInput` union; re-exported from `packages/shared/src/types/index.ts` + `packages/shared/src/index.ts`. `SYNC_DISCREPANCY_CODES` (`packages/shared/src/systemActors.ts`) adds `'sba-only'` so the orphan-delete write stamps `SyncActor:sba-only` and renders with the automated-actor chip. Consumed by the `syncApplyFix` callable's new `sba-only` delete path (`functions/`) and the extension's `fix.ts` "Remove From SBA" dispatch. Spec / sync-design / changelog reconciled in the same PR. See `docs/changelog/sync-kindoo-authoritative.md`.

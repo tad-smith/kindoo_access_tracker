@@ -52,9 +52,8 @@ extension/
 │   │       │                      # saveAccessRule, lookupUserByEmail, revokeUser,
 │   │       │                      # listAllEnvironmentUsers (Sync, paginated)
 │   │       ├── provision.ts       # v2.2 — orchestrates add/change/remove/edit flows
-│   │       │                      # (read-first / merged-state pattern)
-│   │       ├── sync-provision.ts  # Sync Phase 2 — drives Kindoo to a single Seat
-│   │       │                      # (sba-only + *-mismatch "Update Kindoo")
+│   │       │                      # (read-first / merged-state pattern). The ONLY
+│   │       │                      # SBA → Kindoo write path; Sync never writes Kindoo.
 │   │       └── sync/              # Sync — drift detection + per-row fix dispatch
 │   │           ├── parser.ts      # Kindoo Description → resolved scope+calling segments
 │   │           ├── classifier.ts  # segment → intended seat shape (auto/manual/temp)
@@ -62,7 +61,8 @@ extension/
 │   │           ├── buildingsFromDoors.ts  # door-grant → effective rules → SBA buildings
 │   │           │                  # (true auto-user reconciliation across direct
 │   │           │                  #  + AccessRule grants)
-│   │           └── fix.ts         # Phase 2 — per-row fix dispatcher (callable | orchestrator)
+│   │           └── fix.ts         # Phase 2 — per-row fix dispatcher (SBA-side callable only;
+│   │                              # Kindoo-authoritative — sba-only deletes, mismatches Update SBA)
 │   ├── panel/
 │   │   ├── App.tsx                # React root — top-level router (stake resolution + downstream)
 │   │   ├── SignedOutPanel.tsx
