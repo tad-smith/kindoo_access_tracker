@@ -2,11 +2,15 @@
 // Phase 2 drift report. Each invocation handles one discrepancy code on
 // one seat — no bulk endpoint, no confirmation dance.
 //
-// Codes split by which side owns the write:
-//   - SBA-side  → this callable
-//   - Kindoo-side → the extension's v2.2 provision orchestrator
-// The Kindoo-side codes (`sba-only`, plus the `direction: 'sba-to-kindoo'`
-// variants of the *-mismatch codes) never reach the backend.
+// Kindoo is the authoritative source: sync never writes SBA → Kindoo.
+// Provisioning into Kindoo flows through SBA requests, not sync. Every
+// drift code is now an SBA-side mutation that flows through this
+// callable. `sba-only` is an SBA-side delete: an SBA seat with no
+// Kindoo presence is an orphan (Kindoo, the authority, doesn't have
+// it), so we delete it. (It was previously a Kindoo-side write —
+// "Provision in Kindoo" — handled by the extension and never reaching
+// the backend; the Kindoo-authoritative shift made it an SBA-side
+// "Remove From SBA" delete.)
 //
 // Per-axis single-field writes are intentional: the operator picks each
 // axis independently in the drift UI. If two axes are misaligned on the
@@ -55,6 +59,7 @@ import type {
   ExtraKindooCallingPayload,
   KindooManager,
   KindooOnlyPayload,
+  SbaOnlyRemovePayload,
   ScopeMismatchPayload,
   Seat,
   SyncApplyFixInput,
@@ -164,6 +169,8 @@ export const syncApplyFix = onCall(
         return applyTypeMismatch(stakeId, fix.payload as TypeMismatchPayload);
       case 'buildings-mismatch':
         return applyBuildingsMismatch(stakeId, fix.payload as BuildingsMismatchPayload);
+      case 'sba-only':
+        return applySbaOnlyRemove(stakeId, fix.payload as SbaOnlyRemovePayload);
       default:
         throw new HttpsError('invalid-argument', `unknown fix code: ${code}`);
     }
@@ -523,6 +530,97 @@ async function applyBuildingsMismatch(
     });
     return { success: true, seatId: canonical };
   });
+}
+
+/**
+ * `sba-only` — Kindoo-authoritative orphan delete ("Remove From SBA").
+ * The drift report found an SBA seat with no Kindoo presence; since
+ * Kindoo is the authority, the SBA seat is stale and gets removed.
+ *
+ * Mirrors `removeSeatOnRequestComplete`'s seat-removal semantics:
+ *   - No `duplicate_grants[]` (the common orphan case) → delete the
+ *     seat. To attribute the deletion to `SyncActor:sba-only` in the
+ *     audit log, we follow the Expiry precedent: stamp `lastActor`
+ *     (a bookkeeping-only write the audit trigger no-ops), then delete.
+ *     The audit trigger reads the stamped BEFORE snapshot and emits a
+ *     `delete_seat` row attributed to the Sync actor. Stamp + delete
+ *     must be two committed writes (not one transaction) — inside a
+ *     single transaction they collapse to a bare delete whose BEFORE
+ *     carries the seat's *prior* actor, mis-attributing the row.
+ *   - Has `duplicate_grants[]` → the member holds other-site / other-
+ *     scope access we must not nuke. Promote the first duplicate to
+ *     primary (same field copy the remove trigger does) instead of
+ *     deleting, in a single-doc transactional update stamped with the
+ *     Sync actor; the audit trigger fans an `update_seat` row.
+ *
+ * Does NOT touch the member's `access/{canonical}` doc — matching the
+ * remove trigger, which leaves access untouched on seat removal.
+ */
+async function applySbaOnlyRemove(
+  stakeId: string,
+  payload: SbaOnlyRemovePayload | undefined,
+): Promise<SyncApplyFixResult> {
+  if (!payload || typeof payload !== 'object') {
+    throw new HttpsError('invalid-argument', 'payload required');
+  }
+  const memberEmail = requireString(payload.memberEmail, 'memberEmail');
+  const canonical = canonicalEmail(memberEmail);
+  if (canonical === '') {
+    throw new HttpsError('invalid-argument', 'memberEmail did not canonicalize');
+  }
+
+  const db = getDb();
+  const seatRef = db.doc(`stakes/${stakeId}/seats/${canonical}`);
+  const actor = syncActor('sba-only');
+
+  const seatSnap = await seatRef.get();
+  if (!seatSnap.exists) {
+    return { success: false, error: 'seat not found' };
+  }
+  const seat = seatSnap.data() as Seat;
+  const dupes = seat.duplicate_grants ?? [];
+
+  if (dupes.length === 0) {
+    // Orphan delete. Expiry-style stamp-then-delete so the audit row is
+    // attributed to the Sync actor (the audit trigger reads BEFORE on a
+    // delete). Two committed writes — see the doc comment above.
+    await seatRef.set(
+      {
+        lastActor: { ...actor },
+        last_modified_at: FieldValue.serverTimestamp(),
+        last_modified_by: { ...actor },
+      },
+      { merge: true },
+    );
+    await seatRef.delete();
+    return { success: true, seatId: canonical };
+  }
+
+  // Multi-grant edge: the member has other grants (e.g. parallel-site
+  // access). Promote the first duplicate to primary rather than nuking
+  // it. Field copy mirrors `removeSeatOnRequestComplete`'s promote path.
+  const [promoted, ...remaining] = dupes;
+  await db.runTransaction(async (tx) => {
+    tx.update(seatRef, {
+      scope: promoted!.scope,
+      type: promoted!.type,
+      callings: promoted!.callings ?? [],
+      building_names: promoted!.building_names ?? [],
+      kindoo_site_id:
+        promoted!.kindoo_site_id !== undefined ? promoted!.kindoo_site_id : FieldValue.delete(),
+      duplicate_grants: remaining,
+      duplicate_scopes: remaining.map((d) => d.scope),
+      // `granted_by_request` justified the now-removed primary; clear it.
+      granted_by_request: FieldValue.delete(),
+      reason: promoted!.reason ?? FieldValue.delete(),
+      start_date: promoted!.start_date ?? FieldValue.delete(),
+      end_date: promoted!.end_date ?? FieldValue.delete(),
+      last_modified_at: FieldValue.serverTimestamp(),
+      last_modified_by: { ...actor },
+      lastActor: { ...actor },
+    });
+  });
+  return { success: true, seatId: canonical };
 }
 
 // ---------------------------------------------------------------------------

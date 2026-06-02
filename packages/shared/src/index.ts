@@ -55,6 +55,7 @@ export type {
   Principal,
   RequestStatus,
   RequestType,
+  SbaOnlyRemovePayload,
   ScopeMismatchPayload,
   Seat,
   SeatType,

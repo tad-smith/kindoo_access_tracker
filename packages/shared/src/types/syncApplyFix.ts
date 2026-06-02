@@ -5,9 +5,11 @@
 // minimal data needed to apply it on the SBA side. See
 // `extension/docs/sync-design.md` for the discrepancy catalogue.
 //
-// Codes split by which side gets written. Only the SBA-side-write codes
-// flow through this callable; the Kindoo-side-write codes are applied by
-// the extension's provision orchestrator and never reach the backend.
+// Kindoo is the authoritative source: sync never writes SBA → Kindoo.
+// Provisioning into Kindoo flows through SBA requests, not sync. The
+// only SBA-side mutation sync performs is to mutate or delete an
+// existing SBA seat to track Kindoo's state. Every code below flows
+// through this callable:
 //
 //   - `kindoo-only`            → create a new SBA seat.
 //   - `extra-kindoo-calling`   → append unmatched callings to an
@@ -15,6 +17,13 @@
 //   - `scope-mismatch`         → update seat `scope` only.
 //   - `type-mismatch`          → update seat `type` only.
 //   - `buildings-mismatch`     → replace seat `building_names` wholesale.
+//   - `sba-only`               → delete an orphaned SBA seat (an SBA
+//                                seat with no Kindoo presence). Kindoo
+//                                is authoritative, so the seat is stale.
+//                                Surfaced as "Remove From SBA" in the
+//                                drift UI. (Was a Kindoo-side write —
+//                                "Provision in Kindoo" — before the
+//                                Kindoo-authoritative shift.)
 //
 // Single-axis updates are intentional: the operator picks each axis
 // independently in the drift UI. If two axes are misaligned on the same
@@ -99,6 +108,13 @@ export type BuildingsMismatchPayload = {
   newBuildingNames: string[];
 };
 
+/** Payload for the `sba-only` fix. Kindoo is authoritative, so an SBA
+ * seat with no Kindoo presence is an orphan — this deletes it. */
+export type SbaOnlyRemovePayload = {
+  /** Raw (typed) email — server canonicalizes to locate the seat. */
+  memberEmail: string;
+};
+
 /** Discriminated union — one `code` + matching `payload` per call. */
 export type SyncApplyFixInput = {
   stakeId: string;
@@ -107,7 +123,8 @@ export type SyncApplyFixInput = {
     | { code: 'extra-kindoo-calling'; payload: ExtraKindooCallingPayload }
     | { code: 'scope-mismatch'; payload: ScopeMismatchPayload }
     | { code: 'type-mismatch'; payload: TypeMismatchPayload }
-    | { code: 'buildings-mismatch'; payload: BuildingsMismatchPayload };
+    | { code: 'buildings-mismatch'; payload: BuildingsMismatchPayload }
+    | { code: 'sba-only'; payload: SbaOnlyRemovePayload };
 };
 
 /** Soft-failure envelope. The callable returns `{ success: false }` for

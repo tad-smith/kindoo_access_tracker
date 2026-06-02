@@ -43,14 +43,17 @@ export const AUTOMATED_ACTOR_NAMES = [
 
 export type AutomatedActorName = (typeof AUTOMATED_ACTOR_NAMES)[number];
 
-/** Discrepancy codes that drive a `SyncActor:*` stamp. Mirrors the five
- * SBA-side-write codes in `extension/docs/sync-design.md`. */
+/** Discrepancy codes that drive a `SyncActor:*` stamp. Mirrors the
+ * SBA-side-write codes in `extension/docs/sync-design.md`. `sba-only`
+ * is an SBA-side delete (Kindoo is authoritative — an SBA seat with no
+ * Kindoo presence is an orphan); the rest mutate an existing seat. */
 export const SYNC_DISCREPANCY_CODES = [
   'kindoo-only',
   'extra-kindoo-calling',
   'scope-mismatch',
   'type-mismatch',
   'buildings-mismatch',
+  'sba-only',
 ] as const;
 
 export type SyncDiscrepancyCode = (typeof SYNC_DISCREPANCY_CODES)[number];
