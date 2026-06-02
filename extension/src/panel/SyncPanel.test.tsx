@@ -438,7 +438,7 @@ describe('SyncPanel', () => {
     };
   }
 
-  it('sba-only renders one Provision in Kindoo button', async () => {
+  it('sba-only renders one Remove From SBA button (Kindoo-authoritative)', async () => {
     const b = bundle();
     b.wardCallingTemplates.push({
       calling_name: 'Sunday School Teacher',
@@ -452,9 +452,12 @@ describe('SyncPanel', () => {
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    expect(
-      screen.getByTestId('sba-sync-fix-provision-kindoo-orphan@example.com'),
-    ).toBeInTheDocument();
+    const removeBtn = screen.getByTestId('sba-sync-fix-remove-sba-orphan@example.com');
+    expect(removeBtn).toBeInTheDocument();
+    expect(removeBtn).toHaveTextContent('Remove From SBA');
+    expect(removeBtn).toHaveClass('sba-btn-danger');
+    // The old Kindoo-side "Provision in Kindoo" button is gone.
+    expect(screen.queryByTestId('sba-sync-fix-provision-kindoo-orphan@example.com')).toBeNull();
     // kindoo-only path on this row is absent — only one button.
     expect(screen.queryByTestId('sba-sync-fix-create-sba-orphan@example.com')).toBeNull();
   });
@@ -526,7 +529,7 @@ describe('SyncPanel', () => {
     expect(screen.queryByTestId('sba-sync-row-manualextra@example.com')).toBeNull();
   });
 
-  it('scope-mismatch renders Update Kindoo + Update SBA buttons', async () => {
+  it('scope-mismatch renders only Update SBA — no Update Kindoo', async () => {
     const b = bundle();
     b.wardCallingTemplates.push({
       calling_name: 'Sunday School Teacher',
@@ -558,8 +561,8 @@ describe('SyncPanel', () => {
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    expect(screen.getByTestId('sba-sync-fix-update-kindoo-scope@example.com')).toBeInTheDocument();
     expect(screen.getByTestId('sba-sync-fix-update-sba-scope@example.com')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-sync-fix-update-kindoo-scope@example.com')).toBeNull();
   });
 
   it('type-mismatch (promote) renders only Update SBA — no Update Kindoo', async () => {
@@ -602,7 +605,7 @@ describe('SyncPanel', () => {
     expect(screen.queryByTestId('sba-sync-fix-update-kindoo-tm@example.com')).toBeNull();
   });
 
-  it('buildings-mismatch on a manual seat renders both fix buttons enabled when derivedBuildings is present', async () => {
+  it('buildings-mismatch on a manual seat renders an enabled Update SBA when derivedBuildings is present', async () => {
     const b = bundle();
     b.wards.push({
       ward_code: 'PC',
@@ -638,12 +641,11 @@ describe('SyncPanel', () => {
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    const kindooBtn = screen.getByTestId('sba-sync-fix-update-kindoo-bm@example.com');
     const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-bm@example.com');
-    expect(kindooBtn).toBeInTheDocument();
     expect(sbaBtn).toBeInTheDocument();
-    expect(kindooBtn).not.toBeDisabled();
     expect(sbaBtn).not.toBeDisabled();
+    // No Kindoo-side button under the Kindoo-authoritative model.
+    expect(screen.queryByTestId('sba-sync-fix-update-kindoo-bm@example.com')).toBeNull();
   });
 
   it('buildings-mismatch on a manual seat with null derivedBuildings disables Update SBA', async () => {
@@ -681,11 +683,11 @@ describe('SyncPanel', () => {
     expect(sbaBtn).toHaveAttribute('title', expect.stringContaining('derivation'));
   });
 
-  it('buildings-mismatch with empty derivedBuildings disables Update SBA but keeps Update Kindoo enabled', async () => {
+  it('buildings-mismatch with empty derivedBuildings disables Update SBA', async () => {
     // A member with no effective Kindoo grants derives to []. Update SBA
     // would send [] — rejected server-side — so it must be disabled, the
-    // same as the null case. Update Kindoo stays enabled: pushing SBA's
-    // buildings to Kindoo (re-granting) is still a valid action.
+    // same as the null case. (No Kindoo-side button under the
+    // Kindoo-authoritative model.)
     const b = bundle();
     b.seats.push({
       ...autoSeat('bmempty@example.com'),
@@ -713,16 +715,15 @@ describe('SyncPanel', () => {
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
     const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-bmempty@example.com');
-    const kindooBtn = screen.getByTestId('sba-sync-fix-update-kindoo-bmempty@example.com');
     expect(sbaBtn).toBeDisabled();
-    expect(kindooBtn).not.toBeDisabled();
+    expect(screen.queryByTestId('sba-sync-fix-update-kindoo-bmempty@example.com')).toBeNull();
   });
 
-  it('buildings-mismatch on an auto seat disables Update Kindoo but keeps Update SBA enabled', async () => {
+  it('buildings-mismatch on an auto seat keeps Update SBA enabled (no Update Kindoo)', async () => {
     // Auto seat in SBA with no buildings; Kindoo user's door-grant
     // derivation produced ['Maple Building'] → buildings-mismatch
-    // emitted for the auto seat. Update Kindoo is owned by Church
-    // Access Automation; Update SBA writes `derivedBuildings`.
+    // emitted for the auto seat. Update SBA writes `derivedBuildings`;
+    // there is no Kindoo-side button under the Kindoo-authoritative model.
     const b = bundle();
     b.wardCallingTemplates.push({
       calling_name: 'Sunday School Teacher',
@@ -751,18 +752,15 @@ describe('SyncPanel', () => {
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    const kindooBtn = screen.getByTestId('sba-sync-fix-update-kindoo-autobm@example.com');
     const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-autobm@example.com');
-    expect(kindooBtn).toBeDisabled();
-    expect(kindooBtn).toHaveAttribute('title', expect.stringContaining('Church Access Automation'));
     expect(sbaBtn).not.toBeDisabled();
+    expect(screen.queryByTestId('sba-sync-fix-update-kindoo-autobm@example.com')).toBeNull();
   });
 
-  it('buildings-mismatch on an auto seat with null derivedBuildings disables both buttons', async () => {
+  it('buildings-mismatch on an auto seat with null derivedBuildings disables Update SBA', async () => {
     // Defensive UI gating: if `derivedBuildings === null` for an auto
-    // buildings-mismatch row (per-user door-grant read failed), both
-    // sides lose a valid source — Update Kindoo is forbidden anyway
-    // (auto), and Update SBA can't determine the correct building set.
+    // buildings-mismatch row (per-user door-grant read failed), Update
+    // SBA can't determine the correct building set, so it's disabled.
     // The current detector skips emitting auto buildings-mismatch when
     // derivedBuildings is null, so we mock `detect` to inject the row
     // directly and verify the gating in isolation.
@@ -812,11 +810,11 @@ describe('SyncPanel', () => {
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    const kindooBtn = screen.getByTestId('sba-sync-fix-update-kindoo-autonull@example.com');
     const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-autonull@example.com');
-    expect(kindooBtn).toBeDisabled();
     expect(sbaBtn).toBeDisabled();
     expect(sbaBtn).toHaveAttribute('title', expect.stringContaining('derivation'));
+    // No Kindoo-side button under the Kindoo-authoritative model.
+    expect(screen.queryByTestId('sba-sync-fix-update-kindoo-autonull@example.com')).toBeNull();
   });
 
   it('kindoo-unparseable renders no fix buttons', async () => {

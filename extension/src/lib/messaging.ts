@@ -207,9 +207,9 @@ export interface DataGetSyncDataRequest {
  * Apply a single per-row Sync Phase 2 fix on the SBA side. The callable
  * itself stamps the seat write with the `SyncActor:<code>` sentinel;
  * the extension just shuttles the operator's discriminated payload
- * through. Kindoo-side fixes (sba-only, *-mismatch "Update Kindoo")
- * never reach this handler — they run client-side through the v2.2
- * provision orchestrator.
+ * through. Kindoo is authoritative: every fix — including the
+ * `sba-only` "Remove From SBA" delete — flows through this handler;
+ * sync never writes SBA → Kindoo.
  */
 export interface DataSyncApplyFixRequest {
   type: 'data.syncApplyFix';

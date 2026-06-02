@@ -34,7 +34,6 @@ import { useCallback, useMemo, useState } from 'react';
 import { ExtensionApiError, getSyncData, type SyncDataBundle } from '../lib/extensionApi';
 import { readKindooSession, type KindooSessionError } from '../content/kindoo/auth';
 import { getEnvironments, listAllEnvironmentUsers } from '../content/kindoo/endpoints';
-import type { KindooEnvironment } from '../content/kindoo/endpoints';
 import { KindooApiError } from '../content/kindoo/client';
 import {
   detect,
@@ -54,7 +53,6 @@ import {
   enrichUsersWithDerivedBuildings,
 } from '../content/kindoo/sync/buildingsFromDoors';
 import { identifyActiveSite, type ActiveSite } from '../content/kindoo/sync/activeSite';
-import type { KindooSession } from '../content/kindoo/auth';
 
 type Step =
   | { kind: 'idle' }
@@ -138,8 +136,11 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
       // Phase A: parallel read of SBA bundle + Kindoo bulk listing +
       // env metadata. The rule door map depends on the buildings list
       // (to know which RIDs to fetch), so it kicks off once the
-      // bundle resolves.
-      const [bundle, kindooUsers, envs] = await Promise.all([
+      // bundle resolves. `getEnvironments` validates the active session
+      // resolves to a real Kindoo environment before the enrichment
+      // loop; its result is read-only metadata (no write path consumes
+      // it under the Kindoo-authoritative model).
+      const [bundle, kindooUsers] = await Promise.all([
         getSyncData(stakeId),
         listAllEnvironmentUsers(session),
         getEnvironments(session),
@@ -196,7 +197,7 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
       );
 
       const result = detect({ ...bundle, kindooUsers: enriched, activeSite });
-      const ctx = buildDispatchContext(stakeId, bundle, envs, session);
+      const ctx: DispatchContext = { stakeId };
       const activeSiteLabel = describeActiveSite(activeSite, bundle);
       setStep({ kind: 'report', result, ctx, activeSiteLabel });
     } catch (err) {
@@ -218,26 +219,6 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
       />
     </div>
   );
-}
-
-function buildDispatchContext(
-  stakeId: string,
-  bundle: SyncDataBundle,
-  envs: KindooEnvironment[],
-  session: KindooSession,
-): DispatchContext {
-  return {
-    stakeId,
-    stake: bundle.stake,
-    wards: bundle.wards,
-    buildings: bundle.buildings,
-    // T-42: thread the foreign-site directory through so the
-    // Kindoo-side fix path can filter `unionSeatBuildings` by the
-    // active session's site.
-    kindooSites: bundle.kindooSites,
-    envs,
-    session,
-  };
 }
 
 /**
@@ -539,20 +520,10 @@ interface DiscrepancyRowProps {
 function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
   const severityClass = discrepancy.severity === 'drift' ? 'sba-badge-remove' : 'sba-badge-temp';
   const actions = fixActionsFor(discrepancy);
-  // Auto seats: Church Access Automation owns direct door grants — the
-  // extension can't write them. The Kindoo-side button is disabled on a
-  // buildings-mismatch when the SBA seat is auto. (type-mismatch no
-  // longer surfaces a Kindoo-side button at all — grants are the source
-  // of truth for type, so the only action is "Update SBA".)
-  // The SBA-side button is disabled on ANY buildings-mismatch where
+  // The "Update SBA" button is disabled on ANY buildings-mismatch where
   // `derivedBuildings` is null/undefined OR empty — door-grant derivation is
   // the only valid source, so without a non-empty result there's nothing to
   // write (null/undefined would wipe the seat; `[]` is rejected server-side).
-  // Operators should steer to "Update Kindoo" or seat removal instead.
-  // (Independent of seat type.)
-  const autoLockedKindoo =
-    discrepancy.code === 'buildings-mismatch' &&
-    (discrepancy.sba?.type === 'auto' || discrepancy.kindoo?.intendedType === 'auto');
   const autoLockedSba =
     discrepancy.code === 'buildings-mismatch' &&
     (discrepancy.kindoo?.derivedBuildings === null ||
@@ -643,7 +614,6 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
         canonical={discrepancy.canonical}
         actions={actions}
         state={state}
-        autoLockedKindoo={autoLockedKindoo}
         autoLockedSba={autoLockedSba}
         onFix={onFix}
       />
@@ -655,23 +625,13 @@ interface FixActionsProps {
   canonical: string;
   actions: FixAction[];
   state: RowState;
-  /** Disable the Kindoo-side button (Church Access Automation owns
-   * auto-seat door grants). */
-  autoLockedKindoo: boolean;
-  /** Disable the SBA-side button (auto buildings-mismatch where
-   * `derivedBuildings` failed — no valid source to send). */
+  /** Disable the "Update SBA" button (buildings-mismatch where
+   * `derivedBuildings` failed / is empty — no valid source to send). */
   autoLockedSba: boolean;
   onFix: (action: FixAction) => void;
 }
 
-function FixActions({
-  canonical,
-  actions,
-  state,
-  autoLockedKindoo,
-  autoLockedSba,
-  onFix,
-}: FixActionsProps) {
+function FixActions({ canonical, actions, state, autoLockedSba, onFix }: FixActionsProps) {
   if (actions.length === 0) return null;
 
   if (state.kind === 'applying') {
@@ -707,19 +667,18 @@ function FixActions({
   return (
     <div className="sba-sync-fix-row">
       {actions.map((a) => {
-        const lockedKindoo = autoLockedKindoo && a.side === 'kindoo';
-        const lockedSba = autoLockedSba && a.side === 'sba';
-        const disabled = lockedKindoo || lockedSba;
-        const title = lockedKindoo
-          ? 'auto seats provisioned by Church Access Automation; not modifiable here.'
-          : lockedSba
-            ? 'door-grant derivation failed; cannot determine the correct building set — re-run Sync.'
-            : undefined;
+        // `autoLockedSba` is only set on buildings-mismatch rows, whose
+        // single action is "Update SBA"; the danger "Remove From SBA"
+        // never carries it, so a variant check isn't needed here.
+        const disabled = autoLockedSba && a.side === 'sba';
+        const title = disabled
+          ? 'door-grant derivation failed; cannot determine the correct building set — re-run Sync.'
+          : undefined;
         return (
           <button
             key={a.testId}
             type="button"
-            className={a.side === 'sba' ? 'sba-btn sba-btn-primary' : 'sba-btn sba-btn-success'}
+            className={`sba-btn ${a.variant === 'danger' ? 'sba-btn-danger' : 'sba-btn-primary'}`}
             onClick={() => onFix(a)}
             disabled={disabled}
             title={title}
