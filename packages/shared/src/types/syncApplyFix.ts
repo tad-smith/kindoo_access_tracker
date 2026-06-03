@@ -79,7 +79,7 @@ export type ScopeMismatchPayload = {
  *
  * Grant-derived promote (`manual`/`temp` → `auto`) / demote (`auto` →
  * `manual`/`temp`). Beyond flipping `type`, the callable reshapes the
- * seat to the spec §13 convention for the target type: an `auto` seat
+ * seat to the spec §6.1 convention for the target type: an `auto` seat
  * carries its calling(s) in `callings[]` with an empty `reason`; a
  * `manual` seat carries `callings: []` with the calling in free-text
  * `reason`.
