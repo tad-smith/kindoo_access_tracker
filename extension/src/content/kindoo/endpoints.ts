@@ -205,6 +205,20 @@ export interface KindooEnvironmentUser {
   /** Current rule assignments — `RuleID` narrowed from `AccessSchedules[]`. */
   accessSchedules: Array<{ ruleId: number }>;
   /**
+   * Kindoo's role enum for this environment-user. Drives the Sync
+   * detector's per-role seat-type branch:
+   *   - `0` Administrator  → seat type forced to `auto`
+   *   - `1` Manager        → seat type forced to `auto`
+   *   - `2` Guest          → grant-based classification (church-granted →
+   *                          auto, SBA-rule → manual)
+   *   - `3` Installer      → 3rd-party vendor; skipped entirely (no rows)
+   * Absent / non-numeric on a record whose role we couldn't read — the
+   * detector treats `undefined` conservatively as Guest (neither
+   * force-auto nor skip). Present on every bulk environment-user record
+   * in the live capture.
+   */
+  DepartmentType?: number;
+  /**
    * Buildings derived from per-door grants via
    * `sync/buildingsFromDoors.ts`. Set by the Sync orchestrator BEFORE
    * calling `detect()`. Three states:
@@ -474,7 +488,13 @@ function asEnvironmentUser(value: unknown): KindooEnvironmentUser | null {
     if (typeof ruleId === 'number') accessSchedules.push({ ruleId });
   }
 
-  return {
+  // Role enum. The `...v` spread passes `DepartmentType` through, but
+  // we capture it explicitly into the typed shape so consumers can rely
+  // on a number-or-absent value rather than the raw index-signature
+  // artifact (which could be a non-numeric wire value).
+  const departmentType = typeof v.DepartmentType === 'number' ? v.DepartmentType : undefined;
+
+  const user: KindooEnvironmentUser = {
     ...v,
     euid,
     userId,
@@ -486,6 +506,15 @@ function asEnvironmentUser(value: unknown): KindooEnvironmentUser | null {
     expiryTimeZone,
     accessSchedules,
   };
+  // Drop a non-numeric `DepartmentType` the spread carried in so the
+  // typed field is never a string / null; set the sanitized number when
+  // present.
+  if (departmentType !== undefined) {
+    user.DepartmentType = departmentType;
+  } else {
+    delete user.DepartmentType;
+  }
+  return user;
 }
 
 /**

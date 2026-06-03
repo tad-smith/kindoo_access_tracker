@@ -508,6 +508,56 @@ function unparseableAligned(sba: SbaBlock, rawDescription: string): boolean {
   return sba.callings.length === 0 && eqNormalized(sba.reason ?? '', calling);
 }
 
+// ============================================================
+// Kindoo role (DepartmentType) — per-role seat-type branch
+// ============================================================
+//
+// Kindoo's `DepartmentType` field is a role enum present on every bulk
+// environment-user record (verified against live Colorado Springs North
+// data). The Sync detector branches its seat-type decision on it:
+//   - Administrator / Manager → force `type = auto`
+//   - Guest                   → grant-based classification (#188)
+//   - Installer               → 3rd-party vendor; skip entirely
+//
+// Live values: Guests = 2 (gossbc + ~320 members); Administrators = 0;
+// Managers = 1; Installers = 3 (ryan.gard, greagmills).
+
+const DEPT_ADMINISTRATOR = 0;
+const DEPT_MANAGER = 1;
+const DEPT_GUEST = 2;
+const DEPT_INSTALLER = 3;
+
+/**
+ * Detector role bucket. Administrator and Manager collapse to `admin`
+ * because they share the same treatment (force `auto`); the distinct
+ * `DEPT_*` constants keep the enum self-documenting.
+ */
+export type KindooRole = 'guest' | 'admin' | 'installer';
+
+/**
+ * Map a Kindoo user's `DepartmentType` enum to the detector role bucket.
+ *
+ *   - `3` (Installer) → `'installer'` — skipped entirely by the loop.
+ *   - `2` (Guest)     → `'guest'`     — grant-based classification.
+ *   - `0`/`1` (Administrator / Manager) → `'admin'` — force `auto`.
+ *   - `undefined` / missing → `'guest'` (conservative: don't force-auto
+ *     or skip a user whose role we couldn't read).
+ *   - any other concrete non-2/non-3 number → `'admin'` (force `auto`),
+ *     matching the Administrator/Manager treatment.
+ *
+ * Pure function — no I/O.
+ */
+export function kindooRole(kuser: KindooEnvironmentUser): KindooRole {
+  const dept = kuser.DepartmentType;
+  if (dept === undefined) return 'guest';
+  if (dept === DEPT_INSTALLER) return 'installer';
+  if (dept === DEPT_GUEST) return 'guest';
+  if (dept === DEPT_ADMINISTRATOR || dept === DEPT_MANAGER) return 'admin';
+  // Any other concrete non-2/non-3 number defaults to the force-auto
+  // (Administrator / Manager) treatment.
+  return 'admin';
+}
+
 /** Sort comparator for the final report. */
 function compareDiscrepancies(a: Discrepancy, b: Discrepancy): number {
   // drift first, then review.
@@ -595,7 +645,8 @@ export function detect(inputs: DetectInputs): DetectResult {
     const kuser = kindooByEmail.get(canon) ?? null;
     const displayEmail = kuser?.username ?? seat?.member_email ?? canon;
 
-    // 1. sba-only — seat present, no Kindoo user.
+    // 1. sba-only — seat present, no Kindoo user. (No `kuser`, so the
+    //    Installer skip below never applies here.)
     if (seat && sbaBlock && !kuser) {
       discrepancies.push({
         canonical: canon,
@@ -608,6 +659,15 @@ export function detect(inputs: DetectInputs): DetectResult {
       });
       continue;
     }
+
+    // Installer skip — a 3rd-party vendor (DepartmentType 3) produces
+    // NO discrepancy rows of any kind (kindoo-only, type/buildings/
+    // callings-mismatch, unparseable, scope-mismatch). Every remaining
+    // branch involves a live `kuser`, so skipping here before any of
+    // them suppresses all installer rows at once. `sba-only` already
+    // returned above (it has no `kuser`).
+    const role = kuser ? kindooRole(kuser) : 'guest';
+    if (kuser && role === 'installer') continue;
 
     // 2. kindoo-only — Kindoo user present, no SBA seat.
     if (!seat && kuser) {
@@ -630,11 +690,18 @@ export function detect(inputs: DetectInputs): DetectResult {
               kuser.accessSchedules.map((s) => s.ruleId),
               inputs.buildings,
             );
+      // Admin (Administrator / Manager) created seats are born `auto`
+      // regardless of grant backing — only the church doesn't provision
+      // them, but their role is non-Guest so SBA treats the seat as
+      // church-owned. Temp still wins (IsTempUser-driven). Guests fall
+      // through to the grant-based decision (#188).
       const createdType: SeatType = kuser.isTempUser
         ? 'temp'
-        : grantsBackAuto(newSeatBuildings, kuser.directGrantBuildings ?? null)
+        : role === 'admin'
           ? 'auto'
-          : 'manual';
+          : grantsBackAuto(newSeatBuildings, kuser.directGrantBuildings ?? null)
+            ? 'auto'
+            : 'manual';
       discrepancies.push({
         canonical: canon,
         displayEmail,
@@ -737,7 +804,33 @@ export function detect(inputs: DetectInputs): DetectResult {
       continue;
     }
 
-    // 6. type-mismatch — grant-based PROMOTE / DEMOTE.
+    // 6. type-mismatch — branches on Kindoo role (DepartmentType).
+    //
+    // Admin (Administrator / Manager): the seat's type is `auto`,
+    // independent of grant backing. If the existing seat is not already
+    // `auto` → PROMOTE to `auto`; if it's already `auto` → no row. The
+    // grant-based promote/demote below is bypassed for admins (it's a
+    // Guest-only signal now). Temp still wins — `temp` is IsTempUser-
+    // driven and orthogonal to role.
+    if (role === 'admin' && sbaBlock.type !== 'temp') {
+      if (sbaBlock.type !== 'auto') {
+        discrepancies.push({
+          canonical: canon,
+          displayEmail,
+          code: 'type-mismatch',
+          severity: 'drift',
+          reason:
+            'Promote to auto: this Kindoo user is an Administrator/Manager (non-Guest), so the seat is church-owned ⇒ auto.',
+          sba: sbaBlock,
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, 'auto'),
+        });
+        continue;
+      }
+      // Already auto — no type-mismatch. Fall through to the buildings /
+      // callings checks below (they're not gated on role).
+    }
+
+    // Guest grant-based PROMOTE / DEMOTE (#188).
     //
     // `type` is a provenance label: who owns the Kindoo grant — the
     // church (`auto`, SBA writes no rule) or SBA (`manual`). We observe
@@ -748,14 +841,14 @@ export function detect(inputs: DetectInputs): DetectResult {
     //   - manual seat + church-backed → PROMOTE to `auto`.
     //   - auto seat + NOT church-backed → DEMOTE to `manual`.
     //   - directGrantBuildings === null (derivation failed) → skip;
-    //     can't determine provenance. This is the ONLY skip: grant
-    //     reconciliation applies to ALL seat roles (managers can hold
-    //     seats), so a zero-door-row user (whose direct grants can't be
-    //     read) stays unclassified rather than being spuriously demoted.
+    //     can't determine provenance.
     //   - temp seats are never promoted / demoted — `temp` is
     //     `IsTempUser`-driven, orthogonal to grant provenance.
+    //   - admin seats are handled above and never reach here for the
+    //     type decision (an already-auto admin falls through, but
+    //     `sbaBlock.type === 'auto'` won't promote/demote here anyway).
     const directGrant = kuser.directGrantBuildings ?? null;
-    if (sbaBlock.type !== 'temp' && directGrant !== null) {
+    if (role === 'guest' && sbaBlock.type !== 'temp' && directGrant !== null) {
       // PROMOTE requires a real grant-backed building (`grantsBackAuto`
       // is false for a zero-building seat). DEMOTE keys off the raw
       // subset (`!isChurchBacked`) so a degenerate zero-building auto
