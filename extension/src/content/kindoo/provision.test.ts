@@ -1897,7 +1897,7 @@ function stageRuleDoors(map: Record<number, number[]>) {
 
 function stageUserDoors(doorIds: number[]) {
   getUserAccessRulesWithEntryPointsMock.mockResolvedValue({
-    rows: doorIds.map((id) => ({ doorId: id, accessScheduleId: 0 })),
+    rows: doorIds.map((id) => ({ doorId: id, churchGranted: true })),
   });
 }
 

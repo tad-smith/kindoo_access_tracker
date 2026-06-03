@@ -540,7 +540,7 @@ function tempDatesForInvite(req: AccessRequest): { startInvite: string; expiryIn
  * Effective rule IDs the user already holds via Church Access
  * Automation's direct door grants. Strict-subset derivation:
  * `getUserDoorIds` returns every DoorID the user can open (both
- * AccessRule-derived AND `AccessScheduleID === 0` direct grants);
+ * AccessRule-derived AND Church Access Automation direct grants);
  * `deriveEffectiveRuleIds` claims a rule iff EVERY door in that
  * rule's door set is in the user's door set.
  *
@@ -1133,10 +1133,10 @@ export interface ProvisionEditArgs {
  * to:
  *   - `targetRids` = rules backing the post-edit composite.
  *   - `ridsAlreadyEffective` = currentSchedules ∪ rules whose door set
- *     is fully covered by the user's direct door grants (the
- *     `buildingsFromDoors` strict-subset derivation; covers both
- *     AccessRule-derived doors AND `AccessScheduleID === 0` Church
- *     direct grants).
+ *     is fully covered by the user's door grants (the
+ *     `buildingsFromDoors` strict-subset derivation over the user's full
+ *     door set; covers both AccessRule-derived doors AND Church Access
+ *     Automation direct grants).
  *   - `ridsToAdd` = targetRids - ridsAlreadyEffective. A building
  *     covered by direct grants alone is skipped — `saveAccessRule`'s
  *     MERGE semantics would otherwise create a parallel AccessSchedule

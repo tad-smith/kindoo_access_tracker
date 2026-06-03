@@ -739,17 +739,46 @@ describe('getEnvironmentRuleWithEntryPoints', () => {
 });
 
 describe('getUserAccessRulesWithEntryPoints', () => {
-  function row(over: Record<string, unknown> = {}) {
+  // A real Church Access Automation grant: AccessScheduleID -1 (NOT 0),
+  // GrantedBy the church automation account / a super-API grantor.
+  const CHURCH_GRANTED_BY = {
+    DisplayName: 'Church Access Automation',
+    Username: 'sentry@groups.churchofjesuschrist.org',
+    IsSuperApi: true,
+  };
+  // A manager/AccessRule grant: positive AccessScheduleID, a normal
+  // (non-super-API) grantor.
+  const RULE_GRANTED_BY = {
+    DisplayName: 'A Manager',
+    Username: 'manager@example.com',
+    IsSuperApi: false,
+  };
+
+  function churchRow(over: Record<string, unknown> = {}) {
     return {
       DoorID: 1001,
-      AccessScheduleID: 0,
+      AccessScheduleID: -1,
+      AccessScheduleName: null,
+      AddedByAccessSchedule: false,
+      GrantedBy: CHURCH_GRANTED_BY,
       EUID: 'eu1',
       UserID: 'u1',
       ...over,
     };
   }
 
-  function page(rows: ReturnType<typeof row>[], total: number) {
+  function ruleRow(over: Record<string, unknown> = {}) {
+    return {
+      DoorID: 2001,
+      AccessScheduleID: 6248,
+      GrantedBy: RULE_GRANTED_BY,
+      EUID: 'eu1',
+      UserID: 'u1',
+      ...over,
+    };
+  }
+
+  function page(rows: Record<string, unknown>[], total: number) {
     return ok({
       CurrentNumberOfRows: rows.length,
       TotalRecordNumber: total,
@@ -774,11 +803,7 @@ describe('getUserAccessRulesWithEntryPoints', () => {
   it('returns all unique DoorIDs from a single short page', async () => {
     const fetchImpl = vi.fn(async () =>
       page(
-        [
-          row({ DoorID: 1001, AccessScheduleID: 0 }),
-          row({ DoorID: 1002, AccessScheduleID: 0 }),
-          row({ DoorID: 2001, AccessScheduleID: 6248 }),
-        ],
+        [churchRow({ DoorID: 1001 }), churchRow({ DoorID: 1002 }), ruleRow({ DoorID: 2001 })],
         3,
       ),
     );
@@ -787,15 +812,42 @@ describe('getUserAccessRulesWithEntryPoints', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('flags church-granted rows and not rule rows (by GrantedBy, not AccessScheduleID)', async () => {
+    // Real church grants carry AccessScheduleID -1, not 0; the signal is
+    // the GrantedBy account / IsSuperApi, never the schedule id.
+    const fetchImpl = vi.fn(async () =>
+      page([churchRow({ DoorID: 1001 }), ruleRow({ DoorID: 2001 })], 2),
+    );
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result.rows.find((r) => r.doorId === 1001)?.churchGranted).toBe(true);
+    expect(result.rows.find((r) => r.doorId === 2001)?.churchGranted).toBe(false);
+  });
+
+  it('treats any super-API grantor as church-granted even off the named account', async () => {
+    const fetchImpl = vi.fn(async () =>
+      page(
+        [
+          churchRow({
+            DoorID: 1001,
+            GrantedBy: { Username: 'other-api@example.com', IsSuperApi: true },
+          }),
+        ],
+        1,
+      ),
+    );
+    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
+    expect(result.rows[0]?.churchGranted).toBe(true);
+  });
+
   it('dedupes rows that share a DoorID across rules', async () => {
     // Same door granted by two rules → emits two rows in the response;
     // we want one row out per door.
     const fetchImpl = vi.fn(async () =>
       page(
         [
-          row({ DoorID: 1001, AccessScheduleID: 6248 }),
-          row({ DoorID: 1001, AccessScheduleID: 6250 }),
-          row({ DoorID: 1002, AccessScheduleID: 0 }),
+          ruleRow({ DoorID: 1001, AccessScheduleID: 6248 }),
+          ruleRow({ DoorID: 1001, AccessScheduleID: 6250 }),
+          churchRow({ DoorID: 1002 }),
         ],
         3,
       ),
@@ -803,41 +855,41 @@ describe('getUserAccessRulesWithEntryPoints', () => {
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
     expect(result.rows).toHaveLength(2);
     expect(result.rows.map((r) => r.doorId).sort()).toEqual([1001, 1002]);
-    // Door 1001 had only rule rows → stays rule-derived.
-    expect(result.rows.find((r) => r.doorId === 1001)?.accessScheduleId).not.toBe(0);
+    // Door 1001 had only rule rows → stays rule-granted.
+    expect(result.rows.find((r) => r.doorId === 1001)?.churchGranted).toBe(false);
   });
 
-  it('prefers the direct grant when a door has both a rule row and a direct row', async () => {
-    // Overlap/lag case: the rule row arrives BEFORE the direct row. The
-    // collapsed row must still carry accessScheduleId 0 so the
-    // grant-based seat-type detector sees the direct grant.
+  it('prefers the church grant when a door has both a rule row and a church row', async () => {
+    // Overlap/lag case: the rule row arrives BEFORE the church row. The
+    // collapsed row must still carry churchGranted: true so the
+    // grant-based seat-type detector sees the church grant.
     const fetchImpl = vi.fn(async () =>
       page(
         [
-          row({ DoorID: 1001, AccessScheduleID: 6248 }), // rule first
-          row({ DoorID: 1001, AccessScheduleID: 0 }), // direct second
+          ruleRow({ DoorID: 1001 }), // rule first
+          churchRow({ DoorID: 1001 }), // church second
         ],
         2,
       ),
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
     expect(result.rows).toHaveLength(1);
-    expect(result.rows[0]?.accessScheduleId).toBe(0);
+    expect(result.rows[0]?.churchGranted).toBe(true);
   });
 
-  it('keeps a direct grant when the direct row arrives first', async () => {
+  it('keeps a church grant when the church row arrives first', async () => {
     const fetchImpl = vi.fn(async () =>
       page(
         [
-          row({ DoorID: 1001, AccessScheduleID: 0 }), // direct first
-          row({ DoorID: 1001, AccessScheduleID: 6248 }), // rule second
+          churchRow({ DoorID: 1001 }), // church first
+          ruleRow({ DoorID: 1001 }), // rule second
         ],
         2,
       ),
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
     expect(result.rows).toHaveLength(1);
-    expect(result.rows[0]?.accessScheduleId).toBe(0);
+    expect(result.rows[0]?.churchGranted).toBe(true);
   });
 
   it('pages with start += 40 until a short page terminates', async () => {
@@ -845,15 +897,11 @@ describe('getUserAccessRulesWithEntryPoints', () => {
     const fetchImpl = vi.fn(async () => {
       call += 1;
       if (call === 1) {
-        const rows = Array.from({ length: 40 }, (_, i) =>
-          row({ DoorID: 1000 + i, AccessScheduleID: 0 }),
-        );
+        const rows = Array.from({ length: 40 }, (_, i) => churchRow({ DoorID: 1000 + i }));
         return page(rows, 50);
       }
       // Short page → terminate.
-      const rows = Array.from({ length: 10 }, (_, i) =>
-        row({ DoorID: 1100 + i, AccessScheduleID: 0 }),
-      );
+      const rows = Array.from({ length: 10 }, (_, i) => churchRow({ DoorID: 1100 + i }));
       return page(rows, 50);
     });
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
@@ -873,9 +921,7 @@ describe('getUserAccessRulesWithEntryPoints', () => {
     let call = 0;
     const fetchImpl = vi.fn(async () => {
       call += 1;
-      const rows = Array.from({ length: 40 }, (_, i) =>
-        row({ DoorID: 1000 + i, AccessScheduleID: 0 }),
-      );
+      const rows = Array.from({ length: 40 }, (_, i) => churchRow({ DoorID: 1000 + i }));
       return page(rows, 40);
     });
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
@@ -884,7 +930,7 @@ describe('getUserAccessRulesWithEntryPoints', () => {
   });
 
   it('falls back to a bare-array response shape', async () => {
-    const fetchImpl = vi.fn(async () => ok([row({ DoorID: 9999 })]));
+    const fetchImpl = vi.fn(async () => ok([churchRow({ DoorID: 9999 })]));
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]?.doorId).toBe(9999);

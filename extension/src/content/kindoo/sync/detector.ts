@@ -100,8 +100,10 @@ export interface KindooBlock {
    */
   derivedBuildings: string[] | null;
   /**
-   * Buildings the user holds via Church Access Automation **direct
-   * grants only** (`AccessScheduleID === 0`). Drives the grant-based
+   * Buildings the user holds via doors granted by the Church Access
+   * Automation **only** (`GrantedBy` = `sentry@groups.churchofjesuschrist.org`
+   * or `IsSuperApi`, NOT an `AccessScheduleID` value — real church
+   * grants carry `AccessScheduleID: -1`). Drives the grant-based
    * seat-type (church-backed) decision. `null` when door-grant
    * derivation was skipped or failed — promote / demote is skipped.
    */
