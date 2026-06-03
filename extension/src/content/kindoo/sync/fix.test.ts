@@ -71,21 +71,20 @@ describe('fixActionsFor', () => {
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'create-sba' });
   });
 
-  it('extra-kindoo-calling returns one Update SBA action (auto-only by construction)', () => {
-    // The detector only emits extra-kindoo-calling for auto seats; the
-    // callable appends to roster `callings[]`, the auto-seat shape. The
-    // testId stays `add-callings-sba` (unchanged append path); the label
-    // is now Update SBA to match the other actionable drift rows.
+  it('callings-mismatch returns one Update SBA action (auto-only by construction)', () => {
+    // The detector only emits callings-mismatch for auto seats; the
+    // callable REPLACES roster `callings[]` with Kindoo's full target
+    // set. It's a true Update-SBA sibling — testId `update-sba`.
     const actions = fixActionsFor(
       discrepancy({
-        code: 'extra-kindoo-calling',
+        code: 'callings-mismatch',
         sba: { scope: 'CO', type: 'auto', callings: ['Sunday School Teacher'], buildingNames: [] },
       }),
     );
     expect(actions).toHaveLength(1);
     expect(actions[0]).toMatchObject({
       side: 'sba',
-      testId: 'add-callings-sba',
+      testId: 'update-sba',
       label: 'Update SBA',
     });
   });
@@ -150,7 +149,7 @@ describe('fixActionsFor', () => {
       'scope-mismatch',
       'type-mismatch',
       'buildings-mismatch',
-      'extra-kindoo-calling',
+      'callings-mismatch',
       'kindoo-unparseable',
     ] as const) {
       expect(fixActionsFor(discrepancy({ code, severity: 'review' }))).toEqual([]);
@@ -280,9 +279,10 @@ describe('buildCallableInput', () => {
   it('kindoo-only manual records the calling in reason even when the classifier matched it (no re-fire loop)', () => {
     // Classifier matched the calling to a template (intendedFreeText
     // empty) but the user is NOT church-backed → manual. The calling
-    // must still land in `reason` so the seat does not re-surface as
-    // extra-kindoo-calling on the next sync (the manual diff reads
-    // reason). Empty callings[] keeps the spec.md §13 shape.
+    // must still land in `reason` (the §6.1 manual shape), with an empty
+    // callings[] — callings-mismatch is auto-only, so a manual seat never
+    // re-surfaces on the calling diff regardless. Keeps the spec.md §13
+    // shape.
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
@@ -362,31 +362,30 @@ describe('buildCallableInput', () => {
     expect(payload.isTempUser).toBe(true);
   });
 
-  it('extra-kindoo-calling sends the detector-supplied extraKindooCallings', () => {
+  it('callings-mismatch sends the detector-supplied FULL Kindoo target set (REPLACE, not delta)', () => {
     const input = buildCallableInput(
       'csnorth',
       discrepancy({
-        code: 'extra-kindoo-calling',
+        code: 'callings-mismatch',
+        displayEmail: 'eric@example.com',
         kindoo: kb({
           description: 'Maple Ward (Sunday School Teacher, Janitor, Greeter)',
           memberName: 'Eric Extra',
           intendedFreeText: '',
-          extraKindooCallings: ['Janitor', 'Greeter'],
+          kindooCallings: ['Sunday School Teacher', 'Janitor', 'Greeter'],
         }),
       }),
     );
-    expect(input.fix.code).toBe('extra-kindoo-calling');
+    expect(input.fix.code).toBe('callings-mismatch');
     const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload.extraCallings).toEqual(['Janitor', 'Greeter']);
+    expect(payload.memberEmail).toBe('eric@example.com');
+    expect(payload.callings).toEqual(['Sunday School Teacher', 'Janitor', 'Greeter']);
   });
 
-  it('extra-kindoo-calling sends [] when the detector set no extras', () => {
-    const input = buildCallableInput(
-      'csnorth',
-      discrepancy({ code: 'extra-kindoo-calling', kindoo: kb({}) }),
-    );
-    const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload.extraCallings).toEqual([]);
+  it('callings-mismatch throws on an empty Kindoo target set (callable rejects empty callings)', () => {
+    expect(() =>
+      buildCallableInput('csnorth', discrepancy({ code: 'callings-mismatch', kindoo: kb({}) })),
+    ).toThrow(/empty Kindoo target/);
   });
 
   it('scope-mismatch sends Kindoo primary scope', () => {

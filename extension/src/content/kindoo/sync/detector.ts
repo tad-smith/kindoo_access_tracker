@@ -40,7 +40,7 @@ export type DiscrepancyCode =
   | 'scope-mismatch'
   | 'type-mismatch'
   | 'buildings-mismatch'
-  | 'extra-kindoo-calling';
+  | 'callings-mismatch';
 
 export type Severity = 'drift' | 'review';
 
@@ -119,13 +119,15 @@ export interface KindooBlock {
    */
   grantTargetType?: SeatType;
   /**
-   * Callings Kindoo's primary segment names that the SBA seat's
-   * `callings[]` lacks (trimmed, case-insensitive diff). Set ONLY on
-   * `extra-kindoo-calling` rows; undefined elsewhere. The fix
-   * dispatcher sends THIS as the callable's `extraCallings`. Sourced
-   * from the parser, not the retired auto-calling classifier.
+   * The FULL set of calling(s) Kindoo's parsed primary segment names
+   * (comma-split, trimmed, de-duped, Kindoo's casing preserved). Set
+   * ONLY on `callings-mismatch` rows; undefined elsewhere. The fix
+   * dispatcher sends THIS as the callable's `callings` — the target set
+   * that REPLACES the seat's prior `callings[]` (Kindoo authoritative),
+   * not a delta. Sourced from the parser, not the retired auto-calling
+   * classifier.
    */
-  extraKindooCallings?: string[];
+  kindooCallings?: string[];
   /** ISO date `YYYY-MM-DD` derived from Kindoo's `startAccessDoorsDateAtTimeZone`. Only set when the user is temp. */
   startDate?: string;
   /** ISO date `YYYY-MM-DD` derived from Kindoo's `expiryDateAtTimeZone`. Only set when the user is temp. */
@@ -466,33 +468,46 @@ export function skipGrantReconciliation(kuser: Pick<KindooEnvironmentUser, 'user
 }
 
 /**
- * Callings present in the Kindoo parens text (`Calling A, Calling B`)
- * but absent from the SBA seat's `callings[]`. Conservative,
- * false-positive-averse:
- *   - split on `,`, trim each, drop empties;
- *   - compare case-insensitively;
- *   - additive direction ONLY — a calling the seat HAS but Kindoo
- *     omits does not surface here (that's not an `extra-kindoo-calling`
- *     case);
- *   - de-dupe so a calling repeated in the parens reports once.
- * The returned strings preserve Kindoo's original casing / spelling so
- * the operator sees exactly what would be added.
+ * The FULL set of calling(s) Kindoo's primary parens text
+ * (`Calling A, Calling B`) names — the target an auto seat's
+ * `callings[]` must MIRROR (Kindoo authoritative). Split on `,`, trim
+ * each, drop empties, de-dupe (case-insensitively so a calling repeated
+ * in the parens appears once). The returned strings preserve Kindoo's
+ * original casing / spelling so the seat ends up labelled exactly as
+ * Kindoo describes it.
  *
  * Pure function — no I/O.
  */
-export function missingCallings(parenText: string, seatCallings: string[]): string[] {
-  const seatSet = new Set(seatCallings.map((c) => c.trim().toLowerCase()));
+export function parseKindooCallings(parenText: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of parenText.split(',')) {
     const trimmed = raw.trim();
     if (trimmed.length === 0) continue;
     const key = trimmed.toLowerCase();
-    if (seatSet.has(key) || seen.has(key)) continue;
+    if (seen.has(key)) continue;
     seen.add(key);
     out.push(trimmed);
   }
   return out;
+}
+
+/**
+ * Order-independent, case/whitespace-normalized set compare for
+ * callings. Two lists are equal when they carry the same normalized
+ * (trimmed + lowercased) members, regardless of order, casing, padding,
+ * or duplicates. Drives the `callings-mismatch` "do they differ?"
+ * decision in either direction.
+ *
+ * Pure function — no I/O.
+ */
+function callingSetsEqual(a: string[], b: string[]): boolean {
+  const norm = (xs: string[]): Set<string> => new Set(xs.map((x) => x.trim().toLowerCase()));
+  const sa = norm(a);
+  const sb = norm(b);
+  if (sa.size !== sb.size) return false;
+  for (const v of sa) if (!sb.has(v)) return false;
+  return true;
 }
 
 /**
@@ -781,8 +796,8 @@ export function detect(inputs: DetectInputs): DetectResult {
     // (type-mismatch + buildings-mismatch). True ⇒ emit neither: a
     // non-Guest (Kindoo Manager / admin, `userRole !== 2`) is not an
     // SBA-owned door grant, so its grant shape is none of our business.
-    // Scope-mismatch and the additive AUTO-only extra-kindoo-calling can
-    // still fire — neither is grant-provenance reconciliation. See
+    // Scope-mismatch and the AUTO-only callings-mismatch can still fire —
+    // neither is grant-provenance reconciliation. See
     // `skipGrantReconciliation` for the full rationale.
     const skipGrantBased = skipGrantReconciliation(kuser);
 
@@ -885,32 +900,35 @@ export function detect(inputs: DetectInputs): DetectResult {
       }
     }
 
-    // 8. extra-kindoo-calling — AUTO seats only. When Kindoo's parsed
-    // primary segment names calling(s) the auto seat's roster
-    // `callings[]` lacks, propose adding the missing one(s). Conservative
-    // to avoid false positives: compare trimmed + case-insensitively,
-    // additive direction only (Kindoo has callings the seat lacks);
-    // never fire on ordering / formatting differences.
+    // 8. callings-mismatch — AUTO seats only. An auto seat's `callings[]`
+    // must MIRROR Kindoo's parsed primary calling(s) (Kindoo is
+    // authoritative for the calling label). When the two differ as
+    // normalized sets — in EITHER direction (Kindoo renamed, added, or
+    // dropped a calling) — propose replacing the seat's `callings[]` with
+    // Kindoo's full target set. Compare trimmed + case-insensitively, so
+    // ordering / casing / padding differences never fire.
+    //
+    // Guard: only emit when Kindoo's target set is NON-EMPTY. The callable
+    // rejects an empty `callings`; "Kindoo has a scope but no calling" is
+    // not a callings-mismatch — it's left to the other codes / no row.
     //
     // Manual / temp seats are deliberately NOT checked: they record their
     // calling in the free-text `reason`, which is frequently operator
     // prose ("Requested by bishop", "Visiting speaker") rather than a
     // calling name — comparing against it would flood the review list
     // with non-actionable rows on every existing manual seat (operator
-    // decision 2026-05-30). The `syncApplyFix` extra-kindoo-calling path
-    // appends to `callings[]`, which is the auto-seat shape anyway.
-    // Supersedes the old `intended.reviewMixed` trigger (tied to the
-    // retired auto-calling classifier).
+    // decision 2026-05-30). The `syncApplyFix` callings-mismatch path
+    // REPLACES `callings[]`, which is the auto-seat shape anyway.
     if (sbaBlock.type === 'auto') {
-      const extraCallings = missingCallings(primary.calling, sbaBlock.callings);
-      if (extraCallings.length > 0) {
-        const knownLabel = sbaBlock.callings.length > 0 ? sbaBlock.callings.join(', ') : '(none)';
+      const kindooCallings = parseKindooCallings(primary.calling);
+      if (kindooCallings.length > 0 && !callingSetsEqual(kindooCallings, sbaBlock.callings)) {
+        const seatLabel = sbaBlock.callings.length > 0 ? sbaBlock.callings.join(', ') : '(none)';
         discrepancies.push({
           canonical: canon,
           displayEmail,
-          code: 'extra-kindoo-calling',
+          code: 'callings-mismatch',
           severity: 'drift',
-          reason: `Kindoo lists calling(s) [${extraCallings.join(', ')}] beyond SBA's seat callings [${knownLabel}]; add the missing calling(s) to the SBA seat.`,
+          reason: `Kindoo lists calling(s) [${kindooCallings.join(', ')}]; the seat has [${seatLabel}] — update SBA to match Kindoo.`,
           sba: sbaBlock,
           kindoo: buildKindooBlock(
             kuser,
@@ -919,7 +937,7 @@ export function detect(inputs: DetectInputs): DetectResult {
             inputs.buildings,
             sets,
             undefined,
-            extraCallings,
+            kindooCallings,
           ),
         });
         continue;
@@ -990,9 +1008,10 @@ function buildKindooBlock(
    * rows; carried onto the block so the fix dispatcher sends the
    * observed-provenance target, not the template-derived `intendedType`. */
   grantTargetType?: SeatType,
-  /** Missing-calling diff for `extra-kindoo-calling` rows; carried so
-   * the fix dispatcher sources `extraCallings` from the parser diff. */
-  extraKindooCallings?: string[],
+  /** Full Kindoo target calling set for `callings-mismatch` rows; carried
+   * so the fix dispatcher sources the REPLACE `callings` from the parser,
+   * not a delta. */
+  kindooCallings?: string[],
 ): KindooBlock {
   const primary = pickPrimarySegment(parsed, sets);
   const ruleIds = kuser.accessSchedules.map((s) => s.ruleId);
@@ -1010,7 +1029,7 @@ function buildKindooBlock(
     directGrantBuildings: kuser.directGrantBuildings ?? null,
   };
   if (grantTargetType !== undefined) block.grantTargetType = grantTargetType;
-  if (extraKindooCallings !== undefined) block.extraKindooCallings = extraKindooCallings;
+  if (kindooCallings !== undefined) block.kindooCallings = kindooCallings;
   if (kuser.isTempUser) {
     const start = toIsoDate(kuser.startAccessDoorsDateAtTimeZone);
     const end = toIsoDate(kuser.expiryDateAtTimeZone);

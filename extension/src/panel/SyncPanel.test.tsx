@@ -475,7 +475,7 @@ describe('SyncPanel', () => {
     expect((actionArg as { side: string }).side).toBe('sba');
   });
 
-  it('extra-kindoo-calling renders Update SBA (testId add-callings-sba) + click dispatches', async () => {
+  it('callings-mismatch renders Update SBA (testId update-sba) + click dispatches', async () => {
     applyFixMock.mockResolvedValue({ ok: true });
     const b = bundle();
     b.wardCallingTemplates.push({
@@ -494,14 +494,14 @@ describe('SyncPanel', () => {
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    const btn = await screen.findByTestId('sba-sync-fix-add-callings-sba-extra@example.com');
+    const btn = await screen.findByTestId('sba-sync-fix-update-sba-extra@example.com');
     await user.click(btn);
     await waitFor(() => expect(applyFixMock).toHaveBeenCalled());
-    expect((applyFixMock.mock.calls[0]![0] as { code: string }).code).toBe('extra-kindoo-calling');
+    expect((applyFixMock.mock.calls[0]![0] as { code: string }).code).toBe('callings-mismatch');
   });
 
-  it('does NOT surface extra-kindoo-calling on a MANUAL seat (auto-only; no row at all)', async () => {
-    // Operator decision 2026-05-30: extra-kindoo-calling is auto-only. A
+  it('does NOT surface callings-mismatch on a MANUAL seat (auto-only; no row at all)', async () => {
+    // Operator decision 2026-05-30: callings-mismatch is auto-only. A
     // manual seat whose Kindoo description names an extra calling produces
     // NO row — manual reasons are frequently operator prose and would
     // flood the review list. Buildings + scope agree here, so the manual
@@ -877,7 +877,7 @@ describe('SyncPanel', () => {
     // Review-only: no action buttons of any kind.
     expect(screen.queryByTestId('sba-sync-fix-create-sba-blank@example.com')).toBeNull();
     expect(screen.queryByTestId('sba-sync-fix-update-sba-blank@example.com')).toBeNull();
-    expect(screen.queryByTestId('sba-sync-fix-add-callings-sba-blank@example.com')).toBeNull();
+    expect(screen.queryByTestId('sba-sync-fix-update-sba-blank@example.com')).toBeNull();
   });
 
   it('success path removes the row and decrements the matching counter', async () => {
@@ -922,7 +922,7 @@ describe('SyncPanel', () => {
       'scope-mismatch',
       'type-mismatch',
       'buildings-mismatch',
-      'extra-kindoo-calling',
+      'callings-mismatch',
     ]);
     const optionLabels = Array.from(select.options).map((o) => o.textContent);
     expect(optionLabels).toEqual([
@@ -934,7 +934,7 @@ describe('SyncPanel', () => {
       'scope-mismatch',
       'type-mismatch',
       'buildings-mismatch',
-      'extra-kindoo-calling',
+      'callings-mismatch',
     ]);
   });
 
@@ -1033,7 +1033,7 @@ describe('SyncPanel', () => {
   it('renders the filter-empty hint when severity + code AND eliminates all rows', async () => {
     const b = bundle();
     // sba-only seat (sba-only is severity=drift). The only row's code is
-    // `sba-only`, so filtering to the `extra-kindoo-calling` code below
+    // `sba-only`, so filtering to the `callings-mismatch` code below
     // eliminates it even though both are drift severity.
     b.seats.push({
       member_canonical: 'orphan@example.com',
@@ -1052,10 +1052,10 @@ describe('SyncPanel', () => {
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    // Drift chip + extra-kindoo-calling code → the lone sba-only row is
+    // Drift chip + callings-mismatch code → the lone sba-only row is
     // dropped by the code filter, leaving zero rows.
     await user.click(screen.getByTestId('sba-sync-filter-drift'));
-    await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'extra-kindoo-calling');
+    await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'callings-mismatch');
     expect(screen.queryByTestId('sba-sync-list')).toBeNull();
     expect(screen.getByTestId('sba-sync-empty')).toHaveTextContent(
       'No discrepancies match the current filters.',
