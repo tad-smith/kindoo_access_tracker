@@ -151,7 +151,7 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       // (`intendedCallings`) + unmatched (`intendedFreeText`), de-duped.
       // Where it lands on the new seat depends on the type, matching how
       // the request flow + `markRequestComplete` shape seats
-      // (`docs/spec.md` §13):
+      // (`docs/spec.md` §6.1):
       //   - auto  → roster `callings[]` (no `reason`).
       //   - manual / temp → `callings: []`; the calling text lives in the
       //     single free-text `reason`. Writing it to `callings[]` would

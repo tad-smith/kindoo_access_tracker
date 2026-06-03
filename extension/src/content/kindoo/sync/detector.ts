@@ -524,7 +524,7 @@ function eqNormalized(a: string, b: string): boolean {
  * next run like every other drift code.
  *
  * "Aligned" = the seat is at stake scope AND the calling text (raw Kindoo
- * description, trimmed) is recorded per the §13 seat shape:
+ * description, trimmed) is recorded per the §6.1 seat shape:
  *   - auto         → `callings` equals `[<rawDescription>]`.
  *   - manual / temp → `reason === <rawDescription>` and `callings` empty.
  * Comparison is case/whitespace-normalized. `kindoo_site_id` is not
