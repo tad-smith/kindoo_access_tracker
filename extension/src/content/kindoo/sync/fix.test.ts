@@ -111,10 +111,10 @@ describe('fixActionsFor', () => {
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'update-sba', label: 'Update SBA' });
   });
 
-  it('kindoo-unparseable (review, non-Guest manager) returns no actions', () => {
-    // A non-Guest present-but-unparseable row is emitted as review; the
-    // review guard suppresses any action so Update SBA can never clobber a
-    // manager's seat.
+  it('kindoo-unparseable (review) returns no actions', () => {
+    // A review-severity unparseable row (the no-resolvable-primary-segment
+    // defensive branch) is display-only; the review guard suppresses any
+    // action so an Update SBA can never derive a corrupt calling.
     expect(fixActionsFor(discrepancy({ code: 'kindoo-unparseable', severity: 'review' }))).toEqual(
       [],
     );

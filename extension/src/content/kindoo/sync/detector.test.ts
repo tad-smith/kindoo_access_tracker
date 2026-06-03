@@ -4,13 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Building, CallingTemplate, Seat, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
-import {
-  detect,
-  grantsBackAuto,
-  isChurchBacked,
-  parseKindooCallings,
-  skipGrantReconciliation,
-} from './detector';
+import { detect, grantsBackAuto, isChurchBacked, parseKindooCallings } from './detector';
 
 describe('isChurchBacked', () => {
   it('true when every seat building is direct-granted', () => {
@@ -41,21 +35,6 @@ describe('grantsBackAuto', () => {
   });
   it('false when directGrantBuildings is null', () => {
     expect(grantsBackAuto(['A'], null)).toBe(false);
-  });
-});
-
-describe('skipGrantReconciliation', () => {
-  it('does NOT skip a Guest (userRole === 2) — in scope for grant reconciliation', () => {
-    expect(skipGrantReconciliation({ userRole: 2 })).toBe(false);
-  });
-  it('skips a non-Guest (userRole === 0 — Manager/admin)', () => {
-    expect(skipGrantReconciliation({ userRole: 0 })).toBe(true);
-    expect(skipGrantReconciliation({ userRole: 1 })).toBe(true);
-  });
-  it('skips when the role is unknown (omitted) — the safe default, never demote what we cannot classify', () => {
-    // Empty RulesList / failed door fetch leaves userRole unset →
-    // `undefined !== 2` → skip. Consistent with the per-check null guards.
-    expect(skipGrantReconciliation({})).toBe(true);
   });
 });
 
@@ -171,22 +150,8 @@ function kuser(overrides: Partial<KindooEnvironmentUser>): KindooEnvironmentUser
     expiryDateAtTimeZone: null,
     expiryTimeZone: 'Mountain Standard Time',
     accessSchedules: [{ ruleId: 6248 }],
-    // Default to Guest — the overwhelming majority of synced users, and
-    // the role that puts a user IN scope for grant-based reconciliation.
-    // Tests covering non-Guests / unknown role override or delete this.
-    userRole: 2,
     ...overrides,
   };
-}
-
-/** A `kuser` whose role couldn't be read (empty RulesList / failed
- *  fetch): `userRole` genuinely absent. The factory defaults to Guest,
- *  so model "unknown" by deleting the key (an explicit `undefined`
- *  literal is rejected under exactOptionalPropertyTypes). */
-function kuserRoleUnknown(overrides: Partial<KindooEnvironmentUser>): KindooEnvironmentUser {
-  const u = kuser(overrides);
-  delete (u as { userRole?: number }).userRole;
-  return u;
 }
 
 const STAKE = stake();
@@ -334,14 +299,15 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('manual');
   });
 
-  it('emits kindoo-unparseable (drift) for a Guest present-but-unparseable description', () => {
-    // Guest (userRole 2), text present but doesn't match `Scope (Calling)`
-    // — treat as a church-wide stake-scope calling; Update SBA offered, so
-    // drift. Seat is at ward scope (not aligned), so the row stands.
+  it('emits kindoo-unparseable (drift) for a present-but-unparseable description', () => {
+    // Text present but doesn't match `Scope (Calling)` — treat as a
+    // church-wide stake-scope calling; Update SBA offered, so drift. Seat
+    // is at ward scope (not aligned), so the row stands. The Guest gate is
+    // gone: this applies to every seat role.
     const result = detect(
       baseInputs({
         seats: [seat({})],
-        kindooUsers: [kuser({ description: 'Some Church-Wide Calling', userRole: 2 })],
+        kindooUsers: [kuser({ description: 'Some Church-Wide Calling' })],
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
@@ -352,27 +318,27 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.kindoo?.description).toBe('Some Church-Wide Calling');
   });
 
-  it('emits kindoo-unparseable (review) for a non-Guest manager present-but-unparseable (B)', () => {
-    // A Kindoo Manager (non-Guest) who also holds an SBA seat: the row is
-    // FYI only — an actionable Update SBA would clobber their seat. Gated
-    // by `skipGrantReconciliation`, so it surfaces as review (no action).
+  it('emits kindoo-unparseable (drift) for a Kindoo Manager present-but-unparseable', () => {
+    // A Kindoo Manager who also holds an SBA seat: with the Guest gate
+    // removed, this is an actionable drift (Update SBA), the same as any
+    // other seat role. Managers can hold seats too.
     const result = detect(
       baseInputs({
         seats: [seat({})],
-        kindooUsers: [kuserRoleUnknown({ description: 'Kindoo Manager - Stake Clerk' })],
+        kindooUsers: [kuser({ description: 'Kindoo Manager - Stake Clerk' })],
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
     expect(result.discrepancies[0]?.code).toBe('kindoo-unparseable');
-    expect(result.discrepancies[0]?.severity).toBe('review');
+    expect(result.discrepancies[0]?.severity).toBe('drift');
   });
 
   it('suppresses kindoo-unparseable entirely on a foreign Kindoo site (A)', () => {
     // Operator contract: "apply to stake scope" is a home/stake concept;
     // a foreign active site never surfaces a kindoo-unparseable row. The
-    // home-site gate enforces this even for a Guest with an unaligned
-    // seat (and the foreign-site user filter independently drops
-    // unresolved descriptions — belt and suspenders).
+    // home-site gate enforces this even with an unaligned seat (and the
+    // foreign-site user filter independently drops unresolved descriptions
+    // — belt and suspenders).
     const result = detect({
       ...mixedInputs({
         seats: [seat({ member_canonical: 'fa@example.com', member_email: 'fa@example.com' })],
@@ -380,7 +346,6 @@ describe('detect', () => {
           kuser({
             username: 'fa@example.com',
             description: 'Some Church-Wide Calling',
-            userRole: 2,
           }),
         ],
         activeSite: { kind: 'foreign', siteId: 'east-stake' },
@@ -389,12 +354,12 @@ describe('detect', () => {
     expect(result.discrepancies.filter((d) => d.code === 'kindoo-unparseable')).toEqual([]);
   });
 
-  it('home-site Guest present-but-unparseable: drift when seat NOT aligned, suppressed when aligned (C)', () => {
+  it('home-site present-but-unparseable: drift when seat NOT aligned, suppressed when aligned (B)', () => {
     // Not aligned — seat still at ward scope → actionable drift row.
     const notAligned = detect({
       ...baseInputs({
         seats: [seat({ scope: 'CO', type: 'auto', callings: ['Sunday School Teacher'] })],
-        kindooUsers: [kuser({ description: 'Some Church-Wide Calling', userRole: 2 })],
+        kindooUsers: [kuser({ description: 'Some Church-Wide Calling' })],
       }),
       activeSite: { kind: 'home' },
     });
@@ -406,7 +371,7 @@ describe('detect', () => {
     const alignedAuto = detect({
       ...baseInputs({
         seats: [seat({ scope: 'stake', type: 'auto', callings: ['Some Church-Wide Calling'] })],
-        kindooUsers: [kuser({ description: 'Some Church-Wide Calling', userRole: 2 })],
+        kindooUsers: [kuser({ description: 'Some Church-Wide Calling' })],
       }),
       activeSite: { kind: 'home' },
     });
@@ -424,7 +389,7 @@ describe('detect', () => {
             reason: 'some church-wide calling',
           }),
         ],
-        kindooUsers: [kuser({ description: '  Some Church-Wide Calling  ', userRole: 2 })],
+        kindooUsers: [kuser({ description: '  Some Church-Wide Calling  ' })],
       }),
       activeSite: { kind: 'home' },
     });
@@ -632,14 +597,13 @@ describe('detect', () => {
     expect(result.discrepancies.filter((d) => d.code === 'type-mismatch')).toEqual([]);
   });
 
-  it('NO type-mismatch AND NO buildings-mismatch for a non-Guest (userRole=0) with an auto seat (Kindoo Manager)', () => {
+  it('demotes a Kindoo Manager auto seat that is no longer church-backed (gate removed)', () => {
     // Staging repro shape (placeholder email/name): a Kindoo Manager
     // whose Description parses cleanly (stake-scope, Stake Clerk) and
-    // matches an auto SBA seat. The role lookup returns userRole=0 (the
-    // staging manager's value); grant-based reconciliation applies only
-    // to Guests (2). Guard BOTH checks — skipping only the demote would
-    // flip this to a spurious buildings-mismatch ([Maple, Pine Creek] vs
-    // the manager's door truth). No row at all.
+    // matches an auto SBA seat. With the Guest gate removed, grant
+    // reconciliation applies to managers too: the seat's buildings are not
+    // direct-granted (directGrantBuildings=[]) → DEMOTE to manual fires.
+    // The demote short-circuits before the buildings check (one row).
     const result = detect(
       baseInputs({
         seats: [
@@ -653,7 +617,6 @@ describe('detect', () => {
         kindooUsers: [
           kuser({
             description: 'Colorado Springs North Stake (Stake Clerk)',
-            userRole: 0,
             accessSchedules: [],
             derivedBuildings: [],
             directGrantBuildings: [],
@@ -661,13 +624,17 @@ describe('detect', () => {
         ],
       }),
     );
-    expect(result.discrepancies).toEqual([]);
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('type-mismatch');
+    expect(row.kindoo?.grantTargetType).toBe('manual');
   });
 
-  it('skips a non-Guest by role even when it HAS door grants (role is the only signal)', () => {
-    // A non-Guest (userRole=0) that holds doors must still be skipped —
-    // role is the only scope signal. Without the role gate this
-    // church-backed-divergent shape would demote.
+  it('reconciles a user that HAS door grants regardless of seat role', () => {
+    // A user that holds rule-derived doors but no direct grants
+    // (directGrantBuildings=[]) under an auto seat → DEMOTE to manual.
+    // Previously a non-Guest here was skipped by the role gate; now it
+    // reconciles like any other seat.
     const result = detect(
       baseInputs({
         seats: [
@@ -681,35 +648,6 @@ describe('detect', () => {
         kindooUsers: [
           kuser({
             description: 'Maple Ward (Sunday School Teacher)',
-            userRole: 0,
-            derivedBuildings: ['Maple Building'],
-            directGrantBuildings: [],
-          }),
-        ],
-      }),
-    );
-    expect(result.discrepancies).toEqual([]);
-  });
-
-  it('still demotes a Guest (userRole=2) with shrunk grants', () => {
-    // The role gate must NOT swallow a real demote. This Guest still
-    // holds rule-derived doors (derivedBuildings=[Maple]) but they are no
-    // longer direct-granted (directGrantBuildings=[]) → the church
-    // stopped owning the seat → demote fires exactly as before.
-    const result = detect(
-      baseInputs({
-        seats: [
-          seat({
-            scope: 'CO',
-            type: 'auto',
-            callings: ['Sunday School Teacher'],
-            building_names: ['Maple Building'],
-          }),
-        ],
-        kindooUsers: [
-          kuser({
-            description: 'Maple Ward (Sunday School Teacher)',
-            userRole: 2,
             derivedBuildings: ['Maple Building'],
             directGrantBuildings: [],
           }),
@@ -722,13 +660,10 @@ describe('detect', () => {
     expect(row.kindoo?.grantTargetType).toBe('manual');
   });
 
-  it('LIMITATION: a Guest whose church access was ENTIRELY revoked (zero door rows) is NOT demoted', () => {
-    // Documented trade-off of role-from-door-rows: userRole is read off
-    // the door grants, so a Guest with zero rows has no role to read →
-    // userRole unset (modeled by kuserRoleUnknown, the production state) →
-    // skip. The seat-type label lags at `auto`; the member already has no
-    // Kindoo access. A fallback role source would be needed to demote
-    // here, which the manager-fix doesn't warrant.
+  it('demotes an auto seat with shrunk grants', () => {
+    // A user still holds rule-derived doors (derivedBuildings=[Maple]) but
+    // they are no longer direct-granted (directGrantBuildings=[]) → the
+    // church stopped owning the seat → demote fires.
     const result = detect(
       baseInputs({
         seats: [
@@ -740,33 +675,7 @@ describe('detect', () => {
           }),
         ],
         kindooUsers: [
-          kuserRoleUnknown({
-            description: 'Maple Ward (Sunday School Teacher)',
-            derivedBuildings: [],
-            directGrantBuildings: [],
-          }),
-        ],
-      }),
-    );
-    expect(result.discrepancies).toEqual([]);
-  });
-
-  it('skips when the role is UNKNOWN (omitted) — even with grants present', () => {
-    // Role couldn't be read (userRole omitted — empty RulesList / failed
-    // fetch). `undefined !== 2` ⇒ skip, the safe default. This shape
-    // would otherwise demote (directGrantBuildings=[] under an auto seat).
-    const result = detect(
-      baseInputs({
-        seats: [
-          seat({
-            scope: 'CO',
-            type: 'auto',
-            callings: ['Sunday School Teacher'],
-            building_names: ['Maple Building'],
-          }),
-        ],
-        kindooUsers: [
-          kuserRoleUnknown({
+          kuser({
             description: 'Maple Ward (Sunday School Teacher)',
             derivedBuildings: ['Maple Building'],
             directGrantBuildings: [],
@@ -774,13 +683,18 @@ describe('detect', () => {
         ],
       }),
     );
-    expect(result.discrepancies).toEqual([]);
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('type-mismatch');
+    expect(row.kindoo?.grantTargetType).toBe('manual');
   });
 
-  it('still skips a fetch-failure (null) auto seat — role unknown + derivation null', () => {
-    // The per-user door fetch FAILED (derivedBuildings / directGrantBuildings
-    // null) AND the role is unknown. Both the role gate and the
-    // pre-existing null guards skip — no row.
+  it('demotes an auto seat whose church access was ENTIRELY revoked (zero door rows)', () => {
+    // gossbc-style fix: a user with zero door rows reads derivedBuildings
+    // / directGrantBuildings as []. Direct grants are KNOWN (empty), so the
+    // auto seat is no longer church-backed → DEMOTE. Previously the
+    // role-from-door-rows gate skipped this (role unreadable); the gate is
+    // gone, so the demote fires.
     const result = detect(
       baseInputs({
         seats: [
@@ -792,7 +706,38 @@ describe('detect', () => {
           }),
         ],
         kindooUsers: [
-          kuserRoleUnknown({
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('type-mismatch');
+    expect(row.kindoo?.grantTargetType).toBe('manual');
+  });
+
+  it('skips a fetch-failure (null) auto seat — derivation null (per-check null safety)', () => {
+    // The per-user door fetch FAILED (derivedBuildings /
+    // directGrantBuildings null). The per-check null guards skip both the
+    // promote/demote (directGrantBuildings null) and the auto
+    // buildings-mismatch (derivedBuildings null) — no row. This safety is
+    // unchanged by the gate removal.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
             description: 'Maple Ward (Sunday School Teacher)',
             derivedBuildings: null,
             directGrantBuildings: null,
@@ -803,10 +748,9 @@ describe('detect', () => {
     expect(result.discrepancies).toEqual([]);
   });
 
-  it('still emits buildings-mismatch for a Guest (userRole=2) when doors differ from the SBA seat', () => {
-    // Boundary check the other way: a Guest in scope must NOT be
-    // suppressed. The seat building [Maple] is fully direct-granted so the
-    // seat stays auto (no demote preempts), but the Kindoo door truth
+  it('emits buildings-mismatch when doors differ from the SBA seat (seat stays auto)', () => {
+    // The seat building [Maple] is fully direct-granted so the seat stays
+    // auto (no demote preempts), but the Kindoo door truth
     // (derivedBuildings=[Maple, Pine Creek]) carries an extra building →
     // buildings-mismatch.
     const result = detect(
@@ -822,7 +766,6 @@ describe('detect', () => {
         kindooUsers: [
           kuser({
             description: 'Maple Ward (Sunday School Teacher)',
-            userRole: 2,
             derivedBuildings: ['Maple Building', 'Pine Creek Building'],
             directGrantBuildings: ['Maple Building'],
           }),
