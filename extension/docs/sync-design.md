@@ -79,9 +79,10 @@ Multi-calling within a single segment (`Maple Ward (Elders Quorum First Counselo
 > `type` from this classifier's template match — `type` is observed from Church Access Automation
 > direct grants (`isChurchBacked` / `grantsBackAuto`). The classifier still runs to extract the
 > **calling name(s)** (for `callings[]` + the sort lookup) and the parsed scope; its `type` /
-> `reviewMixed` outputs are no longer authoritative. `extra-kindoo-calling` is now an AUTO-only
-> `seat.callings` diff, not the `reviewMixed` path described in step 6. Read this section for the
-> parser/calling-extraction mechanics; read the Grant-derived section for how `type` is decided.
+> `reviewMixed` outputs are no longer authoritative. `callings-mismatch` is now an AUTO-only
+> set diff of `seat.callings` against Kindoo's parsed primary calling(s) (either direction), not the
+> `reviewMixed` path described in step 6. Read this section for the parser/calling-extraction
+> mechanics; read the Grant-derived section for how `type` is decided.
 
 For each parsed segment + the user's `IsTempUser` flag, compute the intended seat shape:
 
@@ -127,11 +128,11 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 | seat (any type) | Kindoo user, `derivedBuildings` ≠ seat.building_names | `buildings-mismatch` |
 | seat (manual/temp) | Kindoo user, `derivedBuildings === null`, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` (AccessSchedules fallback) |
 | seat (auto) | Kindoo user, `derivedBuildings === null` (per-user derivation failed) | (buildings check skipped — fallback) |
-| seat (auto only) | Kindoo parsed callings ⊋ seat `callings[]` — see Stage 1 (e) | `extra-kindoo-calling` (drift — Update SBA appends the missing calling(s) to the seat's `callings[]`) |
+| seat (auto only) | Kindoo parsed callings ≠ seat `callings[]` as normalized sets (either direction), Kindoo set non-empty — see Stage 1 (e) | `callings-mismatch` (drift — Update SBA replaces the seat's `callings[]` with Kindoo's full parsed set) |
 | seat | Kindoo user, all-good | (no row) |
 
 Severity:
-- `sba-only`, `kindoo-only`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch`, `extra-kindoo-calling` → **drift** (an unambiguous SBA-side action is available).
+- `sba-only`, `kindoo-only`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch`, `callings-mismatch` → **drift** (an unambiguous SBA-side action is available).
 - `kindoo-unparseable` → **drift** only for a home-site Guest with an unaligned seat; **review** for a non-Guest (Manager / admin). On a foreign site or an already-aligned seat it emits no row at all.
 - `kindoo-no-description` → **review** (a blank Kindoo Description yields nothing Sync can reconcile).
 
@@ -143,7 +144,7 @@ The split between `kindoo-unparseable` and `kindoo-no-description` is the parser
 - **(B) Guest vs non-Guest** — a Guest (`UserRole === 2`) gets the actionable `drift` row; a non-Guest (Manager / admin, `skipGrantReconciliation(kuser)` true) gets a `review` row with no action. An Update SBA on a manager's seat would clobber it.
 - **(C) Not already aligned** — for a home-site Guest, the drift row fires only when the SBA seat is **not** already in the state Update SBA would produce (`unparseableAligned`: `scope==='stake'` plus the calling recorded per §6.1 — `callings===[description]` for auto, `reason===description` for manual/temp, case/whitespace-normalized). Once aligned (operator applied it, or the seat already matched), the row is suppressed so it resolves on the next Sync run like every other drift code.
 
-The defensive **"resolved segments but no primary"** fallback also emits `kindoo-unparseable`, but as **review** (no action): there the Description *did* parse (it carries scope + parens, e.g. `Maple Ward (Bishop)`), so routing it to Update SBA would send that whole string as the calling and corrupt the seat. `extra-kindoo-calling` moved `review → drift` once its append became the unambiguous action.
+The defensive **"resolved segments but no primary"** fallback also emits `kindoo-unparseable`, but as **review** (no action): there the Description *did* parse (it carries scope + parens, e.g. `Maple Ward (Bishop)`), so routing it to Update SBA would send that whole string as the calling and corrupt the seat. `callings-mismatch` moved `review → drift` once its replace-to-match-Kindoo became the unambiguous action.
 
 **Auto-user buildings derivation.** Auto-imported users (the Church Access Automation flow, ~310 of 313 csnorth users in production) receive door access via **direct door grants keyed by `VidName`**, not via `AccessSchedules`. The bulk listing (`KindooGetEnvironmentUsersLightWithTotalNumberOfRecordsWithEntryPoints`) only exposes `AccessSchedules` — direct grants are excluded.
 
@@ -274,7 +275,7 @@ Each discrepancy row gains one or two specific-action buttons. Per-row only — 
 |---|---|---|
 | `sba-only` | "Remove From SBA" (danger) | SBA-side delete via `syncApplyFix` with `code: 'sba-only'`. An SBA seat with no Kindoo presence is an orphan (the authority doesn't have it), so the callable deletes it, mirroring `removeSeatOnRequestComplete` — plain `tx.delete` for the common orphan; promote-first-duplicate-to-primary when the seat carries `duplicate_grants[]` for other sites. (Was a Kindoo-side "Provision in Kindoo" write before the Kindoo-authoritative shift.) |
 | `kindoo-only` | "Create SBA seat" | SBA-side: `syncApplyFix` with `code: 'kindoo-only'`. Server-side stamps the seat write with `SyncActor:kindoo-only`. |
-| `extra-kindoo-calling` | "Update SBA" | SBA-side: `syncApplyFix` with `code: 'extra-kindoo-calling'`; backend de-dupes + appends to `callings[]`. Severity drift. The append path and `testId` (`add-callings-sba`) are unchanged; the button label moved from "Add to SBA seat" to "Update SBA" to match the other Update-SBA actions. |
+| `callings-mismatch` | "Update SBA" (`testId: update-sba`) | SBA-side: `syncApplyFix` with `code: 'callings-mismatch'`; backend REPLACES `callings[]` with Kindoo's full parsed set (`kindooCallings` — a renamed calling replaces the old name, not appended), recomputes `sort_order`, and reconciles the scope's `importer_callings` (rewrites it when the new callings earn a `give_app_access` grant, else clears it — a replace can REMOVE access). Severity drift. A true Update-SBA sibling of `scope-mismatch` / `buildings-mismatch`. |
 | `scope-mismatch` | "Update SBA" only | `syncApplyFix` with `code: 'scope-mismatch'` carrying Kindoo's parsed primary scope. No "Update Kindoo" — Sync never writes SBA → Kindoo. |
 | `type-mismatch` | "Update SBA" only | Grants own the type decision (promote/demote), so the only action is Update SBA, which flips the seat to the grant-derived target (`grantTargetType`) via `syncApplyFix` with `code: 'type-mismatch'`. No "Update Kindoo" — the extension can't write church grants. |
 | `buildings-mismatch` | "Update SBA" only | `syncApplyFix` with `code: 'buildings-mismatch'`. Sources from `derivedBuildings` (the direct + rule-grant strict-subset chain) for ALL seat types — never the AccessSchedules-derived `buildingNames`, which misses direct grants and would wipe buildings for auto users. Update SBA refuses (button disabled) when `derivedBuildings === null` (per-user door read failed). No "Update Kindoo" — Sync never writes SBA → Kindoo. |
@@ -491,12 +492,20 @@ The remaining (d) work is therefore code-only (stop the web reading `auto_kindoo
 plus reconciling the spec §13 prose that still describes Sync classifying type against the
 templates. The request path is untouched (already born-manual). Tracked as T-57 (d).
 
-(e) **Redefine `extra-kindoo-calling`** (extension) — **SHIPPED (PR #179).** The old auto-calling
-trigger (mixed auto/non-auto in `classifier.ts`) is gone. The redefinition landed **AUTO-only**
-(operator decision 2026-05-30, narrower than the interim "independent of type" sketch): the diff
-fires only when the SBA seat `type === 'auto'`, comparing Kindoo's parsed callings against the
-seat's `callings[]`. Manual / temp seats are never checked — see the "Implementation notes" entry
-below for the rationale.
+(e) **Redefine the calling-diff code** (extension) — **SHIPPED (PR #179), corrected (PR #186).**
+The old auto-calling trigger (mixed auto/non-auto in `classifier.ts`) is gone. The redefinition
+landed **AUTO-only** (operator decision 2026-05-30, narrower than the interim "independent of type"
+sketch): the diff fires only when the SBA seat `type === 'auto'`. The AUTO-only decision still holds.
+
+> **Superseded by `callings-mismatch` (PR #186).** As first shipped, the code was named
+> `extra-kindoo-calling` and fired only in the **additive** direction (Kindoo has a calling the seat
+> lacks), and the callable **appended** the missing calling(s) to `callings[]`. That append was a
+> bug on a *rename*: Kindoo `Bishopric Clerk` over a seat labelled `Bishop` produced
+> `[Bishop, Bishopric Clerk]` instead of replacing. PR #186 renamed it `callings-mismatch` and made
+> it a true sibling of `scope-mismatch` / `buildings-mismatch`: the detector emits whenever the
+> seat's `callings[]` differ from Kindoo's parsed primary set as normalized sets in **either
+> direction** (rename, add, or drop), and the callable **replaces** `callings[]` with Kindoo's full
+> set. The current behaviour is described in the "Implementation notes" entries below.
 
 #### Implementation notes — detector track (b + c + e), landed
 
@@ -526,26 +535,31 @@ the AccessSchedules fallback) → auto; else manual. The seat is shaped to match
 `markRequestComplete` (`docs/spec.md` §6.1): an **auto** seat carries the FULL parsed primary-segment
 calling list (matched ∪ unmatched) in `callings[]` and no `reason`; a **manual / temp** seat carries
 `callings: []` and the full parsed calling text in the single free-text `reason`. Writing the
-calling to a manual seat's `callings[]` would mint a hybrid seat that re-fires `extra-kindoo-calling`
-forever (the manual diff reads `reason`). The reason sources from the FULL parsed list, not
+calling to a manual seat's `callings[]` would mint a hybrid seat that violates the §6.1 manual/temp
+shape (`callings-mismatch` is AUTO-only, so it never reconciles a manual seat). The reason sources
+from the FULL parsed list, not
 `intendedFreeText` (the classifier's unmatched remainder, empty when the classifier matched
 everything — which would otherwise record the calling nowhere).
 
 **Detector check order (c + e).** Within the both-sides-present branch the order is
-scope-mismatch → type-mismatch (promote/demote) → buildings-mismatch → **extra-kindoo-calling
+scope-mismatch → type-mismatch (promote/demote) → buildings-mismatch → **callings-mismatch
 (last)**. Each `continue`s, so at most one row per email; a genuine type/scope/buildings drift
-preempts a calling addition.
+preempts a calling reconciliation.
 
-**`extra-kindoo-calling` is AUTO-only (e — operator decision 2026-05-30).** The diff fires only
-when the SBA seat `type === 'auto'`: compare Kindoo's parsed callings against the roster
-`callings[]`, trimmed + case-insensitive, additive direction only. **Manual / temp seats are not
-checked at all.** They record their calling in the free-text `reason`, which is frequently operator
-prose (`"Requested by bishop"`, `"Visiting speaker"`) rather than a calling name; surfacing the
-diff on them would flood the review list with non-actionable rows on every existing manual seat.
-(This also moots the manual fix-action question — there are no manual `extra-kindoo-calling` rows.)
-The extras ride on `KindooBlock.extraKindooCallings`; `fix.ts` sends them as the callable
-`extraCallings`. The `syncApplyFix` path appends to `callings[]`, which is the auto-seat shape, so
-the one-click **"Add to SBA seat"** button applies to every (auto-only) row.
+**`callings-mismatch` is AUTO-only (e — operator decision 2026-05-30).** The diff fires only
+when the SBA seat `type === 'auto'`: compare the seat's `callings[]` against Kindoo's parsed
+primary calling(s) as **normalized sets** (trimmed + case-insensitive), and emit a row whenever they
+differ **in either direction** — rename, add, or drop — provided Kindoo's target set is **non-empty**
+(`callingSetsEqual` decides equality; `parseKindooCallings` builds the target). Ordering / casing /
+padding differences never fire. **Manual / temp seats are not checked at all.** They record their
+calling in the free-text `reason`, which is frequently operator prose (`"Requested by bishop"`,
+`"Visiting speaker"`) rather than a calling name; surfacing the diff on them would flood the review
+list with non-actionable rows on every existing manual seat. (This also moots the manual fix-action
+question — there are no manual `callings-mismatch` rows.) The full target set rides on
+`KindooBlock.kindooCallings`; `fix.ts` sends it as the callable `callings`. The `syncApplyFix` path
+**replaces** `callings[]` with that set (a renamed calling replaces the old name, not appended) and
+reconciles the scope's `importer_callings`, so the one-click **"Update SBA"** button
+(`testId: update-sba`) applies to every (auto-only) row.
 
 **`type-mismatch` fix UI + payload (c).** Kindoo grants are the source of truth for type, so the row
 exposes **only "Update SBA"** — no "Update Kindoo" (the extension can't write church grants;
@@ -586,7 +600,7 @@ spurious demote; guarding only the demote then flips them to a spurious `buildin
 **The fix is one predicate, `skipGrantReconciliation(kuser)`**, that both grant checks consult — so
 they can never disagree (guarding only one flips the user to the other's spurious row). The detector
 skips **both** `type-mismatch` (promote/demote) and `buildings-mismatch` when it returns `true`,
-surfacing **no row** (a `scope-mismatch` or the additive AUTO-only `extra-kindoo-calling` can still
+surfacing **no row** (a `scope-mismatch` or the AUTO-only `callings-mismatch` can still
 fire, since neither is grant-provenance reconciliation).
 
 **The predicate is the Kindoo seat role, and only that:** `kuser.userRole !== KINDOO_GUEST_ROLE`
