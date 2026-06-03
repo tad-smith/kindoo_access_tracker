@@ -45,6 +45,7 @@ export type {
   KindooManager,
   KindooOnlyPayload,
   KindooSite,
+  KindooUnparseablePayload,
   ManualGrant,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,

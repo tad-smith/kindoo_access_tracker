@@ -16,6 +16,14 @@
 // axis independently in the drift UI. If two axes are misaligned on the
 // same seat, the second drift row re-emits on the next sync run.
 //
+// `kindoo-unparseable` is an SBA-side update for a Kindoo Description
+// that is present but doesn't parse as `Scope (Calling)`: such a
+// description is treated as a church-wide calling, so the seat is moved
+// to stake scope and its calling is set from the raw description text
+// (per the §13 convention — `callings[]` for auto, free-text `reason`
+// for manual / temp). Blank descriptions stay review-only and are
+// handled extension-side; they never reach this callable.
+//
 // Auth: same authority check as `markRequestComplete` — read the
 // `kindooManagers/{canonical}` doc directly (custom claims can be ~1h
 // stale on idle sessions; the doc is the source of truth at call time).
@@ -59,6 +67,7 @@ import type {
   ExtraKindooCallingPayload,
   KindooManager,
   KindooOnlyPayload,
+  KindooUnparseablePayload,
   SbaOnlyRemovePayload,
   ScopeMismatchPayload,
   Seat,
@@ -167,6 +176,8 @@ export const syncApplyFix = onCall(
         return applyScopeMismatch(stakeId, fix.payload as ScopeMismatchPayload);
       case 'type-mismatch':
         return applyTypeMismatch(stakeId, fix.payload as TypeMismatchPayload);
+      case 'kindoo-unparseable':
+        return applyKindooUnparseable(stakeId, fix.payload as KindooUnparseablePayload);
       case 'buildings-mismatch':
         return applyBuildingsMismatch(stakeId, fix.payload as BuildingsMismatchPayload);
       case 'sba-only':
@@ -481,6 +492,101 @@ async function applyTypeMismatch(
           actor,
         });
       }
+    }
+
+    tx.update(seatRef, update);
+    return { success: true, seatId: canonical };
+  });
+}
+
+/**
+ * `kindoo-unparseable` — a Kindoo Description that is present but doesn't
+ * parse as `Scope (Calling)` is treated as a CHURCH-WIDE calling applied
+ * at stake scope. We move the seat to `scope = 'stake'`, keep its
+ * existing `type`, and set the calling from the raw description text per
+ * the §13 convention (auto → `callings[]`; manual / temp → free-text
+ * `reason`, callings cleared, temp dates preserved).
+ *
+ * Access-doc handling: the seat is leaving its old scope. The common
+ * case is a MANUAL church-wide seat with no `importer_callings` — nothing
+ * to migrate. For the rare AUTO case, the seat carried
+ * `importer_callings[oldScope]`; the Kindoo-authoritative reap principle
+ * (#183) says don't leave stale calling-derived access under the
+ * abandoned scope, so we reap the old scope with
+ * `clearImporterCallingsForScope` (the same blessed helper the
+ * type-mismatch demote and sba-only paths use). This is consistent with
+ * the just-shipped reaping behaviour and is preferred over mirroring
+ * `applyScopeMismatch`, which would leave the access doc stranded under
+ * the old scope.
+ *
+ * We deliberately do NOT re-write a stake-scope `importer_callings` entry
+ * for the church-wide calling: by definition an unparseable description
+ * matches no `give_app_access` calling template, so
+ * `writeAccessForAutoScope` would no-op (no `give_app_access` match → no
+ * new grant). Skipping it keeps the transaction's reads strictly before
+ * its writes and avoids a dead write. If such a church-wide calling ever
+ * needs SBA app access, that flows through a manual grant, not sync.
+ */
+async function applyKindooUnparseable(
+  stakeId: string,
+  payload: KindooUnparseablePayload | undefined,
+): Promise<SyncApplyFixResult> {
+  if (!payload || typeof payload !== 'object') {
+    throw new HttpsError('invalid-argument', 'payload required');
+  }
+  const memberEmail = requireString(payload.memberEmail, 'memberEmail');
+  const calling = requireString(payload.calling, 'calling').trim();
+  const canonical = canonicalEmail(memberEmail);
+  if (canonical === '') {
+    throw new HttpsError('invalid-argument', 'memberEmail did not canonicalize');
+  }
+
+  const db = getDb();
+  const seatRef = db.doc(`stakes/${stakeId}/seats/${canonical}`);
+  const accessRef = db.doc(`stakes/${stakeId}/access/${canonical}`);
+  const actor = syncActor('kindoo-unparseable');
+
+  return db.runTransaction<SyncApplyFixResult>(async (tx) => {
+    // All reads before any write.
+    const snap = await tx.get(seatRef);
+    if (!snap.exists) {
+      return { success: false, error: 'seat not found' };
+    }
+    const seat = snap.data() as Seat;
+    const oldScope = seat.scope;
+
+    const update: Record<string, unknown> = {
+      scope: 'stake',
+      last_modified_at: FieldValue.serverTimestamp(),
+      last_modified_by: actor,
+      lastActor: actor,
+    };
+
+    if (seat.type === 'auto') {
+      // §13 auto convention: calling lives in `callings[]`, no `reason`.
+      // A church-wide calling matches no calling template, so it carries
+      // no template-driven `sort_order`; clear any stale value.
+      update.callings = dedupePreserveOrder([calling]);
+      update.reason = FieldValue.delete();
+      update.sort_order = FieldValue.delete();
+
+      // Reap the OLD scope's calling-derived access (Kindoo-authoritative
+      // reap, #183). No stake-scope access is written: an unparseable
+      // calling matches no `give_app_access` template, so there's no grant
+      // to create (see the doc comment above).
+      const accessSnap = await tx.get(accessRef);
+      if (accessSnap.exists) {
+        clearImporterCallingsForScope(tx, accessRef, {
+          access: accessSnap.data() as Access,
+          scope: oldScope,
+          actor,
+        });
+      }
+    } else {
+      // §13 manual / temp convention: calling lives in free-text `reason`,
+      // `callings[]` cleared. Temp seats keep their existing dates.
+      update.reason = calling;
+      update.callings = [];
     }
 
     tx.update(seatRef, update);

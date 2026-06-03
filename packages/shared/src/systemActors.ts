@@ -52,6 +52,7 @@ export const SYNC_DISCREPANCY_CODES = [
   'extra-kindoo-calling',
   'scope-mismatch',
   'type-mismatch',
+  'kindoo-unparseable',
   'buildings-mismatch',
   'sba-only',
 ] as const;
