@@ -2,11 +2,15 @@
 // Phase 2 drift report. Each invocation handles one discrepancy code on
 // one seat — no bulk endpoint, no confirmation dance.
 //
-// Codes split by which side owns the write:
-//   - SBA-side  → this callable
-//   - Kindoo-side → the extension's v2.2 provision orchestrator
-// The Kindoo-side codes (`sba-only`, plus the `direction: 'sba-to-kindoo'`
-// variants of the *-mismatch codes) never reach the backend.
+// Kindoo is the authoritative source: sync never writes SBA → Kindoo.
+// Provisioning into Kindoo flows through SBA requests, not sync. Every
+// drift code is now an SBA-side mutation that flows through this
+// callable. `sba-only` is an SBA-side delete: an SBA seat with no
+// Kindoo presence is an orphan (Kindoo, the authority, doesn't have
+// it), so we delete it. (It was previously a Kindoo-side write —
+// "Provision in Kindoo" — handled by the extension and never reaching
+// the backend; the Kindoo-authoritative shift made it an SBA-side
+// "Remove From SBA" delete.)
 //
 // Per-axis single-field writes are intentional: the operator picks each
 // axis independently in the drift UI. If two axes are misaligned on the
@@ -55,6 +59,7 @@ import type {
   ExtraKindooCallingPayload,
   KindooManager,
   KindooOnlyPayload,
+  SbaOnlyRemovePayload,
   ScopeMismatchPayload,
   Seat,
   SyncApplyFixInput,
@@ -164,6 +169,8 @@ export const syncApplyFix = onCall(
         return applyTypeMismatch(stakeId, fix.payload as TypeMismatchPayload);
       case 'buildings-mismatch':
         return applyBuildingsMismatch(stakeId, fix.payload as BuildingsMismatchPayload);
+      case 'sba-only':
+        return applySbaOnlyRemove(stakeId, fix.payload as SbaOnlyRemovePayload);
       default:
         throw new HttpsError('invalid-argument', `unknown fix code: ${code}`);
     }
@@ -525,6 +532,200 @@ async function applyBuildingsMismatch(
   });
 }
 
+/**
+ * `sba-only` — Kindoo-authoritative orphan delete ("Remove From SBA").
+ * The drift report found an SBA seat with no Kindoo presence; since
+ * Kindoo is the authority, the SBA seat is stale and gets removed.
+ *
+ * Both branches re-read the seat INSIDE a transaction and re-validate
+ * `duplicate_grants[]` before acting, so a concurrent
+ * `markRequestComplete` between the outer read and the write can't be
+ * silently clobbered.
+ *
+ * Mirrors `removeSeatOnRequestComplete`'s seat-removal semantics:
+ *   - No `duplicate_grants[]` (the common orphan case) → delete the
+ *     seat. To attribute the deletion to `SyncActor:sba-only` in the
+ *     audit log we follow the Expiry precedent: stamp `lastActor`
+ *     (a bookkeeping-only write the audit trigger no-ops), then delete.
+ *     Stamp + reap happen in ONE transaction; the bare `delete()` is a
+ *     separate second committed write. They can't share a transaction —
+ *     a stamp + delete inside one tx collapses to a bare delete whose
+ *     BEFORE carries the seat's *prior* actor, mis-attributing the row.
+ *     Reaping inside the same tx as the stamp (rather than after the
+ *     delete) keeps the reaping guarantee retry-safe: a reap/stamp
+ *     failure leaves seat + access intact; a delete failure leaves the
+ *     seat alive with access already reaped. Either self-heals on retry
+ *     or on the next Sync round.
+ *   - Has `duplicate_grants[]` → the member holds other-site / other-
+ *     scope access we must not nuke. Promote the first duplicate to
+ *     primary (same field copy the remove trigger does) instead of
+ *     deleting, in a transactional update stamped with the Sync actor;
+ *     the audit trigger fans an `update_seat` row.
+ *
+ * Access reap: the removed primary's `scope` is cleared from the
+ * member's `access/{canonical}` doc via `clearImporterCallingsForScope`
+ * — the same blessed helper the demote path uses. This drops the
+ * calling-derived `importer_callings[scope]` (so `syncAccessClaims`
+ * stops granting SBA app access on the strength of a calling that no
+ * longer has a seat), preserves `manual_grants` (deliberate manager
+ * grants are independent of seats), preserves other scopes'
+ * `importer_callings`, and deletes the access doc iff BOTH maps end up
+ * empty. A manual/temp orphan carries no `importer_callings`, so the
+ * reap is a harmless no-op for it. On promote, the cleared scope is the
+ * REMOVED primary's — the promoted scope's `importer_callings` survives
+ * because the member still holds that seat.
+ *
+ * Audit caveat: the reap's `update_access` row is stamped with
+ * `SyncActor:sba-only`, but when the helper DELETES the access doc
+ * (both maps went empty) its bare `tx.delete` fans a `delete_access`
+ * row attributed to the doc's PRIOR `lastActor`, not the Sync actor.
+ * Pre-existing — shared with the `type-mismatch` demote path — and
+ * accepted at our scale rather than adding a stamp-then-delete dance
+ * for the access doc.
+ */
+async function applySbaOnlyRemove(
+  stakeId: string,
+  payload: SbaOnlyRemovePayload | undefined,
+): Promise<SyncApplyFixResult> {
+  if (!payload || typeof payload !== 'object') {
+    throw new HttpsError('invalid-argument', 'payload required');
+  }
+  const memberEmail = requireString(payload.memberEmail, 'memberEmail');
+  const canonical = canonicalEmail(memberEmail);
+  if (canonical === '') {
+    throw new HttpsError('invalid-argument', 'memberEmail did not canonicalize');
+  }
+
+  const db = getDb();
+  const seatRef = db.doc(`stakes/${stakeId}/seats/${canonical}`);
+  const accessRef = db.doc(`stakes/${stakeId}/access/${canonical}`);
+  const actor = syncActor('sba-only');
+
+  const seatSnap = await seatRef.get();
+  if (!seatSnap.exists) {
+    return { success: false, error: 'seat not found' };
+  }
+  const seat = seatSnap.data() as Seat;
+  const dupes = seat.duplicate_grants ?? [];
+
+  if (dupes.length === 0) {
+    // Orphan delete, retry-safe. ONE transaction re-reads + re-validates
+    // the seat, stamps `lastActor: SyncActor:sba-only`, and reaps the
+    // access scope; the bare delete is a separate second committed write
+    // (a stamp + delete inside one tx collapses to a bare delete that
+    // mis-attributes the audit row — see the doc comment above).
+    const txResult = await db.runTransaction<SyncApplyFixResult>(async (tx) => {
+      // All reads before any write.
+      const freshSeatSnap = await tx.get(seatRef);
+      if (!freshSeatSnap.exists) {
+        return { success: false, error: 'seat not found' };
+      }
+      const freshSeat = freshSeatSnap.data() as Seat;
+      if ((freshSeat.duplicate_grants ?? []).length > 0) {
+        // A concurrent `markRequestComplete` added a duplicate grant
+        // between the outer read and here — deleting would silently
+        // destroy it. Soft-fail; the operator re-clicks and the next
+        // round takes the promote path.
+        return { success: false, error: 'seat changed concurrently' };
+      }
+      const accessSnap = await tx.get(accessRef);
+
+      // Stamp the seat so the delete's audit BEFORE-snapshot attributes
+      // `delete_seat` to the Sync actor (the audit trigger reads BEFORE
+      // on a delete). Bookkeeping-only — no-op'd by the audit trigger.
+      tx.set(
+        seatRef,
+        {
+          lastActor: { ...actor },
+          last_modified_at: FieldValue.serverTimestamp(),
+          last_modified_by: { ...actor },
+        },
+        { merge: true },
+      );
+
+      // Reap the orphan seat's scope from the access doc in the SAME tx,
+      // so a failure here leaves seat + access both intact for a clean
+      // retry (the reaping guarantee never half-applies).
+      if (accessSnap.exists) {
+        clearImporterCallingsForScope(tx, accessRef, {
+          access: accessSnap.data() as Access,
+          scope: freshSeat.scope,
+          actor,
+        });
+      }
+      return { success: true, seatId: canonical };
+    });
+    if (!txResult.success) return txResult;
+
+    // Irreversible second write: the seat's BEFORE snapshot now carries
+    // the Sync-actor stamp, so `delete_seat` is attributed correctly. A
+    // failure here leaves the seat alive with access already reaped;
+    // retrying re-runs the idempotent tx, then re-deletes (or the next
+    // Sync round re-detects sba-only).
+    await seatRef.delete();
+    return { success: true, seatId: canonical };
+  }
+
+  // Multi-grant edge: the member has other grants (e.g. parallel-site
+  // access). Promote the first duplicate to primary rather than nuking
+  // it. Field copy mirrors `removeSeatOnRequestComplete`'s promote path.
+  //
+  // Read the seat (and access doc) INSIDE the transaction so we act on
+  // the committed state, not the stale outer snapshot: a concurrent
+  // `markRequestComplete` could have changed `duplicate_grants[]` or
+  // deleted the seat between the outer read and here.
+  return db.runTransaction<SyncApplyFixResult>(async (tx) => {
+    const freshSeatSnap = await tx.get(seatRef);
+    if (!freshSeatSnap.exists) {
+      // Seat removed concurrently — soft-fail rather than throw on update.
+      return { success: false, error: 'seat not found' };
+    }
+    const freshSeat = freshSeatSnap.data() as Seat;
+    const freshDupes = freshSeat.duplicate_grants ?? [];
+    if (freshDupes.length === 0) {
+      // Duplicates consumed concurrently (e.g. a remove completed). The
+      // seat is now a plain orphan; don't promote a grant that no longer
+      // exists. Soft-fail so the drift report re-emits and the operator
+      // re-clicks (which will take the orphan-delete path).
+      return { success: false, error: 'seat changed concurrently; no duplicate grant to promote' };
+    }
+    const removedScope = freshSeat.scope;
+    const accessSnap = await tx.get(accessRef);
+
+    const [promoted, ...remaining] = freshDupes;
+    tx.update(seatRef, {
+      scope: promoted!.scope,
+      type: promoted!.type,
+      callings: promoted!.callings ?? [],
+      building_names: promoted!.building_names ?? [],
+      kindoo_site_id:
+        promoted!.kindoo_site_id !== undefined ? promoted!.kindoo_site_id : FieldValue.delete(),
+      duplicate_grants: remaining,
+      duplicate_scopes: remaining.map((d) => d.scope),
+      // `granted_by_request` justified the now-removed primary; clear it.
+      granted_by_request: FieldValue.delete(),
+      reason: promoted!.reason ?? FieldValue.delete(),
+      start_date: promoted!.start_date ?? FieldValue.delete(),
+      end_date: promoted!.end_date ?? FieldValue.delete(),
+      last_modified_at: FieldValue.serverTimestamp(),
+      last_modified_by: { ...actor },
+      lastActor: { ...actor },
+    });
+
+    // Reap the REMOVED primary's scope from the access doc. The promoted
+    // scope's importer_callings survives (the member still holds it).
+    if (accessSnap.exists) {
+      clearImporterCallingsForScope(tx, accessRef, {
+        access: accessSnap.data() as Access,
+        scope: removedScope,
+        actor,
+      });
+    }
+
+    return { success: true, seatId: canonical };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Auto-seat helpers: template-index loading, sort_order derivation
 // from `wardCallingTemplates` / `stakeCallingTemplates`, and the
@@ -698,15 +899,17 @@ function clearImporterCallingsForScope(
     return;
   }
 
-  tx.set(
-    ref,
-    {
-      importer_callings: finalImporter,
-      sort_order: finalImporterEmpty ? null : (access.sort_order ?? null),
-      last_modified_at: FieldValue.serverTimestamp(),
-      last_modified_by: actor,
-      lastActor: actor,
-    },
-    { merge: true },
-  );
+  // `tx.update` (not `tx.set merge`) so `importer_callings` is REPLACED
+  // wholesale with `finalImporter`. A `set merge` deep-merges nested
+  // maps key-by-key, which would leave the cleared scope's stale entry
+  // behind whenever another scope survives. `update` replaces the named
+  // field entirely while leaving `manual_grants` (and every other
+  // unmentioned field) untouched.
+  tx.update(ref, {
+    importer_callings: finalImporter,
+    sort_order: finalImporterEmpty ? null : (access.sort_order ?? null),
+    last_modified_at: FieldValue.serverTimestamp(),
+    last_modified_by: actor,
+    lastActor: actor,
+  });
 }

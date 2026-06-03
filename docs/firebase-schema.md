@@ -297,7 +297,7 @@ Per-user role-grant doc. Doc exists iff the user has *any* Sync-managed or manua
 }
 ```
 
-**Written by:** Sync's `syncApplyFix` callable (writes / updates `importer_callings` entries per classifier match — Admin SDK, bypasses rules); manager Access page (`manual_grants` only).
+**Written by:** Sync's `syncApplyFix` callable (writes / updates `importer_callings` entries per classifier match; on `sba-only` Remove From SBA and `type-mismatch` demote, *reaps* the removed scope's `importer_callings[scope]` via `clearImporterCallingsForScope`, preserving `manual_grants` and deleting the doc only when both maps go empty — Admin SDK, bypasses rules); manager Access page (`manual_grants` only).
 
 **Read by:** `syncAccessClaims` trigger; manager Access page.
 

@@ -253,14 +253,16 @@ Each discrepancy row gains one or two specific-action buttons. Per-row only — 
 
 ### Fix-action catalogue
 
+**Kindoo is authoritative; Sync never writes SBA → Kindoo (locked 2026-06-02, PR #183).** Every fix below is an SBA-side mutation that reconciles the SBA seat to Kindoo's observed state. Provisioning *into* Kindoo (inviting a user, writing AccessSchedules) flows exclusively through the request-driven provision orchestrator (`provision.ts`), not through Sync. There are no "Provision in Kindoo" / "Update Kindoo" buttons; the CS-side Kindoo-write orchestrator that backed them (`sync-provision.ts`) has been removed. The only Sync action toward an orphaned SBA seat is REMOVE.
+
 | Code | Buttons | What happens |
 |---|---|---|
-| `sba-only` | "Provision in Kindoo" | Kindoo-side write via `syncProvisionFromSeat`. Inviting if absent; description rewrite + per-rule reconcile if existing. |
+| `sba-only` | "Remove From SBA" (danger) | SBA-side delete via `syncApplyFix` with `code: 'sba-only'`. An SBA seat with no Kindoo presence is an orphan (the authority doesn't have it), so the callable deletes it, mirroring `removeSeatOnRequestComplete` — plain `tx.delete` for the common orphan; promote-first-duplicate-to-primary when the seat carries `duplicate_grants[]` for other sites. (Was a Kindoo-side "Provision in Kindoo" write before the Kindoo-authoritative shift.) |
 | `kindoo-only` | "Create SBA seat" | SBA-side: `syncApplyFix` with `code: 'kindoo-only'`. Server-side stamps the seat write with `SyncActor:kindoo-only`. |
 | `extra-kindoo-calling` | "Add to SBA seat" | SBA-side: `syncApplyFix` with `code: 'extra-kindoo-calling'`; backend de-dupes + appends to `callings[]`. |
-| `scope-mismatch` | "Update Kindoo" / "Update SBA" | Update Kindoo: rewrite Description to SBA scope via `syncProvisionFromSeat`. Update SBA: `syncApplyFix` with `code: 'scope-mismatch'` carrying Kindoo's parsed primary scope. |
-| `type-mismatch` | "Update SBA" only | **Superseded by Stage 1 (c).** Grants own the type decision (promote/demote), so the only action is Update SBA, which flips the seat to the grant-derived target (`grantTargetType`) via `syncApplyFix` with `code: 'type-mismatch'`. No "Update Kindoo" — the extension can't write church grants; revoke-on-promote is Stage 2. |
-| `buildings-mismatch` | "Update Kindoo" / "Update SBA" | Update SBA sources from `derivedBuildings` (the direct + rule-grant strict-subset chain) for ALL seat types — never the AccessSchedules-derived `buildingNames`, which misses direct grants and would wipe buildings for auto users. Update SBA refuses (button disabled) when `derivedBuildings === null` (per-user door read failed). Update Kindoo: manual/temp reconciles AccessSchedules to SBA's building set (per-rule revoke + saveAccessRule merge); auto is disabled (Church Access Automation owns direct door grants). |
+| `scope-mismatch` | "Update SBA" only | `syncApplyFix` with `code: 'scope-mismatch'` carrying Kindoo's parsed primary scope. No "Update Kindoo" — Sync never writes SBA → Kindoo. |
+| `type-mismatch` | "Update SBA" only | Grants own the type decision (promote/demote), so the only action is Update SBA, which flips the seat to the grant-derived target (`grantTargetType`) via `syncApplyFix` with `code: 'type-mismatch'`. No "Update Kindoo" — the extension can't write church grants. |
+| `buildings-mismatch` | "Update SBA" only | `syncApplyFix` with `code: 'buildings-mismatch'`. Sources from `derivedBuildings` (the direct + rule-grant strict-subset chain) for ALL seat types — never the AccessSchedules-derived `buildingNames`, which misses direct grants and would wipe buildings for auto users. Update SBA refuses (button disabled) when `derivedBuildings === null` (per-user door read failed). No "Update Kindoo" — Sync never writes SBA → Kindoo. |
 | `kindoo-unparseable` | none | Operator handles in Kindoo's admin UI. |
 
 ### Audit + SyncActor
@@ -269,7 +271,7 @@ Every backend-side seat write made by `syncApplyFix` is stamped with `lastActor:
 
 The `SyncActor:` prefix is recognised by the web renderer's `isAutomatedActor` helper and rendered with the automated-actor chip in the audit log + dashboard, alongside `Importer` / `ExpiryTrigger` / `RemoveTrigger` / `OutOfBand`. Helpers (`syncActorName`, `parseSyncActorCode`, `SYNC_DISCREPANCY_CODES`) live in `packages/shared/src/systemActors.ts`.
 
-Kindoo-side writes (`sba-only`, every `*-mismatch` "Update Kindoo") don't reach Firestore — they're Kindoo API calls and have no SBA audit row by design. The seat docs themselves don't change on those paths.
+Every fix now flows through `syncApplyFix` and lands an SBA-side seat write, so every fix produces an audit row — including `sba-only`. The orphan delete uses the Expiry-style stamp-then-delete (stamp `lastActor: SyncActor:sba-only` in a committed write, then delete) so the audit trigger reads the stamped BEFORE snapshot and attributes the `delete_seat` row to the Sync actor; the duplicate-grant-promotion branch fans an `update_seat` row instead. There are no longer any Kindoo-side Sync writes that bypass Firestore.
 
 ### Per-row state machine
 
@@ -296,7 +298,8 @@ The building source matters because the bulk listing's AccessSchedules excludes 
 
 New:
 - `extension/src/content/kindoo/sync/fix.ts` + `fix.test.ts` — dispatcher + payload builder.
-- `extension/src/content/kindoo/sync-provision.ts` — Kindoo-side orchestrator that drives Kindoo to a single `Seat`. Sibling of `provision.ts`; reuses the same low-level endpoint helpers without piping through the request-driven merge path.
+
+> **Retired 2026-06-02 (PR #183).** `extension/src/content/kindoo/sync-provision.ts` — the Kindoo-side orchestrator that drove Kindoo to a single `Seat` — was deleted when Sync became Kindoo-authoritative (no SBA → Kindoo writes). Its `unionSeatBuildings` helper had no other caller; the request-driven within-site building union lives in `provision.ts`. `fix.ts` lost its Kindoo-write branch (`dispatchKindooFix`, `synthesizeSeatFromBlocks`, the Kindoo-only `DispatchContext` fields) at the same time.
 
 Modified:
 - `extension/src/content/kindoo/sync/detector.ts` — `KindooBlock` extended with `memberName` + classifier fields + building names + temp dates.
@@ -312,7 +315,7 @@ Modified:
 - Per-row confirmation dialogs. Operator chose trust-fire.
 - Undo affordance. Operator can run sync again and fix forward.
 - Sync-driven Firestore writes that bypass the callable. Every SBA write goes through `syncApplyFix`.
-- Writing auto-user door grants from the extension (Church Access Automation territory). Auto seats can't be type-changed and can't have their Kindoo-side buildings written via Update Kindoo in Phase 2 — Update SBA on `buildings-mismatch` is allowed and reconciles SBA to `derivedBuildings`.
+- Writing anything into Kindoo from Sync. Kindoo is authoritative; Sync only mutates / deletes SBA seats to track Kindoo's state. Provisioning into Kindoo flows through the request-driven provision orchestrator, not Sync. The `buildings-mismatch` and `scope-mismatch` "Update Kindoo" buttons and the `sba-only` "Provision in Kindoo" write were removed in PR #183.
 
 ## Grant-derived seat type (Stage 1 + Stage 2 — locked 2026-05-30)
 

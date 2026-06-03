@@ -1,13 +1,11 @@
 // Unit tests for the Sync Phase 2 fix dispatcher. Verifies:
 //   - `fixActionsFor` returns the expected buttons per discrepancy code.
 //   - `buildCallableInput` constructs the discriminated union payload
-//     correctly for each SBA-side fix.
-//   - `applyFix` routes SBA codes to the callable mock and Kindoo codes
-//     to the orchestrator mock, never crossing wires.
+//     correctly for each fix.
+//   - `applyFix` routes every code through the SBA-side callable mock
+//     (Kindoo is authoritative — sync never writes SBA → Kindoo).
 
 import { describe, expect, it, vi } from 'vitest';
-import type { Building, Stake, Ward } from '@kindoo/shared';
-import type { KindooEnvironment } from '../endpoints';
 import { applyFix, buildCallableInput, fixActionsFor, type DispatchContext } from './fix';
 import type { Discrepancy, KindooBlock } from './detector';
 
@@ -31,24 +29,6 @@ function kb(over: Partial<KindooBlock> = {}): KindooBlock {
   };
 }
 
-function stake(): Stake {
-  return { stake_id: 'csnorth', stake_name: 'CSN' } as Stake;
-}
-
-function ward(code: string, name: string, building: string): Ward {
-  return { ward_code: code, ward_name: name, building_name: building } as Ward;
-}
-
-function building(name: string, ruleId: number | null): Building {
-  const b: Partial<Building> = { building_id: name, building_name: name };
-  if (ruleId !== null) b.kindoo_rule = { rule_id: ruleId, rule_name: `${name} Doors` };
-  return b as Building;
-}
-
-function env(): KindooEnvironment {
-  return { EID: 27994, Name: 'CSN', TimeZone: 'Mountain Standard Time' };
-}
-
 function discrepancy(over: Partial<Discrepancy> = {}): Discrepancy {
   return {
     canonical: 'a@example.com',
@@ -66,29 +46,23 @@ function discrepancy(over: Partial<Discrepancy> = {}): Discrepancy {
 function ctxWith(overrides: Partial<DispatchContext> = {}): DispatchContext {
   return {
     stakeId: 'csnorth',
-    stake: stake(),
-    wards: [ward('CO', 'Maple Ward', 'Maple Building')],
-    buildings: [building('Maple Building', 6248)],
-    kindooSites: [],
-    envs: [env()],
-    session: { token: 't', eid: 27994 },
     callSyncApplyFix: vi.fn().mockResolvedValue({ success: true, seatId: 'a@example.com' }),
-    syncProvisionFromSeat: vi.fn().mockResolvedValue({
-      kindoo_uid: 'u1',
-      action: 'invited',
-      note: 'ok',
-    }),
     ...overrides,
   };
 }
 
 describe('fixActionsFor', () => {
-  it('sba-only returns one Provision in Kindoo action', () => {
+  it('sba-only returns one Remove From SBA danger action', () => {
     const actions = fixActionsFor(
       discrepancy({ code: 'sba-only', sba: {} as never, kindoo: null }),
     );
     expect(actions).toHaveLength(1);
-    expect(actions[0]).toMatchObject({ side: 'kindoo', testId: 'provision-kindoo' });
+    expect(actions[0]).toMatchObject({
+      side: 'sba',
+      testId: 'remove-sba',
+      label: 'Remove From SBA',
+      variant: 'danger',
+    });
   });
 
   it('kindoo-only returns one Create SBA seat action', () => {
@@ -110,15 +84,17 @@ describe('fixActionsFor', () => {
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'add-callings-sba' });
   });
 
-  it('scope-mismatch / buildings-mismatch each return two actions (Update Kindoo + Update SBA)', () => {
+  it('scope-mismatch / buildings-mismatch each return a single Update SBA action', () => {
+    // Kindoo-authoritative: the "Update Kindoo" action is gone; only the
+    // SBA-tracking action remains.
     for (const code of ['scope-mismatch', 'buildings-mismatch'] as const) {
       const actions = fixActionsFor(discrepancy({ code }));
-      expect(actions).toHaveLength(2);
-      expect(actions.map((a) => a.side)).toEqual(['kindoo', 'sba']);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({ side: 'sba', testId: 'update-sba' });
     }
   });
 
-  it('type-mismatch returns only an Update SBA action (grants own type; no Update Kindoo)', () => {
+  it('type-mismatch returns only an Update SBA action (grants own type)', () => {
     const actions = fixActionsFor(discrepancy({ code: 'type-mismatch' }));
     expect(actions).toHaveLength(1);
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'update-sba' });
@@ -548,11 +524,26 @@ describe('buildCallableInput', () => {
     ).toThrow(/derivation/i);
   });
 
-  it('throws for sba-only (no SBA-side path)', () => {
-    expect(() => buildCallableInput('csnorth', discrepancy({ code: 'sba-only' }))).toThrow();
+  it('sba-only builds the Remove From SBA payload from the seat email', () => {
+    // Kindoo-authoritative remove: the kindoo block is null, so the
+    // typed email rides on `displayEmail`. The backend canonicalizes it
+    // to locate the orphaned seat.
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: 'sba-only',
+        displayEmail: 'Orphan.Seat@Example.com',
+        sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
+        kindoo: null,
+      }),
+    );
+    expect(input.stakeId).toBe('csnorth');
+    expect(input.fix.code).toBe('sba-only');
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload).toEqual({ memberEmail: 'Orphan.Seat@Example.com' });
   });
 
-  it('throws for kindoo-unparseable (no SBA-side path)', () => {
+  it('throws for kindoo-unparseable (no SBA-side callable path)', () => {
     expect(() =>
       buildCallableInput('csnorth', discrepancy({ code: 'kindoo-unparseable' })),
     ).toThrow();
@@ -560,16 +551,15 @@ describe('buildCallableInput', () => {
 });
 
 describe('applyFix', () => {
-  it('SBA-side action calls the callable wrapper and returns ok on success', async () => {
+  it('calls the callable wrapper and returns ok on success', async () => {
     const ctx = ctxWith();
     const action = fixActionsFor(discrepancy({ code: 'kindoo-only' }))[0]!;
     const outcome = await applyFix(discrepancy({ code: 'kindoo-only' }), action, ctx);
     expect(outcome).toEqual({ ok: true });
     expect(ctx.callSyncApplyFix).toHaveBeenCalledTimes(1);
-    expect(ctx.syncProvisionFromSeat).not.toHaveBeenCalled();
   });
 
-  it('SBA-side action surfaces the callable error envelope', async () => {
+  it('surfaces the callable error envelope', async () => {
     const ctx = ctxWith({
       callSyncApplyFix: vi.fn().mockResolvedValue({ success: false, error: 'seat not found' }),
     });
@@ -578,78 +568,30 @@ describe('applyFix', () => {
     expect(outcome).toEqual({ ok: false, error: 'seat not found' });
   });
 
-  it('Kindoo-side action calls the orchestrator and returns ok', async () => {
+  it('sba-only Remove From SBA dispatches the delete callable', async () => {
     const ctx = ctxWith();
     const d = discrepancy({
       code: 'sba-only',
-      sba: {
-        scope: 'CO',
-        type: 'auto',
-        callings: ['Sunday School Teacher'],
-        buildingNames: ['Maple Building'],
-      },
-      kindoo: null,
-    });
-    const action = fixActionsFor(d)[0]!;
-    const outcome = await applyFix(d, action, ctx);
-    expect(outcome).toEqual({ ok: true });
-    expect(ctx.syncProvisionFromSeat).toHaveBeenCalledTimes(1);
-    expect(ctx.callSyncApplyFix).not.toHaveBeenCalled();
-  });
-
-  it('T-42: threads kindooSites from the dispatch context through to syncProvisionFromSeat', async () => {
-    // The Kindoo-side fix path must pass `kindooSites` so the
-    // orchestrator's `unionSeatBuildings` per-site filter can resolve
-    // the active session's site and exclude parallel-site duplicate
-    // buildings from the write. Without this, a multi-site seat
-    // surfaced on the Sync drift report would push foreign-site
-    // buildings into the active environment.
-    const kindooSites = [
-      {
-        id: 'east-stake',
-        display_name: 'East Stake',
-        kindoo_expected_site_name: 'East Stake',
-        kindoo_eid: 4321,
-        created_at: { seconds: 0, nanoseconds: 0 },
-        last_modified_at: { seconds: 0, nanoseconds: 0 },
-        lastActor: { email: 'sys', canonical: 'sys' },
-      },
-    ] as unknown as DispatchContext['kindooSites'];
-    const provisionMock = vi.fn().mockResolvedValue({
-      kindoo_uid: 'u1',
-      action: 'invited',
-      note: 'ok',
-    });
-    const ctx = ctxWith({ kindooSites, syncProvisionFromSeat: provisionMock });
-    const d = discrepancy({
-      code: 'sba-only',
-      sba: {
-        scope: 'CO',
-        type: 'auto',
-        callings: ['Sunday School Teacher'],
-        buildingNames: ['Maple Building'],
-      },
-      kindoo: null,
-    });
-    const action = fixActionsFor(d)[0]!;
-    await applyFix(d, action, ctx);
-    expect(provisionMock).toHaveBeenCalledTimes(1);
-    const callArgs = provisionMock.mock.calls[0]![0] as Record<string, unknown>;
-    expect(callArgs['kindooSites']).toBe(kindooSites);
-  });
-
-  it('Kindoo-side action wraps a thrown orchestrator error as a flat error', async () => {
-    const ctx = ctxWith({
-      syncProvisionFromSeat: vi.fn().mockRejectedValue(new Error('Kindoo 401')),
-    });
-    const d = discrepancy({
-      code: 'sba-only',
+      displayEmail: 'orphan@example.com',
       sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
       kindoo: null,
     });
     const action = fixActionsFor(d)[0]!;
     const outcome = await applyFix(d, action, ctx);
-    expect(outcome).toEqual({ ok: false, error: 'Kindoo 401' });
+    expect(outcome).toEqual({ ok: true });
+    expect(ctx.callSyncApplyFix).toHaveBeenCalledTimes(1);
+    const sent = (ctx.callSyncApplyFix as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(sent.fix.code).toBe('sba-only');
+    expect(sent.fix.payload).toEqual({ memberEmail: 'orphan@example.com' });
+  });
+
+  it('wraps a thrown callable error as a flat error', async () => {
+    const ctx = ctxWith({
+      callSyncApplyFix: vi.fn().mockRejectedValue(new Error('SW 500')),
+    });
+    const action = fixActionsFor(discrepancy({ code: 'kindoo-only' }))[0]!;
+    const outcome = await applyFix(discrepancy({ code: 'kindoo-only' }), action, ctx);
+    expect(outcome).toEqual({ ok: false, error: 'SW 500' });
   });
 
   it('Update SBA on auto buildings-mismatch with null derivedBuildings is refused as a flat error', async () => {
@@ -668,7 +610,7 @@ describe('applyFix', () => {
     expect(ctx.callSyncApplyFix).not.toHaveBeenCalled();
   });
 
-  it('type-mismatch exposes only an Update SBA action (no Update Kindoo)', async () => {
+  it('type-mismatch exposes only an Update SBA action (no Update Kindoo)', () => {
     // Grants are the source of truth for type; the extension cannot
     // write church grants, so there is no Kindoo-side action.
     const d = discrepancy({
@@ -709,6 +651,5 @@ describe('applyFix', () => {
     const sent = (ctx.callSyncApplyFix as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(sent.fix.code).toBe('type-mismatch');
     expect(sent.fix.payload.newType).toBe('auto');
-    expect(ctx.syncProvisionFromSeat).not.toHaveBeenCalled();
   });
 });
