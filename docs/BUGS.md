@@ -6,6 +6,19 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-15] `applyScopeMismatch` doesn't clear `kindoo_site_id` when resolving a seat to stake scope
+Status: open
+Owner: @backend-engineer
+Severity: low (rare data shape — a foreign-ward seat scope-mismatching to stake; 1–2 requests/week at v1 scale)
+
+**Pre-existing** (not introduced by PR #184). Surfaced by the #184 re-review while narrowing a spec claim about `kindoo_site_id` clearing.
+
+**Symptom:** A foreign-site ward seat (`scope='<foreign-ward>'`, `kindoo_site_id='<foreign-site>'`) whose Kindoo Description parses to a stake-scope primary fires `scope-mismatch`. Applying the Update-SBA fix runs `applyScopeMismatch` (`functions/src/callable/syncApplyFix.ts`) with `newScope==='stake'`, which sets `scope='stake'` but leaves the old foreign `kindoo_site_id` in place. The invariant is stake-scope ⇒ home (`kindoo_site_id` null/absent — spec §15 Phase 1), so the seat is now internally inconsistent.
+
+**Consequence:** `projectSeatForSite` resolves the seat to the foreign site (off its stale `kindoo_site_id`), not home. The seat is then invisible on a home-site Sync run (and mis-scoped on home-stake utilization / roster placement) until something else rewrites the field.
+
+**Fix (deferred):** one line in `applyScopeMismatch` — `kindoo_site_id: FieldValue.delete()` in the seat `update` when `newScope==='stake'`, mirroring `applyKindooUnparseable` (which already does this) — plus a test asserting the field is cleared on the stake resolution. Out of scope for #184 (review-row actionability); logged for a follow-up.
+
 ## [B-14] auditTrigger.test.ts flakes CI with "expected 1, got 2" audit-row count
 Status: closed (fixed on branch `fix/audit-trigger-test-isolation`)
 Owner: @backend-engineer
