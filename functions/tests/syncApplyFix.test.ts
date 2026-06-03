@@ -514,6 +514,72 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       });
     });
 
+    it('clears a foreign kindoo_site_id when resolving to stake scope (B-15)', async () => {
+      await seedManager();
+      // A foreign-site ward seat that scope-mismatches to stake: stake-scope
+      // primaries must resolve to the home site (kindoo_site_id absent), or
+      // projectSeatForSite resolves it off-home and it goes invisible on the
+      // home Sync run.
+      await seedSeat({ scope: 'CO', type: 'manual', callings: ['Ward Clerk'] });
+      const { db } = requireEmulators();
+      await db
+        .doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`)
+        .update({ kindoo_site_id: 'foreign-site-123' });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'scope-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, newScope: 'stake' },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.scope).toBe('stake');
+      // Foreign site id gone → resolves to home.
+      expect(seat.kindoo_site_id).toBeUndefined();
+    });
+
+    it('leaves kindoo_site_id untouched when resolving to a ward scope (B-15)', async () => {
+      await seedManager();
+      // A foreign-site seat that scope-mismatches to a WARD (not stake) keeps
+      // its kindoo_site_id — only the stake resolution clears it.
+      await seedSeat({ scope: 'CO', type: 'manual', callings: ['Ward Clerk'] });
+      const { db } = requireEmulators();
+      await db
+        .doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`)
+        .update({ kindoo_site_id: 'foreign-site-123' });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'scope-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, newScope: 'DZ' },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.scope).toBe('DZ');
+      // Ward resolution does not touch kindoo_site_id.
+      expect(seat.kindoo_site_id).toBe('foreign-site-123');
+    });
+
     it('returns soft failure when the seat is missing', async () => {
       await seedManager();
       const result = await syncApplyFix.run(
