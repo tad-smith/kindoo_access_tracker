@@ -17,7 +17,7 @@ This doc covers Phase 1 in detail. Phase 2 is outlined and gets its own design p
 2. **UI surface:** new panel state inside the existing slide-over, reached via a "Sync" link in the Queue header (alongside "Configure Kindoo"). NOT a separate tab/window.
 3. **Trigger:** explicit operator click only. No periodic/background sync.
 4. **Performance:** batch read all data, render the report in one shot when reads complete. Show a spinner during the read. No streaming.
-5. **Unparseable descriptions** (don't match `Scope (Calling)[ | Scope (Calling)]`): assume **manual seat with unknown scope** and **flag for review**. Operator decides what to do.
+5. **Unparseable descriptions** (don't match `Scope (Calling)[ | Scope (Calling)]`): originally flagged for review with no action. **Superseded in Stage 2** — now split on blank-vs-present: a **present-but-unparseable** Description is treated as a church-wide stake-scope calling and gets an Update-SBA action (`kindoo-unparseable`, drift); a **blank** Description stays review-only with no action (`kindoo-no-description`, the only remaining review row). See the discrepancy catalogue + fix-action catalogue below.
 6. **Kindoo Manager accounts** (manager's own account + any other Kindoo Manager): their descriptions *often* don't fit the convention (e.g. `Kindoo Manager - Stake Clerk account`), so they typically fall through to "unparseable" + flagged for review naturally. **But this is not guaranteed** — a manager whose Description happens to parse (e.g. `Colorado Springs North Stake (Stake Clerk)`, a real staging case) and matches an SBA seat would otherwise be subjected to grant-based type / buildings reconciliation and falsely demoted (a manager has no guest door grants, so the church-direct-grant chain reads as "access revoked"). **Managers are now detected by their Kindoo seat role, not assumed-unparseable.** Grant-based reconciliation (`type-mismatch` promote/demote AND `buildings-mismatch`) applies ONLY to **Guests** (`UserRole === 2` — the role SBA provisions seats as); every non-Guest (Manager / admin, e.g. the staging manager's `UserRole: 0`) is skipped entirely, no row. The role rides on a **per-user call the sync already makes** (no extra request — it's denormalized on every `RulesList` row of the door-grants response) and is stamped onto `KindooEnvironmentUser.userRole`. An unreadable role (empty `RulesList` / failed fetch → `userRole` unset) also skips (`undefined !== 2`) — the safe default; we never promote/demote a user we can't classify. See the "Role-based grant-reconciliation scope" implementation note under Stage 1.
 7. **No backend changes in Phase 1.** All reads go through existing collection-level Firestore reads (already allowed for managers) + the existing paginated Kindoo `GetEnvironmentUsersLight` endpoint.
 
@@ -116,19 +116,22 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 |---|---|---|
 | seat present | no Kindoo user | `sba-only` |
 | no seat | Kindoo user present | `kindoo-only` |
-| seat | Kindoo user, unparseable | `kindoo-unparseable` (flag for review) |
+| seat | Kindoo user, Description present but unparseable | `kindoo-unparseable` (drift — treat as church-wide stake-scope calling, Update SBA; see Stage 2) |
+| seat | Kindoo user, Description blank (empty / whitespace) | `kindoo-no-description` (review — nothing derivable, no action) |
 | seat | Kindoo user, parsed primary scope ≠ seat.scope | `scope-mismatch` |
 | seat (any type) | Kindoo user, `userRole !== 2` (non-Guest, OR role unreadable) | (both type-mismatch AND buildings-mismatch skipped — not a confirmed SBA-owned Guest seat, see "Role-based grant-reconciliation scope") |
 | seat (manual/auto, not temp) | grant-based promote/demote — see Stage 1 (c) | `type-mismatch` |
 | seat (any type) | Kindoo user, `derivedBuildings` ≠ seat.building_names | `buildings-mismatch` |
 | seat (manual/temp) | Kindoo user, `derivedBuildings === null`, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` (AccessSchedules fallback) |
 | seat (auto) | Kindoo user, `derivedBuildings === null` (per-user derivation failed) | (buildings check skipped — fallback) |
-| seat (auto only) | Kindoo parsed callings ⊋ seat `callings[]` — see Stage 1 (e) | `extra-kindoo-calling` (flag for review — operator adds the missing calling(s) to the SBA seat) |
+| seat (auto only) | Kindoo parsed callings ⊋ seat `callings[]` — see Stage 1 (e) | `extra-kindoo-calling` (drift — Update SBA appends the missing calling(s) to the seat's `callings[]`) |
 | seat | Kindoo user, all-good | (no row) |
 
 Severity:
-- `sba-only`, `kindoo-only`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch` → **drift** (real divergence).
-- `kindoo-unparseable`, `extra-kindoo-calling` → **review** (operator-judgment needed).
+- `sba-only`, `kindoo-only`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch`, `extra-kindoo-calling`, `kindoo-unparseable` → **drift** (an unambiguous SBA-side action is available).
+- `kindoo-no-description` → **review** (operator-judgment needed). This is the **only** review-severity code remaining — a blank Kindoo Description yields nothing Sync can reconcile, so it surfaces with no fix button. No Sync row is a dead-end review anymore except a blank Description.
+
+The split between `kindoo-unparseable` and `kindoo-no-description` is the parser's blank-vs-present distinction (`parsed.segments.length === 0`). A present-but-unparseable Description is treated as a church-wide (stake-scope) calling and gets an Update-SBA action (Stage 2 reclassified it `review → drift`); a blank Description has no derivable SBA side. `extra-kindoo-calling` likewise moved `review → drift` once its append became the unambiguous action. The defensive "resolved segments but no primary" fallback also emits `kindoo-unparseable` (drift) so it offers Update SBA.
 
 **Auto-user buildings derivation.** Auto-imported users (the Church Access Automation flow, ~310 of 313 csnorth users in production) receive door access via **direct door grants keyed by `VidName`**, not via `AccessSchedules`. The bulk listing (`KindooGetEnvironmentUsersLightWithTotalNumberOfRecordsWithEntryPoints`) only exposes `AccessSchedules` — direct grants are excluded.
 
@@ -152,7 +155,7 @@ Wall-time estimate: ~313 per-user calls at concurrency 4 and ~150 ms median late
 
 **Active-site filter (Kindoo Sites Phase 4 — see `docs/spec.md` §15).** The detector takes an optional `activeSite: ActiveSite` input resolved by `content/kindoo/sync/activeSite.ts` from the live EID (`localStorage.state.sites.ids[0]`), `stake.kindoo_config.site_id`, and each `KindooSite.kindoo_eid`. The filter scopes both sides of the diff to seats / users belonging to the active Kindoo site so a session pointed at the home site does not flag foreign-site grants as drift (and vice versa):
 
-- `home` — Include seats whose `scope === 'stake'` (Phase 1 policy: stake-scope seats are home-only) and seats whose scope is a ward with `kindoo_site_id` null / absent. Include Kindoo users whose parsed primary segment resolves to one of those wards or to the stake; on home, unparseable / unresolvable Kindoo users are also kept so the historical `kindoo-only` / `kindoo-unparseable` rows still surface.
+- `home` — Include seats whose `scope === 'stake'` (Phase 1 policy: stake-scope seats are home-only) and seats whose scope is a ward with `kindoo_site_id` null / absent. Include Kindoo users whose parsed primary segment resolves to one of those wards or to the stake; on home, unparseable / unresolvable Kindoo users are also kept so the `kindoo-only` / `kindoo-unparseable` / `kindoo-no-description` rows still surface.
 - `foreign(siteId)` — Include only seats whose scope is a ward with `kindoo_site_id === siteId`. Stake-scope seats and unparseable Kindoo users are excluded. Include only Kindoo users whose parsed primary segment resolves to one of those wards — home-ward users and other-foreign-ward users belong to a different manager's queue and are dropped entirely (no `kindoo-only` drift row).
 - `unknown` — Active EID matches neither home nor any configured `KindooSite`. The detector returns an empty diff; the panel renders an empty-state recovery message and skips the report entirely (and the door-grant enrichment loop is short-circuited up front in `SyncPanel`).
 
@@ -259,11 +262,12 @@ Each discrepancy row gains one or two specific-action buttons. Per-row only — 
 |---|---|---|
 | `sba-only` | "Remove From SBA" (danger) | SBA-side delete via `syncApplyFix` with `code: 'sba-only'`. An SBA seat with no Kindoo presence is an orphan (the authority doesn't have it), so the callable deletes it, mirroring `removeSeatOnRequestComplete` — plain `tx.delete` for the common orphan; promote-first-duplicate-to-primary when the seat carries `duplicate_grants[]` for other sites. (Was a Kindoo-side "Provision in Kindoo" write before the Kindoo-authoritative shift.) |
 | `kindoo-only` | "Create SBA seat" | SBA-side: `syncApplyFix` with `code: 'kindoo-only'`. Server-side stamps the seat write with `SyncActor:kindoo-only`. |
-| `extra-kindoo-calling` | "Add to SBA seat" | SBA-side: `syncApplyFix` with `code: 'extra-kindoo-calling'`; backend de-dupes + appends to `callings[]`. |
+| `extra-kindoo-calling` | "Update SBA" | SBA-side: `syncApplyFix` with `code: 'extra-kindoo-calling'`; backend de-dupes + appends to `callings[]`. Severity drift. The append path and `testId` (`add-callings-sba`) are unchanged; the button label moved from "Add to SBA seat" to "Update SBA" to match the other Update-SBA actions. |
 | `scope-mismatch` | "Update SBA" only | `syncApplyFix` with `code: 'scope-mismatch'` carrying Kindoo's parsed primary scope. No "Update Kindoo" — Sync never writes SBA → Kindoo. |
 | `type-mismatch` | "Update SBA" only | Grants own the type decision (promote/demote), so the only action is Update SBA, which flips the seat to the grant-derived target (`grantTargetType`) via `syncApplyFix` with `code: 'type-mismatch'`. No "Update Kindoo" — the extension can't write church grants. |
 | `buildings-mismatch` | "Update SBA" only | `syncApplyFix` with `code: 'buildings-mismatch'`. Sources from `derivedBuildings` (the direct + rule-grant strict-subset chain) for ALL seat types — never the AccessSchedules-derived `buildingNames`, which misses direct grants and would wipe buildings for auto users. Update SBA refuses (button disabled) when `derivedBuildings === null` (per-user door read failed). No "Update Kindoo" — Sync never writes SBA → Kindoo. |
-| `kindoo-unparseable` | none | Operator handles in Kindoo's admin UI. |
+| `kindoo-unparseable` | "Update SBA" | SBA-side: `syncApplyFix` with `code: 'kindoo-unparseable'`, payload `{ memberEmail, calling }` where `calling` is the raw Kindoo Description text. A present-but-unparseable Description is treated as a church-wide calling: the callable sets the seat to `scope='stake'`, preserves `type`, and writes the calling per the §13 convention (auto → `callings[]`; manual/temp → free-text `reason`, callings cleared, temp dates preserved). For an auto seat it also reaps the OLD scope's `importer_callings` via `clearImporterCallingsForScope` (Kindoo-authoritative reap, like #183) and writes **no** new grant — an unparseable church-wide calling matches no `give_app_access` template, so no SBA app access is granted automatically (that flows through a manual grant). |
+| `kindoo-no-description` | none | Review-only. A blank Kindoo Description yields nothing Sync can reconcile, so no SBA-side action is offered; the operator decides manually. The **only** remaining no-action Sync row. |
 
 ### Audit + SyncActor
 

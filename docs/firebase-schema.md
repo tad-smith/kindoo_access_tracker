@@ -297,7 +297,7 @@ Per-user role-grant doc. Doc exists iff the user has *any* Sync-managed or manua
 }
 ```
 
-**Written by:** Sync's `syncApplyFix` callable (writes / updates `importer_callings` entries per classifier match; on `sba-only` Remove From SBA and `type-mismatch` demote, *reaps* the removed scope's `importer_callings[scope]` via `clearImporterCallingsForScope`, preserving `manual_grants` and deleting the doc only when both maps go empty — Admin SDK, bypasses rules); manager Access page (`manual_grants` only).
+**Written by:** Sync's `syncApplyFix` callable (writes / updates `importer_callings` entries per classifier match; on `sba-only` Remove From SBA, `type-mismatch` demote, and `kindoo-unparseable` (auto seat moving to stake scope), *reaps* the removed/old scope's `importer_callings[scope]` via `clearImporterCallingsForScope`, preserving `manual_grants` and deleting the doc only when both maps go empty — Admin SDK, bypasses rules); manager Access page (`manual_grants` only). `kindoo-unparseable` writes **no** new stake-scope `importer_callings` entry: an unparseable church-wide calling matches no `give_app_access` template, so there is no grant to create.
 
 **Read by:** `syncAccessClaims` trigger; manager Access page.
 
