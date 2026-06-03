@@ -380,7 +380,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
 
 **Sort order:** The denormalized `sort_order` field is **no longer read by the web** (Sync Stage 1a — see `extension/docs/sync-design.md` "Grant-derived seat type" part (a)). Roster / All Seats sort is computed **at render time** from a compiled churchwide `calling → order` table (`packages/shared/src/callingSortOrder.ts`; 85 entries — stake callings 1–42, ward 43–85; exact trimmed case-insensitive match, no wildcards):
 - **Auto seats:** order = **MIN** of the table order across the seat's `callings[]`.
-- **Manual seats:** order = the table order of the free-text `seat.reason` (manual seats carry `callings: []` and store the calling in `reason` — see §13/spec). No match ⇒ unknown.
+- **Manual seats:** order = the table order of the free-text `seat.reason` (manual seats carry `callings: []` and store the calling in `reason` — see §6.1/spec). No match ⇒ unknown.
 - **Temp seats:** not calling-ordered — sorted by `end_date` descending (soonest-expiring at the band bottom).
 - **Unknown** (no calling/reason match) within the auto / manual bands ⇒ band bottom, then `created_at` ascending (oldest first), then `member_name`.
 

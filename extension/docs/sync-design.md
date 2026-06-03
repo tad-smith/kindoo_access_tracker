@@ -438,7 +438,7 @@ touched — it still sorts the `access/` collection by the doc-level `sort_order
 - **auto band**: by calling order — `seatCallingOrder(seat.callings)`; a multi-calling seat uses
   the **MIN** order across its callings.
 - **manual band**: by calling order too, but sourced from `seat.reason`, not `seat.callings` —
-  manual seats carry `callings: []` and store the calling in the free-text `reason` (spec §13), so
+  manual seats carry `callings: []` and store the calling in the free-text `reason` (spec §6.1), so
   the comparator matches `callingSortOrder(seat.reason)` (single value, trimmed +
   case-insensitive) against the same table.
 - **auto + manual unknown** (no calling matches the table) → bottom of the band, by `created_at`
@@ -468,7 +468,7 @@ emits promote/demote rows driven by the grant predicate, not `intended.type` vs 
 `classifier.ts`'s auto-set lookups against `auto_kindoo_access` no longer drive type; the **parser
 stays** (still need the calling name for `callings[]` + the sort lookup). Promote/demote are
 operator-clicked via the existing `SyncPanel` fix UI — the `applyTypeMismatch` write path
-(`syncApplyFix.ts`) flips type **and reshapes the seat to the §13 convention** (PR #180; see
+(`syncApplyFix.ts`) flips type **and reshapes the seat to the §6.1 convention** (PR #180; see
 "Implementation notes" + the Stage 1c backend note below), so no new write path is needed.
 
 (d) **Soft-deprecate the `auto_kindoo_access` flag's seat-type role** — **PENDING (not yet
@@ -523,7 +523,7 @@ known (no doors the church must own). `null` direct set ⇒ not church-backed (c
 **`kindoo-only` created type + shape (c).** Same rule: temp (`IsTempUser`) → temp; else church-backed
 (evaluated against the building set the new seat would carry — `derivedBuildings` when known, else
 the AccessSchedules fallback) → auto; else manual. The seat is shaped to match the request flow /
-`markRequestComplete` (`docs/spec.md` §13): an **auto** seat carries the FULL parsed primary-segment
+`markRequestComplete` (`docs/spec.md` §6.1): an **auto** seat carries the FULL parsed primary-segment
 calling list (matched ∪ unmatched) in `callings[]` and no `reason`; a **manual / temp** seat carries
 `callings: []` and the full parsed calling text in the single free-text `reason`. Writing the
 calling to a manual seat's `callings[]` would mint a hybrid seat that re-fires `extra-kindoo-calling`
@@ -556,7 +556,7 @@ unmatched). **DEMOTE (`newType: 'manual'`) omits `callings`** — the backend de
 the seat's existing callings.
 
 **Backend seat-shape on flip (PR #180, landed).** `applyTypeMismatch` (`syncApplyFix.ts`) reshapes
-the seat to the §13 convention as it flips `type` — the earlier "until the backend PR lands the
+the seat to the §6.1 convention as it flips `type` — the earlier "until the backend PR lands the
 field is sent but ignored" caveat is resolved. **Promote** (`manual`/`temp` → `auto`): set
 `callings[]` from the payload's `callings` (fallback `[seat.reason]` when the payload is
 empty/absent and the seat carries a non-empty reason, else `[]`), clear `reason`, stamp `sort_order`
