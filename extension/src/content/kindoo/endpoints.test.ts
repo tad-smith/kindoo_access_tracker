@@ -318,6 +318,20 @@ describe('lookupUserByEmail', () => {
     });
   });
 
+  it('captures a numeric DepartmentType (role enum) onto the typed shape', async () => {
+    const fetchImpl = vi.fn(async () => ok({ EUList: [richUser({ DepartmentType: 3 })] }));
+    const user = await lookupUserByEmail(SESSION, 'tad.e.smith@gmail.com', fetchImpl);
+    expect(user?.DepartmentType).toBe(3);
+  });
+
+  it('leaves DepartmentType undefined when the field is absent or non-numeric', async () => {
+    const fetchImpl = vi.fn(async () =>
+      ok({ EUList: [richUser({ DepartmentType: 'not-a-number' })] }),
+    );
+    const user = await lookupUserByEmail(SESSION, 'tad.e.smith@gmail.com', fetchImpl);
+    expect(user?.DepartmentType).toBeUndefined();
+  });
+
   it('filters by exact username (case-insensitive) — substring keyword matches do not leak', async () => {
     // Kindoo's keyWord does substring; client must filter to avoid
     // operating on the wrong user.

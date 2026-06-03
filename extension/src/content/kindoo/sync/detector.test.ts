@@ -4,37 +4,36 @@
 import { describe, expect, it } from 'vitest';
 import type { Building, CallingTemplate, Seat, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
-import { detect, grantsBackAuto, isChurchBacked, parseKindooCallings } from './detector';
+import {
+  detect,
+  grantsBackAuto,
+  isChurchBacked,
+  kindooRole,
+  parseKindooCallings,
+} from './detector';
 
 describe('isChurchBacked', () => {
-  it('true when every seat building is direct-granted', () => {
-    expect(isChurchBacked(['A', 'B'], ['A', 'B', 'C'])).toBe(true);
+  it('true when the member holds ANY church-direct grant', () => {
+    expect(isChurchBacked(['A'])).toBe(true);
+    expect(isChurchBacked(['A', 'B'])).toBe(true);
   });
-  it('false when one seat building is not direct-granted (conservative)', () => {
-    expect(isChurchBacked(['A', 'B'], ['A'])).toBe(false);
+  it('false when there are zero church-direct grants (all SBA-provisioned)', () => {
+    expect(isChurchBacked([])).toBe(false);
   });
   it('false when directGrantBuildings is null (cannot determine)', () => {
-    expect(isChurchBacked(['A'], null)).toBe(false);
-  });
-  it('true (vacuously) for a seat with no buildings when the set is known', () => {
-    expect(isChurchBacked([], [])).toBe(true);
-    expect(isChurchBacked([], ['A'])).toBe(true);
+    expect(isChurchBacked(null)).toBe(false);
   });
 });
 
 describe('grantsBackAuto', () => {
-  it('true when the seat has buildings and all are direct-granted', () => {
-    expect(grantsBackAuto(['A'], ['A', 'B'])).toBe(true);
+  it('true when the member holds at least one church-direct grant', () => {
+    expect(grantsBackAuto(['A'])).toBe(true);
   });
-  it('false for a zero-building seat (NOT vacuously auto — born manual)', () => {
-    expect(grantsBackAuto([], [])).toBe(false);
-    expect(grantsBackAuto([], ['A'])).toBe(false);
-  });
-  it('false when a building is not direct-granted', () => {
-    expect(grantsBackAuto(['A', 'B'], ['A'])).toBe(false);
+  it('false when there are zero church-direct grants', () => {
+    expect(grantsBackAuto([])).toBe(false);
   });
   it('false when directGrantBuildings is null', () => {
-    expect(grantsBackAuto(['A'], null)).toBe(false);
+    expect(grantsBackAuto(null)).toBe(false);
   });
 });
 
@@ -54,6 +53,41 @@ describe('parseKindooCallings', () => {
   it('returns [] for an empty / whitespace-only parens text', () => {
     expect(parseKindooCallings('')).toEqual([]);
     expect(parseKindooCallings('   ')).toEqual([]);
+  });
+});
+
+describe('kindooRole', () => {
+  const withDept = (dept: number | undefined): KindooEnvironmentUser =>
+    ({
+      euid: 'e',
+      userId: 'u',
+      username: 'x@example.com',
+      description: '',
+      isTempUser: false,
+      startAccessDoorsDateAtTimeZone: null,
+      expiryDateAtTimeZone: null,
+      expiryTimeZone: '',
+      accessSchedules: [],
+      ...(dept !== undefined ? { DepartmentType: dept } : {}),
+    }) as KindooEnvironmentUser;
+
+  it('maps DepartmentType 0 (Administrator) to admin', () => {
+    expect(kindooRole(withDept(0))).toBe('admin');
+  });
+  it('maps DepartmentType 1 (Manager) to admin', () => {
+    expect(kindooRole(withDept(1))).toBe('admin');
+  });
+  it('maps DepartmentType 2 (Guest) to guest', () => {
+    expect(kindooRole(withDept(2))).toBe('guest');
+  });
+  it('maps DepartmentType 3 (Installer) to installer', () => {
+    expect(kindooRole(withDept(3))).toBe('installer');
+  });
+  it('treats undefined / missing DepartmentType as guest (conservative)', () => {
+    expect(kindooRole(withDept(undefined))).toBe('guest');
+  });
+  it('treats any other concrete number as admin (force-auto)', () => {
+    expect(kindooRole(withDept(9))).toBe('admin');
   });
 });
 
@@ -150,8 +184,24 @@ function kuser(overrides: Partial<KindooEnvironmentUser>): KindooEnvironmentUser
     expiryDateAtTimeZone: null,
     expiryTimeZone: 'Mountain Standard Time',
     accessSchedules: [{ ruleId: 6248 }],
+    // Default to Guest (DepartmentType 2) so the base fixture exercises
+    // the grant-based classification path (#188); role-branch tests
+    // override this explicitly.
+    DepartmentType: 2,
     ...overrides,
   };
+}
+
+/**
+ * A kuser with NO `DepartmentType` at all (the field is absent, not
+ * `undefined`-valued — `exactOptionalPropertyTypes` forbids passing the
+ * literal `undefined`). Exercises the detector's "missing role →
+ * conservative Guest" path.
+ */
+function kuserNoRole(overrides: Partial<KindooEnvironmentUser>): KindooEnvironmentUser {
+  const u = kuser(overrides);
+  delete u.DepartmentType;
+  return u;
 }
 
 const STAKE = stake();
@@ -490,6 +540,92 @@ describe('detect', () => {
     expect(row.reason).toContain('Demote to manual');
   });
 
+  it('promotes a Guest with a PARTIAL church grant (some church doors + some SBA) to auto', () => {
+    // New "any church-direct grant" rule: the seat spans two buildings;
+    // only ONE is church-direct-granted. The seat-building-subset rule
+    // would have left this manual — now a single church grant promotes
+    // it to auto. (Building coverage still drives buildings-mismatch, not
+    // the type decision.)
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'stake',
+            type: 'manual',
+            callings: [],
+            reason: 'Stake Clerk',
+            building_names: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Colorado Springs North Stake (Stake Clerk)',
+            derivedBuildings: ['Maple Building', 'Pine Creek Building'],
+            // Only Maple is church-direct; Pine Creek is SBA-provisioned.
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    const typeRows = result.discrepancies.filter((d) => d.code === 'type-mismatch');
+    expect(typeRows).toHaveLength(1);
+    expect(typeRows[0]?.kindoo?.grantTargetType).toBe('auto');
+    expect(typeRows[0]?.reason).toContain('Promote to auto');
+  });
+
+  it('keeps an auto Guest seat auto when it holds at least one church-direct grant (no demote)', () => {
+    // The seat building set is NOT fully church-direct (only Maple is),
+    // but ≥1 church grant means the church still provisions ⇒ stays auto.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'stake',
+            type: 'auto',
+            callings: ['Stake Clerk'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Colorado Springs North Stake (Stake Clerk)',
+            derivedBuildings: ['Maple Building', 'Pine Creek Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies.filter((d) => d.code === 'type-mismatch')).toEqual([]);
+  });
+
+  it('demotes a Guest auto seat with ZERO church-direct grants to manual', () => {
+    // All access is SBA-rule-provisioned (directGrantBuildings=[]) → no
+    // church grant → demote to manual.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    const typeRows = result.discrepancies.filter((d) => d.code === 'type-mismatch');
+    expect(typeRows).toHaveLength(1);
+    expect(typeRows[0]?.kindoo?.grantTargetType).toBe('manual');
+    expect(typeRows[0]?.reason).toContain('Demote to manual');
+  });
+
   it('does not promote/demote when directGrantBuildings is null (cannot determine)', () => {
     // Derivation failed → directGrantBuildings null → skip the type
     // decision entirely, same fallback as the buildings-null skip.
@@ -746,6 +882,304 @@ describe('detect', () => {
       }),
     );
     expect(result.discrepancies).toEqual([]);
+  });
+
+  // ----- Kindoo role (DepartmentType) branch -----
+
+  it('admin (DepartmentType 0) kindoo-only is born auto regardless of grant backing', () => {
+    // An Administrator with NO direct grants (directGrantBuildings=[]).
+    // A Guest here would be born manual; an admin forces auto.
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            DepartmentType: 0,
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('auto');
+  });
+
+  it('admin (DepartmentType 1, Manager) kindoo-only is born auto regardless of grant backing', () => {
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            DepartmentType: 1,
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('auto');
+  });
+
+  it('admin kindoo-only that is also a temp user stays temp (temp wins over force-auto)', () => {
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            DepartmentType: 0,
+            isTempUser: true,
+            description: 'Maple Ward (Visiting speaker)',
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('temp');
+  });
+
+  it('admin with an existing MANUAL seat emits type-mismatch PROMOTE to auto', () => {
+    // No direct grants — a Guest would NOT promote here; the admin role
+    // forces auto independent of grant backing.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Building Greeter',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            DepartmentType: 0,
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    const typeRows = result.discrepancies.filter((d) => d.code === 'type-mismatch');
+    expect(typeRows).toHaveLength(1);
+    expect(typeRows[0]?.kindoo?.grantTargetType).toBe('auto');
+    expect(typeRows[0]?.reason).toContain('Promote to auto');
+  });
+
+  it('admin with an existing AUTO seat emits NO type-mismatch row', () => {
+    // Even with zero direct grants — a Guest auto seat here would DEMOTE;
+    // the admin stays auto, so no type-mismatch.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            DepartmentType: 1,
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies.filter((d) => d.code === 'type-mismatch')).toEqual([]);
+  });
+
+  it('admin never bypasses temp — a temp seat is not promoted to auto', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'temp',
+            callings: [],
+            reason: 'Visiting speaker',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            DepartmentType: 0,
+            isTempUser: true,
+            description: 'Maple Ward (Visiting speaker)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies.filter((d) => d.code === 'type-mismatch')).toEqual([]);
+  });
+
+  it('admin with an UNPARSEABLE description on an aligned-stake MANUAL seat still PROMOTEs to auto (hoist)', () => {
+    // The gap the reviewer found: a Manager carries an unparseable
+    // description, and the seat is ALREADY at the unparseable-aligned
+    // stake state (scope='stake', type='manual', reason===description,
+    // callings empty). The unparseable-aligned short-circuit would
+    // suppress the row — so the admin force-auto MUST run before it. With
+    // the hoist, the seat promotes to auto.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'stake',
+            type: 'manual',
+            callings: [],
+            reason: 'Manager Service Account',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            DepartmentType: 1,
+            // Unparseable: text present but no `Scope (Calling)` form. Seat
+            // reason mirrors it, so the seat is unparseable-aligned.
+            description: 'Manager Service Account',
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('type-mismatch');
+    expect(row.kindoo?.grantTargetType).toBe('auto');
+    expect(row.reason).toContain('Promote to auto');
+  });
+
+  it('already-auto admin with an unaligned UNPARSEABLE description still falls through to kindoo-unparseable', () => {
+    // An already-auto admin is NOT short-circuited by the hoist (it only
+    // fires for non-auto, non-temp). So an auto admin seat at ward scope
+    // with an unparseable description still surfaces the
+    // `kindoo-unparseable → stake` drift row.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            DepartmentType: 1,
+            description: 'Manager Service Account',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-unparseable');
+    expect(row.severity).toBe('drift');
+  });
+
+  it('installer (DepartmentType 3) kindoo-only emits NO row', () => {
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            DepartmentType: 3,
+            username: 'ryan.gard@example.com',
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+    // Counter still reflects the user existed in the listing.
+    expect(result.kindooCount).toBe(1);
+  });
+
+  it('installer emits NO row even with an unparseable description', () => {
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            DepartmentType: 3,
+            username: 'greagmills@example.com',
+            description: 'Some Church-Wide Calling',
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('installer emits NO row even when it differs from an existing SBA seat', () => {
+    // Both sides present and the Kindoo door truth differs from the seat;
+    // a Guest here would fire buildings-mismatch. The installer suppresses
+    // every code.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'inst@example.com',
+            member_email: 'inst@example.com',
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            DepartmentType: 3,
+            username: 'inst@example.com',
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building', 'Pine Creek Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('undefined DepartmentType is treated as Guest (grant-based, not auto/skip)', () => {
+    // No DepartmentType → conservative Guest path: an auto seat with no
+    // direct grants DEMOTEs to manual (the Guest grant-based behavior),
+    // proving the user was neither force-auto'd nor skipped.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuserNoRole({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    const typeRows = result.discrepancies.filter((d) => d.code === 'type-mismatch');
+    expect(typeRows).toHaveLength(1);
+    expect(typeRows[0]?.kindoo?.grantTargetType).toBe('manual');
   });
 
   it('emits buildings-mismatch when doors differ from the SBA seat (seat stays auto)', () => {
