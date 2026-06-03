@@ -537,16 +537,25 @@ async function applyBuildingsMismatch(
  * The drift report found an SBA seat with no Kindoo presence; since
  * Kindoo is the authority, the SBA seat is stale and gets removed.
  *
+ * Both branches re-read the seat INSIDE a transaction and re-validate
+ * `duplicate_grants[]` before acting, so a concurrent
+ * `markRequestComplete` between the outer read and the write can't be
+ * silently clobbered.
+ *
  * Mirrors `removeSeatOnRequestComplete`'s seat-removal semantics:
  *   - No `duplicate_grants[]` (the common orphan case) → delete the
  *     seat. To attribute the deletion to `SyncActor:sba-only` in the
- *     audit log, we follow the Expiry precedent: stamp `lastActor`
+ *     audit log we follow the Expiry precedent: stamp `lastActor`
  *     (a bookkeeping-only write the audit trigger no-ops), then delete.
- *     The audit trigger reads the stamped BEFORE snapshot and emits a
- *     `delete_seat` row attributed to the Sync actor. Stamp + delete
- *     must be two committed writes (not one transaction) — inside a
- *     single transaction they collapse to a bare delete whose BEFORE
- *     carries the seat's *prior* actor, mis-attributing the row.
+ *     Stamp + reap happen in ONE transaction; the bare `delete()` is a
+ *     separate second committed write. They can't share a transaction —
+ *     a stamp + delete inside one tx collapses to a bare delete whose
+ *     BEFORE carries the seat's *prior* actor, mis-attributing the row.
+ *     Reaping inside the same tx as the stamp (rather than after the
+ *     delete) keeps the reaping guarantee retry-safe: a reap/stamp
+ *     failure leaves seat + access intact; a delete failure leaves the
+ *     seat alive with access already reaped. Either self-heals on retry
+ *     or on the next Sync round.
  *   - Has `duplicate_grants[]` → the member holds other-site / other-
  *     scope access we must not nuke. Promote the first duplicate to
  *     primary (same field copy the remove trigger does) instead of
@@ -565,6 +574,14 @@ async function applyBuildingsMismatch(
  * reap is a harmless no-op for it. On promote, the cleared scope is the
  * REMOVED primary's — the promoted scope's `importer_callings` survives
  * because the member still holds that seat.
+ *
+ * Audit caveat: the reap's `update_access` row is stamped with
+ * `SyncActor:sba-only`, but when the helper DELETES the access doc
+ * (both maps went empty) its bare `tx.delete` fans a `delete_access`
+ * row attributed to the doc's PRIOR `lastActor`, not the Sync actor.
+ * Pre-existing — shared with the `type-mismatch` demote path — and
+ * accepted at our scale rather than adding a stamp-then-delete dance
+ * for the access doc.
  */
 async function applySbaOnlyRemove(
   stakeId: string,
@@ -592,23 +609,60 @@ async function applySbaOnlyRemove(
   const dupes = seat.duplicate_grants ?? [];
 
   if (dupes.length === 0) {
-    // Orphan delete. Expiry-style stamp-then-delete so the audit row is
-    // attributed to the Sync actor (the audit trigger reads BEFORE on a
-    // delete). Two committed writes — see the doc comment above.
-    await seatRef.set(
-      {
-        lastActor: { ...actor },
-        last_modified_at: FieldValue.serverTimestamp(),
-        last_modified_by: { ...actor },
-      },
-      { merge: true },
-    );
+    // Orphan delete, retry-safe. ONE transaction re-reads + re-validates
+    // the seat, stamps `lastActor: SyncActor:sba-only`, and reaps the
+    // access scope; the bare delete is a separate second committed write
+    // (a stamp + delete inside one tx collapses to a bare delete that
+    // mis-attributes the audit row — see the doc comment above).
+    const txResult = await db.runTransaction<SyncApplyFixResult>(async (tx) => {
+      // All reads before any write.
+      const freshSeatSnap = await tx.get(seatRef);
+      if (!freshSeatSnap.exists) {
+        return { success: false, error: 'seat not found' };
+      }
+      const freshSeat = freshSeatSnap.data() as Seat;
+      if ((freshSeat.duplicate_grants ?? []).length > 0) {
+        // A concurrent `markRequestComplete` added a duplicate grant
+        // between the outer read and here — deleting would silently
+        // destroy it. Soft-fail; the operator re-clicks and the next
+        // round takes the promote path.
+        return { success: false, error: 'seat changed concurrently' };
+      }
+      const accessSnap = await tx.get(accessRef);
+
+      // Stamp the seat so the delete's audit BEFORE-snapshot attributes
+      // `delete_seat` to the Sync actor (the audit trigger reads BEFORE
+      // on a delete). Bookkeeping-only — no-op'd by the audit trigger.
+      tx.set(
+        seatRef,
+        {
+          lastActor: { ...actor },
+          last_modified_at: FieldValue.serverTimestamp(),
+          last_modified_by: { ...actor },
+        },
+        { merge: true },
+      );
+
+      // Reap the orphan seat's scope from the access doc in the SAME tx,
+      // so a failure here leaves seat + access both intact for a clean
+      // retry (the reaping guarantee never half-applies).
+      if (accessSnap.exists) {
+        clearImporterCallingsForScope(tx, accessRef, {
+          access: accessSnap.data() as Access,
+          scope: freshSeat.scope,
+          actor,
+        });
+      }
+      return { success: true, seatId: canonical };
+    });
+    if (!txResult.success) return txResult;
+
+    // Irreversible second write: the seat's BEFORE snapshot now carries
+    // the Sync-actor stamp, so `delete_seat` is attributed correctly. A
+    // failure here leaves the seat alive with access already reaped;
+    // retrying re-runs the idempotent tx, then re-deletes (or the next
+    // Sync round re-detects sba-only).
     await seatRef.delete();
-    // Reap the deleted seat's scope from the access doc. Separate from
-    // the seat's stamp-then-delete (which can't be transactional); the
-    // helper's own tx.delete/tx.update carries the demote path's blessed
-    // attribution, so no extra stamp dance is needed here.
-    await reapAccessScope(db, accessRef, seat.scope, actor);
     return { success: true, seatId: canonical };
   }
 
@@ -669,29 +723,6 @@ async function applySbaOnlyRemove(
     }
 
     return { success: true, seatId: canonical };
-  });
-}
-
-/**
- * Reap a single scope's calling-derived access for the orphan-delete
- * path. Reads the access doc in its own transaction and delegates to
- * `clearImporterCallingsForScope`. No-op when the doc is absent (a
- * manual/temp orphan with no access doc).
- */
-async function reapAccessScope(
-  db: Firestore,
-  accessRef: DocumentReference,
-  scope: string,
-  actor: ActorRef,
-): Promise<void> {
-  await db.runTransaction(async (tx) => {
-    const accessSnap = await tx.get(accessRef);
-    if (!accessSnap.exists) return;
-    clearImporterCallingsForScope(tx, accessRef, {
-      access: accessSnap.data() as Access,
-      scope,
-      actor,
-    });
   });
 }
 

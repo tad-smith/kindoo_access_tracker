@@ -890,6 +890,14 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
   // orphan, so the fix DELETES it. The common case is a plain delete;
   // when the seat carries duplicate_grants[] (other-site / other-scope
   // access) we promote the first duplicate instead of nuking it.
+  //
+  // Both branches re-read + re-validate the seat inside a transaction.
+  // The orphan branch's in-tx re-assert ("duplicate appeared between the
+  // outer read and the delete → soft-fail 'seat changed concurrently'")
+  // can't be reached via the seed seam: a seat that already has
+  // duplicates routes to the promote branch on the outer read, never the
+  // orphan branch. The re-assert is the guard against true mid-call
+  // concurrency, which we don't fake-inject — no test theater.
 
   describe("code='sba-only'", () => {
     it('deletes the orphaned seat and returns success + seatId', async () => {
