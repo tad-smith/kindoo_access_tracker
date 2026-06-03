@@ -150,7 +150,7 @@ The defensive **"resolved segments but no primary"** fallback also emits `kindoo
 To reconcile auto users, the Sync run derives each user's effective building set from their per-door grants. The chain (implemented in `content/kindoo/sync/buildingsFromDoors.ts`):
 
 1. **`buildRuleDoorMap`** — one `KindooGetEnvRuleWithEntryPointsFormatted` call per AccessRule referenced by an SBA building (csnorth has 4 → 4 calls). Each rule's response carries every door in the environment with `IsSelected: true` on the doors belonging to the queried rule. The map: `RuleID → Set<DoorID>`.
-2. **`getUserDoorIds`** — one `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints` call per Kindoo user (313 calls in csnorth). Paginated with `start += 40`. Every row carries a `DoorID` regardless of grant origin (rule-derived vs direct Church Access Automation grant via `AccessScheduleID === 0`). The flattened, deduplicated set is the user's effective door set.
+2. **`getUserDoorIds`** — one `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints` call per Kindoo user (313 calls in csnorth). Paginated with `start += 40`. Every row carries a `DoorID` regardless of grant origin (rule-derived vs church direct grant from the Church Access Automation). The flattened, deduplicated set is the user's effective door set.
 3. **`deriveEffectiveRuleIds`** — pure function. A user "effectively holds" a rule iff EVERY DoorID in that rule's door set is present in the user's door set. Strict subset; partial overlap does not claim the rule. Empty rule door sets are explicitly guarded against (would otherwise vacuously match every empty rule).
 4. **`derivedBuildingNames`** — pure function. Map effective RuleIDs to SBA building names via `building.kindoo_rule.rule_id`. Returns a deduplicated, alphabetically-sorted array.
 
@@ -381,32 +381,37 @@ buildings`) and is **insufficient**: it only fires when the church grants doors 
 SBA's rules explain. In the overlap/lag case — SBA wrote a rule **and** the church grants the
 same doors — the door sets coincide, the signal is silent, and the seat never promotes.
 
-The authoritative signal is **direct-grant coverage**: the church's grants are the per-door
-rows with **`AccessScheduleID === 0`** (Church Access Automation). A seat is church-backed iff
-every door of its building's rule is present among the member's `AccessScheduleID === 0` rows —
-true even when an SBA rule covers the same doors.
+The authoritative signal is **church-grant coverage**: the church's grants are the per-door
+rows **granted by the Church Access Automation** — identified by their **grantor**
+(`GrantedBy.Username === sentry@groups.churchofjesuschrist.org` or `GrantedBy.IsSuperApi === true`),
+not by `AccessScheduleID` (real church grants carry `AccessScheduleID: -1`). A seat is church-backed
+iff every door of its building's rule is present among the member's church-granted rows — true even
+when an SBA rule covers the same doors.
 
 **Confirmed — the data was already in hand, no fresh capture needed.** (b)+(c) shipped against the
-existing capture; nothing was pending.
+existing capture; nothing was pending. (The grantor field is already requested via
+`FetchGrantedByData: 'true'`.)
 
 - The per-user door endpoint
   (`KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints`) returns one row
-  **per (door, granting source)**: `AccessScheduleID === 0` is a direct church grant; a non-zero
-  value is the granting rule. A door granted by both a rule and a direct grant therefore emits
-  **both** rows — so the overlap/lag case is observable. (`v2-kindoo-api-capture.md:781–820`.)
+  **per (door, granting source)**: a row whose `GrantedBy` is the Church Access Automation account
+  (or a super-API grantor) is a church direct grant; otherwise it is an SBA/manager AccessRule grant.
+  A door granted by both a rule and the church therefore emits **both** rows — so the overlap/lag
+  case is observable. (`v2-kindoo-api-capture.md:781–820`.)
 - The endpoint parser **already surfaces it**: `endpoints.ts` returns
-  `UserDoorGrantRow { doorId, accessScheduleId }`. The detector partitions direct
-  (`accessScheduleId === 0`) from rule-derived rather than collapsing to `doorId` alone — see the
-  "Prefer-direct door dedup" implementation note below for the as-built dedup.
+  `UserDoorGrantRow { doorId, churchGranted }`, with `churchGranted` set by `isChurchGrantedRow`
+  (grantor-based, the `CHURCH_AUTOMATION_USERNAME` const / `IsSuperApi`). The detector partitions
+  church-granted from rule-derived rather than collapsing to `doorId` alone — see the
+  "Prefer-church door dedup" implementation note below for the as-built dedup.
 
-**Algorithm** (mirrors the existing strict-subset `deriveEffectiveRuleIds`, restricted to direct
-doors):
+**Algorithm** (mirrors the existing strict-subset `deriveEffectiveRuleIds`, restricted to
+church-granted doors):
 
-1. `directDoorIds = { r.doorId | r.accessScheduleId === 0 }` for the member.
-2. A building X (→ rule `R_X`, door set from `buildRuleDoorMap`) is **direct-granted** iff
-   **every** door of `R_X` ∈ `directDoorIds` (strict subset; partial coverage ⇒ not
+1. `churchDoorIds = { r.doorId | r.churchGranted }` for the member.
+2. A building X (→ rule `R_X`, door set from `buildRuleDoorMap`) is **church-granted** iff
+   **every** door of `R_X` ∈ `churchDoorIds` (strict subset; partial coverage ⇒ not
    church-backed — conservative, matches the existing rule-derivation convention).
-3. A seat is **church-backed** iff every one of its `building_names` is direct-granted. Partial
+3. A seat is **church-backed** iff every one of its `building_names` is church-granted. Partial
    coverage on a multi-building seat ⇒ not auto (surface for review rather than guess).
 
 ### Stage 1 — grant classification + sort + soft-deprecation (operator-clicked)
@@ -453,12 +458,13 @@ touched — it still sorts the `access/` collection by the doc-level `sort_order
 it)**; removing it is a deferred cleanup, not required for Stage 1. This keeps the sort track
 independent of the detector track (which reuses `applyTypeMismatch`).
 
-(b) **Direct-grant detector** (extension) — **SHIPPED (PR #179)**. `buildingsFromDoors.ts` tracks
-`AccessScheduleID === 0` coverage per building (`directGrantBuildings`); `isChurchBacked` /
+(b) **Church-grant detector** (extension) — **SHIPPED (PR #179)**. `buildingsFromDoors.ts` tracks
+church-grant coverage per building (`directGrantBuildings`); `isChurchBacked` /
 `grantsBackAuto` in `detector.ts` are the per-seat predicates. No fresh capture was needed — the
-`AccessScheduleID === 0` direct-grant signal is already surfaced by `endpoints.ts`
-(`UserDoorGrantRow.accessScheduleId`); the detector work was to stop collapsing it and partition
-direct from rule-derived (see "Confirmed — the data is already in hand" above). **Follow-up
+church direct-grant signal is already surfaced by `endpoints.ts`
+(`UserDoorGrantRow.churchGranted`, set by `isChurchGrantedRow` off `GrantedBy`); the detector work
+was to stop collapsing it and partition church-granted from rule-derived (see "Confirmed — the data
+is already in hand" above). **Follow-up
 (superseded by PR #187):** a brief experiment scoped both grant checks to Guests by reading a
 per-user `UserRole` (PR #181), to dodge a false demote on a Kindoo Manager whose Description parsed.
 That gate was removed in PR #187 — it mis-skipped a real church-granted Guest whose `UserRole` read
@@ -514,13 +520,14 @@ sketch): the diff fires only when the SBA seat `type === 'auto'`. The AUTO-only 
 
 These pin down details the design above glossed; they are the as-built contract.
 
-**Prefer-direct door dedup (b).** `getUserAccessRulesWithEntryPoints` (`endpoints.ts`) returns one
+**Prefer-church door dedup (b).** `getUserAccessRulesWithEntryPoints` (`endpoints.ts`) returns one
 `UserDoorGrantRow` per (door, source). It collapses to one row per `doorId` but **prefers the
-direct grant**: if ANY row for a door is direct (`AccessScheduleID === 0`), the collapsed row
-carries `accessScheduleId: 0`. Without this, a rule row arriving before the direct row would mask
-the direct grant (the overlap/lag case) since the old dedup kept first-seen. `directGrantBuildings`
-is then `derivedBuildingNames(deriveEffectiveRuleIds(directDoorIds, ruleDoorMap), buildings)` over
-the direct-only door subset; `enrichUsersWithDerivedBuildings` computes both sets from a single
+church grant**: if ANY row for a door is church-granted (`isChurchGrantedRow` — `GrantedBy` is the
+Church Access Automation account or `IsSuperApi`), the collapsed row carries `churchGranted: true`.
+Without this, a rule row arriving before the church row would mask the church grant (the overlap/lag
+case) since the old dedup kept first-seen. `directGrantBuildings` is then
+`derivedBuildingNames(deriveEffectiveRuleIds(churchDoorIds, ruleDoorMap), buildings)` over the
+church-granted door subset; `enrichUsersWithDerivedBuildings` computes both sets from a single
 fetch (`getUserDoorGrants`) and nulls BOTH on a per-user error.
 
 **`isChurchBacked` (c).** `directGrantBuildings !== null && every seat building ∈
