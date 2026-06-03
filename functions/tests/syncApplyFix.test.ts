@@ -2002,7 +2002,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         });
       });
 
-      it('on manual: REPLACES callings but leaves sort_order absent and writes no access doc', async () => {
+      it('on manual: rejects with failed-precondition and leaves the seat untouched (auto-only; no §6.1 hybrid)', async () => {
         await seedManager();
         await seedTemplate({
           scope: 'CO',
@@ -2010,27 +2010,32 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
           give_app_access: true,
           sheet_order: 1,
         });
-        await seedSeat({ scope: 'CO', type: 'manual', callings: ['Old Calling'] });
-
-        await syncApplyFix.run(
-          callableReq({
-            auth: { email: MANAGER_EMAIL },
-            data: {
-              stakeId: STAKE_ID,
-              fix: {
-                code: 'callings-mismatch',
-                payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishop'] },
-              },
-            },
-          }),
-        );
-
+        // Well-formed manual seat: empty callings, calling in free-text reason.
+        await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
         const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: 'Old Calling' });
+
+        await expect(
+          syncApplyFix.run(
+            callableReq({
+              auth: { email: MANAGER_EMAIL },
+              data: {
+                stakeId: STAKE_ID,
+                fix: {
+                  code: 'callings-mismatch',
+                  payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishop'] },
+                },
+              },
+            }),
+          ),
+        ).rejects.toMatchObject({ code: 'failed-precondition' });
+
+        // Seat left untouched — no hybrid (callings stay empty, reason kept).
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
-        ).data() as Seat & { sort_order?: unknown };
-        expect(seat.callings).toEqual(['Bishop']);
-        expect(seat.sort_order).toBeUndefined();
+        ).data() as Seat & { reason?: unknown };
+        expect(seat.callings).toEqual([]);
+        expect(seat.reason).toBe('Old Calling');
         const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
         expect(accessSnap.exists).toBe(false);
       });

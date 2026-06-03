@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AUTOMATED_ACTOR_NAMES,
+  HISTORICAL_SYNC_DISCREPANCY_CODES,
   LEGACY_IMPORTER_ACTOR_NAME,
   SYNC_ACTOR_PREFIX,
   SYNC_DISCREPANCY_CODES,
@@ -35,6 +36,20 @@ describe('isAutomatedActor', () => {
 
   it('matches every SyncActor:<code> stamp', () => {
     for (const code of SYNC_DISCREPANCY_CODES) {
+      expect(isAutomatedActor(`${SYNC_ACTOR_PREFIX}${code}`)).toBe(true);
+    }
+  });
+
+  it('matches the renamed callings-mismatch code', () => {
+    expect(isAutomatedActor('SyncActor:callings-mismatch')).toBe(true);
+  });
+
+  it('still matches deprecated/historical SyncActor codes on existing audit rows', () => {
+    // `extra-kindoo-calling` was renamed to `callings-mismatch`. Rows
+    // stamped before the rename must keep classifying as automated, not
+    // demote to a human actor.
+    expect(isAutomatedActor('SyncActor:extra-kindoo-calling')).toBe(true);
+    for (const code of HISTORICAL_SYNC_DISCREPANCY_CODES) {
       expect(isAutomatedActor(`${SYNC_ACTOR_PREFIX}${code}`)).toBe(true);
     }
   });
@@ -74,5 +89,15 @@ describe('syncActorName + parseSyncActorCode', () => {
   it('returns null for SyncActor prefix with an unknown code', () => {
     expect(parseSyncActorCode('SyncActor:invented-code')).toBeNull();
     expect(parseSyncActorCode('SyncActor:')).toBeNull();
+  });
+
+  it('returns null for deprecated/historical codes (recognised for audit, not a current input)', () => {
+    // Historical codes classify as automated via `isAutomatedActor` but
+    // are not current `SyncDiscrepancyCode` inputs, so `parseSyncActorCode`
+    // (which narrows to the current union) does not surface them.
+    expect(parseSyncActorCode('SyncActor:extra-kindoo-calling')).toBeNull();
+    expect((SYNC_DISCREPANCY_CODES as readonly string[]).includes('extra-kindoo-calling')).toBe(
+      false,
+    );
   });
 });

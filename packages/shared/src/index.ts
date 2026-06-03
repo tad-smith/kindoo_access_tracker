@@ -12,6 +12,7 @@ export { canonicalEmail, emailsEqual } from './canonicalEmail.js';
 export { principalFromClaims } from './principal.js';
 export {
   AUTOMATED_ACTOR_NAMES,
+  HISTORICAL_SYNC_DISCREPANCY_CODES,
   LEGACY_IMPORTER_ACTOR_NAME,
   SYNC_ACTOR_PREFIX,
   SYNC_DISCREPANCY_CODES,

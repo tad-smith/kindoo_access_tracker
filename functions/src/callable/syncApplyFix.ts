@@ -318,8 +318,10 @@ async function applyKindooOnly(
  * drops the scope's entry (deleting the doc when both maps go empty,
  * `manual_grants` always preserved).
  *
- * Auto-seat shaped by construction (the detector emits this code for auto
- * seats only); we still guard on `seat.type === 'auto'`.
+ * Auto-only by construction (the detector emits this code for auto seats
+ * only). A non-auto seat is rejected with `failed-precondition` rather
+ * than written — replacing `callings[]` on a manual / temp seat would
+ * mint a §6.1-violating hybrid (callings AND free-text reason).
  */
 async function applyCallingsMismatch(
   stakeId: string,
@@ -357,6 +359,16 @@ async function applyCallingsMismatch(
     }
     const seat = snap.data() as Seat;
 
+    // `callings-mismatch` mirrors Kindoo's calling onto an AUTO seat's
+    // `callings[]` (§6.1: auto seats carry the calling there, no `reason`).
+    // The detector only emits it for auto seats, so a non-auto seat here
+    // is a malformed request — replacing `callings[]` on a manual / temp
+    // seat would mint a §6.1-violating hybrid (callings AND reason). Reject
+    // rather than write it.
+    if (seat.type !== 'auto') {
+      throw new HttpsError('failed-precondition', 'callings-mismatch applies to auto seats only');
+    }
+
     const update: Record<string, unknown> = {
       callings: newCallings,
       last_modified_at: FieldValue.serverTimestamp(),
@@ -364,37 +376,33 @@ async function applyCallingsMismatch(
       lastActor: actor,
     };
 
-    // The detector emits this code for auto seats only; the access /
-    // sort_order bookkeeping is auto-shaped. Guard defensively.
-    if (seat.type === 'auto') {
-      const idx = await loadTemplateIndex(db, tx, stakeId, seat.scope);
-      update.sort_order = minSheetOrder(idx, newCallings);
+    const idx = await loadTemplateIndex(db, tx, stakeId, seat.scope);
+    update.sort_order = minSheetOrder(idx, newCallings);
 
-      // REPLACE can remove access: recompute the grant set from the NEW
-      // callings, then either rewrite the scope's importer_callings or
-      // clear it. Read the access doc before any write.
-      const accessCallings = filterByGiveAppAccess(idx, newCallings);
-      const accessSnap = await tx.get(accessRef);
-      if (accessCallings.length > 0) {
-        writeAccessForAutoScope(tx, accessRef, {
-          canonical,
-          memberEmail: seat.member_email ?? memberEmail,
-          memberName: seat.member_name ?? '',
-          scope: seat.scope,
-          callings: accessCallings,
-          sortOrder: update.sort_order as number | null,
-          priorAccess: accessSnap.exists ? (accessSnap.data() as Access) : undefined,
-          actor,
-        });
-      } else if (accessSnap.exists) {
-        // The new callings earn no grant; drop the old scope's entry
-        // (deletes the doc when both maps go empty).
-        clearImporterCallingsForScope(tx, accessRef, {
-          access: accessSnap.data() as Access,
-          scope: seat.scope,
-          actor,
-        });
-      }
+    // REPLACE can remove access: recompute the grant set from the NEW
+    // callings, then either rewrite the scope's importer_callings or
+    // clear it. Read the access doc before any write.
+    const accessCallings = filterByGiveAppAccess(idx, newCallings);
+    const accessSnap = await tx.get(accessRef);
+    if (accessCallings.length > 0) {
+      writeAccessForAutoScope(tx, accessRef, {
+        canonical,
+        memberEmail: seat.member_email ?? memberEmail,
+        memberName: seat.member_name ?? '',
+        scope: seat.scope,
+        callings: accessCallings,
+        sortOrder: update.sort_order as number | null,
+        priorAccess: accessSnap.exists ? (accessSnap.data() as Access) : undefined,
+        actor,
+      });
+    } else if (accessSnap.exists) {
+      // The new callings earn no grant; drop the old scope's entry
+      // (deletes the doc when both maps go empty).
+      clearImporterCallingsForScope(tx, accessRef, {
+        access: accessSnap.data() as Access,
+        scope: seat.scope,
+        actor,
+      });
     }
 
     tx.update(seatRef, update);
