@@ -389,12 +389,22 @@ async function applyScopeMismatch(
     if (!snap.exists) {
       return { success: false, error: 'seat not found' };
     }
-    tx.update(seatRef, {
+    const update: Record<string, unknown> = {
       scope: newScope,
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,
-    });
+    };
+    // Stake-scope primaries resolve to the home site (spec §15 Phase 1):
+    // `kindoo_site_id` must be null/absent. A foreign-site ward seat that
+    // scope-mismatches to stake would otherwise keep its foreign site id
+    // and `projectSeatForSite` would resolve it off-home. Clear it ONLY
+    // when resolving to stake; a ward newScope leaves it untouched.
+    // Mirrors `applyKindooUnparseable`.
+    if (newScope === 'stake') {
+      update.kindoo_site_id = FieldValue.delete();
+    }
+    tx.update(seatRef, update);
     return { success: true, seatId: canonical };
   });
 }

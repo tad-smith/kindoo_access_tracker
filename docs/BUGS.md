@@ -6,8 +6,25 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
-## [B-15] `applyScopeMismatch` doesn't clear `kindoo_site_id` when resolving a seat to stake scope
+## [B-16] Per-row Sync fixes write the primary grant's fields even when the row was surfaced via a projected duplicate
 Status: open
+Owner: @backend-engineer
+Severity: low (requires a rare data shape — parallel-site `duplicate_grants[]` AND an unparseable Kindoo Description on the same member; 1–2 requests/week at v1 scale)
+
+**Pre-existing** (not a regression). Surfaced by the PR #184 review.
+
+**Symptom:** When a member's primary seat sits on a **foreign** Kindoo site but is surfaced on a **home** Sync run via its home-side duplicate grant, the home Sync row's `sbaBlock` is the projected duplicate's view (`projectSeatForSite` — `extension/src/content/kindoo/sync/`), not the primary. The per-row `syncApplyFix` fix handlers — `applyScopeMismatch`, `applyTypeMismatch`, `applyBuildingsMismatch` — all hardcode writes to the **primary** seat's fields, not the projected duplicate's. Applying a fix from such a row therefore mutates the wrong grant.
+
+**Consequence (worst case, `kindoo-unparseable`):** the fix flips the foreign-site **primary** to `scope='stake'` and clears its `kindoo_site_id` (per the B-15 fix), while the home-ward **duplicate** grant stays as-is. The member ends up with two home grants (a now-stake-scope primary plus the home-ward duplicate) instead of the intended single reshape, and the foreign-site grant is silently lost.
+
+**Why it's a known limitation, not an active defect:** the trigger combination is rare — the member must carry a parallel-site `duplicate_grants[]` entry AND an unparseable Kindoo Description on the same Sync run. The primary-field-write behaviour is a **pre-existing class** shared by all three fix handlers; B-15's new `kindoo_site_id` clearing only amplifies the impact (it now also strips the foreign site, not just flips scope). At v1 scale (12 wards, ~250 seats, 1–2 requests/week) the combination has not been observed. Logged as a known limitation rather than a blocking defect.
+
+**Fix shape (deferred):** the fix handlers need to target the grant the row was surfaced from — thread the projected duplicate's `(scope, kindoo_site_id)` discriminator through `syncApplyFix` and splice/update that `duplicate_grants[]` entry instead of the primary when the row originated from a projection. Mirrors the `(scope, kindoo_site_id)`-keyed targeting `planRemove` already uses (§485, §552). Out of scope for #184 (review-row actionability).
+
+**Reference:** surfaced in PR #184 review.
+
+## [B-15] `applyScopeMismatch` doesn't clear `kindoo_site_id` when resolving a seat to stake scope
+Status: closed (fixed in commit `7f8189d`)
 Owner: @backend-engineer
 Severity: low (rare data shape — a foreign-ward seat scope-mismatching to stake; 1–2 requests/week at v1 scale)
 
@@ -17,7 +34,7 @@ Severity: low (rare data shape — a foreign-ward seat scope-mismatching to stak
 
 **Consequence:** `projectSeatForSite` resolves the seat to the foreign site (off its stale `kindoo_site_id`), not home. The seat is then invisible on a home-site Sync run (and mis-scoped on home-stake utilization / roster placement) until something else rewrites the field.
 
-**Fix (deferred):** one line in `applyScopeMismatch` — `kindoo_site_id: FieldValue.delete()` in the seat `update` when `newScope==='stake'`, mirroring `applyKindooUnparseable` (which already does this) — plus a test asserting the field is cleared on the stake resolution. Out of scope for #184 (review-row actionability); logged for a follow-up.
+**Fix (commit `7f8189d`):** `applyScopeMismatch` now sets `kindoo_site_id: FieldValue.delete()` in the seat `update` when `newScope==='stake'`, mirroring `applyKindooUnparseable`. A test asserts the field is cleared on the stake resolution. The inverse direction (`newScope` a ward) is unchanged — it leaves `kindoo_site_id` untouched, so a ward-scope seat keeps whatever site its primary already carried.
 
 ## [B-14] auditTrigger.test.ts flakes CI with "expected 1, got 2" audit-row count
 Status: closed (fixed on branch `fix/audit-trigger-test-isolation`)
