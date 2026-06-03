@@ -36,6 +36,7 @@ export type {
   BuildingsMismatchPayload,
   ExtraKindooCallingPayload,
   KindooOnlyPayload,
+  KindooUnparseablePayload,
   SbaOnlyRemovePayload,
   ScopeMismatchPayload,
   SyncApplyFixInput,

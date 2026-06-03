@@ -304,9 +304,8 @@ describe('SyncPanel', () => {
       duplicate_grants: [],
     } as never);
     getSyncDataMock.mockResolvedValue(b);
-    // kindoo-only with unparseable description → review-eligible? Actually
-    // kindoo-only is drift severity. Use a Kindoo user that has a seat
-    // with unparseable description for review.
+    // A seated Kindoo user with a BLANK description → kindoo-no-description,
+    // the one remaining review-severity code.
     b.seats.push({
       member_canonical: 'review@example.com',
       member_email: 'review@example.com',
@@ -322,7 +321,7 @@ describe('SyncPanel', () => {
         euid: 'e1',
         userId: 'u1',
         username: 'review@example.com',
-        description: 'Kindoo Manager - Stake Clerk',
+        description: '',
         isTempUser: false,
         startAccessDoorsDateAtTimeZone: null,
         expiryDateAtTimeZone: null,
@@ -476,7 +475,7 @@ describe('SyncPanel', () => {
     expect((actionArg as { side: string }).side).toBe('sba');
   });
 
-  it('extra-kindoo-calling renders Add to SBA seat + click dispatches', async () => {
+  it('extra-kindoo-calling renders Update SBA (testId add-callings-sba) + click dispatches', async () => {
     applyFixMock.mockResolvedValue({ ok: true });
     const b = bundle();
     b.wardCallingTemplates.push({
@@ -817,21 +816,68 @@ describe('SyncPanel', () => {
     expect(screen.queryByTestId('sba-sync-fix-update-kindoo-autonull@example.com')).toBeNull();
   });
 
-  it('kindoo-unparseable renders no fix buttons', async () => {
+  it('kindoo-unparseable (Guest, home site, unaligned) renders an Update SBA button', async () => {
+    // Guest (userRole 2 default), home site (eid matches), seat at ward
+    // scope so NOT aligned with the stake-scope target → drift; offers
+    // Update SBA (church-wide stake-scope calling).
     const b = bundle();
     b.seats.push(autoSeat('weird@example.com') as never);
     getSyncDataMock.mockResolvedValue(b);
     listAllEnvironmentUsersMock.mockResolvedValue([
-      kuser('weird@example.com', { description: 'Kindoo Manager - Stake Clerk' }),
+      kuser('weird@example.com', { description: 'Some Church-Wide Calling' }),
     ]);
     const user = userEvent.setup();
     await renderSync();
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    expect(screen.queryByTestId('sba-sync-fix-create-sba-weird@example.com')).toBeNull();
-    expect(screen.queryByTestId('sba-sync-fix-update-kindoo-weird@example.com')).toBeNull();
-    expect(screen.queryByTestId('sba-sync-fix-update-sba-weird@example.com')).toBeNull();
+    const row = screen.getByTestId('sba-sync-row-weird@example.com');
+    expect(row).toHaveAttribute('data-severity', 'drift');
+    expect(screen.getByTestId('sba-sync-fix-update-sba-weird@example.com')).toBeInTheDocument();
+  });
+
+  it('kindoo-unparseable (non-Guest manager, home site) renders review-only with no buttons', async () => {
+    // A Kindoo Manager (non-Guest) with an unparseable description who
+    // also holds an SBA seat: emitted as review, no action button. The
+    // enrichment mock stamps userRole=0 so skipGrantReconciliation is true.
+    const b = bundle();
+    b.seats.push(autoSeat('manager@example.com') as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      kuser('manager@example.com', { description: 'Kindoo Manager - Stake Clerk' }),
+    ]);
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
+      users.map((u: Record<string, unknown>) => ({ ...u, userRole: 0 })),
+    );
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    const row = screen.getByTestId('sba-sync-row-manager@example.com');
+    expect(row).toHaveAttribute('data-severity', 'review');
+    expect(screen.queryByTestId('sba-sync-fix-update-sba-manager@example.com')).toBeNull();
+  });
+
+  it('kindoo-no-description (blank) renders review-only with no fix buttons', async () => {
+    // Blank description → kindoo-no-description, the one review-only code.
+    const b = bundle();
+    b.seats.push(autoSeat('blank@example.com') as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      kuser('blank@example.com', { description: '' }),
+    ]);
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    const row = screen.getByTestId('sba-sync-row-blank@example.com');
+    expect(row).toHaveAttribute('data-severity', 'review');
+    // Review-only: no action buttons of any kind.
+    expect(screen.queryByTestId('sba-sync-fix-create-sba-blank@example.com')).toBeNull();
+    expect(screen.queryByTestId('sba-sync-fix-update-sba-blank@example.com')).toBeNull();
+    expect(screen.queryByTestId('sba-sync-fix-add-callings-sba-blank@example.com')).toBeNull();
   });
 
   it('success path removes the row and decrements the matching counter', async () => {
@@ -854,7 +900,7 @@ describe('SyncPanel', () => {
   // combined via AND.
   // --------------------------------------------------------------------
 
-  it('renders the code-filter dropdown with All codes + 7 codes', async () => {
+  it('renders the code-filter dropdown with All codes + 8 codes', async () => {
     getSyncDataMock.mockResolvedValue(bundle());
     listAllEnvironmentUsersMock.mockResolvedValue([]);
     const user = userEvent.setup();
@@ -872,6 +918,7 @@ describe('SyncPanel', () => {
       'sba-only',
       'kindoo-only',
       'kindoo-unparseable',
+      'kindoo-no-description',
       'scope-mismatch',
       'type-mismatch',
       'buildings-mismatch',
@@ -883,6 +930,7 @@ describe('SyncPanel', () => {
       'sba-only',
       'kindoo-only',
       'kindoo-unparseable',
+      'kindoo-no-description',
       'scope-mismatch',
       'type-mismatch',
       'buildings-mismatch',
@@ -984,8 +1032,9 @@ describe('SyncPanel', () => {
 
   it('renders the filter-empty hint when severity + code AND eliminates all rows', async () => {
     const b = bundle();
-    // sba-only seat (sba-only is severity=drift). No kindoo-only or
-    // review-severity rows present.
+    // sba-only seat (sba-only is severity=drift). The only row's code is
+    // `sba-only`, so filtering to the `extra-kindoo-calling` code below
+    // eliminates it even though both are drift severity.
     b.seats.push({
       member_canonical: 'orphan@example.com',
       member_email: 'orphan@example.com',
@@ -1003,7 +1052,8 @@ describe('SyncPanel', () => {
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
-    // Drift chip + extra-kindoo-calling (review-severity) → no overlap.
+    // Drift chip + extra-kindoo-calling code → the lone sba-only row is
+    // dropped by the code filter, leaving zero rows.
     await user.click(screen.getByTestId('sba-sync-filter-drift'));
     await user.selectOptions(screen.getByTestId('sba-sync-code-filter'), 'extra-kindoo-calling');
     expect(screen.queryByTestId('sba-sync-list')).toBeNull();

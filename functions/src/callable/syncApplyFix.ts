@@ -16,6 +16,14 @@
 // axis independently in the drift UI. If two axes are misaligned on the
 // same seat, the second drift row re-emits on the next sync run.
 //
+// `kindoo-unparseable` is an SBA-side update for a Kindoo Description
+// that is present but doesn't parse as `Scope (Calling)`: such a
+// description is treated as a church-wide calling, so the seat is moved
+// to stake scope and its calling is set from the raw description text
+// (per the §6.1 convention — `callings[]` for auto, free-text `reason`
+// for manual / temp). Blank descriptions stay review-only and are
+// handled extension-side; they never reach this callable.
+//
 // Auth: same authority check as `markRequestComplete` — read the
 // `kindooManagers/{canonical}` doc directly (custom claims can be ~1h
 // stale on idle sessions; the doc is the source of truth at call time).
@@ -39,7 +47,7 @@
 //
 // Seat shape on type flip (`applyTypeMismatch`, grant-derived
 // promote / demote — see `extension/docs/sync-design.md` "Grant-derived
-// seat type"): the §13 convention is auto seats carry the calling in
+// seat type"): the §6.1 convention is auto seats carry the calling in
 // `callings[]` (empty `reason`), manual / temp seats carry
 // `callings: []` with the calling in free-text `reason`. Promote sets
 // `callings[]` from the payload (fallback `[reason]`) and clears
@@ -59,6 +67,7 @@ import type {
   ExtraKindooCallingPayload,
   KindooManager,
   KindooOnlyPayload,
+  KindooUnparseablePayload,
   SbaOnlyRemovePayload,
   ScopeMismatchPayload,
   Seat,
@@ -167,6 +176,8 @@ export const syncApplyFix = onCall(
         return applyScopeMismatch(stakeId, fix.payload as ScopeMismatchPayload);
       case 'type-mismatch':
         return applyTypeMismatch(stakeId, fix.payload as TypeMismatchPayload);
+      case 'kindoo-unparseable':
+        return applyKindooUnparseable(stakeId, fix.payload as KindooUnparseablePayload);
       case 'buildings-mismatch':
         return applyBuildingsMismatch(stakeId, fix.payload as BuildingsMismatchPayload);
       case 'sba-only':
@@ -424,9 +435,9 @@ async function applyTypeMismatch(
       lastActor: actor,
     };
 
-    // Reshape the seat to the §13 convention on the type flip, then run
+    // Reshape the seat to the §6.1 convention on the type flip, then run
     // the auto-seat `sort_order` + access-doc bookkeeping off the
-    // reshaped callings. §13: auto seats carry the calling in
+    // reshaped callings. §6.1: auto seats carry the calling in
     // `callings[]` (empty `reason`); manual / temp seats carry
     // `callings: []` with the calling in free-text `reason`.
     // - manual / temp → auto (promote): set `callings[]` from the
@@ -481,6 +492,126 @@ async function applyTypeMismatch(
           actor,
         });
       }
+    }
+
+    tx.update(seatRef, update);
+    return { success: true, seatId: canonical };
+  });
+}
+
+/**
+ * `kindoo-unparseable` — a Kindoo Description that is present but doesn't
+ * parse as `Scope (Calling)` is treated as a CHURCH-WIDE calling applied
+ * at stake scope. We move the seat to `scope = 'stake'`, clear any
+ * foreign `kindoo_site_id` (stake-scope primaries resolve to the home
+ * site, spec §15 Phase 1), keep its existing `type`, and set the calling
+ * from the raw description text per the §6.1 convention (auto →
+ * `callings[]`; manual / temp → free-text `reason`, callings cleared,
+ * temp dates preserved).
+ *
+ * Access-doc handling (AUTO seats only — manual / temp carry no
+ * `importer_callings`): the seat is leaving its old scope, so we reap the
+ * old scope's calling-derived grant (Kindoo-authoritative reap, #183).
+ * Whether the member KEEPS SBA app access then depends on the calling:
+ *
+ *   - If `calling` matches a `give_app_access` STAKE template, we write a
+ *     fresh `importer_callings['stake'] = [calling]` with the template's
+ *     `sort_order`. "Unparseable" only means the description didn't match
+ *     `Scope (Calling)`; a bare template name (e.g. `Stake Clerk`, no
+ *     parens) reaches this path and IS a real template, so dropping its
+ *     access would be a silent regression. The seat keeps stake-scope
+ *     access.
+ *   - If `calling` matches no `give_app_access` template, no new grant is
+ *     written (the old scope is still reaped). A genuinely free-text
+ *     church-wide calling confers no SBA app access via sync; if it ever
+ *     should, that flows through a manual grant.
+ *
+ * The whole access-doc reshape is ONE coherent write
+ * (`writeStakeScopeAccessForUnparseable`): it computes the final
+ * `importer_callings` (old scope dropped, stake entry added iff a grant
+ * matched), then either deletes the doc (final importer empty AND no
+ * manual grants) or writes it. All reads (access doc + stake template
+ * index) precede that write, satisfying Firestore reads-before-writes.
+ */
+async function applyKindooUnparseable(
+  stakeId: string,
+  payload: KindooUnparseablePayload | undefined,
+): Promise<SyncApplyFixResult> {
+  if (!payload || typeof payload !== 'object') {
+    throw new HttpsError('invalid-argument', 'payload required');
+  }
+  const memberEmail = requireString(payload.memberEmail, 'memberEmail');
+  const calling = requireString(payload.calling, 'calling').trim();
+  const canonical = canonicalEmail(memberEmail);
+  if (canonical === '') {
+    throw new HttpsError('invalid-argument', 'memberEmail did not canonicalize');
+  }
+
+  const db = getDb();
+  const seatRef = db.doc(`stakes/${stakeId}/seats/${canonical}`);
+  const accessRef = db.doc(`stakes/${stakeId}/access/${canonical}`);
+  const actor = syncActor('kindoo-unparseable');
+
+  return db.runTransaction<SyncApplyFixResult>(async (tx) => {
+    // All reads before any write.
+    const snap = await tx.get(seatRef);
+    if (!snap.exists) {
+      return { success: false, error: 'seat not found' };
+    }
+    const seat = snap.data() as Seat;
+    const oldScope = seat.scope;
+
+    const update: Record<string, unknown> = {
+      scope: 'stake',
+      // Stake-scope primary grants resolve to the home site (spec §15
+      // Phase 1): `kindoo_site_id` must be null/absent. The seat may have
+      // carried a foreign site id (Sync run against a foreign site), so
+      // clear it on every type. See packages/shared/src/types/seat.ts.
+      kindoo_site_id: FieldValue.delete(),
+      last_modified_at: FieldValue.serverTimestamp(),
+      last_modified_by: actor,
+      lastActor: actor,
+    };
+
+    if (seat.type === 'auto') {
+      // §6.1 auto convention: calling lives in `callings[]`, no `reason`.
+      update.callings = dedupePreserveOrder([calling]);
+      update.reason = FieldValue.delete();
+
+      // Access doc: reap the OLD scope's calling-derived grant, then —
+      // iff `calling` matches a `give_app_access` STAKE template — write a
+      // fresh `importer_callings['stake']` so the member keeps SBA app
+      // access. "Unparseable" only means the description doesn't match
+      // `Scope (Calling)`; a bare template name (e.g. `Stake Clerk`)
+      // reaches here and IS a real template, so we must not silently drop
+      // access. Both reads (access doc + stake template index) happen
+      // before any write to satisfy Firestore's reads-before-writes rule.
+      const accessSnap = await tx.get(accessRef);
+      const idx = await loadTemplateIndex(db, tx, stakeId, 'stake');
+      const stakeSort = minSheetOrder(idx, [calling]);
+      const stakeHasGrant = filterByGiveAppAccess(idx, [calling]).length > 0;
+      // The seat's `sort_order` mirrors the matched stake template's
+      // `sheet_order` (parity with `applyKindooOnly` / `applyExtraKindooCalling`,
+      // which stamp it from ANY template match); `null` for a non-template
+      // calling. The access grant is gated on `give_app_access` separately.
+      update.sort_order = stakeSort;
+
+      writeStakeScopeAccessForUnparseable(tx, accessRef, {
+        canonical,
+        memberEmail: seat.member_email ?? memberEmail,
+        memberName: seat.member_name ?? '',
+        oldScope,
+        calling,
+        stakeSort,
+        stakeHasGrant,
+        priorAccess: accessSnap.exists ? (accessSnap.data() as Access) : undefined,
+        actor,
+      });
+    } else {
+      // §6.1 manual / temp convention: calling lives in free-text `reason`,
+      // `callings[]` cleared. Temp seats keep their existing dates.
+      update.reason = calling;
+      update.callings = [];
     }
 
     tx.update(seatRef, update);
@@ -912,4 +1043,114 @@ function clearImporterCallingsForScope(
     last_modified_by: actor,
     lastActor: actor,
   });
+}
+
+/**
+ * One coherent access-doc write for the `kindoo-unparseable` AUTO path.
+ * Drops the seat's OLD scope from `importer_callings`, then adds a fresh
+ * `importer_callings['stake'] = [calling]` iff the calling matched a
+ * `give_app_access` stake template (`stakeHasGrant`). Resolves the final
+ * state in memory (no read after this write), then:
+ *   - deletes the doc when the final `importer_callings` is empty AND
+ *     `manual_grants` is empty (nothing left to justify access), or
+ *   - writes the doc otherwise: `tx.update` when it exists (replaces
+ *     `importer_callings` wholesale, leaving `manual_grants` untouched —
+ *     a `set merge` would deep-merge map keys and strand the old scope),
+ *     or a full `tx.set` create when it doesn't.
+ * `importer_callings` is always written as the fully-computed map, so the
+ * cleared old scope never lingers.
+ */
+function writeStakeScopeAccessForUnparseable(
+  tx: Transaction,
+  ref: DocumentReference,
+  opts: {
+    canonical: string;
+    memberEmail: string;
+    memberName: string;
+    oldScope: string;
+    calling: string;
+    /** MIN(sheet_order) for `calling` under the stake index; `null` if no match. */
+    stakeSort: number | null;
+    /** True iff `calling` matched a `give_app_access` stake template. */
+    stakeHasGrant: boolean;
+    priorAccess: Access | undefined;
+    actor: ActorRef;
+  },
+): void {
+  const {
+    canonical,
+    memberEmail,
+    memberName,
+    oldScope,
+    calling,
+    stakeSort,
+    stakeHasGrant,
+    priorAccess,
+    actor,
+  } = opts;
+
+  // Final importer map: every scope except the abandoned old one, plus a
+  // fresh stake entry when the calling earns app access. The old scope's
+  // entry is always dropped even if it equals 'stake' — the stake entry,
+  // if any, is rewritten wholesale from this calling.
+  const finalImporter: Record<string, string[]> = {};
+  for (const [s, c] of Object.entries(priorAccess?.importer_callings ?? {})) {
+    if (s === oldScope || s === 'stake') continue;
+    if (c && c.length > 0) finalImporter[s] = [...c];
+  }
+  if (stakeHasGrant) finalImporter['stake'] = [calling];
+
+  const hasManual = Object.values(priorAccess?.manual_grants ?? {}).some(
+    (arr) => arr && arr.length > 0,
+  );
+  const finalImporterEmpty = Object.keys(finalImporter).length === 0;
+
+  // If there's no prior doc and nothing to grant, there's nothing to do.
+  if (!priorAccess && finalImporterEmpty) return;
+
+  if (finalImporterEmpty && !hasManual) {
+    tx.delete(ref);
+    return;
+  }
+
+  // sort_order: keep the smaller of the prior value and this stake entry's
+  // MIN (other surviving scopes may carry a smaller key). `null` when the
+  // final importer is empty (manual-only doc).
+  const priorSort = typeof priorAccess?.sort_order === 'number' ? priorAccess.sort_order : null;
+  const finalSort = finalImporterEmpty
+    ? null
+    : pickMin(priorSort, stakeHasGrant ? stakeSort : null);
+
+  const now = FieldValue.serverTimestamp();
+  if (priorAccess) {
+    // `tx.update` (NOT `tx.set merge`) so `importer_callings` is REPLACED
+    // wholesale with `finalImporter`. A `set merge` deep-merges nested
+    // maps key-by-key, which would leave the cleared old scope's stale
+    // entry behind. `update` replaces the named field entirely while
+    // leaving `manual_grants` (and every other unmentioned field)
+    // untouched — same reasoning as `clearImporterCallingsForScope`.
+    tx.update(ref, {
+      member_canonical: canonical,
+      member_email: memberEmail,
+      member_name: memberName || priorAccess.member_name,
+      importer_callings: finalImporter,
+      sort_order: finalSort,
+      last_modified_at: now,
+      last_modified_by: actor,
+      lastActor: actor,
+    });
+  } else {
+    tx.set(ref, {
+      member_canonical: canonical,
+      member_email: memberEmail,
+      member_name: memberName,
+      importer_callings: finalImporter,
+      manual_grants: {},
+      sort_order: finalSort,
+      created_at: now,
+      last_modified_at: now,
+      last_modified_by: actor,
+      lastActor: actor,
+    });
+  }
 }

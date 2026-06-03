@@ -16,6 +16,11 @@
 //                                existing SBA seat's `callings[]`.
 //   - `scope-mismatch`         → update seat `scope` only.
 //   - `type-mismatch`          → update seat `type` only.
+//   - `kindoo-unparseable`     → SBA-side update: a present-but-unparseable
+//                                Kindoo Description is treated as a
+//                                church-wide calling — move the seat to
+//                                stake scope and set the calling from the
+//                                raw description text.
 //   - `buildings-mismatch`     → replace seat `building_names` wholesale.
 //   - `sba-only`               → delete an orphaned SBA seat (an SBA
 //                                seat with no Kindoo presence). Kindoo
@@ -74,7 +79,7 @@ export type ScopeMismatchPayload = {
  *
  * Grant-derived promote (`manual`/`temp` → `auto`) / demote (`auto` →
  * `manual`/`temp`). Beyond flipping `type`, the callable reshapes the
- * seat to the spec §13 convention for the target type: an `auto` seat
+ * seat to the spec §6.1 convention for the target type: an `auto` seat
  * carries its calling(s) in `callings[]` with an empty `reason`; a
  * `manual` seat carries `callings: []` with the calling in free-text
  * `reason`.
@@ -115,6 +120,17 @@ export type SbaOnlyRemovePayload = {
   memberEmail: string;
 };
 
+/** Payload for the `kindoo-unparseable` fix. A Kindoo Description that
+ * is present but doesn't parse as `Scope (Calling)` is treated as a
+ * church-wide calling: the seat is moved to stake scope and the calling
+ * is set from the raw Kindoo description text. */
+export type KindooUnparseablePayload = {
+  /** Raw (typed) email — server canonicalizes to locate the seat. */
+  memberEmail: string;
+  /** The church-wide calling text, taken from the raw Kindoo description. */
+  calling: string;
+};
+
 /** Discriminated union — one `code` + matching `payload` per call. */
 export type SyncApplyFixInput = {
   stakeId: string;
@@ -123,6 +139,7 @@ export type SyncApplyFixInput = {
     | { code: 'extra-kindoo-calling'; payload: ExtraKindooCallingPayload }
     | { code: 'scope-mismatch'; payload: ScopeMismatchPayload }
     | { code: 'type-mismatch'; payload: TypeMismatchPayload }
+    | { code: 'kindoo-unparseable'; payload: KindooUnparseablePayload }
     | { code: 'buildings-mismatch'; payload: BuildingsMismatchPayload }
     | { code: 'sba-only'; payload: SbaOnlyRemovePayload };
 };

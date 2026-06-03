@@ -336,15 +336,114 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('manual');
   });
 
-  it('emits kindoo-unparseable on a Kindoo Manager-style description', () => {
+  it('emits kindoo-unparseable (drift) for a Guest present-but-unparseable description', () => {
+    // Guest (userRole 2), text present but doesn't match `Scope (Calling)`
+    // — treat as a church-wide stake-scope calling; Update SBA offered, so
+    // drift. Seat is at ward scope (not aligned), so the row stands.
     const result = detect(
       baseInputs({
         seats: [seat({})],
-        kindooUsers: [kuser({ description: 'Kindoo Manager - Stake Clerk' })],
+        kindooUsers: [kuser({ description: 'Some Church-Wide Calling', userRole: 2 })],
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
     expect(result.discrepancies[0]?.code).toBe('kindoo-unparseable');
+    expect(result.discrepancies[0]?.severity).toBe('drift');
+    // The kindoo block stays populated so the dispatcher can read the raw
+    // description.
+    expect(result.discrepancies[0]?.kindoo?.description).toBe('Some Church-Wide Calling');
+  });
+
+  it('emits kindoo-unparseable (review) for a non-Guest manager present-but-unparseable (B)', () => {
+    // A Kindoo Manager (non-Guest) who also holds an SBA seat: the row is
+    // FYI only — an actionable Update SBA would clobber their seat. Gated
+    // by `skipGrantReconciliation`, so it surfaces as review (no action).
+    const result = detect(
+      baseInputs({
+        seats: [seat({})],
+        kindooUsers: [kuserRoleUnknown({ description: 'Kindoo Manager - Stake Clerk' })],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('kindoo-unparseable');
+    expect(result.discrepancies[0]?.severity).toBe('review');
+  });
+
+  it('suppresses kindoo-unparseable entirely on a foreign Kindoo site (A)', () => {
+    // Operator contract: "apply to stake scope" is a home/stake concept;
+    // a foreign active site never surfaces a kindoo-unparseable row. The
+    // home-site gate enforces this even for a Guest with an unaligned
+    // seat (and the foreign-site user filter independently drops
+    // unresolved descriptions — belt and suspenders).
+    const result = detect({
+      ...mixedInputs({
+        seats: [seat({ member_canonical: 'fa@example.com', member_email: 'fa@example.com' })],
+        kindooUsers: [
+          kuser({
+            username: 'fa@example.com',
+            description: 'Some Church-Wide Calling',
+            userRole: 2,
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    });
+    expect(result.discrepancies.filter((d) => d.code === 'kindoo-unparseable')).toEqual([]);
+  });
+
+  it('home-site Guest present-but-unparseable: drift when seat NOT aligned, suppressed when aligned (C)', () => {
+    // Not aligned — seat still at ward scope → actionable drift row.
+    const notAligned = detect({
+      ...baseInputs({
+        seats: [seat({ scope: 'CO', type: 'auto', callings: ['Sunday School Teacher'] })],
+        kindooUsers: [kuser({ description: 'Some Church-Wide Calling', userRole: 2 })],
+      }),
+      activeSite: { kind: 'home' },
+    });
+    expect(notAligned.discrepancies).toHaveLength(1);
+    expect(notAligned.discrepancies[0]?.code).toBe('kindoo-unparseable');
+    expect(notAligned.discrepancies[0]?.severity).toBe('drift');
+
+    // Aligned (auto): stake scope + callings === [rawDescription] → no row.
+    const alignedAuto = detect({
+      ...baseInputs({
+        seats: [seat({ scope: 'stake', type: 'auto', callings: ['Some Church-Wide Calling'] })],
+        kindooUsers: [kuser({ description: 'Some Church-Wide Calling', userRole: 2 })],
+      }),
+      activeSite: { kind: 'home' },
+    });
+    expect(alignedAuto.discrepancies).toEqual([]);
+
+    // Aligned (manual): stake scope + reason === rawDescription, callings
+    // empty → no row. Case/whitespace-insensitive.
+    const alignedManual = detect({
+      ...baseInputs({
+        seats: [
+          seat({
+            scope: 'stake',
+            type: 'manual',
+            callings: [],
+            reason: 'some church-wide calling',
+          }),
+        ],
+        kindooUsers: [kuser({ description: '  Some Church-Wide Calling  ', userRole: 2 })],
+      }),
+      activeSite: { kind: 'home' },
+    });
+    expect(alignedManual.discrepancies).toEqual([]);
+  });
+
+  it('emits kindoo-no-description (review) on a blank Kindoo description', () => {
+    // Blank description (no segments) — nothing to reconcile; the one
+    // remaining review-only code, no SBA-side action.
+    const result = detect(
+      baseInputs({
+        seats: [seat({})],
+        kindooUsers: [kuser({ description: '' })],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('kindoo-no-description');
     expect(result.discrepancies[0]?.severity).toBe('review');
   });
 
@@ -1027,7 +1126,7 @@ describe('detect', () => {
     expect(result.discrepancies).toHaveLength(1);
     const row = result.discrepancies[0]!;
     expect(row.code).toBe('extra-kindoo-calling');
-    expect(row.severity).toBe('review');
+    expect(row.severity).toBe('drift');
     // Only the calling the seat lacks is the extra; the one it already
     // has is not re-proposed.
     expect(row.kindoo?.extraKindooCallings).toEqual(['Building Janitor']);
@@ -1206,25 +1305,10 @@ describe('detect', () => {
   });
 
   it('sorts drift before review and ties alphabetically by email', () => {
-    const result = detect(
-      baseInputs({
-        seats: [
-          seat({ member_canonical: 'z@example.com', member_email: 'z@example.com' }),
-          seat({ member_canonical: 'a@example.com', member_email: 'a@example.com' }),
-        ],
-        kindooUsers: [
-          // extra-kindoo-calling → review
-          kuser({
-            username: 'z@example.com',
-            description: 'Maple Ward (Sunday School Teacher, Janitor)',
-          }),
-          // matches SBA on a@example.com → no row
-          kuser({ username: 'a@example.com' }),
-        ],
-      }),
-    );
-    // a@example.com matches → no row; z@example.com → review row.
-    // Plus add an sba-only to confirm drift sorts first.
+    // `z@example.com` has a blank Kindoo description → kindoo-no-description
+    // (the one review-severity code). `b-orphan@example.com` is an
+    // sba-only drift row. Drift must sort ahead of review regardless of
+    // email ordering (b < z, but the review row would lose anyway).
     const inputs = baseInputs({
       seats: [
         seat({ member_canonical: 'z@example.com', member_email: 'z@example.com' }),
@@ -1232,19 +1316,17 @@ describe('detect', () => {
         seat({ member_canonical: 'b-orphan@example.com', member_email: 'b-orphan@example.com' }),
       ],
       kindooUsers: [
-        kuser({
-          username: 'z@example.com',
-          description: 'Maple Ward (Sunday School Teacher, Janitor)',
-        }),
+        // blank description → kindoo-no-description (review)
+        kuser({ username: 'z@example.com', description: '' }),
+        // matches SBA on a@example.com → no row
         kuser({ username: 'a@example.com' }),
       ],
     });
     const sorted = detect(inputs);
     expect(sorted.discrepancies[0]?.code).toBe('sba-only');
     expect(sorted.discrepancies[0]?.displayEmail).toBe('b-orphan@example.com');
-    expect(sorted.discrepancies[1]?.code).toBe('extra-kindoo-calling');
-    // (suppress unused-var lint on the helper above)
-    expect(result).toBeDefined();
+    expect(sorted.discrepancies[1]?.code).toBe('kindoo-no-description');
+    expect(sorted.discrepancies[1]?.displayEmail).toBe('z@example.com');
   });
 
   it('canonicalizes Kindoo usernames before joining with seat emails', () => {

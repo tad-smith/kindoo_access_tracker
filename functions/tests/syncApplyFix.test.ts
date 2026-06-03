@@ -537,7 +537,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
   describe("code='type-mismatch'", () => {
     it('promote (manual → auto): scope + buildings untouched, type flips, lastActor stamped', async () => {
       await seedManager();
-      // Well-formed manual seat: callings empty, calling in reason (§13).
+      // Well-formed manual seat: callings empty, calling in reason (§6.1).
       await seedSeat({
         scope: 'CO',
         type: 'manual',
@@ -572,7 +572,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       });
     });
 
-    // ----- Seat reshape on the type flip (§13 convention) -----
+    // ----- Seat reshape on the type flip (§6.1 convention) -----
     //
     // Auto seats carry the calling in `callings[]` with empty `reason`;
     // manual / temp seats carry `callings: []` with the calling in
@@ -759,6 +759,341 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
           }),
         ),
       ).rejects.toMatchObject({ code: 'invalid-argument' });
+    });
+  });
+
+  // ----- kindoo-unparseable -----
+  //
+  // A present-but-unparseable Kindoo Description is treated as a
+  // church-wide calling: the seat moves to stake scope (foreign
+  // kindoo_site_id cleared) and the calling is set from the raw
+  // description per §6.1 (auto → callings[]; manual/temp → free-text
+  // reason). Auto seats reap the old scope's calling-derived access
+  // (Kindoo-authoritative, #183), then KEEP stake-scope access iff the
+  // calling matches a give_app_access stake template (a bare template
+  // name is "unparseable" yet real); a non-template calling earns no new
+  // grant.
+
+  describe("code='kindoo-unparseable'", () => {
+    it('manual seat: moves to stake scope, sets reason from calling, clears callings, keeps type', async () => {
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'manual',
+        callings: ['Some Calling'],
+        building_names: ['Maple Building'],
+      });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-unparseable',
+              payload: { memberEmail: MEMBER_EMAIL, calling: 'Church History Adviser' },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { reason?: unknown };
+      expect(seat.scope).toBe('stake');
+      // §6.1 manual convention: calling in reason, callings cleared.
+      expect(seat.reason).toBe('Church History Adviser');
+      expect(seat.callings).toEqual([]);
+      // type unchanged; buildings untouched.
+      expect(seat.type).toBe('manual');
+      expect(seat.building_names).toEqual(['Maple Building']);
+      expect(seat.lastActor).toEqual({
+        email: 'SyncActor:kindoo-unparseable',
+        canonical: 'SyncActor:kindoo-unparseable',
+      });
+    });
+
+    it('temp seat: sets reason from calling and preserves existing dates', async () => {
+      await seedManager();
+      await seedSeat({ scope: 'CO', type: 'temp', callings: [] });
+      const { db } = requireEmulators();
+      await db
+        .doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`)
+        .update({ start_date: '2026-01-01', end_date: '2026-12-31' });
+
+      await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-unparseable',
+              payload: { memberEmail: MEMBER_EMAIL, calling: 'Visiting Authority' },
+            },
+          },
+        }),
+      );
+
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & {
+        reason?: unknown;
+        start_date?: unknown;
+        end_date?: unknown;
+      };
+      expect(seat.scope).toBe('stake');
+      expect(seat.type).toBe('temp');
+      expect(seat.reason).toBe('Visiting Authority');
+      expect(seat.callings).toEqual([]);
+      // temp dates preserved across the reshape.
+      expect(seat.start_date).toBe('2026-01-01');
+      expect(seat.end_date).toBe('2026-12-31');
+    });
+
+    it('auto seat (non-template calling): moves to stake scope, sets callings, clears reason, sort_order null, keeps type', async () => {
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Ward Clerk'],
+        sort_order: 5,
+      });
+      const { db } = requireEmulators();
+      // Seed a stale reason to prove the auto reshape clears it.
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: 'stale' });
+
+      await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-unparseable',
+              payload: { memberEmail: MEMBER_EMAIL, calling: 'Church History Adviser' },
+            },
+          },
+        }),
+      );
+
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { reason?: unknown; sort_order?: unknown };
+      expect(seat.scope).toBe('stake');
+      expect(seat.type).toBe('auto');
+      // §6.1 auto convention: calling in callings[], reason cleared.
+      expect(seat.callings).toEqual(['Church History Adviser']);
+      expect(seat.reason).toBeUndefined();
+      // non-template church-wide calling earns no template sort key → null.
+      expect(seat.sort_order).toBe(null);
+    });
+
+    it('auto seat (give_app_access stake template): keeps stake access, sort_order from template', async () => {
+      await seedManager();
+      // `Stake Clerk` is a real stake template name — a bare template name
+      // (no parens) is "unparseable" yet must NOT cost the member access.
+      await seedTemplate({
+        scope: 'stake',
+        calling_name: 'Stake Clerk',
+        give_app_access: true,
+        sheet_order: 3,
+      });
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 5 });
+      await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 5 });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-unparseable',
+              payload: { memberEmail: MEMBER_EMAIL, calling: 'Stake Clerk' },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { sort_order?: unknown };
+      expect(seat.scope).toBe('stake');
+      expect(seat.callings).toEqual(['Stake Clerk']);
+      // seat sort_order mirrors the matched stake template.
+      expect(seat.sort_order).toBe(3);
+
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      // Old scope reaped; fresh stake entry written so access is preserved.
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
+      expect(access.sort_order).toBe(3);
+      expect(access.lastActor).toEqual({
+        email: 'SyncActor:kindoo-unparseable',
+        canonical: 'SyncActor:kindoo-unparseable',
+      });
+    });
+
+    it("auto seat (non-template calling): reaps the old scope's importer_callings and creates no new stake-scope grant", async () => {
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Bishop'],
+        sort_order: 5,
+      });
+      // Auto seat justified by importer_callings[CO]; the church-wide
+      // calling is non-template, so after the fix the doc should have no
+      // importer_callings at all (CO reaped, no new stake entry).
+      await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 5 });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-unparseable',
+              payload: { memberEmail: MEMBER_EMAIL, calling: 'Church History Adviser' },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      // Both maps empty → the reap helper deletes the access doc, so the
+      // member holds no calling-derived stake access for the new calling.
+      const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+      expect(accessSnap.exists).toBe(false);
+    });
+
+    it("auto seat with a manual grant: reaps only the old scope's importer_callings, keeps the manual grant", async () => {
+      await seedManager();
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 5 });
+      await seedAccess({
+        importer_callings: { CO: ['Bishop'] },
+        manual_grants: {
+          CO: [
+            {
+              grant_id: 'grant-1',
+              reason: 'deliberate manager grant',
+              granted_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+              granted_at: Timestamp.now(),
+            },
+          ],
+        },
+        sort_order: 5,
+      });
+
+      await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-unparseable',
+              payload: { memberEmail: MEMBER_EMAIL, calling: 'Church History Adviser' },
+            },
+          },
+        }),
+      );
+
+      const { db } = requireEmulators();
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      // CO calling-derived grant reaped; deliberate manual grant preserved.
+      expect(access.importer_callings).toEqual({});
+      expect(access.manual_grants.CO?.length).toBe(1);
+    });
+
+    it('clears a foreign kindoo_site_id when forcing stake scope', async () => {
+      await seedManager();
+      // Seat synced against a foreign site carries that site id; stake-scope
+      // primaries must resolve to the home site (kindoo_site_id absent).
+      await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+      const { db } = requireEmulators();
+      await db
+        .doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`)
+        .update({ kindoo_site_id: 'foreign-site-123' });
+
+      await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-unparseable',
+              payload: { memberEmail: MEMBER_EMAIL, calling: 'Visiting Authority' },
+            },
+          },
+        }),
+      );
+
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.scope).toBe('stake');
+      // Foreign site id gone → resolves to home.
+      expect(seat.kindoo_site_id).toBeUndefined();
+    });
+
+    it('returns soft failure when the seat is missing', async () => {
+      await seedManager();
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-unparseable',
+              payload: { memberEmail: MEMBER_EMAIL, calling: 'Church History Adviser' },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: false, error: 'seat not found' });
+    });
+
+    it('rejects an empty calling with invalid-argument', async () => {
+      await seedManager();
+      await seedSeat({});
+      await expect(
+        syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-unparseable',
+                payload: { memberEmail: MEMBER_EMAIL, calling: '   ' },
+              },
+            },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+    });
+
+    it('rejects a non-manager with permission-denied (auth gate reuse)', async () => {
+      await seedSeat({});
+      await expect(
+        syncApplyFix.run(
+          callableReq({
+            auth: { email: 'outsider@gmail.com' },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-unparseable',
+                payload: { memberEmail: MEMBER_EMAIL, calling: 'Church History Adviser' },
+              },
+            },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'permission-denied' });
     });
   });
 
