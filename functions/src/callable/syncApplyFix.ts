@@ -550,11 +550,21 @@ async function applyBuildingsMismatch(
  *   - Has `duplicate_grants[]` → the member holds other-site / other-
  *     scope access we must not nuke. Promote the first duplicate to
  *     primary (same field copy the remove trigger does) instead of
- *     deleting, in a single-doc transactional update stamped with the
- *     Sync actor; the audit trigger fans an `update_seat` row.
+ *     deleting, in a transactional update stamped with the Sync actor;
+ *     the audit trigger fans an `update_seat` row.
  *
- * Does NOT touch the member's `access/{canonical}` doc — matching the
- * remove trigger, which leaves access untouched on seat removal.
+ * Access reap: the removed primary's `scope` is cleared from the
+ * member's `access/{canonical}` doc via `clearImporterCallingsForScope`
+ * — the same blessed helper the demote path uses. This drops the
+ * calling-derived `importer_callings[scope]` (so `syncAccessClaims`
+ * stops granting SBA app access on the strength of a calling that no
+ * longer has a seat), preserves `manual_grants` (deliberate manager
+ * grants are independent of seats), preserves other scopes'
+ * `importer_callings`, and deletes the access doc iff BOTH maps end up
+ * empty. A manual/temp orphan carries no `importer_callings`, so the
+ * reap is a harmless no-op for it. On promote, the cleared scope is the
+ * REMOVED primary's — the promoted scope's `importer_callings` survives
+ * because the member still holds that seat.
  */
 async function applySbaOnlyRemove(
   stakeId: string,
@@ -571,6 +581,7 @@ async function applySbaOnlyRemove(
 
   const db = getDb();
   const seatRef = db.doc(`stakes/${stakeId}/seats/${canonical}`);
+  const accessRef = db.doc(`stakes/${stakeId}/access/${canonical}`);
   const actor = syncActor('sba-only');
 
   const seatSnap = await seatRef.get();
@@ -593,14 +604,41 @@ async function applySbaOnlyRemove(
       { merge: true },
     );
     await seatRef.delete();
+    // Reap the deleted seat's scope from the access doc. Separate from
+    // the seat's stamp-then-delete (which can't be transactional); the
+    // helper's own tx.delete/tx.update carries the demote path's blessed
+    // attribution, so no extra stamp dance is needed here.
+    await reapAccessScope(db, accessRef, seat.scope, actor);
     return { success: true, seatId: canonical };
   }
 
   // Multi-grant edge: the member has other grants (e.g. parallel-site
   // access). Promote the first duplicate to primary rather than nuking
   // it. Field copy mirrors `removeSeatOnRequestComplete`'s promote path.
-  const [promoted, ...remaining] = dupes;
-  await db.runTransaction(async (tx) => {
+  //
+  // Read the seat (and access doc) INSIDE the transaction so we act on
+  // the committed state, not the stale outer snapshot: a concurrent
+  // `markRequestComplete` could have changed `duplicate_grants[]` or
+  // deleted the seat between the outer read and here.
+  return db.runTransaction<SyncApplyFixResult>(async (tx) => {
+    const freshSeatSnap = await tx.get(seatRef);
+    if (!freshSeatSnap.exists) {
+      // Seat removed concurrently — soft-fail rather than throw on update.
+      return { success: false, error: 'seat not found' };
+    }
+    const freshSeat = freshSeatSnap.data() as Seat;
+    const freshDupes = freshSeat.duplicate_grants ?? [];
+    if (freshDupes.length === 0) {
+      // Duplicates consumed concurrently (e.g. a remove completed). The
+      // seat is now a plain orphan; don't promote a grant that no longer
+      // exists. Soft-fail so the drift report re-emits and the operator
+      // re-clicks (which will take the orphan-delete path).
+      return { success: false, error: 'seat changed concurrently; no duplicate grant to promote' };
+    }
+    const removedScope = freshSeat.scope;
+    const accessSnap = await tx.get(accessRef);
+
+    const [promoted, ...remaining] = freshDupes;
     tx.update(seatRef, {
       scope: promoted!.scope,
       type: promoted!.type,
@@ -619,8 +657,42 @@ async function applySbaOnlyRemove(
       last_modified_by: { ...actor },
       lastActor: { ...actor },
     });
+
+    // Reap the REMOVED primary's scope from the access doc. The promoted
+    // scope's importer_callings survives (the member still holds it).
+    if (accessSnap.exists) {
+      clearImporterCallingsForScope(tx, accessRef, {
+        access: accessSnap.data() as Access,
+        scope: removedScope,
+        actor,
+      });
+    }
+
+    return { success: true, seatId: canonical };
   });
-  return { success: true, seatId: canonical };
+}
+
+/**
+ * Reap a single scope's calling-derived access for the orphan-delete
+ * path. Reads the access doc in its own transaction and delegates to
+ * `clearImporterCallingsForScope`. No-op when the doc is absent (a
+ * manual/temp orphan with no access doc).
+ */
+async function reapAccessScope(
+  db: Firestore,
+  accessRef: DocumentReference,
+  scope: string,
+  actor: ActorRef,
+): Promise<void> {
+  await db.runTransaction(async (tx) => {
+    const accessSnap = await tx.get(accessRef);
+    if (!accessSnap.exists) return;
+    clearImporterCallingsForScope(tx, accessRef, {
+      access: accessSnap.data() as Access,
+      scope,
+      actor,
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -796,15 +868,17 @@ function clearImporterCallingsForScope(
     return;
   }
 
-  tx.set(
-    ref,
-    {
-      importer_callings: finalImporter,
-      sort_order: finalImporterEmpty ? null : (access.sort_order ?? null),
-      last_modified_at: FieldValue.serverTimestamp(),
-      last_modified_by: actor,
-      lastActor: actor,
-    },
-    { merge: true },
-  );
+  // `tx.update` (not `tx.set merge`) so `importer_callings` is REPLACED
+  // wholesale with `finalImporter`. A `set merge` deep-merges nested
+  // maps key-by-key, which would leave the cleared scope's stale entry
+  // behind whenever another scope survives. `update` replaces the named
+  // field entirely while leaving `manual_grants` (and every other
+  // unmentioned field) untouched.
+  tx.update(ref, {
+    importer_callings: finalImporter,
+    sort_order: finalImporterEmpty ? null : (access.sort_order ?? null),
+    last_modified_at: FieldValue.serverTimestamp(),
+    last_modified_by: actor,
+    lastActor: actor,
+  });
 }

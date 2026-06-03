@@ -1015,6 +1015,210 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         canonical: 'SyncActor:sba-only',
       });
     });
+
+    // ----- Access reap (Kindoo-authoritative: drop calling-derived
+    // app access when the orphan seat is removed) -----
+    //
+    // `syncAccessClaims` grants SBA app access off `importer_callings`.
+    // Removing an auto orphan must reap the removed scope's
+    // `importer_callings` so the member loses access — unless they still
+    // hold a justification (a manual grant, or another scope's calling).
+
+    it('auto orphan: reaps the only access grant — access doc deleted', async () => {
+      await seedManager();
+      // Auto orphan whose access is justified solely by importer_callings[CO].
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 5 });
+      await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 5 });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: { code: 'sba-only', payload: { memberEmail: MEMBER_EMAIL } },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      // Seat gone.
+      expect((await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).exists).toBe(false);
+      // Access doc deleted — no surviving justification, so the member
+      // loses SBA app access on the next claims sync.
+      expect((await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()).exists).toBe(false);
+    });
+
+    it('auto orphan with a manual grant: access doc survives, manual_grants intact, only importer_callings[scope] cleared', async () => {
+      await seedManager();
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 5 });
+      await seedAccess({
+        importer_callings: { CO: ['Bishop'] },
+        manual_grants: {
+          CO: [
+            {
+              grant_id: 'grant-1',
+              reason: 'deliberate manager grant',
+              granted_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+              granted_at: Timestamp.now(),
+            },
+          ],
+        },
+        sort_order: 5,
+      });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: { code: 'sba-only', payload: { memberEmail: MEMBER_EMAIL } },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      expect((await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).exists).toBe(false);
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      // Calling-derived grant cleared; deliberate manual grant preserved.
+      expect(access.importer_callings).toEqual({});
+      expect(access.manual_grants.CO?.length).toBe(1);
+      // Reap stamped by the Sync actor (matches the demote path's helper).
+      expect(access.lastActor).toEqual({
+        email: 'SyncActor:sba-only',
+        canonical: 'SyncActor:sba-only',
+      });
+    });
+
+    it("auto orphan with another scope's calling: access doc survives, only the removed scope's importer_callings cleared", async () => {
+      await seedManager();
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 5 });
+      // The member also has calling-derived access under 'stake' — a
+      // justification that must survive removing the CO seat.
+      await seedAccess({
+        importer_callings: { CO: ['Bishop'], stake: ['Stake Clerk'] },
+        sort_order: 5,
+      });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: { code: 'sba-only', payload: { memberEmail: MEMBER_EMAIL } },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      // Only CO cleared; the stake-scope justification survives.
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
+    });
+
+    it('manual orphan: reap is a no-op on a manual-grant-only access doc', async () => {
+      await seedManager();
+      // Manual orphan: a manual seat carries no importer_callings, so the
+      // reap clears nothing. A member with a manual grant keeps access.
+      await seedSeat({ scope: 'CO', type: 'manual' });
+      await seedAccess({
+        importer_callings: {},
+        manual_grants: {
+          CO: [
+            {
+              grant_id: 'grant-1',
+              reason: 'deliberate manager grant',
+              granted_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+              granted_at: Timestamp.now(),
+            },
+          ],
+        },
+      });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: { code: 'sba-only', payload: { memberEmail: MEMBER_EMAIL } },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      expect((await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).exists).toBe(false);
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      // Access doc survives untouched — the manual grant keeps SBA access.
+      expect(access.manual_grants.CO?.length).toBe(1);
+      expect(access.importer_callings).toEqual({});
+    });
+
+    it('promote: reaps the REMOVED primary scope from access while the promoted scope survives', async () => {
+      await seedManager();
+      const { db } = requireEmulators();
+      // Auto seat at CO with a parallel-site auto duplicate at DZ; the
+      // member's access doc carries calling-derived grants for BOTH
+      // scopes. Removing the CO primary promotes DZ and must reap only CO.
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).set({
+        member_canonical: MEMBER_EMAIL,
+        member_email: MEMBER_EMAIL,
+        member_name: 'Alice',
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Bishop'],
+        building_names: ['Maple Building'],
+        kindoo_site_id: 'home',
+        sort_order: 5,
+        duplicate_grants: [
+          {
+            scope: 'DZ',
+            type: 'auto',
+            callings: ['Elders Quorum President'],
+            building_names: ['Briargate Building'],
+            kindoo_site_id: 'site-dz',
+            detected_at: Timestamp.now(),
+          },
+        ],
+        duplicate_scopes: ['DZ'],
+        created_at: Timestamp.now(),
+        last_modified_at: Timestamp.now(),
+        last_modified_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+        lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+      });
+      await seedAccess({
+        importer_callings: { CO: ['Bishop'], DZ: ['Elders Quorum President'] },
+        sort_order: 5,
+      });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: { code: 'sba-only', payload: { memberEmail: MEMBER_EMAIL } },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      // Seat promoted to DZ.
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      expect(seat.scope).toBe('DZ');
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      // Removed primary (CO) reaped; promoted scope (DZ) survives.
+      expect(access.importer_callings).toEqual({ DZ: ['Elders Quorum President'] });
+    });
   });
 
   // ----- Importer parity: sort_order + access-doc bookkeeping -----
@@ -1636,6 +1840,74 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(row.entity_type).toBe('seat');
       expect(row.entity_id).toBe(MEMBER_EMAIL);
       expect(row.action).toBe('delete_seat');
+      expect(row.actor_email).toBe('SyncActor:sba-only');
+      expect(row.actor_canonical).toBe('SyncActor:sba-only');
+    });
+
+    it('sba-only promote produces an update_seat audit row attributed to SyncActor:sba-only', async () => {
+      await seedManager();
+      const { db } = requireEmulators();
+      // Seat with a duplicate grant so removal promotes (a real tx.update)
+      // rather than deleting.
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).set({
+        member_canonical: MEMBER_EMAIL,
+        member_email: MEMBER_EMAIL,
+        member_name: 'Alice',
+        scope: 'CO',
+        type: 'manual',
+        callings: [],
+        reason: 'primary reason',
+        building_names: ['Maple Building'],
+        duplicate_grants: [
+          {
+            scope: 'DZ',
+            type: 'temp',
+            callings: ['Sub Teacher'],
+            building_names: ['Briargate Building'],
+            detected_at: Timestamp.now(),
+          },
+        ],
+        duplicate_scopes: ['DZ'],
+        created_at: Timestamp.now(),
+        last_modified_at: Timestamp.now(),
+        last_modified_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+        lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+      });
+      const before = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat;
+
+      await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: { code: 'sba-only', payload: { memberEmail: MEMBER_EMAIL } },
+          },
+        }),
+      );
+
+      const after = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      // Promoted, not deleted.
+      expect(after.scope).toBe('DZ');
+
+      const time = '2026-05-13T18:00:00.000Z';
+      const event = {
+        params: { stakeId: STAKE_ID, memberCanonical: MEMBER_EMAIL },
+        time,
+        data: {
+          before: { exists: true, data: () => before },
+          after: { exists: true, data: () => after },
+        },
+      } as unknown as never;
+      await auditSeatWrites.run(event);
+
+      const audit = await db.collection(`stakes/${STAKE_ID}/auditLog`).get();
+      expect(audit.empty).toBe(false);
+      const row = audit.docs[0]!.data() as AuditLog;
+      expect(row.entity_type).toBe('seat');
+      expect(row.entity_id).toBe(MEMBER_EMAIL);
+      expect(row.action).toBe('update_seat');
       expect(row.actor_email).toBe('SyncActor:sba-only');
       expect(row.actor_canonical).toBe('SyncActor:sba-only');
     });
