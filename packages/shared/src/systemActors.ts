@@ -43,13 +43,19 @@ export const AUTOMATED_ACTOR_NAMES = [
 
 export type AutomatedActorName = (typeof AUTOMATED_ACTOR_NAMES)[number];
 
-/** Discrepancy codes that drive a `SyncActor:*` stamp. Mirrors the
- * SBA-side-write codes in `extension/docs/sync-design.md`. `sba-only`
+/** Current discrepancy codes that drive a `SyncActor:*` stamp. Mirrors
+ * the SBA-side-write codes in `extension/docs/sync-design.md`. `sba-only`
  * is an SBA-side delete (Kindoo is authoritative — an SBA seat with no
- * Kindoo presence is an orphan); the rest mutate an existing seat. */
+ * Kindoo presence is an orphan); the rest mutate an existing seat.
+ *
+ * This is the set of codes the `syncApplyFix` callable can be invoked
+ * with today (it types `syncActor`'s input). Historical codes that may
+ * still appear on EXISTING audit rows live in
+ * `HISTORICAL_SYNC_DISCREPANCY_CODES` below — recognised for audit-row
+ * classification but never stamped on new writes. */
 export const SYNC_DISCREPANCY_CODES = [
   'kindoo-only',
-  'extra-kindoo-calling',
+  'callings-mismatch',
   'scope-mismatch',
   'type-mismatch',
   'kindoo-unparseable',
@@ -58,6 +64,25 @@ export const SYNC_DISCREPANCY_CODES = [
 ] as const;
 
 export type SyncDiscrepancyCode = (typeof SYNC_DISCREPANCY_CODES)[number];
+
+/** Deprecated/historical discrepancy codes retained ONLY for audit-row
+ * recognition. These are no longer valid `syncApplyFix` inputs (the
+ * callable's switch has no case for them, so they can't be invoked) and
+ * `syncActor` won't accept them — but production audit rows already
+ * stamped `SyncActor:<code>` must keep classifying as automated, not as
+ * human actors. Append here when a code is renamed; never remove.
+ *
+ *   - `extra-kindoo-calling` — renamed to `callings-mismatch` (the
+ *     APPEND→REPLACE corrective fix). Rows from the original #178/#179
+ *     ship may carry this stamp. */
+export const HISTORICAL_SYNC_DISCREPANCY_CODES = ['extra-kindoo-calling'] as const;
+
+/** All `SyncActor:<code>` codes recognised as automated for audit-row
+ * classification — current inputs plus deprecated/historical codes. */
+const RECOGNISED_SYNC_DISCREPANCY_CODES: readonly string[] = [
+  ...SYNC_DISCREPANCY_CODES,
+  ...HISTORICAL_SYNC_DISCREPANCY_CODES,
+];
 
 /** Prefix that identifies a `SyncActor:<code>` stamp. */
 export const SYNC_ACTOR_PREFIX = 'SyncActor:' as const;
@@ -85,9 +110,12 @@ export const LEGACY_IMPORTER_ACTOR_NAME = 'Importer';
 /** True iff the given actor identifier matches a synthetic system actor.
  * Recognises the static names in `AUTOMATED_ACTOR_NAMES`, the legacy
  * `Importer` actor for pre-T-45 audit rows, and the `SyncActor:<code>`
- * prefix. */
+ * prefix — for BOTH current codes and deprecated/historical codes that
+ * survive on existing audit rows (so a renamed code never demotes its
+ * historical rows to "human actor"). */
 export function isAutomatedActor(s: string): boolean {
   if ((AUTOMATED_ACTOR_NAMES as readonly string[]).includes(s)) return true;
   if (s === LEGACY_IMPORTER_ACTOR_NAME) return true;
-  return parseSyncActorCode(s) !== null;
+  if (!s.startsWith(SYNC_ACTOR_PREFIX)) return false;
+  return RECOGNISED_SYNC_DISCREPANCY_CODES.includes(s.slice(SYNC_ACTOR_PREFIX.length));
 }

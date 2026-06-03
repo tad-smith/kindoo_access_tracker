@@ -394,23 +394,32 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
     });
   });
 
-  // ----- extra-kindoo-calling -----
+  // ----- callings-mismatch -----
 
-  describe("code='extra-kindoo-calling'", () => {
-    it('appends extras to existing seat.callings preserving order + de-duping', async () => {
+  describe("code='callings-mismatch'", () => {
+    it('REPLACES seat.callings with the Kindoo target (rename, not append) and recomputes sort_order', async () => {
       await seedManager();
-      await seedSeat({ callings: ['Ward Clerk', 'Sunday School Teacher'] });
+      await seedTemplate({
+        scope: 'CO',
+        calling_name: 'Bishop',
+        give_app_access: false,
+        sheet_order: 10,
+      });
+      await seedTemplate({
+        scope: 'CO',
+        calling_name: 'Bishopric Clerk',
+        give_app_access: false,
+        sheet_order: 4,
+      });
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 10 });
       const result = await syncApplyFix.run(
         callableReq({
           auth: { email: MANAGER_EMAIL },
           data: {
             stakeId: STAKE_ID,
             fix: {
-              code: 'extra-kindoo-calling',
-              payload: {
-                memberEmail: MEMBER_EMAIL,
-                extraCallings: ['Ward Clerk', 'Elders Quorum President'],
-              },
+              code: 'callings-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishopric Clerk'] },
             },
           },
         }),
@@ -418,16 +427,33 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
       const { db } = requireEmulators();
       const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
-      // Existing entries preserved; duplicate dropped; new entry appended.
-      expect(seat.callings).toEqual([
-        'Ward Clerk',
-        'Sunday School Teacher',
-        'Elders Quorum President',
-      ]);
+      // REPLACED — the old name is gone, not sitting beside the new one.
+      expect(seat.callings).toEqual(['Bishopric Clerk']);
+      // sort_order recomputed from the new calling (4, not 10).
+      expect(seat.sort_order).toBe(4);
       expect(seat.lastActor).toEqual({
-        email: 'SyncActor:extra-kindoo-calling',
-        canonical: 'SyncActor:extra-kindoo-calling',
+        email: 'SyncActor:callings-mismatch',
+        canonical: 'SyncActor:callings-mismatch',
       });
+    });
+
+    it('rejects an empty callings target with invalid-argument', async () => {
+      await seedManager();
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'] });
+      await expect(
+        syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'callings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, callings: [] },
+              },
+            },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
     });
 
     it('returns soft failure when the seat is missing', async () => {
@@ -438,11 +464,8 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
           data: {
             stakeId: STAKE_ID,
             fix: {
-              code: 'extra-kindoo-calling',
-              payload: {
-                memberEmail: MEMBER_EMAIL,
-                extraCallings: ['Ward Clerk'],
-              },
+              code: 'callings-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishopric Clerk'] },
             },
           },
         }),
@@ -450,30 +473,22 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(result).toEqual({ success: false, error: 'seat not found' });
     });
 
-    it('is a no-op when every extra is already present (returns success without bumping lastActor)', async () => {
-      await seedManager();
-      await seedSeat({ callings: ['Ward Clerk', 'Sunday School Teacher'] });
-      const result = await syncApplyFix.run(
-        callableReq({
-          auth: { email: MANAGER_EMAIL },
-          data: {
-            stakeId: STAKE_ID,
-            fix: {
-              code: 'extra-kindoo-calling',
-              payload: {
-                memberEmail: MEMBER_EMAIL,
-                extraCallings: ['Ward Clerk'],
+    it('rejects a signed-in non-manager with permission-denied', async () => {
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'] });
+      await expect(
+        syncApplyFix.run(
+          callableReq({
+            auth: { email: 'outsider@gmail.com' },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'callings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishopric Clerk'] },
               },
             },
-          },
-        }),
-      );
-      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
-      const { db } = requireEmulators();
-      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
-      // No write applied — original lastActor preserved.
-      expect(seat.lastActor).toEqual({ email: MANAGER_EMAIL, canonical: MANAGER_EMAIL });
-      expect(seat.callings).toEqual(['Ward Clerk', 'Sunday School Teacher']);
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'permission-denied' });
     });
   });
 
@@ -1824,27 +1839,31 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       });
     });
 
-    describe("code='extra-kindoo-calling'", () => {
-      it('on auto: writes access doc for newly-appended give_app_access calling and recomputes sort_order if smaller', async () => {
+    describe("code='callings-mismatch'", () => {
+      it('on auto: REPLACES importer_callings[scope] with the new give_app_access target and recomputes sort_order', async () => {
         await seedManager();
+        // Old calling granted access (sheet_order 10); new calling grants
+        // access too (sheet_order 2). The replace must rewrite the grant
+        // set to the NEW calling and recompute sort_order.
         await seedTemplate({
           scope: 'CO',
-          calling_name: 'Ward Clerk',
-          give_app_access: false,
+          calling_name: 'Bishop',
+          give_app_access: true,
           sheet_order: 10,
         });
         await seedTemplate({
           scope: 'CO',
-          calling_name: 'Bishop',
+          calling_name: 'Stake President',
           give_app_access: true,
           sheet_order: 2,
         });
         await seedSeat({
           scope: 'CO',
           type: 'auto',
-          callings: ['Ward Clerk'],
+          callings: ['Bishop'],
           sort_order: 10,
         });
+        await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 10 });
 
         await syncApplyFix.run(
           callableReq({
@@ -1852,8 +1871,8 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
             data: {
               stakeId: STAKE_ID,
               fix: {
-                code: 'extra-kindoo-calling',
-                payload: { memberEmail: MEMBER_EMAIL, extraCallings: ['Bishop'] },
+                code: 'callings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, callings: ['Stake President'] },
               },
             },
           }),
@@ -1863,26 +1882,40 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
         ).data() as Seat;
-        expect(seat.callings).toEqual(['Ward Clerk', 'Bishop']);
-        // MIN(Ward Clerk=10, Bishop=2) = 2; sort_order recomputed.
+        expect(seat.callings).toEqual(['Stake President']);
         expect(seat.sort_order).toBe(2);
 
         const access = (
           await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
         ).data() as Access;
-        expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
+        // importer_callings[CO] REPLACED with the new calling (old name gone).
+        expect(access.importer_callings).toEqual({ CO: ['Stake President'] });
         expect(access.sort_order).toBe(2);
       });
 
-      it('on manual: leaves sort_order absent and writes no access doc even when give_app_access templates match', async () => {
+      it('on auto: a replace that DROPS the give_app_access calling clears importer_callings[scope] and deletes the access doc (both maps empty)', async () => {
         await seedManager();
+        // Old calling granted access; new calling does not. The replace
+        // must remove the now-unjustified grant.
         await seedTemplate({
           scope: 'CO',
           calling_name: 'Bishop',
           give_app_access: true,
-          sheet_order: 1,
+          sheet_order: 5,
         });
-        await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Sunday School Teacher',
+          give_app_access: false,
+          sheet_order: 30,
+        });
+        await seedSeat({
+          scope: 'CO',
+          type: 'auto',
+          callings: ['Bishop'],
+          sort_order: 5,
+        });
+        await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 5 });
 
         await syncApplyFix.run(
           callableReq({
@@ -1890,8 +1923,8 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
             data: {
               stakeId: STAKE_ID,
               fix: {
-                code: 'extra-kindoo-calling',
-                payload: { memberEmail: MEMBER_EMAIL, extraCallings: ['Bishop'] },
+                code: 'callings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, callings: ['Sunday School Teacher'] },
               },
             },
           }),
@@ -1900,9 +1933,109 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         const { db } = requireEmulators();
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
-        ).data() as Seat & { sort_order?: unknown };
-        expect(seat.callings).toEqual(['Bishop']);
-        expect(seat.sort_order).toBeUndefined();
+        ).data() as Seat;
+        expect(seat.callings).toEqual(['Sunday School Teacher']);
+        expect(seat.sort_order).toBe(30);
+        // No give_app_access calling remains; both maps empty → doc deleted.
+        const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+        expect(accessSnap.exists).toBe(false);
+      });
+
+      it('on auto: a replace that drops the grant but leaves manual_grants clears importer_callings[scope] yet keeps the doc', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 5,
+        });
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Sunday School Teacher',
+          give_app_access: false,
+          sheet_order: 30,
+        });
+        await seedSeat({
+          scope: 'CO',
+          type: 'auto',
+          callings: ['Bishop'],
+          sort_order: 5,
+        });
+        await seedAccess({
+          importer_callings: { CO: ['Bishop'] },
+          manual_grants: {
+            CO: [
+              {
+                grant_id: 'grant-1',
+                reason: 'manager grant',
+                granted_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+                granted_at: Timestamp.now(),
+              },
+            ],
+          },
+          sort_order: 5,
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'callings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, callings: ['Sunday School Teacher'] },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        // importer_callings[CO] dropped; manual_grants preserved; doc remains.
+        expect(access.importer_callings).toEqual({});
+        expect(access.manual_grants.CO?.length).toBe(1);
+        expect(access.lastActor).toEqual({
+          email: 'SyncActor:callings-mismatch',
+          canonical: 'SyncActor:callings-mismatch',
+        });
+      });
+
+      it('on manual: rejects with failed-precondition and leaves the seat untouched (auto-only; no §6.1 hybrid)', async () => {
+        await seedManager();
+        await seedTemplate({
+          scope: 'CO',
+          calling_name: 'Bishop',
+          give_app_access: true,
+          sheet_order: 1,
+        });
+        // Well-formed manual seat: empty callings, calling in free-text reason.
+        await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: 'Old Calling' });
+
+        await expect(
+          syncApplyFix.run(
+            callableReq({
+              auth: { email: MANAGER_EMAIL },
+              data: {
+                stakeId: STAKE_ID,
+                fix: {
+                  code: 'callings-mismatch',
+                  payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishop'] },
+                },
+              },
+            }),
+          ),
+        ).rejects.toMatchObject({ code: 'failed-precondition' });
+
+        // Seat left untouched — no hybrid (callings stay empty, reason kept).
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat & { reason?: unknown };
+        expect(seat.callings).toEqual([]);
+        expect(seat.reason).toBe('Old Calling');
         const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
         expect(accessSnap.exists).toBe(false);
       });

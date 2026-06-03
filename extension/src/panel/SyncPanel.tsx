@@ -90,7 +90,7 @@ const CODE_FILTER_OPTIONS: readonly DiscrepancyCode[] = [
   'scope-mismatch',
   'type-mismatch',
   'buildings-mismatch',
-  'extra-kindoo-calling',
+  'callings-mismatch',
 ];
 
 /** Per-row fix state. `idle` → buttons visible; `applying` → in flight;

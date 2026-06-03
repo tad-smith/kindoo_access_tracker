@@ -54,14 +54,13 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
       return [{ side: 'sba', label: 'Remove From SBA', testId: 'remove-sba', variant: 'danger' }];
     case 'kindoo-only':
       return [{ side: 'sba', label: 'Create SBA seat', testId: 'create-sba' }];
-    case 'extra-kindoo-calling':
+    case 'callings-mismatch':
       // Auto seats only by construction (the detector suppresses this
-      // code for manual / temp). The `syncApplyFix` path appends to the
-      // roster `callings[]`, which is the auto-seat shape. The testId
-      // stays `add-callings-sba` (the underlying append path is
-      // unchanged); only the user-facing label matches the other
-      // Update-SBA buttons.
-      return [{ side: 'sba', label: 'Update SBA', testId: 'add-callings-sba' }];
+      // code for manual / temp). The `syncApplyFix` path REPLACES the
+      // roster `callings[]` with Kindoo's full target set (Kindoo
+      // authoritative) — a true Update-SBA sibling of scope / buildings
+      // mismatch.
+      return [{ side: 'sba', label: 'Update SBA', testId: 'update-sba' }];
     case 'type-mismatch':
       // Grant-derived type: Kindoo's observed direct grants are the
       // source of truth for `type`, so the only action is to flip the
@@ -155,8 +154,7 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       //   - auto  → roster `callings[]` (no `reason`).
       //   - manual / temp → `callings: []`; the calling text lives in the
       //     single free-text `reason`. Writing it to `callings[]` would
-      //     mint a hybrid seat that re-fires `extra-kindoo-calling` on the
-      //     next sync (the manual diff reads `reason`, not `callings[]`).
+      //     mint a hybrid seat that violates the §6.1 manual/temp shape.
       const parsedCallings = combineParsedCallings(
         d.kindoo.intendedCallings,
         d.kindoo.intendedFreeText,
@@ -208,20 +206,25 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         fix: { code: 'kindoo-only', payload: payload as never },
       };
     }
-    case 'extra-kindoo-calling': {
-      if (!d.kindoo) throw new Error('extra-kindoo-calling row missing Kindoo block');
-      // Source the extras from the detector's callings-set diff
-      // (`extraKindooCallings`), NOT the retired auto-calling
-      // classifier's `intendedFreeText`. The diff is the set of
-      // Kindoo-named callings the SBA seat lacks.
-      const extraCallings = d.kindoo.extraKindooCallings ?? [];
+    case 'callings-mismatch': {
+      if (!d.kindoo) throw new Error('callings-mismatch row missing Kindoo block');
+      // The FULL Kindoo target set (`kindooCallings`), sourced from the
+      // detector's parser — NOT a delta. The callable REPLACES the seat's
+      // `callings[]` with this wholesale (Kindoo authoritative). Guard
+      // against an empty target: the detector only emits this code with a
+      // non-empty set, and the callable rejects empty `callings`, so fail
+      // loud rather than send a payload the server will reject.
+      const callings = d.kindoo.kindooCallings ?? [];
+      if (callings.length === 0) {
+        throw new Error('callings-mismatch row has an empty Kindoo target set');
+      }
       return {
         stakeId,
         fix: {
-          code: 'extra-kindoo-calling',
+          code: 'callings-mismatch',
           payload: {
             memberEmail: d.displayEmail,
-            extraCallings,
+            callings,
           },
         },
       };

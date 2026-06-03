@@ -8,7 +8,7 @@ import {
   detect,
   grantsBackAuto,
   isChurchBacked,
-  missingCallings,
+  parseKindooCallings,
   skipGrantReconciliation,
 } from './detector';
 
@@ -59,24 +59,22 @@ describe('skipGrantReconciliation', () => {
   });
 });
 
-describe('missingCallings', () => {
-  it('returns Kindoo callings the seat lacks (additive direction)', () => {
-    expect(missingCallings('Bishop, Clerk', ['Bishop'])).toEqual(['Clerk']);
+describe('parseKindooCallings', () => {
+  it('returns the full comma-split calling set, preserving Kindoo casing', () => {
+    expect(parseKindooCallings('Bishop, Clerk')).toEqual(['Bishop', 'Clerk']);
   });
-  it('returns [] when the seat has all Kindoo callings', () => {
-    expect(missingCallings('Bishop, Clerk', ['Clerk', 'Bishop'])).toEqual([]);
+  it('trims surrounding whitespace on each calling', () => {
+    expect(parseKindooCallings(' Bishop ,  Clerk ')).toEqual(['Bishop', 'Clerk']);
   });
-  it('ignores case + surrounding whitespace', () => {
-    expect(missingCallings(' bishop ,  CLERK ', ['Bishop', 'clerk'])).toEqual([]);
-  });
-  it('does not report a calling the seat has but Kindoo omits (additive only)', () => {
-    expect(missingCallings('Bishop', ['Bishop', 'Clerk'])).toEqual([]);
-  });
-  it('de-dupes a calling repeated in the parens', () => {
-    expect(missingCallings('Clerk, clerk', ['Bishop'])).toEqual(['Clerk']);
+  it('de-dupes a calling repeated in the parens (case-insensitively, first casing wins)', () => {
+    expect(parseKindooCallings('Clerk, clerk')).toEqual(['Clerk']);
   });
   it('drops empty segments', () => {
-    expect(missingCallings('Bishop, , ', ['Bishop'])).toEqual([]);
+    expect(parseKindooCallings('Bishop, , ')).toEqual(['Bishop']);
+  });
+  it('returns [] for an empty / whitespace-only parens text', () => {
+    expect(parseKindooCallings('')).toEqual([]);
+    expect(parseKindooCallings('   ')).toEqual([]);
   });
 });
 
@@ -1001,9 +999,8 @@ describe('detect', () => {
             scope: 'CO',
             type: 'manual',
             callings: [],
-            // Reason matches the Kindoo parens so the (separate)
-            // extra-kindoo-calling diff stays quiet — this test is
-            // strictly about buildings not drifting.
+            // Manual seat, so callings-mismatch never fires (auto-only) —
+            // this test is strictly about buildings not drifting.
             reason: 'Building Greeter',
             building_names: ['Maple Building'],
           }),
@@ -1109,7 +1106,7 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.code).toBe('buildings-mismatch');
   });
 
-  it('emits extra-kindoo-calling when Kindoo names a calling the SBA seat lacks', () => {
+  it("emits callings-mismatch carrying Kindoo's FULL set when the seat differs (superset case)", () => {
     const result = detect(
       baseInputs({
         seats: [seat({ scope: 'CO', type: 'auto', callings: ['Sunday School Teacher'] })],
@@ -1125,17 +1122,48 @@ describe('detect', () => {
     );
     expect(result.discrepancies).toHaveLength(1);
     const row = result.discrepancies[0]!;
-    expect(row.code).toBe('extra-kindoo-calling');
+    expect(row.code).toBe('callings-mismatch');
     expect(row.severity).toBe('drift');
-    // Only the calling the seat lacks is the extra; the one it already
-    // has is not re-proposed.
-    expect(row.kindoo?.extraKindooCallings).toEqual(['Building Janitor']);
-    expect(row.reason).toContain('[Building Janitor]');
-    expect(row.reason).toContain('[Sunday School Teacher]');
-    expect(row.reason).toContain('add the missing calling(s) to the SBA seat');
+    // The FULL Kindoo target set (REPLACE), not a delta — the seat's
+    // existing calling is part of the target too.
+    expect(row.kindoo?.kindooCallings).toEqual(['Sunday School Teacher', 'Building Janitor']);
+    expect(row.reason).toContain('[Sunday School Teacher, Building Janitor]');
+    expect(row.reason).toContain('update SBA to match Kindoo');
   });
 
-  it('does NOT emit extra-kindoo-calling when the seat already has every Kindoo calling', () => {
+  it("emits callings-mismatch on a RENAME, carrying ONLY Kindoo's renamed calling (REPLACE, not append)", () => {
+    // The motivating bug: Kindoo renamed `Bishop` → `Bishopric Clerk`. The
+    // seat must MIRROR Kindoo (replace), not accumulate both.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Bishop'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Bishopric Clerk)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('callings-mismatch');
+    // FULL target set is just Kindoo's renamed calling — the old `Bishop`
+    // is NOT carried forward.
+    expect(row.kindoo?.kindooCallings).toEqual(['Bishopric Clerk']);
+    expect(row.reason).toContain('[Bishopric Clerk]');
+    expect(row.reason).toContain('[Bishop]');
+  });
+
+  it('does NOT emit callings-mismatch when the seat already matches every Kindoo calling', () => {
     const result = detect(
       baseInputs({
         seats: [
@@ -1155,10 +1183,10 @@ describe('detect', () => {
         ],
       }),
     );
-    expect(result.discrepancies.filter((d) => d.code === 'extra-kindoo-calling')).toEqual([]);
+    expect(result.discrepancies.filter((d) => d.code === 'callings-mismatch')).toEqual([]);
   });
 
-  it('does NOT emit extra-kindoo-calling on case / whitespace-only differences', () => {
+  it('does NOT emit callings-mismatch on case / whitespace-only differences', () => {
     const result = detect(
       baseInputs({
         seats: [
@@ -1179,11 +1207,11 @@ describe('detect', () => {
         ],
       }),
     );
-    expect(result.discrepancies.filter((d) => d.code === 'extra-kindoo-calling')).toEqual([]);
+    expect(result.discrepancies.filter((d) => d.code === 'callings-mismatch')).toEqual([]);
   });
 
-  it('NEVER emits extra-kindoo-calling for a manual seat, regardless of reason content', () => {
-    // Operator decision 2026-05-30: extra-kindoo-calling is auto-only.
+  it('NEVER emits callings-mismatch for a manual seat, regardless of reason content', () => {
+    // Operator decision 2026-05-30: callings-mismatch is auto-only.
     // Manual seats record their calling in the free-text `reason`, which
     // is frequently operator prose (not a calling name); surfacing the
     // diff on them would flood the review list. So a manual seat — even
@@ -1211,7 +1239,7 @@ describe('detect', () => {
     expect(result.discrepancies).toEqual([]);
   });
 
-  it('NEVER emits extra-kindoo-calling for a temp seat, regardless of reason content', () => {
+  it('NEVER emits callings-mismatch for a temp seat, regardless of reason content', () => {
     const result = detect(
       baseInputs({
         seats: [
@@ -1262,7 +1290,7 @@ describe('detect', () => {
     expect(result.discrepancies).toEqual([]);
   });
 
-  it('extra-kindoo-calling is the only row emitted when scope and type otherwise agree', () => {
+  it('callings-mismatch is the only row emitted when scope and type otherwise agree', () => {
     // Mixed segment now classifies as auto (not manual), so the
     // downstream type-mismatch / buildings-mismatch checks must not
     // also fire on the same row.
@@ -1285,7 +1313,33 @@ describe('detect', () => {
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
-    expect(result.discrepancies[0]?.code).toBe('extra-kindoo-calling');
+    expect(result.discrepancies[0]?.code).toBe('callings-mismatch');
+  });
+
+  it('does NOT emit callings-mismatch when Kindoo names a scope but NO calling (empty target)', () => {
+    // `Maple Ward` with no parens → primary segment carries an empty
+    // calling string. The callable rejects empty `callings`, so the
+    // detector must leave it to the other codes / no row.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies.filter((d) => d.code === 'callings-mismatch')).toEqual([]);
   });
 
   it('reports counts independent of discrepancies emitted', () => {
