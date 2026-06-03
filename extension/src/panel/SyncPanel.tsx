@@ -33,7 +33,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ExtensionApiError, getSyncData, type SyncDataBundle } from '../lib/extensionApi';
 import { readKindooSession, type KindooSessionError } from '../content/kindoo/auth';
-import { getEnvironments, listAllEnvironmentUsers } from '../content/kindoo/endpoints';
+import { listAllEnvironmentUsers } from '../content/kindoo/endpoints';
 import { KindooApiError } from '../content/kindoo/client';
 import {
   detect,
@@ -133,17 +133,12 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
     const session = sessionResult.session;
 
     try {
-      // Phase A: parallel read of SBA bundle + Kindoo bulk listing +
-      // env metadata. The rule door map depends on the buildings list
-      // (to know which RIDs to fetch), so it kicks off once the
-      // bundle resolves. `getEnvironments` validates the active session
-      // resolves to a real Kindoo environment before the enrichment
-      // loop; its result is read-only metadata (no write path consumes
-      // it under the Kindoo-authoritative model).
+      // Phase A: parallel read of SBA bundle + Kindoo bulk listing. The
+      // rule door map depends on the buildings list (to know which RIDs
+      // to fetch), so it kicks off once the bundle resolves.
       const [bundle, kindooUsers] = await Promise.all([
         getSyncData(stakeId),
         listAllEnvironmentUsers(session),
-        getEnvironments(session),
       ]);
 
       // Phase A.5: identify which Kindoo site the active session is
