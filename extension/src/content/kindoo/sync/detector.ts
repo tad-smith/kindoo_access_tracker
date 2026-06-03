@@ -376,46 +376,38 @@ function setsEqual(a: string[], b: string[]): boolean {
 }
 
 /**
- * Grant-based provenance predicate: a seat is "church-backed" iff
- * EVERY one of its building names is present in the member's
- * direct-grant building set. Conservative — partial coverage on a
- * multi-building seat is NOT church-backed (surface for review rather
- * than guess). Returns `false` when `directGrantBuildings === null`
- * (derivation failed — caller treats that as "can't determine").
+ * Grant-based provenance predicate (Guest seats only): a seat is
+ * "church-backed" iff the member holds **at least one** Church Access
+ * Automation DIRECT grant. The seat's own building set no longer enters
+ * this decision — ANY church-direct grant means the church is
+ * provisioning the user, so the seat is `auto`; zero church-direct
+ * grants means every door is SBA-rule-provisioned, so `manual`.
  *
- * A seat with no building names is vacuously church-backed when the
- * direct-grant set is known: there are no doors the church must own,
- * so provenance can't argue against `auto`. (In practice a typed seat
- * always carries at least one building.)
+ *   - `directGrantBuildings === null` (derivation failed) → `false`
+ *     ("can't determine" — caller leaves the type unchanged).
+ *   - non-empty → `true` (auto): at least one church-direct grant.
+ *   - `[]` → `false` (manual): zero church-direct grants.
+ *
+ * (Building-set coverage still matters for `buildings-mismatch`; that
+ * path is unaffected by this change.)
  *
  * Pure function — no I/O.
  */
-export function isChurchBacked(
-  seatBuildingNames: string[],
-  directGrantBuildings: string[] | null,
-): boolean {
-  if (directGrantBuildings === null) return false;
-  const direct = new Set(directGrantBuildings);
-  return seatBuildingNames.every((b) => direct.has(b));
+export function isChurchBacked(directGrantBuildings: string[] | null): boolean {
+  return directGrantBuildings !== null && directGrantBuildings.length > 0;
 }
 
 /**
- * The seat-type decision: a seat is `auto` (church-owned provisioning)
- * iff it has **at least one building** AND every building is
- * direct-granted. The non-empty guard is the difference from
- * `isChurchBacked`'s raw set-subset (which is vacuously true for a
- * zero-building seat): a seat with no doors has no church-owned grant
- * to justify `auto`, so it stays `manual` (the born-manual default). A
- * zero-grant Kindoo user (newly added, access revoked) therefore is NOT
- * minted as an empty-building auto seat.
+ * The Guest seat-type decision: a seat is `auto` (church-owned
+ * provisioning) iff the member holds at least one church-direct grant.
+ * Identical to `isChurchBacked` under the "any church-direct grant"
+ * rule; kept as a distinct export for the create / promote call sites
+ * (vs `isChurchBacked` at the demote site).
  *
  * Pure function — no I/O.
  */
-export function grantsBackAuto(
-  seatBuildingNames: string[],
-  directGrantBuildings: string[] | null,
-): boolean {
-  return seatBuildingNames.length > 0 && isChurchBacked(seatBuildingNames, directGrantBuildings);
+export function grantsBackAuto(directGrantBuildings: string[] | null): boolean {
+  return isChurchBacked(directGrantBuildings);
 }
 
 /**
@@ -674,32 +666,20 @@ export function detect(inputs: DetectInputs): DetectResult {
       const parsed = parseDescription(kuser.description, inputs.stake, inputs.wards);
       const primary = pickRelevantSegment(parsed);
       const intended = primary ? classifySegment(primary, kuser.isTempUser, sets) : null;
-      // Grant-derived type for the seat we'd create: temp wins
-      // (`IsTempUser`-driven); otherwise grant-backed → auto, else
-      // manual. Evaluated against the building set the new seat would
-      // carry — `derivedBuildings` when known, else the AccessSchedules
-      // fallback (matches the fix dispatcher's building source). A null
-      // derivation or a zero-building set can't be grant-backed
-      // (`grantsBackAuto` requires ≥1 building), so a zero-grant Kindoo
-      // user falls through to the born-manual default rather than
-      // minting an empty-building auto seat.
-      const newSeatBuildings =
-        kuser.derivedBuildings !== null && kuser.derivedBuildings !== undefined
-          ? kuser.derivedBuildings
-          : ruleIdsToBuildingNames(
-              kuser.accessSchedules.map((s) => s.ruleId),
-              inputs.buildings,
-            );
-      // Admin (Administrator / Manager) created seats are born `auto`
-      // regardless of grant backing — only the church doesn't provision
-      // them, but their role is non-Guest so SBA treats the seat as
-      // church-owned. Temp still wins (IsTempUser-driven). Guests fall
-      // through to the grant-based decision (#188).
+      // Grant-derived type for the seat we'd create:
+      //   - temp wins (`IsTempUser`-driven).
+      //   - Admin (Administrator / Manager) → `auto` regardless of grant
+      //     backing (non-Guest role ⇒ SBA treats the seat as church-owned).
+      //   - Guest → `auto` when the member holds ANY church-direct grant
+      //     (`grantsBackAuto`); else `manual`. The seat's building set no
+      //     longer enters this decision — a single church-direct grant is
+      //     enough. A null derivation falls through to `manual` (the
+      //     born-manual default; we don't mint auto on unknown provenance).
       const createdType: SeatType = kuser.isTempUser
         ? 'temp'
         : role === 'admin'
           ? 'auto'
-          : grantsBackAuto(newSeatBuildings, kuser.directGrantBuildings ?? null)
+          : grantsBackAuto(kuser.directGrantBuildings ?? null)
             ? 'auto'
             : 'manual';
       discrepancies.push({
@@ -838,10 +818,14 @@ export function detect(inputs: DetectInputs): DetectResult {
     // grants (`directGrantBuildings`), NOT from the calling-template
     // classifier (which is a guess at churchwide behaviour and drifts).
     //
-    //   - manual seat + church-backed → PROMOTE to `auto`.
-    //   - auto seat + NOT church-backed → DEMOTE to `manual`.
+    // The test is "ANY church-direct grant" — the seat's own building set
+    // no longer enters the decision (it still drives `buildings-mismatch`
+    // below):
+    //   - manual seat + ≥1 church-direct grant → PROMOTE to `auto`.
+    //   - auto seat + ZERO church-direct grants → DEMOTE to `manual`.
     //   - directGrantBuildings === null (derivation failed) → skip;
-    //     can't determine provenance.
+    //     can't determine provenance (leave the type unchanged — never
+    //     demote on unknown provenance).
     //   - temp seats are never promoted / demoted — `temp` is
     //     `IsTempUser`-driven, orthogonal to grant provenance.
     //   - admin seats are handled above and never reach here for the
@@ -849,36 +833,35 @@ export function detect(inputs: DetectInputs): DetectResult {
     //     `sbaBlock.type === 'auto'` won't promote/demote here anyway).
     const directGrant = kuser.directGrantBuildings ?? null;
     if (role === 'guest' && sbaBlock.type !== 'temp' && directGrant !== null) {
-      // PROMOTE requires a real grant-backed building (`grantsBackAuto`
-      // is false for a zero-building seat). DEMOTE keys off the raw
-      // subset (`!isChurchBacked`) so a degenerate zero-building auto
-      // seat — vacuously church-backed — does NOT spuriously demote.
-      const promoteToAuto = grantsBackAuto(sbaBlock.buildingNames, directGrant);
-      const stillChurchBacked = isChurchBacked(sbaBlock.buildingNames, directGrant);
-      if (sbaBlock.type === 'manual' && promoteToAuto) {
-        // PROMOTE — the church grants every door of this seat's
-        // buildings, so the church owns provisioning ⇒ auto.
-        discrepancies.push({
-          canonical: canon,
-          displayEmail,
-          code: 'type-mismatch',
-          severity: 'drift',
-          reason: `Promote to auto: the church directly grants every door for this seat's building(s) [${sbaBlock.buildingNames.join(', ') || '(none)'}], so Kindoo provisioning is church-owned.`,
-          sba: sbaBlock,
-          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, 'auto'),
-        });
-        continue;
-      }
-      if (sbaBlock.type === 'auto' && !stillChurchBacked) {
-        // DEMOTE — the church no longer grants all of this seat's
-        // doors, so SBA must own them ⇒ manual.
+      // `directGrant !== null` here, so `isChurchBacked` reduces to
+      // "≥1 church-direct grant". DEMOTE fires only on the empty set —
+      // never on `null` (excluded by the guard).
+      const churchBacked = isChurchBacked(directGrant);
+      if (sbaBlock.type === 'manual' && churchBacked) {
+        // PROMOTE — the member holds at least one church-direct grant, so
+        // the church owns provisioning ⇒ auto.
         const directList = directGrant.length > 0 ? directGrant.join(', ') : '(none)';
         discrepancies.push({
           canonical: canon,
           displayEmail,
           code: 'type-mismatch',
           severity: 'drift',
-          reason: `Demote to manual: the church no longer directly grants all of this seat's building(s) [${sbaBlock.buildingNames.join(', ') || '(none)'}] (direct grants cover [${directList}]); SBA must own the access.`,
+          reason: `Promote to auto: the church directly grants door access for this member (church-direct building(s) [${directList}]), so Kindoo provisioning is church-owned.`,
+          sba: sbaBlock,
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, 'auto'),
+        });
+        continue;
+      }
+      if (sbaBlock.type === 'auto' && !churchBacked) {
+        // DEMOTE — the member holds ZERO church-direct grants (all access
+        // is SBA-rule-provisioned), so SBA must own them ⇒ manual.
+        discrepancies.push({
+          canonical: canon,
+          displayEmail,
+          code: 'type-mismatch',
+          severity: 'drift',
+          reason:
+            'Demote to manual: the church no longer directly grants any door access for this member; SBA owns the access ⇒ manual.',
           sba: sbaBlock,
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, 'manual'),
         });

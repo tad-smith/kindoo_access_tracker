@@ -13,34 +13,27 @@ import {
 } from './detector';
 
 describe('isChurchBacked', () => {
-  it('true when every seat building is direct-granted', () => {
-    expect(isChurchBacked(['A', 'B'], ['A', 'B', 'C'])).toBe(true);
+  it('true when the member holds ANY church-direct grant', () => {
+    expect(isChurchBacked(['A'])).toBe(true);
+    expect(isChurchBacked(['A', 'B'])).toBe(true);
   });
-  it('false when one seat building is not direct-granted (conservative)', () => {
-    expect(isChurchBacked(['A', 'B'], ['A'])).toBe(false);
+  it('false when there are zero church-direct grants (all SBA-provisioned)', () => {
+    expect(isChurchBacked([])).toBe(false);
   });
   it('false when directGrantBuildings is null (cannot determine)', () => {
-    expect(isChurchBacked(['A'], null)).toBe(false);
-  });
-  it('true (vacuously) for a seat with no buildings when the set is known', () => {
-    expect(isChurchBacked([], [])).toBe(true);
-    expect(isChurchBacked([], ['A'])).toBe(true);
+    expect(isChurchBacked(null)).toBe(false);
   });
 });
 
 describe('grantsBackAuto', () => {
-  it('true when the seat has buildings and all are direct-granted', () => {
-    expect(grantsBackAuto(['A'], ['A', 'B'])).toBe(true);
+  it('true when the member holds at least one church-direct grant', () => {
+    expect(grantsBackAuto(['A'])).toBe(true);
   });
-  it('false for a zero-building seat (NOT vacuously auto — born manual)', () => {
-    expect(grantsBackAuto([], [])).toBe(false);
-    expect(grantsBackAuto([], ['A'])).toBe(false);
-  });
-  it('false when a building is not direct-granted', () => {
-    expect(grantsBackAuto(['A', 'B'], ['A'])).toBe(false);
+  it('false when there are zero church-direct grants', () => {
+    expect(grantsBackAuto([])).toBe(false);
   });
   it('false when directGrantBuildings is null', () => {
-    expect(grantsBackAuto(['A'], null)).toBe(false);
+    expect(grantsBackAuto(null)).toBe(false);
   });
 });
 
@@ -545,6 +538,92 @@ describe('detect', () => {
     expect(row.code).toBe('type-mismatch');
     expect(row.kindoo?.grantTargetType).toBe('manual');
     expect(row.reason).toContain('Demote to manual');
+  });
+
+  it('promotes a Guest with a PARTIAL church grant (some church doors + some SBA) to auto', () => {
+    // New "any church-direct grant" rule: the seat spans two buildings;
+    // only ONE is church-direct-granted. The seat-building-subset rule
+    // would have left this manual — now a single church grant promotes
+    // it to auto. (Building coverage still drives buildings-mismatch, not
+    // the type decision.)
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'stake',
+            type: 'manual',
+            callings: [],
+            reason: 'Stake Clerk',
+            building_names: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Colorado Springs North Stake (Stake Clerk)',
+            derivedBuildings: ['Maple Building', 'Pine Creek Building'],
+            // Only Maple is church-direct; Pine Creek is SBA-provisioned.
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    const typeRows = result.discrepancies.filter((d) => d.code === 'type-mismatch');
+    expect(typeRows).toHaveLength(1);
+    expect(typeRows[0]?.kindoo?.grantTargetType).toBe('auto');
+    expect(typeRows[0]?.reason).toContain('Promote to auto');
+  });
+
+  it('keeps an auto Guest seat auto when it holds at least one church-direct grant (no demote)', () => {
+    // The seat building set is NOT fully church-direct (only Maple is),
+    // but ≥1 church grant means the church still provisions ⇒ stays auto.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'stake',
+            type: 'auto',
+            callings: ['Stake Clerk'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Colorado Springs North Stake (Stake Clerk)',
+            derivedBuildings: ['Maple Building', 'Pine Creek Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies.filter((d) => d.code === 'type-mismatch')).toEqual([]);
+  });
+
+  it('demotes a Guest auto seat with ZERO church-direct grants to manual', () => {
+    // All access is SBA-rule-provisioned (directGrantBuildings=[]) → no
+    // church grant → demote to manual.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    const typeRows = result.discrepancies.filter((d) => d.code === 'type-mismatch');
+    expect(typeRows).toHaveLength(1);
+    expect(typeRows[0]?.kindoo?.grantTargetType).toBe('manual');
+    expect(typeRows[0]?.reason).toContain('Demote to manual');
   });
 
   it('does not promote/demote when directGrantBuildings is null (cannot determine)', () => {
