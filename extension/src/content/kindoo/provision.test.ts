@@ -195,9 +195,9 @@ beforeEach(() => {
     allDoors: [],
   }));
   getUserAccessRulesWithEntryPointsMock.mockReset();
-  // No door rows; `userRole` is irrelevant to the provision flow (which
-  // only consumes the door set via getUserDoorIds).
-  getUserAccessRulesWithEntryPointsMock.mockResolvedValue({ rows: [], userRole: null });
+  // No door rows by default; the provision flow only consumes the door
+  // set via getUserDoorIds.
+  getUserAccessRulesWithEntryPointsMock.mockResolvedValue({ rows: [] });
 });
 afterEach(() => {
   vi.resetModules();
@@ -1898,7 +1898,6 @@ function stageRuleDoors(map: Record<number, number[]>) {
 function stageUserDoors(doorIds: number[]) {
   getUserAccessRulesWithEntryPointsMock.mockResolvedValue({
     rows: doorIds.map((id) => ({ doorId: id, accessScheduleId: 0 })),
-    userRole: null,
   });
 }
 

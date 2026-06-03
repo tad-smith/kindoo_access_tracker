@@ -232,29 +232,6 @@ export interface KindooEnvironmentUser {
    *     detector skips the promote/demote decision (can't determine).
    */
   directGrantBuildings?: string[] | null;
-  /**
-   * Kindoo seat role, stamped onto each user before `detect()` from a
-   * per-user call the sync ALREADY makes (no extra request — see
-   * `KINDOO_GUEST_ROLE`). **Guest === 2** (the role SBA provisions seats
-   * as, and the invite dropdown's "Guest"); managers / admins are other
-   * values (the staging manager came back `0`).
-   *
-   * This is THE scope signal for grant-based reconciliation: the
-   * grant-derived `type-mismatch` (promote/demote) and
-   * `buildings-mismatch` apply ONLY to Guests. A non-Guest (Manager /
-   * admin) is skipped entirely — they are not SBA-owned door grants, so
-   * the church-direct-grant chain would misread absence of grants as a
-   * revoked seat (a real staging false-positive: a Stake Clerk manager
-   * whose Description parsed and matched an auto seat).
-   *
-   *   - `2`         — Guest; in scope for grant-based reconciliation.
-   *   - other value — non-Guest; skip both grant-based checks, no row.
-   *   - `undefined` — role couldn't be read (empty `RulesList` / failed
-   *     fetch), or a pre-Phase-2 caller. The detector SKIPS
-   *     (`undefined !== 2`) — the safe default; never promote/demote a
-   *     user we can't classify.
-   */
-  userRole?: number;
   /** Anything else Kindoo returns. */
   [k: string]: unknown;
 }
@@ -355,19 +332,6 @@ export async function checkUserType(
   // invite form; "no UID returned" is the not-found signal.
   return { exists: false, uid: null };
 }
-
-/**
- * Kindoo seat role: **Guest === 2** (the role SBA provisions seats as,
- * and the invite dropdown's "Guest"). Managers / admins are other
- * values (the staging manager came back `0`). Grant-based reconciliation
- * applies only to Guests — see `detector.ts` `skipGrantReconciliation`.
- *
- * The role rides on a per-user call the sync ALREADY makes (the door
- * grants response, denormalized on every `RulesList` row), so no extra
- * request is needed; `getUserAccessRulesWithEntryPoints` surfaces it and
- * the enrichment loop stamps `KindooEnvironmentUser.userRole`.
- */
-export const KINDOO_GUEST_ROLE = 2;
 
 /**
  * Invite a single user to the site. Wraps
@@ -826,22 +790,13 @@ export interface UserDoorGrantRow {
  * `getUserDoorIds` while making the direct-grant signal
  * order-independent for the grant-based seat-type detector (a rule row
  * arriving before the direct row must not mask the direct grant).
- *
- * **Also surfaces the user's Kindoo seat role.** Every `RulesList` row
- * carries a denormalized `UserRole` (Guest === 2; managers / admins are
- * other values, e.g. 0). We return the first numeric one seen across all
- * pages — no extra request. `null` when the user has no door rows (the
- * `RulesList` is empty), which the Sync detector treats as "skip"
- * (`undefined !== 2`) — never demote a user it can't classify. The role
- * rides alongside the door rows in the return object rather than on each
- * `UserDoorGrantRow` (it's per-user, not per-door).
  */
 export async function getUserAccessRulesWithEntryPoints(
   session: KindooSession,
   userId: string,
   eid: number,
   fetchImpl?: typeof fetch,
-): Promise<{ rows: UserDoorGrantRow[]; userRole: number | null }> {
+): Promise<{ rows: UserDoorGrantRow[] }> {
   const PAGE_SIZE = 40;
   // Safety cap. A user with hundreds of doors would be an outlier; the
   // cap stops a wire mismatch from spinning forever.
@@ -852,8 +807,6 @@ export async function getUserAccessRulesWithEntryPoints(
   const byDoor = new Map<number, UserDoorGrantRow>();
   let start = 0;
   let total: number | null = null;
-  // First numeric `UserRole` seen on any row (denormalized per-user).
-  let userRole: number | null = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const raw = await postKindoo(
       'KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints',
@@ -889,11 +842,6 @@ export async function getUserAccessRulesWithEntryPoints(
     for (const entry of list) {
       if (typeof entry !== 'object' || entry === null) continue;
       const r = entry as Record<string, unknown>;
-      // Capture the denormalized per-user role off the first row that
-      // carries a numeric one (every row repeats it).
-      if (userRole === null && typeof r.UserRole === 'number') {
-        userRole = r.UserRole;
-      }
       const did = r.DoorID;
       if (typeof did !== 'number') continue;
       const asid = typeof r.AccessScheduleID === 'number' ? r.AccessScheduleID : 0;
@@ -910,7 +858,7 @@ export async function getUserAccessRulesWithEntryPoints(
     start += PAGE_SIZE;
     if (total !== null && start >= total) break;
   }
-  return { rows: Array.from(byDoor.values()), userRole };
+  return { rows: Array.from(byDoor.values()) };
 }
 
 /**

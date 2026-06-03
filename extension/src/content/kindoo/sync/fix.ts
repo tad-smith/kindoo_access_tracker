@@ -41,9 +41,9 @@ export interface FixAction {
 export function fixActionsFor(d: Discrepancy): FixAction[] {
   // Invariant: a review-severity row is display-only by construction —
   // it never offers an action button, regardless of code. This guards
-  // the non-Guest present-but-unparseable case (a Kindoo Manager who
-  // also holds an SBA seat is emitted as `kindoo-unparseable` /
-  // `review`, FYI only; Update SBA would clobber their seat) and
+  // the blank-description (`kindoo-no-description`) and the
+  // no-resolvable-primary-segment (`kindoo-unparseable` / `review`)
+  // cases, where no SBA-side action can be safely derived, and
   // future-proofs the model (review ⇒ no action).
   if (d.severity === 'review') return [];
   switch (d.code) {

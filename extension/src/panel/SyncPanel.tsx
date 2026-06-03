@@ -169,10 +169,7 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
 
       // Phase C: enrich each user with derivedBuildings. ~313 calls
       // at concurrency=4; the operator sees "Reading Kindoo user N of
-      // M…" tick along. The same per-user door fetch also carries the
-      // user's Kindoo seat role (`userRole`); enrichment stamps it so
-      // the detector can scope grant-based reconciliation to Guests
-      // (`UserRole === 2`) — see `skipGrantReconciliation`.
+      // M…" tick along.
       const enriched = await enrichUsersWithDerivedBuildings(
         session,
         session.eid,

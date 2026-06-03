@@ -17,7 +17,7 @@ import type {
   Ward,
   WardCallingTemplate,
 } from '@kindoo/shared';
-import { KINDOO_GUEST_ROLE, type KindooEnvironmentUser } from '../endpoints';
+import type { KindooEnvironmentUser } from '../endpoints';
 import {
   parseDescription,
   pickPrimarySegment,
@@ -417,57 +417,6 @@ export function grantsBackAuto(
 }
 
 /**
- * THE single "is this user out of scope for grant-based reconciliation?"
- * decision. Both grant-derived checks — `type-mismatch` (promote/demote)
- * AND `buildings-mismatch` — consult this one predicate so they can
- * never disagree (guarding only one flips the user to the other's
- * spurious row). Returning `true` means: emit neither grant-based row
- * for this user.
- *
- * **The signal is the Kindoo seat role, and only that.** Grant-based
- * reconciliation applies ONLY to **Guests** (`UserRole ===
- * KINDOO_GUEST_ROLE`, i.e. 2 — the role SBA provisions seats as). Any
- * non-Guest is skipped: managers / admins are not SBA-owned door grants,
- * so their grant shape is none of our business. `userRole` is stamped
- * onto each user before `detect()` from a per-user call the sync already
- * makes (no extra request — see `KINDOO_GUEST_ROLE` in `endpoints.ts`).
- *
- * The motivating case is a Kindoo **Manager** whose Description parses
- * cleanly and matches an SBA auto seat (so Locked-in decision #6's
- * unparseable fall-through doesn't catch them — real staging case: a
- * Stake Clerk manager, `UserRole: 0`). A manager has no guest door
- * grants, so the church-direct-grant chain reads as "access revoked" and
- * would falsely demote — then, if only the demote were guarded, falsely
- * flag a `buildings-mismatch`.
- *
- * **`undefined` role → skip** (the safe default): `userRole` is read
- * from the door-grant rows (`endpoints.ts`), so a user with an EMPTY
- * `RulesList` — including a Guest whose church access was entirely
- * revoked — has no row to read it from and stays `undefined` ⇒ skip
- * (`undefined !== 2`). A failed door fetch is the same. This avoids the
- * false-demote on a user we can't classify and is consistent with the
- * per-check `directGrantBuildings === null` / `derivedBuildings === null`
- * skips.
- *
- * **Known trade-off (the role-from-door-rows limitation).** A real Guest
- * who has had ALL church access removed (zero door rows) is therefore
- * NOT demoted — the seat-type label stays `auto` even though SBA should
- * now own it. We accept this: the member already has no Kindoo door
- * access (only the label lags), and the alternative — a fallback role
- * source (a per-user `checkUserType`, or `UserRole` off the bulk
- * listing) for every zero-row seated user — is cost the manager-demote
- * fix doesn't warrant. A Guest with ANY remaining grant still carries
- * the role on its rows and demotes normally when those grants no longer
- * back the seat. Re-running Sync after the member is re-granted (or the
- * fallback is added later) resolves the lag.
- *
- * Pure function — no I/O.
- */
-export function skipGrantReconciliation(kuser: Pick<KindooEnvironmentUser, 'userRole'>): boolean {
-  return kuser.userRole !== KINDOO_GUEST_ROLE;
-}
-
-/**
  * The FULL set of calling(s) Kindoo's primary parens text
  * (`Calling A, Calling B`) names — the target an auto seat's
  * `callings[]` must MIRROR (Kindoo authoritative). Split on `,`, trim
@@ -513,8 +462,7 @@ function callingSetsEqual(a: string[], b: string[]): boolean {
 /**
  * Home-site predicate for the present-but-unparseable gate. "Apply to
  * stake scope" is a home-site / stake concept — on a foreign Kindoo site
- * it's meaningless, so `kindoo-unparseable` is suppressed there entirely
- * (both the actionable Guest variant and the review non-Guest variant).
+ * it's meaningless, so `kindoo-unparseable` is suppressed there entirely.
  *
  * `undefined` (no active-site context — pre-Phase-4 callers / tests that
  * don't filter) is treated as home-eligible so legacy behaviour is
@@ -711,18 +659,17 @@ export function detect(inputs: DetectInputs): DetectResult {
     //
     //    b) Present-but-unparseable (`segments.length > 0`, none resolve)
     //       — text exists but doesn't match `Scope (Calling)`. We treat it
-    //       as a church-wide (stake-scope) calling. Three gates, in order:
+    //       as a church-wide (stake-scope) calling and Update SBA for
+    //       EVERYONE (all seat roles — managers can hold seats too). Two
+    //       gates, in order:
     //         A) Home-site only. "Apply to stake scope" is a home/stake
     //            concept; suppress the row entirely on a foreign site.
-    //         B) Non-Guest (Kindoo Manager / admin) → emit `review` (FYI,
-    //            no action). A manager isn't an SBA-owned grant; an
-    //            actionable Update SBA would clobber their seat.
-    //         C) Guest → actionable `drift`, BUT only when the SBA seat is
-    //            not already in the state Update SBA would produce. Once
-    //            aligned (stake scope + calling recorded per type), suppress
-    //            the row so it resolves like every other drift code.
-    //       The kindoo block stays populated either way so the dispatcher
-    //       can read the raw description.
+    //         B) Already aligned → no drift. When the SBA seat is already
+    //            in the state Update SBA would produce (stake scope +
+    //            calling recorded per type), suppress the row so it
+    //            resolves like every other drift code.
+    //       The kindoo block stays populated so the dispatcher can read
+    //       the raw description.
     if (parsed.unparseable) {
       if (parsed.segments.length === 0) {
         discrepancies.push({
@@ -738,19 +685,15 @@ export function detect(inputs: DetectInputs): DetectResult {
       }
       // A) Foreign site → no unparseable row at all.
       if (!isHomeSite(inputs.activeSite)) continue;
-      // B) Non-Guest → review-only (no action via the fixActionsFor
-      //    review guard); Guest → actionable.
-      const reviewOnly = skipGrantReconciliation(kuser);
-      // C) Guest already aligned with the stake-scope target → no drift.
-      if (!reviewOnly && unparseableAligned(sbaBlock, kuser.description)) continue;
+      // B) Already aligned with the stake-scope target → no drift.
+      if (unparseableAligned(sbaBlock, kuser.description)) continue;
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'kindoo-unparseable',
-        severity: reviewOnly ? 'review' : 'drift',
-        reason: reviewOnly
-          ? "Kindoo description doesn't match 'Scope (Calling)' and this is a non-Guest (Manager / admin); review manually."
-          : "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA.",
+        severity: 'drift',
+        reason:
+          "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA.",
         sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
       });
@@ -792,15 +735,6 @@ export function detect(inputs: DetectInputs): DetectResult {
       continue;
     }
 
-    // The single out-of-scope decision for BOTH grant-based checks
-    // (type-mismatch + buildings-mismatch). True ⇒ emit neither: a
-    // non-Guest (Kindoo Manager / admin, `userRole !== 2`) is not an
-    // SBA-owned door grant, so its grant shape is none of our business.
-    // Scope-mismatch and the AUTO-only callings-mismatch can still fire —
-    // neither is grant-provenance reconciliation. See
-    // `skipGrantReconciliation` for the full rationale.
-    const skipGrantBased = skipGrantReconciliation(kuser);
-
     // 6. type-mismatch — grant-based PROMOTE / DEMOTE.
     //
     // `type` is a provenance label: who owns the Kindoo grant — the
@@ -812,13 +746,14 @@ export function detect(inputs: DetectInputs): DetectResult {
     //   - manual seat + church-backed → PROMOTE to `auto`.
     //   - auto seat + NOT church-backed → DEMOTE to `manual`.
     //   - directGrantBuildings === null (derivation failed) → skip;
-    //     can't determine provenance, same as the buildings-null skip.
-    //   - skipGrantReconciliation → skip; non-Guest (or role unknown),
-    //     out of scope for grant-based reconciliation (see that predicate).
+    //     can't determine provenance. This is the ONLY skip: grant
+    //     reconciliation applies to ALL seat roles (managers can hold
+    //     seats), so a zero-door-row user (whose direct grants can't be
+    //     read) stays unclassified rather than being spuriously demoted.
     //   - temp seats are never promoted / demoted — `temp` is
     //     `IsTempUser`-driven, orthogonal to grant provenance.
     const directGrant = kuser.directGrantBuildings ?? null;
-    if (sbaBlock.type !== 'temp' && directGrant !== null && !skipGrantBased) {
+    if (sbaBlock.type !== 'temp' && directGrant !== null) {
       // PROMOTE requires a real grant-backed building (`grantsBackAuto`
       // is false for a zero-building seat). DEMOTE keys off the raw
       // subset (`!isChurchBacked`) so a degenerate zero-building auto
@@ -867,16 +802,11 @@ export function detect(inputs: DetectInputs): DetectResult {
     // For auto when derivation failed, leave the compare set `null` so the
     // check is skipped — unchanged auto behavior.
     //
-    // The grant-reconciliation skip short-circuits FIRST: a non-Guest
-    // (Kindoo Manager, `userRole !== 2`) would otherwise compare
-    // `derivedBuildings === []` against the seat's buildings and flag a
-    // spurious `[buildings] vs []` mismatch — the exact false positive
-    // guarding only the demote above would create. Their grant shape is
-    // not "SBA's buildings are wrong"; skip.
+    // Grant reconciliation applies to ALL seat roles (managers can hold
+    // seats); the only skip is "can't classify" — `derivedBuildings ===
+    // null` for auto (and no manual/temp AccessSchedules fallback).
     let kindooBuildingsForCompare: string[] | null = null;
-    if (skipGrantBased) {
-      kindooBuildingsForCompare = null;
-    } else if (kuser.derivedBuildings !== null && kuser.derivedBuildings !== undefined) {
+    if (kuser.derivedBuildings !== null && kuser.derivedBuildings !== undefined) {
       kindooBuildingsForCompare = kuser.derivedBuildings;
     } else if (intended.type === 'manual' || intended.type === 'temp') {
       kindooBuildingsForCompare = ruleIdsToBuildingNames(

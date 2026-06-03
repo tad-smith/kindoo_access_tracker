@@ -745,8 +745,6 @@ describe('getUserAccessRulesWithEntryPoints', () => {
       AccessScheduleID: 0,
       EUID: 'eu1',
       UserID: 'u1',
-      // Guest by default; every RulesList row carries the denormalized role.
-      UserRole: 2,
       ...over,
     };
   }
@@ -786,7 +784,6 @@ describe('getUserAccessRulesWithEntryPoints', () => {
     );
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
     expect(result.rows.map((r) => r.doorId).sort()).toEqual([1001, 1002, 2001]);
-    expect(result.userRole).toBe(2);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -897,21 +894,6 @@ describe('getUserAccessRulesWithEntryPoints', () => {
     const fetchImpl = vi.fn(async () => page([], 0));
     const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
     expect(result.rows).toEqual([]);
-    expect(result.userRole).toBeNull();
-  });
-
-  it('reads UserRole off the first row that carries one (manager === 0)', async () => {
-    const fetchImpl = vi.fn(async () =>
-      page([row({ DoorID: 1001, UserRole: 0 }), row({ DoorID: 1002, UserRole: 0 })], 2),
-    );
-    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result.userRole).toBe(0);
-  });
-
-  it('leaves userRole null when no row carries a numeric UserRole', async () => {
-    const fetchImpl = vi.fn(async () => page([row({ DoorID: 1001, UserRole: undefined })], 1));
-    const result = await getUserAccessRulesWithEntryPoints(SESSION, 'user-1', 27994, fetchImpl);
-    expect(result.userRole).toBeNull();
   });
 });
 

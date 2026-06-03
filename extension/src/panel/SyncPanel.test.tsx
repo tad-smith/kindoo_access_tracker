@@ -192,21 +192,14 @@ describe('SyncPanel', () => {
     expect(enrichUsersWithDerivedBuildingsMock).toHaveBeenCalledTimes(1);
   });
 
-  it('a non-Guest (userRole=0 stamped by enrichment) with an auto seat surfaces NO row', async () => {
-    // End-to-end through the orchestrator: a Kindoo Manager (UserRole 0)
-    // whose Description matches an auto SBA seat must NOT produce a
-    // type-mismatch / buildings-mismatch row. The role is carried on the
-    // per-user door fetch and stamped during enrichment (mocked here).
-    //
-    // The mock models a production-reachable non-Guest that the ROLE GATE
-    // (not the null guard) is what skips: the manager holds a door row
-    // (so userRole=0 IS readable) AND derives a building. With an auto
-    // seat and directGrantBuildings=[], removing the role gate fires the
-    // type-mismatch DEMOTE branch (the seat is no longer church-backed),
-    // which short-circuits before the buildings-mismatch check — so a row
-    // appears and this test fails if the gate regresses. (derivedBuildings
-    // also differs from the seat's two buildings, but the demote preempts
-    // that comparison.) Placeholder email/name.
+  it('a Kindoo Manager auto seat no longer church-backed surfaces a type-mismatch (gate removed)', async () => {
+    // End-to-end through the orchestrator: a Kindoo Manager whose
+    // Description matches an auto SBA seat. With the Guest gate removed,
+    // grant reconciliation applies to managers too: the seat's buildings
+    // are not direct-granted (directGrantBuildings=[]) so the auto seat
+    // is no longer church-backed → DEMOTE to manual (type-mismatch). The
+    // demote short-circuits before the buildings-mismatch check, so one
+    // row appears. Placeholder email/name.
     const user = userEvent.setup();
     const b = bundle();
     b.wards.push({
@@ -241,13 +234,11 @@ describe('SyncPanel', () => {
         accessSchedules: [],
       },
     ]);
-    // Realistic non-Guest enrichment: userRole=0 read off a door row, a
-    // derived building present (differs from the seat → would be a
-    // buildings-mismatch but for the role gate).
+    // A derived building present (differs from the seat) and no direct
+    // grants → the auto seat is no longer church-backed.
     enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
       users.map((u: Record<string, unknown>) => ({
         ...u,
-        userRole: 0,
         derivedBuildings: ['Maple Building'],
         directGrantBuildings: [],
       })),
@@ -255,8 +246,9 @@ describe('SyncPanel', () => {
     await renderSync();
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
-    // No discrepancy row rendered for the manager.
-    expect(screen.queryByTestId('sba-sync-row-manager@example.com')).not.toBeInTheDocument();
+    const row = screen.getByTestId('sba-sync-row-manager@example.com');
+    expect(row).toHaveTextContent('type-mismatch');
+    expect(screen.getByTestId('sba-sync-fix-update-sba-manager@example.com')).not.toBeDisabled();
   });
 
   it('renders an empty-report message when both sides agree', async () => {
@@ -428,11 +420,6 @@ describe('SyncPanel', () => {
       expiryDateAtTimeZone: null,
       expiryTimeZone: 'Mountain Standard Time',
       accessSchedules: [{ ruleId: 6248 }],
-      // Guest by default → in scope for grant-based reconciliation, so
-      // the *-mismatch fix-action tests below surface their rows. Tests
-      // for non-Guests / unknown role stamp userRole via the enrichment
-      // mock instead (it spreads this user, so an explicit value wins).
-      userRole: 2,
       ...overrides,
     };
   }
@@ -816,10 +803,10 @@ describe('SyncPanel', () => {
     expect(screen.queryByTestId('sba-sync-fix-update-kindoo-autonull@example.com')).toBeNull();
   });
 
-  it('kindoo-unparseable (Guest, home site, unaligned) renders an Update SBA button', async () => {
-    // Guest (userRole 2 default), home site (eid matches), seat at ward
-    // scope so NOT aligned with the stake-scope target → drift; offers
-    // Update SBA (church-wide stake-scope calling).
+  it('kindoo-unparseable (home site, unaligned) renders an Update SBA button', async () => {
+    // Home site (eid matches), seat at ward scope so NOT aligned with the
+    // stake-scope target → drift; offers Update SBA (church-wide
+    // stake-scope calling).
     const b = bundle();
     b.seats.push(autoSeat('weird@example.com') as never);
     getSyncDataMock.mockResolvedValue(b);
@@ -836,27 +823,25 @@ describe('SyncPanel', () => {
     expect(screen.getByTestId('sba-sync-fix-update-sba-weird@example.com')).toBeInTheDocument();
   });
 
-  it('kindoo-unparseable (non-Guest manager, home site) renders review-only with no buttons', async () => {
-    // A Kindoo Manager (non-Guest) with an unparseable description who
-    // also holds an SBA seat: emitted as review, no action button. The
-    // enrichment mock stamps userRole=0 so skipGrantReconciliation is true.
+  it('kindoo-unparseable (Kindoo Manager, home site) renders Update SBA (gate removed)', async () => {
+    // A Kindoo Manager with an unparseable description who also holds an
+    // SBA seat: with the Guest gate removed, this is an actionable drift
+    // (Update SBA), the same as any other seat role. Managers can hold
+    // seats too.
     const b = bundle();
     b.seats.push(autoSeat('manager@example.com') as never);
     getSyncDataMock.mockResolvedValue(b);
     listAllEnvironmentUsersMock.mockResolvedValue([
       kuser('manager@example.com', { description: 'Kindoo Manager - Stake Clerk' }),
     ]);
-    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
-      users.map((u: Record<string, unknown>) => ({ ...u, userRole: 0 })),
-    );
     const user = userEvent.setup();
     await renderSync();
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
 
     const row = screen.getByTestId('sba-sync-row-manager@example.com');
-    expect(row).toHaveAttribute('data-severity', 'review');
-    expect(screen.queryByTestId('sba-sync-fix-update-sba-manager@example.com')).toBeNull();
+    expect(row).toHaveAttribute('data-severity', 'drift');
+    expect(screen.getByTestId('sba-sync-fix-update-sba-manager@example.com')).toBeInTheDocument();
   });
 
   it('kindoo-no-description (blank) renders review-only with no fix buttons', async () => {
