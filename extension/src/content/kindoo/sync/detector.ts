@@ -36,6 +36,7 @@ export type DiscrepancyCode =
   | 'sba-only'
   | 'kindoo-only'
   | 'kindoo-unparseable'
+  | 'kindoo-no-description'
   | 'scope-mismatch'
   | 'type-mismatch'
   | 'buildings-mismatch'
@@ -638,15 +639,41 @@ export function detect(inputs: DetectInputs): DetectResult {
 
     const parsed = parseDescription(kuser.description, inputs.stake, inputs.wards);
 
-    // 3. kindoo-unparseable — description does not parse at all.
+    // 3. Description doesn't resolve. Two cases — split on whether any
+    //    text is present:
+    //
+    //    a) Blank (`segments.length === 0`) — nothing to reconcile. This
+    //       is the ONE remaining review-only code: no SBA-side action can
+    //       be derived from an empty description, so the operator decides
+    //       manually. `kindoo-no-description`, severity `review`.
+    //
+    //    b) Present-but-unparseable (`segments.length > 0`, none resolve)
+    //       — text exists but doesn't match `Scope (Calling)`. We treat it
+    //       as a church-wide (stake-scope) calling and offer Update SBA:
+    //       the callable moves the seat to stake scope and sets the calling
+    //       from the raw description. `kindoo-unparseable`, severity
+    //       `drift`. The kindoo block stays populated so the dispatcher can
+    //       read the raw description.
     if (parsed.unparseable) {
+      if (parsed.segments.length === 0) {
+        discrepancies.push({
+          canonical: canon,
+          displayEmail,
+          code: 'kindoo-no-description',
+          severity: 'review',
+          reason: 'Kindoo description is blank — nothing to reconcile; manual review.',
+          sba: sbaBlock,
+          kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
+        });
+        continue;
+      }
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'kindoo-unparseable',
-        severity: 'review',
+        severity: 'drift',
         reason:
-          "Kindoo description does not match the 'Scope (Calling)' convention; cannot classify intended seat shape.",
+          "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA.",
         sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
       });
@@ -656,12 +683,14 @@ export function detect(inputs: DetectInputs): DetectResult {
     const primary = pickRelevantSegment(parsed);
     if (!primary) {
       // Shouldn't be reachable when unparseable=false and the filter
-      // already kept this user, but be defensive.
+      // already kept this user, but be defensive. Text is present (some
+      // segment resolved), so this is treated like present-but-unparseable
+      // — drift, Update SBA available.
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'kindoo-unparseable',
-        severity: 'review',
+        severity: 'drift',
         reason: 'Kindoo description has no resolvable primary segment.',
         sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
@@ -816,7 +845,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           canonical: canon,
           displayEmail,
           code: 'extra-kindoo-calling',
-          severity: 'review',
+          severity: 'drift',
           reason: `Kindoo lists calling(s) [${extraCallings.join(', ')}] beyond SBA's seat callings [${knownLabel}]; add the missing calling(s) to the SBA seat.`,
           sba: sbaBlock,
           kindoo: buildKindooBlock(

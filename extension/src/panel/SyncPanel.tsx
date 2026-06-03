@@ -86,6 +86,7 @@ const CODE_FILTER_OPTIONS: readonly DiscrepancyCode[] = [
   'sba-only',
   'kindoo-only',
   'kindoo-unparseable',
+  'kindoo-no-description',
   'scope-mismatch',
   'type-mismatch',
   'buildings-mismatch',

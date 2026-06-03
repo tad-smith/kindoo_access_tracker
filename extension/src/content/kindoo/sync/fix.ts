@@ -50,8 +50,11 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
     case 'extra-kindoo-calling':
       // Auto seats only by construction (the detector suppresses this
       // code for manual / temp). The `syncApplyFix` path appends to the
-      // roster `callings[]`, which is the auto-seat shape.
-      return [{ side: 'sba', label: 'Add to SBA seat', testId: 'add-callings-sba' }];
+      // roster `callings[]`, which is the auto-seat shape. The testId
+      // stays `add-callings-sba` (the underlying append path is
+      // unchanged); only the user-facing label matches the other
+      // Update-SBA buttons.
+      return [{ side: 'sba', label: 'Update SBA', testId: 'add-callings-sba' }];
     case 'type-mismatch':
       // Grant-derived type: Kindoo's observed direct grants are the
       // source of truth for `type`, so the only action is to flip the
@@ -62,6 +65,12 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
     case 'buildings-mismatch':
       return [{ side: 'sba', label: 'Update SBA', testId: 'update-sba' }];
     case 'kindoo-unparseable':
+      // Present-but-unparseable: treat as a church-wide stake-scope
+      // calling. The callable moves the seat to stake scope and sets the
+      // calling from the raw description.
+      return [{ side: 'sba', label: 'Update SBA', testId: 'update-sba' }];
+    case 'kindoo-no-description':
+      // Blank description — review-only, no derivable SBA action.
       return [];
   }
 }
@@ -285,7 +294,32 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         fix: { code: 'sba-only', payload: { memberEmail: d.displayEmail } },
       };
     }
-    case 'kindoo-unparseable':
+    case 'kindoo-unparseable': {
+      if (!d.kindoo) throw new Error('kindoo-unparseable row missing Kindoo block');
+      // Present-but-unparseable description → church-wide stake-scope
+      // calling. The callable sets the seat to `scope='stake'` and writes
+      // the calling text from the raw Kindoo description (auto →
+      // `callings[]`, manual/temp → `reason`). The raw description is the
+      // agreed source. Guard against an empty/whitespace value — the
+      // callable rejects an empty `calling`; this shouldn't happen for a
+      // present-but-unparseable row (segments exist only when there's text)
+      // but fail loud rather than send a payload the server will reject.
+      const calling = d.kindoo.description.trim();
+      if (calling.length === 0) {
+        throw new Error('kindoo-unparseable row has an empty Kindoo description');
+      }
+      return {
+        stakeId,
+        fix: {
+          code: 'kindoo-unparseable',
+          payload: { memberEmail: d.displayEmail, calling },
+        },
+      };
+    }
+    case 'kindoo-no-description':
+      // Review-only: a blank description has no SBA-side callable path and
+      // surfaces no action button, so this is never dispatched. Reaching
+      // here means a caller bypassed `fixActionsFor` — fail loud.
       throw new Error(`${d.code} has no SBA-side callable path`);
   }
 }

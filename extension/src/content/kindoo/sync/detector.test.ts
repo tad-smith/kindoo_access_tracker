@@ -336,7 +336,10 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('manual');
   });
 
-  it('emits kindoo-unparseable on a Kindoo Manager-style description', () => {
+  it('emits kindoo-unparseable (drift) on a present-but-unparseable description', () => {
+    // Text is present but doesn't match `Scope (Calling)` — treat as a
+    // church-wide stake-scope calling; Update SBA is offered, so this is
+    // drift, not review.
     const result = detect(
       baseInputs({
         seats: [seat({})],
@@ -345,6 +348,23 @@ describe('detect', () => {
     );
     expect(result.discrepancies).toHaveLength(1);
     expect(result.discrepancies[0]?.code).toBe('kindoo-unparseable');
+    expect(result.discrepancies[0]?.severity).toBe('drift');
+    // The kindoo block stays populated so the dispatcher can read the raw
+    // description.
+    expect(result.discrepancies[0]?.kindoo?.description).toBe('Kindoo Manager - Stake Clerk');
+  });
+
+  it('emits kindoo-no-description (review) on a blank Kindoo description', () => {
+    // Blank description (no segments) — nothing to reconcile; the one
+    // remaining review-only code, no SBA-side action.
+    const result = detect(
+      baseInputs({
+        seats: [seat({})],
+        kindooUsers: [kuser({ description: '' })],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('kindoo-no-description');
     expect(result.discrepancies[0]?.severity).toBe('review');
   });
 
@@ -1027,7 +1047,7 @@ describe('detect', () => {
     expect(result.discrepancies).toHaveLength(1);
     const row = result.discrepancies[0]!;
     expect(row.code).toBe('extra-kindoo-calling');
-    expect(row.severity).toBe('review');
+    expect(row.severity).toBe('drift');
     // Only the calling the seat lacks is the extra; the one it already
     // has is not re-proposed.
     expect(row.kindoo?.extraKindooCallings).toEqual(['Building Janitor']);
@@ -1206,25 +1226,10 @@ describe('detect', () => {
   });
 
   it('sorts drift before review and ties alphabetically by email', () => {
-    const result = detect(
-      baseInputs({
-        seats: [
-          seat({ member_canonical: 'z@example.com', member_email: 'z@example.com' }),
-          seat({ member_canonical: 'a@example.com', member_email: 'a@example.com' }),
-        ],
-        kindooUsers: [
-          // extra-kindoo-calling → review
-          kuser({
-            username: 'z@example.com',
-            description: 'Maple Ward (Sunday School Teacher, Janitor)',
-          }),
-          // matches SBA on a@example.com → no row
-          kuser({ username: 'a@example.com' }),
-        ],
-      }),
-    );
-    // a@example.com matches → no row; z@example.com → review row.
-    // Plus add an sba-only to confirm drift sorts first.
+    // `z@example.com` has a blank Kindoo description → kindoo-no-description
+    // (the one review-severity code). `b-orphan@example.com` is an
+    // sba-only drift row. Drift must sort ahead of review regardless of
+    // email ordering (b < z, but the review row would lose anyway).
     const inputs = baseInputs({
       seats: [
         seat({ member_canonical: 'z@example.com', member_email: 'z@example.com' }),
@@ -1232,19 +1237,17 @@ describe('detect', () => {
         seat({ member_canonical: 'b-orphan@example.com', member_email: 'b-orphan@example.com' }),
       ],
       kindooUsers: [
-        kuser({
-          username: 'z@example.com',
-          description: 'Maple Ward (Sunday School Teacher, Janitor)',
-        }),
+        // blank description → kindoo-no-description (review)
+        kuser({ username: 'z@example.com', description: '' }),
+        // matches SBA on a@example.com → no row
         kuser({ username: 'a@example.com' }),
       ],
     });
     const sorted = detect(inputs);
     expect(sorted.discrepancies[0]?.code).toBe('sba-only');
     expect(sorted.discrepancies[0]?.displayEmail).toBe('b-orphan@example.com');
-    expect(sorted.discrepancies[1]?.code).toBe('extra-kindoo-calling');
-    // (suppress unused-var lint on the helper above)
-    expect(result).toBeDefined();
+    expect(sorted.discrepancies[1]?.code).toBe('kindoo-no-description');
+    expect(sorted.discrepancies[1]?.displayEmail).toBe('z@example.com');
   });
 
   it('canonicalizes Kindoo usernames before joining with seat emails', () => {

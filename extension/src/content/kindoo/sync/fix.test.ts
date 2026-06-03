@@ -71,9 +71,11 @@ describe('fixActionsFor', () => {
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'create-sba' });
   });
 
-  it('extra-kindoo-calling returns one Add to SBA seat action (auto-only by construction)', () => {
+  it('extra-kindoo-calling returns one Update SBA action (auto-only by construction)', () => {
     // The detector only emits extra-kindoo-calling for auto seats; the
-    // callable appends to roster `callings[]`, the auto-seat shape.
+    // callable appends to roster `callings[]`, the auto-seat shape. The
+    // testId stays `add-callings-sba` (unchanged append path); the label
+    // is now Update SBA to match the other actionable drift rows.
     const actions = fixActionsFor(
       discrepancy({
         code: 'extra-kindoo-calling',
@@ -81,7 +83,11 @@ describe('fixActionsFor', () => {
       }),
     );
     expect(actions).toHaveLength(1);
-    expect(actions[0]).toMatchObject({ side: 'sba', testId: 'add-callings-sba' });
+    expect(actions[0]).toMatchObject({
+      side: 'sba',
+      testId: 'add-callings-sba',
+      label: 'Update SBA',
+    });
   });
 
   it('scope-mismatch / buildings-mismatch each return a single Update SBA action', () => {
@@ -100,8 +106,14 @@ describe('fixActionsFor', () => {
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'update-sba' });
   });
 
-  it('kindoo-unparseable returns no actions', () => {
-    expect(fixActionsFor(discrepancy({ code: 'kindoo-unparseable' }))).toEqual([]);
+  it('kindoo-unparseable returns one Update SBA action', () => {
+    const actions = fixActionsFor(discrepancy({ code: 'kindoo-unparseable' }));
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({ side: 'sba', testId: 'update-sba', label: 'Update SBA' });
+  });
+
+  it('kindoo-no-description returns no actions (review-only)', () => {
+    expect(fixActionsFor(discrepancy({ code: 'kindoo-no-description' }))).toEqual([]);
   });
 });
 
@@ -543,9 +555,37 @@ describe('buildCallableInput', () => {
     expect(payload).toEqual({ memberEmail: 'Orphan.Seat@Example.com' });
   });
 
-  it('throws for kindoo-unparseable (no SBA-side callable path)', () => {
+  it('kindoo-unparseable sends the raw Kindoo description as the church-wide calling', () => {
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: 'kindoo-unparseable',
+        displayEmail: 'Weird.User@Example.com',
+        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+        kindoo: kb({ description: '  Stake Technology Specialist  ' }),
+      }),
+    );
+    expect(input.stakeId).toBe('csnorth');
+    expect(input.fix.code).toBe('kindoo-unparseable');
+    expect(input.fix.payload).toEqual({
+      memberEmail: 'Weird.User@Example.com',
+      // Trimmed from the raw Kindoo description.
+      calling: 'Stake Technology Specialist',
+    });
+  });
+
+  it('kindoo-unparseable throws when the Kindoo description is whitespace-only', () => {
     expect(() =>
-      buildCallableInput('csnorth', discrepancy({ code: 'kindoo-unparseable' })),
+      buildCallableInput(
+        'csnorth',
+        discrepancy({ code: 'kindoo-unparseable', kindoo: kb({ description: '   ' }) }),
+      ),
+    ).toThrow(/empty Kindoo description/);
+  });
+
+  it('throws for kindoo-no-description (review-only, no SBA-side callable path)', () => {
+    expect(() =>
+      buildCallableInput('csnorth', discrepancy({ code: 'kindoo-no-description' })),
     ).toThrow();
   });
 });
