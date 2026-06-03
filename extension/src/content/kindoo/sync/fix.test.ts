@@ -106,14 +106,55 @@ describe('fixActionsFor', () => {
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'update-sba' });
   });
 
-  it('kindoo-unparseable returns one Update SBA action', () => {
-    const actions = fixActionsFor(discrepancy({ code: 'kindoo-unparseable' }));
+  it('kindoo-unparseable (drift) returns one Update SBA action', () => {
+    const actions = fixActionsFor(discrepancy({ code: 'kindoo-unparseable', severity: 'drift' }));
     expect(actions).toHaveLength(1);
     expect(actions[0]).toMatchObject({ side: 'sba', testId: 'update-sba', label: 'Update SBA' });
   });
 
-  it('kindoo-no-description returns no actions (review-only)', () => {
-    expect(fixActionsFor(discrepancy({ code: 'kindoo-no-description' }))).toEqual([]);
+  it('kindoo-unparseable (review, non-Guest manager) returns no actions', () => {
+    // A non-Guest present-but-unparseable row is emitted as review; the
+    // review guard suppresses any action so Update SBA can never clobber a
+    // manager's seat.
+    expect(fixActionsFor(discrepancy({ code: 'kindoo-unparseable', severity: 'review' }))).toEqual(
+      [],
+    );
+  });
+
+  it('kindoo-no-description (review) returns no actions', () => {
+    expect(
+      fixActionsFor(discrepancy({ code: 'kindoo-no-description', severity: 'review' })),
+    ).toEqual([]);
+  });
+
+  it('a review kindoo-unparseable with a parens-bearing description offers no action (D)', () => {
+    // The `!primary` defensive branch emits review even though the
+    // description DID parse (carries scope + parens). No action button
+    // means buildCallableInput is never called with it — its
+    // scope-and-parens text can never reach the wire as a `calling`.
+    expect(
+      fixActionsFor(
+        discrepancy({
+          code: 'kindoo-unparseable',
+          severity: 'review',
+          kindoo: kb({ description: 'Maple Ward (Bishop)' }),
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('any review-severity row returns no actions regardless of code (invariant)', () => {
+    // Even a code that is normally actionable yields no buttons when the
+    // detector marked the row review.
+    for (const code of [
+      'scope-mismatch',
+      'type-mismatch',
+      'buildings-mismatch',
+      'extra-kindoo-calling',
+      'kindoo-unparseable',
+    ] as const) {
+      expect(fixActionsFor(discrepancy({ code, severity: 'review' }))).toEqual([]);
+    }
   });
 });
 

@@ -336,14 +336,14 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('manual');
   });
 
-  it('emits kindoo-unparseable (drift) on a present-but-unparseable description', () => {
-    // Text is present but doesn't match `Scope (Calling)` — treat as a
-    // church-wide stake-scope calling; Update SBA is offered, so this is
-    // drift, not review.
+  it('emits kindoo-unparseable (drift) for a Guest present-but-unparseable description', () => {
+    // Guest (userRole 2), text present but doesn't match `Scope (Calling)`
+    // — treat as a church-wide stake-scope calling; Update SBA offered, so
+    // drift. Seat is at ward scope (not aligned), so the row stands.
     const result = detect(
       baseInputs({
         seats: [seat({})],
-        kindooUsers: [kuser({ description: 'Kindoo Manager - Stake Clerk' })],
+        kindooUsers: [kuser({ description: 'Some Church-Wide Calling', userRole: 2 })],
       }),
     );
     expect(result.discrepancies).toHaveLength(1);
@@ -351,7 +351,86 @@ describe('detect', () => {
     expect(result.discrepancies[0]?.severity).toBe('drift');
     // The kindoo block stays populated so the dispatcher can read the raw
     // description.
-    expect(result.discrepancies[0]?.kindoo?.description).toBe('Kindoo Manager - Stake Clerk');
+    expect(result.discrepancies[0]?.kindoo?.description).toBe('Some Church-Wide Calling');
+  });
+
+  it('emits kindoo-unparseable (review) for a non-Guest manager present-but-unparseable (B)', () => {
+    // A Kindoo Manager (non-Guest) who also holds an SBA seat: the row is
+    // FYI only — an actionable Update SBA would clobber their seat. Gated
+    // by `skipGrantReconciliation`, so it surfaces as review (no action).
+    const result = detect(
+      baseInputs({
+        seats: [seat({})],
+        kindooUsers: [kuserRoleUnknown({ description: 'Kindoo Manager - Stake Clerk' })],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('kindoo-unparseable');
+    expect(result.discrepancies[0]?.severity).toBe('review');
+  });
+
+  it('suppresses kindoo-unparseable entirely on a foreign Kindoo site (A)', () => {
+    // Operator contract: "apply to stake scope" is a home/stake concept;
+    // a foreign active site never surfaces a kindoo-unparseable row. The
+    // home-site gate enforces this even for a Guest with an unaligned
+    // seat (and the foreign-site user filter independently drops
+    // unresolved descriptions — belt and suspenders).
+    const result = detect({
+      ...mixedInputs({
+        seats: [seat({ member_canonical: 'fa@example.com', member_email: 'fa@example.com' })],
+        kindooUsers: [
+          kuser({
+            username: 'fa@example.com',
+            description: 'Some Church-Wide Calling',
+            userRole: 2,
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    });
+    expect(result.discrepancies.filter((d) => d.code === 'kindoo-unparseable')).toEqual([]);
+  });
+
+  it('home-site Guest present-but-unparseable: drift when seat NOT aligned, suppressed when aligned (C)', () => {
+    // Not aligned — seat still at ward scope → actionable drift row.
+    const notAligned = detect({
+      ...baseInputs({
+        seats: [seat({ scope: 'CO', type: 'auto', callings: ['Sunday School Teacher'] })],
+        kindooUsers: [kuser({ description: 'Some Church-Wide Calling', userRole: 2 })],
+      }),
+      activeSite: { kind: 'home' },
+    });
+    expect(notAligned.discrepancies).toHaveLength(1);
+    expect(notAligned.discrepancies[0]?.code).toBe('kindoo-unparseable');
+    expect(notAligned.discrepancies[0]?.severity).toBe('drift');
+
+    // Aligned (auto): stake scope + callings === [rawDescription] → no row.
+    const alignedAuto = detect({
+      ...baseInputs({
+        seats: [seat({ scope: 'stake', type: 'auto', callings: ['Some Church-Wide Calling'] })],
+        kindooUsers: [kuser({ description: 'Some Church-Wide Calling', userRole: 2 })],
+      }),
+      activeSite: { kind: 'home' },
+    });
+    expect(alignedAuto.discrepancies).toEqual([]);
+
+    // Aligned (manual): stake scope + reason === rawDescription, callings
+    // empty → no row. Case/whitespace-insensitive.
+    const alignedManual = detect({
+      ...baseInputs({
+        seats: [
+          seat({
+            scope: 'stake',
+            type: 'manual',
+            callings: [],
+            reason: 'some church-wide calling',
+          }),
+        ],
+        kindooUsers: [kuser({ description: '  Some Church-Wide Calling  ', userRole: 2 })],
+      }),
+      activeSite: { kind: 'home' },
+    });
+    expect(alignedManual.discrepancies).toEqual([]);
   });
 
   it('emits kindoo-no-description (review) on a blank Kindoo description', () => {

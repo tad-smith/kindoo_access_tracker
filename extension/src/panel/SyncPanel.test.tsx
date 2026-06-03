@@ -816,14 +816,15 @@ describe('SyncPanel', () => {
     expect(screen.queryByTestId('sba-sync-fix-update-kindoo-autonull@example.com')).toBeNull();
   });
 
-  it('kindoo-unparseable (present-but-unparseable) renders an Update SBA button', async () => {
-    // Text present, doesn't match `Scope (Calling)` → drift; offers
+  it('kindoo-unparseable (Guest, home site, unaligned) renders an Update SBA button', async () => {
+    // Guest (userRole 2 default), home site (eid matches), seat at ward
+    // scope so NOT aligned with the stake-scope target → drift; offers
     // Update SBA (church-wide stake-scope calling).
     const b = bundle();
     b.seats.push(autoSeat('weird@example.com') as never);
     getSyncDataMock.mockResolvedValue(b);
     listAllEnvironmentUsersMock.mockResolvedValue([
-      kuser('weird@example.com', { description: 'Kindoo Manager - Stake Clerk' }),
+      kuser('weird@example.com', { description: 'Some Church-Wide Calling' }),
     ]);
     const user = userEvent.setup();
     await renderSync();
@@ -833,6 +834,29 @@ describe('SyncPanel', () => {
     const row = screen.getByTestId('sba-sync-row-weird@example.com');
     expect(row).toHaveAttribute('data-severity', 'drift');
     expect(screen.getByTestId('sba-sync-fix-update-sba-weird@example.com')).toBeInTheDocument();
+  });
+
+  it('kindoo-unparseable (non-Guest manager, home site) renders review-only with no buttons', async () => {
+    // A Kindoo Manager (non-Guest) with an unparseable description who
+    // also holds an SBA seat: emitted as review, no action button. The
+    // enrichment mock stamps userRole=0 so skipGrantReconciliation is true.
+    const b = bundle();
+    b.seats.push(autoSeat('manager@example.com') as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      kuser('manager@example.com', { description: 'Kindoo Manager - Stake Clerk' }),
+    ]);
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _eid, users) =>
+      users.map((u: Record<string, unknown>) => ({ ...u, userRole: 0 })),
+    );
+    const user = userEvent.setup();
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    const row = screen.getByTestId('sba-sync-row-manager@example.com');
+    expect(row).toHaveAttribute('data-severity', 'review');
+    expect(screen.queryByTestId('sba-sync-fix-update-sba-manager@example.com')).toBeNull();
   });
 
   it('kindoo-no-description (blank) renders review-only with no fix buttons', async () => {

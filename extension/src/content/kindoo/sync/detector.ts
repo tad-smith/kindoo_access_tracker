@@ -495,6 +495,54 @@ export function missingCallings(parenText: string, seatCallings: string[]): stri
   return out;
 }
 
+/**
+ * Home-site predicate for the present-but-unparseable gate. "Apply to
+ * stake scope" is a home-site / stake concept — on a foreign Kindoo site
+ * it's meaningless, so `kindoo-unparseable` is suppressed there entirely
+ * (both the actionable Guest variant and the review non-Guest variant).
+ *
+ * `undefined` (no active-site context — pre-Phase-4 callers / tests that
+ * don't filter) is treated as home-eligible so legacy behaviour is
+ * preserved. `unknown` short-circuits the whole detect to an empty diff
+ * upstream, so it never reaches this predicate; for completeness it is
+ * NOT home.
+ */
+function isHomeSite(activeSite: ActiveSite | undefined): boolean {
+  if (!activeSite) return true;
+  return activeSite.kind === 'home';
+}
+
+/** Case/whitespace-normalized compare of two strings. */
+function eqNormalized(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * Is the SBA seat ALREADY in the state the present-but-unparseable
+ * Update-SBA action would produce? When true, there's no drift — the
+ * actionable `kindoo-unparseable` row is suppressed so it resolves on the
+ * next run like every other drift code.
+ *
+ * "Aligned" = the seat is at stake scope AND the calling text (raw Kindoo
+ * description, trimmed) is recorded per the §13 seat shape:
+ *   - auto         → `callings` equals `[<rawDescription>]`.
+ *   - manual / temp → `reason === <rawDescription>` and `callings` empty.
+ * Comparison is case/whitespace-normalized. `kindoo_site_id` is not
+ * checked — the backend clears it when forcing stake scope.
+ *
+ * Pure function — no I/O.
+ */
+function unparseableAligned(sba: SbaBlock, rawDescription: string): boolean {
+  const calling = rawDescription.trim();
+  if (calling.length === 0) return false;
+  if (sba.scope !== 'stake') return false;
+  if (sba.type === 'auto') {
+    return sba.callings.length === 1 && eqNormalized(sba.callings[0]!, calling);
+  }
+  // manual / temp — calling lives in `reason`, callings cleared.
+  return sba.callings.length === 0 && eqNormalized(sba.reason ?? '', calling);
+}
+
 /** Sort comparator for the final report. */
 function compareDiscrepancies(a: Discrepancy, b: Discrepancy): number {
   // drift first, then review.
@@ -642,18 +690,24 @@ export function detect(inputs: DetectInputs): DetectResult {
     // 3. Description doesn't resolve. Two cases — split on whether any
     //    text is present:
     //
-    //    a) Blank (`segments.length === 0`) — nothing to reconcile. This
-    //       is the ONE remaining review-only code: no SBA-side action can
-    //       be derived from an empty description, so the operator decides
-    //       manually. `kindoo-no-description`, severity `review`.
+    //    a) Blank (`segments.length === 0`) — nothing to reconcile. The
+    //       ONE always-review code: no SBA-side action can be derived from
+    //       an empty description. `kindoo-no-description`, `review`.
     //
     //    b) Present-but-unparseable (`segments.length > 0`, none resolve)
     //       — text exists but doesn't match `Scope (Calling)`. We treat it
-    //       as a church-wide (stake-scope) calling and offer Update SBA:
-    //       the callable moves the seat to stake scope and sets the calling
-    //       from the raw description. `kindoo-unparseable`, severity
-    //       `drift`. The kindoo block stays populated so the dispatcher can
-    //       read the raw description.
+    //       as a church-wide (stake-scope) calling. Three gates, in order:
+    //         A) Home-site only. "Apply to stake scope" is a home/stake
+    //            concept; suppress the row entirely on a foreign site.
+    //         B) Non-Guest (Kindoo Manager / admin) → emit `review` (FYI,
+    //            no action). A manager isn't an SBA-owned grant; an
+    //            actionable Update SBA would clobber their seat.
+    //         C) Guest → actionable `drift`, BUT only when the SBA seat is
+    //            not already in the state Update SBA would produce. Once
+    //            aligned (stake scope + calling recorded per type), suppress
+    //            the row so it resolves like every other drift code.
+    //       The kindoo block stays populated either way so the dispatcher
+    //       can read the raw description.
     if (parsed.unparseable) {
       if (parsed.segments.length === 0) {
         discrepancies.push({
@@ -667,13 +721,21 @@ export function detect(inputs: DetectInputs): DetectResult {
         });
         continue;
       }
+      // A) Foreign site → no unparseable row at all.
+      if (!isHomeSite(inputs.activeSite)) continue;
+      // B) Non-Guest → review-only (no action via the fixActionsFor
+      //    review guard); Guest → actionable.
+      const reviewOnly = skipGrantReconciliation(kuser);
+      // C) Guest already aligned with the stake-scope target → no drift.
+      if (!reviewOnly && unparseableAligned(sbaBlock, kuser.description)) continue;
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'kindoo-unparseable',
-        severity: 'drift',
-        reason:
-          "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA.",
+        severity: reviewOnly ? 'review' : 'drift',
+        reason: reviewOnly
+          ? "Kindoo description doesn't match 'Scope (Calling)' and this is a non-Guest (Manager / admin); review manually."
+          : "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA.",
         sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
       });
@@ -683,15 +745,17 @@ export function detect(inputs: DetectInputs): DetectResult {
     const primary = pickRelevantSegment(parsed);
     if (!primary) {
       // Shouldn't be reachable when unparseable=false and the filter
-      // already kept this user, but be defensive. Text is present (some
-      // segment resolved), so this is treated like present-but-unparseable
-      // — drift, Update SBA available.
+      // already kept this user, but be defensive. Here the description DID
+      // parse (it carries scope + parens, e.g. "Maple Ward (Bishop)") —
+      // routing it to Update SBA would send that whole string as the
+      // `calling` and corrupt the seat. Emit `review` (no action via the
+      // fixActionsFor review guard) instead.
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'kindoo-unparseable',
-        severity: 'drift',
-        reason: 'Kindoo description has no resolvable primary segment.',
+        severity: 'review',
+        reason: 'Kindoo description has no resolvable primary segment; review manually.',
         sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
       });

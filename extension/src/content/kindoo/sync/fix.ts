@@ -39,6 +39,13 @@ export interface FixAction {
 /** Enumerate the fix actions available on a discrepancy row. Order
  * matters — the panel renders them left-to-right in this order. */
 export function fixActionsFor(d: Discrepancy): FixAction[] {
+  // Invariant: a review-severity row is display-only by construction —
+  // it never offers an action button, regardless of code. This guards
+  // the non-Guest present-but-unparseable case (a Kindoo Manager who
+  // also holds an SBA seat is emitted as `kindoo-unparseable` /
+  // `review`, FYI only; Update SBA would clobber their seat) and
+  // future-proofs the model (review ⇒ no action).
+  if (d.severity === 'review') return [];
   switch (d.code) {
     case 'sba-only':
       // Kindoo-authoritative: an SBA seat with no Kindoo presence is an
