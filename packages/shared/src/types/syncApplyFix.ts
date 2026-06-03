@@ -12,8 +12,13 @@
 // through this callable:
 //
 //   - `kindoo-only`            → create a new SBA seat.
-//   - `extra-kindoo-calling`   → append unmatched callings to an
-//                                existing SBA seat's `callings[]`.
+//   - `callings-mismatch`      → REPLACE an auto seat's `callings[]` with
+//                                Kindoo's parsed calling(s) (Kindoo is
+//                                authoritative; a renamed calling replaces
+//                                the old name, it does not sit beside it).
+//                                Sibling of `scope-mismatch` /
+//                                `buildings-mismatch`. Reconciles the
+//                                scope's `importer_callings`.
 //   - `scope-mismatch`         → update seat `scope` only.
 //   - `type-mismatch`          → update seat `type` only.
 //   - `kindoo-unparseable`     → SBA-side update: a present-but-unparseable
@@ -59,13 +64,15 @@ export type KindooOnlyPayload = {
   isTempUser: boolean;
 };
 
-/** Payload for the `extra-kindoo-calling` fix. Appends to existing seat's
- * `callings[]` (de-duped, existing preserved). */
-export type ExtraKindooCallingPayload = {
+/** Payload for the `callings-mismatch` fix. REPLACES an auto seat's
+ * `callings[]` wholesale with Kindoo's parsed calling(s) (Kindoo is
+ * authoritative), then reconciles the scope's `importer_callings`. */
+export type CallingsMismatchPayload = {
   /** Raw (typed) email — server canonicalizes. */
   memberEmail: string;
-  /** Callings to add. Dedup happens server-side. */
-  extraCallings: string[];
+  /** The FULL target set = Kindoo's parsed calling(s). Replaces the
+   * seat's prior `callings[]` (not a delta). Dedup happens server-side. */
+  callings: string[];
 };
 
 /** Payload for the `scope-mismatch` fix (sync direction: kindoo-to-sba). */
@@ -136,7 +143,7 @@ export type SyncApplyFixInput = {
   stakeId: string;
   fix:
     | { code: 'kindoo-only'; payload: KindooOnlyPayload }
-    | { code: 'extra-kindoo-calling'; payload: ExtraKindooCallingPayload }
+    | { code: 'callings-mismatch'; payload: CallingsMismatchPayload }
     | { code: 'scope-mismatch'; payload: ScopeMismatchPayload }
     | { code: 'type-mismatch'; payload: TypeMismatchPayload }
     | { code: 'kindoo-unparseable'; payload: KindooUnparseablePayload }

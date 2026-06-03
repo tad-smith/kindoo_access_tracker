@@ -34,7 +34,7 @@ export type { DuplicateGrant, Seat, SeatType } from './seat.js';
 export type { KindooConfig, OverCapEntry, Stake } from './stake.js';
 export type {
   BuildingsMismatchPayload,
-  ExtraKindooCallingPayload,
+  CallingsMismatchPayload,
   KindooOnlyPayload,
   KindooUnparseablePayload,
   SbaOnlyRemovePayload,

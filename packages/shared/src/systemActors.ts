@@ -49,7 +49,7 @@ export type AutomatedActorName = (typeof AUTOMATED_ACTOR_NAMES)[number];
  * Kindoo presence is an orphan); the rest mutate an existing seat. */
 export const SYNC_DISCREPANCY_CODES = [
   'kindoo-only',
-  'extra-kindoo-calling',
+  'callings-mismatch',
   'scope-mismatch',
   'type-mismatch',
   'kindoo-unparseable',

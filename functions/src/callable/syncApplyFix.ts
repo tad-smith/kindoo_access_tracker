@@ -38,12 +38,20 @@
 //     `{ success: false, error }` so the extension can surface a clean
 //     inline message without trapping a thrown error.
 //
-// Auto-seat bookkeeping: `applyKindooOnly` / `applyExtraKindooCalling`
+// Auto-seat bookkeeping: `applyKindooOnly` / `applyCallingsMismatch`
 // / `applyTypeMismatch` stamp `sort_order` from the matched template's
 // `sheet_order` (via `functions/src/lib/diff.ts:minSheetOrderForCallings`)
-// and upsert the corresponding access doc with `give_app_access` from
+// and reconcile the corresponding access doc with `give_app_access` from
 // the template. `applyScopeMismatch` / `applyBuildingsMismatch` don't
 // touch type or callings, so that bookkeeping doesn't apply to them.
+//
+// `callings-mismatch` REPLACES the auto seat's `callings[]` wholesale to
+// match Kindoo's parsed calling(s) (Kindoo authoritative — a renamed
+// calling replaces the old name, not appended), recomputes `sort_order`,
+// and reconciles the scope's `importer_callings`. Because a replace can
+// REMOVE access (the old callings may have granted a `give_app_access`
+// the new ones don't), the access reconcile writes the new grant set when
+// non-empty and clears `importer_callings[scope]` when empty.
 //
 // Seat shape on type flip (`applyTypeMismatch`, grant-derived
 // promote / demote — see `extension/docs/sync-design.md` "Grant-derived
@@ -63,8 +71,8 @@ import type {
   Access,
   ActorRef,
   BuildingsMismatchPayload,
+  CallingsMismatchPayload,
   CallingTemplate,
-  ExtraKindooCallingPayload,
   KindooManager,
   KindooOnlyPayload,
   KindooUnparseablePayload,
@@ -170,8 +178,8 @@ export const syncApplyFix = onCall(
     switch (code) {
       case 'kindoo-only':
         return applyKindooOnly(stakeId, fix.payload as KindooOnlyPayload);
-      case 'extra-kindoo-calling':
-        return applyExtraKindooCalling(stakeId, fix.payload as ExtraKindooCallingPayload);
+      case 'callings-mismatch':
+        return applyCallingsMismatch(stakeId, fix.payload as CallingsMismatchPayload);
       case 'scope-mismatch':
         return applyScopeMismatch(stakeId, fix.payload as ScopeMismatchPayload);
       case 'type-mismatch':
@@ -295,15 +303,42 @@ async function applyKindooOnly(
   return result;
 }
 
-async function applyExtraKindooCalling(
+/**
+ * `callings-mismatch` — REPLACE an auto seat's `callings[]` with Kindoo's
+ * parsed calling(s) (Kindoo is authoritative). A renamed calling replaces
+ * the old name wholesale (Kindoo `Bishopric Clerk`, seat `Bishop` → seat
+ * becomes `['Bishopric Clerk']`, NOT `['Bishop', 'Bishopric Clerk']`).
+ * Sibling of `scope-mismatch` / `buildings-mismatch`.
+ *
+ * Because a replace can REMOVE access (the old callings may have granted
+ * a `give_app_access` the new ones don't), the scope's access is
+ * reconciled the same way `applyTypeMismatch` does: when the new callings
+ * still earn a grant, `writeAccessForAutoScope` rewrites
+ * `importer_callings[scope]`; when they don't, `clearImporterCallingsForScope`
+ * drops the scope's entry (deleting the doc when both maps go empty,
+ * `manual_grants` always preserved).
+ *
+ * Auto-seat shaped by construction (the detector emits this code for auto
+ * seats only); we still guard on `seat.type === 'auto'`.
+ */
+async function applyCallingsMismatch(
   stakeId: string,
-  payload: ExtraKindooCallingPayload | undefined,
+  payload: CallingsMismatchPayload | undefined,
 ): Promise<SyncApplyFixResult> {
   if (!payload || typeof payload !== 'object') {
     throw new HttpsError('invalid-argument', 'payload required');
   }
   const memberEmail = requireString(payload.memberEmail, 'memberEmail');
-  const extras = cleanStringArray(payload.extraCallings ?? [], 'extraCallings');
+  // The FULL target set = Kindoo's parsed calling(s). A real auto-seat
+  // callings-mismatch always has a target, so an empty set is malformed.
+  const callings = cleanStringArray(payload.callings ?? [], 'callings');
+  if (callings.length === 0) {
+    throw new HttpsError(
+      'invalid-argument',
+      'callings must not be empty — a callings-mismatch always replaces with a non-empty target',
+    );
+  }
+  const newCallings = dedupePreserveOrder(callings);
   const canonical = canonicalEmail(memberEmail);
   if (canonical === '') {
     throw new HttpsError('invalid-argument', 'memberEmail did not canonicalize');
@@ -312,50 +347,51 @@ async function applyExtraKindooCalling(
   const db = getDb();
   const seatRef = db.doc(`stakes/${stakeId}/seats/${canonical}`);
   const accessRef = db.doc(`stakes/${stakeId}/access/${canonical}`);
-  const actor = syncActor('extra-kindoo-calling');
+  const actor = syncActor('callings-mismatch');
 
   return db.runTransaction<SyncApplyFixResult>(async (tx) => {
+    // All reads before any write.
     const snap = await tx.get(seatRef);
     if (!snap.exists) {
       return { success: false, error: 'seat not found' };
     }
     const seat = snap.data() as Seat;
-    const priorCallings = seat.callings ?? [];
-    const merged = dedupePreserveOrder([...priorCallings, ...extras]);
-    if (merged.length === priorCallings.length) {
-      // Nothing to add — every extra is already present. Still treat as
-      // a success so the extension can clear the drift row from its UI.
-      return { success: true, seatId: canonical };
-    }
 
     const update: Record<string, unknown> = {
-      callings: merged,
+      callings: newCallings,
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,
     };
 
-    // PARITY (Importer): auto seats carry a template-driven `sort_order`
-    // and drive `access` doc creation for `give_app_access` templates;
-    // manual / temp seats don't. Skip both for non-auto.
+    // The detector emits this code for auto seats only; the access /
+    // sort_order bookkeeping is auto-shaped. Guard defensively.
     if (seat.type === 'auto') {
       const idx = await loadTemplateIndex(db, tx, stakeId, seat.scope);
-      const newSortOrder = minSheetOrder(idx, merged);
-      if ((seat.sort_order ?? null) !== newSortOrder) {
-        update.sort_order = newSortOrder;
-      }
-      const accessCallings = filterByGiveAppAccess(idx, merged);
+      update.sort_order = minSheetOrder(idx, newCallings);
+
+      // REPLACE can remove access: recompute the grant set from the NEW
+      // callings, then either rewrite the scope's importer_callings or
+      // clear it. Read the access doc before any write.
+      const accessCallings = filterByGiveAppAccess(idx, newCallings);
+      const accessSnap = await tx.get(accessRef);
       if (accessCallings.length > 0) {
-        const accessSnap = await tx.get(accessRef);
-        const priorAccess = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
         writeAccessForAutoScope(tx, accessRef, {
           canonical,
           memberEmail: seat.member_email ?? memberEmail,
           memberName: seat.member_name ?? '',
           scope: seat.scope,
           callings: accessCallings,
-          sortOrder: newSortOrder,
-          priorAccess,
+          sortOrder: update.sort_order as number | null,
+          priorAccess: accessSnap.exists ? (accessSnap.data() as Access) : undefined,
+          actor,
+        });
+      } else if (accessSnap.exists) {
+        // The new callings earn no grant; drop the old scope's entry
+        // (deletes the doc when both maps go empty).
+        clearImporterCallingsForScope(tx, accessRef, {
+          access: accessSnap.data() as Access,
+          scope: seat.scope,
           actor,
         });
       }
@@ -601,7 +637,7 @@ async function applyKindooUnparseable(
       const stakeSort = minSheetOrder(idx, [calling]);
       const stakeHasGrant = filterByGiveAppAccess(idx, [calling]).length > 0;
       // The seat's `sort_order` mirrors the matched stake template's
-      // `sheet_order` (parity with `applyKindooOnly` / `applyExtraKindooCalling`,
+      // `sheet_order` (parity with `applyKindooOnly` / `applyCallingsMismatch`,
       // which stamp it from ANY template match); `null` for a non-template
       // calling. The access grant is gated on `give_app_access` separately.
       update.sort_order = stakeSort;
