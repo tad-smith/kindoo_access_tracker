@@ -699,6 +699,31 @@ export function detect(inputs: DetectInputs): DetectResult {
 
     const parsed = parseDescription(kuser.description, inputs.stake, inputs.wards);
 
+    // Admin (Administrator / Manager) force-auto — HOISTED above the
+    // description-resolve / unparseable section. The seat's type is `auto`
+    // regardless of grant backing OR whether the description parses.
+    // Managers typically carry unparseable descriptions; if the
+    // unparseable-aligned short-circuit (or the foreign-site / no-primary
+    // branches) ran first, a manual admin seat would stay `manual`
+    // forever. So promote here, before any of that:
+    //   - non-auto, non-temp admin seat → PROMOTE to `auto`, then continue.
+    //   - already-auto (or temp) admin seat → fall through, so an
+    //     already-auto admin with an unparseable description still gets the
+    //     `unparseable → stake` / scope / buildings reconciliation.
+    if (role === 'admin' && sbaBlock.type !== 'auto' && sbaBlock.type !== 'temp') {
+      discrepancies.push({
+        canonical: canon,
+        displayEmail,
+        code: 'type-mismatch',
+        severity: 'drift',
+        reason:
+          'Promote to auto: this Kindoo user is an Administrator/Manager (non-Guest), so the seat is church-owned ⇒ auto.',
+        sba: sbaBlock,
+        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets, 'auto'),
+      });
+      continue;
+    }
+
     // 3. Description doesn't resolve. Two cases — split on whether any
     //    text is present:
     //
@@ -784,33 +809,14 @@ export function detect(inputs: DetectInputs): DetectResult {
       continue;
     }
 
-    // 6. type-mismatch — branches on Kindoo role (DepartmentType).
+    // 6. type-mismatch — Guest grant-based PROMOTE / DEMOTE (#188).
     //
-    // Admin (Administrator / Manager): the seat's type is `auto`,
-    // independent of grant backing. If the existing seat is not already
-    // `auto` → PROMOTE to `auto`; if it's already `auto` → no row. The
-    // grant-based promote/demote below is bypassed for admins (it's a
-    // Guest-only signal now). Temp still wins — `temp` is IsTempUser-
-    // driven and orthogonal to role.
-    if (role === 'admin' && sbaBlock.type !== 'temp') {
-      if (sbaBlock.type !== 'auto') {
-        discrepancies.push({
-          canonical: canon,
-          displayEmail,
-          code: 'type-mismatch',
-          severity: 'drift',
-          reason:
-            'Promote to auto: this Kindoo user is an Administrator/Manager (non-Guest), so the seat is church-owned ⇒ auto.',
-          sba: sbaBlock,
-          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, 'auto'),
-        });
-        continue;
-      }
-      // Already auto — no type-mismatch. Fall through to the buildings /
-      // callings checks below (they're not gated on role).
-    }
-
-    // Guest grant-based PROMOTE / DEMOTE (#188).
+    // Admin (Administrator / Manager) force-auto is HOISTED above the
+    // description-resolve section (a non-auto admin already promoted +
+    // continued; an already-auto admin fell through to here, where
+    // `sbaBlock.type === 'auto'` can't promote / demote anyway). So this
+    // block is effectively Guest-only — explicitly gated `role ===
+    // 'guest'` for clarity.
     //
     // `type` is a provenance label: who owns the Kindoo grant — the
     // church (`auto`, SBA writes no rule) or SBA (`manual`). We observe
@@ -828,9 +834,6 @@ export function detect(inputs: DetectInputs): DetectResult {
     //     demote on unknown provenance).
     //   - temp seats are never promoted / demoted — `temp` is
     //     `IsTempUser`-driven, orthogonal to grant provenance.
-    //   - admin seats are handled above and never reach here for the
-    //     type decision (an already-auto admin falls through, but
-    //     `sbaBlock.type === 'auto'` won't promote/demote here anyway).
     const directGrant = kuser.directGrantBuildings ?? null;
     if (role === 'guest' && sbaBlock.type !== 'temp' && directGrant !== null) {
       // `directGrant !== null` here, so `isChurchBacked` reduces to

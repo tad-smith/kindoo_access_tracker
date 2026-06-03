@@ -1022,6 +1022,74 @@ describe('detect', () => {
     expect(result.discrepancies.filter((d) => d.code === 'type-mismatch')).toEqual([]);
   });
 
+  it('admin with an UNPARSEABLE description on an aligned-stake MANUAL seat still PROMOTEs to auto (hoist)', () => {
+    // The gap the reviewer found: a Manager carries an unparseable
+    // description, and the seat is ALREADY at the unparseable-aligned
+    // stake state (scope='stake', type='manual', reason===description,
+    // callings empty). The unparseable-aligned short-circuit would
+    // suppress the row — so the admin force-auto MUST run before it. With
+    // the hoist, the seat promotes to auto.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'stake',
+            type: 'manual',
+            callings: [],
+            reason: 'Manager Service Account',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            DepartmentType: 1,
+            // Unparseable: text present but no `Scope (Calling)` form. Seat
+            // reason mirrors it, so the seat is unparseable-aligned.
+            description: 'Manager Service Account',
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('type-mismatch');
+    expect(row.kindoo?.grantTargetType).toBe('auto');
+    expect(row.reason).toContain('Promote to auto');
+  });
+
+  it('already-auto admin with an unaligned UNPARSEABLE description still falls through to kindoo-unparseable', () => {
+    // An already-auto admin is NOT short-circuited by the hoist (it only
+    // fires for non-auto, non-temp). So an auto admin seat at ward scope
+    // with an unparseable description still surfaces the
+    // `kindoo-unparseable → stake` drift row.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            DepartmentType: 1,
+            description: 'Manager Service Account',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-unparseable');
+    expect(row.severity).toBe('drift');
+  });
+
   it('installer (DepartmentType 3) kindoo-only emits NO row', () => {
     const result = detect(
       baseInputs({
