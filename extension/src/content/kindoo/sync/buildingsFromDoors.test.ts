@@ -209,12 +209,29 @@ describe('enrichUsersWithDerivedBuildings', () => {
     };
   }
 
-  function pageResp(rows: Array<{ DoorID: number; AccessScheduleID?: number }>, total: number) {
+  // A real Church Access Automation grant: AccessScheduleID -1 (NOT 0),
+  // GrantedBy the church automation account.
+  const CHURCH_GRANTED_BY = {
+    DisplayName: 'Church Access Automation',
+    Username: 'sentry@groups.churchofjesuschrist.org',
+    IsSuperApi: true,
+  };
+  // A manager/AccessRule grant: a normal, non-super-API grantor.
+  const RULE_GRANTED_BY = { DisplayName: 'A Manager', IsSuperApi: false };
+
+  // `church` defaults to true — the common direct-grant case. A row with
+  // `church: false` models a manager/AccessRule grant (positive
+  // AccessScheduleID, non-super-API grantor).
+  function pageResp(rows: Array<{ DoorID: number; church?: boolean }>, total: number) {
     return ok({
       CurrentNumberOfRows: rows.length,
       TotalRecordNumber: total,
-      // Default AccessScheduleID 0 (direct grant) when a row omits it.
-      RulesList: rows.map((r) => ({ AccessScheduleID: 0, ...r })),
+      RulesList: rows.map((r) => {
+        const church = r.church ?? true;
+        return church
+          ? { DoorID: r.DoorID, AccessScheduleID: -1, GrantedBy: CHURCH_GRANTED_BY }
+          : { DoorID: r.DoorID, AccessScheduleID: 6248, GrantedBy: RULE_GRANTED_BY };
+      }),
     });
   }
 
@@ -229,8 +246,9 @@ describe('enrichUsersWithDerivedBuildings', () => {
     ]);
     const buildings = [building('Maple Building', 6248), building('Pine Creek Building', 6249)];
 
-    // alice → doors [1, 2] all direct (claims Maple via both derived +
-    // direct); bob → doors [10, 11] all direct (claims Pine Creek).
+    // alice → doors [1, 2] all church-granted (claims Maple via both
+    // derived + direct); bob → doors [10, 11] all church-granted (claims
+    // Pine Creek).
     const responses = new Map<string, ReturnType<typeof pageResp>>();
     responses.set('u1', pageResp([{ DoorID: 1 }, { DoorID: 2 }], 2));
     responses.set('u2', pageResp([{ DoorID: 10 }, { DoorID: 11 }], 2));
@@ -274,17 +292,17 @@ describe('enrichUsersWithDerivedBuildings', () => {
   });
 
   it('a rule-only door is in derivedBuildings but NOT directGrantBuildings', async () => {
-    // Maple's doors [1,2] come via a granting rule (AccessScheduleID
-    // nonzero), not a direct grant. derivedBuildings claims Maple (the
-    // doors are present); directGrantBuildings does not (none direct).
+    // Maple's doors [1,2] come via a granting rule (GrantedBy a normal
+    // manager), not a church grant. derivedBuildings claims Maple (the
+    // doors are present); directGrantBuildings does not (none church).
     const users = [ku({ userId: 'u1', username: 'rule@example.com' })];
     const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
     const buildings = [building('Maple Building', 6248)];
     const fetchImpl = vi.fn(async () =>
       pageResp(
         [
-          { DoorID: 1, AccessScheduleID: 6248 },
-          { DoorID: 2, AccessScheduleID: 6248 },
+          { DoorID: 1, church: false },
+          { DoorID: 2, church: false },
         ],
         2,
       ),
@@ -301,15 +319,18 @@ describe('enrichUsersWithDerivedBuildings', () => {
     expect(enriched[0]?.directGrantBuildings).toEqual([]);
   });
 
-  it('a direct-only door is in BOTH derivedBuildings and directGrantBuildings', async () => {
+  it('a church-only door is in BOTH derivedBuildings and directGrantBuildings', async () => {
+    // The Stake High Councilor case: all doors are church-granted
+    // (Username sentry@…, IsSuperApi, AccessScheduleID -1) — the seat
+    // stays church-backed (non-empty directGrantBuildings → no demote).
     const users = [ku({ userId: 'u1', username: 'direct@example.com' })];
     const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
     const buildings = [building('Maple Building', 6248)];
     const fetchImpl = vi.fn(async () =>
       pageResp(
         [
-          { DoorID: 1, AccessScheduleID: 0 },
-          { DoorID: 2, AccessScheduleID: 0 },
+          { DoorID: 1, church: true },
+          { DoorID: 2, church: true },
         ],
         2,
       ),
@@ -326,9 +347,9 @@ describe('enrichUsersWithDerivedBuildings', () => {
     expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
   });
 
-  it('an overlap door (both rule + direct rows) lands in directGrantBuildings', async () => {
-    // Door 1 emits two rows — one direct, one via rule. Door 2 direct
-    // only. Both are direct-covered, so directGrantBuildings claims
+  it('an overlap door (both rule + church rows) lands in directGrantBuildings', async () => {
+    // Door 1 emits two rows — one church, one via rule. Door 2 church
+    // only. Both are church-covered, so directGrantBuildings claims
     // Maple (the overlap/lag case the design calls out).
     const users = [ku({ userId: 'u1', username: 'overlap@example.com' })];
     const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
@@ -336,9 +357,9 @@ describe('enrichUsersWithDerivedBuildings', () => {
     const fetchImpl = vi.fn(async () =>
       pageResp(
         [
-          { DoorID: 1, AccessScheduleID: 0 },
-          { DoorID: 1, AccessScheduleID: 6248 },
-          { DoorID: 2, AccessScheduleID: 0 },
+          { DoorID: 1, church: true },
+          { DoorID: 1, church: false },
+          { DoorID: 2, church: true },
         ],
         3,
       ),
@@ -355,18 +376,18 @@ describe('enrichUsersWithDerivedBuildings', () => {
     expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
   });
 
-  it('partial direct coverage does NOT claim the rule for directGrantBuildings (strict subset)', async () => {
-    // Maple needs doors [1,2]. The user holds door 1 direct + door 2
+  it('partial church coverage does NOT claim the rule for directGrantBuildings (strict subset)', async () => {
+    // Maple needs doors [1,2]. The user holds door 1 church + door 2
     // via rule only. derivedBuildings claims Maple (both doors present);
-    // directGrantBuildings does NOT (door 2 is not direct).
+    // directGrantBuildings does NOT (door 2 is not church-granted).
     const users = [ku({ userId: 'u1', username: 'partial@example.com' })];
     const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
     const buildings = [building('Maple Building', 6248)];
     const fetchImpl = vi.fn(async () =>
       pageResp(
         [
-          { DoorID: 1, AccessScheduleID: 0 },
-          { DoorID: 2, AccessScheduleID: 6248 },
+          { DoorID: 1, church: true },
+          { DoorID: 2, church: false },
         ],
         2,
       ),
@@ -430,18 +451,32 @@ describe('enrichUsersWithDerivedBuildings', () => {
   });
 });
 
-describe('getUserDoorIds', () => {
-  function pageResp(rows: Array<{ DoorID: number; AccessScheduleID?: number }>, total: number) {
-    return ok({
-      CurrentNumberOfRows: rows.length,
-      TotalRecordNumber: total,
-      RulesList: rows.map((r) => ({ AccessScheduleID: 0, ...r })),
-    });
-  }
+// Church Access Automation grant vs manager/AccessRule grant, expressed
+// via the real GrantedBy shape. `church` defaults to true.
+const CHURCH_GRANTED_BY = {
+  DisplayName: 'Church Access Automation',
+  Username: 'sentry@groups.churchofjesuschrist.org',
+  IsSuperApi: true,
+};
+const RULE_GRANTED_BY = { DisplayName: 'A Manager', IsSuperApi: false };
 
+function grantPageResp(rows: Array<{ DoorID: number; church?: boolean }>, total: number): Response {
+  return ok({
+    CurrentNumberOfRows: rows.length,
+    TotalRecordNumber: total,
+    RulesList: rows.map((r) => {
+      const church = r.church ?? true;
+      return church
+        ? { DoorID: r.DoorID, AccessScheduleID: -1, GrantedBy: CHURCH_GRANTED_BY }
+        : { DoorID: r.DoorID, AccessScheduleID: 6248, GrantedBy: RULE_GRANTED_BY };
+    }),
+  });
+}
+
+describe('getUserDoorIds', () => {
   it('flattens paginated grants into a Set of DoorIDs', async () => {
     const fetchImpl = vi.fn(async () =>
-      pageResp([{ DoorID: 1001 }, { DoorID: 1002 }, { DoorID: 1003, AccessScheduleID: 6248 }], 3),
+      grantPageResp([{ DoorID: 1001 }, { DoorID: 1002 }, { DoorID: 1003, church: false }], 3),
     );
     const result = await getUserDoorIds(SESSION, 'user-1', 27994, fetchImpl);
     expect(result).toEqual(new Set([1001, 1002, 1003]));
@@ -449,10 +484,10 @@ describe('getUserDoorIds', () => {
 
   it('dedupes door ids that appear under multiple access schedules', async () => {
     const fetchImpl = vi.fn(async () =>
-      pageResp(
+      grantPageResp(
         [
-          { DoorID: 1001, AccessScheduleID: 6248 },
-          { DoorID: 1001, AccessScheduleID: 6250 },
+          { DoorID: 1001, church: false },
+          { DoorID: 1001, church: false },
         ],
         2,
       ),
@@ -462,28 +497,20 @@ describe('getUserDoorIds', () => {
   });
 
   it('returns an empty set when the user has no grants', async () => {
-    const fetchImpl = vi.fn(async () => pageResp([], 0));
+    const fetchImpl = vi.fn(async () => grantPageResp([], 0));
     const result = await getUserDoorIds(SESSION, 'user-1', 27994, fetchImpl);
     expect(result).toEqual(new Set());
   });
 });
 
 describe('getUserDoorGrants', () => {
-  function pageResp(rows: Array<{ DoorID: number; AccessScheduleID?: number }>, total: number) {
-    return ok({
-      CurrentNumberOfRows: rows.length,
-      TotalRecordNumber: total,
-      RulesList: rows.map((r) => ({ AccessScheduleID: 0, ...r })),
-    });
-  }
-
-  it('partitions rows into all-doors and direct-only door sets', async () => {
+  it('partitions rows into all-doors and church-only door sets', async () => {
     const fetchImpl = vi.fn(async () =>
-      pageResp(
+      grantPageResp(
         [
-          { DoorID: 1, AccessScheduleID: 0 }, // direct
-          { DoorID: 2, AccessScheduleID: 6248 }, // rule-derived
-          { DoorID: 3, AccessScheduleID: 0 }, // direct
+          { DoorID: 1, church: true }, // church
+          { DoorID: 2, church: false }, // rule-derived
+          { DoorID: 3, church: true }, // church
         ],
         3,
       ),
@@ -493,12 +520,12 @@ describe('getUserDoorGrants', () => {
     expect(direct).toEqual(new Set([1, 3]));
   });
 
-  it('counts an overlap door (both direct + rule rows) as direct', async () => {
+  it('counts an overlap door (both church + rule rows) as church-granted', async () => {
     const fetchImpl = vi.fn(async () =>
-      pageResp(
+      grantPageResp(
         [
-          { DoorID: 1, AccessScheduleID: 6248 },
-          { DoorID: 1, AccessScheduleID: 0 },
+          { DoorID: 1, church: false },
+          { DoorID: 1, church: true },
         ],
         2,
       ),
@@ -509,18 +536,18 @@ describe('getUserDoorGrants', () => {
   });
 
   it('returns empty sets when the user has no grants', async () => {
-    const fetchImpl = vi.fn(async () => pageResp([], 0));
+    const fetchImpl = vi.fn(async () => grantPageResp([], 0));
     const { all, direct } = await getUserDoorGrants(SESSION, 'user-1', 27994, fetchImpl);
     expect(all).toEqual(new Set());
     expect(direct).toEqual(new Set());
   });
 
-  it('direct set is empty when every row is rule-derived', async () => {
+  it('church set is empty when every row is rule-derived', async () => {
     const fetchImpl = vi.fn(async () =>
-      pageResp(
+      grantPageResp(
         [
-          { DoorID: 1, AccessScheduleID: 6248 },
-          { DoorID: 2, AccessScheduleID: 6249 },
+          { DoorID: 1, church: false },
+          { DoorID: 2, church: false },
         ],
         2,
       ),

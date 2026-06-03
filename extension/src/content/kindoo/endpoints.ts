@@ -218,8 +218,8 @@ export interface KindooEnvironmentUser {
    */
   derivedBuildings?: string[] | null;
   /**
-   * Buildings whose rule the user holds via Church Access Automation
-   * **direct grants only** (`AccessScheduleID === 0` door rows). Set by
+   * Buildings whose rule the user holds via doors granted by the Church
+   * Access Automation **only** (church-granted door rows). Set by
    * the Sync orchestrator BEFORE `detect()`, computed alongside
    * `derivedBuildings` from the same per-user fetch. Drives the
    * grant-based seat-type decision (a seat is church-backed iff every
@@ -764,13 +764,40 @@ export async function getEnvironmentRuleWithEntryPoints(
   return { ruleId: id, ruleName: name, selectedDoorIds, allDoors };
 }
 
+/**
+ * Stable account the Church Access Automation grants doors under. A door
+ * granted by this account (or by any super-API grantor) is a church
+ * **direct** grant; everything else is a manager/AccessRule grant.
+ */
+export const CHURCH_AUTOMATION_USERNAME = 'sentry@groups.churchofjesuschrist.org';
+
 /** One door-grant row off
  * `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints`.
- * `accessScheduleId === 0` indicates a direct grant (Church Access
- * Automation); non-zero ids point back at an AccessRule. */
+ * `churchGranted` is the auto/manual provenance signal: true when the
+ * door was granted by the Church Access Automation (the door's
+ * `GrantedBy` is the church automation account or a super-API grantor),
+ * false when it came via an SBA/manager AccessRule. AccessScheduleID is
+ * NOT the signal — real church grants carry `AccessScheduleID: -1`, not
+ * 0. */
 export interface UserDoorGrantRow {
   doorId: number;
-  accessScheduleId: number;
+  churchGranted: boolean;
+}
+
+/**
+ * Whether a raw door-grant row was granted by the Church Access
+ * Automation. The grantor — not the AccessScheduleID — is the
+ * auto/manual signal: the church automation account
+ * (`CHURCH_AUTOMATION_USERNAME`) or any super-API grantor
+ * (`GrantedBy.IsSuperApi === true`). We already request grantor data
+ * via `FetchGrantedByData: 'true'`.
+ */
+function isChurchGrantedRow(r: Record<string, unknown>): boolean {
+  const grantedBy = r.GrantedBy;
+  if (typeof grantedBy !== 'object' || grantedBy === null) return false;
+  const g = grantedBy as Record<string, unknown>;
+  if (g.Username === CHURCH_AUTOMATION_USERNAME) return true;
+  return g.IsSuperApi === true;
 }
 
 /**
@@ -782,14 +809,14 @@ export interface UserDoorGrantRow {
  * Loops `start = 0, 40, 80, …` (Kindoo's per-user page size) until a
  * short page or `TotalRecordNumber` terminates.
  *
- * **One row per door, preferring the direct grant.** A door granted by
- * both a rule and a Church Access Automation direct grant emits two
- * rows; we collapse to one per `doorId`, but if ANY of a door's rows is
- * direct (`AccessScheduleID === 0`) the collapsed row carries
- * `accessScheduleId: 0`. This keeps the door SET correct for
- * `getUserDoorIds` while making the direct-grant signal
- * order-independent for the grant-based seat-type detector (a rule row
- * arriving before the direct row must not mask the direct grant).
+ * **One row per door, preferring the church grant.** A door granted by
+ * both a rule and the Church Access Automation emits two rows; we
+ * collapse to one per `doorId`, but if ANY of a door's rows is
+ * church-granted the collapsed row carries `churchGranted: true`. This
+ * keeps the door SET correct for `getUserDoorIds` while making the
+ * church-grant signal order-independent for the grant-based seat-type
+ * detector (a rule row arriving before the church row must not mask the
+ * church grant).
  */
 export async function getUserAccessRulesWithEntryPoints(
   session: KindooSession,
@@ -844,14 +871,14 @@ export async function getUserAccessRulesWithEntryPoints(
       const r = entry as Record<string, unknown>;
       const did = r.DoorID;
       if (typeof did !== 'number') continue;
-      const asid = typeof r.AccessScheduleID === 'number' ? r.AccessScheduleID : 0;
+      const churchGranted = isChurchGrantedRow(r);
       const existing = byDoor.get(did);
       if (existing === undefined) {
-        byDoor.set(did, { doorId: did, accessScheduleId: asid });
-      } else if (asid === 0 && existing.accessScheduleId !== 0) {
-        // A direct grant for a door first seen via a rule — upgrade so
-        // the direct signal survives regardless of row order.
-        existing.accessScheduleId = 0;
+        byDoor.set(did, { doorId: did, churchGranted });
+      } else if (churchGranted && !existing.churchGranted) {
+        // A church grant for a door first seen via a rule — upgrade so
+        // the church signal survives regardless of row order.
+        existing.churchGranted = true;
       }
     }
     if (list.length < PAGE_SIZE) break;

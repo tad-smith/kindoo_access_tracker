@@ -18,9 +18,9 @@
 //   - `derivedBuildings` — strict-subset over ALL of the user's doors
 //     (direct + rule-derived). The authoritative effective-access set.
 //   - `directGrantBuildings` — strict-subset over only the doors held
-//     via a Church Access Automation DIRECT grant (`accessScheduleId
-//     === 0`). Drives the grant-based seat-type decision: a seat is
-//     church-backed iff every one of its buildings is direct-granted.
+//     via a grant from the Church Access Automation (`churchGranted`
+//     rows). Drives the grant-based seat-type decision: a seat is
+//     church-backed iff every one of its buildings is church-granted.
 //
 // `buildRuleDoorMap` + `getUserDoorGrants` do the I/O;
 // `deriveEffectiveRuleIds` + `derivedBuildingNames` are pure and
@@ -57,8 +57,8 @@ export async function buildRuleDoorMap(
 
 /**
  * Fetch the full set of DoorIDs a Kindoo user can open. Includes both
- * rule-derived grants AND Church Access Automation direct grants
- * (`AccessScheduleID === 0` rows).
+ * rule-derived grants AND Church Access Automation grants — every door
+ * regardless of grantor.
  */
 export async function getUserDoorIds(
   session: KindooSession,
@@ -73,14 +73,14 @@ export async function getUserDoorIds(
 /**
  * Partition a user's door-grant rows into two door sets in a SINGLE
  * fetch:
- *   - `all` — every DoorID the user can open (direct + rule-derived).
- *   - `direct` — only the DoorIDs the user holds via a Church Access
- *     Automation **direct grant** (`accessScheduleId === 0` rows).
+ *   - `all` — every DoorID the user can open (church + rule-derived).
+ *   - `direct` — only the DoorIDs the user holds via a grant from the
+ *     Church Access Automation (`churchGranted` rows).
  *
- * Rows are one-per-(door, source), so a door granted by both a rule
- * AND a direct grant appears in both forms; it lands in `all` (always)
- * and in `direct` (because at least one of its rows is direct). The
- * enrichment worker uses `all` for `derivedBuildings` and `direct` for
+ * Rows are one-per-door (collapsed church-preferring), so a door
+ * granted by both a rule AND the church lands in `all` (always) and in
+ * `direct` (its collapsed row is `churchGranted`). The enrichment
+ * worker uses `all` for `derivedBuildings` and `direct` for
  * `directGrantBuildings` (the grant-based seat-type decision).
  */
 export async function getUserDoorGrants(
@@ -94,7 +94,7 @@ export async function getUserDoorGrants(
   const direct = new Set<number>();
   for (const r of rows) {
     all.add(r.doorId);
-    if (r.accessScheduleId === 0) direct.add(r.doorId);
+    if (r.churchGranted) direct.add(r.doorId);
   }
   return { all, direct };
 }
