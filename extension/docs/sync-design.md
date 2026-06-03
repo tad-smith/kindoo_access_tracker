@@ -18,7 +18,7 @@ This doc covers Phase 1 in detail. Phase 2 is outlined and gets its own design p
 3. **Trigger:** explicit operator click only. No periodic/background sync.
 4. **Performance:** batch read all data, render the report in one shot when reads complete. Show a spinner during the read. No streaming.
 5. **Unparseable descriptions** (don't match `Scope (Calling)[ | Scope (Calling)]`): originally flagged for review with no action. **Superseded in Stage 2** — now split on blank-vs-present. A **blank** Description stays review-only (`kindoo-no-description`). A **present-but-unparseable** Description is treated as a church-wide stake-scope calling and gets an actionable Update-SBA `kindoo-unparseable` drift row, for **every seat role**, on the **home site**, when the seat **isn't already stake-aligned**; a foreign site or an already-aligned seat emits no row, and the defensive parsed-but-no-primary case is review. *(The Stage 2 increment that emitted a review-only `kindoo-unparseable` for non-Guests — PR #184 — was **superseded by PR #187**: the Guest gate is gone, so present-but-unparseable is actionable drift for everyone. See the discrepancy catalogue + fix-action catalogue below.)*
-6. **Kindoo Manager accounts** (manager's own account + any other Kindoo Manager): their descriptions *often* don't fit the convention (e.g. `Kindoo Manager - Stake Clerk account`), so they typically fall through to "unparseable" naturally. **~~Managers are detected by their Kindoo seat role and skipped from grant-based reconciliation.~~ Superseded by PR #187 — there is no Kindoo-role gate.** Grant-based reconciliation (`type-mismatch` promote/demote AND `buildings-mismatch`) and the `kindoo-unparseable` Update-SBA now apply to **all seat roles**, managers included. The operator's decision: managers can legitimately hold seats, and the role-from-door-rows signal mis-skipped a real church-granted Guest whose `UserRole` read as `undefined` from empty door rows. The `skipGrantReconciliation` predicate, the `userRole` field/plumbing, and `KINDOO_GUEST_ROLE` were removed. The only remaining safety is the per-check provenance-unknown skip: a failed per-user door fetch leaves `directGrantBuildings` / `derivedBuildings` `null`, and the relevant check is skipped rather than spuriously demoting a user we can't classify (a successful fetch with zero rows yields `[]`, not `null`, and demotes normally). SBA still *provisions* every seat as a Guest (`UserRole: 2` on the invite wire shape) — only the detector's role-**reading** was removed.
+6. **Kindoo Manager accounts** (manager's own account + any other Kindoo Manager): their descriptions *often* don't fit the convention (e.g. `Kindoo Manager - Stake Clerk account`), so they typically fall through to "unparseable" naturally. **~~Managers are detected by their Kindoo seat role and skipped from grant-based reconciliation.~~ Superseded by PR #187 (no Kindoo-role gate), then re-shaped by PR #189 (role branch reintroduced — but on `DepartmentType`, the Kindoo role enum, not the old door-row `UserRole`).** History: PR #181 scoped grant reconciliation to Guests by reading a per-user `UserRole` off the door-grant rows; **PR #187** removed that gate (it mis-skipped a real church-granted Guest whose `UserRole` read as `undefined` from empty door rows — `skipGrantReconciliation`, the `userRole` field/plumbing, and `KINDOO_GUEST_ROLE` were all removed); **PR #189** reintroduced a role branch keyed on the bulk record's `DepartmentType` enum, which is reliably present (unlike the door-row `UserRole`). The current shape: the `kindoo-unparseable` Update-SBA still applies to **all classified roles**; the **grant-based** type decision (`type-mismatch` promote/demote) is **role-branched** — Administrator/Manager (`0`/`1`) force `auto`, Guest (`2`) grant-based, Installer (`3`) skipped entirely (no rows at all). See "Kindoo role (`DepartmentType`)" under "Grant-derived seat type". The per-check provenance-unknown skip is unchanged: a failed per-user door fetch leaves `directGrantBuildings` / `derivedBuildings` `null`, and the relevant Guest check is skipped (a successful fetch with zero rows yields `[]`, not `null`, and demotes normally). SBA still *provisions* every seat as a Guest (`UserRole: 2` on the invite wire shape) — `DepartmentType` is the role read back off the live roster.
 
    *Superseded record (PR #181, the Guest-scoping; PR #184, the non-Guest unparseable-review variant): both gated on Kindoo seat role; both reversed by PR #187. The "Role-based grant-reconciliation scope" implementation note under Stage 1 describes the now-removed mechanism.*
 7. **No backend changes in Phase 1.** All reads go through existing collection-level Firestore reads (already allowed for managers) + the existing paginated Kindoo `GetEnvironmentUsersLight` endpoint.
@@ -118,13 +118,14 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 | SBA side | Kindoo side | Discrepancy code |
 |---|---|---|
 | seat present | no Kindoo user | `sba-only` |
+| (any) | Kindoo user is an **Installer** (`DepartmentType 3`) | (no row of any kind — the user is skipped entirely; see "Kindoo role" below) |
 | no seat | Kindoo user present | `kindoo-only` |
 | seat (any role) | Kindoo user, Description present but unparseable, **home site + not already stake-aligned** | `kindoo-unparseable` (drift — treat as church-wide stake-scope calling, Update SBA) |
 | seat | Kindoo user, Description present but unparseable, **foreign site** | (no row — suppressed; "apply to stake scope" is a home/stake concept) |
 | seat | Kindoo user, Description present but unparseable, **already stake-aligned** | (no row — seat already matches the Update-SBA target, resolves like any drift) |
 | seat | Kindoo user, Description blank (empty / whitespace) | `kindoo-no-description` (review — nothing derivable, no action) |
 | seat | Kindoo user, parsed primary scope ≠ seat.scope | `scope-mismatch` |
-| seat (manual/auto, not temp) | grant-based promote/demote — see Stage 1 (c); applies to all roles, skipped only when `directGrantBuildings === null` (fetch failed) | `type-mismatch` |
+| seat (manual/auto, not temp) | role/grant promote/demote — see Stage 1 (c) + "Kindoo role" below. **Administrator/Manager** (`DepartmentType 0`/`1`) → force `auto` (promote a non-`auto` seat; an already-`auto` seat emits no row). **Guest** (`2`, or role unreadable) → grant-based: promote `manual→auto` on **any** church-direct grant, demote `auto→manual` only on **zero** church-direct grants; skip when `directGrantBuildings === null` (fetch failed). | `type-mismatch` |
 | seat (any type) | Kindoo user, `derivedBuildings` ≠ seat.building_names | `buildings-mismatch` |
 | seat (manual/temp) | Kindoo user, `derivedBuildings === null`, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` (AccessSchedules fallback) |
 | seat (auto) | Kindoo user, `derivedBuildings === null` (per-user derivation failed) | (buildings check skipped — fallback) |
@@ -358,6 +359,41 @@ Two axes that look correlated but aren't (the root of the bug):
 Grants are authoritative for the first; `type` encodes the second. We let observed grants
 *drive* the second under the policy "church grants the doors ⇒ the church owns them ⇒ `auto`."
 
+### Kindoo role (`DepartmentType`) — the first branch (PR #189)
+
+The seat-type decision branches **first** on the Kindoo role, the `DepartmentType` enum carried
+on every bulk environment-user record (verified live against the operator's environment), and
+only falls through to the grant-provenance logic above for **Guests**. `DepartmentType`:
+**0 = Administrator, 1 = Manager, 2 = Guest, 3 = Installer.** The detector's `kindooRole`
+(`detector.ts`) maps the enum to a three-bucket role — `'admin'` (Administrator / Manager),
+`'guest'` (Guest, or any role we couldn't read), `'installer'` — and the `detect()` branches
+key off it. The ruleset, evaluated in order:
+
+0. **Installer (`3`) → not classified.** A 3rd-party access vendor; the loop `continue`s past the
+   user, emitting **no row of any kind** (kindoo-only, type/buildings/callings-mismatch,
+   unparseable, scope-mismatch). The skip sits after the `sba-only` branch (no `kuser`, so it never
+   reaches the skip) and before every branch that needs a live `kuser`, so one `continue` suppresses
+   all installer rows at once. Live installers: `ryan.gard`, `greagmills`.
+1. **Temp (`IsTempUser`) → `temp`.** Time-bound; never promoted / demoted. Orthogonal to role and
+   to grant provenance (unchanged from prior behaviour).
+2. **Administrator (`0`) / Manager (`1`) → `auto`, forced.** A non-Guest role is admin-managed,
+   church-owned access, so the seat is `auto` regardless of grant backing — the Guest grant check is
+   **bypassed**. In the both-sides-present branch this fires a `type-mismatch` PROMOTE when the seat
+   isn't already `auto`; an already-`auto` admin seat emits no type row (it falls through to the
+   buildings / callings checks, which aren't role-gated). Any concrete `DepartmentType` other than
+   `2`/`3` collapses to the `'admin'` bucket (force-auto). A `kindoo-only` admin seat is created
+   `auto`. `undefined` / missing role → `'guest'` (conservative — don't force-auto or skip a user
+   whose role we couldn't read).
+3. **Guest (`2`, or role unreadable) → grant-based**, per "The detector" + the predicate change
+   below: **any** church-direct grant → `auto`; **zero** → `manual`; `null` (fetch failed) → leave
+   unchanged.
+
+Roles 0/1 and 3 are **role-decided, not grant-decided** — only Guests reach the door-grant
+provenance logic. This supersedes the earlier all-roles grant-only model (PRs #179 / #187): the
+demote-everyone behaviour that #187 unblocked was right for Guests but wrong for Admins/Managers
+(whose church-owned access never shows up as guest door grants) and for Installers (not SBA's
+concern at all).
+
 ### Lifecycle (self-healing convergence)
 
 - **Birth:** every seat is born `manual`. (Already true — the request path only mints
@@ -381,12 +417,22 @@ buildings`) and is **insufficient**: it only fires when the church grants doors 
 SBA's rules explain. In the overlap/lag case — SBA wrote a rule **and** the church grants the
 same doors — the door sets coincide, the signal is silent, and the seat never promotes.
 
-The authoritative signal is **church-grant coverage**: the church's grants are the per-door
-rows **granted by the Church Access Automation** — identified by their **grantor**
+The authoritative signal is the member's **church-direct grants**: the per-door rows **granted by
+the Church Access Automation** — identified by their **grantor**
 (`GrantedBy.Username === sentry@groups.churchofjesuschrist.org` or `GrantedBy.IsSuperApi === true`),
-not by `AccessScheduleID` (real church grants carry `AccessScheduleID: -1`). A seat is church-backed
-iff every door of its building's rule is present among the member's church-granted rows — true even
-when an SBA rule covers the same doors.
+not by `AccessScheduleID` (real church grants carry `AccessScheduleID: -1`). These collapse to the
+member's `directGrantBuildings` set (the buildings the church directly grants — observable even when
+an SBA rule covers the same doors).
+
+> **Seat-type predicate, corrected (PR #189).** The Guest seat-type decision is now **"any
+> church-direct grant"**: a Guest is `auto` iff `directGrantBuildings` is **non-empty** (≥1
+> church-direct door), `manual` iff it is `[]`, unchanged iff it is `null`. The earlier rule — "a
+> seat is church-backed iff **every** one of its `building_names` is church-granted" (the
+> all-buildings strict subset) — is **superseded** for the type decision: a single church-direct
+> door now suffices, and the seat's own building set no longer enters it. The building-coverage
+> derivation below (`buildRuleDoorMap` → strict subset) still computes *which* buildings the church
+> grants (`directGrantBuildings`) and still drives `buildings-mismatch`; only the type predicate that
+> reads it changed from subset-of-seat-buildings to non-empty.
 
 **Confirmed — the data was already in hand, no fresh capture needed.** (b)+(c) shipped against the
 existing capture; nothing was pending. (The grantor field is already requested via
@@ -409,10 +455,14 @@ church-granted doors):
 
 1. `churchDoorIds = { r.doorId | r.churchGranted }` for the member.
 2. A building X (→ rule `R_X`, door set from `buildRuleDoorMap`) is **church-granted** iff
-   **every** door of `R_X` ∈ `churchDoorIds` (strict subset; partial coverage ⇒ not
-   church-backed — conservative, matches the existing rule-derivation convention).
-3. A seat is **church-backed** iff every one of its `building_names` is church-granted. Partial
-   coverage on a multi-building seat ⇒ not auto (surface for review rather than guess).
+   **every** door of `R_X` ∈ `churchDoorIds` (strict subset; partial coverage ⇒ that building isn't
+   added to `directGrantBuildings` — conservative, matches the existing rule-derivation convention).
+   The set of all such buildings is `directGrantBuildings`.
+3. **Guest seat-type decision (PR #189):** a Guest is `auto` iff `directGrantBuildings` is
+   **non-empty** (≥1 church-direct building), `manual` iff `[]`, unchanged iff `null`. ~~A seat is
+   church-backed iff every one of its `building_names` is church-granted~~ — the all-buildings subset
+   rule is superseded; the seat's own `building_names` no longer enter the type decision. (Steps 1–2
+   still build `directGrantBuildings`, which drives `buildings-mismatch` unchanged.)
 
 ### Stage 1 — grant classification + sort + soft-deprecation (operator-clicked)
 
@@ -464,14 +514,15 @@ church-grant coverage per building (`directGrantBuildings`); `isChurchBacked` /
 church direct-grant signal is already surfaced by `endpoints.ts`
 (`UserDoorGrantRow.churchGranted`, set by `isChurchGrantedRow` off `GrantedBy`); the detector work
 was to stop collapsing it and partition church-granted from rule-derived (see "Confirmed — the data
-is already in hand" above). **Follow-up
-(superseded by PR #187):** a brief experiment scoped both grant checks to Guests by reading a
-per-user `UserRole` (PR #181), to dodge a false demote on a Kindoo Manager whose Description parsed.
-That gate was removed in PR #187 — it mis-skipped a real church-granted Guest whose `UserRole` read
-as `undefined` from empty door rows, and managers can legitimately hold seats. Grant checks now run
-for all roles; the only skip is the provenance-unknown one (`directGrantBuildings === null` on a
-failed fetch). See the (now-superseded) "Role-based grant-reconciliation scope" implementation note
-below.
+is already in hand" above). The per-seat predicates were **corrected in PR #189** to "any
+church-direct grant" (single argument, non-empty `directGrantBuildings` ⇒ auto) — see "`isChurchBacked`
+/ `grantsBackAuto` (c)" below. **Role-gate history:** a brief experiment scoped both grant checks to
+Guests by reading a per-user `UserRole` (PR #181); **PR #187** removed that gate (it mis-skipped a
+real church-granted Guest whose `UserRole` read as `undefined` from empty door rows); **PR #189**
+reintroduced a role branch on the bulk record's reliable `DepartmentType` enum — the **grant** check
+is now Guest-only (Admin/Manager force `auto`, Installer skipped), while the provenance-unknown skip
+(`directGrantBuildings === null` on a failed fetch) is unchanged. See "Kindoo role (`DepartmentType`)"
+above and the (now-superseded) "Role-based grant-reconciliation scope" implementation note below.
 
 (c) **Switch classification** (extension) — **SHIPPED (PR #179)**. `detector.ts` `type-mismatch`
 emits promote/demote rows driven by the grant predicate, not `intended.type` vs stored type.
@@ -530,18 +581,27 @@ case) since the old dedup kept first-seen. `directGrantBuildings` is then
 church-granted door subset; `enrichUsersWithDerivedBuildings` computes both sets from a single
 fetch (`getUserDoorGrants`) and nulls BOTH on a per-user error.
 
-**`isChurchBacked` (c).** `directGrantBuildings !== null && every seat building ∈
-directGrantBuildings`. A seat with no buildings is vacuously church-backed when the direct set is
-known (no doors the church must own). `null` direct set ⇒ not church-backed (can't determine).
+**`isChurchBacked` / `grantsBackAuto` (c) — corrected (PR #189).** Both now take a single argument
+and reduce to **"any church-direct grant"**: `isChurchBacked(directGrantBuildings) =
+directGrantBuildings !== null && directGrantBuildings.length > 0`, and `grantsBackAuto` is
+identical (kept as a distinct export for the create / promote call sites vs `isChurchBacked` at the
+demote site). The seat's `building_names` are no longer passed in. ~~`every seat building ∈
+directGrantBuildings`~~ — the all-buildings strict-subset predicate (and the vacuously-church-backed
+zero-building edge case it carried) is **gone**. `null` direct set ⇒ not auto (can't determine,
+leave unchanged); `[]` ⇒ manual; non-empty ⇒ auto. This is the Guest path only — Admin/Manager seats
+are forced `auto` and never call these (see "Kindoo role").
 
 **Promote/demote target carrier (c).** The grant-derived target type rides on
 `KindooBlock.grantTargetType` (`'auto'` for promote, `'manual'` for demote; also set on
 `kindoo-only` rows as the created-seat type). `fix.ts` sends THIS as the callable `newType`, never
 `intendedType`. `type-mismatch` throws in the payload builder if `grantTargetType` is absent.
 
-**`kindoo-only` created type + shape (c).** Same rule: temp (`IsTempUser`) → temp; else church-backed
-(evaluated against the building set the new seat would carry — `derivedBuildings` when known, else
-the AccessSchedules fallback) → auto; else manual. The seat is shaped to match the request flow /
+**`kindoo-only` created type + shape (c) — role-branched (PR #189).** The created seat's type:
+temp (`IsTempUser`) → temp; else **Admin** (Administrator / Manager) → `auto` regardless of grant
+backing; else **Guest** → `grantsBackAuto(directGrantBuildings)` → auto when the member holds ANY
+church-direct grant, else manual. The seat's building set no longer enters the type decision (a
+`null` derivation falls through to manual — the born-manual default; we don't mint auto on unknown
+provenance). The seat is shaped to match the request flow /
 `markRequestComplete` (`docs/spec.md` §6.1): an **auto** seat carries the FULL parsed primary-segment
 calling list (matched ∪ unmatched) in `callings[]` and no `reason`; a **manual / temp** seat carries
 `callings: []` and the full parsed calling text in the single free-text `reason`. Writing the
@@ -574,10 +634,12 @@ reconciles the scope's `importer_callings`, so the one-click **"Update SBA"** bu
 **`type-mismatch` fix UI + payload (c).** Kindoo grants are the source of truth for type, so the row
 exposes **only "Update SBA"** — no "Update Kindoo" (the extension can't write church grants;
 revoke-on-promote is Stage 2). `fixActionsFor('type-mismatch')` returns the single SBA action. The
-callable payload carries `newType` (grant-derived target) and, **on PROMOTE only (`newType:
+callable payload carries `newType` (role/grant target) and, **on PROMOTE only (`newType:
 'auto'`), `callings: string[]`** — the full Kindoo-parsed primary-segment calling list (matched ∪
 unmatched). **DEMOTE (`newType: 'manual'`) omits `callings`** — the backend derives `reason` from
-the seat's existing callings.
+the seat's existing callings. PROMOTE now also fires for an Administrator/Manager seat that isn't
+already `auto` (PR #189); the callable payload and write path are identical — only the detector's
+decision to emit the row changed.
 
 **Backend seat-shape on flip (PR #180, landed).** `applyTypeMismatch` (`syncApplyFix.ts`) reshapes
 the seat to the §6.1 convention as it flips `type` — the earlier "until the backend PR lands the
@@ -591,12 +653,14 @@ access doc if both `importer_callings` and `manual_grants` end up empty). The sh
 `TypeMismatchPayload.callings?: string[]` field carries the promote calling list (append-only type
 change).
 
-**Zero-grant seats never auto (b/c).** The seat-type decision uses `grantsBackAuto` (church-backed
-AND ≥1 building), not the raw `isChurchBacked` (which is vacuously true for a zero-building seat).
-A `kindoo-only` user with no door grants (newly added, access revoked) is therefore born **manual**,
-not an empty-building auto seat, and a zero-building `manual` seat is not spuriously promoted.
-Demote keys off `!isChurchBacked` so a degenerate zero-building `auto` seat is not spuriously
-demoted either.
+**Zero-grant Guests never auto (b/c) — restated (PR #189).** Under "any church-direct grant", a
+Guest with `directGrantBuildings === []` (no church-direct grants — newly added, access revoked, or
+all access SBA-provisioned) is `manual`: a `kindoo-only` Guest with no church grant is born
+**manual**, and an existing `auto` Guest seat with zero church grants demotes. A `null` set (fetch
+failed) is left unchanged, never demoted. The earlier "≥1 building / vacuously-church-backed
+zero-building seat" reasoning no longer applies — `grantsBackAuto` and `isChurchBacked` are now the
+same `directGrantBuildings`-non-empty test, and the seat's building set is irrelevant to the type
+decision. (This is Guests only; Admin/Manager seats are forced `auto` regardless of grant count.)
 
 > **⚠ SUPERSEDED by PR #187 — historical record, kept verbatim.** The role gate this note describes
 > (`skipGrantReconciliation`, the `userRole` field/plumbing, `KINDOO_GUEST_ROLE`) was **removed**.
