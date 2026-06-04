@@ -18,8 +18,8 @@
 //       the open state to the new scope's derivation.
 //   - Ward users can expand and check additional buildings (multi-
 //     select).
-//   - Duplicate-warning surfaces when the live seat hook returns a
-//     hit in the same scope.
+//   - Duplicate error surfaces (and Submit is disabled) when the live
+//     seat hook returns a hit in the same scope.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -1158,8 +1158,8 @@ describe('<NewRequestForm /> — reason field is type-conditional', () => {
   });
 });
 
-describe('<NewRequestForm /> — duplicate warning', () => {
-  it('renders the warning when the live seat hook returns a hit in the same scope', async () => {
+describe('<NewRequestForm /> — duplicate error', () => {
+  it('renders the error when the live seat hook returns a hit in the same scope', async () => {
     const user = userEvent.setup();
     useSeatForMemberMock.mockReturnValue(
       liveSeatResult({
@@ -1190,10 +1190,10 @@ describe('<NewRequestForm /> — duplicate warning', () => {
       />,
     );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
-    expect(await screen.findByTestId('new-request-duplicate-warning')).toBeInTheDocument();
+    expect(await screen.findByTestId('new-request-duplicate-error')).toBeInTheDocument();
   });
 
-  it('does not warn when the seat is in a different scope', async () => {
+  it('does not error when the seat is in a different scope', async () => {
     const user = userEvent.setup();
     useSeatForMemberMock.mockReturnValue(
       liveSeatResult({
@@ -1224,7 +1224,50 @@ describe('<NewRequestForm /> — duplicate warning', () => {
       />,
     );
     await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
-    expect(screen.queryByTestId('new-request-duplicate-warning')).toBeNull();
+    expect(screen.queryByTestId('new-request-duplicate-error')).toBeNull();
+  });
+
+  it('disables Submit and blocks the mutation on a same-scope dup hit', async () => {
+    const user = userEvent.setup();
+    useSeatForMemberMock.mockReturnValue(
+      liveSeatResult({
+        member_canonical: 'bob@example.com',
+        member_email: 'bob@example.com',
+        member_name: 'Bob',
+        scope: 'CO',
+        type: 'manual',
+        callings: [],
+        building_names: [],
+        duplicate_grants: [],
+        created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+        last_modified_at: {
+          seconds: 0,
+          nanoseconds: 0,
+          toDate: () => new Date(),
+          toMillis: () => 0,
+        },
+        last_modified_by: { email: 'a@b.c', canonical: 'a@b.c' },
+        lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+      } as Seat),
+    );
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
+      />,
+    );
+    // Fill in every other required field so the dup hit is the only gate
+    // standing between the form and a valid submission.
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    // The dup error is live and the ward default building is ticked.
+    expect(await screen.findByTestId('new-request-duplicate-error')).toBeInTheDocument();
+    const submitBtn = screen.getByTestId('new-request-submit');
+    expect(submitBtn).toBeDisabled();
+    await user.click(submitBtn);
+    expect(submitMock).not.toHaveBeenCalled();
   });
 });
 
