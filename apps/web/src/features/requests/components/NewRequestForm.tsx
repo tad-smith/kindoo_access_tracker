@@ -24,8 +24,10 @@
 //
 // Cross-cutting behaviour:
 //   - `Requesting for:` label / dropdown above the form.
-//   - Inline duplicate warning when a seat already exists for the
-//     entered member in the chosen scope (live via `useSeatForMember`).
+//   - Inline blocking duplicate error when a seat already exists for
+//     the entered member in the chosen scope (live via
+//     `useSeatForMember`): surfaces a client-side error and disables
+//     Submit so a duplicate request can't be created.
 //   - Submit writes a request doc; success → toast + form reset.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -482,15 +484,10 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       </Collapsible>
 
       {dupHit ? (
-        <div
-          className="kd-duplicate-warning"
-          role="status"
-          data-testid="new-request-duplicate-warning"
-        >
-          <Badge variant="warning">Heads up</Badge> {dupHit.member_email} already has a{' '}
-          {dupHit.type} seat in {dupHit.scope}. You can still submit if you mean to; the manager
-          will see the duplicate too.
-        </div>
+        <p className="kd-form-error" role="alert" data-testid="new-request-duplicate-error">
+          <Badge variant="danger">Error</Badge> {dupHit.member_email} already has a {dupHit.type}{' '}
+          seat in {dupHit.scope}. You can&apos;t submit a duplicate request.
+        </p>
       ) : null}
 
       <div className="kd-urgent-block">
@@ -507,7 +504,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       <div className="form-actions">
         <Button
           type="submit"
-          disabled={submit.isPending || watchedBuildings.length === 0}
+          disabled={submit.isPending || watchedBuildings.length === 0 || dupHit != null}
           data-testid="new-request-submit"
         >
           {submit.isPending ? 'Submitting…' : 'Submit request'}
