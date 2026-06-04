@@ -705,7 +705,7 @@ describe('<ManagerQueuePage />', () => {
     expect(screen.queryByTestId('queue-section-outstanding')).toBeNull();
   });
 
-  it('surfaces a duplicate-warning chip on add cards when the member already has a seat', () => {
+  it('blocks an add card with an error and hides Mark Complete when the member already has a seat', () => {
     const requests = [
       makeRequest({
         request_id: 'r1',
@@ -738,7 +738,74 @@ describe('<ManagerQueuePage />', () => {
       }),
     );
     render(<ManagerQueuePage />);
-    expect(screen.getByTestId('queue-duplicate-r1')).toBeInTheDocument();
+    // The blocking error chip is shown (not the old warning chip).
+    expect(screen.getByTestId('queue-duplicate-error-r1')).toBeInTheDocument();
+    expect(screen.queryByTestId('queue-duplicate-r1')).toBeNull();
+    // Mark Complete is suppressed; only Reject remains.
+    expect(screen.queryByTestId('queue-complete-r1')).toBeNull();
+    expect(screen.getByTestId('queue-reject-r1')).toBeInTheDocument();
+  });
+
+  it('keeps Mark Complete on an add card when the member has no existing seat', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    // No seat for this member → no duplicate, no block.
+    useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
+    render(<ManagerQueuePage />);
+    expect(screen.queryByTestId('queue-duplicate-error-r1')).toBeNull();
+    expect(screen.getByTestId('queue-complete-r1')).toBeInTheDocument();
+    expect(screen.getByTestId('queue-reject-r1')).toBeInTheDocument();
+  });
+
+  it('shows no duplicate error on an edit card even when the member already has a seat', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'edit_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+        building_names: ['Maple Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    // An edit completion modifies the existing seat, so a pre-existing
+    // seat is expected — not a duplicate. The error chip must not appear
+    // and Mark Complete stays.
+    useSeatForMemberMock.mockReturnValue(
+      liveDocResult({
+        member_canonical: 'a@x.com',
+        member_email: 'a@x.com',
+        member_name: 'A',
+        scope: 'stake',
+        type: 'manual',
+        callings: [],
+        building_names: ['Maple Building'],
+        duplicate_grants: [],
+        created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+        last_modified_at: {
+          seconds: 0,
+          nanoseconds: 0,
+          toDate: () => new Date(),
+          toMillis: () => 0,
+        },
+        last_modified_by: { email: 'a@b.c', canonical: 'a@b.c' },
+        lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+      }),
+    );
+    render(<ManagerQueuePage />);
+    expect(screen.queryByTestId('queue-duplicate-error-r1')).toBeNull();
+    expect(screen.queryByTestId('queue-duplicate-r1')).toBeNull();
+    expect(screen.getByTestId('queue-complete-r1')).toBeInTheDocument();
+    expect(screen.getByTestId('queue-reject-r1')).toBeInTheDocument();
   });
 });
 

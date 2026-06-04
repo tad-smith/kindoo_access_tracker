@@ -209,10 +209,23 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
   const [completeOpen, setCompleteOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
 
-  // Live duplicate-warning: surface inside the queue card too, not just
-  // the requester's New Request page. Helps the manager see at a glance
-  // whether a complete will collide.
+  // Live duplicate check: surface inside the queue card too, not just
+  // the requester's New Request page.
+  //
+  // For an add request, Mark Complete creates a brand-new one-per-member
+  // seat doc keyed by canonical email, so ANY existing seat (regardless
+  // of scope) guarantees the create throws. We therefore turn the
+  // duplicate signal into a blocking error and suppress Mark Complete
+  // for add types — leaving only Reject.
+  //
+  // Edit completions modify the existing seat in place (All Seats →
+  // markRequestComplete) where an existing seat is expected, and remove
+  // completions target one — so for both an existing seat is normal, not
+  // a duplicate. The chip therefore renders ONLY for add types, gated on
+  // the same `blockedByDuplicate` condition that hides Mark Complete.
   const dup = useSeatForMember(request.member_canonical);
+  const blockedByDuplicate =
+    (request.type === 'add_manual' || request.type === 'add_temp') && !!dup.data;
 
   const reqDate = (() => {
     const ts = request.requested_at as unknown as { toDate?: () => Date };
@@ -315,24 +328,28 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
           <strong>Requester:</strong> {request.requester_email}
         </span>
       </div>
-      {request.type !== 'remove' && dup.data ? (
+      {blockedByDuplicate && dup.data ? (
         <div
-          className="kd-queue-card-warning"
-          data-testid={`queue-duplicate-${request.request_id}`}
+          className="kd-queue-card-error"
+          role="alert"
+          data-testid={`queue-duplicate-error-${request.request_id}`}
         >
-          <Badge variant="warning">Duplicate</Badge> Member already has a {dup.data.type} seat in{' '}
-          {dup.data.scope}.
+          <Badge variant="danger">Error</Badge> Member already has a {dup.data.type} seat in{' '}
+          {dup.data.scope}. This request can&apos;t be completed — reject it, or reconcile via All
+          Seats.
         </div>
       ) : null}
 
       <div className="form-actions">
-        <Button
-          variant="success"
-          onClick={() => setCompleteOpen(true)}
-          data-testid={`queue-complete-${request.request_id}`}
-        >
-          Mark Complete
-        </Button>
+        {blockedByDuplicate ? null : (
+          <Button
+            variant="success"
+            onClick={() => setCompleteOpen(true)}
+            data-testid={`queue-complete-${request.request_id}`}
+          >
+            Mark Complete
+          </Button>
+        )}
         <Button
           variant="danger"
           onClick={() => setRejectOpen(true)}
