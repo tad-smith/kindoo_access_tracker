@@ -34,6 +34,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { UtilizationBar } from '../../../lib/render/UtilizationBar';
 import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
+import { scopeLabel } from '../../../lib/scopeLabel';
 import { summariseAuditRow } from '../auditLog/summarise';
 
 /**
@@ -95,7 +96,11 @@ export function ManagerDashboardPage() {
           buildings={buildings.data ?? []}
           stakeSeatCap={stake.data?.stake_seat_cap}
         />
-        <WarningsCard loading={stake.isLoading} overCaps={stake.data?.last_over_caps_json ?? []} />
+        <WarningsCard
+          loading={stake.isLoading}
+          overCaps={stake.data?.last_over_caps_json ?? []}
+          wards={wards.data ?? []}
+        />
         <RecentActivityCard
           loading={audit.isLoading || audit.data === undefined}
           rows={audit.data ?? []}
@@ -260,9 +265,10 @@ function UtilizationCard({ loading, seats, wards, buildings, stakeSeatCap }: Uti
 interface WarningsCardProps {
   loading: boolean;
   overCaps: readonly OverCapEntry[];
+  wards: readonly Ward[];
 }
 
-function WarningsCard({ loading, overCaps }: WarningsCardProps) {
+function WarningsCard({ loading, overCaps, wards }: WarningsCardProps) {
   if (loading) {
     return (
       <Card data-testid="dashboard-card-warnings">
@@ -297,8 +303,8 @@ function WarningsCard({ loading, overCaps }: WarningsCardProps) {
           {overCaps.map((p) => (
             <li key={p.pool}>
               <span>
-                <strong>{p.pool === 'stake' ? 'Stake' : `Ward ${p.pool}`}</strong>: {p.count} /{' '}
-                {p.cap} (over by {p.over_by})
+                <strong>{scopeLabel(p.pool, wards)}</strong>: {p.count} / {p.cap} (over by{' '}
+                {p.over_by})
               </span>
               <Link to="/manager/seats" search={{ ward: p.pool }}>
                 view

@@ -201,8 +201,9 @@ describe('<ManagerDashboardPage />', () => {
     expect(within(util).getByText(/1 \/ 150 seats used/)).toBeInTheDocument();
   });
 
-  it('renders the warnings card with one row per over-cap pool', async () => {
+  it('renders the warnings card with one row per over-cap pool, ward by name', async () => {
     mockAll({
+      wards: [makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })],
       stake: {
         stake_seat_cap: 200,
         last_over_caps_json: [
@@ -214,7 +215,7 @@ describe('<ManagerDashboardPage />', () => {
     await renderWithRouter();
     const warn = screen.getByTestId('dashboard-card-warnings');
     expect(within(warn).getByText(/Stake/)).toBeInTheDocument();
-    expect(within(warn).getByText(/Ward CO/)).toBeInTheDocument();
+    expect(within(warn).getByText(/Maple/)).toBeInTheDocument();
     expect(within(warn).getByText(/over by 10/)).toBeInTheDocument();
     expect(within(warn).getByText(/over by 2/)).toBeInTheDocument();
   });

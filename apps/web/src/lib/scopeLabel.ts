@@ -41,6 +41,10 @@ export function useScopeLabel(): (scope: string) => string {
     [activeStakeId],
   );
   const wards = useFirestoreCollection<Ward>(wardsQuery);
-  const list = wards.data ?? [];
-  return useMemo(() => (scope: string) => scopeLabel(scope, list), [list]);
+  // Key on `wards.data` (stable per snapshot; `undefined` is a stable
+  // primitive) so the closure only rebuilds when the catalogue changes.
+  return useMemo(() => {
+    const list = wards.data ?? [];
+    return (scope: string) => scopeLabel(scope, list);
+  }, [wards.data]);
 }

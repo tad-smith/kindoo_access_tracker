@@ -262,7 +262,7 @@ describe('<AllSeatsPage />', () => {
     });
     render(<AllSeatsPage initialWard="CO" />);
     const host = screen.getByTestId('allseats-utilization');
-    expect(host).toHaveTextContent(/Ward CO utilization/);
+    expect(host).toHaveTextContent(/Maple utilization/);
     expect(host).toHaveTextContent(/2 \/ 20 seats used/);
   });
 

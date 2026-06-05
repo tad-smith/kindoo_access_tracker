@@ -211,7 +211,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
     ? 'Entire-stake utilization'
     : ward === 'stake'
       ? 'Stake-scope utilization'
-      : `Ward ${ward} utilization`;
+      : `${scopeLabel(ward, wardsList)} utilization`;
   const utilizationTotal = !ward
     ? allSeats.filter((s) => {
         if (s.scope === 'stake') return true;
