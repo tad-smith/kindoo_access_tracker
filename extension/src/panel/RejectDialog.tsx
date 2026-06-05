@@ -41,6 +41,13 @@ export function RejectDialog({ stakeId, request, onCancel, onRejected }: RejectD
       await rejectRequest(stakeId, request.request_id, trimmed);
       onRejected();
     } catch (err) {
+      // Keep the dialog mounted with the error visible — do NOT call
+      // `onRejected` (which dismisses the card + refetches the queue and
+      // would tear this component down before the operator can read the
+      // message). The error persists in local state until they retry or
+      // cancel. Also log grep-ably so the failure survives even if the
+      // inline alert is missed.
+      console.error('[sba-ext] reject failed', err);
       const message =
         err instanceof ExtensionApiError || err instanceof Error ? err.message : String(err);
       setError(message);
