@@ -6,8 +6,13 @@
 //   1. Stake-only user signs in → the form collapses to a static
 //      "Requesting for: Stake" line, no dropdown rendered.
 //   2. Single-ward bishopric user signs in → the form collapses to
-//      "Requesting for: Ward CO", and BA does NOT appear anywhere
-//      in the form (no leak from the wards catalogue).
+//      "Requesting for: <ward name>", and the unheld ward does NOT
+//      appear anywhere in the form (no leak from the wards catalogue).
+//
+// Scopes render the ward NAME (not the code) everywhere they're shown.
+// The seeded ward names are chosen so they don't collide with the
+// "Maple Building" checkbox label (which is always present in the
+// stake-scope building checklist).
 
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -84,7 +89,7 @@ async function seedBaseStake(): Promise<void> {
   // when the wards catalogue carries entries the user does NOT hold.
   await writeDoc('stakes/csnorth/wards/CO', {
     ward_code: 'CO',
-    ward_name: 'Maple',
+    ward_name: 'Cottonwood',
     building_name: 'Maple Building',
     seat_cap: 20,
     lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
@@ -120,11 +125,11 @@ test.describe('B-3 — New Request scope filter mirrors the principal role union
     await expect(form).toContainText(/Requesting for:/i);
     await expect(form).toContainText(/Stake/i);
 
-    // The stake user should NOT see any ward option text in the page,
-    // even though wards CO + BA exist in the catalogue.
+    // The stake user should NOT see any ward name in the page, even
+    // though wards CO (Cottonwood) + BA (Banning) exist in the catalogue.
     const formText = (await form.textContent()) ?? '';
-    expect(formText).not.toMatch(/Ward CO/);
-    expect(formText).not.toMatch(/Ward BA/);
+    expect(formText).not.toMatch(/Cottonwood/);
+    expect(formText).not.toMatch(/Banning/);
   });
 
   test('single-ward bishopric user: scope dropdown is suppressed; only the held ward is offered', async ({
@@ -136,12 +141,12 @@ test.describe('B-3 — New Request scope filter mirrors the principal role union
     await expect(page.getByTestId('new-request-scope')).toHaveCount(0);
     const form = page.getByTestId('new-request-form');
     await expect(form).toContainText(/Requesting for:/i);
-    await expect(form).toContainText(/Ward CO/);
+    await expect(form).toContainText(/Cottonwood/);
 
-    // BA is in the catalogue but NOT in the user role union — must not
-    // surface in the form anywhere.
+    // BA (Banning) is in the catalogue but NOT in the user role union —
+    // must not surface in the form anywhere.
     const formText = (await form.textContent()) ?? '';
-    expect(formText).not.toMatch(/Ward BA/);
+    expect(formText).not.toMatch(/Banning/);
     // And no stake option either — the form's "Requesting for:" prefix
     // would be followed by "Stake" if it surfaced, so a Stake substring
     // is the proxy.

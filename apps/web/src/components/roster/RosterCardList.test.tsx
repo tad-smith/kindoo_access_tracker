@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { RosterCardList } from './RosterCardList';
-import { makeSeat } from '../../../test/fixtures';
+import { makeSeat, makeWard } from '../../../test/fixtures';
 
 describe('RosterCardList', () => {
   it('shows the supplied empty message when no seats are passed', () => {
@@ -95,10 +95,22 @@ describe('RosterCardList', () => {
     expect(cards[2]).toHaveAttribute('data-seat-id', 'c@x.com');
   });
 
-  it('renders the scope chip when showScope is true', () => {
+  it('renders the scope chip with the ward name when showScope is true', () => {
     const seat = makeSeat({ scope: 'CO' });
-    render(<RosterCardList seats={[seat]} showScope />);
-    expect(document.querySelector('.roster-card-scope code')).toHaveTextContent('CO');
+    render(
+      <RosterCardList
+        seats={[seat]}
+        showScope
+        wards={[makeWard({ ward_code: 'CO', ward_name: 'Maple' })]}
+      />,
+    );
+    expect(document.querySelector('.roster-card-scope')).toHaveTextContent('Maple');
+  });
+
+  it('falls back to the raw code in the scope chip when the ward is unresolved', () => {
+    const seat = makeSeat({ scope: 'CO' });
+    render(<RosterCardList seats={[seat]} showScope wards={[]} />);
+    expect(document.querySelector('.roster-card-scope')).toHaveTextContent('CO');
   });
 
   it('does not render the scope chip when showScope is false', () => {

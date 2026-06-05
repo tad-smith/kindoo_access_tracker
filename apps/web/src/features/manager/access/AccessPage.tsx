@@ -15,10 +15,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import type { Access, ManualGrant } from '@kindoo/shared';
+import type { Access, ManualGrant, Ward } from '@kindoo/shared';
 import { useAccessList, useAddManualGrantMutation, useDeleteManualGrantMutation } from './hooks';
 import { compareAccessForCard, compareScopeBand, lookupSheetOrder } from './sort';
 import { useStakeWards } from '../dashboard/hooks';
+import { scopeLabel } from '../../../lib/scopeLabel';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
@@ -48,6 +49,7 @@ export function AccessPage() {
   } | null>(null);
 
   const all = useMemo(() => access.data ?? [], [access.data]);
+  const wardsList = useMemo(() => wards.data ?? [], [wards.data]);
 
   // Scope dropdown reflects the principal's authority:
   //   - manager (full stake) → all wards + 'stake'
@@ -132,7 +134,7 @@ export function AccessPage() {
             <option value="">All</option>
             {scopes.map((s) => (
               <option key={s} value={s}>
-                {s === 'stake' ? 'Stake' : s}
+                {scopeLabel(s, wardsList)}
               </option>
             ))}
           </Select>
@@ -159,6 +161,7 @@ export function AccessPage() {
           <AccessTable
             users={sorted}
             scopeFilter={scopeFilter}
+            wards={wardsList}
             onDeleteRequest={(canonical, scope, grant) =>
               setPendingDelete({ canonical, scope, grant })
             }
@@ -169,6 +172,7 @@ export function AccessPage() {
                 key={a.member_canonical}
                 access={a}
                 scopeFilter={scopeFilter}
+                wards={wardsList}
                 onDeleteRequest={(scope, grant) =>
                   setPendingDelete({ canonical: a.member_canonical, scope, grant })
                 }
@@ -188,7 +192,7 @@ export function AccessPage() {
         title="Remove manual access?"
         description={
           pendingDelete
-            ? `Remove the "${pendingDelete.grant.reason}" grant for ${pendingDelete.scope === 'stake' ? 'the Stake' : pendingDelete.scope}?`
+            ? `Remove the "${pendingDelete.grant.reason}" grant for ${pendingDelete.scope === 'stake' ? 'the Stake' : scopeLabel(pendingDelete.scope, wardsList)}?`
             : 'Remove this manual access?'
         }
       >
@@ -265,10 +269,11 @@ function flattenAccess(users: readonly Access[], scopeFilter: string): AccessTab
 interface AccessTableProps {
   users: readonly Access[];
   scopeFilter: string;
+  wards: readonly Ward[];
   onDeleteRequest: (canonical: string, scope: string, grant: ManualGrant) => void;
 }
 
-function AccessTable({ users, scopeFilter, onDeleteRequest }: AccessTableProps) {
+function AccessTable({ users, scopeFilter, wards, onDeleteRequest }: AccessTableProps) {
   const rows = useMemo(() => flattenAccess(users, scopeFilter), [users, scopeFilter]);
   return (
     <table className="kd-access-table kd-responsive-table-desktop" data-testid="access-table">
@@ -284,9 +289,7 @@ function AccessTable({ users, scopeFilter, onDeleteRequest }: AccessTableProps) 
       <tbody>
         {rows.map((r, i) => (
           <tr key={`${r.canonical}|${r.scope}|${r.source}|${r.calling}|${i}`}>
-            <td>
-              <code>{r.scope}</code>
-            </td>
+            <td>{scopeLabel(r.scope, wards)}</td>
             <td>{r.calling}</td>
             <td>
               <span className="roster-email" title={r.email}>
@@ -321,10 +324,11 @@ function AccessTable({ users, scopeFilter, onDeleteRequest }: AccessTableProps) 
 interface AccessCardProps {
   access: Access;
   scopeFilter: string;
+  wards: readonly Ward[];
   onDeleteRequest: (scope: string, grant: ManualGrant) => void;
 }
 
-function AccessCard({ access, scopeFilter, onDeleteRequest }: AccessCardProps) {
+function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardProps) {
   const importerScopes = Object.entries(access.importer_callings ?? {})
     .filter(([scope, callings]) => (!scopeFilter || scope === scopeFilter) && callings.length > 0)
     .sort(([a], [b]) => (a === 'stake' ? -1 : b === 'stake' ? 1 : a.localeCompare(b)));
@@ -348,9 +352,7 @@ function AccessCard({ access, scopeFilter, onDeleteRequest }: AccessCardProps) {
           </div>
           {importerScopes.map(([scope, callings]) => (
             <div key={`imp-${scope}`}>
-              <span className="roster-card-chip roster-card-scope">
-                <code>{scope === 'stake' ? 'stake' : scope}</code>
-              </span>
+              <span className="roster-card-chip roster-card-scope">{scopeLabel(scope, wards)}</span>
               <ul className="kd-access-grants">
                 {callings.map((c) => (
                   <li key={c}>{c}</li>
@@ -368,9 +370,7 @@ function AccessCard({ access, scopeFilter, onDeleteRequest }: AccessCardProps) {
           </div>
           {manualScopes.map(([scope, grants]) => (
             <div key={`man-${scope}`}>
-              <span className="roster-card-chip roster-card-scope">
-                <code>{scope === 'stake' ? 'stake' : scope}</code>
-              </span>
+              <span className="roster-card-chip roster-card-scope">{scopeLabel(scope, wards)}</span>
               <ul className="kd-access-grants">
                 {grants.map((g) => (
                   <li key={g.grant_id}>
@@ -414,8 +414,10 @@ function AddManualGrantDialog({ open, onClose }: AddManualGrantDialogProps) {
   // dropdown enforces that at the UX layer.
   const wards = useStakeWards();
   const wardsLoading = wards.isLoading || wards.data === undefined;
+  // Option `value` stays the ward_code (what gets written); the visible
+  // label is the ward name.
   const wardOptions = useMemo(
-    () => [...(wards.data ?? [])].map((w) => w.ward_code).sort((a, b) => a.localeCompare(b)),
+    () => [...(wards.data ?? [])].sort((a, b) => a.ward_code.localeCompare(b.ward_code)),
     [wards.data],
   );
   const form = useForm<AddManualForm>({
@@ -474,9 +476,9 @@ function AddManualGrantDialog({ open, onClose }: AddManualGrantDialogProps) {
           Scope
           <Select {...register('scope')} disabled={wardsLoading} data-testid="add-manual-scope">
             <option value="stake">Stake</option>
-            {wardOptions.map((code) => (
-              <option key={code} value={code}>
-                {code}
+            {wardOptions.map((w) => (
+              <option key={w.ward_code} value={w.ward_code}>
+                {w.ward_name}
               </option>
             ))}
           </Select>

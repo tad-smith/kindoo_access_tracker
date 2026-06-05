@@ -17,7 +17,7 @@
 // Section is silent (returns `null`) when there are no pending adds
 // for the scope.
 
-import type { AccessRequest, Seat, ActorRef, TimestampLike } from '@kindoo/shared';
+import type { AccessRequest, Seat, ActorRef, TimestampLike, Ward } from '@kindoo/shared';
 import { Badge } from '../../../components/ui/Badge';
 import { RosterCardList } from '../../../components/roster/RosterCardList';
 
@@ -25,11 +25,14 @@ export interface PendingAddRequestsSectionProps {
   pendingAdds: readonly AccessRequest[];
   /** When true, render the scope chip on line 1 (cross-scope pages). */
   showScope?: boolean;
+  /** Wards catalogue — resolves the scope chip to a ward name. */
+  wards?: readonly Ward[];
 }
 
 export function PendingAddRequestsSection({
   pendingAdds,
   showScope = false,
+  wards = [],
 }: PendingAddRequestsSectionProps) {
   if (pendingAdds.length === 0) return null;
 
@@ -50,6 +53,7 @@ export function PendingAddRequestsSection({
       <RosterCardList
         seats={seats}
         showScope={showScope}
+        wards={wards}
         extraBadges={() => (
           <Badge variant="warning" data-testid="pending-add-badge">
             Pending

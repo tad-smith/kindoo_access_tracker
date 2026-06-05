@@ -24,6 +24,14 @@ vi.mock('./cancelRequest', () => ({
   useCancelRequest: () => useCancelRequestMock(),
 }));
 
+// The scope-label hook subscribes to the wards collection; stub it so
+// these render tests don't need a live Firestore. Maps the fixture ward
+// code to a name and passes everything else through.
+vi.mock('../../lib/scopeLabel', () => ({
+  useScopeLabel: () => (scope: string) =>
+    scope === 'stake' ? 'Stake' : scope === 'CO' ? 'Cottonwood' : scope,
+}));
+
 import { MyRequestsPage } from './MyRequestsPage';
 
 function principal(overrides: Record<string, unknown> = {}) {
@@ -176,7 +184,7 @@ describe('<MyRequestsPage />', () => {
     mockRequests([]);
     render(<MyRequestsPage />);
     expect(screen.queryByLabelText(/^Scope:/)).toBeNull();
-    expect(screen.getByText(/Scope: Ward CO/)).toBeInTheDocument();
+    expect(screen.getByText(/Scope: Cottonwood/)).toBeInTheDocument();
   });
 
   it('renders a scope filter when the principal has multiple requestable scopes', () => {
