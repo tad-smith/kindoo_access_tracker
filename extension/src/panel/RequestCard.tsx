@@ -43,14 +43,26 @@ import {
   ProvisionSiteMismatchError,
 } from '../content/kindoo/siteCheck';
 import { ResultDialog, type ResultDialogState } from './ResultDialog';
+import { RejectDialog } from './RejectDialog';
 
 interface RequestCardProps {
   /** Active stake — threaded from App's resolution step. */
   stakeId: string;
   request: AccessRequest;
   bundle: StakeConfigBundle;
-  /** Called after the operator dismisses the result dialog; parent
-   * drops the card from the queue list. */
+  /**
+   * True when the request subject already has an SBA seat (any scope).
+   * For `add_manual` / `add_temp` this blocks completion — Mark Complete
+   * would create a duplicate seat doc, which fails — so the provision
+   * button is hidden and only Reject is offered. Parent (`QueuePanel`)
+   * derives this from `getSeatByEmail`; a lookup failure resolves to
+   * `false` so the provision button stays visible rather than blocking
+   * the queue on a transient read miss.
+   */
+  memberHasSeat: boolean;
+  /** Called after the operator dismisses the result dialog OR after a
+   * successful reject; parent drops the card from the queue list and
+   * refetches. */
   onDismissed: (requestId: string) => void;
 }
 
@@ -60,8 +72,15 @@ type CardState =
   | { kind: 'error'; message: string }
   | { kind: 'result'; dialog: ResultDialogState };
 
-export function RequestCard({ stakeId, request, bundle, onDismissed }: RequestCardProps) {
+export function RequestCard({
+  stakeId,
+  request,
+  bundle,
+  memberHasSeat,
+  onDismissed,
+}: RequestCardProps) {
   const [state, setState] = useState<CardState>({ kind: 'idle' });
+  const [rejectOpen, setRejectOpen] = useState(false);
 
   const isUrgent = request.urgent === true;
   const submittedAt = formatTimestamp(request.requested_at);
@@ -210,6 +229,14 @@ export function RequestCard({ stakeId, request, bundle, onDismissed }: RequestCa
         ? 'sba-btn sba-btn-primary'
         : 'sba-btn sba-btn-success';
 
+  // Completing an add for someone who already has a seat would create a
+  // duplicate seat doc (the Mark Complete write fails). Mirror the web
+  // app's PR #191: hide the provision button and offer only Reject for
+  // add types whose subject already holds a seat. Edit / remove types
+  // operate on an existing seat by design and are unaffected.
+  const isAdd = request.type === 'add_manual' || request.type === 'add_temp';
+  const blockedByExistingSeat = isAdd && memberHasSeat;
+
   return (
     <div
       className="sba-request-card"
@@ -271,15 +298,35 @@ export function RequestCard({ stakeId, request, bundle, onDismissed }: RequestCa
           </span>
         </div>
       ) : null}
+      {blockedByExistingSeat ? (
+        <p
+          role="alert"
+          className="sba-error"
+          data-testid={`sba-existing-seat-${request.request_id}`}
+        >
+          Member already has a seat — reject this request.
+        </p>
+      ) : null}
       <div className="sba-request-actions">
+        {blockedByExistingSeat ? null : (
+          <button
+            type="button"
+            className={buttonClass}
+            onClick={() => void provision()}
+            disabled={isBusy}
+            data-testid={buttonTestId}
+          >
+            {isBusy ? `${buttonLabel}…` : buttonLabel}
+          </button>
+        )}
         <button
           type="button"
-          className={buttonClass}
-          onClick={() => void provision()}
+          className="sba-btn sba-btn-danger"
+          onClick={() => setRejectOpen(true)}
           disabled={isBusy}
-          data-testid={buttonTestId}
+          data-testid={`sba-reject-${request.request_id}`}
         >
-          {isBusy ? `${buttonLabel}…` : buttonLabel}
+          Reject
         </button>
       </div>
       {state.kind === 'error' ? (
@@ -293,6 +340,17 @@ export function RequestCard({ stakeId, request, bundle, onDismissed }: RequestCa
       ) : null}
 
       {state.kind === 'result' ? <ResultDialog state={state.dialog} onDismiss={dismiss} /> : null}
+      {rejectOpen ? (
+        <RejectDialog
+          stakeId={stakeId}
+          request={request}
+          onCancel={() => setRejectOpen(false)}
+          onRejected={() => {
+            setRejectOpen(false);
+            onDismissed(request.request_id);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

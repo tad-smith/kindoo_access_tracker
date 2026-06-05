@@ -1,45 +1,24 @@
 // Component tests for the Manager Queue page. Mocks every hook so the
-// test exercises just the rendering shape + the per-row dialog gating.
+// test exercises just the rendering shape. The queue is read-only — no
+// action affordances — so the tests assert the sections, metadata, the
+// read-only note, the duplicate chip, the focus deep-link, and the
+// absence of any complete / reject buttons.
 
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import type { AccessRequest, Building } from '@kindoo/shared';
+import type { AccessRequest } from '@kindoo/shared';
 import { makeRequest } from '../../../../test/fixtures';
 
 const usePendingMock = vi.fn();
-const useBuildingsMock = vi.fn();
-const completeAddMutate = vi.fn().mockResolvedValue(undefined);
-const completeRemoveMutate = vi.fn().mockResolvedValue(undefined);
-const rejectMutate = vi.fn().mockResolvedValue(undefined);
 const useSeatForMemberMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./hooks', () => ({
   usePendingRequests: () => usePendingMock(),
-  useCompleteAddRequest: () => ({ mutateAsync: completeAddMutate, isPending: false }),
-  useCompleteRemoveRequest: () => ({ mutateAsync: completeRemoveMutate, isPending: false }),
-  useRejectRequest: () => ({ mutateAsync: rejectMutate, isPending: false }),
-}));
-
-vi.mock('../allSeats/hooks', () => ({
-  useBuildings: () => useBuildingsMock(),
 }));
 
 vi.mock('../../requests/hooks', () => ({
   useSeatForMember: (canonical: string | null) => useSeatForMemberMock(canonical),
-  usePendingRemoveRequests: () => ({
-    data: [],
-    error: null,
-    status: 'success',
-    isPending: false,
-    isLoading: false,
-    isSuccess: true,
-    isError: false,
-    isFetching: false,
-    fetchStatus: 'idle',
-  }),
-  useSubmitRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock('@tanstack/react-router', () => ({
@@ -47,6 +26,9 @@ vi.mock('@tanstack/react-router', () => ({
 }));
 
 import { ManagerQueuePage } from './QueuePage';
+
+const WEB_STORE_URL =
+  'https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/klkkpfdafbjebccodmgkogdklachelpb';
 
 function liveResult<T>(data: T[] | undefined, isLoading = false) {
   return {
@@ -76,40 +58,8 @@ function liveDocResult<T>(data: T | undefined) {
   };
 }
 
-function buildings(): Building[] {
-  return [
-    {
-      building_id: 'maple',
-      building_name: 'Maple Building',
-      address: '',
-      created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
-      last_modified_at: {
-        seconds: 0,
-        nanoseconds: 0,
-        toDate: () => new Date(),
-        toMillis: () => 0,
-      },
-      lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
-    },
-    {
-      building_id: 'cedar',
-      building_name: 'Cedar Building',
-      address: '',
-      created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
-      last_modified_at: {
-        seconds: 0,
-        nanoseconds: 0,
-        toDate: () => new Date(),
-        toMillis: () => 0,
-      },
-      lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
-    },
-  ];
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
-  useBuildingsMock.mockReturnValue(liveResult(buildings()));
   useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
   // jsdom does not implement scrollIntoView; stub on the prototype so
   // the focus-card effect does not throw. Using `Object.defineProperty`
@@ -145,7 +95,7 @@ describe('<ManagerQueuePage />', () => {
     expect(container.querySelector('section.kd-page-medium')).not.toBeNull();
   });
 
-  it('renders one card per pending request with action buttons', () => {
+  it('renders one display-only card per pending request — no action buttons', () => {
     const requests = [
       makeRequest({ request_id: 'r1', type: 'add_manual', scope: 'CO', member_email: 'a@x.com' }),
       makeRequest({
@@ -162,8 +112,11 @@ describe('<ManagerQueuePage />', () => {
     render(<ManagerQueuePage />);
     expect(screen.getByTestId('queue-card-r1')).toBeInTheDocument();
     expect(screen.getByTestId('queue-card-r2')).toBeInTheDocument();
-    expect(screen.getByTestId('queue-complete-r1')).toBeInTheDocument();
-    expect(screen.getByTestId('queue-reject-r1')).toBeInTheDocument();
+    // Read-only: no complete / reject affordances anywhere.
+    expect(screen.queryByTestId('queue-complete-r1')).toBeNull();
+    expect(screen.queryByTestId('queue-reject-r1')).toBeNull();
+    expect(screen.queryByTestId('queue-complete-r2')).toBeNull();
+    expect(screen.queryByTestId('queue-reject-r2')).toBeNull();
   });
 
   it('renders the member on a "Give Access To" row with name + (email) format', () => {
@@ -333,204 +286,6 @@ describe('<ManagerQueuePage />', () => {
     expect(screen.queryByTestId('queue-buildings-r1')).toBeNull();
   });
 
-  it('disables Confirm in the complete dialog when no buildings are ticked', async () => {
-    const user = userEvent.setup();
-    const requests = [
-      makeRequest({
-        request_id: 'r1',
-        type: 'add_manual',
-        scope: 'stake',
-        member_email: 'a@x.com',
-        building_names: [],
-      }),
-    ];
-    usePendingMock.mockReturnValue(liveResult(requests));
-    render(<ManagerQueuePage />);
-    await user.click(screen.getByTestId('queue-complete-r1'));
-    const confirmBtn = await screen.findByTestId('complete-add-confirm');
-    expect(confirmBtn).toBeDisabled();
-  });
-
-  it('enables Confirm in the complete dialog once a building is ticked', async () => {
-    const user = userEvent.setup();
-    const requests = [
-      makeRequest({
-        request_id: 'r1',
-        type: 'add_manual',
-        scope: 'stake',
-        member_email: 'a@x.com',
-        building_names: [],
-      }),
-    ];
-    usePendingMock.mockReturnValue(liveResult(requests));
-    render(<ManagerQueuePage />);
-    await user.click(screen.getByTestId('queue-complete-r1'));
-    const confirmBtn = await screen.findByTestId('complete-add-confirm');
-    expect(confirmBtn).toBeDisabled();
-    await user.click(screen.getByTestId('complete-building-maple'));
-    expect(confirmBtn).toBeEnabled();
-  });
-
-  it('renders an optional completion-note textarea on the add-complete dialog', async () => {
-    const user = userEvent.setup();
-    const requests = [
-      makeRequest({
-        request_id: 'r1',
-        type: 'add_manual',
-        scope: 'stake',
-        member_email: 'a@x.com',
-        building_names: ['Maple Building'],
-      }),
-    ];
-    usePendingMock.mockReturnValue(liveResult(requests));
-    render(<ManagerQueuePage />);
-    await user.click(screen.getByTestId('queue-complete-r1'));
-    const note = await screen.findByTestId('complete-add-note');
-    expect(note.tagName).toBe('TEXTAREA');
-    expect(note).toHaveAttribute(
-      'placeholder',
-      'What did you do? (Optional context for the requester.)',
-    );
-    // Labeled "Completion note" — the surrounding <label> wraps the textarea
-    // so RTL's getByLabelText sees the same element by accessible name.
-    expect(screen.getByLabelText(/completion note/i)).toBe(note);
-  });
-
-  it('passes the trimmed completion_note through to the add-complete mutation', async () => {
-    const user = userEvent.setup();
-    const requests = [
-      makeRequest({
-        request_id: 'r1',
-        type: 'add_manual',
-        scope: 'stake',
-        member_email: 'a@x.com',
-        building_names: ['Maple Building'],
-      }),
-    ];
-    usePendingMock.mockReturnValue(liveResult(requests));
-    render(<ManagerQueuePage />);
-    await user.click(screen.getByTestId('queue-complete-r1'));
-    const note = await screen.findByTestId('complete-add-note');
-    await user.type(note, '  Granted; door system syncs overnight.  ');
-    await user.click(screen.getByTestId('complete-add-confirm'));
-    await waitFor(() => {
-      expect(completeAddMutate).toHaveBeenCalled();
-    });
-    const arg = completeAddMutate.mock.calls[0]?.[0] as {
-      completion_note: string;
-      building_names: string[];
-    };
-    // react-hook-form ships the raw value; the hook trims server-side
-    // before deciding whether to write the field.
-    expect(arg.completion_note).toBe('  Granted; door system syncs overnight.  ');
-    expect(arg.building_names).toEqual(['Maple Building']);
-  });
-
-  it('passes empty completion_note on the add-complete mutation when the textarea is blank', async () => {
-    const user = userEvent.setup();
-    const requests = [
-      makeRequest({
-        request_id: 'r1',
-        type: 'add_manual',
-        scope: 'stake',
-        member_email: 'a@x.com',
-        building_names: ['Maple Building'],
-      }),
-    ];
-    usePendingMock.mockReturnValue(liveResult(requests));
-    render(<ManagerQueuePage />);
-    await user.click(screen.getByTestId('queue-complete-r1'));
-    await user.click(screen.getByTestId('complete-add-confirm'));
-    await waitFor(() => {
-      expect(completeAddMutate).toHaveBeenCalled();
-    });
-    const arg = completeAddMutate.mock.calls[0]?.[0] as { completion_note: string };
-    expect(arg.completion_note).toBe('');
-  });
-
-  it('renders an optional completion-note textarea on the remove-complete dialog', async () => {
-    const user = userEvent.setup();
-    const requests = [
-      makeRequest({
-        request_id: 'r1',
-        type: 'remove',
-        scope: 'CO',
-        member_email: 'a@x.com',
-        member_canonical: 'a@x.com',
-      }),
-    ];
-    usePendingMock.mockReturnValue(liveResult(requests));
-    render(<ManagerQueuePage />);
-    await user.click(screen.getByTestId('queue-complete-r1'));
-    const note = await screen.findByTestId('complete-remove-note');
-    expect(note.tagName).toBe('TEXTAREA');
-    expect(note).toHaveAttribute(
-      'placeholder',
-      'What did you do? (Optional context for the requester.)',
-    );
-    expect(screen.getByLabelText(/completion note/i)).toBe(note);
-  });
-
-  it('passes the textarea value through to the remove-complete mutation', async () => {
-    const user = userEvent.setup();
-    const requests = [
-      makeRequest({
-        request_id: 'r1',
-        type: 'remove',
-        scope: 'CO',
-        member_email: 'a@x.com',
-        member_canonical: 'a@x.com',
-      }),
-    ];
-    usePendingMock.mockReturnValue(liveResult(requests));
-    render(<ManagerQueuePage />);
-    await user.click(screen.getByTestId('queue-complete-r1'));
-    const note = await screen.findByTestId('complete-remove-note');
-    await user.type(note, 'Removed; awaiting overnight sync.');
-    await user.click(screen.getByTestId('complete-remove-confirm'));
-    await waitFor(() => {
-      expect(completeRemoveMutate).toHaveBeenCalled();
-    });
-    const arg = completeRemoveMutate.mock.calls[0]?.[0] as { completion_note: string };
-    expect(arg.completion_note).toBe('Removed; awaiting overnight sync.');
-  });
-
-  it('passes empty completion_note on the remove-complete mutation when the textarea is blank', async () => {
-    const user = userEvent.setup();
-    const requests = [
-      makeRequest({
-        request_id: 'r1',
-        type: 'remove',
-        scope: 'CO',
-        member_email: 'a@x.com',
-        member_canonical: 'a@x.com',
-      }),
-    ];
-    usePendingMock.mockReturnValue(liveResult(requests));
-    render(<ManagerQueuePage />);
-    await user.click(screen.getByTestId('queue-complete-r1'));
-    await user.click(screen.getByTestId('complete-remove-confirm'));
-    await waitFor(() => {
-      expect(completeRemoveMutate).toHaveBeenCalled();
-    });
-    const arg = completeRemoveMutate.mock.calls[0]?.[0] as { completion_note: string };
-    expect(arg.completion_note).toBe('');
-  });
-
-  it('blocks reject submit when the reason is empty', async () => {
-    const user = userEvent.setup();
-    const requests = [
-      makeRequest({ request_id: 'r1', type: 'add_manual', scope: 'CO', member_email: 'a@x.com' }),
-    ];
-    usePendingMock.mockReturnValue(liveResult(requests));
-    render(<ManagerQueuePage />);
-    await user.click(screen.getByTestId('queue-reject-r1'));
-    const form = await screen.findByTestId('reject-dialog-form');
-    await user.click(within(form).getByTestId('reject-confirm'));
-    expect(rejectMutate).not.toHaveBeenCalled();
-    expect(within(form).getByText(/rejection reason is required/i)).toBeInTheDocument();
-  });
-
   it('renders only sections that contain at least one request', () => {
     // Two non-urgent add_manual requests with old requested_at land
     // in Outstanding; no urgent or far-future requests are seeded so
@@ -641,7 +396,7 @@ describe('<ManagerQueuePage />', () => {
       within(screen.getByTestId('queue-section-outstanding')).getByRole('heading', { level: 2 }),
     ).toHaveTextContent('Outstanding Requests (2)');
 
-    // Snapshot updates (e.g., one request marked complete): count goes to 1.
+    // Snapshot updates (e.g., one request completed in the extension): count goes to 1.
     usePendingMock.mockReturnValue(
       liveResult([makeRequest({ request_id: 'o1', type: 'add_manual', requested_at: oldTs })]),
     );
@@ -650,7 +405,7 @@ describe('<ManagerQueuePage />', () => {
       within(screen.getByTestId('queue-section-outstanding')).getByRole('heading', { level: 2 }),
     ).toHaveTextContent('Outstanding Requests (1)');
 
-    // Last request completes: section vanishes; page-level empty state appears.
+    // Last request resolves: section vanishes; page-level empty state appears.
     usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
     rerender(<ManagerQueuePage />);
     expect(screen.queryByTestId('queue-section-outstanding')).toBeNull();
@@ -705,7 +460,7 @@ describe('<ManagerQueuePage />', () => {
     expect(screen.queryByTestId('queue-section-outstanding')).toBeNull();
   });
 
-  it('blocks an add card with an error and hides Mark Complete when the member already has a seat', () => {
+  it('shows the blocking duplicate chip on an add card when the member already has a seat', () => {
     const requests = [
       makeRequest({
         request_id: 'r1',
@@ -738,15 +493,18 @@ describe('<ManagerQueuePage />', () => {
       }),
     );
     render(<ManagerQueuePage />);
-    // The blocking error chip is shown (not the old warning chip).
-    expect(screen.getByTestId('queue-duplicate-error-r1')).toBeInTheDocument();
-    expect(screen.queryByTestId('queue-duplicate-r1')).toBeNull();
-    // Mark Complete is suppressed; only Reject remains.
+    // The blocking error chip is shown verbatim, with its danger badge + copy.
+    const chip = screen.getByTestId('queue-duplicate-error-r1');
+    expect(chip).toBeInTheDocument();
+    expect(chip).toHaveAttribute('role', 'alert');
+    expect(chip).toHaveClass('kd-queue-card-error');
+    expect(chip.textContent).toMatch(/already has a auto seat in GE/);
+    // No action affordances regardless of the chip.
     expect(screen.queryByTestId('queue-complete-r1')).toBeNull();
-    expect(screen.getByTestId('queue-reject-r1')).toBeInTheDocument();
+    expect(screen.queryByTestId('queue-reject-r1')).toBeNull();
   });
 
-  it('keeps Mark Complete on an add card when the member has no existing seat', () => {
+  it('shows no duplicate chip on an add card when the member has no existing seat', () => {
     const requests = [
       makeRequest({
         request_id: 'r1',
@@ -757,15 +515,13 @@ describe('<ManagerQueuePage />', () => {
       }),
     ];
     usePendingMock.mockReturnValue(liveResult(requests));
-    // No seat for this member → no duplicate, no block.
+    // No seat for this member → no duplicate chip.
     useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
     render(<ManagerQueuePage />);
     expect(screen.queryByTestId('queue-duplicate-error-r1')).toBeNull();
-    expect(screen.getByTestId('queue-complete-r1')).toBeInTheDocument();
-    expect(screen.getByTestId('queue-reject-r1')).toBeInTheDocument();
   });
 
-  it('shows no duplicate error on an edit card even when the member already has a seat', () => {
+  it('shows no duplicate chip on an edit card even when the member already has a seat', () => {
     const requests = [
       makeRequest({
         request_id: 'r1',
@@ -778,8 +534,7 @@ describe('<ManagerQueuePage />', () => {
     ];
     usePendingMock.mockReturnValue(liveResult(requests));
     // An edit completion modifies the existing seat, so a pre-existing
-    // seat is expected — not a duplicate. The error chip must not appear
-    // and Mark Complete stays.
+    // seat is expected — not a duplicate. The chip must not appear.
     useSeatForMemberMock.mockReturnValue(
       liveDocResult({
         member_canonical: 'a@x.com',
@@ -803,9 +558,119 @@ describe('<ManagerQueuePage />', () => {
     );
     render(<ManagerQueuePage />);
     expect(screen.queryByTestId('queue-duplicate-error-r1')).toBeNull();
-    expect(screen.queryByTestId('queue-duplicate-r1')).toBeNull();
-    expect(screen.getByTestId('queue-complete-r1')).toBeInTheDocument();
-    expect(screen.getByTestId('queue-reject-r1')).toBeInTheDocument();
+  });
+});
+
+describe('<ManagerQueuePage /> — read-only note', () => {
+  it('always renders the read-only note pointing managers to the Chrome extension', () => {
+    usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
+    render(<ManagerQueuePage />);
+    const note = screen.getByTestId('queue-readonly-note');
+    expect(note).toBeInTheDocument();
+    expect(note.textContent).toMatch(
+      /can only be completed or rejected from the Chrome extension/i,
+    );
+  });
+
+  it('renders the note even when the queue has pending requests', () => {
+    usePendingMock.mockReturnValue(
+      liveResult([makeRequest({ request_id: 'r1', type: 'add_manual' })]),
+    );
+    render(<ManagerQueuePage />);
+    expect(screen.getByTestId('queue-readonly-note')).toBeInTheDocument();
+  });
+
+  it('links the note to the Chrome Web Store listing, opening in a new tab safely', () => {
+    usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
+    render(<ManagerQueuePage />);
+    const link = screen.getByTestId('queue-readonly-note-link');
+    expect(link).toHaveAttribute('href', WEB_STORE_URL);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+});
+
+describe('<ManagerQueuePage /> edit request rendering', () => {
+  it('labels an edit_auto card "Edit (auto)" and shows the proposed buildings with the "→" prefix', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'edit_auto',
+        scope: 'CO',
+        member_email: 'auto@x.com',
+        member_canonical: 'auto@x.com',
+        building_names: ['Maple Building', 'Cedar Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(within(card).getByText('Edit (auto)')).toBeInTheDocument();
+    const buildingsRow = screen.getByTestId('queue-buildings-r1');
+    expect(buildingsRow.textContent).toMatch(/→ Buildings:/);
+    expect(buildingsRow.textContent).toMatch(/Maple Building, Cedar Building/);
+  });
+
+  it('labels an edit_manual card "Edit (manual)" with the reason + buildings', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r2',
+        type: 'edit_manual',
+        scope: 'CO',
+        member_email: 'manual@x.com',
+        member_canonical: 'manual@x.com',
+        reason: 'Valiant Activities Leader',
+        building_names: ['Maple Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r2');
+    expect(within(card).getByText('Edit (manual)')).toBeInTheDocument();
+    expect(within(card).getByText(/Valiant Activities Leader/)).toBeInTheDocument();
+    expect(screen.getByTestId('queue-buildings-r2').textContent).toMatch(
+      /→ Buildings:.*Maple Building/,
+    );
+  });
+
+  it('labels an edit_temp card "Edit (temp)" and renders the date range alongside the proposed buildings', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r3',
+        type: 'edit_temp',
+        scope: 'CO',
+        member_email: 'temp@x.com',
+        member_canonical: 'temp@x.com',
+        reason: 'youth conference',
+        building_names: ['Maple Building'],
+        start_date: '2026-05-01',
+        end_date: '2026-05-15',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r3');
+    expect(within(card).getByText('Edit (temp)')).toBeInTheDocument();
+    expect(card.textContent).toMatch(/2026-05-01.*2026-05-15/);
+    expect(screen.getByTestId('queue-buildings-r3').textContent).toMatch(
+      /→ Buildings:.*Maple Building/,
+    );
+  });
+
+  it('does not prefix the buildings row with "→" on non-edit (add/remove) cards', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r-add',
+        type: 'add_manual',
+        scope: 'CO',
+        building_names: ['Maple Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    const row = screen.getByTestId('queue-buildings-r-add');
+    expect(row.textContent).not.toMatch(/→/);
+    expect(row.textContent).toMatch(/^Buildings:/);
   });
 });
 
@@ -898,89 +763,5 @@ describe('<ManagerQueuePage /> — ?focus=<rid> deep-link', () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  describe('edit request rendering', () => {
-    it('labels an edit_auto card "Edit (auto)" and shows the proposed buildings with the "→" prefix', () => {
-      const requests = [
-        makeRequest({
-          request_id: 'r1',
-          type: 'edit_auto',
-          scope: 'CO',
-          member_email: 'auto@x.com',
-          member_canonical: 'auto@x.com',
-          building_names: ['Maple Building', 'Cedar Building'],
-        }),
-      ];
-      usePendingMock.mockReturnValue(liveResult(requests));
-      render(<ManagerQueuePage />);
-      const card = screen.getByTestId('queue-card-r1');
-      expect(within(card).getByText('Edit (auto)')).toBeInTheDocument();
-      const buildingsRow = screen.getByTestId('queue-buildings-r1');
-      expect(buildingsRow.textContent).toMatch(/→ Buildings:/);
-      expect(buildingsRow.textContent).toMatch(/Maple Building, Cedar Building/);
-    });
-
-    it('labels an edit_manual card "Edit (manual)" with the reason + buildings', () => {
-      const requests = [
-        makeRequest({
-          request_id: 'r2',
-          type: 'edit_manual',
-          scope: 'CO',
-          member_email: 'manual@x.com',
-          member_canonical: 'manual@x.com',
-          reason: 'Valiant Activities Leader',
-          building_names: ['Maple Building'],
-        }),
-      ];
-      usePendingMock.mockReturnValue(liveResult(requests));
-      render(<ManagerQueuePage />);
-      const card = screen.getByTestId('queue-card-r2');
-      expect(within(card).getByText('Edit (manual)')).toBeInTheDocument();
-      expect(within(card).getByText(/Valiant Activities Leader/)).toBeInTheDocument();
-      expect(screen.getByTestId('queue-buildings-r2').textContent).toMatch(
-        /→ Buildings:.*Maple Building/,
-      );
-    });
-
-    it('labels an edit_temp card "Edit (temp)" and renders the date range alongside the proposed buildings', () => {
-      const requests = [
-        makeRequest({
-          request_id: 'r3',
-          type: 'edit_temp',
-          scope: 'CO',
-          member_email: 'temp@x.com',
-          member_canonical: 'temp@x.com',
-          reason: 'youth conference',
-          building_names: ['Maple Building'],
-          start_date: '2026-05-01',
-          end_date: '2026-05-15',
-        }),
-      ];
-      usePendingMock.mockReturnValue(liveResult(requests));
-      render(<ManagerQueuePage />);
-      const card = screen.getByTestId('queue-card-r3');
-      expect(within(card).getByText('Edit (temp)')).toBeInTheDocument();
-      expect(card.textContent).toMatch(/2026-05-01.*2026-05-15/);
-      expect(screen.getByTestId('queue-buildings-r3').textContent).toMatch(
-        /→ Buildings:.*Maple Building/,
-      );
-    });
-
-    it('does not prefix the buildings row with "→" on non-edit (add/remove) cards', () => {
-      const requests = [
-        makeRequest({
-          request_id: 'r-add',
-          type: 'add_manual',
-          scope: 'CO',
-          building_names: ['Maple Building'],
-        }),
-      ];
-      usePendingMock.mockReturnValue(liveResult(requests));
-      render(<ManagerQueuePage />);
-      const row = screen.getByTestId('queue-buildings-r-add');
-      expect(row.textContent).not.toMatch(/→/);
-      expect(row.textContent).toMatch(/^Buildings:/);
-    });
   });
 });

@@ -22,6 +22,15 @@
   margin: 0 0 12px;
 }
 
+/* Muted top-of-queue note: the manager queue is read-only — the
+   complete / reject workflow lives in the Chrome extension. Info-toned
+   (not an error); the link inherits the app's anchor styling. */
+.kd-queue-readonly-note {
+  color: var(--kd-fg-3);
+  font-size: 0.9em;
+  margin: 0 0 16px;
+}
+
 /* Page header row: subtitle (or ward name) on the left, primary action
    button on the right. Wraps on narrow viewports so the button drops
    below the subtitle instead of squishing the text. Used by the

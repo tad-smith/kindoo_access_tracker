@@ -4,9 +4,9 @@
 //     their ward's building (Maple) listed in the header summary.
 //   - Expands the widget and ticks an additional building (Cedar).
 //   - Submits the request.
-//   - The manager opens the Mark Complete dialog and sees BOTH
-//     buildings pre-checked from the requester's selection — proof
-//     the second building flowed through to Firestore.
+//   - The manager's (read-only) Request Queue card lists BOTH buildings
+//     from the requester's selection — proof the second building flowed
+//     through to Firestore.
 //
 // The legacy form did not let ward users select multiple buildings;
 // this spec is the regression-guard against losing that capability.
@@ -104,7 +104,7 @@ test.describe('New Request — collapsible buildings selector', () => {
     await seedBaseStake();
   });
 
-  test('ward submitter starts collapsed with the ward building, expands, adds Cedar, and the manager sees both pre-checked', async ({
+  test('ward submitter starts collapsed with the ward building, expands, adds Cedar, and the manager queue shows both', async ({
     browser,
   }) => {
     const bishopricCtx = await browser.newContext();
@@ -150,16 +150,16 @@ test.describe('New Request — collapsible buildings selector', () => {
     await bishopricPage.getByRole('link', { name: /^My Requests$/ }).click();
     await expect(bishopricPage.locator('[data-status="pending"]').first()).toBeVisible();
 
-    // Manager completes — both buildings pre-checked from submission.
+    // Manager's read-only queue card lists both buildings from the
+    // submission — proof both flowed through to Firestore.
     await createSignedInUser(managerPage, 'mgr-multi@example.com', { manager: true });
     await managerPage.getByRole('link', { name: /^Request Queue$/ }).click();
-    const completeButton = managerPage.locator('[data-testid^="queue-complete-"]').first();
-    await completeButton.click();
-    await expect(
-      managerPage.locator('[data-testid="complete-building-maple-building"]'),
-    ).toBeChecked();
-    await expect(
-      managerPage.locator('[data-testid="complete-building-cedar-building"]'),
-    ).toBeChecked();
+    const card = managerPage.locator('[data-testid^="queue-card-"]').first();
+    await expect(card).toBeVisible({ timeout: 10_000 });
+    const buildingsRow = managerPage.locator('[data-testid^="queue-buildings-"]').first();
+    await expect(buildingsRow).toContainText('Maple Building');
+    await expect(buildingsRow).toContainText('Cedar Building');
+    // The queue is read-only — no Mark Complete affordance.
+    await expect(managerPage.locator('[data-testid^="queue-complete-"]')).toHaveCount(0);
   });
 });
