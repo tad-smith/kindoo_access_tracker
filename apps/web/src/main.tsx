@@ -31,7 +31,7 @@ import { createRouter, RouterProvider } from '@tanstack/react-router';
 // any consumer touches the Firebase SDK singletons.
 import './lib/firebase';
 import { RootErrorBoundary } from './components/RootErrorBoundary';
-import { PwaUpdatePrompt } from './components/layout/PwaUpdatePrompt';
+import { registerServiceWorker } from './lib/pwa/registerServiceWorker';
 import { registerNotificationClickRouter } from './features/notifications/serviceWorkerMessenger';
 import {
   notifyActiveStakeUrlNavigated,
@@ -109,9 +109,13 @@ createRoot(rootEl).render(
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>
-      {/* Mounted at the root so SW registers regardless of auth state
-          and the update prompt survives auth/route transitions. */}
-      <PwaUpdatePrompt />
     </RootErrorBoundary>
   </StrictMode>,
 );
+
+// Register the autoUpdate service worker (registerType: 'autoUpdate'). A new
+// deploy's worker skip-waits, claims clients, and the page silently reloads
+// onto the new bundle on activation — no in-app update prompt. See
+// `lib/pwa/registerServiceWorker.ts` for the reload mechanics. Called after
+// the first render so SW work never blocks initial paint.
+registerServiceWorker();

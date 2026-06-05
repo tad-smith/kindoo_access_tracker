@@ -106,6 +106,25 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
    - Open `https://staging.stakebuildingaccess.org` (or `https://kindoo-staging.web.app`) in a browser. Expected: the SPA loads.
    - Open the browser console. Expected: no red errors.
    - **Verify the third-party Licenses link (T-20).** In an INCOGNITO window (so no prior service worker is cached), sign in and click the `Licenses` link in the nav footer. Expected: a plain-text page with the THIRD_PARTY_LICENSES.txt content (Apache-2.0 / MIT notices for the runtime deps). Curl alone is NOT enough — `curl https://<host>/THIRD_PARTY_LICENSES.txt` bypasses the service worker and will return the real bytes even if the SW is shadowing the link click. The browser click test is what catches a `navigateFallbackDenylist` regression that rewrites the link to the SPA shell.
+   - **Verify the Hosting cache headers.** These are what stop the PWA version-thrash (an old cached service worker reasserting after a deploy); confirm them with curl, which bypasses the SW and shows the raw Hosting response:
+
+     ```bash
+     host=staging.stakebuildingaccess.org
+     # SPA shell (served for any navigation path via the catch-all rewrite) — must revalidate:
+     curl -sSI "https://$host/"          | grep -i '^cache-control:'
+     curl -sSI "https://$host/dashboard" | grep -i '^cache-control:'
+     # Service-worker scripts — must revalidate so a new deploy can win:
+     curl -sSI "https://$host/sw.js"                     | grep -i '^cache-control:'
+     curl -sSI "https://$host/firebase-messaging-sw.js"  | grep -i '^cache-control:'
+     # A content-hashed asset — must be immutable (pick any file under /assets/ from the build):
+     curl -sSI "https://$host/assets/$(ls apps/web/dist/assets | grep -m1 '^index-.*\.js$')" | grep -i '^cache-control:'
+     ```
+
+     Expected:
+     - `/`, `/dashboard`, `/sw.js`, `/firebase-messaging-sw.js` → `cache-control: no-cache, max-age=0, must-revalidate`
+     - the `/assets/…` file → `cache-control: public, max-age=31536000, immutable`
+
+     If the shell or `sw.js` comes back `immutable` (or with a long `max-age`), the header globs in `firebase.json` regressed — see the "shows the old version" troubleshooting entry below.
 
 ## Prod deploy
 
@@ -129,6 +148,7 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
 4. **Verify the prod URL.**
 
    - Open `https://stakebuildingaccess.org` (or `https://kindoo-prod.web.app`) in a browser; sign in; smoke-test the pages relevant to this deploy.
+   - **Verify the Hosting cache headers** with the curl block from the staging step, substituting `host=stakebuildingaccess.org`. Same expected output: `no-cache, max-age=0, must-revalidate` for the shell + SW scripts, `public, max-age=31536000, immutable` for `/assets/…`.
 
 ## Rollback
 
@@ -165,6 +185,18 @@ A workspace's `tsconfig.json` is broken. Run `pnpm typecheck` directly to see wh
 ### Deploy succeeds but the staging site shows the old version
 
 Browser cache. Hard-refresh (Cmd-Shift-R on macOS). The `version.gen.ts` payload (rendered in the topbar) should match the commit you just deployed; if it does not, the deploy actually did not go through — check `firebase hosting:channel:list --project staging` and re-run the deploy.
+
+If a hard-refresh does NOT fix it, suspect the service worker, not Hosting. The Hosting cache headers (`firebase.json` → `hosting.headers`) make the SPA shell and the SW scripts (`/sw.js`, `/firebase-messaging-sw.js`) `no-cache` so a new deploy always wins on the next revalidation, while only content-hashed `/assets/**` (and the root-level hashed `workbox-*.js` chunk) stay `immutable`. The header `source` globs match the **request path** — Firebase Hosting headers are **last-match-wins**, so the catch-all `**` no-cache rule comes first and the `/assets/**` + `/workbox-*.js` immutable rules come after it to override it for hashed files only. If you change those globs, re-verify with the curl block in the "Verify the staging URL" step. Confirm the headers are actually live: `curl -sSI https://staging.stakebuildingaccess.org/sw.js | grep -i cache-control` must show `no-cache`.
+
+**One-time escape hatch for a desktop browser already stuck in the pre-fix thrash.** Browsers that cached the old `sw.js` (or an uncontrolled tab) before these headers shipped can keep reasserting the stale worker even after the fix is deployed, because the OLD `sw.js` was fetched under default caching. To force such a browser onto the new build once:
+
+1. DevTools → Application → Service Workers → check "Update on reload", then click **Unregister** for the site's worker.
+2. DevTools → Application → Storage → **Clear site data**.
+3. Close ALL tabs for the origin (the controlling page only releases when every tab is gone), then reopen.
+
+After the headers are live, this is a one-time-per-browser cleanup; subsequent deploys revalidate `sw.js` automatically and do not need it.
+
+> **CDN propagation:** Firebase Hosting serves through Fastly. After a deploy, edge nodes can briefly serve the previous release's headers/bytes until propagation completes (seconds, occasionally a minute). If the curl checks above show stale headers immediately after deploy, wait and re-run before concluding the config is wrong.
 
 ## What this runbook does NOT cover
 
