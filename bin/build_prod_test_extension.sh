@@ -1,1 +1,1 @@
-pnpm --filter @kindoo/extension build --mode production
+pnpm --filter @kindoo/shared build && pnpm --filter @kindoo/extension build --mode production

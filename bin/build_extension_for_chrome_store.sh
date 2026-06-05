@@ -12,6 +12,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# @kindoo/shared dist must be current before the extension's tsc -b resolves it.
+pnpm --filter @kindoo/shared build
+
 VITE_OMIT_KEY=true pnpm --filter @kindoo/extension build
 
 DIST="extension/dist/production"
