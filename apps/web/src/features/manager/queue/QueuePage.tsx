@@ -211,6 +211,19 @@ function QueueCard({ request, isFocused }: QueueCardProps) {
   const blockedByDuplicate =
     (request.type === 'add_manual' || request.type === 'add_temp') && !!dup.data;
 
+  // Informational edit-side analog of the duplicate-add chip: an
+  // `edit_*` completion modifies the member's existing seat, so a
+  // missing seat means the request targets something that no longer
+  // exists. Gate on `isSuccess` (subscription resolved) — NOT just
+  // `!dup.data`, which is also true while the seat is still loading.
+  // The DIY `useFirestoreDoc` keeps `status === 'success'` for a
+  // resolved-but-absent doc (data stays `undefined`), so
+  // `isSuccess && !dup.data` is the unambiguous "resolved, no seat"
+  // signal and never flashes during load.
+  const isEditType =
+    request.type === 'edit_auto' || request.type === 'edit_manual' || request.type === 'edit_temp';
+  const editTargetMissing = isEditType && dup.isSuccess && !dup.data;
+
   const reqDate = (() => {
     const ts = request.requested_at as unknown as { toDate?: () => Date };
     if (ts && ts.toDate) return ts.toDate().toISOString().slice(0, 16).replace('T', ' ');
@@ -321,6 +334,15 @@ function QueueCard({ request, isFocused }: QueueCardProps) {
           <Badge variant="danger">Error</Badge> Member already has a {dup.data.type} seat in{' '}
           {dup.data.scope}. This request can&apos;t be completed — reject it, or reconcile via All
           Seats.
+        </div>
+      ) : null}
+      {editTargetMissing ? (
+        <div
+          className="kd-queue-card-error"
+          role="alert"
+          data-testid={`queue-edit-missing-seat-${request.request_id}`}
+        >
+          <Badge variant="danger">Error</Badge> This request edits a seat that no longer exists.
         </div>
       ) : null}
     </div>
