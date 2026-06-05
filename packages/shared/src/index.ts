@@ -16,7 +16,7 @@ export { buildingSlug } from './buildingSlug.js';
 export { callingSortOrder, seatCallingOrder } from './callingSortOrder.js';
 export { canonicalEmail, emailsEqual } from './canonicalEmail.js';
 export { principalFromClaims } from './principal.js';
-export { resolveWardSite } from './resolveWardSite.js';
+export { buildingNameById, resolveWardBuilding, resolveWardSite } from './resolveWardSite.js';
 export {
   comparisonDateMs,
   outstandingCutoffMs,
