@@ -321,8 +321,12 @@ export function buildingRenameBlocker(
   if (requestCount > 0) {
     parts.push(`${requestCount} pending ${requestCount === 1 ? 'request' : 'requests'}`);
   }
+  // Subject-verb agreement: singular "references" only when there's
+  // exactly ONE reference total. A compound subject ("1 seat and 1
+  // pending request") is plural → "reference".
+  const verb = seatCount + requestCount === 1 ? 'references' : 'reference';
   return (
-    `Can't rename "${currentName}" — ${parts.join(' and ')} reference it. ` +
+    `Can't rename "${currentName}" — ${parts.join(' and ')} ${verb} it. ` +
     `Remove or reassign them first.`
   );
 }

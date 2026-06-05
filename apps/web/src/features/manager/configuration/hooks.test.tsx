@@ -128,7 +128,8 @@ describe('configuration buildingRenameBlocker', () => {
       [],
     );
     expect(msg).toContain('Can\'t rename "Black Forest"');
-    expect(msg).toContain('1 seat');
+    // Singular subject → singular verb "references".
+    expect(msg).toContain('1 seat references it');
     expect(msg).toContain('Remove or reassign them first.');
   });
 
@@ -138,7 +139,8 @@ describe('configuration buildingRenameBlocker', () => {
       [],
       [request({ status: 'pending', building_names: ['Black Forest'] })],
     );
-    expect(msg).toContain('1 pending request');
+    // Singular subject → singular verb "references".
+    expect(msg).toContain('1 pending request references it');
   });
 
   it('allows the rename when the only reference is a completed request (historical)', () => {
@@ -193,6 +195,20 @@ describe('configuration buildingRenameBlocker', () => {
     );
   });
 
+  it('uses the plural verb for a compound subject of two singular parts', () => {
+    // 1 seat + 1 pending request = 2 references total → "reference",
+    // even though each individual part is singular.
+    const msg = buildingRenameBlocker(
+      'Black Forest',
+      [seat({ building_names: ['Black Forest'] })],
+      [request({ status: 'pending', building_names: ['Black Forest'] })],
+    );
+    expect(msg).toBe(
+      'Can\'t rename "Black Forest" — 1 seat and 1 pending request reference it. ' +
+        'Remove or reassign them first.',
+    );
+  });
+
   it('tolerates a seat / request with an absent building_names array', () => {
     expect(
       buildingRenameBlocker(
@@ -223,7 +239,7 @@ describe('configuration buildingRenameBlocker', () => {
       [],
     );
     expect(msg).toContain('Can\'t rename "Black Forest"');
-    expect(msg).toContain('1 seat');
+    expect(msg).toContain('1 seat references it');
   });
 
   it('counts a seat once when it references via both primary and duplicate-grant arrays', () => {
@@ -240,9 +256,9 @@ describe('configuration buildingRenameBlocker', () => {
       ],
       [],
     );
-    // One seat, not two.
+    // One seat, not two. Singular subject → singular verb "references".
     expect(msg).toBe(
-      'Can\'t rename "Black Forest" — 1 seat reference it. Remove or reassign them first.',
+      'Can\'t rename "Black Forest" — 1 seat references it. Remove or reassign them first.',
     );
   });
 

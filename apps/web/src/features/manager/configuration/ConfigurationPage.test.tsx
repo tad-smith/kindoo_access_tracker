@@ -916,7 +916,7 @@ describe('Buildings tab rename ref-guard', () => {
             );
           if (refs) {
             throw new Error(
-              `Can't rename "${prev}" — 1 seat reference it. Remove or reassign them first.`,
+              `Can't rename "${prev}" — 1 seat references it. Remove or reassign them first.`,
             );
           }
         }
