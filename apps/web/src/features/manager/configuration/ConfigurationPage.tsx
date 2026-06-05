@@ -51,6 +51,8 @@ import {
   useDeleteWardMutation,
   useKindooSites,
   useManagers,
+  useRequests,
+  useSeats,
   useStakeDoc,
   useUpdateStakeConfigMutation,
   useUpsertBuildingMutation,
@@ -461,6 +463,11 @@ function BuildingsTab() {
   // Subscribe to wards so the building delete ref-guard can block when
   // any ward references this building (wards FK on building_name).
   const wards = useWards();
+  // Subscribe to seats + requests so the rename ref-guard can block an
+  // in-place rename while any active seat / pending request snapshots
+  // the building's current display name (display-name arrays — §3.2).
+  const seats = useSeats();
+  const requests = useRequests();
   const kindooSites = useKindooSites();
   const upsert = useUpsertBuildingMutation();
   const del = useDeleteBuildingMutation();
@@ -487,6 +494,14 @@ function BuildingsTab() {
   // against [] and a duplicate name slips through on the first click.
   const buildingsReady = buildings.data !== undefined;
 
+  // Gate Edit on the seats + requests snapshots arriving (mirrors
+  // `deleteReady`). Deep-linking ?tab=buildings can land an Edit click
+  // before those snapshots hydrate; without this gate the rename
+  // ref-guard runs against [] and a rename slips through on the first
+  // click while active seats / pending requests still snapshot the old
+  // name. Add doesn't need this — creates can't rename.
+  const renameRefsReady = seats.data !== undefined && requests.data !== undefined;
+
   return (
     <div className="kd-config-section">
       <SectionHeader
@@ -510,10 +525,15 @@ function BuildingsTab() {
             <span className="kd-config-row-actions">
               <Button
                 variant="secondary"
-                onClick={() => setOpenMode({ kind: 'edit', building: b })}
+                disabled={!renameRefsReady}
+                title={renameRefsReady ? undefined : 'Loading…'}
+                onClick={() => {
+                  if (!renameRefsReady) return;
+                  setOpenMode({ kind: 'edit', building: b });
+                }}
                 data-testid={`config-building-edit-${b.building_id}`}
               >
-                Edit
+                {renameRefsReady ? 'Edit' : 'Loading…'}
               </Button>
               <Button
                 variant="danger"
@@ -544,12 +564,22 @@ function BuildingsTab() {
         kindooSiteOptions={kindooSites.data ?? []}
         isPending={upsert.isPending}
         onSubmit={async (input, editingBuildingId) => {
+          // The building's current display name (edit only) so the
+          // rename ref-guard can tell whether the name is changing.
+          const previousBuildingName = editingBuildingId
+            ? (buildings.data ?? []).find((b) => b.building_id === editingBuildingId)?.building_name
+            : undefined;
           await upsert.mutateAsync({
             ...input,
             // Carry the original slug through on edit so the write hits
             // the SAME doc and never re-slugs a renamed building.
             ...(editingBuildingId ? { building_id: editingBuildingId } : {}),
             existingBuildings: buildings.data ?? [],
+            // Rename ref-guard inputs: the current name + the live
+            // seats / pending-requests catalogues the guard checks.
+            ...(previousBuildingName !== undefined ? { previousBuildingName } : {}),
+            seats: seats.data ?? [],
+            pendingRequests: requests.data ?? [],
           });
           toast('Building saved.', 'success');
         }}
