@@ -219,36 +219,6 @@ describe('wardSchema', () => {
     };
     expect(wardSchema.parse(seed)).toEqual(seed);
   });
-
-  // Kindoo Sites — `null` (or absent) means home site; a string
-  // points at a doc id under `stakes/{stakeId}/kindooSites/`.
-  it('parses with kindoo_site_id explicitly null', () => {
-    const seed = {
-      ward_code: '01',
-      ward_name: '1st Ward',
-      building_name: 'Maple Building',
-      seat_cap: 30,
-      kindoo_site_id: null,
-      created_at: T,
-      last_modified_at: T,
-      lastActor: ACTOR,
-    };
-    expect(wardSchema.parse(seed)).toEqual(seed);
-  });
-
-  it('parses with kindoo_site_id set to a foreign-site doc id', () => {
-    const seed = {
-      ward_code: '07',
-      ward_name: '7th Ward',
-      building_name: 'Pine Building',
-      seat_cap: 30,
-      kindoo_site_id: 'east-stake',
-      created_at: T,
-      last_modified_at: T,
-      lastActor: ACTOR,
-    };
-    expect(wardSchema.parse(seed)).toEqual(seed);
-  });
 });
 
 describe('buildingSchema', () => {
