@@ -16,20 +16,8 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { Access, ManualGrant } from '@kindoo/shared';
-import {
-  useAccessList,
-  useAddManualGrantMutation,
-  useDeleteManualGrantMutation,
-  useStakeCallingTemplates,
-  useWardCallingTemplates,
-} from './hooks';
-import {
-  buildSheetOrderLookup,
-  compareAccessForCard,
-  compareScopeBand,
-  lookupSheetOrder,
-  type SheetOrderLookup,
-} from './sort';
+import { useAccessList, useAddManualGrantMutation, useDeleteManualGrantMutation } from './hooks';
+import { compareAccessForCard, compareScopeBand, lookupSheetOrder } from './sort';
 import { useStakeWards } from '../dashboard/hooks';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
@@ -49,23 +37,8 @@ function errorMessage(err: unknown): string {
 export function AccessPage() {
   const access = useAccessList();
   const wards = useStakeWards();
-  const stakeTemplates = useStakeCallingTemplates();
-  const wardTemplates = useWardCallingTemplates();
   const principal = usePrincipal();
   const activeStakeId = useActiveStake();
-  // (scope, calling) → sheet_order. Drives the desktop table view's
-  // per-row sort. Card view continues to use the doc-level
-  // `sort_order` denormalised by the importer (correct under the
-  // operator's no-cross-scope-overlap assumption).
-  const sheetOrderLookup = useMemo<SheetOrderLookup>(
-    () =>
-      buildSheetOrderLookup({
-        stakeTemplates: stakeTemplates.data ?? [],
-        wardTemplates: wardTemplates.data ?? [],
-        wardCodes: (wards.data ?? []).map((w) => w.ward_code),
-      }),
-    [stakeTemplates.data, wardTemplates.data, wards.data],
-  );
   const [scopeFilter, setScopeFilter] = useState<string>('');
   const deleteMutation = useDeleteManualGrantMutation();
   const [pendingDelete, setPendingDelete] = useState<{
@@ -186,7 +159,6 @@ export function AccessPage() {
           <AccessTable
             users={sorted}
             scopeFilter={scopeFilter}
-            sheetOrderLookup={sheetOrderLookup}
             onDeleteRequest={(canonical, scope, grant) =>
               setPendingDelete({ canonical, scope, grant })
             }
@@ -245,11 +217,7 @@ interface AccessTableRow {
   grant?: ManualGrant;
 }
 
-function flattenAccess(
-  users: readonly Access[],
-  scopeFilter: string,
-  sheetOrderLookup: SheetOrderLookup,
-): AccessTableRow[] {
+function flattenAccess(users: readonly Access[], scopeFilter: string): AccessTableRow[] {
   const rows: AccessTableRow[] = [];
   for (const u of users) {
     for (const [scope, callings] of Object.entries(u.importer_callings ?? {})) {
@@ -278,16 +246,15 @@ function flattenAccess(
       }
     }
   }
-  // Sort: scope band (stake first, then wards alpha) → per-row
-  // sheet_order from the calling-template lookup → email.
-  // Manual-grant rows have no template (their `calling` field carries
-  // a free-text reason) so they fall through to `+Infinity` and land
-  // at the bottom of their scope band.
+  // Sort: scope band (stake first, then wards alpha) → per-row calling
+  // order from the canonical churchwide table → email. Manual-grant
+  // rows carry a free-text reason that isn't a calling, so they fall
+  // through to `+Infinity` and land at the bottom of their scope band.
   rows.sort((a, b) => {
     const scopeCmp = compareScopeBand(a.scope, b.scope);
     if (scopeCmp !== 0) return scopeCmp;
-    const aOrder = lookupSheetOrder(sheetOrderLookup, a.scope, a.calling);
-    const bOrder = lookupSheetOrder(sheetOrderLookup, b.scope, b.calling);
+    const aOrder = lookupSheetOrder(a.scope, a.calling);
+    const bOrder = lookupSheetOrder(b.scope, b.calling);
     if (aOrder !== bOrder) return aOrder - bOrder;
     if (a.calling !== b.calling) return a.calling.localeCompare(b.calling);
     return a.email.localeCompare(b.email);
@@ -298,15 +265,11 @@ function flattenAccess(
 interface AccessTableProps {
   users: readonly Access[];
   scopeFilter: string;
-  sheetOrderLookup: SheetOrderLookup;
   onDeleteRequest: (canonical: string, scope: string, grant: ManualGrant) => void;
 }
 
-function AccessTable({ users, scopeFilter, sheetOrderLookup, onDeleteRequest }: AccessTableProps) {
-  const rows = useMemo(
-    () => flattenAccess(users, scopeFilter, sheetOrderLookup),
-    [users, scopeFilter, sheetOrderLookup],
-  );
+function AccessTable({ users, scopeFilter, onDeleteRequest }: AccessTableProps) {
+  const rows = useMemo(() => flattenAccess(users, scopeFilter), [users, scopeFilter]);
   return (
     <table className="kd-access-table kd-responsive-table-desktop" data-testid="access-table">
       <thead>

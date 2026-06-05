@@ -4,12 +4,19 @@
 // schemas, and the `auditId` / `buildingSlug` helpers.
 
 // ---- Pure helpers -----------------------------------------------------
+export {
+  STAKE_APP_ACCESS_CALLINGS,
+  WARD_APP_ACCESS_CALLINGS,
+  appAccessCallingsForScope,
+  filterAppAccessCallings,
+} from './appAccessCallings.js';
 export { auditId } from './auditId.js';
 export { BOOKKEEPING_FIELDS } from './auditBookkeepingFields.js';
 export { buildingSlug } from './buildingSlug.js';
 export { callingSortOrder, seatCallingOrder } from './callingSortOrder.js';
 export { canonicalEmail, emailsEqual } from './canonicalEmail.js';
 export { principalFromClaims } from './principal.js';
+export { resolveWardSite } from './resolveWardSite.js';
 export {
   comparisonDateMs,
   outstandingCutoffMs,
@@ -40,7 +47,6 @@ export type {
   Building,
   BuildingsMismatchPayload,
   CallingsMismatchPayload,
-  CallingTemplate,
   CompletionStatus,
   CreateStakeError,
   CreateStakeInput,
@@ -68,7 +74,6 @@ export type {
   Seat,
   SeatType,
   Stake,
-  StakeCallingTemplate,
   StakeClaims,
   SyncApplyFixInput,
   SyncApplyFixResult,
@@ -76,7 +81,6 @@ export type {
   TypeMismatchPayload,
   UserIndexEntry,
   Ward,
-  WardCallingTemplate,
 } from './types/index.js';
 
 // ---- Zod schemas ------------------------------------------------------
@@ -88,7 +92,6 @@ export {
   auditEntityTypeSchema,
   auditLogSchema,
   buildingSchema,
-  callingTemplateSchema,
   duplicateGrantSchema,
   kindooManagerSchema,
   kindooSiteSchema,
@@ -101,10 +104,8 @@ export {
   requestTypeSchema,
   seatSchema,
   seatTypeSchema,
-  stakeCallingTemplateSchema,
   stakeSchema,
   timestampLikeSchema,
   userIndexEntrySchema,
-  wardCallingTemplateSchema,
   wardSchema,
 } from './schemas/index.js';

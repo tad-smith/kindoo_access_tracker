@@ -3,6 +3,8 @@
 //
 //   - Skip-if-equal idempotence (second run produces zero writes).
 //   - Missing-ward duplicate skipped with logged warning.
+//   - Missing-building ward skipped (NOT demoted to home); building
+//     found resolves to home/foreign per its `kindoo_site_id`.
 //   - Migration writes stamp `lastActor.canonical='Migration'` so the
 //     auditTrigger emits `action='migration_backfill_kindoo_site_id'`.
 //   - Per-stake scoping via the `stakeId` parameter.
@@ -16,6 +18,12 @@ import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.j
 const STAKE_ID = 'csnorth';
 const ACTOR = { email: 'admin@gmail.com', canonical: 'admin@gmail.com' };
 
+// Seed a ward (and, when `kindoo_site_id` is given, its building). The
+// migration derives each scope's expected site from the ward's building,
+// so the site lives on the building doc, not the ward. Omitting
+// `kindoo_site_id` seeds a ward whose `building_name` has NO building doc
+// (the missing-building case the migration must skip-and-warn on, not
+// collapse to home).
 async function seedWard(opts: {
   ward_code: string;
   ward_name?: string;
@@ -23,17 +31,29 @@ async function seedWard(opts: {
   kindoo_site_id?: string | null;
 }): Promise<void> {
   const { db } = requireEmulators();
+  const buildingName = opts.building_name ?? `${opts.ward_code} Building`;
   const doc: Record<string, unknown> = {
     ward_code: opts.ward_code,
     ward_name: opts.ward_name ?? `${opts.ward_code} Ward`,
-    building_name: opts.building_name ?? `${opts.ward_code} Building`,
+    building_name: buildingName,
     seat_cap: 30,
     created_at: Timestamp.now(),
     last_modified_at: Timestamp.now(),
     lastActor: ACTOR,
   };
-  if (opts.kindoo_site_id !== undefined) doc.kindoo_site_id = opts.kindoo_site_id;
   await db.doc(`stakes/${STAKE_ID}/wards/${opts.ward_code}`).set(doc);
+  if (opts.kindoo_site_id !== undefined) {
+    const buildingId = buildingName.toLowerCase().replace(/\s+/g, '-');
+    await db.doc(`stakes/${STAKE_ID}/buildings/${buildingId}`).set({
+      building_id: buildingId,
+      building_name: buildingName,
+      address: '123 Test St',
+      kindoo_site_id: opts.kindoo_site_id,
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      lastActor: ACTOR,
+    });
+  }
 }
 
 async function seedSeat(opts: {
@@ -265,5 +285,60 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
     expect(alice.kindoo_site_id).toBeUndefined();
     // The mirror backfilled to empty (no duplicates on the seat).
     expect(alice.duplicate_scopes).toEqual([]);
+  });
+
+  it('ward whose building is missing: primary kindoo_site_id is left untouched with a warning (NOT demoted to home)', async () => {
+    const { db } = requireEmulators();
+    // Ward CO exists but its `building_name` has no building doc (renamed
+    // / deleted building). The seat was previously categorised foreign.
+    // Regression guard: the migration must NOT collapse to home — it must
+    // skip-and-warn, preserving the seat's existing foreign site.
+    await seedWard({ ward_code: 'CO' }); // no kindoo_site_id → no building doc
+    await seedSeat({
+      canonical: 'alice@gmail.com',
+      scope: 'CO',
+      kindoo_site_id: 'east-stake',
+    });
+
+    const result = await backfillKindooSiteIdForStake(db, STAKE_ID);
+    // Same skip-with-warning surface as the unknown-ward case.
+    expect(result.primary_kindoo_site_id_skipped).toBe(1);
+    expect(result.warnings.some((w) => w.includes('alice@gmail.com') && w.includes('CO'))).toBe(
+      true,
+    );
+    const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+    // Critical: the pre-existing foreign site survives untouched.
+    expect(alice.kindoo_site_id).toBe('east-stake');
+  });
+
+  it('ward whose building is foreign-site: primary kindoo_site_id resolves to the foreign site', async () => {
+    const { db } = requireEmulators();
+    await seedWard({ ward_code: 'FT', kindoo_site_id: 'east-stake' });
+    // Seat has no stored site yet (legacy shape); migration lands it.
+    await seedSeat({ canonical: 'alice@gmail.com', scope: 'FT' });
+
+    const result = await backfillKindooSiteIdForStake(db, STAKE_ID);
+    expect(result.primary_kindoo_site_id_skipped).toBe(0);
+    expect(result.seats_updated).toBe(1);
+    const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+    expect(alice.kindoo_site_id).toBe('east-stake');
+  });
+
+  it('ward whose building is home-site: primary kindoo_site_id resolves to home (null)', async () => {
+    const { db } = requireEmulators();
+    await seedWard({ ward_code: 'CO', kindoo_site_id: null });
+    // Seat pre-stored with a stale foreign value while CO's building is
+    // home → the migration writes null (building FOUND, site null).
+    await seedSeat({
+      canonical: 'alice@gmail.com',
+      scope: 'CO',
+      kindoo_site_id: 'east-stake',
+    });
+
+    const result = await backfillKindooSiteIdForStake(db, STAKE_ID);
+    expect(result.primary_kindoo_site_id_skipped).toBe(0);
+    expect(result.seats_updated).toBe(1);
+    const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
+    expect(alice.kindoo_site_id).toBe(null);
   });
 });

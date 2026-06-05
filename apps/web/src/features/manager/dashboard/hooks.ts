@@ -16,10 +16,17 @@
 
 import { limit, orderBy, query, where } from 'firebase/firestore';
 import { useMemo } from 'react';
-import type { AccessRequest, AuditLog, Seat, Ward } from '@kindoo/shared';
+import type { AccessRequest, AuditLog, Building, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreCollection, useFirestoreDoc } from '../../../lib/data';
 import { db } from '../../../lib/firebase';
-import { auditLogCol, requestsCol, seatsCol, stakeRef, wardsCol } from '../../../lib/docs';
+import {
+  auditLogCol,
+  buildingsCol,
+  requestsCol,
+  seatsCol,
+  stakeRef,
+  wardsCol,
+} from '../../../lib/docs';
 import { useActiveStake } from '../../../lib/useActiveStake';
 
 const RECENT_AUDIT_LIMIT = 10;
@@ -66,6 +73,15 @@ export function useStakeWards() {
   const activeStakeId = useActiveStake();
   const q = useMemo(() => (activeStakeId ? wardsCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Ward>(q);
+}
+
+export function useStakeBuildings() {
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
+  return useFirestoreCollection<Building>(q);
 }
 
 export function useStakeDoc() {

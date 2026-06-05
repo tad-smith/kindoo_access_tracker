@@ -88,8 +88,6 @@ function bundle() {
       },
     ],
     seats: [],
-    wardCallingTemplates: [],
-    stakeCallingTemplates: [],
     kindooSites: [],
   };
 }
@@ -212,7 +210,6 @@ describe('SyncPanel', () => {
       building_name: 'Pine Creek Building',
       kindoo_rule: { rule_id: 6249, rule_name: 'Pine Creek Doors' },
     } as never);
-    b.stakeCallingTemplates.push({ calling_name: 'Stake Clerk' } as never);
     b.seats.push({
       member_canonical: 'manager@example.com',
       member_email: 'manager@example.com',
@@ -426,10 +423,6 @@ describe('SyncPanel', () => {
 
   it('sba-only renders one Remove From SBA button (Kindoo-authoritative)', async () => {
     const b = bundle();
-    b.wardCallingTemplates.push({
-      calling_name: 'Sunday School Teacher',
-      auto_kindoo_access: true,
-    } as never);
     b.seats.push(autoSeat('orphan@example.com') as never);
     getSyncDataMock.mockResolvedValue(b);
     listAllEnvironmentUsersMock.mockResolvedValue([]);
@@ -465,10 +458,6 @@ describe('SyncPanel', () => {
   it('callings-mismatch renders Update SBA (testId update-sba) + click dispatches', async () => {
     applyFixMock.mockResolvedValue({ ok: true });
     const b = bundle();
-    b.wardCallingTemplates.push({
-      calling_name: 'Sunday School Teacher',
-      auto_kindoo_access: true,
-    } as never);
     b.seats.push(autoSeat('extra@example.com') as never);
     getSyncDataMock.mockResolvedValue(b);
     listAllEnvironmentUsersMock.mockResolvedValue([
@@ -517,10 +506,6 @@ describe('SyncPanel', () => {
 
   it('scope-mismatch renders only Update SBA — no Update Kindoo', async () => {
     const b = bundle();
-    b.wardCallingTemplates.push({
-      calling_name: 'Sunday School Teacher',
-      auto_kindoo_access: true,
-    } as never);
     b.wards.push({
       ward_code: 'PC',
       ward_name: 'Pine Creek Ward',
@@ -549,6 +534,12 @@ describe('SyncPanel', () => {
 
     expect(screen.getByTestId('sba-sync-fix-update-sba-scope@example.com')).toBeInTheDocument();
     expect(screen.queryByTestId('sba-sync-fix-update-kindoo-scope@example.com')).toBeNull();
+    // The parser-derived "intended type" line is meaningless on
+    // scope-mismatch (always manual/temp; never the real seat type) and
+    // is hidden.
+    expect(screen.getByTestId('sba-sync-row-scope@example.com')).not.toHaveTextContent(
+      'intended type',
+    );
   });
 
   it('type-mismatch (promote) renders only Update SBA — no Update Kindoo', async () => {
@@ -585,6 +576,11 @@ describe('SyncPanel', () => {
 
     // The row is a type-mismatch.
     expect(screen.getByTestId('sba-sync-row-tm@example.com')).toHaveTextContent('type-mismatch');
+    // Grant-derived rows show the observed-provenance type, not the
+    // hidden parser-derived "intended type".
+    const tmRow = screen.getByTestId('sba-sync-row-tm@example.com');
+    expect(tmRow).toHaveTextContent('grant-derived type:');
+    expect(tmRow).not.toHaveTextContent('intended type');
     // Only Update SBA — no Update Kindoo button at all.
     const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-tm@example.com');
     expect(sbaBtn).not.toBeDisabled();
@@ -711,10 +707,6 @@ describe('SyncPanel', () => {
     // emitted for the auto seat. Update SBA writes `derivedBuildings`;
     // there is no Kindoo-side button under the Kindoo-authoritative model.
     const b = bundle();
-    b.wardCallingTemplates.push({
-      calling_name: 'Sunday School Teacher',
-      auto_kindoo_access: true,
-    } as never);
     b.seats.push({
       ...autoSeat('autobm@example.com'),
       building_names: [],
@@ -775,7 +767,7 @@ describe('SyncPanel', () => {
                 isTempUser: false,
                 memberName: 'A A',
                 primaryScope: 'CO',
-                intendedType: 'auto',
+                intendedType: 'manual',
                 intendedCallings: ['Sunday School Teacher'],
                 intendedFreeText: '',
                 ruleIds: [],
@@ -971,10 +963,6 @@ describe('SyncPanel', () => {
 
   it('combines severity chip + code dropdown with AND semantics', async () => {
     const b = bundle();
-    b.wardCallingTemplates.push({
-      calling_name: 'Sunday School Teacher',
-      auto_kindoo_access: true,
-    } as never);
     // sba-only auto seat (drift).
     b.seats.push({
       member_canonical: 'orphan@example.com',

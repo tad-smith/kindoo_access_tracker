@@ -18,45 +18,17 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type {
-  Access,
-  ManualGrant,
-  StakeCallingTemplate,
-  WardCallingTemplate,
-} from '@kindoo/shared';
+import type { Access, ManualGrant } from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../../lib/data';
 import { auth, db } from '../../../lib/firebase';
-import {
-  accessCol,
-  accessRef,
-  stakeCallingTemplatesCol,
-  wardCallingTemplatesCol,
-} from '../../../lib/docs';
+import { accessCol, accessRef } from '../../../lib/docs';
 import { useActiveStake } from '../../../lib/useActiveStake';
 
 export function useAccessList() {
   const activeStakeId = useActiveStake();
   const q = useMemo(() => (activeStakeId ? accessCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Access>(q);
-}
-
-export function useStakeCallingTemplates() {
-  const activeStakeId = useActiveStake();
-  const q = useMemo(
-    () => (activeStakeId ? stakeCallingTemplatesCol(db, activeStakeId) : null),
-    [activeStakeId],
-  );
-  return useFirestoreCollection<StakeCallingTemplate>(q);
-}
-
-export function useWardCallingTemplates() {
-  const activeStakeId = useActiveStake();
-  const q = useMemo(
-    () => (activeStakeId ? wardCallingTemplatesCol(db, activeStakeId) : null),
-    [activeStakeId],
-  );
-  return useFirestoreCollection<WardCallingTemplate>(q);
 }
 
 interface RefreshedActor {

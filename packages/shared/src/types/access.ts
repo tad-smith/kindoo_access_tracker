@@ -32,10 +32,12 @@ export type Access = {
   member_name: string;
 
   /**
-   * Importer-managed. Keys = scope (`'stake'` or a ward_code). Values =
-   * list of callings whose template row had `give_app_access=true`. The
-   * Importer wholesale-replaces this map per scope on each import run;
-   * never mutates `manual_grants`.
+   * Sync-managed (field name is historical — predates the T-45 importer
+   * removal; the extension's Sync feature now owns it). Keys = scope
+   * (`'stake'` or a ward_code). Values = list of callings that grant app
+   * access for that scope (the hard-coded churchwide app-access set —
+   * `filterAppAccessCallings`). Sync wholesale-replaces this map per
+   * scope; never mutates `manual_grants`.
    */
   importer_callings: Record<string, string[]>;
 
@@ -46,10 +48,10 @@ export type Access = {
   manual_grants: Record<string, ManualGrant[]>;
 
   /**
-   * Doc-level sort priority. MIN across every `importer_callings`
-   * calling's matched template `sheet_order`. Importer-populated;
-   * `null` when `importer_callings` is empty (manual-only access docs).
-   * Web-side sort treats `null` / missing as "after all numbered."
+   * Doc-level sort priority. MIN canonical `seatCallingOrder` across the
+   * `importer_callings` callings. Sync-populated; `null` when
+   * `importer_callings` is empty (manual-only access docs). Web-side sort
+   * treats `null` / missing as "after all numbered."
    */
   sort_order?: number | null;
 

@@ -10,14 +10,13 @@
 // comma-separated when one segment carries multiple matching callings.
 //
 // The parser does not classify auto-vs-manual — it just splits and
-// resolves scope names against the known wards + stake. The classifier
+// resolves scope names against the known wards + stake. The detector
 // consumes its output.
 //
 // Phase 1 of the sync feature; design doc at
 // `extension/docs/sync-design.md` §"Description parser".
 
-import type { Stake, Ward } from '@kindoo/shared';
-import type { CallingTemplateSets } from './classifier';
+import { filterAppAccessCallings, type Stake, type Ward } from '@kindoo/shared';
 
 /** One scope+calling segment within a parsed description. */
 export interface ParsedSegment {
@@ -138,47 +137,34 @@ export function parseDescription(
   return { segments, unparseable, raw: input };
 }
 
-/** True iff any calling in `segment.calling` (split on `,`) auto-matches. */
-function segmentAutoMatches(segment: ParsedSegment, sets: CallingTemplateSets): boolean {
+/** True iff any calling in `segment.calling` (split on `,`) grants app
+ * access for the segment's own scope — ward callings for ward scopes,
+ * the stake list for `'stake'`. Uses the hard-coded app-access lists. */
+function segmentGrantsAppAccess(segment: ParsedSegment): boolean {
   if (!segment.resolvedScope || segment.scope === null) return false;
-  const autoSet =
-    segment.scope === 'stake'
-      ? sets.stakeCallings
-      : (sets.wardCallings.get(segment.scope) ?? new Set<string>());
-  if (autoSet.size === 0) return false;
-  for (const raw of segment.calling.split(',')) {
-    const c = raw.trim().toLowerCase();
-    if (c.length > 0 && autoSet.has(c)) return true;
-  }
-  return false;
+  const callings = segment.calling.split(',').map((c) => c.trim());
+  return filterAppAccessCallings(segment.scope, callings).length > 0;
 }
 
 /**
- * Pick the primary segment from a list of resolved segments. When
- * `sets` is supplied, prefer the segment that classifies as auto so a
- * non-auto stake segment doesn't steal primary from a real ward-auto
- * match (the two-segment ward-priority case observed in production:
- * stake/Technology Specialist + ward/Bishop where the seat lives on
- * the ward). Among auto-matching segments — and as the fallback when
- * no `sets` are supplied or nothing auto-matches — apply SBA's
- * existing `pickPrimaryScope` ordering: stake-scope first, then
- * alphabetical by `ward_code`. Returns `null` when no segment
+ * Pick the primary segment from a list of resolved segments. Prefer a
+ * segment whose calling grants app access (per the hard-coded
+ * per-scope lists) so a non-app-access stake segment doesn't steal
+ * primary from a real ward app-access match — the two-segment
+ * ward-priority case observed in production (stake/Technology
+ * Specialist + ward/Bishop where the seat lives on the ward). Among
+ * equally-ranked segments — and as the fallback when none grant app
+ * access — apply SBA's `pickPrimaryScope` ordering: stake-scope first,
+ * then alphabetical by `ward_code`. Returns `null` when no segment
  * resolved.
  */
-export function pickPrimarySegment(
-  parsed: ParsedDescription,
-  sets?: CallingTemplateSets,
-): ParsedSegment | null {
+export function pickPrimarySegment(parsed: ParsedDescription): ParsedSegment | null {
   const resolved = parsed.segments.filter((s) => s.resolvedScope);
   if (resolved.length === 0) return null;
 
-  // Pool to pick from: auto-matching segments when at least one exists
-  // and we have `sets` to evaluate against; otherwise all resolved.
-  let pool = resolved;
-  if (sets) {
-    const autoMatches = resolved.filter((s) => segmentAutoMatches(s, sets));
-    if (autoMatches.length > 0) pool = autoMatches;
-  }
+  // Prefer app-access-granting segments when at least one exists.
+  const appAccess = resolved.filter(segmentGrantsAppAccess);
+  const pool = appAccess.length > 0 ? appAccess : resolved;
 
   const stakeSeg = pool.find((s) => s.scope === 'stake');
   if (stakeSeg) return stakeSeg;

@@ -750,13 +750,8 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
 
   it('shows ONLY foreign-site buildings on a foreign-site ward seat', () => {
     mockCatalogue(
-      [
-        makeWard({
-          ward_code: 'FN',
-          building_name: 'Pine Building',
-          kindoo_site_id: 'foreign-1',
-        }),
-      ],
+      // The ward's site is derived from its building (Pine → foreign-1).
+      [makeWard({ ward_code: 'FN', building_name: 'Pine Building' })],
       [
         makeBuilding({
           building_id: 'maple',
@@ -818,13 +813,8 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
     // submit. With no foreign building also ticked, the dialog renders
     // zero pre-checked checkboxes.
     mockCatalogue(
-      [
-        makeWard({
-          ward_code: 'FN',
-          building_name: 'Pine Building',
-          kindoo_site_id: 'foreign-1',
-        }),
-      ],
+      // Ward FN's building (Pine) is on foreign-1; site derives from it.
+      [makeWard({ ward_code: 'FN', building_name: 'Pine Building' })],
       [
         makeBuilding({
           building_id: 'maple',
@@ -854,22 +844,17 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
   });
 
   it('renders an empty-state when the site filter narrows the catalogue to zero', () => {
-    // Foreign-site ward but no foreign building configured yet → the
-    // visible set is empty. The dialog renders an explicit message
-    // rather than an empty list.
+    // Ward FN resolves to the home site (its building isn't in the
+    // catalogue), but no home building is configured yet — only a
+    // foreign one. The home-filtered visible set is empty, so the
+    // dialog renders an explicit message rather than an empty list.
     mockCatalogue(
-      [
-        makeWard({
-          ward_code: 'FN',
-          building_name: '',
-          kindoo_site_id: 'foreign-1',
-        }),
-      ],
+      [makeWard({ ward_code: 'FN', building_name: '' })],
       [
         makeBuilding({
-          building_id: 'maple',
-          building_name: 'Maple Building',
-          kindoo_site_id: null,
+          building_id: 'pine',
+          building_name: 'Pine Building',
+          kindoo_site_id: 'foreign-1',
         }),
       ],
     );
@@ -882,7 +867,7 @@ describe('<EditSeatDialog /> — Kindoo Sites building filter (spec §15)', () =
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     expect(screen.getByTestId('edit-seat-buildings-empty-for-scope')).toBeInTheDocument();
-    expect(screen.queryByTestId('edit-seat-building-maple')).toBeNull();
+    expect(screen.queryByTestId('edit-seat-building-pine')).toBeNull();
   });
 });
 

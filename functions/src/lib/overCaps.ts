@@ -3,23 +3,21 @@
 // and `removeSeatOnRequestComplete` (spec §8).
 //
 // Home stake portion-cap = `stake_seat_cap - sum(home-site ward seats)`,
-// clamped at 0. Foreign-site wards (those with `kindoo_site_id` set)
-// don't contribute to either side of the home-stake calculation — their
-// seats come out of a foreign Kindoo site's pool, not ours. Per-ward
-// over-cap is unaffected: each ward's `seat_cap` reflects what its own
-// Kindoo site allotted it.
+// clamped at 0. Foreign-site wards (those whose building points at a
+// foreign Kindoo site) don't contribute to either side of the home-stake
+// calculation — their seats come out of a foreign Kindoo site's pool,
+// not ours. Per-ward over-cap is unaffected: each ward's `seat_cap`
+// reflects what its own Kindoo site allotted it.
 //
 // T-42: a seat's home/foreign status reads `Seat.kindoo_site_id`
-// directly when populated (importer / `markRequestComplete` / migration
-// stamp it); falls back to the seat's `scope` → ward `kindoo_site_id`
-// for legacy / pre-migration seats. The uniform missing-ward policy
-// (skip-with-warning everywhere) means a seat that references an
-// unknown ward never gets `kindoo_site_id` written — the ward-fallback
-// here returns `undefined` for that case, and the caller excludes the
-// seat from `homeWardSeatsN`. That preserves the pre-T-42 behaviour
-// where unknown-ward seats didn't count against the home-stake
-// portion-cap (they simply weren't in any ward's seat_cap bucket
-// either).
+// directly when populated (`markRequestComplete` / migration stamp it);
+// falls back to the seat's `scope` → ward site for legacy / pre-migration
+// seats. A ward's site is no longer stored on the ward — it derives from
+// the ward's building. The caller resolves `wardSites` (`ward_code →
+// site`) and passes it in. A seat referencing an unknown ward classifies
+// as `'unknown'` (its scope isn't in `wardSites`) and is excluded from
+// `homeWardSeatsN`, preserving the pre-T-42 behaviour where unknown-ward
+// seats didn't count against the home-stake portion-cap.
 //
 // A ward over-caps when `count > seat_cap` and `seat_cap > 0`.
 
@@ -57,8 +55,14 @@ export function computeOverCaps(opts: {
   seats: Seat[];
   wards: Ward[];
   stakeSeatCap: number;
+  /**
+   * `ward_code → kindoo_site_id` (`null` = home), resolved by the caller
+   * through each ward's building. Wards absent from this map (or mapping
+   * to `null`) classify as home.
+   */
+  wardSites: ReadonlyMap<string, string | null>;
 }): OverCapEntry[] {
-  const { seats, wards, stakeSeatCap } = opts;
+  const { seats, wards, stakeSeatCap, wardSites } = opts;
 
   // INTENTIONAL DIVERGENCE FROM UI BARS: over-cap warnings count
   // primary scope only (`s.scope`). The UI's per-ward bars
@@ -88,10 +92,10 @@ export function computeOverCaps(opts: {
 
   if (Number.isFinite(stakeSeatCap) && stakeSeatCap > 0) {
     const homeWardCodes = new Set(
-      wards.filter((w) => w.kindoo_site_id == null).map((w) => w.ward_code),
+      wards.filter((w) => (wardSites.get(w.ward_code) ?? null) == null).map((w) => w.ward_code),
     );
     const foreignWardCodes = new Set(
-      wards.filter((w) => w.kindoo_site_id != null).map((w) => w.ward_code),
+      wards.filter((w) => (wardSites.get(w.ward_code) ?? null) != null).map((w) => w.ward_code),
     );
     const stakeN = counts.get('stake') ?? 0;
     let homeWardSeatsN = 0;

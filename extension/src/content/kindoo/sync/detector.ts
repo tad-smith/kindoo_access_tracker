@@ -6,17 +6,8 @@
 // content-script's paginated Kindoo loop. Outputs are rendered by
 // `SyncPanel.tsx`.
 
-import { canonicalEmail } from '@kindoo/shared';
-import type {
-  Building,
-  DuplicateGrant,
-  Seat,
-  SeatType,
-  Stake,
-  StakeCallingTemplate,
-  Ward,
-  WardCallingTemplate,
-} from '@kindoo/shared';
+import { canonicalEmail, resolveWardSite } from '@kindoo/shared';
+import type { Building, DuplicateGrant, Seat, SeatType, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
 import {
   parseDescription,
@@ -24,13 +15,48 @@ import {
   type ParsedDescription,
   type ParsedSegment,
 } from './parser';
-import {
-  buildCallingTemplateSets,
-  classifySegment,
-  type CallingTemplateSets,
-  type IntendedSeatShape,
-} from './classifier';
 import type { ActiveSite } from './activeSite';
+
+/**
+ * The seat shape derived from a parsed primary segment. Template-based
+ * auto/manual classification was retired (seat type now comes from
+ * Kindoo role + door grants); this carries only the parser-sourced
+ * calling text the fix dispatcher needs.
+ *
+ *   - `type`     — `temp` when `IsTempUser`, else `manual`. Informational
+ *                  only; the authoritative seat type is `grantTargetType`
+ *                  (role + door-grant derived). Rendered in the report.
+ *   - `callings` — always empty; kept so the `KindooBlock` shape and the
+ *                  `combineParsedCallings` consumer are unchanged.
+ *   - `freeText` — the full parsed calling text from the segment.
+ */
+interface IntendedSeatShape {
+  type: 'manual' | 'temp';
+  callings: string[];
+  freeText: string;
+}
+
+/** Derive the parser-only seat shape for a resolved primary segment. */
+function intendedShape(segment: ParsedSegment, isTempUser: boolean): IntendedSeatShape {
+  return {
+    type: isTempUser ? 'temp' : 'manual',
+    callings: [],
+    freeText: segment.calling,
+  };
+}
+
+/**
+ * Build a `building_name → { kindoo_site_id }` lookup from the buildings
+ * catalogue. Feeds `resolveWardSite`, which derives a ward's Kindoo site
+ * from its assigned building (ward docs no longer carry `kindoo_site_id`).
+ */
+function buildingsByName(
+  buildings: Building[],
+): ReadonlyMap<string, Pick<Building, 'kindoo_site_id'>> {
+  const m = new Map<string, Pick<Building, 'kindoo_site_id'>>();
+  for (const b of buildings) m.set(b.building_name, b);
+  return m;
+}
 
 export type DiscrepancyCode =
   | 'sba-only'
@@ -79,12 +105,14 @@ export interface KindooBlock {
   memberName: string;
   /** Parsed primary segment's scope (`'stake'` / ward_code / `null`). */
   primaryScope: 'stake' | string | null;
-  /** Intended seat shape derived by the classifier from the primary segment. */
+  /** Parser-derived seat shape from the primary segment. Informational
+   * only — `temp` when `IsTempUser`, else `manual`; the authoritative
+   * seat type is `grantTargetType` (role + door-grant derived). */
   intendedType: IntendedSeatShape['type'] | null;
-  /** Auto-matched callings on the primary segment. Empty for manual/temp/unresolved. */
+  /** Always empty — auto-calling classification was retired. Kept so the
+   * `combineParsedCallings` consumer's shape is unchanged. */
   intendedCallings: string[];
-  /** Free-text reason carried by the primary segment (manual/temp parens,
-   * or the unmatched-callings remainder on a mixed-auto segment). */
+  /** Full parsed calling text carried by the primary segment. */
   intendedFreeText: string;
   /** Rule IDs Kindoo currently assigns. */
   ruleIds: number[];
@@ -115,9 +143,8 @@ export interface KindooBlock {
    *     the callable's `newType`.
    *   - `kindoo-only` rows — the type the created seat should be born
    *     as (temp → `'temp'`, grant-backed → `'auto'`, else `'manual'`).
-   * Undefined on every other code. Always preferred over the
-   * template-derived `intendedType`, which is no longer authoritative
-   * for type.
+   * Undefined on every other code. The authoritative seat type;
+   * `intendedType` is informational only.
    */
   grantTargetType?: SeatType;
   /**
@@ -141,20 +168,18 @@ export interface DetectInputs {
   wards: Ward[];
   buildings: Building[];
   seats: Seat[];
-  wardCallingTemplates: WardCallingTemplate[];
-  stakeCallingTemplates: StakeCallingTemplate[];
   /** Every Kindoo environment-user (paginated list flattened). */
   kindooUsers: KindooEnvironmentUser[];
   /**
    * Which Kindoo site the operator's active session is pointed at —
    * resolved by `identifyActiveSite()` from the live EID + SBA config.
-   * Scopes the diff to seats / users belonging to that site:
-   *   - `home`            → only wards / seats with `kindoo_site_id`
-   *                         null / absent (and stake-scope seats).
-   *   - `foreign(siteId)` → only wards / seats whose
-   *                         `kindoo_site_id === siteId`. Stake-scope
-   *                         seats are home-only (Phase 1 policy), so
-   *                         they're excluded.
+   * Scopes the diff to seats / users belonging to that site. A ward's
+   * site derives from its assigned building (`resolveWardSite`):
+   *   - `home`            → only wards / seats that resolve to the home
+   *                         site (and stake-scope seats).
+   *   - `foreign(siteId)` → only wards / seats whose building resolves
+   *                         to `siteId`. Stake-scope seats are home-only
+   *                         (Phase 1 policy), so they're excluded.
    *   - `unknown`         → caller is responsible for the empty-state
    *                         UX; we still return an empty diff defensively.
    *
@@ -232,13 +257,15 @@ function toSbaBlock(seat: Seat): SbaBlock {
 function projectSeatForSite(
   seat: Seat,
   wards: Ward[],
+  buildings: Building[],
   activeSite: ActiveSite | undefined,
 ): SbaBlock | null {
   if (!activeSite || activeSite.kind === 'unknown') return null;
+  const byName = buildingsByName(buildings);
   const wardSite = (wardCode: string): string | null => {
     if (wardCode === 'stake') return null;
     const ward = wards.find((w) => w.ward_code === wardCode);
-    return ward ? (ward.kindoo_site_id ?? null) : null;
+    return ward ? resolveWardSite(ward, byName) : null;
   };
   // Match by seat-level field when present; fall back to scope→ward
   // lookup so legacy seats (pre-migration) still classify.
@@ -319,31 +346,32 @@ function wardBuildingsForScope(scope: string, wards: Ward[]): string[] {
 
 /**
  * T-42: pick the parsed segment whose scope's Kindoo site matches the
- * active site. Mirrors `pickPrimarySegment`'s `prefer auto > stake >
- * ward-alpha` tiebreaker but pre-filters by site. Returns `null` when
- * no segment resolves to the active site.
+ * active site. Mirrors `pickPrimarySegment`'s `stake > ward-alpha`
+ * tiebreaker but pre-filters by site. A ward's site derives from its
+ * assigned building (`resolveWardSite`). Returns `null` when no segment
+ * resolves to the active site.
  */
 function pickSegmentForSite(
   parsed: ParsedDescription,
-  sets: CallingTemplateSets,
-  stake: Stake,
   wards: Ward[],
+  buildings: Building[],
   activeSite: ActiveSite | undefined,
 ): ParsedSegment | null {
   if (!activeSite || activeSite.kind === 'unknown') return null;
+  const byName = buildingsByName(buildings);
   const wantSiteId: string | null = activeSite.kind === 'home' ? null : activeSite.siteId;
   const segmentSite = (segment: ParsedSegment): string | null | undefined => {
     if (!segment.resolvedScope || segment.scope === null) return undefined;
     if (segment.scope === 'stake') return null; // stake-scope is home-only.
     const w = wards.find((x) => x.ward_code === segment.scope);
-    return w ? (w.kindoo_site_id ?? null) : undefined;
+    return w ? resolveWardSite(w, byName) : undefined;
   };
   const filtered = parsed.segments.filter((s) => segmentSite(s) === wantSiteId);
   if (filtered.length === 0) return null;
   // Reuse `pickPrimarySegment`'s tiebreaker by wrapping the filter in
   // a ParsedDescription shell (`raw` / `unparseable` aren't used by
   // the picker).
-  return pickPrimarySegment({ segments: filtered, unparseable: false, raw: parsed.raw }, sets);
+  return pickPrimarySegment({ segments: filtered, unparseable: false, raw: parsed.raw });
 }
 
 /**
@@ -562,12 +590,6 @@ function compareDiscrepancies(a: Discrepancy, b: Discrepancy): number {
  * the two counters that surface in the report header.
  */
 export function detect(inputs: DetectInputs): DetectResult {
-  const sets = buildCallingTemplateSets(
-    inputs.stakeCallingTemplates,
-    inputs.wardCallingTemplates,
-    inputs.wards.map((w) => w.ward_code),
-  );
-
   // Active-site filter: scope the union of (seats, kindoo users) to
   // grants belonging to the active Kindoo site. `unknown` returns an
   // empty diff up front (the panel renders an empty-state recovery
@@ -601,14 +623,14 @@ export function detect(inputs: DetectInputs): DetectResult {
       projectedSeats.push({ seat, sbaBlock: toSbaBlock(seat) });
       continue;
     }
-    const projected = projectSeatForSite(seat, inputs.wards, inputs.activeSite);
+    const projected = projectSeatForSite(seat, inputs.wards, inputs.buildings, inputs.activeSite);
     if (projected) projectedSeats.push({ seat, sbaBlock: projected });
   }
   const filteredKindooUsers = filterKindooUsersByActiveSite(
     inputs.kindooUsers,
     inputs.stake,
     inputs.wards,
-    sets,
+    inputs.buildings,
     inputs.activeSite,
   );
 
@@ -625,9 +647,9 @@ export function detect(inputs: DetectInputs): DetectResult {
   // SBA-side `sbaBlock` is already projected onto the active site.
   const pickRelevantSegment = (parsed: ParsedDescription): ParsedSegment | null => {
     if (inputs.activeSite) {
-      return pickSegmentForSite(parsed, sets, inputs.stake, inputs.wards, inputs.activeSite);
+      return pickSegmentForSite(parsed, inputs.wards, inputs.buildings, inputs.activeSite);
     }
-    return pickPrimarySegment(parsed, sets);
+    return pickPrimarySegment(parsed);
   };
 
   for (const canon of allCanonical) {
@@ -665,7 +687,7 @@ export function detect(inputs: DetectInputs): DetectResult {
     if (!seat && kuser) {
       const parsed = parseDescription(kuser.description, inputs.stake, inputs.wards);
       const primary = pickRelevantSegment(parsed);
-      const intended = primary ? classifySegment(primary, kuser.isTempUser, sets) : null;
+      const intended = primary ? intendedShape(primary, kuser.isTempUser) : null;
       // Grant-derived type for the seat we'd create:
       //   - temp wins (`IsTempUser`-driven).
       //   - Admin (Administrator / Manager) → `auto` regardless of grant
@@ -689,7 +711,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'drift',
         reason: 'Kindoo has a user for this email, but SBA has no seat for them.',
         sba: null,
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, createdType),
+        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, createdType),
       });
       continue;
     }
@@ -719,7 +741,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         reason:
           'Promote to auto: this Kindoo user is an Administrator/Manager (non-Guest), so the seat is church-owned ⇒ auto.',
         sba: sbaBlock,
-        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets, 'auto'),
+        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, 'auto'),
       });
       continue;
     }
@@ -753,7 +775,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'review',
           reason: 'Kindoo description is blank — nothing to reconcile; manual review.',
           sba: sbaBlock,
-          kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
+          kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings),
         });
         continue;
       }
@@ -769,7 +791,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         reason:
           "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA.",
         sba: sbaBlock,
-        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
+        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings),
       });
       continue;
     }
@@ -789,22 +811,22 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'review',
         reason: 'Kindoo description has no resolvable primary segment; review manually.',
         sba: sbaBlock,
-        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, sets),
+        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings),
       });
       continue;
     }
-    const intended = classifySegment(primary, kuser.isTempUser, sets);
+    const intended = intendedShape(primary, kuser.isTempUser);
 
     // 5. scope-mismatch — parsed primary scope differs from seat.scope.
-    if (intended.scope !== sbaBlock.scope) {
+    if (primary.scope !== sbaBlock.scope) {
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'scope-mismatch',
         severity: 'drift',
-        reason: `Primary scope differs: SBA=${sbaBlock.scope}, Kindoo=${intended.scope ?? '(unresolved)'}.`,
+        reason: `Primary scope differs: SBA=${sbaBlock.scope}, Kindoo=${primary.scope ?? '(unresolved)'}.`,
         sba: sbaBlock,
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
+        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
       });
       continue;
     }
@@ -851,7 +873,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'drift',
           reason: `Promote to auto: the church directly grants door access for this member (church-direct building(s) [${directList}]), so Kindoo provisioning is church-owned.`,
           sba: sbaBlock,
-          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, 'auto'),
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, 'auto'),
         });
         continue;
       }
@@ -866,7 +888,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           reason:
             'Demote to manual: the church no longer directly grants any door access for this member; SBA owns the access ⇒ manual.',
           sba: sbaBlock,
-          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets, 'manual'),
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, 'manual'),
         });
         continue;
       }
@@ -879,17 +901,15 @@ export function detect(inputs: DetectInputs): DetectResult {
     // authoritative Kindoo door-access signal for ALL seat types: it sees
     // both Church Access Automation direct grants AND rule-based grants.
     // The bulk listing's AccessSchedules array misses direct grants, so it
-    // is only a fallback for manual/temp when derivation failed (`null`).
-    // For auto when derivation failed, leave the compare set `null` so the
-    // check is skipped — unchanged auto behavior.
-    //
-    // Grant reconciliation applies to ALL seat roles (managers can hold
-    // seats); the only skip is "can't classify" — `derivedBuildings ===
-    // null` for auto (and no manual/temp AccessSchedules fallback).
+    // is only a fallback for manual/temp SEATS when derivation failed
+    // (`null`). For auto seats when derivation failed, leave the compare
+    // set `null` so the check is skipped — auto door access comes via
+    // direct grants the AccessSchedules array doesn't expose, so an
+    // AccessSchedules-derived empty set would be a false positive.
     let kindooBuildingsForCompare: string[] | null = null;
     if (kuser.derivedBuildings !== null && kuser.derivedBuildings !== undefined) {
       kindooBuildingsForCompare = kuser.derivedBuildings;
-    } else if (intended.type === 'manual' || intended.type === 'temp') {
+    } else if (sbaBlock.type === 'manual' || sbaBlock.type === 'temp') {
       kindooBuildingsForCompare = ruleIdsToBuildingNames(
         kuser.accessSchedules.map((s) => s.ruleId),
         inputs.buildings,
@@ -905,7 +925,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'drift',
           reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].`,
           sba: sbaBlock,
-          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, sets),
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
         });
         continue;
       }
@@ -946,7 +966,6 @@ export function detect(inputs: DetectInputs): DetectResult {
             parsed,
             intended,
             inputs.buildings,
-            sets,
             undefined,
             kindooCallings,
           ),
@@ -986,7 +1005,7 @@ function filterKindooUsersByActiveSite(
   users: KindooEnvironmentUser[],
   stake: Stake,
   wards: Ward[],
-  sets: CallingTemplateSets,
+  buildings: Building[],
   activeSite: ActiveSite | undefined,
 ): KindooEnvironmentUser[] {
   if (!activeSite) return users;
@@ -994,7 +1013,7 @@ function filterKindooUsersByActiveSite(
   return users.filter((u) => {
     const parsed = parseDescription(u.description, stake, wards);
     // Find ANY segment whose scope sits on the active site.
-    const matched = pickSegmentForSite(parsed, sets, stake, wards, activeSite);
+    const matched = pickSegmentForSite(parsed, wards, buildings, activeSite);
     if (matched) return true;
     // No matching segment. Preserve historical "show unparseable users
     // on home" behaviour: if home AND every segment is unresolved,
@@ -1014,17 +1033,16 @@ function buildKindooBlock(
   parsed: ParsedDescription,
   intended: IntendedSeatShape | null,
   buildings: Building[],
-  sets: CallingTemplateSets,
   /** Grant-derived target type for promote / demote `type-mismatch`
    * rows; carried onto the block so the fix dispatcher sends the
-   * observed-provenance target, not the template-derived `intendedType`. */
+   * observed-provenance target, not the informational `intendedType`. */
   grantTargetType?: SeatType,
   /** Full Kindoo target calling set for `callings-mismatch` rows; carried
    * so the fix dispatcher sources the REPLACE `callings` from the parser,
    * not a delta. */
   kindooCallings?: string[],
 ): KindooBlock {
-  const primary = pickPrimarySegment(parsed, sets);
+  const primary = pickPrimarySegment(parsed);
   const ruleIds = kuser.accessSchedules.map((s) => s.ruleId);
   const block: KindooBlock = {
     description: kuser.description,

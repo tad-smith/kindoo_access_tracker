@@ -24,11 +24,9 @@ import type {
   MarkRequestCompleteOutput,
   Seat,
   Stake,
-  StakeCallingTemplate,
   SyncApplyFixInput,
   SyncApplyFixResult,
   Ward,
-  WardCallingTemplate,
 } from '@kindoo/shared';
 
 /** Reduced user shape — the only auth fields the panel renders. The
@@ -240,8 +238,6 @@ export interface SyncDataBundle {
   wards: Ward[];
   buildings: Building[];
   seats: Seat[];
-  wardCallingTemplates: WardCallingTemplate[];
-  stakeCallingTemplates: StakeCallingTemplate[];
   /**
    * Foreign Kindoo sites (`stakes/{stakeId}/kindooSites/*`). Used by
    * the Sync detector to scope drift comparisons to the active Kindoo

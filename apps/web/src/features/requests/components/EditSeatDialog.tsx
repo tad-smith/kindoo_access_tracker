@@ -129,17 +129,17 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
   // seats never reach this dialog — the affordance is hidden upstream).
   // Legacy buildings without `kindoo_site_id` are treated as home.
   const visibleBuildings = useMemo(
-    () => filterBuildingsBySite(buildings, siteIdForScope(seat?.scope ?? '', wards)),
+    () => filterBuildingsBySite(buildings, siteIdForScope(seat?.scope ?? '', wards, buildings)),
     [buildings, wards, seat?.scope],
   );
 
   // Forced-checked buildings — applied to the rendered checkbox list as
   // both `checked` AND `disabled`. Empty for manual/temp seats. Clamped
   // to the visible set so a locked building hidden by the site filter
-  // (a legacy auto seat whose ward.building_name disagrees with
-  // ward.kindoo_site_id) is silently dropped from the locked set rather
-  // than rendered as an invisible-and-uncheckable pre-check. The VISUAL
-  // lock spans the auto-primary + same-scope non-auto dup union — see
+  // (a legacy auto seat whose building is on a different site) is
+  // silently dropped from the locked set rather than rendered as an
+  // invisible-and-uncheckable pre-check. The VISUAL lock spans the
+  // auto-primary + same-scope non-auto dup union — see
   // `lockedAutoBuildingsFor` for why.
   const lockedBuildings = useMemo(() => {
     const raw = seat ? lockedAutoBuildingsFor(seat) : [];

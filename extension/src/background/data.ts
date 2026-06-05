@@ -31,15 +31,7 @@ import {
   updateDoc,
   writeBatch,
 } from 'firebase/firestore';
-import type {
-  Building,
-  KindooSite,
-  Seat,
-  Stake,
-  StakeCallingTemplate,
-  Ward,
-  WardCallingTemplate,
-} from '@kindoo/shared';
+import type { Building, KindooSite, Seat, Stake, Ward } from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
@@ -91,8 +83,6 @@ export interface SyncDataBundle {
   wards: Ward[];
   buildings: Building[];
   seats: Seat[];
-  wardCallingTemplates: WardCallingTemplate[];
-  stakeCallingTemplates: StakeCallingTemplate[];
   /**
    * Foreign Kindoo sites under `stakes/{stakeId}/kindooSites/*`. The
    * Sync feature filters its comparison to seats / users on the
@@ -354,8 +344,8 @@ export async function writeKindooConfig(
 
 /**
  * One-shot read of every collection the Sync feature needs. Stake doc
- * + wards + buildings + seats + ward calling templates + stake calling
- * templates, fetched in parallel via `Promise.all`.
+ * + wards + buildings + seats + foreign Kindoo sites, fetched in
+ * parallel via `Promise.all`.
  *
  * Firestore rules gate read authorisation; non-managers get a
  * permission-denied that surfaces back through the SW message
@@ -365,21 +355,11 @@ export async function loadSyncData(stakeId: string): Promise<SyncDataBundle> {
   const db = firestore();
   const stakeRef = doc(db, 'stakes', stakeId);
 
-  const [
-    stakeSnap,
-    wardsSnap,
-    buildingsSnap,
-    seatsSnap,
-    wardTemplatesSnap,
-    stakeTemplatesSnap,
-    kindooSitesSnap,
-  ] = await Promise.all([
+  const [stakeSnap, wardsSnap, buildingsSnap, seatsSnap, kindooSitesSnap] = await Promise.all([
     getDoc(stakeRef),
     getDocs(collection(db, 'stakes', stakeId, 'wards')),
     getDocs(collection(db, 'stakes', stakeId, 'buildings')),
     getDocs(collection(db, 'stakes', stakeId, 'seats')),
-    getDocs(collection(db, 'stakes', stakeId, 'wardCallingTemplates')),
-    getDocs(collection(db, 'stakes', stakeId, 'stakeCallingTemplates')),
     getDocs(collection(db, 'stakes', stakeId, 'kindooSites')),
   ]);
 
@@ -390,10 +370,6 @@ export async function loadSyncData(stakeId: string): Promise<SyncDataBundle> {
   const wards = wardsSnap.docs.map((d) => d.data() as Ward);
   const buildings = buildingsSnap.docs.map((d) => d.data() as Building);
   const seats = seatsSnap.docs.map((d) => d.data() as Seat);
-  const wardCallingTemplates = wardTemplatesSnap.docs.map((d) => d.data() as WardCallingTemplate);
-  const stakeCallingTemplates = stakeTemplatesSnap.docs.map(
-    (d) => d.data() as StakeCallingTemplate,
-  );
   const kindooSites = kindooSitesSnap.docs.map((d) => d.data() as KindooSite);
 
   return {
@@ -401,8 +377,6 @@ export async function loadSyncData(stakeId: string): Promise<SyncDataBundle> {
     wards,
     buildings,
     seats,
-    wardCallingTemplates,
-    stakeCallingTemplates,
     kindooSites,
   };
 }

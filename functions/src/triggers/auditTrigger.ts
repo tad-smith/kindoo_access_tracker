@@ -185,42 +185,6 @@ export const auditKindooSiteWrites = onDocumentWritten(
   },
 );
 
-export const auditWardCallingTemplateWrites = onDocumentWritten(
-  'stakes/{stakeId}/wardCallingTemplates/{calling}',
-  async (event) => {
-    const { stakeId, calling } = event.params as { stakeId: string; calling: string };
-    if (!event.data) return;
-    await emitAuditRow({
-      stakeId,
-      collection: 'wardCallingTemplates',
-      docId: calling,
-      entityType: 'stake',
-      entityIdOverride: `wardCallingTemplate:${calling}`,
-      before: snapshotData(event.data.before),
-      after: snapshotData(event.data.after),
-      eventTime: event.time,
-    });
-  },
-);
-
-export const auditStakeCallingTemplateWrites = onDocumentWritten(
-  'stakes/{stakeId}/stakeCallingTemplates/{calling}',
-  async (event) => {
-    const { stakeId, calling } = event.params as { stakeId: string; calling: string };
-    if (!event.data) return;
-    await emitAuditRow({
-      stakeId,
-      collection: 'stakeCallingTemplates',
-      docId: calling,
-      entityType: 'stake',
-      entityIdOverride: `stakeCallingTemplate:${calling}`,
-      before: snapshotData(event.data.before),
-      after: snapshotData(event.data.after),
-      eventTime: event.time,
-    });
-  },
-);
-
 // ===== Shared helper =====
 
 /** Audit-trigger context — what the per-path wrappers pass to the helper. */
@@ -235,7 +199,7 @@ export type EmitContext = {
   /**
    * Optional override for `auditLog.entity_id`. Defaults to `docId`.
    * Used for entities not in the audit-schema enum (wards, buildings,
-   * calling templates) so the entry remains unambiguous.
+   * Kindoo sites) so the entry remains unambiguous.
    */
   entityIdOverride?: string;
   /** Pre-write snapshot data, or null for a create. */
@@ -254,9 +218,7 @@ export type AuditCollection =
   | 'kindooManagers'
   | 'access'
   | 'seats'
-  | 'requests'
-  | 'wardCallingTemplates'
-  | 'stakeCallingTemplates';
+  | 'requests';
 
 /**
  * Compute the audit row from a write event and persist it. Idempotent:
@@ -457,9 +419,8 @@ const DELETE_ACTION: Record<AuditEntityType, AuditAction> = {
  *     timestamps, so requiring BOTH fields unchanged narrows the
  *     sentinel to real out-of-band writes.
  *
- * Carve-out: some audited collections (`kindooManagers`, `requests`,
- * `wardCallingTemplates`, `stakeCallingTemplates`) have no
- * `last_modified_at` field. When both sides lack it, treat it as
+ * Carve-out: some audited collections (`kindooManagers`, `requests`)
+ * have no `last_modified_at` field. When both sides lack it, treat it as
  * trivially unchanged — the heuristic reduces to the original
  * "lastActor unchanged" check for those collections. That's the best
  * available signal there; an out-of-band edit to one of those docs

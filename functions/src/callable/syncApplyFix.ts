@@ -39,18 +39,20 @@
 //     inline message without trapping a thrown error.
 //
 // Auto-seat bookkeeping: `applyKindooOnly` / `applyCallingsMismatch`
-// / `applyTypeMismatch` stamp `sort_order` from the matched template's
-// `sheet_order` (via `functions/src/lib/diff.ts:minSheetOrderForCallings`)
-// and reconcile the corresponding access doc with `give_app_access` from
-// the template. `applyScopeMismatch` / `applyBuildingsMismatch` don't
-// touch type or callings, so that bookkeeping doesn't apply to them.
+// / `applyTypeMismatch` stamp `sort_order` from the canonical churchwide
+// calling order (`@kindoo/shared:seatCallingOrder`) and reconcile the
+// corresponding access doc against the hard-coded app-access calling sets
+// (`filterAppAccessCallings` — ward callings for ward scopes, stake
+// callings for 'stake' scope). `applyScopeMismatch` /
+// `applyBuildingsMismatch` don't touch type or callings, so that
+// bookkeeping doesn't apply to them.
 //
 // `callings-mismatch` REPLACES the auto seat's `callings[]` wholesale to
 // match Kindoo's parsed calling(s) (Kindoo authoritative — a renamed
 // calling replaces the old name, not appended), recomputes `sort_order`,
 // and reconciles the scope's `importer_callings`. Because a replace can
-// REMOVE access (the old callings may have granted a `give_app_access`
-// the new ones don't), the access reconcile writes the new grant set when
+// REMOVE access (the old callings may have granted app access the new
+// ones don't), the access reconcile writes the new grant set when
 // non-empty and clears `importer_callings[scope]` when empty.
 //
 // Seat shape on type flip (`applyTypeMismatch`, grant-derived
@@ -65,14 +67,19 @@
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import type { DocumentReference, Firestore, Transaction } from 'firebase-admin/firestore';
-import { canonicalEmail } from '@kindoo/shared';
+import type { DocumentReference, Transaction } from 'firebase-admin/firestore';
+import {
+  canonicalEmail,
+  filterAppAccessCallings,
+  resolveWardSite,
+  seatCallingOrder,
+} from '@kindoo/shared';
 import type {
   Access,
   ActorRef,
+  Building,
   BuildingsMismatchPayload,
   CallingsMismatchPayload,
-  CallingTemplate,
   KindooManager,
   KindooOnlyPayload,
   KindooUnparseablePayload,
@@ -82,14 +89,10 @@ import type {
   SyncApplyFixInput,
   SyncApplyFixResult,
   TypeMismatchPayload,
+  Ward,
 } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
-import {
-  buildTemplateIndex,
-  matchTemplate,
-  type TemplateIndex,
-  type TemplateRow,
-} from '../lib/parser.js';
+import { buildingsByName } from '../lib/wardSites.js';
 import { syncActor } from '../lib/systemActors.js';
 
 /** Seat type values the callable accepts. Matches `SeatType` in the
@@ -236,9 +239,9 @@ async function applyKindooOnly(
   const actor = syncActor('kindoo-only');
   const dedupedCallings = dedupePreserveOrder(callings);
 
-  // Auto seats need template-driven `sort_order` + access-doc parity.
-  // Manual / temp seats don't (importer leaves both fields alone).
-  const needsTemplates = type === 'auto';
+  // Auto seats carry a canonical `sort_order` + access-doc parity.
+  // Manual / temp seats don't (Sync leaves both fields alone).
+  const isAuto = type === 'auto';
 
   const result = await db.runTransaction<SyncApplyFixResult>(async (tx) => {
     // All transaction reads must precede any write.
@@ -250,10 +253,9 @@ async function applyKindooOnly(
     let sortOrder: number | null = null;
     let accessCallings: string[] = [];
     let priorAccess: Access | undefined;
-    if (needsTemplates) {
-      const idx = await loadTemplateIndex(db, tx, stakeId, scope);
-      sortOrder = minSheetOrder(idx, dedupedCallings);
-      accessCallings = filterByGiveAppAccess(idx, dedupedCallings);
+    if (isAuto) {
+      sortOrder = seatCallingOrder(dedupedCallings);
+      accessCallings = filterAppAccessCallings(scope, dedupedCallings);
       const accessSnap = await tx.get(accessRef);
       if (accessSnap.exists) priorAccess = accessSnap.data() as Access;
     }
@@ -276,7 +278,7 @@ async function applyKindooOnly(
       last_modified_by: actor,
       lastActor: actor,
     };
-    if (needsTemplates) body.sort_order = sortOrder;
+    if (isAuto) body.sort_order = sortOrder;
     if (reason !== undefined) body.reason = reason;
     if (type === 'temp') {
       if (startDate !== undefined) body.start_date = startDate;
@@ -284,7 +286,7 @@ async function applyKindooOnly(
     }
     tx.set(seatRef, body);
 
-    if (needsTemplates && accessCallings.length > 0) {
+    if (isAuto && accessCallings.length > 0) {
       writeAccessForAutoScope(tx, accessRef, {
         canonical,
         memberEmail,
@@ -310,8 +312,8 @@ async function applyKindooOnly(
  * becomes `['Bishopric Clerk']`, NOT `['Bishop', 'Bishopric Clerk']`).
  * Sibling of `scope-mismatch` / `buildings-mismatch`.
  *
- * Because a replace can REMOVE access (the old callings may have granted
- * a `give_app_access` the new ones don't), the scope's access is
+ * Because a replace can REMOVE access (the old callings may have been in
+ * the scope's app-access set, the new ones not), the scope's access is
  * reconciled the same way `applyTypeMismatch` does: when the new callings
  * still earn a grant, `writeAccessForAutoScope` rewrites
  * `importer_callings[scope]`; when they don't, `clearImporterCallingsForScope`
@@ -376,13 +378,13 @@ async function applyCallingsMismatch(
       lastActor: actor,
     };
 
-    const idx = await loadTemplateIndex(db, tx, stakeId, seat.scope);
-    update.sort_order = minSheetOrder(idx, newCallings);
+    update.sort_order = seatCallingOrder(newCallings);
 
     // REPLACE can remove access: recompute the grant set from the NEW
-    // callings, then either rewrite the scope's importer_callings or
-    // clear it. Read the access doc before any write.
-    const accessCallings = filterByGiveAppAccess(idx, newCallings);
+    // callings against the scope's app-access set, then either rewrite the
+    // scope's importer_callings or clear it. Read the access doc before
+    // any write.
+    const accessCallings = filterAppAccessCallings(seat.scope, newCallings);
     const accessSnap = await tx.get(accessRef);
     if (accessCallings.length > 0) {
       writeAccessForAutoScope(tx, accessRef, {
@@ -426,27 +428,48 @@ async function applyScopeMismatch(
 
   const db = getDb();
   const seatRef = db.doc(`stakes/${stakeId}/seats/${canonical}`);
+  const wardRef = newScope !== 'stake' ? db.doc(`stakes/${stakeId}/wards/${newScope}`) : null;
+  const buildingsRef = db.collection(`stakes/${stakeId}/buildings`);
   const actor = syncActor('scope-mismatch');
 
   return db.runTransaction<SyncApplyFixResult>(async (tx) => {
+    // All reads before any write.
     const snap = await tx.get(seatRef);
     if (!snap.exists) {
       return { success: false, error: 'seat not found' };
     }
+    // For a ward `newScope`, resolve the new ward's Kindoo site from its
+    // building so the moved seat carries the right site. Reads happen up
+    // front to satisfy reads-before-writes.
+    let newSiteId: string | null | undefined; // undefined ⇒ leave field untouched
+    if (wardRef) {
+      const [wardSnap, buildingsSnap] = await Promise.all([tx.get(wardRef), tx.get(buildingsRef)]);
+      if (wardSnap.exists) {
+        const ward = wardSnap.data() as Ward;
+        const buildings = buildingsSnap.docs.map((d) => d.data() as Building);
+        newSiteId = resolveWardSite(ward, buildingsByName(buildings));
+      }
+    }
+
     const update: Record<string, unknown> = {
       scope: newScope,
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,
     };
-    // Stake-scope primaries resolve to the home site (spec §15 Phase 1):
-    // `kindoo_site_id` must be null/absent. A foreign-site ward seat that
-    // scope-mismatches to stake would otherwise keep its foreign site id
-    // and `projectSeatForSite` would resolve it off-home. Clear it ONLY
-    // when resolving to stake; a ward newScope leaves it untouched.
-    // Mirrors `applyKindooUnparseable`.
     if (newScope === 'stake') {
+      // Stake-scope primaries resolve to the home site (spec §15 Phase 1):
+      // `kindoo_site_id` must be null/absent. A foreign-site ward seat
+      // that scope-mismatches to stake would otherwise keep its foreign
+      // site id and `projectSeatForSite` would resolve it off-home.
+      // Mirrors `applyKindooUnparseable`.
       update.kindoo_site_id = FieldValue.delete();
+    } else if (newSiteId !== undefined) {
+      // Ward `newScope`: stamp the new ward's building-derived site.
+      // `null` (home ward) stores explicit null; a foreign id stores it.
+      // An unresolvable ward leaves `newSiteId === undefined`, so the
+      // field is left untouched and the ward-fallback handles it.
+      update.kindoo_site_id = newSiteId;
     }
     tx.update(seatRef, update);
     return { success: true, seatId: canonical };
@@ -509,10 +532,9 @@ async function applyTypeMismatch(
       update.callings = autoCallings;
       update.reason = FieldValue.delete();
 
-      const idx = await loadTemplateIndex(db, tx, stakeId, seat.scope);
-      const newSortOrder = minSheetOrder(idx, autoCallings);
+      const newSortOrder = seatCallingOrder(autoCallings);
       update.sort_order = newSortOrder;
-      const accessCallings = filterByGiveAppAccess(idx, autoCallings);
+      const accessCallings = filterAppAccessCallings(seat.scope, autoCallings);
       if (accessCallings.length > 0) {
         const accessSnap = await tx.get(accessRef);
         const priorAccess = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
@@ -568,24 +590,23 @@ async function applyTypeMismatch(
  * old scope's calling-derived grant (Kindoo-authoritative reap, #183).
  * Whether the member KEEPS SBA app access then depends on the calling:
  *
- *   - If `calling` matches a `give_app_access` STAKE template, we write a
- *     fresh `importer_callings['stake'] = [calling]` with the template's
- *     `sort_order`. "Unparseable" only means the description didn't match
- *     `Scope (Calling)`; a bare template name (e.g. `Stake Clerk`, no
- *     parens) reaches this path and IS a real template, so dropping its
- *     access would be a silent regression. The seat keeps stake-scope
- *     access.
- *   - If `calling` matches no `give_app_access` template, no new grant is
+ *   - If `calling` is in the STAKE app-access calling set, we write a
+ *     fresh `importer_callings['stake'] = [calling]`. "Unparseable" only
+ *     means the description didn't match `Scope (Calling)`; a bare
+ *     app-access calling name (e.g. `Stake Clerk`, no parens) reaches
+ *     this path and IS a real grant, so dropping its access would be a
+ *     silent regression. The seat keeps stake-scope access.
+ *   - If `calling` is not in the stake app-access set, no new grant is
  *     written (the old scope is still reaped). A genuinely free-text
  *     church-wide calling confers no SBA app access via sync; if it ever
  *     should, that flows through a manual grant.
  *
  * The whole access-doc reshape is ONE coherent write
  * (`writeStakeScopeAccessForUnparseable`): it computes the final
- * `importer_callings` (old scope dropped, stake entry added iff a grant
- * matched), then either deletes the doc (final importer empty AND no
- * manual grants) or writes it. All reads (access doc + stake template
- * index) precede that write, satisfying Firestore reads-before-writes.
+ * `importer_callings` (old scope dropped, stake entry added iff the
+ * calling grants stake access), then either deletes the doc (final
+ * importer empty AND no manual grants) or writes it. The access-doc read
+ * precedes that write, satisfying Firestore reads-before-writes.
  */
 async function applyKindooUnparseable(
   stakeId: string,
@@ -633,21 +654,20 @@ async function applyKindooUnparseable(
       update.reason = FieldValue.delete();
 
       // Access doc: reap the OLD scope's calling-derived grant, then —
-      // iff `calling` matches a `give_app_access` STAKE template — write a
-      // fresh `importer_callings['stake']` so the member keeps SBA app
-      // access. "Unparseable" only means the description doesn't match
-      // `Scope (Calling)`; a bare template name (e.g. `Stake Clerk`)
-      // reaches here and IS a real template, so we must not silently drop
-      // access. Both reads (access doc + stake template index) happen
-      // before any write to satisfy Firestore's reads-before-writes rule.
+      // iff `calling` is in the STAKE app-access set — write a fresh
+      // `importer_callings['stake']` so the member keeps SBA app access.
+      // "Unparseable" only means the description doesn't match
+      // `Scope (Calling)`; a bare app-access calling (e.g. `Stake Clerk`)
+      // reaches here and IS a real grant, so we must not silently drop
+      // access. The access-doc read happens before any write to satisfy
+      // Firestore's reads-before-writes rule.
       const accessSnap = await tx.get(accessRef);
-      const idx = await loadTemplateIndex(db, tx, stakeId, 'stake');
-      const stakeSort = minSheetOrder(idx, [calling]);
-      const stakeHasGrant = filterByGiveAppAccess(idx, [calling]).length > 0;
-      // The seat's `sort_order` mirrors the matched stake template's
-      // `sheet_order` (parity with `applyKindooOnly` / `applyCallingsMismatch`,
-      // which stamp it from ANY template match); `null` for a non-template
-      // calling. The access grant is gated on `give_app_access` separately.
+      const stakeSort = seatCallingOrder([calling]);
+      const stakeHasGrant = filterAppAccessCallings('stake', [calling]).length > 0;
+      // The seat's `sort_order` comes from the canonical churchwide order
+      // (parity with `applyKindooOnly` / `applyCallingsMismatch`); `null`
+      // for an unknown calling. The access grant is gated on the stake
+      // app-access set separately.
       update.sort_order = stakeSort;
 
       writeStakeScopeAccessForUnparseable(tx, accessRef, {
@@ -912,67 +932,10 @@ async function applySbaOnlyRemove(
 }
 
 // ---------------------------------------------------------------------------
-// Auto-seat helpers: template-index loading, sort_order derivation
-// from `wardCallingTemplates` / `stakeCallingTemplates`, and the
-// access-doc upsert that backs every auto-seat write (`give_app_access`
-// → access doc; `sort_order` → roster sort key).
+// Auto-seat helpers: the access-doc upsert that backs every auto-seat
+// write. App-access callings (`filterAppAccessCallings`) → access doc;
+// canonical calling order (`seatCallingOrder`) → roster sort key.
 // ---------------------------------------------------------------------------
-
-/**
- * Load the calling-template collection for a scope and build the
- * matcher index. `'stake'` reads `stakeCallingTemplates`; any other
- * scope reads `wardCallingTemplates` (templates are stake-wide; every
- * ward shares the ward-template index).
- *
- * Firestore transactions require all reads to precede any write — pass
- * the `tx` so the template reads count as transaction reads.
- */
-async function loadTemplateIndex(
-  db: Firestore,
-  tx: Transaction,
-  stakeId: string,
-  scope: string,
-): Promise<TemplateIndex> {
-  const collection = scope === 'stake' ? 'stakeCallingTemplates' : 'wardCallingTemplates';
-  const colRef = db.collection(`stakes/${stakeId}/${collection}`);
-  const snap = await tx.get(colRef);
-  const rows: TemplateRow[] = snap.docs.map((d) => {
-    const data = d.data() as CallingTemplate;
-    return {
-      calling_name: data.calling_name,
-      give_app_access: data.give_app_access === true,
-      auto_kindoo_access: data.auto_kindoo_access === true,
-      sheet_order: typeof data.sheet_order === 'number' ? data.sheet_order : 0,
-    };
-  });
-  return buildTemplateIndex(rows);
-}
-
-/**
- * MIN(`sheet_order`) across the matched templates for `callings`.
- * Returns `null` if no calling matches an "orphaned auto seat" — see
- * `diff.ts:minSheetOrderForCallings`.
- */
-function minSheetOrder(idx: TemplateIndex, callings: string[]): number | null {
-  let min: number | null = null;
-  for (const c of callings) {
-    const tpl = matchTemplate(idx, c);
-    if (!tpl) continue;
-    const order = typeof tpl.sheet_order === 'number' ? tpl.sheet_order : 0;
-    if (min === null || order < min) min = order;
-  }
-  return min;
-}
-
-/** Subset of `callings` whose matched template has `give_app_access=true`. */
-function filterByGiveAppAccess(idx: TemplateIndex, callings: string[]): string[] {
-  const out: string[] = [];
-  for (const c of callings) {
-    const tpl = matchTemplate(idx, c);
-    if (tpl && tpl.give_app_access === true) out.push(c);
-  }
-  return out;
-}
 
 /**
  * Write an `access` doc for a sync-created/extended auto seat:
@@ -980,8 +943,8 @@ function filterByGiveAppAccess(idx: TemplateIndex, callings: string[]): string[]
  *     scopes' `importer_callings`)
  *   - replaces `importer_callings[scope]` wholesale with `callings`
  *     (sorted, deduped)
- *   - stamps `sort_order` from the caller (computed once at the
- *     `minSheetOrder` call site for this scope's callings).
+ *   - stamps `sort_order` from the caller (the canonical
+ *     `seatCallingOrder` for this scope's callings).
  */
 function writeAccessForAutoScope(
   tx: Transaction,
@@ -992,7 +955,7 @@ function writeAccessForAutoScope(
     memberName: string;
     scope: string;
     callings: string[];
-    /** MIN(sheet_order) for `callings` under `scope`; `null` if no match. */
+    /** Canonical `seatCallingOrder` for `callings`; `null` if none rank. */
     sortOrder: number | null;
     priorAccess: Access | undefined;
     actor: ActorRef;
@@ -1013,7 +976,7 @@ function writeAccessForAutoScope(
 
   // sort_order: if the prior doc had a smaller value (from another
   // scope's callings stamped earlier), keep it. Otherwise use this
-  // scope's MIN.
+  // scope's order.
   const priorSort = typeof priorAccess?.sort_order === 'number' ? priorAccess.sort_order : null;
   const finalSort = pickMin(priorSort, sortOrder);
 
@@ -1102,9 +1065,9 @@ function clearImporterCallingsForScope(
 /**
  * One coherent access-doc write for the `kindoo-unparseable` AUTO path.
  * Drops the seat's OLD scope from `importer_callings`, then adds a fresh
- * `importer_callings['stake'] = [calling]` iff the calling matched a
- * `give_app_access` stake template (`stakeHasGrant`). Resolves the final
- * state in memory (no read after this write), then:
+ * `importer_callings['stake'] = [calling]` iff the calling is in the
+ * stake app-access set (`stakeHasGrant`). Resolves the final state in
+ * memory (no read after this write), then:
  *   - deletes the doc when the final `importer_callings` is empty AND
  *     `manual_grants` is empty (nothing left to justify access), or
  *   - writes the doc otherwise: `tx.update` when it exists (replaces
@@ -1123,9 +1086,9 @@ function writeStakeScopeAccessForUnparseable(
     memberName: string;
     oldScope: string;
     calling: string;
-    /** MIN(sheet_order) for `calling` under the stake index; `null` if no match. */
+    /** Canonical `seatCallingOrder` for `calling`; `null` if it doesn't rank. */
     stakeSort: number | null;
-    /** True iff `calling` matched a `give_app_access` stake template. */
+    /** True iff `calling` is in the stake app-access set. */
     stakeHasGrant: boolean;
     priorAccess: Access | undefined;
     actor: ActorRef;
