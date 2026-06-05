@@ -1,8 +1,8 @@
 // Component tests for the manager All Seats page. Phase B (T-43):
 // multi-row rendering — one row per grant (primary + each
-// `duplicate_grants[]` entry). Edit on a duplicate row is disabled
-// with a tooltip; Remove on a duplicate row submits a `remove`
-// request scoped to the grant's `(scope, kindoo_site_id)`.
+// `duplicate_grants[]` entry). All Seats is view-only for edits (no
+// edit affordance); Remove on a row submits a `remove` request scoped
+// to the grant's `(scope, kindoo_site_id)`.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -16,7 +16,6 @@ const useBuildingsMock = vi.fn();
 const useKindooSitesMock = vi.fn();
 const useStakeDocMock = vi.fn();
 const usePrincipalMock = vi.fn();
-const inlineEditMutate = vi.fn().mockResolvedValue(undefined);
 const submitMutate = vi.fn().mockResolvedValue({ id: 'req-new' });
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
@@ -25,7 +24,6 @@ vi.mock('./hooks', () => ({
   useWards: () => useWardsMock(),
   useBuildings: () => useBuildingsMock(),
   useKindooSites: () => useKindooSitesMock(),
-  useInlineSeatEditMutation: () => ({ mutateAsync: inlineEditMutate, isPending: false }),
 }));
 
 vi.mock('../dashboard/hooks', () => ({
@@ -231,9 +229,10 @@ describe('<AllSeatsPage />', () => {
     expect(memberLine).not.toBeNull();
     expect(memberLine?.querySelector('.roster-card-member')).not.toBeNull();
     expect(card?.querySelector('.roster-card-line1 .roster-card-member')).toBeNull();
-    // The Edit action button stays on line 1, right of the badges.
+    // The Remove action button stays on line 1, right of the badges.
+    // (All Seats has no Edit affordance — Remove is the only action.)
     expect(
-      card?.querySelector('.roster-card-line1 .roster-card-actions [data-testid^="seat-edit-"]'),
+      card?.querySelector('.roster-card-line1 .roster-card-actions [data-testid^="remove-btn-"]'),
     ).not.toBeNull();
   });
 
@@ -321,35 +320,31 @@ describe('<AllSeatsPage />', () => {
     expect(host).toHaveTextContent(/cap unset/i);
   });
 
-  it('hides the Edit affordance on auto seats', () => {
-    mockAll({
-      seats: [makeSeat({ type: 'auto', member_canonical: 'a@x.com' })],
-      wards: [],
-      buildings: [],
-      stake: { stake_seat_cap: 200 },
-    });
-    render(<AllSeatsPage />);
-    expect(screen.queryByTestId('seat-edit-a@x.com')).toBeNull();
-  });
-
-  it('shows the Edit affordance on manual seats (primary row enabled)', () => {
+  it('renders no edit affordance on All Seats — even on a manual seat — while keeping Remove', () => {
+    usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
     mockAll({
       seats: [
         makeSeat({
+          scope: 'CO',
           type: 'manual',
           member_canonical: 'm@x.com',
+          member_email: 'm@x.com',
           callings: [],
           reason: 'covering bishop',
         }),
       ],
-      wards: [],
+      wards: [makeWard({ ward_code: 'CO' })],
       buildings: [],
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);
-    const edit = screen.getByTestId('seat-edit-m@x.com');
-    expect(edit).toBeInTheDocument();
-    expect(edit).not.toBeDisabled();
+    // No edit affordance anywhere — editing is roster-only now.
+    expect(screen.queryByTestId(/^seat-edit-/)).toBeNull();
+    const card = document.querySelector('.roster-card');
+    expect(card?.querySelector('.roster-card-actions button')).not.toBeNull();
+    expect(card?.textContent).not.toMatch(/\bEdit\b/);
+    // Remove affordance still renders.
+    expect(screen.getByTestId('remove-btn-m@x.com')).toBeInTheDocument();
   });
 
   it('subtracts every ward seat_cap from stake_seat_cap for the Stake-scope pool denominator', () => {
@@ -854,46 +849,11 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(labels).not.toContain('Buildings:');
   });
 
-  // AC #7 (AllSeats slice): Edit on a duplicate row is disabled with
-  // the spec'd tooltip.
-  it('AC #7: Edit button on a parallel-site duplicate row is disabled with the spec tooltip', () => {
-    mockAll({
-      seats: [
-        makeSeat({
-          type: 'manual',
-          callings: [],
-          reason: 'primary',
-          member_canonical: 'r@x.com',
-          member_email: 'r@x.com',
-          kindoo_site_id: null,
-          duplicate_grants: [
-            {
-              scope: 'FN',
-              type: 'manual',
-              reason: 'parallel',
-              kindoo_site_id: 'foreign-1',
-              detected_at: NOW,
-            },
-          ],
-        }),
-      ],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      wards: [makeWard({ ward_code: 'FN', kindoo_site_id: 'foreign-1' } as any)],
-      buildings: [],
-      kindooSites: [{ id: 'foreign-1', display_name: 'East Stake' }],
-      stake: { stake_seat_cap: 200 },
-    });
-    render(<AllSeatsPage />);
-    const dupEdit = screen.getByTestId('seat-edit-r@x.com-dup-0');
-    expect(dupEdit).toBeDisabled();
-    expect(dupEdit.getAttribute('title')).toMatch(/parallel-site changes require a new request/i);
-  });
-
-  // The collapsed row IS the primary, so its Edit button is enabled
-  // (no longer disabled with the within-site tooltip — the within-
-  // site duplicate row no longer exists). The Duplicate badge still
-  // tells the operator the row covers extra buildings.
-  it('within-site DuplicateGrant collapses onto the primary row → Edit enabled, badge present', () => {
+  // The collapsed row IS the primary; a within-site DuplicateGrant
+  // collapses onto it. All Seats has no Edit affordance, so we assert
+  // only the collapse + Duplicate badge here (Edit behaviour is covered
+  // on the roster pages).
+  it('within-site DuplicateGrant collapses onto the primary row → no edit affordance, badge present', () => {
     mockAll({
       seats: [
         makeSeat({
@@ -919,11 +879,9 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);
-    // No standalone duplicate row.
-    expect(screen.queryByTestId('seat-edit-w@x.com-dup-0')).toBeNull();
-    // Edit on the primary (collapsed) row is enabled.
-    const primaryEdit = screen.getByTestId('seat-edit-w@x.com');
-    expect(primaryEdit).not.toBeDisabled();
+    // No standalone duplicate row, and no edit affordance anywhere.
+    expect(document.querySelectorAll('.roster-card[data-seat-id="w@x.com"]')).toHaveLength(1);
+    expect(screen.queryByTestId(/^seat-edit-/)).toBeNull();
     // Duplicate badge (manual primary → "duplicate") with the unified tooltip.
     const badge = screen.getByTestId('grant-duplicate-badge-w@x.com');
     expect(badge.textContent).toBe('duplicate');

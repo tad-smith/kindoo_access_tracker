@@ -368,7 +368,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
 }
 ```
 
-**Written by:** Sync's `syncApplyFix` callable (auto seats — Admin SDK, bypasses rules); manager via request completion (manual/temp); expiry trigger (deletes expired temp seats); manager via inline edit.
+**Written by:** Sync's `syncApplyFix` callable (auto seats — Admin SDK, bypasses rules); manager via request completion (manual/temp); expiry trigger (deletes expired temp seats). (There is no manager direct-write inline edit — All Seats is view-only for edits; seat edits flow through the `edit_*` request → completion path. See `spec.md` §212.)
 
 **Read by:** All roster pages (bishopric, stake, all-seats), manager dashboard, manager queue (for duplicate-warning), audit log entity-history view.
 
