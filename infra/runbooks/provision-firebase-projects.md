@@ -240,10 +240,10 @@ What each API does for us:
 | `identitytoolkit.googleapis.com` | Firebase Authentication backend. |
 | `firebase.googleapis.com` | Firebase project metadata + management API; the CLI uses it. |
 | `firebasehosting.googleapis.com` | Hosts the SPA at `kindoo-staging.web.app` with auto-provisioned HTTPS (per F10). |
-| `cloudfunctions.googleapis.com` | Cloud Functions 2nd-gen — auth triggers, claim-sync, audit fan-out, expiry, email + push notifications. |
+| `cloudfunctions.googleapis.com` | Cloud Functions 2nd-gen — auth triggers, claim-sync, audit fan-out, email + push notifications. |
 | `cloudbuild.googleapis.com` | Cloud Functions 2nd-gen builds via Cloud Build under the hood. |
 | `run.googleapis.com` | Cloud Functions 2nd-gen *runs* on Cloud Run (per F1). |
-| `cloudscheduler.googleapis.com` | Hourly expiry + nightly audit-reconcile (per F8). |
+| `cloudscheduler.googleapis.com` | Nightly audit-reconcile + weekly Firestore export (per F8). |
 | `fcm.googleapis.com` | Firebase Cloud Messaging — push notifications (Phase 10). |
 | `fcmregistrations.googleapis.com` | FCM device-registration API (Phase 10). |
 | `secretmanager.googleapis.com` | Resend API key + any other secrets (Phase 9 onward). |
@@ -311,7 +311,7 @@ Now configure authorized domains:
 
 ### 1.8 Create the runtime service account `kindoo-app`
 
-This is the service account pinned by the nine Cloud Functions that need a non-default runtime identity — all three notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`), both scheduled jobs (`runExpiry`, `reconcileAuditGaps`), and four callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`). It also runs the weekly Firestore export Cloud Scheduler job (created in §3.4 below). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
+This is the service account pinned by the eight Cloud Functions that need a non-default runtime identity — all three notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`), the `reconcileAuditGaps` scheduled job, and four callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`). It also runs the weekly Firestore export Cloud Scheduler job (created in §3.4 below). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
 
 ```bash
 gcloud iam service-accounts create kindoo-app \
@@ -358,7 +358,7 @@ This trips people up the first time. Cloud Functions 2nd-gen runs on Cloud Run, 
 
 For staging, substituting your project number from step 1.2, that's e.g., `123456789012-compute@developer.gserviceaccount.com`.
 
-`kindoo-app` is the SA pinned by the nine Cloud Functions enumerated in step 1.8 (notification triggers, scheduled jobs, and callables that need a non-default identity). Functions that don't pin an SA fall back to the compute SA.
+`kindoo-app` is the SA pinned by the eight Cloud Functions enumerated in step 1.8 (notification triggers, the `reconcileAuditGaps` scheduled job, and callables that need a non-default identity). Functions that don't pin an SA fall back to the compute SA.
 
 In Phase 1 the function we deploy (`hello`) needs no special permissions — it's a pure callable returning `{version, builtAt, env}`. From Phase 2 onward, when `auth.user().onCreate` writes to Firestore, the compute SA must have `roles/datastore.user` and the Functions deploy will fail without it. Add it now while you're already in IAM:
 
@@ -656,7 +656,6 @@ Without this seed, the bootstrap admin's first wizard write is denied — chicke
    | `bootstrap_admin_email` | string | the **typed-form** email of the person who'll run the wizard, e.g. `Tad.E.Smith@gmail.com` |
    | `setup_complete` | boolean | `false` |
    | `stake_seat_cap` | number | `0` (Step 1 will overwrite) |
-   | `expiry_hour` | number | `4` |
    | `timezone` | string | `America/Denver` (or whichever IANA tz the stake uses) |
    | `notifications_enabled` | boolean | `true` |
    | `last_over_caps_json` | array | `[]` |
