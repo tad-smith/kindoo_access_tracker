@@ -332,8 +332,7 @@ function QueueCard({ request, isFocused }: QueueCardProps) {
           data-testid={`queue-duplicate-error-${request.request_id}`}
         >
           <Badge variant="danger">Error</Badge> Member already has a {dup.data.type} seat in{' '}
-          {dup.data.scope}. This request can&apos;t be completed — reject it, or reconcile via All
-          Seats.
+          {dup.data.scope}. This request can&apos;t be completed — reject it.
         </div>
       ) : null}
       {editTargetMissing ? (
