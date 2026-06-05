@@ -128,6 +128,66 @@ beforeEach(() => {
   useSeatForMemberMock.mockReturnValue(liveSeatResult(undefined));
 });
 
+describe('<NewRequestForm /> — initialScope pre-select', () => {
+  // The route forwards `?scope=` as `initialScope`. The form uses it as
+  // the dropdown default only when it matches one of the allowed scopes;
+  // a stale / unauthorized value falls back to the leading scope.
+
+  function multiScopes(): { value: string; label: string }[] {
+    return [
+      { value: 'stake', label: 'Stake' },
+      { value: 'CO', label: 'Ward CO' },
+      { value: 'GE', label: 'Ward GE' },
+    ];
+  }
+
+  it('pre-selects the requested scope when it matches an allowed scope', () => {
+    render(
+      <NewRequestForm
+        scopes={multiScopes()}
+        buildings={buildings()}
+        wards={wards([
+          { code: 'CO', building_name: 'Maple Building' },
+          { code: 'GE', building_name: 'Cedar Building' },
+        ])}
+        initialScope="GE"
+      />,
+    );
+    expect((screen.getByTestId('new-request-scope') as HTMLSelectElement).value).toBe('GE');
+  });
+
+  it('falls back to the leading scope when the requested scope is not allowed', () => {
+    // `?scope=ZZ` — a ward the user has since left. The dropdown lands on
+    // the leading allowed scope ('stake') instead.
+    render(
+      <NewRequestForm
+        scopes={multiScopes()}
+        buildings={buildings()}
+        wards={wards([
+          { code: 'CO', building_name: 'Maple Building' },
+          { code: 'GE', building_name: 'Cedar Building' },
+        ])}
+        initialScope="ZZ"
+      />,
+    );
+    expect((screen.getByTestId('new-request-scope') as HTMLSelectElement).value).toBe('stake');
+  });
+
+  it('falls back to the leading scope when no scope is requested', () => {
+    render(
+      <NewRequestForm
+        scopes={multiScopes()}
+        buildings={buildings()}
+        wards={wards([
+          { code: 'CO', building_name: 'Maple Building' },
+          { code: 'GE', building_name: 'Cedar Building' },
+        ])}
+      />,
+    );
+    expect((screen.getByTestId('new-request-scope') as HTMLSelectElement).value).toBe('stake');
+  });
+});
+
 describe('<NewRequestForm /> — validation', () => {
   it('renders an error when the principal has no scopes available', () => {
     render(<NewRequestForm scopes={[]} buildings={buildings()} wards={[]} />);

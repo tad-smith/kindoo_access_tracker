@@ -144,7 +144,11 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
           {activeWard ? scopeLabel(activeWard, wardsCatalogue.data ?? []) : 'Select a ward'}
         </p>
         <Button asChild variant="default">
-          <Link to="/new" data-testid="bishopric-roster-new-request">
+          <Link
+            to="/new"
+            {...(activeWard ? { search: { scope: activeWard } } : {})}
+            data-testid="bishopric-roster-new-request"
+          >
             New Request
           </Link>
         </Button>

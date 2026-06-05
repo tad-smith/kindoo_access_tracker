@@ -10,6 +10,7 @@
 // AC #10) handles the bishopric surface.
 
 import { useMemo } from 'react';
+import { Link } from '@tanstack/react-router';
 import type { Seat } from '@kindoo/shared';
 import { useFirestoreDoc } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
@@ -22,6 +23,7 @@ import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { stakeAvailablePoolSize } from '../../lib/render/stakePool';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../lib/render/EmptyState';
+import { Button } from '../../components/ui/Button';
 import { PerGrantRosterCard } from '../../components/roster/PerGrantRosterCard';
 import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
 import { usePendingRequestsForScope } from '../requests/hooks';
@@ -84,10 +86,25 @@ export function StakeRosterPage() {
     buildings.data ?? [],
   );
 
+  // The header "New Request" affordance shows only for principals with
+  // stake-scope request authority — the same predicate that gates the
+  // 'stake' option in the New Request dropdown. Manager-only users (who
+  // can land here but can't ADD to the stake scope) don't see it.
+  const canRequest = activeStakeId !== null && isScopeAllowed(principal, activeStakeId, 'stake');
+
   return (
     <section>
       <h1>Stake Roster</h1>
-      <p className="kd-page-subtitle">Stake</p>
+      <div className="kd-page-header-row">
+        <p className="kd-page-subtitle">Stake</p>
+        {canRequest ? (
+          <Button asChild variant="default">
+            <Link to="/new" search={{ scope: 'stake' }} data-testid="stake-roster-new-request">
+              New Request
+            </Link>
+          </Button>
+        ) : null}
+      </div>
 
       <div className="kd-utilization-host">
         <RosterUtilization
