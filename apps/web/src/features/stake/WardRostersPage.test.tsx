@@ -193,7 +193,8 @@ describe('<WardRostersPage />', () => {
     render(<WardRostersPage />);
     const opts = screen.getAllByRole('option').map((o) => o.textContent);
     // "Choose a ward…" is at index 0; CO comes before GE alphabetically.
-    expect(opts.slice(1)).toEqual(['Maple (CO)', 'Cedar (GE)']);
+    // Options show the ward name only (sorted by ward_code).
+    expect(opts.slice(1)).toEqual(['Maple', 'Cedar']);
   });
 
   it('renders the chosen ward’s roster with its utilization bar', async () => {

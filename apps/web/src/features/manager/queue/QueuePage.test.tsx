@@ -25,6 +25,14 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 
+// The scope-label hook subscribes to the wards collection; stub it so
+// these render tests don't need a live Firestore. The resolver maps the
+// fixture ward code to a name and passes everything else through.
+vi.mock('../../../lib/scopeLabel', () => ({
+  useScopeLabel: () => (scope: string) =>
+    scope === 'stake' ? 'Stake' : scope === 'CO' ? 'Cottonwood' : scope,
+}));
+
 import { ManagerQueuePage } from './QueuePage';
 
 const WEB_STORE_URL =

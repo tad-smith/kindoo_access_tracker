@@ -55,11 +55,12 @@ import {
 } from '../../../components/ui/Collapsible';
 import { toast } from '../../../lib/store/toast';
 import { filterBuildingsBySite, siteIdForScope } from '../../../lib/kindooSites';
+import { scopeLabel } from '../../../lib/scopeLabel';
 
 export interface ScopeOption {
   /** `'stake'` or a ward_code. */
   value: string;
-  /** Human label, e.g. `'Stake'` or `'Ward CO'`. */
+  /** Human label, e.g. `'Stake'` or the ward name. */
   label: string;
 }
 
@@ -489,7 +490,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
       {dupHit ? (
         <p className="kd-form-error" role="alert" data-testid="new-request-duplicate-error">
           <Badge variant="danger">Error</Badge> {dupHit.member_email} already has a {dupHit.type}{' '}
-          seat in {dupHit.scope}. You can&apos;t submit a duplicate request.
+          seat in {scopeLabel(dupHit.scope, wards)}. You can&apos;t submit a duplicate request.
         </p>
       ) : null}
 

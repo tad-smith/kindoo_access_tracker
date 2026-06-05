@@ -26,6 +26,7 @@ import { resolveWardSite } from '@kindoo/shared';
 import type { Building, KindooSite, Seat, Ward } from '@kindoo/shared';
 import { useAllSeats, useBuildings, useKindooSites, useWards } from './hooks';
 import { siteLabelForGrant } from '../../../lib/kindooSites';
+import { scopeLabel } from '../../../lib/scopeLabel';
 import { collapseSameScopeGrants, grantsForDisplay, type GrantView } from '../../../lib/grants';
 import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
 import { useStakeDoc } from '../dashboard/hooks';
@@ -210,7 +211,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
     ? 'Entire-stake utilization'
     : ward === 'stake'
       ? 'Stake-scope utilization'
-      : `Ward ${ward} utilization`;
+      : `${scopeLabel(ward, wardsList)} utilization`;
   const utilizationTotal = !ward
     ? allSeats.filter((s) => {
         if (s.scope === 'stake') return true;
@@ -247,7 +248,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
             <option value="stake">Stake</option>
             {wardsList.map((w) => (
               <option key={w.ward_code} value={w.ward_code}>
-                {w.ward_name} ({w.ward_code})
+                {w.ward_name}
               </option>
             ))}
           </Select>
@@ -460,7 +461,7 @@ function GrantRowCard({
             </Badge>
           ) : null}
           <span className="roster-card-chip roster-card-scope">
-            <code>{grant.scope}</code>
+            {scopeLabel(grant.scope, wards)}
           </span>
         </span>
         <span className="roster-card-actions" style={{ display: 'inline-flex', gap: 8 }}>

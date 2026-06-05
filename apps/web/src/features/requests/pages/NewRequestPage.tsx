@@ -51,8 +51,8 @@ export function NewRequestPage() {
   const wards = useFirestoreCollection<Ward>(wardsQuery);
 
   const scopes = useMemo(
-    () => (activeStakeId ? allowedScopesFor(principal, activeStakeId) : []),
-    [principal, activeStakeId],
+    () => (activeStakeId ? allowedScopesFor(principal, activeStakeId, wards.data ?? []) : []),
+    [principal, activeStakeId, wards.data],
   );
 
   return (

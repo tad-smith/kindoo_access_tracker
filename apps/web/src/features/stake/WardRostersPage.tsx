@@ -130,7 +130,7 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
           <option value="">{wards.isLoading ? 'Loading wards…' : 'Choose a ward…'}</option>
           {wardsList.map((w) => (
             <option key={w.ward_code} value={w.ward_code}>
-              {w.ward_name} ({w.ward_code})
+              {w.ward_name}
             </option>
           ))}
         </Select>

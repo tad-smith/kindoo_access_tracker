@@ -20,6 +20,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { type AccessRequest, partitionPendingRequests } from '@kindoo/shared';
 import { usePendingRequests } from './hooks';
 import { useSeatForMember } from '../../requests/hooks';
+import { useScopeLabel } from '../../../lib/scopeLabel';
 import { Badge } from '../../../components/ui/Badge';
 import { CHROME_WEB_STORE_URL } from '../../../lib/links';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
@@ -40,6 +41,7 @@ export interface ManagerQueuePageProps {
 export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   const pending = usePendingRequests();
   const navigate = useNavigate();
+  const labelForScope = useScopeLabel();
 
   // Compute "now" once per render. Time advancement during a session
   // shifts the Outstanding/Future boundary by at most a tick — well
@@ -125,18 +127,21 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             testid="queue-section-urgent"
             requests={sections.urgent}
             focusedId={focusedId}
+            labelForScope={labelForScope}
           />
           <QueueSection
             title="Outstanding Requests"
             testid="queue-section-outstanding"
             requests={sections.outstanding}
             focusedId={focusedId}
+            labelForScope={labelForScope}
           />
           <QueueSection
             title="Future Requests"
             testid="queue-section-future"
             requests={sections.future}
             focusedId={focusedId}
+            labelForScope={labelForScope}
           />
         </div>
       )}
@@ -167,9 +172,10 @@ interface QueueSectionProps {
   testid: string;
   requests: readonly AccessRequest[];
   focusedId: string | undefined;
+  labelForScope: (scope: string) => string;
 }
 
-function QueueSection({ title, testid, requests, focusedId }: QueueSectionProps) {
+function QueueSection({ title, testid, requests, focusedId, labelForScope }: QueueSectionProps) {
   // Hide the entire section (header + body) when empty — the operator
   // brief is unambiguous on this.
   if (requests.length === 0) return null;
@@ -184,6 +190,7 @@ function QueueSection({ title, testid, requests, focusedId }: QueueSectionProps)
             key={request.request_id}
             request={request}
             isFocused={focusedId === request.request_id}
+            labelForScope={labelForScope}
           />
         ))}
       </div>
@@ -194,9 +201,10 @@ function QueueSection({ title, testid, requests, focusedId }: QueueSectionProps)
 interface QueueCardProps {
   request: AccessRequest;
   isFocused: boolean;
+  labelForScope: (scope: string) => string;
 }
 
-function QueueCard({ request, isFocused }: QueueCardProps) {
+function QueueCard({ request, isFocused, labelForScope }: QueueCardProps) {
   // Live duplicate check: surface inside the queue card so the manager
   // sees, at a glance, that an add request collides with an existing
   // seat. The completion path now lives in the extension; the chip is
@@ -248,9 +256,7 @@ function QueueCard({ request, isFocused }: QueueCardProps) {
       <div className="kd-queue-card-line1 kd-queue-card-meta-row">
         <span className="kd-queue-card-badges">
           <Badge variant={badgeVariantForType(request.type)}>{labelForType(request.type)}</Badge>
-          <span className="roster-card-chip roster-card-scope">
-            <code>{request.scope}</code>
-          </span>
+          <span className="roster-card-chip roster-card-scope">{labelForScope(request.scope)}</span>
         </span>
         {reqDate ? (
           <span className="kd-queue-card-meta kd-queue-card-submitted">
@@ -332,7 +338,7 @@ function QueueCard({ request, isFocused }: QueueCardProps) {
           data-testid={`queue-duplicate-error-${request.request_id}`}
         >
           <Badge variant="danger">Error</Badge> Member already has a {dup.data.type} seat in{' '}
-          {dup.data.scope}. This request can&apos;t be completed — reject it.
+          {labelForScope(dup.data.scope)}. This request can&apos;t be completed — reject it.
         </div>
       ) : null}
       {editTargetMissing ? (

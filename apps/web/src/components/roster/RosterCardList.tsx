@@ -19,7 +19,9 @@
 //     filters / sorts before passing.
 //   - `emptyMessage`: rendered via `<EmptyState>` when `seats.length === 0`.
 //   - `showScope`: when true, render the scope chip on line 1 (used by
-//     manager All Seats which spans every scope).
+//     manager All Seats which spans every scope). The chip shows the
+//     ward NAME, resolved from `wards`; pass the wards catalogue so it
+//     resolves (falls back to the raw code when absent).
 //   - `actions(seat)`: optional. Right-aligned action strip. Return
 //     `null` to omit per-row.
 //   - `extraBadges(seat)`: optional. Extra badges injected after the
@@ -34,9 +36,10 @@
 // `useFirestoreCollection` re-renders the parent.
 
 import type { ReactNode } from 'react';
-import type { Seat } from '@kindoo/shared';
+import type { Seat, Ward } from '@kindoo/shared';
 import { Badge } from '../ui/Badge';
 import { EmptyState } from '../../lib/render/EmptyState';
+import { scopeLabel } from '../../lib/scopeLabel';
 
 export interface RosterCardListProps {
   seats: readonly Seat[];
@@ -44,6 +47,8 @@ export interface RosterCardListProps {
   emptyMessage?: string;
   /** When true, render the scope chip on line 1 (manager All Seats). */
   showScope?: boolean;
+  /** Wards catalogue — resolves the scope chip to a ward name. */
+  wards?: readonly Ward[];
   /** Right-aligned per-row action strip. Return `null` to omit. */
   actions?: (seat: Seat) => ReactNode;
   /** Extra badges after the type badge on line 1. */
@@ -56,6 +61,7 @@ export function RosterCardList({
   seats,
   emptyMessage = 'No seats in this roster.',
   showScope = false,
+  wards = [],
   actions,
   extraBadges,
   rowClass,
@@ -70,6 +76,7 @@ export function RosterCardList({
           key={seat.member_canonical}
           seat={seat}
           showScope={showScope}
+          wards={wards}
           {...(actions ? { actions } : {})}
           {...(extraBadges ? { extraBadges } : {})}
           {...(rowClass ? { rowClass } : {})}
@@ -82,12 +89,13 @@ export function RosterCardList({
 interface RosterCardProps {
   seat: Seat;
   showScope: boolean;
+  wards: readonly Ward[];
   actions?: (seat: Seat) => ReactNode;
   extraBadges?: (seat: Seat) => ReactNode;
   rowClass?: (seat: Seat) => string | undefined;
 }
 
-function RosterCard({ seat, showScope, actions, extraBadges, rowClass }: RosterCardProps) {
+function RosterCard({ seat, showScope, wards, actions, extraBadges, rowClass }: RosterCardProps) {
   const typeVariant = seat.type;
   const typeLabel = seat.type;
 
@@ -164,7 +172,7 @@ function RosterCard({ seat, showScope, actions, extraBadges, rowClass }: RosterC
           {extraBadgeNodes}
           {showScope ? (
             <span className="roster-card-chip roster-card-scope">
-              <code>{seat.scope}</code>
+              {scopeLabel(seat.scope, wards)}
             </span>
           ) : null}
         </span>

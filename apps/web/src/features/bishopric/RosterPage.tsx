@@ -38,6 +38,7 @@ import { PendingAddRequestsSection } from '../requests/components/PendingAddRequ
 import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterPending';
 import { canEditSeat, isScopeAllowed } from '../requests/scopeOptions';
+import { scopeLabel } from '../../lib/scopeLabel';
 import { pickGrantForScope, type GrantView } from '../../lib/grants';
 
 export interface BishopricRosterPageProps {
@@ -140,11 +141,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
       <h1>Roster</h1>
       <div className="kd-page-header-row">
         <p className="kd-page-subtitle">
-          {wardDoc
-            ? `${wardDoc.ward_name} (${activeWard ?? ''})`
-            : activeWard
-              ? activeWard
-              : 'Select a ward'}
+          {activeWard ? scopeLabel(activeWard, wardsCatalogue.data ?? []) : 'Select a ward'}
         </p>
         <Button asChild variant="default">
           <Link to="/new" data-testid="bishopric-roster-new-request">
@@ -163,7 +160,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
           >
             {wards.map((w) => (
               <option key={w} value={w}>
-                {w}
+                {scopeLabel(w, wardsCatalogue.data ?? [])}
               </option>
             ))}
           </Select>

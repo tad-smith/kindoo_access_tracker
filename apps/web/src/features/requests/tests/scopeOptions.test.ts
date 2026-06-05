@@ -4,9 +4,18 @@
 import { describe, expect, it } from 'vitest';
 import { allowedScopesFor, canEditSeat, isScopeAllowed } from '../scopeOptions';
 import type { Principal } from '../../../lib/principal';
-import { makeSeat } from '../../../../test/fixtures';
+import { makeSeat, makeWard } from '../../../../test/fixtures';
 
 const STAKE_ID = 'csnorth';
+
+// Wards catalogue for label resolution. Includes CO/BA/GR so the
+// option labels render ward names; an unresolved code falls back to the
+// raw code.
+const WARDS = [
+  makeWard({ ward_code: 'CO', ward_name: 'Cottonwood' }),
+  makeWard({ ward_code: 'BA', ward_name: 'Bayside' }),
+  makeWard({ ward_code: 'GR', ward_name: 'Greenfield' }),
+];
 
 function makePrincipal(overrides: Partial<Principal>): Principal {
   return {
@@ -27,48 +36,57 @@ function makePrincipal(overrides: Partial<Principal>): Principal {
 describe('allowedScopesFor — B-3 scope filter', () => {
   it('stake-only: returns just the stake option', () => {
     const principal = makePrincipal({ stakeMemberStakes: [STAKE_ID] });
-    expect(allowedScopesFor(principal, STAKE_ID)).toEqual([{ value: 'stake', label: 'Stake' }]);
-  });
-
-  it('single ward (no stake): returns just that ward', () => {
-    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['CO'] } });
-    expect(allowedScopesFor(principal, STAKE_ID)).toEqual([{ value: 'CO', label: 'Ward CO' }]);
-  });
-
-  it('multi ward (no stake): returns each ward, sorted', () => {
-    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['GR', 'BA', 'CO'] } });
-    expect(allowedScopesFor(principal, STAKE_ID)).toEqual([
-      { value: 'BA', label: 'Ward BA' },
-      { value: 'CO', label: 'Ward CO' },
-      { value: 'GR', label: 'Ward GR' },
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([
+      { value: 'stake', label: 'Stake' },
     ]);
   });
 
-  it('stake plus N wards: stake first, then those wards (no others)', () => {
+  it('single ward (no stake): returns that ward labelled by name', () => {
+    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['CO'] } });
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([
+      { value: 'CO', label: 'Cottonwood' },
+    ]);
+  });
+
+  it('multi ward (no stake): returns each ward labelled by name, sorted by code', () => {
+    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['GR', 'BA', 'CO'] } });
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([
+      { value: 'BA', label: 'Bayside' },
+      { value: 'CO', label: 'Cottonwood' },
+      { value: 'GR', label: 'Greenfield' },
+    ]);
+  });
+
+  it('unresolved ward code: falls back to the raw code as the label', () => {
+    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['ZZ'] } });
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([{ value: 'ZZ', label: 'ZZ' }]);
+  });
+
+  it('stake plus N wards: stake first, then those wards by name (no others)', () => {
     const principal = makePrincipal({
       stakeMemberStakes: [STAKE_ID],
       bishopricWards: { [STAKE_ID]: ['CO', 'BA'] },
     });
-    expect(allowedScopesFor(principal, STAKE_ID)).toEqual([
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([
       { value: 'stake', label: 'Stake' },
-      { value: 'BA', label: 'Ward BA' },
-      { value: 'CO', label: 'Ward CO' },
+      { value: 'BA', label: 'Bayside' },
+      { value: 'CO', label: 'Cottonwood' },
     ]);
   });
 
   it('no role: returns an empty list', () => {
     const principal = makePrincipal({});
-    expect(allowedScopesFor(principal, STAKE_ID)).toEqual([]);
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([]);
   });
 
   it('manager-only (no stake / no ward claim): empty list — manager status does not grant scope options', () => {
     const principal = makePrincipal({ managerStakes: [STAKE_ID] });
-    expect(allowedScopesFor(principal, STAKE_ID)).toEqual([]);
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([]);
   });
 
   it('platform superadmin without stake / ward claim: empty list — superadmin status does not grant scope options', () => {
     const principal = makePrincipal({ isPlatformSuperadmin: true });
-    expect(allowedScopesFor(principal, STAKE_ID)).toEqual([]);
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([]);
   });
 
   it('manager + stake claim: stake option only (manager adds nothing on top)', () => {
@@ -76,14 +94,18 @@ describe('allowedScopesFor — B-3 scope filter', () => {
       managerStakes: [STAKE_ID],
       stakeMemberStakes: [STAKE_ID],
     });
-    expect(allowedScopesFor(principal, STAKE_ID)).toEqual([{ value: 'stake', label: 'Stake' }]);
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([
+      { value: 'stake', label: 'Stake' },
+    ]);
   });
 
   it('different stake claim: ignores wards keyed under another stake', () => {
     const principal = makePrincipal({
       bishopricWards: { other: ['CO'], [STAKE_ID]: ['BA'] },
     });
-    expect(allowedScopesFor(principal, STAKE_ID)).toEqual([{ value: 'BA', label: 'Ward BA' }]);
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([
+      { value: 'BA', label: 'Bayside' },
+    ]);
   });
 });
 
