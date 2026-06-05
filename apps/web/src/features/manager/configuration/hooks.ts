@@ -276,16 +276,32 @@ export function isNonTerminalRequest(req: AccessRequest): boolean {
 }
 
 /**
+ * True when a seat references `name` anywhere in its display-name
+ * arrays — the primary grant's `building_names` OR any
+ * `duplicate_grants[].building_names`. A member can hold a primary seat
+ * in building X plus a duplicate-site grant (T-43) on building Y, where
+ * the Y reference lives ONLY in `duplicate_grants[].building_names`;
+ * renaming Y would stale that snapshot, so the rename guard must walk
+ * both. Counted once per seat regardless of how many arrays match.
+ */
+function seatReferencesBuilding(seat: Seat, name: string): boolean {
+  if ((seat.building_names ?? []).includes(name)) return true;
+  return (seat.duplicate_grants ?? []).some((g) => (g.building_names ?? []).includes(name));
+}
+
+/**
  * Pure guard symmetric with `buildingDeleteBlocker`: returns a
  * user-facing message when renaming a building away from `currentName`
  * would orphan a display-name snapshot, or `null` when no active seat /
  * pending request references the current name. The display name is the
- * value carried in `seat.building_names` / `request.building_names`
- * (display-name arrays — §3.2), so a rename leaves those snapshots
- * pointing at the old name. Per the chosen prevent-rename approach
- * (T-68 option D), we block the rename while references exist rather
- * than cascade-rewriting them. Match is exact (the arrays store the
- * display name verbatim). References that count: active seats +
+ * value carried in `seat.building_names` (primary grant) /
+ * `seat.duplicate_grants[].building_names` (duplicate-site grants) /
+ * `request.building_names` (display-name arrays — §3.2), so a rename
+ * leaves those snapshots pointing at the old name. Per the chosen
+ * prevent-rename approach (T-68 option D), we block the rename while
+ * references exist rather than cascade-rewriting them. Match is exact
+ * (the arrays store the display name verbatim). References that count:
+ * active seats (primary OR duplicate-grant building sets) +
  * non-terminal requests only; terminal requests are historical.
  * Firestore Security Rules can't iterate sibling collections, so this
  * guard is client-side only (mirrors `buildingDeleteBlocker`).
@@ -295,7 +311,7 @@ export function buildingRenameBlocker(
   seats: ReadonlyArray<Seat>,
   pendingRequests: ReadonlyArray<AccessRequest>,
 ): string | null {
-  const seatCount = seats.filter((s) => (s.building_names ?? []).includes(currentName)).length;
+  const seatCount = seats.filter((s) => seatReferencesBuilding(s, currentName)).length;
   const requestCount = pendingRequests.filter(
     (r) => isNonTerminalRequest(r) && (r.building_names ?? []).includes(currentName),
   ).length;

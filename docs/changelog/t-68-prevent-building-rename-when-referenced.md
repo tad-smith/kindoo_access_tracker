@@ -13,8 +13,8 @@ A building's display name (`building_name`) is editable in place on a frozen `bu
 
 ## What counts as a reference
 
-- **Active seats** — any `seat.building_names` containing the current name.
-- **Non-terminal (pending) requests** — any pending `request.building_names` containing the current name. Completed / rejected / cancelled requests are historical and do **not** block (their arrays are frozen records; a rename does not break them).
+- **Active seats** — the current name appears in EITHER the primary grant's `seat.building_names` OR any `seat.duplicate_grants[].building_names` (duplicate-site grants — T-43). Counted once per seat regardless of how many arrays match. A member whose primary seat is in another building but who holds a duplicate-site grant on the renamed building still blocks — that reference lives only in the duplicate-grant array.
+- **Non-terminal (pending) requests** — any pending `request.building_names` containing the current name. Completed / rejected / cancelled requests are historical and do **not** block (their arrays are frozen records; a rename does not break them). Requests have no `duplicate_grants` — the request side checks `building_names` only.
 - **Wards do not count.** The ward → building FK is the immutable slug (T-67), not the display name, so renames don't affect wards. Only the display-name grant arrays need guarding.
 
 ## Message

@@ -204,6 +204,63 @@ describe('configuration buildingRenameBlocker', () => {
       ),
     ).toBeNull();
   });
+
+  it('blocks when the only reference is a duplicate-grant building set (primary elsewhere)', () => {
+    // Member's primary seat is in another building; the renamed building
+    // is referenced ONLY by a duplicate-site grant (T-43). Renaming it
+    // would stale that snapshot → must block.
+    const msg = buildingRenameBlocker(
+      'Black Forest',
+      [
+        seat({
+          building_names: ['Maple Building'],
+          duplicate_grants: [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            { scope: 'PR', type: 'manual', building_names: ['Black Forest'] } as any,
+          ],
+        }),
+      ],
+      [],
+    );
+    expect(msg).toContain('Can\'t rename "Black Forest"');
+    expect(msg).toContain('1 seat');
+  });
+
+  it('counts a seat once when it references via both primary and duplicate-grant arrays', () => {
+    const msg = buildingRenameBlocker(
+      'Black Forest',
+      [
+        seat({
+          building_names: ['Black Forest'],
+          duplicate_grants: [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            { scope: 'PR', type: 'manual', building_names: ['Black Forest'] } as any,
+          ],
+        }),
+      ],
+      [],
+    );
+    // One seat, not two.
+    expect(msg).toBe(
+      'Can\'t rename "Black Forest" — 1 seat reference it. Remove or reassign them first.',
+    );
+  });
+
+  it('tolerates a seat whose duplicate_grants entry has no building_names', () => {
+    expect(
+      buildingRenameBlocker(
+        'Black Forest',
+        [
+          seat({
+            building_names: ['Maple Building'],
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            duplicate_grants: [{ scope: 'PR', type: 'manual' } as any],
+          }),
+        ],
+        [],
+      ),
+    ).toBeNull();
+  });
 });
 
 describe('configuration kindooSiteDeleteBlocker', () => {
