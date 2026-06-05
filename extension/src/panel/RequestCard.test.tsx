@@ -622,7 +622,11 @@ describe('RequestCard', () => {
     expect(markRequestCompleteMock).not.toHaveBeenCalled();
   });
 
-  it('surfaces a reject error inline and keeps the card', async () => {
+  it('surfaces a reject error inline and keeps the dialog open without dismissing or refetching', async () => {
+    // On failure the error must PERSIST so the operator can read it.
+    // `onDismissed` is the single trigger for both card-drop and the
+    // queue refetch (QueuePanel.handleDismissed), so asserting it is
+    // never called proves neither happens on the failure path.
     rejectRequestMock.mockRejectedValue(
       new Error('Request is no longer pending (current status: complete).'),
     );
@@ -638,7 +642,12 @@ describe('RequestCard', () => {
       expect(screen.getByTestId('sba-reject-error-r1')).toHaveTextContent(/no longer pending/),
     );
     expect(onDismissed).not.toHaveBeenCalled();
+    // Dialog stays mounted with the error still visible (nothing
+    // unmounts it or auto-clears the alert) and the confirm button
+    // re-enables for a retry.
     expect(screen.getByTestId('sba-reject-dialog-r1')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-reject-error-r1')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-reject-confirm-r1')).toBeEnabled();
   });
 
   // ---- Add for an existing user → Reject-only -----------------------

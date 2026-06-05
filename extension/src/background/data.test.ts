@@ -861,3 +861,137 @@ describe('loadSeatByEmail — stake parameterisation', () => {
     );
   });
 });
+
+describe('rejectRequest — SW-side write (getDoc + updateDoc, no transaction)', () => {
+  // The canonical claim DIFFERS from a naive `canonicalEmail(email)`
+  // recompute, so a test that asserts the written canonical can tell
+  // "used the claim" from "recomputed locally" apart. The default email
+  // is mixed-case + dotted Gmail to make that divergence concrete.
+  const CANONICAL_CLAIM = 'claimed-canonical@gmail.com';
+
+  // `noClaim` drops the `canonical` claim entirely (token carries other
+  // claims but not this one), exercising the `?? canonicalEmail(email)`
+  // fallback. `email: null` models a Firebase user with no email.
+  function rejectActor(opts: { email?: string | null; noClaim?: boolean } = {}): User {
+    const email = 'email' in opts ? opts.email : 'Mgr.Name@Gmail.com';
+    return {
+      email,
+      getIdTokenResult: vi.fn().mockResolvedValue({
+        claims: opts.noClaim ? {} : { canonical: CANONICAL_CLAIM },
+      }),
+    } as unknown as User;
+  }
+
+  beforeEach(() => {
+    getDocMock.mockReset();
+    updateDocMock.mockReset();
+    updateDocMock.mockResolvedValue(undefined);
+    serverTimestampMock.mockClear();
+    docMock.mockClear();
+    // Default: the request is still pending so the write proceeds.
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'pending' }) });
+  });
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it('writes via updateDoc (a discrete RestConnection op that works in the MV3 SW), not runTransaction', async () => {
+    // Regression guard for the XMLHttpRequest-is-not-defined failure:
+    // `runTransaction`'s transactional read (BatchGetDocuments over
+    // WebChannel) throws in the service worker. The firestore mock above
+    // deliberately does NOT export `runTransaction` — if the handler
+    // reached for it the import would be undefined and this would throw.
+    const { rejectRequest } = await import('./data');
+    await rejectRequest('csnorth', 'r1', 'Duplicate request', rejectActor());
+    expect(getDocMock).toHaveBeenCalledTimes(1);
+    expect(updateDocMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes EXACTLY the six rule-allowlisted fields with the correct actor shape', async () => {
+    const { rejectRequest } = await import('./data');
+    await rejectRequest('csnorth', 'r1', '  Not eligible  ', rejectActor());
+
+    const payload = updateDocMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    // hasOnly(['status','completer_email','completer_canonical',
+    //          'completed_at','rejection_reason','lastActor'])
+    expect(Object.keys(payload).sort()).toEqual(
+      [
+        'completed_at',
+        'completer_canonical',
+        'completer_email',
+        'lastActor',
+        'rejection_reason',
+        'status',
+      ].sort(),
+    );
+    expect(payload.status).toBe('rejected');
+    // Reason is trimmed.
+    expect(payload.rejection_reason).toBe('Not eligible');
+    expect(payload.completed_at).toBe('__ts__');
+    // `lastActor.email` / `completer_email` are the RAW typed email
+    // (rule compares against `request.auth.token.email`).
+    expect(payload.completer_email).toBe('Mgr.Name@Gmail.com');
+    expect(payload.lastActor).toEqual({
+      email: 'Mgr.Name@Gmail.com',
+      // `canonical` is the token's claim — NOT canonicalEmail(email).
+      canonical: CANONICAL_CLAIM,
+    });
+    expect(payload.completer_canonical).toBe(CANONICAL_CLAIM);
+  });
+
+  it('falls back to canonicalEmail(email) when the token carries no canonical claim', async () => {
+    const { rejectRequest } = await import('./data');
+    await rejectRequest('csnorth', 'r1', 'reason', rejectActor({ noClaim: true }));
+    const payload = updateDocMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    // canonicalEmail('Mgr.Name@Gmail.com') → 'mgrname@gmail.com'.
+    expect(payload.completer_canonical).toBe('mgrname@gmail.com');
+    expect((payload.lastActor as { canonical: string }).canonical).toBe('mgrname@gmail.com');
+  });
+
+  it('writes the request under the supplied stakeId + requestId', async () => {
+    const { rejectRequest } = await import('./data');
+    await rejectRequest('east-co', 'req-99', 'reason', rejectActor());
+    expect(docMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'stakes',
+      'east-co',
+      'requests',
+      'req-99',
+    );
+  });
+
+  it('throws a friendly precondition error and does NOT write when the request is no longer pending', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'complete' }) });
+    const { rejectRequest } = await import('./data');
+    await expect(rejectRequest('csnorth', 'r1', 'reason', rejectActor())).rejects.toThrow(
+      /no longer pending/i,
+    );
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('throws when the request does not exist', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false, data: () => ({}) });
+    const { rejectRequest } = await import('./data');
+    await expect(rejectRequest('csnorth', 'r1', 'reason', rejectActor())).rejects.toThrow(
+      /not found/i,
+    );
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty / whitespace-only reason before touching Firestore', async () => {
+    const { rejectRequest } = await import('./data');
+    await expect(rejectRequest('csnorth', 'r1', '   ', rejectActor())).rejects.toThrow(
+      /reason is required/i,
+    );
+    expect(getDocMock).not.toHaveBeenCalled();
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the actor has no email', async () => {
+    const { rejectRequest } = await import('./data');
+    await expect(
+      rejectRequest('csnorth', 'r1', 'reason', rejectActor({ email: null })),
+    ).rejects.toThrow(/no email/i);
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+});
