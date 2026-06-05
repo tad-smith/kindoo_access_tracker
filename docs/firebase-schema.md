@@ -142,8 +142,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   stake_seat_cap: number;              // license total
 
   // Schedules
-  expiry_hour: number;                 // 0–23, local stake time
-  timezone: string;                    // IANA tz, e.g. 'America/Denver'
+  timezone: string;                    // IANA tz, e.g. 'America/Denver'. Used for audit-log date filtering (the daily expiry scheduler was retired — `architecture.md` D19).
 
   // Deprecated (LCR Sheet importer removed — see `architecture.md` D14,
   // `spec.md` §8). New stake docs do not set these fields; existing
@@ -159,15 +158,13 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   notifications_enabled: boolean;
   notifications_reply_to?: string;     // optional reply-to address; when unset, EmailService omits the Reply-To header
 
-  // Operational state (`last_over_caps_json` written by request-completion over-cap recomputes; `last_expiry_*` by the daily expiry trigger; read by manager UI)
+  // Operational state (`last_over_caps_json` written by request-completion over-cap recomputes; read by manager UI)
   last_over_caps_json: Array<{
     pool: 'stake' | string;            // string = ward_code
     count: number;
     cap: number;
     over_by: number;
   }>;
-  last_expiry_at?: Timestamp;
-  last_expiry_summary?: string;
 
   // Deprecated (LCR Sheet importer removed — see notes above)
   last_import_at?: Timestamp;          // deprecated
@@ -181,7 +178,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 }
 ```
 
-**Written by:** Bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); expiry trigger (`last_expiry_*`).
+**Written by:** Bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute).
 
 **Read by:** every page (stake metadata is in the bootstrap response).
 
@@ -465,12 +462,12 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
 {
   audit_id: string;            // = doc.id
   timestamp: Timestamp;
-  actor_email: string;         // 'ExpiryTrigger' (canonical automated actor) or canonical email.
-                               // Legacy 'Importer' rows remain in the audit log from the pre-removal era
+  actor_email: string;         // automated actor ('RemoveTrigger', 'OutOfBand', 'Migration', a 'SyncActor:<code>' stamp) or a typed user email.
+                               // Legacy 'Importer' rows remain in the audit log from the pre-Sync era
                                // (see `architecture.md` D14); no fresh code path writes that value.
   actor_canonical: string;     // canonical form of actor_email; same value for automated actors
   action:
-    | 'create_seat' | 'update_seat' | 'delete_seat' | 'auto_expire'
+    | 'create_seat' | 'update_seat' | 'delete_seat'
     | 'create_access' | 'update_access' | 'delete_access'
     | 'create_request' | 'submit_request' | 'complete_request' | 'reject_request' | 'cancel_request'
     | 'create_manager' | 'update_manager' | 'delete_manager'
@@ -896,7 +893,6 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `syncManagersClaims` | Firestore write on `stakes/{sid}/kindooManagers/{memberCanonical}` | Recomputes `stakes[sid].manager` claim; revokes |
 | `syncSuperadminClaims` | Firestore write on `platformSuperadmins/{canonicalEmail}` | Toggles `isPlatformSuperadmin` claim |
 | `auditTrigger` | Firestore write on `stakes/{sid}/{collection}/{docId}` for audited collections | Writes deterministic audit row to `stakes/{sid}/auditLog` |
-| `runExpiry` | Cloud Scheduler hourly + manager callable | Scans seats with type='temp' and end_date<today, deletes |
 | `markRequestComplete` | Callable (manager-invoked) | Resolves seat slot, writes the add/edit, flips the request to `complete` in one transaction |
 | `syncApplyFix` | Callable (operator-invoked from the extension's Sync panel) | Applies one classifier-derived fix to `access` + `seats` via Admin SDK; sole auto-seat writer |
 | `notifyOnRequestWrite` | Firestore write on `stakes/{sid}/requests/{rid}` | Sends Resend email per spec.md §9 (submit, complete, reject, cancel) |

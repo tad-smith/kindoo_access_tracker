@@ -1003,6 +1003,8 @@ Reconcile: — **[REMOVED Phase B]**
 
 ## Phase 8 — Importer + Expiry + audit triggers
 
+> **[SUPERSEDED — in part]** Two of the three deliverables this phase shipped were later removed. (1) **Importer** — the LCR Sheet importer (`runImporter`, `runImportNow`, `Importer.ts`, the Sheets client) was deleted in T-45; the extension's Sync feature is the sole auto-seat source (see `architecture.md` D14). (2) **Temp-seat expiry** — the daily expiry scheduler (`runExpiry`, `Expiry.ts`, `lib/schedule.ts`, the `auto_expire` audit action, the `"ExpiryTrigger"` actor, and the `expiry_hour` / `last_expiry_at` / `last_expiry_summary` stake fields) was removed on 2026-06-05 (PR #210). Kindoo is authoritative for seats and expires temp users itself; the extension's Sync then removes the orphaned SBA seat through the `sba-only` "Remove From SBA" path (`spec.md` §7 / §8). SBA runs no expiry clock of its own. See `architecture.md` D19 and `docs/changelog/remove-temp-seat-expiry-scheduler.md`. **Audit triggers** (the third deliverable) are unchanged and remain live. This section is retained as the historical record of what Phase 8 shipped; live behaviour is in `spec.md` and `firebase-schema.md` §7.
+
 **Goal:** All scheduled and event-driven Cloud Functions land. Weekly importer reads the LCR Sheet and applies diff to Firestore; daily expiry trims temp seats; audit triggers fan in audit rows for every entity write; nightly reconciliation catches gaps.
 
 **Owner:** backend-engineer.
