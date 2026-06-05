@@ -48,4 +48,9 @@
   --kd-warn-dark: #7a4400;
   --kd-warn-tint-2: #fde4a1;
   --kd-warn-mid: #6b4a00;
+
+  /* Roster content width — shared by the roster page-header row and the
+     utilization-bar host so the header action button's right edge aligns
+     with the utilization bar below it. */
+  --kd-roster-width: 820px;
 }

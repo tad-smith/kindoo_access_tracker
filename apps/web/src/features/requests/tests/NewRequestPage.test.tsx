@@ -8,6 +8,13 @@ import { render, screen } from '@testing-library/react';
 import type { Principal } from '../../../lib/principal';
 import type { Building, Ward } from '@kindoo/shared';
 import type { ScopeOption } from '../components/NewRequestForm';
+import { makeWard } from '../../../../test/fixtures';
+
+// Wards catalogue used to resolve scope option labels to ward names.
+const WARDS: Ward[] = [
+  makeWard({ ward_code: 'CO', ward_name: 'Cottonwood' }),
+  makeWard({ ward_code: 'BA', ward_name: 'Bayside' }),
+];
 
 const mockedPrincipal: { current: Principal } = {
   current: emptyPrincipal(),
@@ -44,10 +51,10 @@ vi.mock('../../../lib/docs', () => ({
 }));
 
 // Render the form as a deterministic stub so we can assert on the
-// scope list passed in.
+// scope list (and the forwarded initialScope) passed in.
 vi.mock('../components/NewRequestForm', () => ({
-  NewRequestForm: ({ scopes }: { scopes: ScopeOption[] }) => (
-    <div data-testid="form-stub">
+  NewRequestForm: ({ scopes, initialScope }: { scopes: ScopeOption[]; initialScope?: string }) => (
+    <div data-testid="form-stub" data-initial-scope={initialScope ?? ''}>
       {scopes.length === 0 ? (
         <p>NO_SCOPES</p>
       ) : (
@@ -90,7 +97,7 @@ function setPrincipal(overrides: Partial<Principal>): void {
 
 beforeEach(() => {
   setPrincipal({});
-  wardsState.current = { data: [], isLoading: false };
+  wardsState.current = { data: WARDS, isLoading: false };
   buildingsState.current = { data: [], isLoading: false };
 });
 
@@ -108,19 +115,19 @@ describe('NewRequestPage — wires the role-filtered scope list (B-3)', () => {
     expect(readScopes()).toEqual(['stake::Stake']);
   });
 
-  it('bishopric-only: renders only the user wards, sorted', () => {
+  it('bishopric-only: renders only the user wards by name, sorted by code', () => {
     setPrincipal({ bishopricWards: { csnorth: ['CO', 'BA'] } });
     render(<NewRequestPage />);
-    expect(readScopes()).toEqual(['BA::Ward BA', 'CO::Ward CO']);
+    expect(readScopes()).toEqual(['BA::Bayside', 'CO::Cottonwood']);
   });
 
-  it('stake + bishopric: renders stake plus the user wards (no other wards)', () => {
+  it('stake + bishopric: renders stake plus the user wards by name (no other wards)', () => {
     setPrincipal({
       stakeMemberStakes: ['csnorth'],
       bishopricWards: { csnorth: ['CO'] },
     });
     render(<NewRequestPage />);
-    expect(readScopes()).toEqual(['stake::Stake', 'CO::Ward CO']);
+    expect(readScopes()).toEqual(['stake::Stake', 'CO::Cottonwood']);
   });
 
   it('manager-only (no stake / no ward): renders the not-authorized message — empty scope list', () => {
@@ -161,5 +168,17 @@ describe('NewRequestPage — wires the role-filtered scope list (B-3)', () => {
     setPrincipal({ stakeMemberStakes: ['csnorth'] });
     const { container } = render(<NewRequestPage />);
     expect(container.querySelector('section.kd-page-narrow')).not.toBeNull();
+  });
+
+  it('forwards initialScope (from ?scope=) to the form', () => {
+    setPrincipal({ stakeMemberStakes: ['csnorth'], bishopricWards: { csnorth: ['CO'] } });
+    render(<NewRequestPage initialScope="CO" />);
+    expect(screen.getByTestId('form-stub')).toHaveAttribute('data-initial-scope', 'CO');
+  });
+
+  it('omits initialScope when no ?scope= is present', () => {
+    setPrincipal({ stakeMemberStakes: ['csnorth'] });
+    render(<NewRequestPage />);
+    expect(screen.getByTestId('form-stub')).toHaveAttribute('data-initial-scope', '');
   });
 });

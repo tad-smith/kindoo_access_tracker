@@ -54,6 +54,23 @@ vi.mock('../../lib/principal', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
+  // Render an `<a>` with `to` → `href` and the typed `search` object
+  // surfaced as `data-scope` so tests can assert the pre-select target
+  // without spreading the object onto the DOM node.
+  Link: ({
+    to,
+    search,
+    children,
+    ...rest
+  }: {
+    to: string;
+    search?: { scope?: string };
+    children?: React.ReactNode;
+  } & Record<string, unknown>) => (
+    <a href={to} data-scope={search?.scope} {...rest}>
+      {children}
+    </a>
+  ),
 }));
 
 function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
@@ -184,6 +201,43 @@ describe('<WardRostersPage />', () => {
     expect(screen.getByText(/pick a ward above/i)).toBeInTheDocument();
   });
 
+  describe('New Request header action', () => {
+    it('shows the "New Request" link pre-selecting the selected ward when the viewer is in its bishopric', () => {
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'CO' })]);
+      render(<WardRostersPage initialWard="CO" />);
+      const link = screen.getByTestId('ward-rosters-new-request');
+      expect(link).toHaveTextContent('New Request');
+      expect(link).toHaveAttribute('href', '/new');
+      expect(link).toHaveAttribute('data-scope', 'CO');
+    });
+
+    it('hides the New Request link when a ward outside the viewer’s bishopric is selected', () => {
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'GE' })]);
+      render(<WardRostersPage initialWard="GE" />);
+      expect(screen.queryByTestId('ward-rosters-new-request')).toBeNull();
+    });
+
+    it('hides the New Request link when no ward is selected', () => {
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockWards([makeWard({ ward_code: 'CO' })]);
+      mockSeats(undefined);
+      render(<WardRostersPage />);
+      expect(screen.queryByTestId('ward-rosters-new-request')).toBeNull();
+    });
+
+    it('hides the New Request link for a stake-only viewer (stake authority does not extend to wards)', () => {
+      usePrincipalMock.mockReturnValue(principal({ stake: true }));
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'CO' })]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.queryByTestId('ward-rosters-new-request')).toBeNull();
+    });
+  });
+
   it('lists every ward in the dropdown sorted alphabetically', () => {
     mockWards([
       makeWard({ ward_code: 'GE', ward_name: 'Cedar' }),
@@ -193,7 +247,8 @@ describe('<WardRostersPage />', () => {
     render(<WardRostersPage />);
     const opts = screen.getAllByRole('option').map((o) => o.textContent);
     // "Choose a ward…" is at index 0; CO comes before GE alphabetically.
-    expect(opts.slice(1)).toEqual(['Maple (CO)', 'Cedar (GE)']);
+    // Options show the ward name only (sorted by ward_code).
+    expect(opts.slice(1)).toEqual(['Maple', 'Cedar']);
   });
 
   it('renders the chosen ward’s roster with its utilization bar', async () => {

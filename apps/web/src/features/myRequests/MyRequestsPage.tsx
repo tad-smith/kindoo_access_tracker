@@ -11,6 +11,7 @@ import { useMemo, useState } from 'react';
 import type { AccessRequest } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { useActiveStake } from '../../lib/useActiveStake';
+import { useScopeLabel } from '../../lib/scopeLabel';
 import { useMyRequests } from './hooks';
 import { useCancelRequest } from './cancelRequest';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
@@ -28,6 +29,7 @@ interface ScopeOption {
 function requestableScopes(
   principal: ReturnType<typeof usePrincipal>,
   stakeId: string | null,
+  labelFor: (scope: string) => string,
 ): ScopeOption[] {
   if (!stakeId) return [];
   const scopes: ScopeOption[] = [];
@@ -35,7 +37,7 @@ function requestableScopes(
     scopes.push({ value: 'stake', label: 'Stake' });
   }
   for (const ward of principal.bishopricWards[stakeId] ?? []) {
-    scopes.push({ value: ward, label: `Ward ${ward}` });
+    scopes.push({ value: ward, label: labelFor(ward) });
   }
   return scopes;
 }
@@ -43,7 +45,8 @@ function requestableScopes(
 export function MyRequestsPage() {
   const principal = usePrincipal();
   const activeStakeId = useActiveStake();
-  const scopes = requestableScopes(principal, activeStakeId);
+  const labelForScope = useScopeLabel();
+  const scopes = requestableScopes(principal, activeStakeId, labelForScope);
   const [selectedScope, setSelectedScope] = useState<string>('');
 
   const requests = useMyRequests(principal.canonical || null);
@@ -84,7 +87,7 @@ export function MyRequestsPage() {
       ) : (
         <div className="kd-myrequests-cards" data-testid="myrequests-cards">
           {filteredRequests.map((req) => (
-            <MyRequestCard key={req.request_id} request={req} />
+            <MyRequestCard key={req.request_id} request={req} labelForScope={labelForScope} />
           ))}
         </div>
       )}
@@ -94,9 +97,10 @@ export function MyRequestsPage() {
 
 interface MyRequestCardProps {
   request: AccessRequest;
+  labelForScope: (scope: string) => string;
 }
 
-function MyRequestCard({ request }: MyRequestCardProps) {
+function MyRequestCard({ request, labelForScope }: MyRequestCardProps) {
   const cancel = useCancelRequest();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -125,9 +129,7 @@ function MyRequestCard({ request }: MyRequestCardProps) {
       <div className="kd-myrequests-card-line1">
         <Badge variant={badgeVariantForType(request.type)}>{labelForType(request.type)}</Badge>
         <Badge variant={badgeVariantForStatus(request.status)}>{request.status}</Badge>
-        <span className="roster-card-chip roster-card-scope">
-          <code>{request.scope}</code>
-        </span>
+        <span className="roster-card-chip roster-card-scope">{labelForScope(request.scope)}</span>
         <span className="roster-card-member">
           {request.member_name ? (
             <>

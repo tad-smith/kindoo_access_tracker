@@ -90,7 +90,7 @@ Per-env config:
 - TypeScript strict; no `any`.
 - Prettier-formatted (single quotes, 100-char lines, 2-space indent, semicolons, trailing commas).
 - File header comments explain non-obvious *why*, never what.
-- Commit trailer on every commit: `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`.
+- Commit trailer on every commit: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
 
 ## Distribution
 

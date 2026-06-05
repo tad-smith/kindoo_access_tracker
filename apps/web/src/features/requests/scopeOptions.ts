@@ -14,26 +14,33 @@
 // renders deterministically across renders. The 'stake' option, when
 // present, always sorts first; ward options follow.
 
-import type { Seat } from '@kindoo/shared';
+import type { Seat, Ward } from '@kindoo/shared';
 import type { Principal } from '../../lib/principal';
+import { scopeLabel } from '../../lib/scopeLabel';
 import type { ScopeOption } from './components/NewRequestForm';
 
 /**
  * Derive the ordered list of `ScopeOption`s a principal may submit a
- * new request against, for the given stake. Pure; no SDK calls. Tested
- * in `tests/scopeOptions.test.ts`.
+ * new request against, for the given stake. The option `value` is the
+ * scope key (`'stake'` or a ward_code); the `label` is the ward name,
+ * resolved from `wards` (falls back to the raw code when unresolved).
+ * Pure; no SDK calls. Tested in `tests/scopeOptions.test.ts`.
  */
-export function allowedScopesFor(principal: Principal, stakeId: string): ScopeOption[] {
+export function allowedScopesFor(
+  principal: Principal,
+  stakeId: string,
+  wards: readonly Ward[],
+): ScopeOption[] {
   const out: ScopeOption[] = [];
 
   if (principal.stakeMemberStakes.includes(stakeId)) {
     out.push({ value: 'stake', label: 'Stake' });
   }
 
-  const wards = principal.bishopricWards[stakeId] ?? [];
-  const sorted = [...wards].sort((a, b) => a.localeCompare(b));
+  const bishopricWards = principal.bishopricWards[stakeId] ?? [];
+  const sorted = [...bishopricWards].sort((a, b) => a.localeCompare(b));
   for (const code of sorted) {
-    out.push({ value: code, label: `Ward ${code}` });
+    out.push({ value: code, label: scopeLabel(code, wards) });
   }
 
   return out;

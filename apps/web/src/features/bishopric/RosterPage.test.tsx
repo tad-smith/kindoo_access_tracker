@@ -62,17 +62,21 @@ vi.mock('../../lib/data', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
-  // Match the public Link API enough to render an `<a>` with the
-  // `to` prop turned into an `href` for accessible-name queries.
+  // Match the public Link API enough to render an `<a>` with the `to`
+  // prop turned into an `href` for accessible-name queries; surface the
+  // typed `search` object as `data-scope` so tests can assert the pre-
+  // select target without spreading the object onto the DOM node.
   Link: ({
     to,
+    search,
     children,
     ...rest
   }: {
     to: string;
+    search?: { scope?: string };
     children?: React.ReactNode;
   } & Record<string, unknown>) => (
-    <a href={to} {...rest}>
+    <a href={to} data-scope={search?.scope} {...rest}>
       {children}
     </a>
   ),
@@ -240,6 +244,28 @@ describe('<BishopricRosterPage />', () => {
     expect(navigateMock).toHaveBeenCalled();
   });
 
+  it('renders the ward name (not the code) in the subtitle and the picker options', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO', 'GE']));
+    mockSeats([]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    useStakeWardsMock.mockReturnValue({
+      ...stakeListResult,
+      data: [
+        makeWard({ ward_code: 'CO', ward_name: 'Cottonwood' }),
+        makeWard({ ward_code: 'GE', ward_name: 'Glen Eagle' }),
+      ],
+    });
+    const { container } = render(<BishopricRosterPage initialWard="CO" />);
+    // Subtitle resolves to the name, with no parenthesised code.
+    expect(container.querySelector('.kd-page-subtitle')).toHaveTextContent('Cottonwood');
+    expect(container.querySelector('.kd-page-subtitle')?.textContent).not.toMatch(/\(CO\)/);
+    // Picker options carry the ward name as their visible label; the
+    // option value stays the code.
+    const coOption = screen.getByRole('option', { name: 'Cottonwood' });
+    expect(coOption).toHaveValue('CO');
+    expect(screen.getByRole('option', { name: 'Glen Eagle' })).toHaveValue('GE');
+  });
+
   it('renders a utilization bar with seat_cap from the ward doc', () => {
     usePrincipalMock.mockReturnValue(principal(['CO']));
     mockSeats([makeSeat(), makeSeat({ member_canonical: 'b@x.com', member_email: 'b@x.com' })]);
@@ -308,6 +334,19 @@ describe('<BishopricRosterPage />', () => {
       expect(link).toBeInTheDocument();
       expect(link).toHaveTextContent('New Request');
       expect(link).toHaveAttribute('href', '/new');
+    });
+
+    it('pre-selects the active ward as the request scope', () => {
+      // The header link carries `?scope=<activeWard>` so the New Request
+      // form lands on the ward the bishop was just looking at.
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      expect(screen.getByTestId('bishopric-roster-new-request')).toHaveAttribute(
+        'data-scope',
+        'CO',
+      );
     });
 
     it('does not render the New Request action when the principal has no bishopric wards', () => {

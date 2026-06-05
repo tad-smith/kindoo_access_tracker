@@ -462,11 +462,11 @@ describe('<AccessPage />', () => {
       return `${cells[0]}|${cells[1]}`;
     });
     expect(rows).toEqual([
-      'stake|Stake President', // canonical order 0
-      'stake|Stake Clerk', // canonical order 3
-      'CO|Bishop', // in-table → above the off-table row
-      'CO|EQ President', // off-table → +Infinity → bottom of CO band
-      'GE|Counselor', // GE band (only row)
+      'Stake|Stake President', // canonical order 0
+      'Stake|Stake Clerk', // canonical order 3
+      'Maple|Bishop', // in-table → above the off-table row
+      'Maple|EQ President', // off-table → +Infinity → bottom of CO band
+      'Cedar|Counselor', // GE band (only row)
     ]);
   });
 
@@ -509,8 +509,8 @@ describe('<AccessPage />', () => {
       return `${cells[0]}|${cells[1]}`;
     });
     expect(rows).toEqual([
-      'stake|Stake President', // canonical order 0
-      'stake|Covering bishop', // manual → +Infinity → bottom of stake band
+      'Stake|Stake President', // canonical order 0
+      'Stake|Covering bishop', // manual → +Infinity → bottom of stake band
     ]);
   });
 
