@@ -240,6 +240,28 @@ describe('<BishopricRosterPage />', () => {
     expect(navigateMock).toHaveBeenCalled();
   });
 
+  it('renders the ward name (not the code) in the subtitle and the picker options', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO', 'GE']));
+    mockSeats([]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    useStakeWardsMock.mockReturnValue({
+      ...stakeListResult,
+      data: [
+        makeWard({ ward_code: 'CO', ward_name: 'Cottonwood' }),
+        makeWard({ ward_code: 'GE', ward_name: 'Glen Eagle' }),
+      ],
+    });
+    const { container } = render(<BishopricRosterPage initialWard="CO" />);
+    // Subtitle resolves to the name, with no parenthesised code.
+    expect(container.querySelector('.kd-page-subtitle')).toHaveTextContent('Cottonwood');
+    expect(container.querySelector('.kd-page-subtitle')?.textContent).not.toMatch(/\(CO\)/);
+    // Picker options carry the ward name as their visible label; the
+    // option value stays the code.
+    const coOption = screen.getByRole('option', { name: 'Cottonwood' });
+    expect(coOption).toHaveValue('CO');
+    expect(screen.getByRole('option', { name: 'Glen Eagle' })).toHaveValue('GE');
+  });
+
   it('renders a utilization bar with seat_cap from the ward doc', () => {
     usePrincipalMock.mockReturnValue(principal(['CO']));
     mockSeats([makeSeat(), makeSeat({ member_canonical: 'b@x.com', member_email: 'b@x.com' })]);
