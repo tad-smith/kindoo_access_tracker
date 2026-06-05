@@ -204,6 +204,16 @@ describe('<ConfigurationPage />', () => {
     expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
   });
 
+  it('does not flash the no-buildings hint or disable Add Ward while buildings load', () => {
+    // Deep-linking ?tab=wards lands before the buildings snapshot
+    // arrives. The empty-state must not fire on undefined data, or
+    // stakes that DO have buildings briefly show "Add a building first".
+    useBuildingsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-wards-add-button')).not.toBeDisabled();
+    expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
+  });
+
   it('shows ward-form validation error on empty submit (modal-driven)', async () => {
     const user = userEvent.setup();
     useBuildingsMock.mockReturnValue(

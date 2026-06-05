@@ -8,8 +8,6 @@ import { makeAccess } from '../../../../test/fixtures';
 
 const useAccessListMock = vi.fn();
 const useStakeWardsMock = vi.fn();
-const useStakeCallingTemplatesMock = vi.fn();
-const useWardCallingTemplatesMock = vi.fn();
 const addManualMutate = vi.fn().mockResolvedValue(undefined);
 const deleteManualMutate = vi.fn().mockResolvedValue(undefined);
 
@@ -17,8 +15,6 @@ vi.mock('./hooks', () => ({
   useAccessList: () => useAccessListMock(),
   useAddManualGrantMutation: () => ({ mutateAsync: addManualMutate, isPending: false }),
   useDeleteManualGrantMutation: () => ({ mutateAsync: deleteManualMutate, isPending: false }),
-  useStakeCallingTemplates: () => useStakeCallingTemplatesMock(),
-  useWardCallingTemplates: () => useWardCallingTemplatesMock(),
 }));
 
 vi.mock('../dashboard/hooks', () => ({
@@ -62,9 +58,6 @@ function liveResult<T>(data: T[] | undefined, isLoading = false) {
 beforeEach(() => {
   vi.clearAllMocks();
   useStakeWardsMock.mockReturnValue(liveResult([]));
-  // Default to empty template collections; specific tests override.
-  useStakeCallingTemplatesMock.mockReturnValue(liveResult([]));
-  useWardCallingTemplatesMock.mockReturnValue(liveResult([]));
 });
 
 describe('<AccessPage />', () => {
@@ -415,42 +408,10 @@ describe('<AccessPage />', () => {
     expect(table.querySelectorAll('tbody tr')).toHaveLength(2);
   });
 
-  it('table view sorts rows by scope band, then per-row sheet_order from the calling-template lookup', () => {
-    // Stake templates: Stake President = 1, Stake Clerk = 5.
-    // Ward templates: Bishop = 1, Counselor = 3, EQ President = 7.
-    useStakeCallingTemplatesMock.mockReturnValue(
-      liveResult([
-        {
-          calling_name: 'Stake President',
-          give_app_access: true,
-          auto_kindoo_access: true,
-          sheet_order: 1,
-        },
-        {
-          calling_name: 'Stake Clerk',
-          give_app_access: true,
-          auto_kindoo_access: true,
-          sheet_order: 5,
-        },
-      ]),
-    );
-    useWardCallingTemplatesMock.mockReturnValue(
-      liveResult([
-        { calling_name: 'Bishop', give_app_access: true, auto_kindoo_access: true, sheet_order: 1 },
-        {
-          calling_name: 'Counselor',
-          give_app_access: true,
-          auto_kindoo_access: true,
-          sheet_order: 3,
-        },
-        {
-          calling_name: 'EQ President',
-          give_app_access: true,
-          auto_kindoo_access: true,
-          sheet_order: 7,
-        },
-      ]),
-    );
+  it('table view sorts rows by scope band, then per-row canonical calling order', () => {
+    // Per-row order comes from the canonical churchwide table
+    // (`callingSortOrder`): Stake President precedes Stake Clerk; Bishop
+    // precedes the off-table "EQ President" (which falls to +Infinity).
     useStakeWardsMock.mockReturnValue(
       liveResult([
         { ward_code: 'CO', ward_name: 'Maple' },
@@ -463,7 +424,7 @@ describe('<AccessPage />', () => {
         makeAccess({
           member_canonical: 'a@x.com',
           member_email: 'a@x.com',
-          // Stake Clerk (5) — should land BELOW Stake President (1).
+          // Stake Clerk should land BELOW Stake President.
           importer_callings: { stake: ['Stake Clerk'] },
           manual_grants: {},
         }),
@@ -476,7 +437,7 @@ describe('<AccessPage />', () => {
         makeAccess({
           member_canonical: 'c@x.com',
           member_email: 'c@x.com',
-          // EQ President (7) → bottom of CO band.
+          // Off-table calling → +Infinity → bottom of CO band.
           importer_callings: { CO: ['EQ President'] },
           manual_grants: {},
         }),
@@ -501,26 +462,15 @@ describe('<AccessPage />', () => {
       return `${cells[0]}|${cells[1]}`;
     });
     expect(rows).toEqual([
-      'stake|Stake President', // sheet_order 1
-      'stake|Stake Clerk', // sheet_order 5
-      'CO|Bishop', // sheet_order 1, CO band
-      'CO|EQ President', // sheet_order 7, CO band
+      'stake|Stake President', // canonical order 0
+      'stake|Stake Clerk', // canonical order 3
+      'CO|Bishop', // in-table → above the off-table row
+      'CO|EQ President', // off-table → +Infinity → bottom of CO band
       'GE|Counselor', // GE band (only row)
     ]);
   });
 
-  it('table view places manual grants at the bottom of their scope band (no template match)', () => {
-    useStakeCallingTemplatesMock.mockReturnValue(
-      liveResult([
-        {
-          calling_name: 'Stake President',
-          give_app_access: true,
-          auto_kindoo_access: true,
-          sheet_order: 1,
-        },
-      ]),
-    );
-    useWardCallingTemplatesMock.mockReturnValue(liveResult([]));
+  it('table view places manual grants at the bottom of their scope band (no calling match)', () => {
     useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Maple' }]));
     useAccessListMock.mockReturnValue(
       liveResult([
@@ -559,7 +509,7 @@ describe('<AccessPage />', () => {
       return `${cells[0]}|${cells[1]}`;
     });
     expect(rows).toEqual([
-      'stake|Stake President', // sheet_order 1
+      'stake|Stake President', // canonical order 0
       'stake|Covering bishop', // manual → +Infinity → bottom of stake band
     ]);
   });

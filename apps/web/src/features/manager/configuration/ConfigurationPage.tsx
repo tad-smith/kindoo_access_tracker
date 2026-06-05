@@ -180,8 +180,12 @@ function WardsTab() {
   );
 
   // A ward must reference an existing building. Block Add until at
-  // least one building exists.
-  const noBuildings = (buildings.data ?? []).length === 0;
+  // least one building exists. Gate on the buildings snapshot having
+  // arrived (mirrors `deleteReady` elsewhere): while `buildings.data`
+  // is undefined (loading) we must NOT flash the hint or disable Add —
+  // deep-linking ?tab=wards would otherwise show "Add a building first"
+  // on stakes that do have buildings.
+  const noBuildings = buildings.data !== undefined && buildings.data.length === 0;
 
   return (
     <div className="kd-config-section">
