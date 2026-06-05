@@ -1,7 +1,11 @@
-// Manager Requests Queue page (live). Pending-only; rendered as
-// three ordered sections (Urgent / Outstanding / Future) using the
-// `comparison_date` rule in `./sections.ts`. Per-row Mark Complete +
-// Reject actions.
+// Manager Requests Queue page (live, read-only). Pending-only; rendered
+// as three ordered sections (Urgent / Outstanding / Future) using the
+// `comparison_date` rule in `@kindoo/shared`'s `partitionPendingRequests`.
+//
+// The queue is a visibility-only surface: completion and rejection
+// happen in the Chrome extension, not here. A muted top-of-queue note
+// links to the extension. The cards are display-only — no action
+// affordances.
 //
 // `focus` prop carries a request_id from a tapped push notification's
 // deep-link (typed search param at the route level). On first render
@@ -13,39 +17,15 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import type { AccessRequest, Building } from '@kindoo/shared';
-import {
-  useCompleteAddRequest,
-  useCompleteRemoveRequest,
-  usePendingRequests,
-  useRejectRequest,
-} from './hooks';
-import { partitionPendingRequests } from './sections';
-import { useBuildings } from '../allSeats/hooks';
+import { type AccessRequest, partitionPendingRequests } from '@kindoo/shared';
+import { usePendingRequests } from './hooks';
 import { useSeatForMember } from '../../requests/hooks';
-import {
-  completeAddRequestSchema,
-  completeRemoveRequestSchema,
-  rejectRequestSchema,
-  type CompleteAddRequestForm,
-  type CompleteRemoveRequestForm,
-  type RejectRequestForm,
-} from '../../requests/schemas';
 import { Badge } from '../../../components/ui/Badge';
-import { Button } from '../../../components/ui/Button';
-import { Dialog } from '../../../components/ui/Dialog';
-import { Input } from '../../../components/ui/Input';
+import { CHROME_WEB_STORE_URL } from '../../../lib/links';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
-import { toast } from '../../../lib/store/toast';
 
 const FOCUS_HIGHLIGHT_MS = 2000;
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 export interface ManagerQueuePageProps {
   /**
@@ -59,7 +39,6 @@ export interface ManagerQueuePageProps {
 
 export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   const pending = usePendingRequests();
-  const buildings = useBuildings();
   const navigate = useNavigate();
 
   // Compute "now" once per render. Time advancement during a session
@@ -129,13 +108,13 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
     );
   }
 
-  const buildingsList = buildings.data ?? [];
   const total = pending.data.length;
 
   return (
     <section className="kd-page-medium">
       <h1>Request Queue</h1>
       <p className="kd-page-subtitle">Pending requests, sectioned by urgency.</p>
+      <ReadOnlyNote />
 
       {total === 0 ? (
         <EmptyState message="No pending requests. Nice." />
@@ -145,21 +124,18 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             title="Urgent Requests"
             testid="queue-section-urgent"
             requests={sections.urgent}
-            buildings={buildingsList}
             focusedId={focusedId}
           />
           <QueueSection
             title="Outstanding Requests"
             testid="queue-section-outstanding"
             requests={sections.outstanding}
-            buildings={buildingsList}
             focusedId={focusedId}
           />
           <QueueSection
             title="Future Requests"
             testid="queue-section-future"
             requests={sections.future}
-            buildings={buildingsList}
             focusedId={focusedId}
           />
         </div>
@@ -168,15 +144,32 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   );
 }
 
+// Muted note pointing managers to the Chrome extension for the
+// actionable (complete / reject) workflow, which no longer lives here.
+function ReadOnlyNote() {
+  return (
+    <p className="kd-queue-readonly-note" data-testid="queue-readonly-note" role="note">
+      Requests can only be completed or rejected from the Chrome extension.{' '}
+      <a
+        href={CHROME_WEB_STORE_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-testid="queue-readonly-note-link"
+      >
+        Open the extension
+      </a>
+    </p>
+  );
+}
+
 interface QueueSectionProps {
   title: string;
   testid: string;
   requests: readonly AccessRequest[];
-  buildings: readonly Building[];
   focusedId: string | undefined;
 }
 
-function QueueSection({ title, testid, requests, buildings, focusedId }: QueueSectionProps) {
+function QueueSection({ title, testid, requests, focusedId }: QueueSectionProps) {
   // Hide the entire section (header + body) when empty — the operator
   // brief is unambiguous on this.
   if (requests.length === 0) return null;
@@ -190,7 +183,6 @@ function QueueSection({ title, testid, requests, buildings, focusedId }: QueueSe
           <QueueCard
             key={request.request_id}
             request={request}
-            buildings={buildings}
             isFocused={focusedId === request.request_id}
           />
         ))}
@@ -201,28 +193,20 @@ function QueueSection({ title, testid, requests, buildings, focusedId }: QueueSe
 
 interface QueueCardProps {
   request: AccessRequest;
-  buildings: readonly Building[];
   isFocused: boolean;
 }
 
-function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
-  const [completeOpen, setCompleteOpen] = useState(false);
-  const [rejectOpen, setRejectOpen] = useState(false);
-
-  // Live duplicate check: surface inside the queue card too, not just
-  // the requester's New Request page.
+function QueueCard({ request, isFocused }: QueueCardProps) {
+  // Live duplicate check: surface inside the queue card so the manager
+  // sees, at a glance, that an add request collides with an existing
+  // seat. The completion path now lives in the extension; the chip is
+  // kept exactly as-is as an informational signal (operator decision:
+  // "same message, same error display, no changes").
   //
-  // For an add request, Mark Complete creates a brand-new one-per-member
+  // For an add request, completion creates a brand-new one-per-member
   // seat doc keyed by canonical email, so ANY existing seat (regardless
-  // of scope) guarantees the create throws. We therefore turn the
-  // duplicate signal into a blocking error and suppress Mark Complete
-  // for add types — leaving only Reject.
-  //
-  // Edit completions modify the existing seat in place (All Seats →
-  // markRequestComplete) where an existing seat is expected, and remove
-  // completions target one — so for both an existing seat is normal, not
-  // a duplicate. The chip therefore renders ONLY for add types, gated on
-  // the same `blockedByDuplicate` condition that hides Mark Complete.
+  // of scope) guarantees the create throws. Edit / remove completions
+  // expect an existing seat, so the chip renders ONLY for add types.
   const dup = useSeatForMember(request.member_canonical);
   const blockedByDuplicate =
     (request.type === 'add_manual' || request.type === 'add_temp') && !!dup.data;
@@ -339,45 +323,6 @@ function QueueCard({ request, buildings, isFocused }: QueueCardProps) {
           Seats.
         </div>
       ) : null}
-
-      <div className="form-actions">
-        {blockedByDuplicate ? null : (
-          <Button
-            variant="success"
-            onClick={() => setCompleteOpen(true)}
-            data-testid={`queue-complete-${request.request_id}`}
-          >
-            Mark Complete
-          </Button>
-        )}
-        <Button
-          variant="danger"
-          onClick={() => setRejectOpen(true)}
-          data-testid={`queue-reject-${request.request_id}`}
-        >
-          Reject
-        </Button>
-      </div>
-
-      {completeOpen ? (
-        request.type === 'remove' ? (
-          <CompleteRemoveDialog
-            request={request}
-            open={completeOpen}
-            onOpenChange={setCompleteOpen}
-          />
-        ) : (
-          <CompleteAddDialog
-            request={request}
-            buildings={buildings}
-            open={completeOpen}
-            onOpenChange={setCompleteOpen}
-          />
-        )
-      ) : null}
-      {rejectOpen ? (
-        <RejectDialog request={request} open={rejectOpen} onOpenChange={setRejectOpen} />
-      ) : null}
     </div>
   );
 }
@@ -416,242 +361,4 @@ function badgeVariantForType(t: AccessRequest['type']) {
     case 'edit_temp':
       return 'info' as const;
   }
-}
-
-// ---- Complete (add_manual / add_temp) dialog -----------------------
-
-interface CompleteAddDialogProps {
-  request: AccessRequest;
-  buildings: readonly Building[];
-  open: boolean;
-  onOpenChange: (next: boolean) => void;
-}
-
-function CompleteAddDialog({ request, buildings, open, onOpenChange }: CompleteAddDialogProps) {
-  const mutation = useCompleteAddRequest();
-  // Pre-tick: the requester's selection wins when present; otherwise
-  // empty (manager picks). Roster-driven ward-default pre-tick is
-  // out of scope here — the confirmation dialog simply respects what
-  // the requester sent.
-  const initial = request.building_names ?? [];
-  const form = useForm<CompleteAddRequestForm>({
-    resolver: zodResolver(completeAddRequestSchema),
-    defaultValues: { building_names: initial, completion_note: '' },
-  });
-  const { register, handleSubmit, watch, setValue, formState } = form;
-  const selected = watch('building_names');
-
-  const onSubmit = handleSubmit(async (input) => {
-    try {
-      await mutation.mutateAsync({
-        request,
-        building_names: input.building_names,
-        completion_note: input.completion_note,
-      });
-      toast('Request completed.', 'success');
-      onOpenChange(false);
-    } catch (err) {
-      toast(errorMessage(err), 'error');
-    }
-  });
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Mark complete?"
-      description={`Approve and create a ${request.type === 'add_temp' ? 'temporary' : 'manual'} seat for ${request.member_email}.`}
-    >
-      <form onSubmit={onSubmit} className="kd-wizard-form" data-testid="complete-add-dialog-form">
-        <fieldset className="kd-buildings-fieldset">
-          <legend>
-            Buildings <small>(at least one required)</small>
-          </legend>
-          {buildings.length === 0 ? (
-            <p className="kd-empty-state">No buildings configured. Add one via Configuration.</p>
-          ) : (
-            <ul className="kd-checkbox-list">
-              {buildings.map((b) => {
-                const checked = selected.includes(b.building_name);
-                return (
-                  <li key={b.building_id}>
-                    <label>
-                      <input
-                        type="checkbox"
-                        value={b.building_name}
-                        checked={checked}
-                        onChange={(e) => {
-                          const next = e.target.checked
-                            ? [...selected, b.building_name]
-                            : selected.filter((n) => n !== b.building_name);
-                          setValue('building_names', next, { shouldValidate: true });
-                        }}
-                        data-testid={`complete-building-${b.building_id}`}
-                      />{' '}
-                      {b.building_name}
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          {formState.errors.building_names ? (
-            <p role="alert" className="kd-form-error">
-              {formState.errors.building_names.message}
-            </p>
-          ) : null}
-        </fieldset>
-
-        <label>
-          Completion note <small>(optional)</small>
-          <textarea
-            {...register('completion_note')}
-            rows={3}
-            placeholder="What did you do? (Optional context for the requester.)"
-            className="block w-full resize-y rounded border border-kd-border bg-white px-3 py-1.5 text-sm text-kd-fg-1 placeholder:text-kd-fg-3 focus:outline-none focus:ring-2 focus:ring-kd-primary/40 focus:border-kd-primary"
-            data-testid="complete-add-note"
-          />
-        </label>
-
-        <Dialog.Footer>
-          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
-          <Dialog.ConfirmButton
-            type="submit"
-            className="btn-success"
-            disabled={mutation.isPending || selected.length === 0}
-            data-testid="complete-add-confirm"
-          >
-            {mutation.isPending ? 'Completing…' : 'Confirm'}
-          </Dialog.ConfirmButton>
-        </Dialog.Footer>
-      </form>
-    </Dialog>
-  );
-}
-
-// ---- Complete (remove) dialog --------------------------------------
-
-interface CompleteRemoveDialogProps {
-  request: AccessRequest;
-  open: boolean;
-  onOpenChange: (next: boolean) => void;
-}
-
-function CompleteRemoveDialog({ request, open, onOpenChange }: CompleteRemoveDialogProps) {
-  const mutation = useCompleteRemoveRequest();
-  const form = useForm<CompleteRemoveRequestForm>({
-    resolver: zodResolver(completeRemoveRequestSchema),
-    defaultValues: { completion_note: '' },
-  });
-  const { register, handleSubmit } = form;
-
-  const onSubmit = handleSubmit(async (input) => {
-    try {
-      await mutation.mutateAsync({ request, completion_note: input.completion_note });
-      toast('Request completed.', 'success');
-      onOpenChange(false);
-    } catch (err) {
-      toast(errorMessage(err), 'error');
-    }
-  });
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Mark removal complete?"
-      description={`Removes ${request.member_email}'s seat in ${request.scope}. If the seat has already been removed, the request will still be marked complete.`}
-    >
-      <form
-        onSubmit={onSubmit}
-        className="kd-wizard-form"
-        data-testid="complete-remove-dialog-form"
-      >
-        <label>
-          Completion note <small>(optional)</small>
-          <textarea
-            {...register('completion_note')}
-            rows={3}
-            placeholder="What did you do? (Optional context for the requester.)"
-            className="block w-full resize-y rounded border border-kd-border bg-white px-3 py-1.5 text-sm text-kd-fg-1 placeholder:text-kd-fg-3 focus:outline-none focus:ring-2 focus:ring-kd-primary/40 focus:border-kd-primary"
-            data-testid="complete-remove-note"
-          />
-        </label>
-
-        <Dialog.Footer>
-          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
-          <Dialog.ConfirmButton
-            type="submit"
-            className="btn-success"
-            disabled={mutation.isPending}
-            data-testid="complete-remove-confirm"
-          >
-            {mutation.isPending ? 'Completing…' : 'Confirm'}
-          </Dialog.ConfirmButton>
-        </Dialog.Footer>
-      </form>
-    </Dialog>
-  );
-}
-
-// ---- Reject dialog --------------------------------------------------
-
-interface RejectDialogProps {
-  request: AccessRequest;
-  open: boolean;
-  onOpenChange: (next: boolean) => void;
-}
-
-function RejectDialog({ request, open, onOpenChange }: RejectDialogProps) {
-  const mutation = useRejectRequest();
-  const form = useForm<RejectRequestForm>({
-    resolver: zodResolver(rejectRequestSchema),
-    defaultValues: { rejection_reason: '' },
-  });
-  const { register, handleSubmit, formState } = form;
-
-  const onSubmit = handleSubmit(async (input) => {
-    try {
-      await mutation.mutateAsync({ request, rejection_reason: input.rejection_reason });
-      toast('Request rejected.', 'success');
-      onOpenChange(false);
-    } catch (err) {
-      toast(errorMessage(err), 'error');
-    }
-  });
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Reject request?"
-      description={`Reject ${request.member_email}'s ${labelForType(request.type)} in ${request.scope}.`}
-    >
-      <form onSubmit={onSubmit} className="kd-wizard-form" data-testid="reject-dialog-form">
-        <label>
-          Rejection reason
-          <Input
-            {...register('rejection_reason')}
-            data-testid="reject-reason"
-            placeholder="Required — what should the requester know?"
-          />
-        </label>
-        {formState.errors.rejection_reason ? (
-          <p role="alert" className="kd-form-error">
-            {formState.errors.rejection_reason.message}
-          </p>
-        ) : null}
-        <Dialog.Footer>
-          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
-          <Dialog.ConfirmButton
-            type="submit"
-            className="btn-danger"
-            disabled={mutation.isPending}
-            data-testid="reject-confirm"
-          >
-            {mutation.isPending ? 'Rejecting…' : 'Reject'}
-          </Dialog.ConfirmButton>
-        </Dialog.Footer>
-      </form>
-    </Dialog>
-  );
 }

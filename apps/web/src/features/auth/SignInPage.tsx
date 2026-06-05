@@ -36,6 +36,7 @@ import { FirebaseError } from 'firebase/app';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { BrandIcon } from '../../components/layout/BrandIcon';
+import { CHROME_WEB_STORE_URL } from '../../lib/links';
 import { signInEmailSchema, type SignInEmailForm } from './schemas';
 import { clearStashedEmail, sendMagicLink, signInWithGoogle } from './signIn';
 
@@ -47,8 +48,6 @@ const SILENT_GOOGLE_ERROR_CODES: ReadonlySet<string> = new Set([
   'auth/cancelled-popup-request',
 ]);
 
-const CHROME_WEB_STORE_URL =
-  'https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/klkkpfdafbjebccodmgkogdklachelpb';
 const CONTACT_MAILTO = 'mailto:support@stakebuildingaccess.org';
 
 // Verbatim copy from spec §4.1.

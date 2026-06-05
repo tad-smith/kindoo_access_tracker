@@ -1,9 +1,10 @@
-// Pure section logic for the manager Queue. Splits a pending-requests
+// Pure section logic for the manager pending-request queue, shared by
+// the web app and the Chrome extension. Splits a pending-requests
 // snapshot into three ordered buckets:
 //
-//   1. Urgent     — `urgent === true`, sorted by comparison_date asc.
+//   1. Urgent      — `urgent === true`, sorted by comparison_date asc.
 //   2. Outstanding — non-urgent AND comparison_date <= today+7.
-//   3. Future     — non-urgent AND comparison_date > today+7.
+//   3. Future      — non-urgent AND comparison_date > today+7.
 //
 // `comparison_date` rule:
 //   - `add_temp` → `start_date` if present + ISO; else `requested_at`.
@@ -14,32 +15,44 @@
 // America/Denver, the one-day drift on a foreign timezone is
 // harmless for a UI sectioning device.
 //
-// Pure (no React, no Firestore) so the logic is unit-testable.
+// Pure (no React, no Firestore) so the logic is unit-testable. Lives in
+// `@kindoo/shared` so the web queue and the extension queue consume one
+// implementation instead of drifting copies.
 
-import type { AccessRequest } from '@kindoo/shared';
+import type { AccessRequest } from './types/index.js';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Read the wire-form `requested_at` (a Firestore `Timestamp` /
- * `TimestampLike`) into millis-since-epoch. Falls back to 0 when the
- * shape can't be coerced — that lands the row in the earliest-first
- * slot, which is the correct posture for a malformed timestamp on the
- * backlog page.
+ * Read the wire-form `requested_at` into millis-since-epoch. Handles a
+ * live Firestore `Timestamp` (`toMillis` / `toDate`) AND the serialised
+ * `{ seconds, nanoseconds }` / `{ _seconds }` shape that survives the
+ * `getMyPendingRequests` callable boundary — the `httpsCallable`
+ * serialisation strips the `Timestamp` methods and leaves the plain
+ * numeric shape. Falls back to 0 when the shape can't be coerced — that
+ * lands the row in the earliest-first slot, the correct posture for a
+ * malformed timestamp on the backlog.
  */
 function requestedAtMs(req: AccessRequest): number {
   const raw = req.requested_at as unknown;
   if (raw && typeof raw === 'object') {
-    const obj = raw as { toMillis?: () => number; toDate?: () => Date };
+    const obj = raw as {
+      toMillis?: () => number;
+      toDate?: () => Date;
+      seconds?: number;
+      _seconds?: number;
+    };
     if (typeof obj.toMillis === 'function') return obj.toMillis();
     if (typeof obj.toDate === 'function') return obj.toDate().getTime();
+    const seconds = typeof obj.seconds === 'number' ? obj.seconds : obj._seconds;
+    if (typeof seconds === 'number') return seconds * 1000;
   }
   return 0;
 }
 
 /**
- * Convert an ISO date string (`YYYY-MM-DD`) at user's local midnight
- * to millis. Returns `null` if the string isn't ISO.
+ * Convert an ISO date string (`YYYY-MM-DD`) at the user's local
+ * midnight to millis. Returns `null` if the string isn't ISO.
  */
 function isoDateAtLocalMidnightMs(iso: string): number | null {
   if (!ISO_DATE.test(iso)) return null;

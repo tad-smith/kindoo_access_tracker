@@ -195,41 +195,6 @@ export const removeRequestSchema = z.object({
 export type RemoveRequestForm = z.infer<typeof removeRequestSchema>;
 
 /**
- * Reject-dialog schema. Required reason is enforced both client-side
- * (this schema) and server-side (rules require non-empty
- * `rejection_reason`).
- */
-export const rejectRequestSchema = z.object({
-  rejection_reason: z.string().trim().min(1, 'A rejection reason is required.'),
-});
-
-export type RejectRequestForm = z.infer<typeof rejectRequestSchema>;
-
-/**
- * Mark-Complete dialog schema for `add_manual` / `add_temp`. At least
- * one building must be ticked; remove-completion has no buildings.
- * `completion_note` is always optional free text — the hook trims and
- * drops it when empty before writing.
- */
-export const completeAddRequestSchema = z.object({
-  building_names: z.array(z.string()).min(1, 'Pick at least one building.'),
-  completion_note: z.string(),
-});
-
-export type CompleteAddRequestForm = z.infer<typeof completeAddRequestSchema>;
-
-/**
- * Mark-Complete dialog schema for `remove`. Only the optional
- * `completion_note` is collected from the manager. The R-1 race case
- * (seat already gone) is handled in the hook, not the schema.
- */
-export const completeRemoveRequestSchema = z.object({
-  completion_note: z.string(),
-});
-
-export type CompleteRemoveRequestForm = z.infer<typeof completeRemoveRequestSchema>;
-
-/**
  * Edit-seat modal schema. One flat shape that fans into three request
  * types via the `type` discriminator. Per-type required-field gates
  * fire in the `superRefine`:

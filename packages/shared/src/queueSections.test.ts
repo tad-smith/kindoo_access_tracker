@@ -1,14 +1,20 @@
-// Pure unit tests for the Queue page's section partition logic. The
-// rendered page test (`QueuePage.test.tsx`) covers the "section
-// renders or not" UI shape; this file exercises the comparison-date
-// math + sort order + bucket boundaries directly so the cases stay
-// fast.
+// Pure unit tests for the shared queue section-partition logic. Exercises
+// the comparison-date math + sort order + bucket boundaries directly,
+// across both timestamp shapes the two consumers feed in:
+//   - a live Firestore `Timestamp` (methods intact) — the web app.
+//   - the serialised `{ seconds }` / `{ _seconds }` wire shape that
+//     survives the `getMyPendingRequests` callable boundary — the
+//     extension.
 
 import { describe, expect, it } from 'vitest';
-import type { TimestampLike } from '@kindoo/shared';
-import { makeRequest } from '../../../../test/fixtures';
-import { comparisonDateMs, outstandingCutoffMs, partitionPendingRequests } from './sections';
+import type { AccessRequest, TimestampLike } from './types/index.js';
+import {
+  comparisonDateMs,
+  outstandingCutoffMs,
+  partitionPendingRequests,
+} from './queueSections.js';
 
+/** Live Firestore `Timestamp`-like value with the methods intact (web shape). */
 function ts(iso: string): TimestampLike {
   const d = new Date(iso);
   const ms = d.getTime();
@@ -18,6 +24,41 @@ function ts(iso: string): TimestampLike {
     toDate: () => d,
     toMillis: () => ms,
   };
+}
+
+/**
+ * The plain `{ seconds, nanoseconds }` wire shape that survives the
+ * callable serialisation (methods stripped) — what the extension feeds
+ * in. Typed through `unknown` because `AccessRequest.requested_at` is
+ * `TimestampLike` (methods present) but the runtime value is the bare
+ * serialised object.
+ */
+function wireTs(iso: string): AccessRequest['requested_at'] {
+  const ms = new Date(iso).getTime();
+  return {
+    seconds: Math.floor(ms / 1000),
+    nanoseconds: 0,
+  } as unknown as AccessRequest['requested_at'];
+}
+
+function makeRequest(overrides: Partial<AccessRequest> = {}): AccessRequest {
+  return {
+    request_id: 'req-1',
+    type: 'add_manual',
+    scope: 'CO',
+    member_email: 'bob@example.com',
+    member_canonical: 'bob@example.com',
+    member_name: 'Bob Example',
+    reason: 'Sub Sunday teacher',
+    comment: '',
+    building_names: [],
+    status: 'pending',
+    requester_email: 'bishop@example.com',
+    requester_canonical: 'bishop@example.com',
+    requested_at: ts('2026-04-28T12:00:00Z'),
+    lastActor: { email: 'bishop@example.com', canonical: 'bishop@example.com' },
+    ...overrides,
+  } satisfies AccessRequest;
 }
 
 describe('comparisonDateMs', () => {
@@ -54,6 +95,31 @@ describe('comparisonDateMs', () => {
       requested_at: ts('2026-03-30T08:00:00Z'),
     });
     expect(comparisonDateMs(req)).toBe(new Date('2026-03-30T08:00:00Z').getTime());
+  });
+
+  it('reads the serialised { seconds } wire shape (callable boundary) when the Timestamp methods are stripped', () => {
+    const req = makeRequest({
+      type: 'add_manual',
+      requested_at: wireTs('2026-04-15T08:00:00Z'),
+    });
+    expect(comparisonDateMs(req)).toBe(new Date('2026-04-15T08:00:00Z').getTime());
+  });
+
+  it('reads the { _seconds } wire shape too', () => {
+    const ms = new Date('2026-04-10T00:00:00Z').getTime();
+    const req = makeRequest({
+      type: 'add_manual',
+      requested_at: { _seconds: Math.floor(ms / 1000) } as unknown as AccessRequest['requested_at'],
+    });
+    expect(comparisonDateMs(req)).toBe(ms);
+  });
+
+  it('falls back to 0 on an uncoercible requested_at shape', () => {
+    const req = makeRequest({
+      type: 'add_manual',
+      requested_at: {} as unknown as AccessRequest['requested_at'],
+    });
+    expect(comparisonDateMs(req)).toBe(0);
   });
 });
 
@@ -123,6 +189,16 @@ describe('partitionPendingRequests', () => {
       request_id: 'c',
       requested_at: ts('2026-04-25T08:00:00Z'),
     });
+    const result = partitionPendingRequests([a, b, c], NOW);
+    expect(result.outstanding.map((r) => r.request_id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('sorts by comparisonDate across mixed wire + Timestamp shapes', () => {
+    // The extension may receive a heterogeneous list if some rows carry
+    // a serialised wire shape; ordering must still hold.
+    const a = makeRequest({ request_id: 'a', requested_at: wireTs('2026-04-26T08:00:00Z') });
+    const b = makeRequest({ request_id: 'b', requested_at: ts('2026-04-20T08:00:00Z') });
+    const c = makeRequest({ request_id: 'c', requested_at: wireTs('2026-04-25T08:00:00Z') });
     const result = partitionPendingRequests([a, b, c], NOW);
     expect(result.outstanding.map((r) => r.request_id)).toEqual(['b', 'c', 'a']);
   });
