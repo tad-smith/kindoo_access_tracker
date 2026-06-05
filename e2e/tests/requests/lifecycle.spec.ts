@@ -1,30 +1,23 @@
-// Phase 6 end-to-end specs for the request lifecycle.
+// End-to-end specs for the request lifecycle's app-driven halves.
 //
-// Covers the seven user-visible flows from `firebase-migration.md`
-// §Phase 6 Tests / E2E:
-//   1. Bishopric submits add_manual → queue updates live → manager
-//      completes → bishopric roster shows the new seat.
-//   2. Stake submits add_temp with two buildings → manager completes
-//      → seat appears with both buildings + end_date.
-//   3. Bishopric clicks Remove on a manual seat → submits → "removal
-//      pending" badge appears live → manager completes → seat gone.
-//   4. Bishopric submits → cancels from MyRequests → status flips
-//      live to cancelled.
-//   5. Manager rejects pending request with reason → MyRequests
-//      shows rejected + the reason.
-//   6. Multi-role principal submits against a wrong scope → server
-//      denies via the rules.
-//   7. Two managers race Mark Complete; second sees an error toast.
+// The actionable completion / rejection workflow moved to the Chrome
+// extension (see `queue-readonly.spec.ts` for the read-only queue), so
+// the app no longer drives Mark Complete / Reject. What remains
+// app-side and is covered here:
+//   1. Bishopric submits add_manual → it appears live on MyRequests +
+//      on the manager's (read-only) Request Queue.
+//   2. Stake submits add_temp with two buildings → it appears on the
+//      manager's queue carrying both buildings + the date range.
+//   3. Bishopric submits → cancels from MyRequests → status flips live
+//      to cancelled.
+//   4. Bishopric clicks Remove on a manual seat → submits → the
+//      "removal pending" badge appears live on the roster, and the
+//      remove request surfaces on the manager's queue.
 //
 // Each spec seeds its own data + signs in via the emulator hatch, then
 // verifies the user-visible effect end-to-end against a real bundled
 // SPA + the local emulator stack. Cloud Functions aren't running in
-// this suite (the emulator stack here is firestore + auth only) — the
-// audit trigger + remove-seat-on-request-complete trigger are out of
-// scope; their behaviours are covered by `functions/` integration
-// tests. The remove-flow E2E asserts the request flips to complete
-// and the "removal pending" badge clears; the seat-deletion side is
-// gated on Phase 8.
+// this suite (the emulator stack here is firestore + auth only).
 
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -112,14 +105,14 @@ async function seedBaseStake(): Promise<void> {
   });
 }
 
-test.describe('Phase 6 — bishopric add_manual lifecycle', () => {
+test.describe('request lifecycle — bishopric add_manual', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
     await seedBaseStake();
   });
 
-  test('bishopric submits → manager completes → bishopric roster shows the new seat', async ({
+  test('bishopric submits → request shows pending on MyRequests and surfaces on the manager queue', async ({
     browser,
   }) => {
     const bishopricCtx = await browser.newContext();
@@ -139,41 +132,29 @@ test.describe('Phase 6 — bishopric add_manual lifecycle', () => {
     await bishopricPage.getByRole('link', { name: /^My Requests$/ }).click();
     await expect(bishopricPage.locator('[data-status="pending"]').first()).toBeVisible();
 
-    // Manager logs in and completes.
+    // Manager logs in; the request appears live on the (read-only) queue.
     await createSignedInUser(managerPage, 'manager@example.com', { manager: true });
     await expect(managerPage.getByRole('heading', { name: /^Dashboard$/ })).toBeVisible();
     await managerPage.getByRole('link', { name: /^Request Queue$/ }).click();
     await expect(managerPage.getByRole('heading', { name: /^Request Queue$/ })).toBeVisible();
-    // Click Mark Complete on the first card.
-    const completeButton = managerPage.locator('[data-testid^="queue-complete-"]').first();
-    await completeButton.click();
-    // Ward-scope requests auto-populate building_names from the ward's
-    // building_name on submit, so the building is already ticked in the
-    // Mark Complete dialog. Confirm directly.
-    await expect(
-      managerPage.locator('[data-testid="complete-building-maple-building"]'),
-    ).toBeChecked();
-    await managerPage.getByTestId('complete-add-confirm').click();
-
-    // Bishopric: request flips to complete on MyRequests.
-    await expect(bishopricPage.locator('[data-status="complete"]').first()).toBeVisible({
+    await expect(managerPage.locator('[data-testid^="queue-card-"]').first()).toBeVisible({
       timeout: 10_000,
     });
-
-    // Bishopric roster shows the new seat.
-    await bishopricPage.getByRole('link', { name: /^Ward Roster$/ }).click();
-    await expect(bishopricPage.getByText('Bob Example')).toBeVisible();
+    await expect(managerPage.getByText('Bob Example')).toBeVisible();
+    // Read-only: the queue carries no completion / rejection affordance.
+    await expect(managerPage.locator('[data-testid^="queue-complete-"]')).toHaveCount(0);
+    await expect(managerPage.locator('[data-testid^="queue-reject-"]')).toHaveCount(0);
   });
 });
 
-test.describe('Phase 6 — stake add_temp with two buildings', () => {
+test.describe('request lifecycle — stake add_temp with two buildings', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
     await seedBaseStake();
   });
 
-  test('stake submits add_temp with two buildings → manager completes → seat carries both buildings', async ({
+  test('stake submits add_temp with two buildings → both surface on the manager queue with the date range', async ({
     browser,
   }) => {
     const stakeCtx = await browser.newContext();
@@ -197,27 +178,23 @@ test.describe('Phase 6 — stake add_temp with two buildings', () => {
     await expect(stakePage.getByTestId('new-request-building-cedar-building')).toBeChecked();
     await stakePage.getByTestId('new-request-submit').click();
 
-    // Manager completes.
+    // Manager sees the request on the read-only queue, carrying both
+    // buildings and the date range.
     await createSignedInUser(managerPage, 'mgr@example.com', { manager: true });
     await managerPage.getByRole('link', { name: /^Request Queue$/ }).click();
-    const completeButton = managerPage.locator('[data-testid^="queue-complete-"]').first();
-    await completeButton.click();
-    // Both buildings should be pre-ticked from the requester's selection.
-    await expect(
-      managerPage.locator('[data-testid="complete-building-maple-building"]'),
-    ).toBeChecked();
-    await expect(
-      managerPage.locator('[data-testid="complete-building-cedar-building"]'),
-    ).toBeChecked();
-    await managerPage.getByTestId('complete-add-confirm').click();
-
-    // All Seats shows the new seat.
-    await managerPage.getByRole('link', { name: /^All Seats$/ }).click();
+    const card = managerPage.locator('[data-testid^="queue-card-"]').first();
+    await expect(card).toBeVisible({ timeout: 10_000 });
     await expect(managerPage.getByText('Alice Example')).toBeVisible();
+    await expect(card).toContainText('Maple Building');
+    await expect(card).toContainText('Cedar Building');
+    await expect(card).toContainText('2026-05-01');
+    await expect(card).toContainText('2026-05-08');
+    // No action affordances on the read-only queue.
+    await expect(managerPage.locator('[data-testid^="queue-complete-"]')).toHaveCount(0);
   });
 });
 
-test.describe('Phase 6 — cancel + reject', () => {
+test.describe('request lifecycle — cancel from MyRequests', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
@@ -245,47 +222,16 @@ test.describe('Phase 6 — cancel + reject', () => {
       timeout: 10_000,
     });
   });
-
-  test('manager rejects with reason → requester sees rejected status + reason', async ({
-    browser,
-  }) => {
-    const bishopricCtx = await browser.newContext();
-    const bishopricPage = await bishopricCtx.newPage();
-    const managerCtx = await browser.newContext();
-    const managerPage = await managerCtx.newPage();
-
-    await createSignedInUser(bishopricPage, 'bishop3@example.com', { wards: ['CO'] }, '/?p=new');
-    await bishopricPage.getByTestId('new-request-email').fill('bob3@example.com');
-    await bishopricPage.getByTestId('new-request-name').fill('Bob 3');
-    await bishopricPage.getByTestId('new-request-reason').fill('reason');
-    await bishopricPage.getByTestId('new-request-submit').click();
-
-    await createSignedInUser(managerPage, 'mgr2@example.com', { manager: true });
-    await managerPage.getByRole('link', { name: /^Request Queue$/ }).click();
-    const rejectButton = managerPage.locator('[data-testid^="queue-reject-"]').first();
-    await rejectButton.click();
-    await managerPage.getByTestId('reject-reason').fill('Insufficient justification');
-    await managerPage.getByTestId('reject-confirm').click();
-
-    await bishopricPage.getByRole('link', { name: /^My Requests$/ }).click();
-    await expect(bishopricPage.locator('[data-status="rejected"]').first()).toBeVisible({
-      timeout: 10_000,
-    });
-    // Inline rejection reason — no expand button.
-    await expect(bishopricPage.getByTestId('rejection-reason')).toContainText(
-      /Insufficient justification/,
-    );
-  });
 });
 
-test.describe('Phase 6 — removal flow', () => {
+test.describe('request lifecycle — removal flow', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
     await seedBaseStake();
   });
 
-  test('bishopric submits remove → removal-pending badge → manager completes', async ({
+  test('bishopric submits remove → removal-pending badge appears live → request surfaces on the manager queue', async ({
     browser,
   }) => {
     // Pre-seed a manual seat in CO. We want the bishopric's roster to
@@ -324,19 +270,14 @@ test.describe('Phase 6 — removal flow', () => {
       timeout: 10_000,
     });
 
-    // Manager completes the remove. The Phase 8 cloud function would
-    // delete the seat; without it, we only assert the request flips.
+    // The remove request surfaces on the manager's read-only queue.
     await createSignedInUser(managerPage, 'mgr3@example.com', { manager: true });
     await managerPage.getByRole('link', { name: /^Request Queue$/ }).click();
-    const completeBtn = managerPage.locator('[data-testid^="queue-complete-"]').first();
-    await completeBtn.click();
-    await managerPage.getByTestId('complete-remove-confirm').click();
-
-    // Bishopric MyRequests shows complete; seat is still on the roster
-    // (Phase 8 trigger handles the delete).
-    await bishopricPage.getByRole('link', { name: /^My Requests$/ }).click();
-    await expect(bishopricPage.locator('[data-status="complete"]').first()).toBeVisible({
-      timeout: 10_000,
-    });
+    const card = managerPage.locator('[data-testid^="queue-card-"]').first();
+    await expect(card).toBeVisible({ timeout: 10_000 });
+    await expect(card).toContainText(/Remove Access For:/);
+    await expect(card).toContainText('Charlie');
+    // No completion affordance on the read-only queue.
+    await expect(managerPage.locator('[data-testid^="queue-complete-"]')).toHaveCount(0);
   });
 });

@@ -11,6 +11,12 @@ export { callingSortOrder, seatCallingOrder } from './callingSortOrder.js';
 export { canonicalEmail, emailsEqual } from './canonicalEmail.js';
 export { principalFromClaims } from './principal.js';
 export {
+  comparisonDateMs,
+  outstandingCutoffMs,
+  partitionPendingRequests,
+  type QueueSections,
+} from './queueSections.js';
+export {
   AUTOMATED_ACTOR_NAMES,
   HISTORICAL_SYNC_DISCREPANCY_CODES,
   LEGACY_IMPORTER_ACTOR_NAME,
