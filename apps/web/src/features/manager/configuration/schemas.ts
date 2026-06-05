@@ -23,16 +23,14 @@ export const wardSchema = z.object({
     .number({ message: 'Seat cap must be a number.' })
     .int('Seat cap must be an integer.')
     .min(0, 'Seat cap must be 0 or greater.'),
-  // Home site = `null`; a foreign-site doc id = string. Always present
-  // on the form so toggling back to Home overwrites a stale value.
-  kindoo_site_id: z.string().nullable(),
 });
 export type WardForm = z.infer<typeof wardSchema>;
 
 export const buildingSchema = z.object({
   building_name: z.string().trim().min(1, 'Building name is required.'),
   address: z.string().trim(),
-  // Same convention as `wardSchema.kindoo_site_id`.
+  // Home site = `null`; a foreign-site doc id = string. Always present
+  // on the form so toggling back to Home overwrites a stale value.
   kindoo_site_id: z.string().nullable(),
 });
 export type BuildingForm = z.infer<typeof buildingSchema>;
@@ -58,14 +56,6 @@ export const managerSchema = z.object({
   name: z.string().trim().min(1, 'Name is required.'),
 });
 export type ManagerForm = z.infer<typeof managerSchema>;
-
-export const callingTemplateSchema = z.object({
-  calling_name: z.string().trim().min(1, 'Calling name is required.'),
-  give_app_access: z.boolean(),
-  auto_kindoo_access: z.boolean(),
-  sheet_order: z.number({ message: 'Sheet order must be a number.' }).int(),
-});
-export type CallingTemplateForm = z.infer<typeof callingTemplateSchema>;
 
 export const configSchema = z.object({
   stake_name: z.string().trim().min(1, 'Stake name is required.'),

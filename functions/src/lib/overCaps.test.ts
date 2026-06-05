@@ -24,6 +24,10 @@ const ward = (overrides: Partial<Ward> = {}): Ward =>
     ...overrides,
   }) as Ward;
 
+/** `ward_code → kindoo_site_id`. Wards omitted here classify as home. */
+const sites = (entries: Record<string, string | null> = {}): Map<string, string | null> =>
+  new Map(Object.entries(entries));
+
 describe('computeOverCaps', () => {
   it('returns empty when nothing is over', () => {
     expect(
@@ -31,6 +35,7 @@ describe('computeOverCaps', () => {
         seats: [seat({ member_canonical: 'a' }), seat({ member_canonical: 'b' })],
         wards: [ward({ ward_code: 'CO', seat_cap: 20 })],
         stakeSeatCap: 100,
+        wardSites: sites(),
       }),
     ).toEqual([]);
   });
@@ -38,7 +43,7 @@ describe('computeOverCaps', () => {
   it('flags a ward whose count exceeds its cap', () => {
     const seats = Array.from({ length: 21 }, (_, i) => seat({ member_canonical: `m${i}` }));
     const wards = [ward({ ward_code: 'CO', seat_cap: 20 })];
-    expect(computeOverCaps({ seats, wards, stakeSeatCap: 100 })).toEqual([
+    expect(computeOverCaps({ seats, wards, stakeSeatCap: 100, wardSites: sites() })).toEqual([
       { pool: 'CO', count: 21, cap: 20, over_by: 1 },
     ]);
   });
@@ -46,7 +51,7 @@ describe('computeOverCaps', () => {
   it('skips wards with cap=0 (interpreted as "no cap configured")', () => {
     const seats = [seat({ member_canonical: 'a' })];
     const wards = [ward({ ward_code: 'CO', seat_cap: 0 })];
-    expect(computeOverCaps({ seats, wards, stakeSeatCap: 0 })).toEqual([]);
+    expect(computeOverCaps({ seats, wards, stakeSeatCap: 0, wardSites: sites() })).toEqual([]);
   });
 
   it('stake portion-cap = stake_seat_cap - ward seats; over fires when stake-scope exceeds', () => {
@@ -56,7 +61,7 @@ describe('computeOverCaps', () => {
       ...Array.from({ length: 10 }, (_, i) => seat({ member_canonical: `s${i}`, scope: 'stake' })),
     ];
     const wards = [ward({ ward_code: 'CO', seat_cap: 250 })];
-    const out = computeOverCaps({ seats, wards, stakeSeatCap: 200 });
+    const out = computeOverCaps({ seats, wards, stakeSeatCap: 200, wardSites: sites() });
     expect(out).toContainEqual({ pool: 'stake', count: 10, cap: 5, over_by: 5 });
   });
 
@@ -67,7 +72,7 @@ describe('computeOverCaps', () => {
       seat({ member_canonical: 's', scope: 'stake' }),
     ];
     const wards = [ward({ ward_code: 'CO', seat_cap: 100 })];
-    const out = computeOverCaps({ seats, wards, stakeSeatCap: 20 });
+    const out = computeOverCaps({ seats, wards, stakeSeatCap: 20, wardSites: sites() });
     expect(out).toContainEqual({ pool: 'stake', count: 1, cap: 0, over_by: 1 });
   });
 
@@ -79,8 +84,10 @@ describe('computeOverCaps', () => {
       ...Array.from({ length: 5 }, (_, i) => seat({ member_canonical: `s${i}`, scope: 'stake' })),
       ...Array.from({ length: 5 }, (_, i) => seat({ member_canonical: `f${i}`, scope: 'FN' })),
     ];
-    const wards = [ward({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' })];
-    expect(computeOverCaps({ seats, wards, stakeSeatCap: 20 })).toEqual([]);
+    const wards = [ward({ ward_code: 'FN', seat_cap: 50 })];
+    expect(
+      computeOverCaps({ seats, wards, stakeSeatCap: 20, wardSites: sites({ FN: 'east-stake' }) }),
+    ).toEqual([]);
   });
 
   it('mixes home and foreign ward seats: only home seats shrink the stake portion', () => {
@@ -95,9 +102,14 @@ describe('computeOverCaps', () => {
     ];
     const wards = [
       ward({ ward_code: 'CO', seat_cap: 50 }),
-      ward({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' }),
+      ward({ ward_code: 'FN', seat_cap: 50 }),
     ];
-    const out = computeOverCaps({ seats, wards, stakeSeatCap: 20 });
+    const out = computeOverCaps({
+      seats,
+      wards,
+      stakeSeatCap: 20,
+      wardSites: sites({ CO: null, FN: 'east-stake' }),
+    });
     expect(out).toContainEqual({ pool: 'stake', count: 16, cap: 15, over_by: 1 });
   });
 
@@ -108,20 +120,25 @@ describe('computeOverCaps', () => {
     const seats = Array.from({ length: 3 }, (_, i) =>
       seat({ member_canonical: `f${i}`, scope: 'FN' }),
     );
-    const wards = [ward({ ward_code: 'FN', seat_cap: 2, kindoo_site_id: 'east-stake' })];
-    const out = computeOverCaps({ seats, wards, stakeSeatCap: 100 });
+    const wards = [ward({ ward_code: 'FN', seat_cap: 2 })];
+    const out = computeOverCaps({
+      seats,
+      wards,
+      stakeSeatCap: 100,
+      wardSites: sites({ FN: 'east-stake' }),
+    });
     expect(out).toContainEqual({ pool: 'FN', count: 3, cap: 2, over_by: 1 });
   });
 
-  it('treats kindoo_site_id === undefined as home (back-compat with legacy wards)', () => {
-    // Existing wards stored without the field count as home. 5 ward
+  it('treats a ward absent from wardSites as home (back-compat with un-mapped wards)', () => {
+    // A ward whose building site doesn't resolve counts as home. 5 ward
     // seats reduce the portion-cap to 15; 16 stake-scope → over by 1.
     const seats = [
       ...Array.from({ length: 5 }, (_, i) => seat({ member_canonical: `h${i}`, scope: 'CO' })),
       ...Array.from({ length: 16 }, (_, i) => seat({ member_canonical: `s${i}`, scope: 'stake' })),
     ];
-    const wards = [ward({ ward_code: 'CO', seat_cap: 50 })]; // no kindoo_site_id
-    const out = computeOverCaps({ seats, wards, stakeSeatCap: 20 });
+    const wards = [ward({ ward_code: 'CO', seat_cap: 50 })];
+    const out = computeOverCaps({ seats, wards, stakeSeatCap: 20, wardSites: sites() }); // CO un-mapped
     expect(out).toContainEqual({ pool: 'stake', count: 16, cap: 15, over_by: 1 });
   });
 });

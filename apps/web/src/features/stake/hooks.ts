@@ -10,10 +10,10 @@
 
 import { query, where } from 'firebase/firestore';
 import { useMemo } from 'react';
-import type { KindooSite, Seat, Ward } from '@kindoo/shared';
+import type { Building, KindooSite, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
-import { kindooSitesCol, seatsCol, wardsCol } from '../../lib/docs';
+import { buildingsCol, kindooSitesCol, seatsCol, wardsCol } from '../../lib/docs';
 import { useActiveStake } from '../../lib/useActiveStake';
 import { mergeSeatsByCanonical, type RosterResult } from '../../lib/rosters';
 
@@ -61,6 +61,20 @@ export function useStakeWards() {
     [activeStakeId],
   );
   return useFirestoreCollection<Ward>(wardsQuery);
+}
+
+/**
+ * Live buildings catalogue — a ward's Kindoo site is derived from its
+ * building, so the roster's foreign-site label needs this alongside
+ * the wards list.
+ */
+export function useStakeBuildings() {
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
+  return useFirestoreCollection<Building>(q);
 }
 
 /**

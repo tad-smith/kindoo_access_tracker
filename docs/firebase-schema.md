@@ -197,7 +197,6 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   ward_name: string;
   building_name: string;   // FK to buildings (by building_name natural key)
   seat_cap: number;
-  kindoo_site_id?: string | null;  // §4.11 — `null` / absent = home site
   created_at: Timestamp;
   last_modified_at: Timestamp;
   lastActor: { email: string; canonical: string };
@@ -207,7 +206,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 **Written by:** Bootstrap wizard; manager via Configuration page.
 **Read by:** Roster pages (utilization); Sync's `syncApplyFix` (scope resolution).
 
-**`kindoo_site_id`** identifies which Kindoo site (per §4.11) governs this ward. `null` or absent means the home site (the SBA stake's own Kindoo environment, captured on the parent stake doc). A string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. Phase 1 of the Kindoo Sites feature stores the value only; downstream phases (request-form filters, extension orchestrator enforcement, sync filtering) consume it.
+**No `kindoo_site_id` on the ward.** A ward does **not** store its Kindoo site. The site is **derived from the ward's assigned building**: `ward.building_name → building.kindoo_site_id` (`null` / absent = home — §4.11), via `resolveWardSite(ward, buildingsByName)` in `packages/shared` (and the `wardSiteMap` helper in `functions/src/lib/wardSites.ts` for the server consumers — `syncApplyFix`, `markRequestComplete`, over-cap calc). The building is the single source of a ward's site; an unknown building resolves to home.
 
 ### 4.3 `stakes/{stakeId}/buildings/{buildingId}`
 
@@ -230,7 +229,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 **Written by:** Bootstrap wizard; manager via Configuration page.
 **Read by:** Wards (FK), seat building_names defaults.
 
-**`kindoo_site_id`** identifies the Kindoo site that physically governs this building. Same semantics as `wards.kindoo_site_id`: `null` / absent means home site; a string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. A foreign-site building is one whose physical access doors are managed by a different stake's Kindoo environment than the SBA stake's home site, even though the building hosts SBA-stake wards.
+**`kindoo_site_id`** identifies the Kindoo site that physically governs this building. `null` / absent means home site; a string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. A foreign-site building is one whose physical access doors are managed by a different stake's Kindoo environment than the SBA stake's home site, even though the building hosts SBA-stake wards. The building is also the **source of a ward's site**: a ward inherits this value from its assigned building (`ward.building_name`; §4.2). Phase 1 of the Kindoo Sites feature stored the value only; downstream phases (request-form filters, extension orchestrator enforcement, sync filtering) consume it.
 
 ### 4.4 `stakes/{stakeId}/kindooManagers/{canonicalEmail}`
 
@@ -270,8 +269,9 @@ Per-user role-grant doc. Doc exists iff the user has *any* Sync-managed or manua
   member_name: string;
 
   // Sync-managed (Admin SDK via `syncApplyFix`; field name is historical — see
-  // `architecture.md` D14). Keys = scope ('stake' or ward_code). Values = list of
-  // callings in that scope whose template row has give_app_access=true.
+  // `architecture.md` D14). Keys = scope ('stake' or ward_code). Values = the
+  // subset of that scope's callings that are on the hard-coded churchwide
+  // app-access list (`filterAppAccessCallings(scope, callings)` — D17).
   importer_callings: {
     [scope: string]: string[];
   };
@@ -286,8 +286,9 @@ Per-user role-grant doc. Doc exists iff the user has *any* Sync-managed or manua
     }>;
   };
 
-  // Doc-level sort key. MIN of `sheet_order` across every (scope, calling) pair in
-  // `importer_callings`. `null` for manual-only access docs (no `importer_callings`).
+  // Doc-level sort key. MIN canonical `callingSortOrder` priority across every
+  // (scope, calling) pair in `importer_callings`. `null` for manual-only access
+  // docs (no `importer_callings`).
   sort_order: number | null;
 
   created_at: Timestamp;
@@ -297,7 +298,7 @@ Per-user role-grant doc. Doc exists iff the user has *any* Sync-managed or manua
 }
 ```
 
-**Written by:** Sync's `syncApplyFix` callable (writes / updates `importer_callings` entries per classifier match; on `sba-only` Remove From SBA and `type-mismatch` demote, *reaps* the removed scope's `importer_callings[scope]` via `clearImporterCallingsForScope`, preserving `manual_grants` and deleting the doc only when both maps go empty — Admin SDK, bypasses rules); manager Access page (`manual_grants` only). The `callings-mismatch` fix REPLACES the auto seat's `callings[]` with Kindoo's full parsed set and reconciles the scope's `importer_callings` in **either direction** — `writeAccessForAutoScope` when the new callings still earn a `give_app_access` grant, else `clearImporterCallingsForScope` (a replace can REMOVE access, not just add it). The `kindoo-unparseable` fix (auto seat forced to stake scope) reaps the OLD scope's `importer_callings[scope]` and then writes a fresh `importer_callings['stake'] = [calling]` **iff** `calling` matches a `give_app_access` **stake** template — so a bare template name (e.g. `Stake Clerk`) keeps stake-scope app access rather than silently losing it; a non-template calling earns no new entry (old scope still reaped). It does this in one coherent write (`writeStakeScopeAccessForUnparseable`, `tx.update` not `set merge` so the cleared old scope can't linger), deleting the doc only when the final `importer_callings` and `manual_grants` are both empty.
+**Written by:** Sync's `syncApplyFix` callable (writes / updates `importer_callings` entries from `filterAppAccessCallings(scope, callings)` — the subset of the seat's callings on the hard-coded churchwide app-access list, D17; on `sba-only` Remove From SBA and `type-mismatch` demote, *reaps* the removed scope's `importer_callings[scope]` via `clearImporterCallingsForScope`, preserving `manual_grants` and deleting the doc only when both maps go empty — Admin SDK, bypasses rules); manager Access page (`manual_grants` only). The `callings-mismatch` fix REPLACES the auto seat's `callings[]` with Kindoo's full parsed set and reconciles the scope's `importer_callings` in **either direction** — `writeAccessForAutoScope` when `filterAppAccessCallings(scope, newCallings)` still yields a grant, else `clearImporterCallingsForScope` (a replace can REMOVE access, not just add it). The `kindoo-unparseable` fix (auto seat forced to stake scope) reaps the OLD scope's `importer_callings[scope]` and then writes a fresh `importer_callings['stake'] = [calling]` **iff** `calling` is on the hard-coded **stake** app-access list — so a bare app-access calling (e.g. `Stake Clerk`) keeps stake-scope app access rather than silently losing it; a calling off the list earns no new entry (old scope still reaped). It does this in one coherent write (`writeStakeScopeAccessForUnparseable`, `tx.update` not `set merge` so the cleared old scope can't linger), deleting the doc only when the final `importer_callings` and `manual_grants` are both empty.
 
 **Read by:** `syncAccessClaims` trigger; manager Access page.
 
@@ -334,7 +335,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
   start_date?: string;         // temp only, ISO date (YYYY-MM-DD)
   end_date?: string;           // temp only, ISO date
   building_names: string[];
-  kindoo_site_id?: string | null; // T-42. null / absent ⇒ home site; otherwise doc ID under kindooSites/. Mirrors the ward / building convention. Derived from primary scope + ward → kindoo_site_id lookup; stake-scope ⇒ home. Pre-migration seats may have the field absent — the ward-fallback resolver handles classification at read time.
+  kindoo_site_id?: string | null; // T-42. null / absent ⇒ home site; otherwise doc ID under kindooSites/. Mirrors the building convention. Derived from primary scope + ward → BUILDING → kindoo_site_id (resolveWardSite / wardSiteMap); stake-scope ⇒ home. Pre-migration seats may have the field absent — the ward-fallback resolver handles classification at read time.
   sort_order: number | null;   // vestigial — still stamped by syncApplyFix, NOT read by the web (render-time calling-order sort). See "Sort order" below.
 
   // Manual/temp linkage
@@ -384,7 +385,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
 - **Temp seats:** not calling-ordered — sorted by `end_date` descending (soonest-expiring at the band bottom).
 - **Unknown** (no calling/reason match) within the auto / manual bands ⇒ band bottom, then `created_at` ascending (oldest first), then `member_name`.
 
-The `sort_order` field itself is retained on the doc and is still stamped by `syncApplyFix` (the **MIN** of `sheet_order` across `callings[]` for auto; `null` for manual / temp / orphaned auto) — vestigial; the client ignores it. `sheet_order` still drives `give_app_access` wildcard precedence and the Access-page (`access/`) doc sort, which are unchanged.
+The `sort_order` field itself is retained on the doc and is still stamped by `syncApplyFix` from the **same** canonical table — `seatCallingOrder(callings)` (the MIN priority across `callings[]`) for auto; `null` for manual / temp / orphaned auto — vestigial; the client ignores it. There is no longer any `sheet_order` template field: the access-doc `sort_order` (§4.5) is also derived from `callingSortOrder`, and the Access page sorts by that doc-level value.
 
 ### 4.7 `stakes/{stakeId}/requests/{requestId}`
 
@@ -441,30 +442,11 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 - `urgent` is set at create time (rules validate `urgent is bool`) and immutable thereafter — the cancel/complete/reject `affectedKeys()` allowlists exclude it.
 - Edit types (`edit_auto`, `edit_manual`, `edit_temp`) — see [`spec.md`](spec.md) §6.1. `edit_auto` is forbidden at `scope == 'stake'` (Policy 1) at three layers: web UI, rules, and the `markRequestComplete` callable. `edit_temp` carries `start_date` + `end_date` with the same ISO YYYY-MM-DD + start <= end shape as `add_temp`. All three edit types require a non-empty `comment` at creation time, enforced by the shared zod schema, the Firestore rule, and the web form.
 
-### 4.8 `stakes/{stakeId}/wardCallingTemplates/{callingName}`
+### 4.8 `wardCallingTemplates` / `stakeCallingTemplates` — REMOVED
 
-Per-ward calling → seat mapping. Wildcards (`*`) preserved verbatim.
+These two per-stake calling-template collections, their Configuration tabs, and the `give_app_access` / `auto_kindoo_access` / `sheet_order` template fields were removed (PR #192, D17). App access is now granted from a hard-coded churchwide calling list (`packages/shared/src/appAccessCallings.ts`), not from per-stake template rows — see §4.5, `spec.md` §8, and D17. Seat / access `sort_order` and roster ordering use the canonical churchwide `callingSortOrder` table, not template `sheet_order`. The `callingTemplate` shared type + zod schemas, `functions/src/lib/parser.ts`, the template audit triggers, and the extension's template classifier are deleted. No collection occupies §4.8 / §4.9 any more; the numbering is preserved so §4.10 / §4.11 cross-references stay stable. Orphaned template docs left in existing stakes are a post-merge cleanup (T-65).
 
-**Doc ID:** URL-encoded calling name (e.g. `Bishop`, `Counselor%20%2A` for `Counselor *`).
-
-**Fields:**
-
-```typescript
-{
-  calling_name: string;        // human form, with wildcards if any
-  give_app_access: boolean;    // true → row triggers Access doc population
-  sheet_order: number;         // for wildcard tie-breaking (Sheet order wins among wildcards)
-  created_at: Timestamp;
-  lastActor: { email: string; canonical: string };
-}
-```
-
-**Written by:** Manager via Configuration page.
-**Read by:** Sync's classifier (matches each Kindoo user's Description string against the calling-name templates); `syncApplyFix` (scope resolution).
-
-### 4.9 `stakes/{stakeId}/stakeCallingTemplates/{callingName}`
-
-Same shape as `wardCallingTemplates`, applied to the Stake tab.
+### 4.9 *(unused — see §4.8)*
 
 ### 4.10 `stakes/{stakeId}/auditLog/{auditId}`
 
@@ -508,7 +490,7 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
 - `auditId` is deterministic from `(collection, docId, writeTime)` so trigger retries are idempotent.
 - `member_canonical` is set whenever the underlying doc has a `member_canonical` field; absent for system actions (`import_start`, `import_end`, `over_cap_warning`, `setup_complete`, `email_send_failed`).
 - Firestore TTL policy on the `ttl` field deletes rows ~24h after their `ttl` timestamp passes.
-- `create_stake` fires only on the parent-doc create path (`before==null`, `entity_type='stake'`, `collection='stake'`). Sub-entity creates under `stakes/{sid}/` (wards, buildings, kindooSites, calling templates) audit as `entity_type='stake'` with action `update_stake` per the existing `CREATE_ACTION` table in `auditTrigger.ts` — the parent-doc-only branch keeps the `'create_stake'` action unambiguous for audit consumers (Phase 12.3 / F19).
+- `create_stake` fires only on the parent-doc create path (`before==null`, `entity_type='stake'`, `collection='stake'`). Sub-entity creates under `stakes/{sid}/` (wards, buildings, kindooSites) audit as `entity_type='stake'` with action `update_stake` per the existing `CREATE_ACTION` table in `auditTrigger.ts` — the parent-doc-only branch keeps the `'create_stake'` action unambiguous for audit consumers (Phase 12.3 / F19).
 
 ### 4.11 `stakes/{stakeId}/kindooSites/{kindooSiteId}`
 
@@ -540,9 +522,11 @@ Multi-Kindoo-site management for a single SBA stake. A doc here represents a **f
 **Read by:** Configuration page (list + edit); downstream phases — Phase 2 request-form filters, Phase 3 extension orchestrator's active-session validation, Phase 4 sync filtering.
 
 **Invariants:**
-- The home site has NO `KindooSite` document. Its identity lives on the stake doc (`stake.kindoo_config.site_id` / `kindoo_config.site_name`, plus the optional `kindoo_expected_site_name` override). A `null` / absent `kindoo_site_id` on a ward or building means home.
+- The home site has NO `KindooSite` document. Its identity lives on the stake doc (`stake.kindoo_config.site_id` / `kindoo_config.site_name`, plus the optional `kindoo_expected_site_name` override). A `null` / absent `kindoo_site_id` on a building means home; a ward inherits its site from its building (§4.2).
+- Only **buildings** carry `kindoo_site_id`. A ward does not store one — its site is derived from its assigned building (`resolveWardSite` / `wardSiteMap`; §4.2).
 - Authority gating uses the existing per-stake `kindooManagers` allow-list. The SBA stake remains a single SBA stake; foreign-site management does NOT create a new role or multi-stake principal.
-- Field-level referential integrity (a ward / building's `kindoo_site_id` actually existing here) is the UI's concern; rules gate WHO can write, not field-level FK checks.
+- Field-level referential integrity (a building's `kindoo_site_id` actually existing here) is the UI's concern; rules gate WHO can write, not field-level FK checks.
+- **Delete guard.** The Configuration page blocks deleting a Kindoo Site while any **building** still references it (`kindooSiteDeleteBlocker` in `apps/web/src/features/manager/configuration/hooks.ts`). Wards are covered **transitively**: a ward's site comes from its building, so the building guard also protects every ward on that site — there is no separate ward FK check. Rules gate WHO can delete, not this field-level FK; the guard is client-side.
 - Writes to this collection are audited by `auditKindooSiteWrites` (entity_type=`stake`, entity_id=`kindooSite:<slug>`) and reconciled by the nightly `reconcileAuditGaps` job.
 
 ## 5. Indexes
@@ -575,7 +559,7 @@ Combinations beyond these (e.g. `action AND entity_type AND date range`) Firesto
 
 **`seats`:** single-field on `scope` covers most queries. No composite needed at this scale.
 
-**`access`, `kindooManagers`, `wards`, `buildings`, `kindooSites`, `*CallingTemplates`:** small enough to load fully and filter client-side. No composite indexes.
+**`access`, `kindooManagers`, `wards`, `buildings`, `kindooSites`:** small enough to load fully and filter client-side. No composite indexes.
 
 ### 5.2 Firestore TTL policy
 
@@ -706,7 +690,7 @@ service cloud.firestore {
 
       // ----- KindooSites (§4.11) -----
       // Manager-only writes; any stake member can read. Same gating
-      // pattern as wardCallingTemplates / kindooManagers — authority
+      // pattern as kindooManagers — authority
       // over which Kindoo environments this stake can target is a
       // stake-level configuration concern. Existing csnorth
       // `kindooManagers` allow-list governs all Kindoo writes
@@ -855,17 +839,6 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      // ----- Calling templates -----
-      match /wardCallingTemplates/{callingName} {
-        allow read: if isManager(stakeId);
-        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
-      }
-
-      match /stakeCallingTemplates/{callingName} {
-        allow read: if isManager(stakeId);
-        allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);
-      }
-
       // ----- AuditLog -----
       match /auditLog/{auditId} {
         allow read: if isManager(stakeId);
@@ -904,7 +877,7 @@ The gate is OR'd into the read + write rules of the four wizard-managed paths:
 - `stakes/{sid}/wards/{wardCode}` — read + write (Step 3)
 - `stakes/{sid}/buildings/{buildingId}` — read + write (Step 2)
 
-The other wizard-adjacent collections (access, seats, requests, calling templates, auditLog) are NOT covered by the gate — the wizard never writes to them, and the gate intentionally does not open up arbitrary doors.
+The other wizard-adjacent collections (access, seats, requests, auditLog) are NOT covered by the gate — the wizard never writes to them, and the gate intentionally does not open up arbitrary doors.
 
 **One-shot enforcement.** Step 3 of the gate's predicate (`setup_complete == false`) is what makes it strictly time-bounded. The wizard's final write flips `setup_complete=true`; the rule evaluates against pre-write state, so the flip itself succeeds, but every subsequent wizard-shaped write fails because the gate's predicate now returns false. By that point the bootstrap admin holds the manager claim minted by `syncManagersClaims`, so `isManager(stakeId)` takes over.
 

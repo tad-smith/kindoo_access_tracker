@@ -26,7 +26,7 @@ import { useActiveStake } from '../../lib/useActiveStake';
 import { useFirestoreOnce } from '../../lib/data';
 import { wardRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
-import { useBishopricRoster, useKindooSites, useStakeWards } from './hooks';
+import { useBishopricRoster, useKindooSites, useStakeBuildings, useStakeWards } from './hooks';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
@@ -69,6 +69,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
   // Wards + Kindoo Sites — feed the foreign-site badge on ward seats
   // (spec §15). Both subscriptions are stake-wide live reads.
   const wardsCatalogue = useStakeWards();
+  const buildingsCatalogue = useStakeBuildings();
   const kindooSites = useKindooSites();
 
   // Phase B broadened inclusion: pair every seat with its matched
@@ -208,6 +209,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
                     canRemove={canRemove}
                     isPendingRemoval={isPendingRemoval}
                     wards={wardsCatalogue.data ?? []}
+                    buildings={buildingsCatalogue.data ?? []}
                     sites={kindooSites.data ?? []}
                   />
                 );

@@ -1390,18 +1390,18 @@ describe('<NewRequestForm /> — Kindoo Sites building filter (spec §15)', () =
   });
 
   it('renders an empty-state message when the site filter narrows the catalogue to zero', () => {
-    // Ward FN lives on `foreign-1` but no foreign-1 building is yet
-    // configured. The collapsible expands manually so the empty-state
-    // is observable. Stake users get a similar message if no home
-    // buildings exist.
+    // Ward FN resolves to the home site (its building isn't configured
+    // yet), but no home building exists — only a foreign one. The
+    // home-filtered visible set is empty. The collapsible expands
+    // manually so the empty-state is observable.
     render(
       <NewRequestForm
         scopes={[{ value: 'FN', label: 'Ward FN' }]}
-        // Only a home building exists; nothing tagged foreign-1.
+        // Only a foreign building exists; nothing on the home site.
         buildings={buildingsWithSites([
-          { id: 'maple', name: 'Maple Building', kindoo_site_id: null },
+          { id: 'pine', name: 'Pine Building', kindoo_site_id: 'foreign-1' },
         ])}
-        wards={wards([{ code: 'FN', building_name: '', kindoo_site_id: 'foreign-1' }])}
+        wards={wards([{ code: 'FN', building_name: '' }])}
       />,
     );
     // The collapsible defaults to closed for ward scopes; force-expand
@@ -1417,27 +1417,25 @@ describe('<NewRequestForm /> — Kindoo Sites building filter (spec §15)', () =
       });
   });
 
-  it('drops a ward.building_name that disagrees with ward.kindoo_site_id from the pre-checked defaults', async () => {
-    // Risk 2 (legacy / mid-migration state): ward FN has
-    // kindoo_site_id='foreign-1' but its building_name points at a home
-    // building. The form must NOT pre-check the home building (which is
-    // hidden by the site filter and impossible to uncheck) and must NOT
-    // ship that hidden building back on submit. With no visible building
-    // in the foreign-site set, the form lands with zero pre-checked
-    // buildings and submit stays disabled.
+  it('drops a ward default building that is hidden by the site filter from the pre-checked defaults', async () => {
+    // Risk 2 (legacy / mid-migration state): ward FN references a
+    // building ('Ghost Building') that isn't in the catalogue, so the
+    // ward resolves to the home site. The only configured building is
+    // on a foreign site, so the home-filtered visible set is empty. The
+    // form must NOT pre-check the ward's (hidden) default building and
+    // must NOT ship it on submit, landing with zero pre-checked
+    // buildings and a disabled submit.
     render(
       <NewRequestForm
         scopes={[{ value: 'FN', label: 'Ward FN' }]}
         buildings={buildingsWithSites([
-          { id: 'maple', name: 'Maple Building', kindoo_site_id: null },
+          { id: 'pine', name: 'Pine Building', kindoo_site_id: 'foreign-1' },
         ])}
-        wards={wards([
-          { code: 'FN', building_name: 'Maple Building', kindoo_site_id: 'foreign-1' },
-        ])}
+        wards={wards([{ code: 'FN', building_name: 'Ghost Building' }])}
       />,
     );
-    // Header summary reflects no selection (the invisible home pre-check
-    // was dropped). Submit is disabled.
+    // Header summary reflects no selection (the hidden pre-check was
+    // dropped). Submit is disabled.
     expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(/none selected/i);
     expect(screen.getByTestId('new-request-submit')).toBeDisabled();
   });

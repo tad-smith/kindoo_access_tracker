@@ -33,7 +33,7 @@ The default Audit Log page view (`.orderBy('timestamp', 'desc')` with no `where`
 - `(requester_canonical ASC, requested_at DESC)` — MyRequests (one user's requests, newest first).
 - `(scope ASC, status ASC, requested_at ASC)` — manager queue scoped by ward (filter by scope + status, ordered).
 
-`access`, `kindooManagers`, `wards`, `buildings`, `*CallingTemplates`: no composite indexes. These collections are small enough at v1 scale (~12 wards, ~250 seats) to load fully and filter client-side; per `firestore/CLAUDE.md`, indexes are added only when a real query needs one.
+`access`, `kindooManagers`, `wards`, `buildings`, `kindooSites`: no composite indexes. These collections are small enough at v1 scale (~12 wards, ~250 seats) to load fully and filter client-side; per `firestore/CLAUDE.md`, indexes are added only when a real query needs one.
 
 `seats`: single-field on `scope` (auto-created on first query) covers most reads. Bishopric / stake-roster pages filter by scope; managers load all and filter client-side.
 

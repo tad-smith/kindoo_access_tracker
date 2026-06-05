@@ -13,11 +13,6 @@ export {
   platformAuditLogSchema,
 } from './audit.js';
 export { buildingSchema } from './building.js';
-export {
-  callingTemplateSchema,
-  stakeCallingTemplateSchema,
-  wardCallingTemplateSchema,
-} from './callingTemplate.js';
 export { kindooManagerSchema } from './kindooManager.js';
 export { kindooSiteSchema } from './kindooSite.js';
 export { platformSuperadminSchema } from './platformSuperadmin.js';

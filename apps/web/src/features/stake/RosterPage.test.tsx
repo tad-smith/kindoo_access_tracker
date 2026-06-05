@@ -9,6 +9,7 @@ import { makeRequest, makeSeat, makeWard } from '../../../test/fixtures';
 
 const useStakeRosterMock = vi.fn();
 const useStakeWardsMock = vi.fn();
+const useStakeBuildingsMock = vi.fn();
 const useKindooSitesMock = vi.fn();
 const useFirestoreDocMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
@@ -19,6 +20,7 @@ const usePrincipalMock = vi.fn();
 vi.mock('./hooks', () => ({
   useStakeRoster: () => useStakeRosterMock(),
   useStakeWards: () => useStakeWardsMock(),
+  useStakeBuildings: () => useStakeBuildingsMock(),
   useKindooSites: () => useKindooSitesMock(),
 }));
 
@@ -127,6 +129,21 @@ function mockWards(wards: Ward[]) {
   });
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mockBuildings(buildings: any[]) {
+  useStakeBuildingsMock.mockReturnValue({
+    data: buildings,
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  });
+}
+
 function mockStakeDoc(stake: Partial<Stake> | undefined) {
   useFirestoreDocMock.mockReturnValue({
     data: stake,
@@ -157,9 +174,10 @@ function mockPendingRequests(requests: AccessRequest[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Default: no wards. Tests that exercise the new pool denominator
-  // override via mockWards.
+  // Default: no wards / buildings. Tests that exercise the new pool
+  // denominator override via mockWards / mockBuildings.
   mockWards([]);
+  mockBuildings([]);
   // Default: no pending requests.
   mockPendingRequests([]);
   // Default: no pending remove requests for any seat (the per-row
@@ -214,16 +232,19 @@ describe('<StakeRosterPage />', () => {
     expect(screen.getByText(/1 \/ 50 seats used/)).toBeInTheDocument();
   });
 
-  it('excludes foreign-site ward caps from the stake pool denominator', () => {
+  it('excludes foreign-site ward caps (resolved via the ward building) from the stake pool denominator', () => {
     mockSeats([makeSeat({ scope: 'stake' })]);
     mockStakeDoc({ stake_seat_cap: 200 });
     mockWards([
-      makeWard({ ward_code: 'CO', seat_cap: 50 }),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      makeWard({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' } as any),
+      makeWard({ ward_code: 'CO', seat_cap: 50, building_name: 'Home Building' }),
+      makeWard({ ward_code: 'FN', seat_cap: 50, building_name: 'Foreign Building' }),
+    ]);
+    mockBuildings([
+      { building_id: 'home', building_name: 'Home Building', kindoo_site_id: null },
+      { building_id: 'foreign', building_name: 'Foreign Building', kindoo_site_id: 'east-stake' },
     ]);
     render(<StakeRosterPage />);
-    // 200 - 50 (CO, home). FN excluded.
+    // 200 - 50 (CO, home). FN excluded (its building is on east-stake).
     expect(screen.getByText(/1 \/ 150 seats used/)).toBeInTheDocument();
   });
 

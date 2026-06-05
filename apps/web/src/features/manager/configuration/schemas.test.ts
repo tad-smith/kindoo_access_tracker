@@ -3,7 +3,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildingSchema,
-  callingTemplateSchema,
   configSchema,
   kindooSiteFormSchema,
   managerSchema,
@@ -11,24 +10,12 @@ import {
 } from './schemas';
 
 describe('configuration wardSchema', () => {
-  it('accepts a valid ward (Home site)', () => {
+  it('accepts a valid ward', () => {
     const r = wardSchema.safeParse({
       ward_code: 'CO',
       ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
-      kindoo_site_id: null,
-    });
-    expect(r.success).toBe(true);
-  });
-
-  it('accepts a valid ward (foreign site)', () => {
-    const r = wardSchema.safeParse({
-      ward_code: 'CO',
-      ward_name: 'Maple',
-      building_name: 'Main',
-      seat_cap: 20,
-      kindoo_site_id: 'east-stake',
     });
     expect(r.success).toBe(true);
   });
@@ -39,7 +26,6 @@ describe('configuration wardSchema', () => {
       ward_name: 'X',
       building_name: 'Main',
       seat_cap: 1,
-      kindoo_site_id: null,
     });
     expect(r.success).toBe(false);
   });
@@ -77,37 +63,6 @@ describe('configuration buildingSchema', () => {
 describe('configuration managerSchema', () => {
   it('rejects malformed email', () => {
     const r = managerSchema.safeParse({ member_email: 'no', name: 'X', active: true });
-    expect(r.success).toBe(false);
-  });
-});
-
-describe('configuration callingTemplateSchema', () => {
-  it('accepts a wildcard calling name', () => {
-    const r = callingTemplateSchema.safeParse({
-      calling_name: 'Counselor *',
-      give_app_access: true,
-      auto_kindoo_access: true,
-      sheet_order: 5,
-    });
-    expect(r.success).toBe(true);
-  });
-
-  it('accepts independent give_app_access and auto_kindoo_access flags', () => {
-    const r = callingTemplateSchema.safeParse({
-      calling_name: 'Stake Clerk',
-      give_app_access: true,
-      auto_kindoo_access: false,
-      sheet_order: 3,
-    });
-    expect(r.success).toBe(true);
-  });
-
-  it('rejects a missing auto_kindoo_access', () => {
-    const r = callingTemplateSchema.safeParse({
-      calling_name: 'Bishop',
-      give_app_access: true,
-      sheet_order: 1,
-    });
     expect(r.success).toBe(false);
   });
 });

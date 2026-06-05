@@ -18,7 +18,7 @@ function kb(over: Partial<KindooBlock> = {}): KindooBlock {
     isTempUser: false,
     memberName: 'Alice Person',
     primaryScope: 'CO',
-    intendedType: 'auto',
+    intendedType: 'manual',
     intendedCallings: ['Sunday School Teacher'],
     intendedFreeText: '',
     ruleIds: [6248],
@@ -317,7 +317,7 @@ describe('buildCallableInput', () => {
         code: 'kindoo-only',
         kindoo: kb({
           description: 'Maple Ward (Sunday School Teacher, Accompanist)',
-          intendedType: 'auto',
+          intendedType: 'manual',
           intendedCallings: ['Sunday School Teacher'],
           intendedFreeText: 'Accompanist',
           derivedBuildings: ['Maple Building'],
@@ -434,7 +434,7 @@ describe('buildCallableInput', () => {
         sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
         kindoo: kb({
           description: 'Maple Ward (Sunday School Teacher, Accompanist)',
-          intendedType: 'auto',
+          intendedType: 'manual',
           intendedCallings: ['Sunday School Teacher'],
           intendedFreeText: 'Accompanist',
           derivedBuildings: ['Maple Building'],

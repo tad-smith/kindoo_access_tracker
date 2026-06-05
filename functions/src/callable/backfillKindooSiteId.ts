@@ -34,9 +34,10 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
-import { canonicalEmail } from '@kindoo/shared';
-import type { DuplicateGrant, KindooManager, Seat, Ward } from '@kindoo/shared';
+import { canonicalEmail, resolveWardSite } from '@kindoo/shared';
+import type { Building, DuplicateGrant, KindooManager, Seat, Ward } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
+import { buildingsByName } from '../lib/wardSites.js';
 import { MIGRATION_BACKFILL_KINDOO_SITE_ID_ACTOR } from '../lib/systemActors.js';
 
 export interface BackfillKindooSiteIdInput {
@@ -77,21 +78,31 @@ export interface BackfillKindooSiteIdOutput {
 
 /**
  * Resolve a scope's expected `kindoo_site_id`. Stake-scope → home
- * (`null`); ward-scope → that ward's `kindoo_site_id` (`null` /
- * undefined on home wards becomes `null`). Returns `undefined` when
- * the scope is a ward code that doesn't resolve — caller decides
- * whether to skip the entry (duplicates) or coerce to home (primary
- * scope, where this can only happen on legacy data and a "skip
- * everything" outcome would be worse than a controlled fallback).
+ * (`null`); ward-scope → the site of the ward's assigned building
+ * (building FOUND with home/absent site → `null`).
+ *
+ * Returns `undefined` (skip sentinel) when the scope can't be safely
+ * resolved — the caller skips the entry rather than writing a value:
+ *   - scope is a ward code with no matching ward doc, OR
+ *   - the ward's `building_name` has no matching building doc.
+ *
+ * The missing-building case must NOT collapse to home. `resolveWardSite`
+ * folds "building found, site null" and "building not found" into the
+ * same `null`; leaning on that here would silently demote a previously
+ * foreign-site seat to home whenever its building is renamed/deleted. We
+ * check building existence explicitly so a missing building skips-and-
+ * warns, symmetric with the unknown-ward path.
  */
 function resolveExpectedSite(
   scope: string,
   wardsByCode: Map<string, Ward>,
+  buildingSites: Map<string, Pick<Building, 'kindoo_site_id'>>,
 ): string | null | undefined {
   if (scope === 'stake') return null;
   const ward = wardsByCode.get(scope);
   if (!ward) return undefined;
-  return ward.kindoo_site_id ?? null;
+  if (!buildingSites.has(ward.building_name)) return undefined;
+  return resolveWardSite(ward, buildingSites);
 }
 
 /**
@@ -103,8 +114,9 @@ export async function backfillKindooSiteIdForStake(
   db: Firestore,
   stakeId: string,
 ): Promise<BackfillKindooSiteIdOutput> {
-  const [wardsSnap, seatsSnap] = await Promise.all([
+  const [wardsSnap, buildingsSnap, seatsSnap] = await Promise.all([
     db.collection(`stakes/${stakeId}/wards`).get(),
+    db.collection(`stakes/${stakeId}/buildings`).get(),
     db.collection(`stakes/${stakeId}/seats`).get(),
   ]);
 
@@ -113,6 +125,9 @@ export async function backfillKindooSiteIdForStake(
     const w = d.data() as Ward;
     wardsByCode.set(w.ward_code, w);
   }
+  // `ward.kindoo_site_id` was removed — a ward's site derives from its
+  // building. Build the `building_name → { kindoo_site_id }` map once.
+  const buildingSites = buildingsByName(buildingsSnap.docs.map((d) => d.data() as Building));
 
   const out: BackfillKindooSiteIdOutput = {
     ok: true,
@@ -134,22 +149,21 @@ export async function backfillKindooSiteIdForStake(
 
     // ---- Primary side ----
     // The primary scope must resolve. Stake-scope → home. A ward-scope
-    // primary that doesn't resolve to a known ward is a latent data
-    // bug (seat references a deleted ward). Uniform missing-ward
-    // policy: skip with a logged warning rather than coerce to home —
-    // a misconfigured seat must not silently become home-categorised
-    // (the ward may be foreign-site once the operator restores it).
-    // The seat keeps its (likely absent) `kindoo_site_id` and the
-    // downstream ward-fallback resolver handles classification until
-    // the operator fixes the ward.
-    const primaryDerived = resolveExpectedSite(seat.scope, wardsByCode);
+    // primary that doesn't resolve — either the ward is missing, or its
+    // `building_name` has no building doc — is a latent data bug.
+    // Uniform skip-with-warning policy: leave `kindoo_site_id` untouched
+    // rather than coerce to home — a misconfigured seat must not silently
+    // become home-categorised (the ward/building may be foreign-site once
+    // the operator restores it). The downstream ward-fallback resolver
+    // handles classification until the operator fixes the data.
+    const primaryDerived = resolveExpectedSite(seat.scope, wardsByCode, buildingSites);
     const primaryCurrent = (seat as Seat).kindoo_site_id ?? null;
     let primaryDiffers = false;
     let primaryTarget: string | null = primaryCurrent;
     if (primaryDerived === undefined) {
       out.primary_kindoo_site_id_skipped += 1;
       out.warnings.push(
-        `seat ${seatDoc.id}: primary scope '${seat.scope}' does not resolve to a known ward; skipping primary kindoo_site_id (ward-fallback handles classification at read time).`,
+        `seat ${seatDoc.id}: primary scope '${seat.scope}' does not resolve to a known ward/building; skipping primary kindoo_site_id (ward-fallback handles classification at read time).`,
       );
     } else {
       primaryTarget = primaryDerived;
@@ -162,7 +176,7 @@ export async function backfillKindooSiteIdForStake(
     let dupesDiffer = false;
     let dupesUpdatedThisSeat = 0;
     for (const dup of curDupes) {
-      const dupDerived = resolveExpectedSite(dup.scope, wardsByCode);
+      const dupDerived = resolveExpectedSite(dup.scope, wardsByCode, buildingSites);
       if (dupDerived === undefined) {
         // Same uniform skip-with-warning policy as the primary side.
         // Preserve the entry as-is so the next importer cycle can
@@ -170,7 +184,7 @@ export async function backfillKindooSiteIdForStake(
         // cleans it up). Do not error out the whole migration.
         out.duplicates_skipped_missing_ward += 1;
         out.warnings.push(
-          `seat ${seatDoc.id}: duplicate_grants entry with scope '${dup.scope}' (type '${dup.type}') skipped — ward not found.`,
+          `seat ${seatDoc.id}: duplicate_grants entry with scope '${dup.scope}' (type '${dup.type}') skipped — ward/building not found.`,
         );
         nextDupes.push(dup);
         continue;

@@ -14,13 +14,7 @@ import type { Building, Ward } from '@kindoo/shared';
 
 // ---- Pure helpers ---------------------------------------------------
 
-import {
-  buildingDeleteBlocker,
-  kindooSiteDeleteBlocker,
-  nextSheetOrder,
-  planDeleteResequenceWrites,
-  planReorderWrites,
-} from './hooks';
+import { buildingDeleteBlocker, kindooSiteDeleteBlocker } from './hooks';
 
 function ward(overrides: Partial<Ward> = {}): Ward {
   return {
@@ -60,128 +54,19 @@ describe('configuration buildingDeleteBlocker', () => {
 });
 
 describe('configuration kindooSiteDeleteBlocker', () => {
-  it('returns null when no ward or building references the site', () => {
-    expect(kindooSiteDeleteBlocker('east-stake', [], [])).toBeNull();
+  it('returns null when no building references the site', () => {
+    expect(kindooSiteDeleteBlocker('east-stake', [])).toBeNull();
   });
 
-  it('returns a message listing referencing wards when only wards block', () => {
-    const msg = kindooSiteDeleteBlocker(
-      'east-stake',
-      [
-        ward({ ward_code: 'CO', ward_name: 'Maple', kindoo_site_id: 'east-stake' }),
-        ward({ ward_code: 'PC', ward_name: 'Pine Creek', kindoo_site_id: 'east-stake' }),
-      ],
-      [],
-    );
+  it('returns a message listing referencing buildings', () => {
+    const msg = kindooSiteDeleteBlocker('east-stake', [
+      building({ building_id: 'pine', building_name: 'Pine Stake Center' }),
+      building({ building_id: 'maple', building_name: 'Maple Building' }),
+    ]);
     expect(msg).toContain('Cannot delete Kindoo site "east-stake"');
-    expect(msg).toContain('Wards: Maple (CO), Pine Creek (PC)');
-    expect(msg).not.toContain('Buildings:');
-    expect(msg).toContain('Unassign these wards / buildings from this site before deleting.');
-  });
-
-  it('returns a message listing referencing buildings when only buildings block', () => {
-    const msg = kindooSiteDeleteBlocker(
-      'east-stake',
-      [],
-      [building({ building_id: 'pine', building_name: 'Pine Stake Center' })],
-    );
-    expect(msg).toContain('Cannot delete Kindoo site "east-stake"');
-    expect(msg).not.toContain('Wards:');
-    expect(msg).toContain('Buildings: Pine Stake Center');
-  });
-
-  it('groups wards and buildings on separate lines when both block', () => {
-    const msg = kindooSiteDeleteBlocker(
-      'east-stake',
-      [ward({ ward_code: 'CO', ward_name: 'Maple', kindoo_site_id: 'east-stake' })],
-      [building({ building_id: 'pine', building_name: 'Pine Stake Center' })],
-    );
-    expect(msg).toContain('Wards: Maple (CO)');
-    expect(msg).toContain('Buildings: Pine Stake Center');
-  });
-});
-
-describe('configuration nextSheetOrder', () => {
-  it('returns 1 when the existing list is empty', () => {
-    expect(nextSheetOrder([])).toBe(1);
-  });
-
-  it('returns max+1 across the existing rows', () => {
-    expect(nextSheetOrder([{ sheet_order: 1 }, { sheet_order: 5 }, { sheet_order: 3 }])).toBe(6);
-  });
-});
-
-describe('configuration planReorderWrites', () => {
-  it('returns the rows whose new contiguous order differs from current', () => {
-    const current = [
-      { calling_name: 'A', sheet_order: 1 },
-      { calling_name: 'B', sheet_order: 2 },
-      { calling_name: 'C', sheet_order: 3 },
-    ];
-    // Move C to top → only A→2, B→3, C→1 differ.
-    const writes = planReorderWrites(['C', 'A', 'B'], current);
-    expect(writes).toEqual([
-      { calling_name: 'C', sheet_order: 1 },
-      { calling_name: 'A', sheet_order: 2 },
-      { calling_name: 'B', sheet_order: 3 },
-    ]);
-  });
-
-  it('skips rows whose order is already correct', () => {
-    const current = [
-      { calling_name: 'A', sheet_order: 1 },
-      { calling_name: 'B', sheet_order: 2 },
-      { calling_name: 'C', sheet_order: 3 },
-    ];
-    // Identity reorder → no writes.
-    expect(planReorderWrites(['A', 'B', 'C'], current)).toEqual([]);
-  });
-
-  it('writes only the changed positions when adjacent rows swap', () => {
-    const current = [
-      { calling_name: 'A', sheet_order: 1 },
-      { calling_name: 'B', sheet_order: 2 },
-      { calling_name: 'C', sheet_order: 3 },
-    ];
-    const writes = planReorderWrites(['A', 'C', 'B'], current);
-    expect(writes).toEqual([
-      { calling_name: 'C', sheet_order: 2 },
-      { calling_name: 'B', sheet_order: 3 },
-    ]);
-  });
-});
-
-describe('configuration planDeleteResequenceWrites', () => {
-  it('renumbers survivors to contiguous 1..N-1 when middle row is deleted', () => {
-    const current = [
-      { calling_name: 'A', sheet_order: 1 },
-      { calling_name: 'B', sheet_order: 2 },
-      { calling_name: 'C', sheet_order: 3 },
-    ];
-    expect(planDeleteResequenceWrites('B', current)).toEqual([
-      { calling_name: 'C', sheet_order: 2 },
-    ]);
-  });
-
-  it('returns no writes when the deleted row is at the end', () => {
-    const current = [
-      { calling_name: 'A', sheet_order: 1 },
-      { calling_name: 'B', sheet_order: 2 },
-      { calling_name: 'C', sheet_order: 3 },
-    ];
-    expect(planDeleteResequenceWrites('C', current)).toEqual([]);
-  });
-
-  it('handles non-contiguous starting state by writing every survivor that needs to move', () => {
-    const current = [
-      { calling_name: 'A', sheet_order: 5 },
-      { calling_name: 'B', sheet_order: 7 },
-      { calling_name: 'C', sheet_order: 9 },
-    ];
-    expect(planDeleteResequenceWrites('B', current)).toEqual([
-      { calling_name: 'A', sheet_order: 1 },
-      { calling_name: 'C', sheet_order: 2 },
-    ]);
+    expect(msg).toContain('Pine Stake Center');
+    expect(msg).toContain('Maple Building');
+    expect(msg).toContain('Unassign these buildings from this site before deleting.');
   });
 });
 
@@ -252,16 +137,6 @@ vi.mock('../../../lib/docs', async () => {
       path: `stakes/csnorth/buildings/${buildingId}`,
       id: buildingId,
     }),
-    wardCallingTemplateRef: (_db: unknown, _stakeId: string, callingName: string) => ({
-      __sentinel: 'wardCallingTemplateRef',
-      path: `stakes/csnorth/wardCallingTemplates/${callingName}`,
-      id: callingName,
-    }),
-    stakeCallingTemplateRef: (_db: unknown, _stakeId: string, callingName: string) => ({
-      __sentinel: 'stakeCallingTemplateRef',
-      path: `stakes/csnorth/stakeCallingTemplates/${callingName}`,
-      id: callingName,
-    }),
   };
 });
 
@@ -282,8 +157,6 @@ import {
   useDeleteKindooSiteMutation,
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
-  useUpsertStakeCallingTemplateMutation,
-  useUpsertWardCallingTemplateMutation,
   useUpsertWardMutation,
 } from './hooks';
 
@@ -458,17 +331,6 @@ describe('useUpsertKindooSiteMutation', () => {
 });
 
 describe('useDeleteKindooSiteMutation', () => {
-  const refWard = (overrides: Partial<Ward> = {}): Ward =>
-    ({
-      ward_code: 'CO',
-      ward_name: 'Maple',
-      building_name: 'Maple Building',
-      seat_cap: 20,
-      kindoo_site_id: 'east-stake',
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...(overrides as any),
-    }) as Ward;
-
   const refBuilding = (overrides: Partial<Building> = {}): Building =>
     ({
       building_id: 'pine',
@@ -478,11 +340,10 @@ describe('useDeleteKindooSiteMutation', () => {
       ...(overrides as any),
     }) as Building;
 
-  it('deletes the site doc when no ward or building still references it', async () => {
+  it('deletes the site doc when no building still references it', async () => {
     const { result } = renderHook(() => useDeleteKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
       kindooSiteId: 'east-stake',
-      wards: [refWard({ kindoo_site_id: null })],
       buildings: [refBuilding({ kindoo_site_id: null })],
     });
     await waitFor(() => expect(deleteDocMock).toHaveBeenCalled());
@@ -490,46 +351,21 @@ describe('useDeleteKindooSiteMutation', () => {
     expect(ref).toMatchObject({ path: 'stakes/csnorth/kindooSites/east-stake' });
   });
 
-  it('refuses to delete when a ward still references the site', async () => {
-    const { result } = renderHook(() => useDeleteKindooSiteMutation(), { wrapper });
-    await expect(
-      result.current.mutateAsync({
-        kindooSiteId: 'east-stake',
-        wards: [refWard()],
-        buildings: [],
-      }),
-    ).rejects.toThrow(/Cannot delete Kindoo site "east-stake"/);
-    expect(deleteDocMock).not.toHaveBeenCalled();
-  });
-
   it('refuses to delete when a building still references the site', async () => {
     const { result } = renderHook(() => useDeleteKindooSiteMutation(), { wrapper });
     await expect(
       result.current.mutateAsync({
         kindooSiteId: 'east-stake',
-        wards: [],
         buildings: [refBuilding()],
       }),
     ).rejects.toThrow(/Pine Stake Center/);
     expect(deleteDocMock).not.toHaveBeenCalled();
   });
 
-  it('error message lists wards and buildings when both block', async () => {
-    const { result } = renderHook(() => useDeleteKindooSiteMutation(), { wrapper });
-    await expect(
-      result.current.mutateAsync({
-        kindooSiteId: 'east-stake',
-        wards: [refWard()],
-        buildings: [refBuilding()],
-      }),
-    ).rejects.toThrow(/Maple \(CO\).*Pine Stake Center/s);
-  });
-
-  it('ignores wards / buildings pointing at a different site', async () => {
+  it('ignores buildings pointing at a different site', async () => {
     const { result } = renderHook(() => useDeleteKindooSiteMutation(), { wrapper });
     await result.current.mutateAsync({
       kindooSiteId: 'east-stake',
-      wards: [refWard({ kindoo_site_id: 'west-stake' })],
       buildings: [refBuilding({ kindoo_site_id: 'west-stake' })],
     });
     await waitFor(() => expect(deleteDocMock).toHaveBeenCalled());
@@ -581,7 +417,6 @@ describe('useUpsertWardMutation', () => {
       ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
-      kindoo_site_id: null,
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [ref, body, options] = setDocMock.mock.calls[0]!;
@@ -591,10 +426,11 @@ describe('useUpsertWardMutation', () => {
       ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
-      kindoo_site_id: null,
       created_at: '__server_timestamp__',
       lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
     });
+    // A ward's site now derives from its building — never written here.
+    expect(body).not.toHaveProperty('kindoo_site_id');
     expect(options).toEqual({ merge: true });
   });
 
@@ -606,7 +442,6 @@ describe('useUpsertWardMutation', () => {
       ward_name: 'Maple Renamed',
       building_name: 'Main',
       seat_cap: 22,
-      kindoo_site_id: 'east-stake',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [, body] = setDocMock.mock.calls[0]!;
@@ -626,7 +461,6 @@ describe('useUpsertWardMutation', () => {
       ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
-      kindoo_site_id: null,
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     expect(runTransactionMock).toHaveBeenCalledTimes(1);
@@ -640,7 +474,6 @@ describe('useUpsertWardMutation', () => {
       ward_name: 'Maple',
       building_name: 'Main',
       seat_cap: 20,
-      kindoo_site_id: null,
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [ref, body] = setDocMock.mock.calls[0]!;
@@ -711,148 +544,6 @@ describe('useUpsertBuildingMutation', () => {
         kindoo_site_id: null,
       }),
     ).rejects.toThrow(/Building name is required/i);
-    expect(setDocMock).not.toHaveBeenCalled();
-  });
-});
-
-describe('useUpsertWardCallingTemplateMutation', () => {
-  it('stamps created_at on create', async () => {
-    getDocMock.mockResolvedValue({ exists: () => false });
-    const { result } = renderHook(() => useUpsertWardCallingTemplateMutation(), { wrapper });
-    await result.current.mutateAsync({
-      calling_name: 'Bishop',
-      give_app_access: true,
-      auto_kindoo_access: true,
-      sheet_order: 1,
-    });
-    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
-    const [ref, body, options] = setDocMock.mock.calls[0]!;
-    expect(ref).toMatchObject({ path: 'stakes/csnorth/wardCallingTemplates/Bishop' });
-    expect(body).toMatchObject({
-      calling_name: 'Bishop',
-      give_app_access: true,
-      auto_kindoo_access: true,
-      sheet_order: 1,
-      created_at: '__server_timestamp__',
-      lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
-    });
-    expect(options).toEqual({ merge: true });
-  });
-
-  it('omits created_at on edit (preserves original timestamp)', async () => {
-    getDocMock.mockResolvedValue({ exists: () => true });
-    const { result } = renderHook(() => useUpsertWardCallingTemplateMutation(), { wrapper });
-    await result.current.mutateAsync({
-      calling_name: 'Bishop',
-      give_app_access: false,
-      auto_kindoo_access: true,
-      sheet_order: 3,
-    });
-    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
-    const [, body] = setDocMock.mock.calls[0]!;
-    expect(body).not.toHaveProperty('created_at');
-    expect(body).toMatchObject({
-      calling_name: 'Bishop',
-      give_app_access: false,
-      auto_kindoo_access: true,
-      sheet_order: 3,
-    });
-  });
-
-  it('wraps the read + write in a runTransaction', async () => {
-    getDocMock.mockResolvedValue({ exists: () => false });
-    const { result } = renderHook(() => useUpsertWardCallingTemplateMutation(), { wrapper });
-    await result.current.mutateAsync({
-      calling_name: 'Bishop',
-      give_app_access: true,
-      auto_kindoo_access: true,
-      sheet_order: 1,
-    });
-    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
-    expect(runTransactionMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects when the trimmed calling_name is empty', async () => {
-    const { result } = renderHook(() => useUpsertWardCallingTemplateMutation(), { wrapper });
-    await expect(
-      result.current.mutateAsync({
-        calling_name: '   ',
-        give_app_access: true,
-        auto_kindoo_access: true,
-        sheet_order: 1,
-      }),
-    ).rejects.toThrow(/Calling name is required/i);
-    expect(setDocMock).not.toHaveBeenCalled();
-  });
-});
-
-describe('useUpsertStakeCallingTemplateMutation', () => {
-  it('stamps created_at on create', async () => {
-    getDocMock.mockResolvedValue({ exists: () => false });
-    const { result } = renderHook(() => useUpsertStakeCallingTemplateMutation(), { wrapper });
-    await result.current.mutateAsync({
-      calling_name: 'Stake President',
-      give_app_access: true,
-      auto_kindoo_access: true,
-      sheet_order: 1,
-    });
-    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
-    const [ref, body, options] = setDocMock.mock.calls[0]!;
-    expect(ref).toMatchObject({ path: 'stakes/csnorth/stakeCallingTemplates/Stake President' });
-    expect(body).toMatchObject({
-      calling_name: 'Stake President',
-      give_app_access: true,
-      auto_kindoo_access: true,
-      sheet_order: 1,
-      created_at: '__server_timestamp__',
-      lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
-    });
-    expect(options).toEqual({ merge: true });
-  });
-
-  it('omits created_at on edit (preserves original timestamp)', async () => {
-    getDocMock.mockResolvedValue({ exists: () => true });
-    const { result } = renderHook(() => useUpsertStakeCallingTemplateMutation(), { wrapper });
-    await result.current.mutateAsync({
-      calling_name: 'Stake President',
-      give_app_access: true,
-      auto_kindoo_access: false,
-      sheet_order: 4,
-    });
-    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
-    const [, body] = setDocMock.mock.calls[0]!;
-    expect(body).not.toHaveProperty('created_at');
-    expect(body).toMatchObject({
-      calling_name: 'Stake President',
-      give_app_access: true,
-      auto_kindoo_access: false,
-      sheet_order: 4,
-    });
-  });
-
-  it('wraps the read + write in a runTransaction', async () => {
-    getDocMock.mockResolvedValue({ exists: () => false });
-    const { result } = renderHook(() => useUpsertStakeCallingTemplateMutation(), { wrapper });
-    await result.current.mutateAsync({
-      calling_name: 'Stake President',
-      give_app_access: true,
-      auto_kindoo_access: true,
-      sheet_order: 1,
-    });
-    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
-    expect(runTransactionMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects when the trimmed calling_name is empty', async () => {
-    const { result } = renderHook(() => useUpsertStakeCallingTemplateMutation(), { wrapper });
-    await expect(
-      result.current.mutateAsync({
-        calling_name: '   ',
-        give_app_access: true,
-        auto_kindoo_access: true,
-        sheet_order: 1,
-      }),
-    ).rejects.toThrow(/Calling name is required/i);
     expect(setDocMock).not.toHaveBeenCalled();
   });
 });

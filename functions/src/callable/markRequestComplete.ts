@@ -52,9 +52,10 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { canonicalEmail } from '@kindoo/shared';
+import { canonicalEmail, resolveWardSite } from '@kindoo/shared';
 import type {
   AccessRequest,
+  Building,
   DuplicateGrant,
   KindooManager,
   MarkRequestCompleteInput,
@@ -66,6 +67,7 @@ import type {
 } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
 import { computeOverCaps } from '../lib/overCaps.js';
+import { buildingsByName, wardSiteMap } from '../lib/wardSites.js';
 
 /** R-1 race tag — mirrors `R1_AUTO_NOTE` in `apps/web/.../queue/hooks.ts`. */
 const R1_AUTO_NOTE = 'Seat already removed at completion time (no-op).';
@@ -352,6 +354,7 @@ export const markRequestComplete = onCall(
     const stakeRef = db.doc(`stakes/${stakeId}`);
     const seatsRef = db.collection(`stakes/${stakeId}/seats`);
     const wardsRef = db.collection(`stakes/${stakeId}/wards`);
+    const buildingsRef = db.collection(`stakes/${stakeId}/buildings`);
 
     const overCaps = await db.runTransaction<OverCapEntry[]>(async (tx) => {
       const snap = await tx.get(reqRef);
@@ -385,18 +388,27 @@ export const markRequestComplete = onCall(
       let postWriteSeats: Seat[] | null = null;
       let stakeSeatCap = 0;
       let wards: Ward[] = [];
+      // `ward_code → kindoo_site_id` (null = home), resolved through each
+      // ward's building. Populated on the add-type path (the only path
+      // that recomputes over-caps).
+      let wardSites: ReadonlyMap<string, string | null> = new Map();
 
       if (cur.type === 'add_manual' || cur.type === 'add_temp') {
         const seatTarget = cur.member_canonical;
         const seatRef = seatsRef.doc(seatTarget);
-        const [seatSnap, allSeatsSnap, allWardsSnap, stakeSnap] = await Promise.all([
-          tx.get(seatRef),
-          tx.get(seatsRef),
-          tx.get(wardsRef),
-          tx.get(stakeRef),
-        ]);
+        const [seatSnap, allSeatsSnap, allWardsSnap, allBuildingsSnap, stakeSnap] =
+          await Promise.all([
+            tx.get(seatRef),
+            tx.get(seatsRef),
+            tx.get(wardsRef),
+            tx.get(buildingsRef),
+            tx.get(stakeRef),
+          ]);
         const allSeats = allSeatsSnap.docs.map((d) => d.data() as Seat);
         wards = allWardsSnap.docs.map((d) => d.data() as Ward);
+        const buildings = allBuildingsSnap.docs.map((d) => d.data() as Building);
+        const buildingSites = buildingsByName(buildings);
+        wardSites = wardSiteMap(wards, buildings);
         stakeSeatCap = (stakeSnap.data() as Stake | undefined)?.stake_seat_cap ?? 0;
 
         if (!seatSnap.exists) {
@@ -416,18 +428,19 @@ export const markRequestComplete = onCall(
           }
           // T-42: stamp `kindoo_site_id` on the new seat when the
           // request's scope resolves to a known ward (or stake → home).
-          // Uniform missing-ward skip-with-warning policy: an unknown
-          // ward leaves the field unset so the downstream ward-fallback
-          // resolver handles classification at read time — same shape
-          // as the migration's primary-side skip. A misconfigured
-          // request shouldn't silently become home-categorised.
+          // The ward's site derives from its assigned building. Uniform
+          // missing-ward skip-with-warning policy: an unknown ward leaves
+          // the field unset so the downstream ward-fallback resolver
+          // handles classification at read time — same shape as the
+          // migration's primary-side skip. A misconfigured request
+          // shouldn't silently become home-categorised.
           let newSeatSite: string | null | undefined;
           if (cur.scope === 'stake') {
             newSeatSite = null;
           } else {
             const wardDoc = wards.find((w) => w.ward_code === cur.scope);
             if (wardDoc) {
-              newSeatSite = wardDoc.kindoo_site_id ?? null;
+              newSeatSite = resolveWardSite(wardDoc, buildingSites);
             } else {
               newSeatSite = undefined; // leave the field unset on the seat
               logger.warn(
@@ -480,7 +493,7 @@ export const markRequestComplete = onCall(
           const detectedAt = Timestamp.now();
           // T-42: derive the request's target site so a newly-appended
           // duplicate carries `kindoo_site_id`. Stake-scope ⇒ home;
-          // ward-scope ⇒ ward's `kindoo_site_id` (home wards → null).
+          // ward-scope ⇒ the ward's building site (home wards → null).
           // Uniform missing-ward skip-with-warning policy: an unknown
           // ward leaves the new duplicate's `kindoo_site_id` unset so
           // the downstream ward-fallback resolver handles classification
@@ -491,7 +504,7 @@ export const markRequestComplete = onCall(
           } else {
             const wardDoc = wards.find((w) => w.ward_code === cur.scope);
             if (wardDoc) {
-              requestSiteId = wardDoc.kindoo_site_id ?? null;
+              requestSiteId = resolveWardSite(wardDoc, buildingSites);
             } else {
               requestSiteId = undefined; // leave the new duplicate's field unset
               logger.warn(
@@ -626,6 +639,7 @@ export const markRequestComplete = onCall(
           seats: postWriteSeats,
           wards,
           stakeSeatCap,
+          wardSites,
         });
       }
 

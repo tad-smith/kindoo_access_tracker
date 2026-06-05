@@ -54,6 +54,7 @@ function renderCard(overrides: Partial<Parameters<typeof PerGrantRosterCard>[0]>
       canRemove={false}
       isPendingRemoval={false}
       wards={[]}
+      buildings={[]}
       sites={[]}
       {...overrides}
     />,

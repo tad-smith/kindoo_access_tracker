@@ -135,6 +135,7 @@ export function RequestCard({
         envs,
         stake: bundle.stake,
         wards: bundle.wards,
+        buildings: bundle.buildings,
         kindooSites: bundle.kindooSites,
       });
     } catch (err) {

@@ -357,8 +357,6 @@ describe('handleRequest', () => {
       wards: [{ ward_code: 'CO' }],
       buildings: [{ building_id: 'b1' }],
       seats: [{ member_canonical: 'a@x.com' }],
-      wardCallingTemplates: [{ calling_name: 'X' }],
-      stakeCallingTemplates: [],
       kindooSites: [],
     };
     loadSyncDataMock.mockResolvedValue(bundle);
