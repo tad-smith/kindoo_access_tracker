@@ -250,7 +250,7 @@ function UtilizationCard({ loading, seats, wards, buildings, stakeSeatCap }: Uti
                   search={{ ward: w.ward_code }}
                   className="kd-dashboard-link"
                 >
-                  {w.ward_name} ({w.ward_code})
+                  {w.ward_name}
                 </Link>
                 <UtilizationBar total={count} cap={w.seat_cap} overCap={count > w.seat_cap} />
               </li>
