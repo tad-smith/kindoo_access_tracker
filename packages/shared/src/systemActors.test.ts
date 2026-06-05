@@ -18,7 +18,6 @@ describe('isAutomatedActor', () => {
   });
 
   it('matches the post-T-45 synthetic actors (regression guard for B-5)', () => {
-    expect(isAutomatedActor('ExpiryTrigger')).toBe(true);
     expect(isAutomatedActor('RemoveTrigger')).toBe(true);
     expect(isAutomatedActor('OutOfBand')).toBe(true);
     expect(isAutomatedActor('Migration')).toBe(true);

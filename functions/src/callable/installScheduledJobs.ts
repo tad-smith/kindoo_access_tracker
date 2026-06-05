@@ -1,10 +1,10 @@
 // Bootstrap-wizard "Complete Setup" hook. The single-loop scheduler
 // pattern means there are no per-stake jobs to install — the
-// `runExpiry` / `reconcileAuditGaps` Cloud Scheduler jobs are
-// platform-managed and exist after the first deploy. This callable is
-// therefore idempotent: it verifies the caller is a manager of the
-// stake and confirms the stake's schedule fields are set (which the
-// wizard guarantees), but performs no creates.
+// `reconcileAuditGaps` Cloud Scheduler job is platform-managed and
+// exists after the first deploy. This callable is therefore idempotent:
+// it verifies the caller is a manager of the stake and confirms the
+// stake's `timezone` is set (which the wizard guarantees), but performs
+// no creates.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { canonicalEmail } from '@kindoo/shared';
@@ -36,12 +36,9 @@ export const installScheduledJobs = onCall(async (req): Promise<{ ok: true }> =>
   const stakeSnap = await db.doc(`stakes/${stakeId}`).get();
   if (!stakeSnap.exists) throw new HttpsError('failed-precondition', 'stake not found');
   const stake = stakeSnap.data() as Stake;
-  // Defensive — wizard validation already caught these. Surfaces here
+  // Defensive — wizard validation already caught this. Surfaces here
   // so the wizard can show a clean error message if a config knob is
   // mis-stamped.
-  if (typeof stake.expiry_hour !== 'number' || stake.expiry_hour < 0 || stake.expiry_hour > 23) {
-    throw new HttpsError('failed-precondition', 'stake.expiry_hour invalid');
-  }
   if (!stake.timezone) {
     throw new HttpsError('failed-precondition', 'stake.timezone invalid');
   }

@@ -30,9 +30,9 @@ rules_version = '2';
 //     read against another stake fails the parent-doc rule and never
 //     reaches the subcollection rules.
 //
-//   - Admin SDK writes (importer, expiry, claim sync, audit trigger,
-//     remove-seat trigger) bypass rules entirely. The Cloud Functions
-//     code carries the discipline.
+//   - Admin SDK writes (claim sync, audit trigger, remove-seat trigger,
+//     Sync fix applier) bypass rules entirely. The Cloud Functions code
+//     carries the discipline.
 //
 //   - Bootstrap-wizard escape hatch: `isBootstrapAdmin(stakeId)` lets
 //     the designated `stake.bootstrap_admin_email` user write to the
@@ -153,8 +153,8 @@ service cloud.firestore {
     //
     // The disclosure surface is small: the parent stake doc carries
     // `stake_name`, `bootstrap_admin_email` (already the operator's
-    // typed email), config knobs (`expiry_hour`, `timezone`,
-    // `stake_seat_cap`), and bookkeeping fields. None of these are
+    // typed email), config knobs (`timezone`, `stake_seat_cap`), and
+    // bookkeeping fields. None of these are
     // sensitive — `bootstrap_admin_email` is what the SetupInProgress
     // page renders to the non-admin so they know who to contact.
     function isSetupInProgressReadable(stakeId) {
@@ -167,9 +167,9 @@ service cloud.firestore {
     // The `lastActor` integrity check — every client write must
     // declare `lastActor.{email, canonical}` matching the auth token.
     // Server-side (Admin SDK) writes use synthetic actors
-    // (`'ExpiryTrigger'`, `'RemoveTrigger'`, `'OutOfBand'`,
-    // `'Migration'`, `'SyncActor:<code>'`) and bypass this check by
-    // bypassing rules entirely.
+    // (`'RemoveTrigger'`, `'OutOfBand'`, `'Migration'`,
+    // `'SyncActor:<code>'`) and bypass this check by bypassing rules
+    // entirely.
     function lastActorMatchesAuth(data) {
       return data.lastActor.canonical == authedCanonical()
         && data.lastActor.email == request.auth.token.email;

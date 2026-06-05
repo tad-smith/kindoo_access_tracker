@@ -47,13 +47,12 @@ function buildStake(overrides: Partial<Stake> = {}): Stake {
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: true,
     stake_seat_cap: 200,
-    expiry_hour: 3,
     timezone: 'America/Denver',
     notifications_enabled: true,
     last_over_caps_json: [],
     last_modified_at: Timestamp.now(),
-    last_modified_by: { email: 'ExpiryTrigger', canonical: 'ExpiryTrigger' },
-    lastActor: { email: 'ExpiryTrigger', canonical: 'ExpiryTrigger' },
+    last_modified_by: { email: 'RemoveTrigger', canonical: 'RemoveTrigger' },
+    lastActor: { email: 'RemoveTrigger', canonical: 'RemoveTrigger' },
     ...overrides,
   };
 }

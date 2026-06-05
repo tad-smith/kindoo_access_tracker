@@ -8,7 +8,6 @@
 // values from its local module, and apps/web imports `isAutomatedActor`
 // from here to decide whether to paint the `actor-automated` chip.
 //
-//   - `ExpiryTrigger` — stamped by the daily seat-expiry scheduled job.
 //   - `RemoveTrigger` — stamped by `removeSeatOnRequestComplete` when
 //     it edits or deletes a seat in response to a completed remove
 //     request. Distinct from the human completer attribution that
@@ -34,12 +33,7 @@
 // via this enum (the `<code>` suffix on `SyncActor:*` and the
 // open-ended legacy stamp make a flat enum a poor fit).
 
-export const AUTOMATED_ACTOR_NAMES = [
-  'ExpiryTrigger',
-  'RemoveTrigger',
-  'OutOfBand',
-  'Migration',
-] as const;
+export const AUTOMATED_ACTOR_NAMES = ['RemoveTrigger', 'OutOfBand', 'Migration'] as const;
 
 export type AutomatedActorName = (typeof AUTOMATED_ACTOR_NAMES)[number];
 
