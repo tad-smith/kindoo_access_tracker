@@ -6,7 +6,7 @@
 // to already hold the manager claim (so reads + writes pass without the
 // "bootstrap admin" escape hatch). Schema field defaults that the
 // bootstrap wizard fills in but Configuration also exposes are wired
-// here too — e.g., expiry_hour / timezone.
+// here too — e.g., timezone.
 
 import {
   deleteDoc,
@@ -544,7 +544,6 @@ export function useDeleteManagerMutation() {
 export interface ConfigInput {
   stake_name: string;
   stake_seat_cap: number;
-  expiry_hour: number;
   timezone: string;
   notifications_enabled: boolean;
 }
@@ -560,7 +559,6 @@ export function useUpdateStakeConfigMutation() {
       await updateDoc(stakeRef(db, sid), {
         stake_name: input.stake_name,
         stake_seat_cap: input.stake_seat_cap,
-        expiry_hour: input.expiry_hour,
         timezone: input.timezone,
         notifications_enabled: input.notifications_enabled,
         last_modified_at: serverTimestamp(),

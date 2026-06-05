@@ -1,6 +1,6 @@
 // Cloud Function callable wrappers used by the bootstrap wizard.
 //   - `installScheduledJobs` — bootstrap-wizard "Complete Setup" calls
-//     this to install Cloud Scheduler jobs for the expiry trigger;
+//     this to install the `reconcileAuditGaps` Cloud Scheduler job;
 //     idempotent (Cloud Scheduler jobs are platform-managed).
 //
 // The wrapper `httpsCallable`s the function and surfaces a friendly
@@ -16,7 +16,7 @@ export interface InstallScheduledJobsResult {
 /**
  * Invoke `installScheduledJobs` for the named stake. The callable
  * verifies the caller is an active manager of the stake and that the
- * stake's schedule fields are populated. If the callable is
+ * stake's `timezone` is populated. If the callable is
  * unavailable we bubble a friendly error (which surfaces a warn
  * toast — setup completion is not rolled back since the function is
  * best-effort).

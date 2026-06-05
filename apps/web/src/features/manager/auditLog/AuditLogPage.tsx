@@ -165,7 +165,6 @@ function FilterRow({ filters, onApply, onReset }: FilterRowProps) {
           <option value="create_seat">create_seat</option>
           <option value="update_seat">update_seat</option>
           <option value="delete_seat">delete_seat</option>
-          <option value="auto_expire">auto_expire</option>
           <option value="create_access">create_access</option>
           <option value="update_access">update_access</option>
           <option value="delete_access">delete_access</option>
@@ -208,7 +207,7 @@ function FilterRow({ filters, onApply, onReset }: FilterRowProps) {
           type="text"
           value={draft.actor_canonical ?? ''}
           onChange={(e) => update({ actor_canonical: e.target.value || undefined })}
-          placeholder="email or ExpiryTrigger"
+          placeholder="email or RemoveTrigger"
         />
       </label>
       <label>
@@ -310,10 +309,9 @@ function pickMemberEmail(payload: unknown): string | null {
 }
 
 /** Convert user-typed actor / member emails to canonical form for the
- *  Firestore query. Literal automated actors (ExpiryTrigger,
- *  RemoveTrigger, OutOfBand, Migration, SyncActor:* — plus the legacy
- *  pre-T-45 Importer literal) pass through unchanged because they're
- *  not real emails. */
+ *  Firestore query. Literal automated actors (RemoveTrigger, OutOfBand,
+ *  Migration, SyncActor:* — plus the legacy pre-T-45 Importer literal)
+ *  pass through unchanged because they're not real emails. */
 function canonicalizeFilters(filters: AuditLogFilters): AuditLogFilters {
   const out: AuditLogFilters = { ...filters };
   if (out.actor_canonical) {

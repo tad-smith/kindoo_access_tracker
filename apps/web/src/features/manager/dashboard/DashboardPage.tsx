@@ -1,10 +1,9 @@
-// Manager Dashboard page (live). Five live cards:
+// Manager Dashboard page (live). Four live cards:
 //   - Pending Requests (per-type counts; deep-links to /manager/queue)
 //   - Utilization (per-ward + stake bars)
 //   - Warnings (over-cap pools from stake.last_over_caps_json)
 //   - Recent Activity (last 10 audit rows; deep-links to audit log
 //     filtered by entity_id)
-//   - Last Operations (last_expiry_at; triggers reinstall)
 //
 // Each card subscribes via its own `useFirestoreCollection` so the
 // dashboard is fully reactive — pending counts tick up live as a
@@ -13,15 +12,7 @@
 
 import { Link } from '@tanstack/react-router';
 import { isAutomatedActor } from '@kindoo/shared';
-import type {
-  AccessRequest,
-  AuditLog,
-  Building,
-  OverCapEntry,
-  Seat,
-  Stake,
-  Ward,
-} from '@kindoo/shared';
+import type { AccessRequest, AuditLog, Building, OverCapEntry, Seat, Ward } from '@kindoo/shared';
 import {
   usePendingRequests,
   useRecentAuditLog,
@@ -100,7 +91,6 @@ export function ManagerDashboardPage() {
           loading={audit.isLoading || audit.data === undefined}
           rows={audit.data ?? []}
         />
-        <LastOpsCard loading={stake.isLoading} stake={stake.data} />
       </div>
     </section>
   );
@@ -367,45 +357,6 @@ function RecentActivityCard({ loading, rows }: RecentActivityCardProps) {
               </li>
             );
           })}
-        </ul>
-      </CardContent>
-    </Card>
-  );
-}
-
-interface LastOpsCardProps {
-  loading: boolean;
-  stake: Stake | undefined;
-}
-
-function LastOpsCard({ loading, stake }: LastOpsCardProps) {
-  if (loading) {
-    return (
-      <Card data-testid="dashboard-card-ops">
-        <CardHeader>
-          <CardTitle>Last Operations</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-4" />
-        </CardContent>
-      </Card>
-    );
-  }
-  const fmt = (ts: { toDate?: () => Date } | undefined) => {
-    if (!ts || !ts.toDate) return 'never';
-    return ts.toDate().toISOString().replace('T', ' ').slice(0, 16);
-  };
-  return (
-    <Card data-testid="dashboard-card-ops">
-      <CardHeader>
-        <CardTitle>Last Operations</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ul className="kd-dashboard-list">
-          <li>
-            <span>Last expiry</span>
-            <span>{fmt(stake?.last_expiry_at)}</span>
-          </li>
         </ul>
       </CardContent>
     </Card>

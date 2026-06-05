@@ -1,5 +1,5 @@
 // Component tests for the Manager Dashboard. Mocks every hook so the
-// test exercises the rendering shape across all five cards in both
+// test exercises the rendering shape across all four cards in both
 // empty and populated states.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -112,7 +112,7 @@ beforeEach(() => {
 });
 
 describe('<ManagerDashboardPage />', () => {
-  it('renders all five cards in their empty-state form', async () => {
+  it('renders all four cards in their empty-state form', async () => {
     mockAll({ stake: { stake_seat_cap: 200, last_over_caps_json: [] } });
     await renderWithRouter();
     expect(
@@ -125,7 +125,6 @@ describe('<ManagerDashboardPage />', () => {
       within(screen.getByTestId('dashboard-card-recent')).getByText(/no recent activity/i),
     ).toBeInTheDocument();
     expect(screen.getByTestId('dashboard-card-utilization')).toBeInTheDocument();
-    expect(screen.getByTestId('dashboard-card-ops')).toBeInTheDocument();
   });
 
   it('renders pending counts grouped by type', async () => {

@@ -1017,7 +1017,6 @@ function ConfigKeysTab() {
     return {
       stake_name: s?.stake_name ?? '',
       stake_seat_cap: s?.stake_seat_cap ?? 0,
-      expiry_hour: s?.expiry_hour ?? 4,
       timezone: s?.timezone ?? 'America/Denver',
       notifications_enabled: s?.notifications_enabled ?? true,
     };
@@ -1052,15 +1051,6 @@ function ConfigKeysTab() {
       <label>
         Stake seat cap
         <Input type="number" min={0} {...register('stake_seat_cap', { valueAsNumber: true })} />
-      </label>
-      <label>
-        Expiry hour (0–23)
-        <Input
-          type="number"
-          min={0}
-          max={23}
-          {...register('expiry_hour', { valueAsNumber: true })}
-        />
       </label>
       <label htmlFor="config-timezone">
         Timezone (IANA, e.g. America/Denver)
