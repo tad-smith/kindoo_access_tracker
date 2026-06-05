@@ -93,6 +93,20 @@ const CODE_FILTER_OPTIONS: readonly DiscrepancyCode[] = [
   'callings-mismatch',
 ];
 
+/** Codes on which the parser-derived `intendedType` is meaningless and
+ * the line is hidden. Since template-based classification was retired,
+ * `intendedType` is always `'manual'`/`'temp'` (never `'auto'`) — on
+ * these drift codes the seat's real type is unrelated to that label, so
+ * showing "intended type: manual" for an auto seat reads as wrong. The
+ * grant-derived codes (type-mismatch, kindoo-only) render
+ * `grantTargetType` instead and aren't affected. */
+const INTENDED_TYPE_HIDDEN_CODES: ReadonlySet<DiscrepancyCode> = new Set([
+  'scope-mismatch',
+  'buildings-mismatch',
+  'callings-mismatch',
+  'kindoo-unparseable',
+]);
+
 /** Per-row fix state. `idle` → buttons visible; `applying` → in flight;
  * `error` → inline error + Retry; success removes the row entirely so
  * there is no `success` state to render. */
@@ -586,7 +600,7 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
                   <div>
                     <em>grant-derived type:</em> {discrepancy.kindoo.grantTargetType}
                   </div>
-                ) : (
+                ) : INTENDED_TYPE_HIDDEN_CODES.has(discrepancy.code) ? null : (
                   <div>
                     <em>intended type:</em> {discrepancy.kindoo.intendedType ?? '(unresolved)'}
                   </div>

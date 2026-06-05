@@ -534,6 +534,12 @@ describe('SyncPanel', () => {
 
     expect(screen.getByTestId('sba-sync-fix-update-sba-scope@example.com')).toBeInTheDocument();
     expect(screen.queryByTestId('sba-sync-fix-update-kindoo-scope@example.com')).toBeNull();
+    // The parser-derived "intended type" line is meaningless on
+    // scope-mismatch (always manual/temp; never the real seat type) and
+    // is hidden.
+    expect(screen.getByTestId('sba-sync-row-scope@example.com')).not.toHaveTextContent(
+      'intended type',
+    );
   });
 
   it('type-mismatch (promote) renders only Update SBA — no Update Kindoo', async () => {
@@ -570,6 +576,11 @@ describe('SyncPanel', () => {
 
     // The row is a type-mismatch.
     expect(screen.getByTestId('sba-sync-row-tm@example.com')).toHaveTextContent('type-mismatch');
+    // Grant-derived rows show the observed-provenance type, not the
+    // hidden parser-derived "intended type".
+    const tmRow = screen.getByTestId('sba-sync-row-tm@example.com');
+    expect(tmRow).toHaveTextContent('grant-derived type:');
+    expect(tmRow).not.toHaveTextContent('intended type');
     // Only Update SBA — no Update Kindoo button at all.
     const sbaBtn = screen.getByTestId('sba-sync-fix-update-sba-tm@example.com');
     expect(sbaBtn).not.toBeDisabled();

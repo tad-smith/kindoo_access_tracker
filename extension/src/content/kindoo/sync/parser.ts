@@ -16,7 +16,7 @@
 // Phase 1 of the sync feature; design doc at
 // `extension/docs/sync-design.md` §"Description parser".
 
-import type { Stake, Ward } from '@kindoo/shared';
+import { filterAppAccessCallings, type Stake, type Ward } from '@kindoo/shared';
 
 /** One scope+calling segment within a parsed description. */
 export interface ParsedSegment {
@@ -137,18 +137,38 @@ export function parseDescription(
   return { segments, unparseable, raw: input };
 }
 
+/** True iff any calling in `segment.calling` (split on `,`) grants app
+ * access for the segment's own scope — ward callings for ward scopes,
+ * the stake list for `'stake'`. Uses the hard-coded app-access lists. */
+function segmentGrantsAppAccess(segment: ParsedSegment): boolean {
+  if (!segment.resolvedScope || segment.scope === null) return false;
+  const callings = segment.calling.split(',').map((c) => c.trim());
+  return filterAppAccessCallings(segment.scope, callings).length > 0;
+}
+
 /**
- * Pick the primary segment from a list of resolved segments. Applies
- * SBA's `pickPrimaryScope` ordering: stake-scope first, then
- * alphabetical by `ward_code`. Returns `null` when no segment resolved.
+ * Pick the primary segment from a list of resolved segments. Prefer a
+ * segment whose calling grants app access (per the hard-coded
+ * per-scope lists) so a non-app-access stake segment doesn't steal
+ * primary from a real ward app-access match — the two-segment
+ * ward-priority case observed in production (stake/Technology
+ * Specialist + ward/Bishop where the seat lives on the ward). Among
+ * equally-ranked segments — and as the fallback when none grant app
+ * access — apply SBA's `pickPrimaryScope` ordering: stake-scope first,
+ * then alphabetical by `ward_code`. Returns `null` when no segment
+ * resolved.
  */
 export function pickPrimarySegment(parsed: ParsedDescription): ParsedSegment | null {
   const resolved = parsed.segments.filter((s) => s.resolvedScope);
   if (resolved.length === 0) return null;
 
-  const stakeSeg = resolved.find((s) => s.scope === 'stake');
+  // Prefer app-access-granting segments when at least one exists.
+  const appAccess = resolved.filter(segmentGrantsAppAccess);
+  const pool = appAccess.length > 0 ? appAccess : resolved;
+
+  const stakeSeg = pool.find((s) => s.scope === 'stake');
   if (stakeSeg) return stakeSeg;
   // Wards — sort alphabetically by ward_code.
-  const wardsSorted = [...resolved].sort((a, b) => String(a.scope).localeCompare(String(b.scope)));
+  const wardsSorted = [...pool].sort((a, b) => String(a.scope).localeCompare(String(b.scope)));
   return wardsSorted[0] ?? null;
 }

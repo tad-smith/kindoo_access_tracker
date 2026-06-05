@@ -1813,12 +1813,13 @@ describe('detect', () => {
     expect(result.discrepancies).toEqual([]);
   });
 
-  it('picks the stake segment as primary on a multi-segment description (stake-first ordering)', () => {
-    // Template-based auto-preference was retired; the primary-segment
-    // pick is now purely stake-first then ward-alphabetical. A
-    // `Stake (...) | Maple Ward (...)` description picks the stake
-    // segment, so a CO-scope seat surfaces a scope-mismatch (SBA=CO,
-    // Kindoo=stake).
+  it('emits no scope-mismatch when the stake segment is non-app-access but the ward segment app-accesses (two-segment ward-priority shape)', () => {
+    // Restored app-access primary preference (hard-coded lists, not
+    // templates): SBA seat is scope=CO/auto; Kindoo description carries a
+    // non-app-access stake calling (Technology Specialist) alongside a
+    // ward app-access calling (Bishop). The app-access ward segment wins
+    // primary, so its CO scope matches the seat and no scope-mismatch
+    // emits — no spurious drift row.
     const result = detect(
       baseInputs({
         seats: [
@@ -1827,23 +1828,21 @@ describe('detect', () => {
             member_email: 'user2@example.com',
             scope: 'CO',
             type: 'auto',
-            callings: ['Sunday School Teacher'],
+            callings: ['Bishop'],
           }),
         ],
         kindooUsers: [
           kuser({
             username: 'user2@example.com',
             description:
-              'Colorado Springs North Stake (Technology Specialist)  |  Maple Ward (Sunday School Teacher)',
+              'Colorado Springs North Stake (Technology Specialist)  |  Maple Ward (Bishop)',
             accessSchedules: [{ ruleId: 6248 }],
           }),
         ],
       }),
     );
     const rowsForEmail = result.discrepancies.filter((d) => d.canonical === 'user2@example.com');
-    expect(rowsForEmail).toHaveLength(1);
-    expect(rowsForEmail[0]!.code).toBe('scope-mismatch');
-    expect(rowsForEmail[0]!.kindoo?.primaryScope).toBe('stake');
+    expect(rowsForEmail).toEqual([]);
   });
 
   it('counts kindoo-only users with unresolvable descriptions as kindoo-only (not unparseable)', () => {

@@ -258,11 +258,37 @@ describe('pickPrimarySegment', () => {
     expect(pickPrimarySegment(parsed)?.scope).toBe('CO');
   });
 
-  it('always picks the stake segment over a ward segment (stake-first ordering)', () => {
-    // Template-based auto-preference was retired; the picker is purely
-    // stake-first then ward-alphabetical regardless of calling content.
+  it('prefers a ward app-access segment over a non-app-access stake segment', () => {
+    // Restored app-access preference (hard-coded lists, not templates):
+    // a non-app-access stake calling must not steal primary from a real
+    // ward app-access match. Technology Specialist is not in the stake
+    // app-access list; Bishop is a ward app-access calling.
     const parsed = parseDescription(
       'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Bishop)',
+      STAKE,
+      WARDS,
+    );
+    const primary = pickPrimarySegment(parsed);
+    expect(primary?.scope).toBe('CO');
+  });
+
+  it('still prefers the stake segment when it grants app access', () => {
+    // Both segments grant app access for their scope → tie-break falls
+    // back to stake-first ordering.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Stake Clerk) | Maple Ward (Bishop)',
+      STAKE,
+      WARDS,
+    );
+    const primary = pickPrimarySegment(parsed);
+    expect(primary?.scope).toBe('stake');
+  });
+
+  it('falls back to stake-first when no segment grants app access', () => {
+    // Neither calling is in its scope's app-access list → preference is
+    // inert; stake-first ordering applies.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Sunday School Teacher)',
       STAKE,
       WARDS,
     );
