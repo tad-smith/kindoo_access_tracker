@@ -10,14 +10,13 @@
 // comma-separated when one segment carries multiple matching callings.
 //
 // The parser does not classify auto-vs-manual — it just splits and
-// resolves scope names against the known wards + stake. The classifier
+// resolves scope names against the known wards + stake. The detector
 // consumes its output.
 //
 // Phase 1 of the sync feature; design doc at
 // `extension/docs/sync-design.md` §"Description parser".
 
 import type { Stake, Ward } from '@kindoo/shared';
-import type { CallingTemplateSets } from './classifier';
 
 /** One scope+calling segment within a parsed description. */
 export interface ParsedSegment {
@@ -138,51 +137,18 @@ export function parseDescription(
   return { segments, unparseable, raw: input };
 }
 
-/** True iff any calling in `segment.calling` (split on `,`) auto-matches. */
-function segmentAutoMatches(segment: ParsedSegment, sets: CallingTemplateSets): boolean {
-  if (!segment.resolvedScope || segment.scope === null) return false;
-  const autoSet =
-    segment.scope === 'stake'
-      ? sets.stakeCallings
-      : (sets.wardCallings.get(segment.scope) ?? new Set<string>());
-  if (autoSet.size === 0) return false;
-  for (const raw of segment.calling.split(',')) {
-    const c = raw.trim().toLowerCase();
-    if (c.length > 0 && autoSet.has(c)) return true;
-  }
-  return false;
-}
-
 /**
- * Pick the primary segment from a list of resolved segments. When
- * `sets` is supplied, prefer the segment that classifies as auto so a
- * non-auto stake segment doesn't steal primary from a real ward-auto
- * match (the two-segment ward-priority case observed in production:
- * stake/Technology Specialist + ward/Bishop where the seat lives on
- * the ward). Among auto-matching segments — and as the fallback when
- * no `sets` are supplied or nothing auto-matches — apply SBA's
- * existing `pickPrimaryScope` ordering: stake-scope first, then
- * alphabetical by `ward_code`. Returns `null` when no segment
- * resolved.
+ * Pick the primary segment from a list of resolved segments. Applies
+ * SBA's `pickPrimaryScope` ordering: stake-scope first, then
+ * alphabetical by `ward_code`. Returns `null` when no segment resolved.
  */
-export function pickPrimarySegment(
-  parsed: ParsedDescription,
-  sets?: CallingTemplateSets,
-): ParsedSegment | null {
+export function pickPrimarySegment(parsed: ParsedDescription): ParsedSegment | null {
   const resolved = parsed.segments.filter((s) => s.resolvedScope);
   if (resolved.length === 0) return null;
 
-  // Pool to pick from: auto-matching segments when at least one exists
-  // and we have `sets` to evaluate against; otherwise all resolved.
-  let pool = resolved;
-  if (sets) {
-    const autoMatches = resolved.filter((s) => segmentAutoMatches(s, sets));
-    if (autoMatches.length > 0) pool = autoMatches;
-  }
-
-  const stakeSeg = pool.find((s) => s.scope === 'stake');
+  const stakeSeg = resolved.find((s) => s.scope === 'stake');
   if (stakeSeg) return stakeSeg;
   // Wards — sort alphabetically by ward_code.
-  const wardsSorted = [...pool].sort((a, b) => String(a.scope).localeCompare(String(b.scope)));
+  const wardsSorted = [...resolved].sort((a, b) => String(a.scope).localeCompare(String(b.scope)));
   return wardsSorted[0] ?? null;
 }

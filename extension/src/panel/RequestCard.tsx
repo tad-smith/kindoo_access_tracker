@@ -116,6 +116,7 @@ export function RequestCard({ stakeId, request, bundle, onDismissed }: RequestCa
         envs,
         stake: bundle.stake,
         wards: bundle.wards,
+        buildings: bundle.buildings,
         kindooSites: bundle.kindooSites,
       });
     } catch (err) {

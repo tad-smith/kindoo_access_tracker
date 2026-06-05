@@ -13,16 +13,18 @@
 //                         the active session's site Name)
 //   - stake             — stake doc; carries home `kindoo_config.site_id`
 //                         + `kindoo_expected_site_name` fallback
-//   - wards             — ward docs; ward.kindoo_site_id resolves the
-//                         expected foreign site for a ward-scope request
+//   - wards             — ward docs; a ward's Kindoo site derives from
+//                         its assigned building (`resolveWardSite`)
+//   - buildings         — building docs; carry `kindoo_site_id` (the
+//                         ward → site link)
 //   - kindooSites       — foreign KindooSite docs; carry expected
 //                         site name + (when populated) kindoo_eid
 //
 // Expected EID resolution:
 //   - request.scope === 'stake' → home (`stake.kindoo_config.site_id`).
 //   - request.scope === <ward_code>:
-//     - ward.kindoo_site_id null / absent → home
-//     - ward.kindoo_site_id = <id> → foreign `kindooSites/<id>`
+//     - ward's building resolves to home (null) → home
+//     - ward's building resolves to <id> → foreign `kindooSites/<id>`
 //
 // Foreign-site auto-populate: if the matched foreign site has
 // `kindoo_eid` null / absent, compare the active session's site name
@@ -53,7 +55,8 @@
 // v2.1 site-name verification in ConfigurePanel — so trivial casing
 // drift in Kindoo's site name doesn't trip the guard.
 
-import type { AccessRequest, KindooSite, Stake, Ward } from '@kindoo/shared';
+import type { AccessRequest, Building, KindooSite, Stake, Ward } from '@kindoo/shared';
+import { resolveWardSite as resolveWardSiteId } from '@kindoo/shared';
 import type { KindooEnvironment } from './endpoints';
 import type { KindooSession } from './auth';
 
@@ -123,7 +126,17 @@ export interface CheckRequestSiteArgs {
   envs: KindooEnvironment[];
   stake: Stake;
   wards: Ward[];
+  buildings: Building[];
   kindooSites: KindooSite[];
+}
+
+/** Build a `building_name → { kindoo_site_id }` lookup for `resolveWardSite`. */
+function buildingsByName(
+  buildings: Building[],
+): ReadonlyMap<string, Pick<Building, 'kindoo_site_id'>> {
+  const m = new Map<string, Pick<Building, 'kindoo_site_id'>>();
+  for (const b of buildings) m.set(b.building_name, b);
+  return m;
 }
 
 /** Normalise Kindoo site names the same way the v2.1 wizard does. */
@@ -139,19 +152,21 @@ function activeSiteName(envs: KindooEnvironment[], session: KindooSession): stri
   return env ? env.Name : '';
 }
 
-/** Resolve the foreign-site doc referenced by the ward; `null` for
- * home (ward absent / no `kindoo_site_id` / explicit null). Throws
- * `ProvisionForeignSiteMissingError` when the ward points at an id
- * that isn't in the loaded kindooSites set. */
-function resolveWardSite(
+/** Resolve the foreign-site doc for a ward; `null` for home (ward
+ * absent / its building resolves to the home site). The ward → site
+ * link derives from the ward's assigned building (`resolveWardSite`).
+ * Throws `ProvisionForeignSiteMissingError` when the ward resolves to a
+ * site id that isn't in the loaded kindooSites set. */
+function resolveWardForeignSite(
   wardCode: string,
   wards: Ward[],
+  buildings: Building[],
   kindooSites: KindooSite[],
 ): KindooSite | null {
   const ward = wards.find((w) => w.ward_code === wardCode);
   if (!ward) return null;
-  const siteId = ward.kindoo_site_id;
-  if (siteId === null || siteId === undefined) return null;
+  const siteId = resolveWardSiteId(ward, buildingsByName(buildings));
+  if (siteId === null) return null;
   const site = kindooSites.find((s) => s.id === siteId);
   if (!site) throw new ProvisionForeignSiteMissingError(siteId);
   return site;
@@ -174,7 +189,7 @@ function resolveWardSite(
  *     again").
  */
 export function checkRequestSite(args: CheckRequestSiteArgs): SiteCheckResult {
-  const { request, session, envs, stake, wards, kindooSites } = args;
+  const { request, session, envs, stake, wards, buildings, kindooSites } = args;
 
   // ---- Resolve the expected site ----
   let expectedEid: number | null = null;
@@ -189,9 +204,9 @@ export function checkRequestSite(args: CheckRequestSiteArgs): SiteCheckResult {
   } else {
     let wardSite: KindooSite | null;
     try {
-      wardSite = resolveWardSite(request.scope, wards, kindooSites);
+      wardSite = resolveWardForeignSite(request.scope, wards, buildings, kindooSites);
     } catch (err) {
-      // Ward references a `kindoo_site_id` whose KindooSite doc isn't
+      // Ward resolves to a `kindoo_site_id` whose KindooSite doc isn't
       // in the loaded set. Surface the dedicated error class so the
       // operator-facing message can direct them to Configure (NOT to
       // switch sites, which won't help).

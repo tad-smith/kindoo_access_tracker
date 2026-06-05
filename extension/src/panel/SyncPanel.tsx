@@ -582,7 +582,7 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
                 {discrepancy.kindoo.grantTargetType !== undefined ? (
                   // Grant-derived rows (type-mismatch promote/demote,
                   // kindoo-only): show the observed-provenance type, not
-                  // the vestigial template-derived `intendedType`.
+                  // the informational parser-derived `intendedType`.
                   <div>
                     <em>grant-derived type:</em> {discrepancy.kindoo.grantTargetType}
                   </div>
