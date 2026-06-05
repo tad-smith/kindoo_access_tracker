@@ -7,31 +7,24 @@
 // Phase B (T-43, spec §15): multi-row rendering — one row per grant
 // (primary + each `duplicate_grants[]` entry). Each row's columns
 // reflect the grant being rendered, not always the seat's primary.
-// Edit on a duplicate row is disabled with a tooltip; Remove on a
-// duplicate row submits a `remove` request scoped to that grant's
-// `(scope, kindoo_site_id)`. The legacy Reconcile button is gone —
-// the multi-row layout subsumes its surface (AC #12).
+// Remove on a duplicate row submits a `remove` request scoped to that
+// grant's `(scope, kindoo_site_id)`. The legacy Reconcile button is
+// gone — the multi-row layout subsumes its surface (AC #12).
+//
+// All Seats is VIEW-ONLY for edits: there is no edit affordance here.
+// Editing a seat flows entirely through the roster pages' EditSeatDialog
+// request flow (spec §6.1), which creates an audited edit request — no
+// edit dialog may write SBA directly.
 //
 // Mutations:
-//   - Inline-edit dialog on manual / temp primary rows (auto rows
-//     are importer-owned and have no edit affordance).
 //   - Remove via the shared <RemovalAffordance>, grant-aware on
-//     duplicate rows.
+//     duplicate rows. (This is the only write path on this page.)
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import { resolveWardSite } from '@kindoo/shared';
 import type { Building, KindooSite, Seat, Ward } from '@kindoo/shared';
-import {
-  useAllSeats,
-  useBuildings,
-  useInlineSeatEditMutation,
-  useKindooSites,
-  useWards,
-} from './hooks';
+import { useAllSeats, useBuildings, useKindooSites, useWards } from './hooks';
 import { siteLabelForGrant } from '../../../lib/kindooSites';
 import { collapseSameScopeGrants, grantsForDisplay, type GrantView } from '../../../lib/grants';
 import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
@@ -41,19 +34,11 @@ import { UtilizationBar } from '../../../lib/render/UtilizationBar';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
 import { Select } from '../../../components/ui/Select';
-import { Input } from '../../../components/ui/Input';
-import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
-import { Dialog } from '../../../components/ui/Dialog';
-import { toast } from '../../../lib/store/toast';
 import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
 import { isScopeAllowed } from '../../requests/scopeOptions';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 export interface AllSeatsPageProps {
   initialWard?: string;
@@ -147,7 +132,6 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   const kindooSites = useKindooSites();
   const stake = useStakeDoc();
   const navigate = useNavigate();
-  const [editingSeat, setEditingSeat] = useState<Seat | null>(null);
 
   const ward = initialWard ?? '';
   const building = initialBuilding ?? '';
@@ -317,13 +301,10 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
               sites={sitesList}
               principal={principal}
               activeStakeId={activeStakeId}
-              onEdit={() => setEditingSeat(row.seat)}
             />
           ))}
         </div>
       )}
-
-      <SeatEditDialog seat={editingSeat} onClose={() => setEditingSeat(null)} />
     </section>
   );
 }
@@ -337,7 +318,6 @@ interface GrantRowCardProps {
   sites: readonly KindooSite[];
   principal: ReturnType<typeof usePrincipal>;
   activeStakeId: string | null;
-  onEdit: () => void;
 }
 
 function GrantRowCard({
@@ -347,23 +327,14 @@ function GrantRowCard({
   sites,
   principal,
   activeStakeId,
-  onEdit,
 }: GrantRowCardProps) {
   const { seat, grant } = row;
   const siteLabel = siteLabelForGrant(grant, wards, buildings, sites);
   const canRemoveScope =
     activeStakeId !== null && isScopeAllowed(principal, activeStakeId, grant.scope);
-  // Edit affordance: shown only on the primary row of manual / temp
-  // seats (auto seats are importer-owned). On every duplicate row
-  // the button renders disabled with a tooltip — preserves the
-  // action-column rhythm and tells the user the primary is the edit
-  // surface (AC #7).
-  const showEdit = grant.type !== 'auto';
-  const editTooltip = grant.isPrimary
-    ? undefined
-    : grant.isParallelSite
-      ? "Edit the primary grant to modify this person's seat — parallel-site changes require a new request."
-      : "Edit the primary grant to modify this person's seat — this row is informational and is covered by the primary's write.";
+  // All Seats has NO edit affordance — editing a seat flows through the
+  // roster pages' EditSeatDialog request flow (no direct SBA write).
+  // Remove (request) stays available per the gate below.
   // Phase B (AC #2 + spec §15 §412 / §425): same-scope priority
   // losers render as their own rows on AllSeats — INFORMATIONAL only.
   // Remove on a same-`(scope, kindoo_site_id)` non-auto duplicate is
@@ -493,17 +464,6 @@ function GrantRowCard({
           </span>
         </span>
         <span className="roster-card-actions" style={{ display: 'inline-flex', gap: 8 }}>
-          {showEdit ? (
-            <Button
-              variant="secondary"
-              onClick={onEdit}
-              disabled={!grant.isPrimary}
-              {...(editTooltip ? { title: editTooltip } : {})}
-              data-testid={`seat-edit-${testIdSuffix}`}
-            >
-              Edit
-            </Button>
-          ) : null}
           {canRemove ? (
             <RemovalAffordance
               seat={seat}
@@ -524,144 +484,5 @@ function GrantRowCard({
       {buildingsLine}
       {datesLine}
     </div>
-  );
-}
-
-// ---- Inline edit dialog --------------------------------------------
-
-// Schema for the inline-edit form. Each text field is `z.string()` so
-// the input/output types stay identical (RHF's typed `useForm<T>` rejects
-// schemas where input ≠ output under `exactOptionalPropertyTypes`).
-// Empty strings represent "not set"; date fields are validated by the
-// regex below only when populated.
-const seatEditSchema = z
-  .object({
-    member_name: z.string().trim().min(1, 'Member name is required.'),
-    reason: z.string(),
-    start_date: z.string(),
-    end_date: z.string(),
-  })
-  .superRefine((val, ctx) => {
-    const re = /^\d{4}-\d{2}-\d{2}$/;
-    if (val.start_date && !re.test(val.start_date)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['start_date'],
-        message: 'Use YYYY-MM-DD.',
-      });
-    }
-    if (val.end_date && !re.test(val.end_date)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['end_date'],
-        message: 'Use YYYY-MM-DD.',
-      });
-    }
-  });
-type SeatEditForm = z.infer<typeof seatEditSchema>;
-
-interface SeatEditDialogProps {
-  seat: Seat | null;
-  onClose: () => void;
-}
-
-function SeatEditDialog({ seat, onClose }: SeatEditDialogProps) {
-  const mutation = useInlineSeatEditMutation();
-  const form = useForm<SeatEditForm>({
-    resolver: zodResolver(seatEditSchema),
-    defaultValues: {
-      member_name: '',
-      reason: '',
-      start_date: '',
-      end_date: '',
-    },
-    ...(seat
-      ? {
-          values: {
-            member_name: seat.member_name,
-            reason: seat.reason ?? '',
-            start_date: seat.start_date ?? '',
-            end_date: seat.end_date ?? '',
-          },
-        }
-      : {}),
-  });
-  const { register, handleSubmit, formState } = form;
-
-  if (!seat) return null;
-
-  async function onSubmit(input: SeatEditForm) {
-    if (!seat) return;
-    try {
-      const payload: Parameters<typeof mutation.mutateAsync>[0] = {
-        member_canonical: seat.member_canonical,
-        member_name: input.member_name,
-        reason: input.reason,
-      };
-      if (seat.type === 'temp') {
-        if (input.start_date) payload.start_date = input.start_date;
-        if (input.end_date) payload.end_date = input.end_date;
-      }
-      await mutation.mutateAsync(payload);
-      toast('Seat updated.', 'success');
-      onClose();
-    } catch (err) {
-      toast(errorMessage(err), 'error');
-    }
-  }
-
-  return (
-    <Dialog
-      open={seat !== null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-      title={`Edit seat — ${seat.member_email}`}
-      description={`Type: ${seat.type} · scope: ${seat.scope}. Scope and type are immutable.`}
-    >
-      <form onSubmit={handleSubmit(onSubmit)} className="kd-wizard-form">
-        <label>
-          Member name
-          <Input {...register('member_name')} />
-        </label>
-        {formState.errors.member_name ? (
-          <p role="alert" className="kd-form-error">
-            {formState.errors.member_name.message}
-          </p>
-        ) : null}
-        <label>
-          Reason
-          <Input {...register('reason')} />
-        </label>
-        {seat.type === 'temp' ? (
-          <>
-            <label>
-              Start date (YYYY-MM-DD)
-              <Input type="date" {...register('start_date')} />
-            </label>
-            {formState.errors.start_date ? (
-              <p role="alert" className="kd-form-error">
-                {formState.errors.start_date.message}
-              </p>
-            ) : null}
-            <label>
-              End date (YYYY-MM-DD)
-              <Input type="date" {...register('end_date')} />
-            </label>
-            {formState.errors.end_date ? (
-              <p role="alert" className="kd-form-error">
-                {formState.errors.end_date.message}
-              </p>
-            ) : null}
-          </>
-        ) : null}
-        <Dialog.Footer>
-          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
-          <Button type="submit" disabled={mutation.isPending}>
-            {mutation.isPending ? 'Saving…' : 'Save changes'}
-          </Button>
-        </Dialog.Footer>
-      </form>
-    </Dialog>
   );
 }
