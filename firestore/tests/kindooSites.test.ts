@@ -175,50 +175,11 @@ describe('firestore.rules — stakes/{sid}/kindooSites/{kindooSiteId}', () => {
     });
   });
 
-  // ----- `kindoo_site_id` on wards / buildings -----
-  // The new optional field rides on the existing wards / buildings
-  // write predicate. Tests pin that the field passes through cleanly
-  // (manager can set, manager can clear via null, non-managers
-  // denied).
-  describe('wards.kindoo_site_id', () => {
-    const WARD_PATH = `stakes/${STAKE_ID}/wards/07`;
-
-    function wardDoc(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
-      return {
-        ward_code: '07',
-        ward_name: '7th Ward',
-        building_name: 'Pine Building',
-        seat_cap: 30,
-        created_at: new Date(),
-        last_modified_at: new Date(),
-        lastActor: lastActorOf(personas.manager),
-        ...overrides,
-      };
-    }
-
-    it('manager can set kindoo_site_id to a foreign-site id', async () => {
-      const db = managerContext(env, STAKE_ID).firestore();
-      await assertSucceeds(db.doc(WARD_PATH).set(wardDoc({ kindoo_site_id: SITE_ID })));
-    });
-
-    it('manager can set kindoo_site_id to null (home site)', async () => {
-      const db = managerContext(env, STAKE_ID).firestore();
-      await assertSucceeds(db.doc(WARD_PATH).set(wardDoc({ kindoo_site_id: null })));
-    });
-
-    it('stake-scope member cannot update kindoo_site_id', async () => {
-      const db = stakeMemberContext(env, STAKE_ID).firestore();
-      await assertFails(
-        db.doc(WARD_PATH).set(
-          wardDoc({
-            kindoo_site_id: SITE_ID,
-            lastActor: lastActorOf(personas.stakeMember),
-          }),
-        ),
-      );
-    });
-  });
-
+  // ----- `kindoo_site_id` on buildings -----
+  // The optional field rides on the existing buildings write predicate.
+  // Tests pin that the field passes through cleanly (manager can set,
+  // manager can clear via null, non-managers denied). Wards no longer
+  // carry `kindoo_site_id` — a ward's site derives from its building.
   describe('buildings.kindoo_site_id', () => {
     const BUILDING_PATH = `stakes/${STAKE_ID}/buildings/pine-building`;
 

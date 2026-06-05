@@ -16,6 +16,9 @@ import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.j
 const STAKE_ID = 'csnorth';
 const ACTOR = { email: 'admin@gmail.com', canonical: 'admin@gmail.com' };
 
+// Seed a ward (and, when `kindoo_site_id` is given, its building). The
+// migration derives each scope's expected site from the ward's building,
+// so the site lives on the building doc, not the ward.
 async function seedWard(opts: {
   ward_code: string;
   ward_name?: string;
@@ -23,17 +26,29 @@ async function seedWard(opts: {
   kindoo_site_id?: string | null;
 }): Promise<void> {
   const { db } = requireEmulators();
+  const buildingName = opts.building_name ?? `${opts.ward_code} Building`;
   const doc: Record<string, unknown> = {
     ward_code: opts.ward_code,
     ward_name: opts.ward_name ?? `${opts.ward_code} Ward`,
-    building_name: opts.building_name ?? `${opts.ward_code} Building`,
+    building_name: buildingName,
     seat_cap: 30,
     created_at: Timestamp.now(),
     last_modified_at: Timestamp.now(),
     lastActor: ACTOR,
   };
-  if (opts.kindoo_site_id !== undefined) doc.kindoo_site_id = opts.kindoo_site_id;
   await db.doc(`stakes/${STAKE_ID}/wards/${opts.ward_code}`).set(doc);
+  if (opts.kindoo_site_id !== undefined) {
+    const buildingId = buildingName.toLowerCase().replace(/\s+/g, '-');
+    await db.doc(`stakes/${STAKE_ID}/buildings/${buildingId}`).set({
+      building_id: buildingId,
+      building_name: buildingName,
+      address: '123 Test St',
+      kindoo_site_id: opts.kindoo_site_id,
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      lastActor: ACTOR,
+    });
+  }
 }
 
 async function seedSeat(opts: {

@@ -86,7 +86,6 @@ export {
   auditEntityTypeSchema,
   auditLogSchema,
   buildingSchema,
-  callingTemplateSchema,
   duplicateGrantSchema,
   kindooManagerSchema,
   kindooSiteSchema,
@@ -99,10 +98,8 @@ export {
   requestTypeSchema,
   seatSchema,
   seatTypeSchema,
-  stakeCallingTemplateSchema,
   stakeSchema,
   timestampLikeSchema,
   userIndexEntrySchema,
-  wardCallingTemplateSchema,
   wardSchema,
 } from './schemas/index.js';

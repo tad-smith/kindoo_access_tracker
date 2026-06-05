@@ -53,6 +53,7 @@ import { logger } from 'firebase-functions';
 import { FieldValue } from 'firebase-admin/firestore';
 import type {
   AccessRequest,
+  Building,
   DuplicateGrant,
   OverCapEntry,
   Seat,
@@ -61,6 +62,7 @@ import type {
 } from '@kindoo/shared';
 import { getDb } from '../lib/admin.js';
 import { computeOverCaps } from '../lib/overCaps.js';
+import { wardSiteMap } from '../lib/wardSites.js';
 import { REMOVE_TRIGGER_ACTOR } from '../lib/systemActors.js';
 
 /** Plan output: how the seat write should resolve. */
@@ -207,6 +209,7 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
     const stakeRef = db.doc(`stakes/${stakeId}`);
     const seatsCol = db.collection(`stakes/${stakeId}/seats`);
     const wardsCol = db.collection(`stakes/${stakeId}/wards`);
+    const buildingsCol = db.collection(`stakes/${stakeId}/buildings`);
 
     await db.runTransaction(async (tx) => {
       const seatSnap = await tx.get(seatRef);
@@ -294,13 +297,16 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
       // Gather the rest of the seat set + wards + stake doc for the
       // cap recompute. Transactions require all reads precede all
       // writes, so this batch happens before any tx.update/delete.
-      const [allSeatsSnap, wardsSnap, stakeSnap] = await Promise.all([
+      const [allSeatsSnap, wardsSnap, buildingsSnap, stakeSnap] = await Promise.all([
         tx.get(seatsCol),
         tx.get(wardsCol),
+        tx.get(buildingsCol),
         tx.get(stakeRef),
       ]);
       const allSeats = allSeatsSnap.docs.map((d) => d.data() as Seat);
       const wards = wardsSnap.docs.map((d) => d.data() as Ward);
+      const buildings = buildingsSnap.docs.map((d) => d.data() as Building);
+      const wardSites = wardSiteMap(wards, buildings);
       const stakeData = stakeSnap.data() as Stake | undefined;
       const stakeSeatCap = stakeData?.stake_seat_cap ?? 0;
 
@@ -366,6 +372,7 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
         seats: postWriteSeats,
         wards,
         stakeSeatCap,
+        wardSites,
       });
 
       tx.set(

@@ -17,8 +17,6 @@ const AUDITED_COLLECTIONS = [
   'access',
   'seats',
   'requests',
-  'wardCallingTemplates',
-  'stakeCallingTemplates',
 ] as const;
 
 export const reconcileAuditGaps = onSchedule(

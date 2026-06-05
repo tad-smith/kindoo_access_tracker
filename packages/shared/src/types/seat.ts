@@ -91,13 +91,12 @@ export type Seat = {
 
   // ----- Sort priority -----
   /**
-   * Denormalised from the matched calling template's `sheet_order` so
-   * roster pages can sort auto seats by template priority without a
-   * per-page template lookup. Importer-populated for `type='auto'`
-   * (MIN across `callings[]`); `null` for `'manual'` / `'temp'` seats
-   * and for auto-orphans whose calling no longer matches any template.
-   * Web-side sort treats `null` / missing as "after all numbered
-   * entries within the auto section."
+   * Denormalised MIN canonical `seatCallingOrder` across `callings[]`.
+   * Sync-populated for `type='auto'`; `null` for `'manual'` / `'temp'`
+   * seats and for auto-orphans whose calling doesn't rank in the
+   * canonical order. Web roster / All-Seats sort derives order from
+   * `callings[]` at render time (see `callingSortOrder.ts`), so this is
+   * a convenience mirror, not the sort source of truth.
    */
   sort_order?: number | null;
 
