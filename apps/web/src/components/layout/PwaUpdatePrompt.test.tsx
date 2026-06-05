@@ -1,6 +1,7 @@
 // Tests for the update-prompt strip. Mocks the SW hook to drive
-// `needRefresh` and verifies the toast surfaces, "Refresh" calls update,
-// and "Later" dismisses without reloading.
+// `needRefresh` and verifies the strip surfaces and that its single
+// action — "Update now" — calls the update path. The prompt is
+// single-action by design: there is no "Later" / dismiss affordance.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -10,7 +11,6 @@ const swState = {
   needRefresh: false,
   offlineReady: false,
   update: vi.fn().mockResolvedValue(undefined),
-  dismissNeedRefresh: vi.fn(),
   dismissOfflineReady: vi.fn(),
 };
 
@@ -23,7 +23,6 @@ import { PwaUpdatePrompt } from './PwaUpdatePrompt';
 beforeEach(() => {
   swState.needRefresh = false;
   swState.update.mockClear();
-  swState.dismissNeedRefresh.mockClear();
 });
 
 describe('PwaUpdatePrompt', () => {
@@ -37,24 +36,21 @@ describe('PwaUpdatePrompt', () => {
     swState.needRefresh = true;
     render(<PwaUpdatePrompt />);
     expect(screen.getByText(/Update available/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Refresh/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Later|Dismiss/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Update now/ })).toBeInTheDocument();
   });
 
-  it('clicking Refresh triggers the update', async () => {
+  it('renders exactly one action — no Later or dismiss button', () => {
+    swState.needRefresh = true;
+    render(<PwaUpdatePrompt />);
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /Later|Dismiss/ })).toBeNull();
+  });
+
+  it('clicking Update now triggers the update path', async () => {
     swState.needRefresh = true;
     const user = userEvent.setup();
     render(<PwaUpdatePrompt />);
-    await user.click(screen.getByRole('button', { name: /Refresh/ }));
+    await user.click(screen.getByRole('button', { name: /Update now/ }));
     expect(swState.update).toHaveBeenCalledOnce();
-  });
-
-  it('clicking Later dismisses the prompt without reloading', async () => {
-    swState.needRefresh = true;
-    const user = userEvent.setup();
-    render(<PwaUpdatePrompt />);
-    await user.click(screen.getByRole('button', { name: /Later|Dismiss/ }));
-    expect(swState.dismissNeedRefresh).toHaveBeenCalledOnce();
-    expect(swState.update).not.toHaveBeenCalled();
   });
 });
