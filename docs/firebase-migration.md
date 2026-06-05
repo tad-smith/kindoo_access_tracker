@@ -903,6 +903,8 @@ Coverage gate: every flow in `spec.md` §6 has an E2E.
 
 **Goal:** Every manager admin surface works. Configuration page edits all the editable tables. Inline edit on All Seats. Access page write actions. Bootstrap wizard runs end-to-end. Reconcile flow for seat collisions.
 
+> **[SUPERSEDED]** Two surfaces described below were later removed: inline seat edit on All Seats (shipped in Phase 7, removed in PR #197 — seat editing is now request-only via `edit_*` requests → `markRequestComplete`, and client seat `update` is denied by rules per PR #200) and the Reconcile flow (removed in Phase B — multi-row rendering subsumes it; see `docs/spec.md` §549, §598). The original sub-tasks are preserved below for history with inline `[REMOVED …]` annotations.
+
 **Owner:** web-engineer.
 
 **Dependencies:** Phase 6.
@@ -926,14 +928,14 @@ _Manager Import page_
 - [ ] Status display: last import time + summary.
 - [ ] Over-cap banner: reads `last_over_caps_json` from stake doc.
 
-_Inline edit on All Seats_
+_Inline edit on All Seats_ — **[REMOVED PR #197]** Shipped in Phase 7 (`SeatEditDialog` + `useInlineSeatEditMutation`), removed in PR #197. Seat editing is now request-only: an `edit_*` request flows through the Pending Queue → `markRequestComplete`. Client seat `update` is denied by Firestore rules (PR #200, T-66) — seats are server-written only. The sub-tasks below are preserved for history.
 
 - [ ] Edit button on manual/temp rows only.
 - [ ] Editable: `member_name`, `reason`, `building_names`, `start_date`, `end_date` (temp).
 - [ ] Immutable: `scope`, `type`, `member_canonical`, `seat_id` (= doc.id), all `created_*` fields.
 - [ ] Auto rows have no edit affordance.
 
-_Reconcile flow for seat duplicate_grants_
+_Reconcile flow for seat duplicate_grants_ — **[REMOVED Phase B]** Reconcile button + `ReconcileDialog` + `useReconcileSeatMutation` were removed; Phase B's multi-row rendering surfaces every grant visually, making Reconcile redundant (see `docs/spec.md` §549, §598). The sub-tasks below are preserved for history.
 
 - [ ] Badge on any seat with `duplicate_grants.length > 0`.
 - [ ] Reconcile dialog: radio-button list over `[primary, ...duplicate_grants]`. Manager picks "real" grant.
@@ -960,16 +962,16 @@ _Toast / error UX_
 
 _Unit_
 
-- [ ] Form validation in NewRequestForm, CompleteDialog, Reconcile dialog, every Configuration sub-form.
+- [ ] Form validation in NewRequestForm, CompleteDialog, ~~Reconcile dialog~~ (**[REMOVED Phase B]**), every Configuration sub-form.
 - [ ] Bootstrap wizard step gating: Complete-Setup enabled iff steps 1–3 valid.
 
 _Integration_
 
 - [ ] Manager Configuration CRUD: every editable table — write succeeds; unauthorized writes denied.
-- [ ] Inline seat edit: manual/temp updates persist; auto row → no edit possible (UI affordance absent + rule denial if hand-crafted).
+- [ ] Inline seat edit: manual/temp updates persist; auto row → no edit possible (UI affordance absent + rule denial if hand-crafted). — **[REMOVED PR #197 / #200]** Inline edit gone; client seat `update` is now uniformly denied by rules (T-66, PR #200). Edit coverage moved to the `edit_*` request → `markRequestComplete` path.
 - [ ] Manual access add: composite-key collision (same scope + same reason) → client-tx rejects with friendly error.
 - [ ] Manual access delete: importer-source field protected; manager can't touch importer_callings.
-- [ ] Reconcile: swap primary with duplicate → seat doc rewritten correctly; `scope` reflects new primary.
+- [ ] Reconcile: swap primary with duplicate → seat doc rewritten correctly; `scope` reflects new primary. — **[REMOVED Phase B]** Reconcile flow gone; superseded by multi-row rendering.
 
 _E2E (Playwright)_
 
@@ -980,16 +982,16 @@ Bootstrap wizard:
 - [ ] Non-admin during setup → SetupInProgress (not NotAuthorized).
 - [ ] Post-setup, hand-crafted wizard write → rule denial.
 
-Reconcile:
+Reconcile: — **[REMOVED Phase B]**
 - [ ] Seat with `duplicate_grants` shows badge → click Reconcile → dialog → pick → seat updates → badge gone.
 
 ### Acceptance criteria
 
 - Bootstrap wizard runs end-to-end against a fresh staging `stakes/csnorth` doc.
 - Manager Configuration CRUD against every editable table.
-- Inline edit of seats works.
+- Inline edit of seats works. — **[REMOVED PR #197]** Seat editing is request-only (`edit_*` → `markRequestComplete`); client seat `update` denied by rules (PR #200).
 - Manual access add/delete works.
-- Reconcile flow works for seat duplicate_grants.
+- Reconcile flow works for seat duplicate_grants. — **[REMOVED Phase B]** Superseded by multi-row rendering.
 - All Phase 6 read-side and write-side acceptance criteria still pass.
 
 ### Out of scope
