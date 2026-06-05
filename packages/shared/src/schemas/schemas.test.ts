@@ -18,7 +18,6 @@ import {
   accessSchema,
   auditLogSchema,
   buildingSchema,
-  callingTemplateSchema,
   kindooManagerSchema,
   kindooSiteSchema,
   manualGrantSchema,
@@ -213,36 +212,6 @@ describe('wardSchema', () => {
       ward_name: '1st Ward',
       building_name: 'Maple Building',
       seat_cap: 30,
-      created_at: T,
-      last_modified_at: T,
-      lastActor: ACTOR,
-    };
-    expect(wardSchema.parse(seed)).toEqual(seed);
-  });
-
-  // Kindoo Sites — `null` (or absent) means home site; a string
-  // points at a doc id under `stakes/{stakeId}/kindooSites/`.
-  it('parses with kindoo_site_id explicitly null', () => {
-    const seed = {
-      ward_code: '01',
-      ward_name: '1st Ward',
-      building_name: 'Maple Building',
-      seat_cap: 30,
-      kindoo_site_id: null,
-      created_at: T,
-      last_modified_at: T,
-      lastActor: ACTOR,
-    };
-    expect(wardSchema.parse(seed)).toEqual(seed);
-  });
-
-  it('parses with kindoo_site_id set to a foreign-site doc id', () => {
-    const seed = {
-      ward_code: '07',
-      ward_name: '7th Ward',
-      building_name: 'Pine Building',
-      seat_cap: 30,
-      kindoo_site_id: 'east-stake',
       created_at: T,
       last_modified_at: T,
       lastActor: ACTOR,
@@ -1069,67 +1038,6 @@ describe('accessRequestSchema', () => {
       lastActor: ACTOR,
     };
     expect(accessRequestSchema.safeParse(seed).success).toBe(false);
-  });
-});
-
-describe('callingTemplateSchema', () => {
-  it('parses a representative ward template entry', () => {
-    const seed = {
-      calling_name: 'Bishop',
-      give_app_access: true,
-      auto_kindoo_access: true,
-      sheet_order: 1,
-      created_at: T,
-      lastActor: ACTOR,
-    };
-    expect(callingTemplateSchema.parse(seed)).toEqual(seed);
-  });
-
-  it('parses a wildcard template entry', () => {
-    const seed = {
-      calling_name: 'Counselor *',
-      give_app_access: false,
-      auto_kindoo_access: false,
-      sheet_order: 14,
-      created_at: T,
-      lastActor: ACTOR,
-    };
-    expect(callingTemplateSchema.parse(seed)).toEqual(seed);
-  });
-
-  it('parses give_app_access and auto_kindoo_access as independent flags', () => {
-    const seed = {
-      calling_name: 'Stake Clerk',
-      give_app_access: true,
-      auto_kindoo_access: false,
-      sheet_order: 5,
-      created_at: T,
-      lastActor: ACTOR,
-    };
-    expect(callingTemplateSchema.parse(seed)).toEqual(seed);
-  });
-
-  it('rejects a non-boolean auto_kindoo_access', () => {
-    const seed = {
-      calling_name: 'Bishop',
-      give_app_access: true,
-      auto_kindoo_access: 'yes',
-      sheet_order: 1,
-      created_at: T,
-      lastActor: ACTOR,
-    };
-    expect(() => callingTemplateSchema.parse(seed)).toThrow();
-  });
-
-  it('rejects a missing auto_kindoo_access', () => {
-    const seed = {
-      calling_name: 'Bishop',
-      give_app_access: true,
-      sheet_order: 1,
-      created_at: T,
-      lastActor: ACTOR,
-    };
-    expect(() => callingTemplateSchema.parse(seed)).toThrow();
   });
 });
 

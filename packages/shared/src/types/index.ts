@@ -1,8 +1,8 @@
 // Domain types barrel. Auth shapes (claims, principal, userIndex
 // bridge), per-stake domain entities (Stake / Ward / Building /
-// KindooManager / Access / Seat / Request / CallingTemplate /
-// AuditLog / PlatformSuperadmin / PlatformAuditLog), plus the shared
-// `ActorRef` carried on every doc's `lastActor` field.
+// KindooManager / Access / Seat / Request / AuditLog /
+// PlatformSuperadmin / PlatformAuditLog), plus the shared `ActorRef`
+// carried on every doc's `lastActor` field.
 export type { ActorRef } from './actor.js';
 export type { Access, ManualGrant } from './access.js';
 export type {
@@ -21,11 +21,6 @@ export type {
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
 } from './extensionCallables.js';
-export type {
-  CallingTemplate,
-  StakeCallingTemplate,
-  WardCallingTemplate,
-} from './callingTemplate.js';
 export type { KindooManager } from './kindooManager.js';
 export type { KindooSite } from './kindooSite.js';
 export type { PlatformSuperadmin } from './platformSuperadmin.js';

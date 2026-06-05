@@ -58,34 +58,6 @@ async function seedSeat(opts: {
   await db.doc(`stakes/${STAKE_ID}/seats/${canonical}`).set(body);
 }
 
-/**
- * Seed a calling-template doc. Default scope='CO' writes to
- * `wardCallingTemplates`; scope='stake' writes to
- * `stakeCallingTemplates`. The collection split mirrors the importer's
- * shape (stake-wide ward templates + per-stake stake templates).
- */
-async function seedTemplate(opts: {
-  scope?: 'stake' | string;
-  calling_name: string;
-  give_app_access?: boolean;
-  auto_kindoo_access?: boolean;
-  sheet_order?: number;
-}): Promise<void> {
-  const { db } = requireEmulators();
-  const scope = opts.scope ?? 'CO';
-  const collection = scope === 'stake' ? 'stakeCallingTemplates' : 'wardCallingTemplates';
-  // Use the calling name URL-encoded as the doc ID; matches firebase-schema.md §§4.8–4.9.
-  const docId = encodeURIComponent(opts.calling_name);
-  await db.doc(`stakes/${STAKE_ID}/${collection}/${docId}`).set({
-    calling_name: opts.calling_name,
-    give_app_access: opts.give_app_access ?? false,
-    auto_kindoo_access: opts.auto_kindoo_access ?? true,
-    sheet_order: opts.sheet_order ?? 0,
-    created_at: Timestamp.now(),
-    lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
-  });
-}
-
 async function seedAccess(opts: {
   canonical?: string;
   importer_callings?: Record<string, string[]>;
@@ -107,6 +79,38 @@ async function seedAccess(opts: {
   };
   if (opts.sort_order !== undefined) body.sort_order = opts.sort_order;
   await db.doc(`stakes/${STAKE_ID}/access/${canonical}`).set(body);
+}
+
+/** Seed a ward doc. A ward's Kindoo site derives from its building. */
+async function seedWard(opts: { ward_code: string; building_name?: string }): Promise<void> {
+  const { db } = requireEmulators();
+  await db.doc(`stakes/${STAKE_ID}/wards/${opts.ward_code}`).set({
+    ward_code: opts.ward_code,
+    ward_name: `${opts.ward_code} Ward`,
+    building_name: opts.building_name ?? `${opts.ward_code} Building`,
+    seat_cap: 0,
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+  });
+}
+
+/** Seed a building doc. `kindoo_site_id` null/absent = home site. */
+async function seedBuilding(opts: {
+  building_name: string;
+  kindoo_site_id?: string | null;
+}): Promise<void> {
+  const { db } = requireEmulators();
+  const body: Record<string, unknown> = {
+    building_id: opts.building_name.toLowerCase().replace(/\s+/g, '-'),
+    building_name: opts.building_name,
+    address: '123 Test St',
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+  };
+  if (opts.kindoo_site_id !== undefined) body.kindoo_site_id = opts.kindoo_site_id;
+  await db.doc(`stakes/${STAKE_ID}/buildings/${body.building_id as string}`).set(body);
 }
 
 function callableReq(opts: { auth?: { email: string } | null; data: unknown }): never {
@@ -399,19 +403,14 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
   describe("code='callings-mismatch'", () => {
     it('REPLACES seat.callings with the Kindoo target (rename, not append) and recomputes sort_order', async () => {
       await seedManager();
-      await seedTemplate({
+      // Rename `Bishopric First Counselor` (canonical order 43) →
+      // `Bishop` (canonical order 42). sort_order recomputes 43 → 42.
+      await seedSeat({
         scope: 'CO',
-        calling_name: 'Bishop',
-        give_app_access: false,
-        sheet_order: 10,
+        type: 'auto',
+        callings: ['Bishopric First Counselor'],
+        sort_order: 43,
       });
-      await seedTemplate({
-        scope: 'CO',
-        calling_name: 'Bishopric Clerk',
-        give_app_access: false,
-        sheet_order: 4,
-      });
-      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 10 });
       const result = await syncApplyFix.run(
         callableReq({
           auth: { email: MANAGER_EMAIL },
@@ -419,7 +418,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
             stakeId: STAKE_ID,
             fix: {
               code: 'callings-mismatch',
-              payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishopric Clerk'] },
+              payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishop'] },
             },
           },
         }),
@@ -428,9 +427,9 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       const { db } = requireEmulators();
       const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
       // REPLACED — the old name is gone, not sitting beside the new one.
-      expect(seat.callings).toEqual(['Bishopric Clerk']);
-      // sort_order recomputed from the new calling (4, not 10).
-      expect(seat.sort_order).toBe(4);
+      expect(seat.callings).toEqual(['Bishop']);
+      // sort_order recomputed from the new calling (42, not 43).
+      expect(seat.sort_order).toBe(42);
       expect(seat.lastActor).toEqual({
         email: 'SyncActor:callings-mismatch',
         canonical: 'SyncActor:callings-mismatch',
@@ -563,10 +562,43 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.kindoo_site_id).toBeUndefined();
     });
 
-    it('leaves kindoo_site_id untouched when resolving to a ward scope (B-15)', async () => {
+    it('stamps the new ward building site when resolving to a foreign-site ward scope', async () => {
       await seedManager();
-      // A foreign-site seat that scope-mismatches to a WARD (not stake) keeps
-      // its kindoo_site_id — only the stake resolution clears it.
+      // A home seat scope-mismatches to ward DZ whose building is on a
+      // foreign Kindoo site. The seat picks up the new ward's site.
+      await seedWard({ ward_code: 'DZ', building_name: 'Pine Building' });
+      await seedBuilding({ building_name: 'Pine Building', kindoo_site_id: 'east-stake' });
+      await seedSeat({ scope: 'CO', type: 'manual', callings: ['Ward Clerk'] });
+      const { db } = requireEmulators();
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'scope-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, newScope: 'DZ' },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.scope).toBe('DZ');
+      // New ward's building site is foreign → stamped onto the seat.
+      expect(seat.kindoo_site_id).toBe('east-stake');
+    });
+
+    it('stamps null (home) when resolving to a ward whose building is home', async () => {
+      await seedManager();
+      // Seat carries a stale foreign site; the new ward's building is on
+      // the home site, so the seat resolves to home (explicit null).
+      await seedWard({ ward_code: 'DZ', building_name: 'Maple Building' });
+      await seedBuilding({ building_name: 'Maple Building', kindoo_site_id: null });
       await seedSeat({ scope: 'CO', type: 'manual', callings: ['Ward Clerk'] });
       const { db } = requireEmulators();
       await db
@@ -591,7 +623,40 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
       ).data() as Seat & { kindoo_site_id?: unknown };
       expect(seat.scope).toBe('DZ');
-      // Ward resolution does not touch kindoo_site_id.
+      // Home ward building → explicit null.
+      expect(seat.kindoo_site_id).toBe(null);
+    });
+
+    it('leaves kindoo_site_id untouched when the new ward scope is unresolvable', async () => {
+      await seedManager();
+      // No ward doc for DZ → the site can't be resolved, so the field is
+      // left as-is and the ward-fallback handles classification at read
+      // time.
+      await seedSeat({ scope: 'CO', type: 'manual', callings: ['Ward Clerk'] });
+      const { db } = requireEmulators();
+      await db
+        .doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`)
+        .update({ kindoo_site_id: 'foreign-site-123' });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'scope-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, newScope: 'DZ' },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.scope).toBe('DZ');
+      // Unresolvable ward → field untouched.
       expect(seat.kindoo_site_id).toBe('foreign-site-123');
     });
 
@@ -851,9 +916,9 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
   // description per §6.1 (auto → callings[]; manual/temp → free-text
   // reason). Auto seats reap the old scope's calling-derived access
   // (Kindoo-authoritative, #183), then KEEP stake-scope access iff the
-  // calling matches a give_app_access stake template (a bare template
-  // name is "unparseable" yet real); a non-template calling earns no new
-  // grant.
+  // calling is in the STAKE app-access set (a bare app-access calling
+  // name is "unparseable" yet real); a non-app-access calling earns no
+  // new grant.
 
   describe("code='kindoo-unparseable'", () => {
     it('manual seat: moves to stake scope, sets reason from calling, clears callings, keeps type', async () => {
@@ -970,18 +1035,13 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.sort_order).toBe(null);
     });
 
-    it('auto seat (give_app_access stake template): keeps stake access, sort_order from template', async () => {
+    it('auto seat (stake app-access calling): keeps stake access, sort_order from canonical order', async () => {
       await seedManager();
-      // `Stake Clerk` is a real stake template name — a bare template name
-      // (no parens) is "unparseable" yet must NOT cost the member access.
-      await seedTemplate({
-        scope: 'stake',
-        calling_name: 'Stake Clerk',
-        give_app_access: true,
-        sheet_order: 3,
-      });
-      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 5 });
-      await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 5 });
+      // `Stake Clerk` is in the STAKE app-access set (canonical order 3)
+      // — a bare app-access calling name (no parens) is "unparseable"
+      // yet must NOT cost the member access.
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 42 });
+      await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 42 });
 
       const result = await syncApplyFix.run(
         callableReq({
@@ -1003,7 +1063,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       ).data() as Seat & { sort_order?: unknown };
       expect(seat.scope).toBe('stake');
       expect(seat.callings).toEqual(['Stake Clerk']);
-      // seat sort_order mirrors the matched stake template.
+      // seat sort_order from the canonical churchwide order (Stake Clerk = 3).
       expect(seat.sort_order).toBe(3);
 
       const access = (
@@ -1645,40 +1705,22 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
     });
   });
 
-  // ----- Importer parity: sort_order + access-doc bookkeeping -----
+  // ----- Auto-seat bookkeeping: sort_order + access-doc fan-out -----
   //
-  // The seat-create / seat-mutate paths in `syncApplyFix` must leave
-  // Firestore in the same shape the LCR Sheet importer would produce
-  // on its next run. See the PARITY note at the top of
-  // `functions/src/callable/syncApplyFix.ts` and the mirror notes in
-  // `functions/src/services/Importer.ts` + `functions/src/lib/diff.ts`.
-  // These tests cover sort_order stamping and `access`-doc fan-out for
-  // `give_app_access` templates across the three apply paths that can
-  // turn a seat auto.
+  // App access is a hard-coded churchwide list (no per-stake calling
+  // templates): a calling grants app access iff it's in the scope's set
+  // (`filterAppAccessCallings` — ward callings for ward scopes, stake
+  // callings for 'stake'). `sort_order` comes from the canonical
+  // churchwide calling order (`seatCallingOrder`). These tests cover
+  // both across the three apply paths that can turn a seat auto.
 
-  describe('importer parity (auto-seat sort_order + access bookkeeping)', () => {
+  describe('auto-seat bookkeeping (sort_order + access fan-out)', () => {
     describe("code='kindoo-only' on auto seats", () => {
-      it('stamps sort_order = MIN(sheet_order) and writes access docs for give_app_access templates', async () => {
+      it('stamps sort_order = canonical MIN and writes access docs for ward app-access callings', async () => {
         await seedManager();
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 10,
-        });
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Ward Clerk',
-          give_app_access: true,
-          sheet_order: 3,
-        });
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Sunday School Teacher',
-          give_app_access: false,
-          sheet_order: 50,
-        });
-
+        // `Bishop` (canonical 42) + `Ward Clerk` (canonical 47) are both
+        // in the WARD app-access set; `Elders Quorum President` (canonical
+        // 51) is NOT — it ranks for sort but earns no app access.
         const result = await syncApplyFix.run(
           callableReq({
             auth: { email: MANAGER_EMAIL },
@@ -1691,7 +1733,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   memberName: 'Alice',
                   scope: 'CO',
                   type: 'auto',
-                  callings: ['Bishop', 'Ward Clerk', 'Sunday School Teacher'],
+                  callings: ['Bishop', 'Ward Clerk', 'Elders Quorum President'],
                   buildingNames: ['Maple Building'],
                   isTempUser: false,
                 },
@@ -1705,27 +1747,29 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
         ).data() as Seat;
-        // MIN(10, 3, 50) = 3.
-        expect(seat.sort_order).toBe(3);
+        // canonical MIN(42, 47, 51) = 42.
+        expect(seat.sort_order).toBe(42);
 
         const access = (
           await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
         ).data() as Access;
-        // Only the two give_app_access=true callings should appear under
-        // importer_callings[CO]; the give_app_access=false one is dropped.
-        // Sorted alphabetically per the importer's contract.
+        // Only the two WARD app-access callings appear under
+        // importer_callings[CO]; the non-app-access one is dropped.
+        // Sorted alphabetically per the access-doc contract.
         expect(access.importer_callings).toEqual({ CO: ['Bishop', 'Ward Clerk'] });
         expect(access.manual_grants).toEqual({});
-        expect(access.sort_order).toBe(3);
+        // Access sort_order mirrors the seat's canonical MIN.
+        expect(access.sort_order).toBe(42);
         expect(access.lastActor).toEqual({
           email: 'SyncActor:kindoo-only',
           canonical: 'SyncActor:kindoo-only',
         });
       });
 
-      it('writes no access doc when no calling matches a give_app_access template; sort_order may be null', async () => {
+      it('writes no access doc when no calling is in the app-access set; sort_order may be null', async () => {
         await seedManager();
-        // No templates seeded — every calling is an orphan.
+        // `Unknown Calling` isn't in the canonical order nor any app-access
+        // set — orphan auto seat, no grant.
         await syncApplyFix.run(
           callableReq({
             auth: { email: MANAGER_EMAIL },
@@ -1751,7 +1795,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
         ).data() as Seat;
-        // Orphan auto seat: sort_order is null (no template matches).
+        // Orphan auto seat: sort_order is null (calling doesn't rank).
         expect(seat.sort_order).toBe(null);
         const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
         expect(accessSnap.exists).toBe(false);
@@ -1759,14 +1803,8 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
     });
 
     describe("code='kindoo-only' on non-auto seats", () => {
-      it('manual: writes no sort_order and no access doc even when templates exist', async () => {
+      it('manual: writes no sort_order and no access doc even for an app-access calling', async () => {
         await seedManager();
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 1,
-        });
         await syncApplyFix.run(
           callableReq({
             auth: { email: MANAGER_EMAIL },
@@ -1798,14 +1836,8 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         expect(accessSnap.exists).toBe(false);
       });
 
-      it('temp: writes no sort_order and no access doc even when templates exist', async () => {
+      it('temp: writes no sort_order and no access doc even for an app-access calling', async () => {
         await seedManager();
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 1,
-        });
         await syncApplyFix.run(
           callableReq({
             auth: { email: MANAGER_EMAIL },
@@ -1840,30 +1872,18 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
     });
 
     describe("code='callings-mismatch'", () => {
-      it('on auto: REPLACES importer_callings[scope] with the new give_app_access target and recomputes sort_order', async () => {
+      it('on auto: REPLACES importer_callings[scope] with the new app-access target and recomputes sort_order', async () => {
         await seedManager();
-        // Old calling granted access (sheet_order 10); new calling grants
-        // access too (sheet_order 2). The replace must rewrite the grant
-        // set to the NEW calling and recompute sort_order.
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 10,
-        });
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Stake President',
-          give_app_access: true,
-          sheet_order: 2,
-        });
+        // Old calling `Ward Clerk` (47) is in the WARD app-access set; new
+        // calling `Bishop` (42) is too. The replace rewrites the grant set
+        // to the NEW calling and recomputes sort_order 47 → 42.
         await seedSeat({
           scope: 'CO',
           type: 'auto',
-          callings: ['Bishop'],
-          sort_order: 10,
+          callings: ['Ward Clerk'],
+          sort_order: 47,
         });
-        await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 10 });
+        await seedAccess({ importer_callings: { CO: ['Ward Clerk'] }, sort_order: 47 });
 
         await syncApplyFix.run(
           callableReq({
@@ -1872,7 +1892,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
               stakeId: STAKE_ID,
               fix: {
                 code: 'callings-mismatch',
-                payload: { memberEmail: MEMBER_EMAIL, callings: ['Stake President'] },
+                payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishop'] },
               },
             },
           }),
@@ -1882,40 +1902,29 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
         ).data() as Seat;
-        expect(seat.callings).toEqual(['Stake President']);
-        expect(seat.sort_order).toBe(2);
+        expect(seat.callings).toEqual(['Bishop']);
+        expect(seat.sort_order).toBe(42);
 
         const access = (
           await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
         ).data() as Access;
         // importer_callings[CO] REPLACED with the new calling (old name gone).
-        expect(access.importer_callings).toEqual({ CO: ['Stake President'] });
-        expect(access.sort_order).toBe(2);
+        expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
+        expect(access.sort_order).toBe(42);
       });
 
-      it('on auto: a replace that DROPS the give_app_access calling clears importer_callings[scope] and deletes the access doc (both maps empty)', async () => {
+      it('on auto: a replace that DROPS the app-access calling clears importer_callings[scope] and deletes the access doc (both maps empty)', async () => {
         await seedManager();
-        // Old calling granted access; new calling does not. The replace
-        // must remove the now-unjustified grant.
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 5,
-        });
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Sunday School Teacher',
-          give_app_access: false,
-          sheet_order: 30,
-        });
+        // Old calling `Bishop` (42) is in the WARD app-access set; new
+        // calling `Elders Quorum President` (51) ranks for sort but is NOT
+        // in the set. The replace must remove the now-unjustified grant.
         await seedSeat({
           scope: 'CO',
           type: 'auto',
           callings: ['Bishop'],
-          sort_order: 5,
+          sort_order: 42,
         });
-        await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 5 });
+        await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 42 });
 
         await syncApplyFix.run(
           callableReq({
@@ -1924,7 +1933,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
               stakeId: STAKE_ID,
               fix: {
                 code: 'callings-mismatch',
-                payload: { memberEmail: MEMBER_EMAIL, callings: ['Sunday School Teacher'] },
+                payload: { memberEmail: MEMBER_EMAIL, callings: ['Elders Quorum President'] },
               },
             },
           }),
@@ -1934,32 +1943,21 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         const seat = (
           await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
         ).data() as Seat;
-        expect(seat.callings).toEqual(['Sunday School Teacher']);
-        expect(seat.sort_order).toBe(30);
-        // No give_app_access calling remains; both maps empty → doc deleted.
+        expect(seat.callings).toEqual(['Elders Quorum President']);
+        expect(seat.sort_order).toBe(51);
+        // No app-access calling remains; both maps empty → doc deleted.
         const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
         expect(accessSnap.exists).toBe(false);
       });
 
       it('on auto: a replace that drops the grant but leaves manual_grants clears importer_callings[scope] yet keeps the doc', async () => {
         await seedManager();
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 5,
-        });
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Sunday School Teacher',
-          give_app_access: false,
-          sheet_order: 30,
-        });
+        // `Bishop` (in WARD set) → `Elders Quorum President` (not in set).
         await seedSeat({
           scope: 'CO',
           type: 'auto',
           callings: ['Bishop'],
-          sort_order: 5,
+          sort_order: 42,
         });
         await seedAccess({
           importer_callings: { CO: ['Bishop'] },
@@ -1973,7 +1971,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
               },
             ],
           },
-          sort_order: 5,
+          sort_order: 42,
         });
 
         await syncApplyFix.run(
@@ -1983,7 +1981,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
               stakeId: STAKE_ID,
               fix: {
                 code: 'callings-mismatch',
-                payload: { memberEmail: MEMBER_EMAIL, callings: ['Sunday School Teacher'] },
+                payload: { memberEmail: MEMBER_EMAIL, callings: ['Elders Quorum President'] },
               },
             },
           }),
@@ -2004,12 +2002,6 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
 
       it('on manual: rejects with failed-precondition and leaves the seat untouched (auto-only; no §6.1 hybrid)', async () => {
         await seedManager();
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 1,
-        });
         // Well-formed manual seat: empty callings, calling in free-text reason.
         await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
         const { db } = requireEmulators();
@@ -2042,15 +2034,10 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
     });
 
     describe("code='type-mismatch' flipping to auto", () => {
-      it('manual → auto: stamps sort_order from the payload callings, writes access doc for give_app_access matches', async () => {
+      it('manual → auto: stamps sort_order from the payload callings, writes access doc for app-access matches', async () => {
         await seedManager();
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 5,
-        });
         // Well-formed manual seat: callings empty, calling in reason.
+        // `Bishop` is in the WARD app-access set (canonical order 42).
         await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
         const { db } = requireEmulators();
         await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: 'Bishop' });
@@ -2076,23 +2063,17 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         expect(seat.callings).toEqual(['Bishop']);
         expect(seat.reason).toBeUndefined();
         // sort_order derived from the (reshaped) callings.
-        expect(seat.sort_order).toBe(5);
+        expect(seat.sort_order).toBe(42);
 
         const access = (
           await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
         ).data() as Access;
         expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
-        expect(access.sort_order).toBe(5);
+        expect(access.sort_order).toBe(42);
       });
 
       it('manual → auto with no payload callings: sort_order + access doc derive from the reason fallback', async () => {
         await seedManager();
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 7,
-        });
         await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
         const { db } = requireEmulators();
         await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: 'Bishop' });
@@ -2115,7 +2096,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
           await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
         ).data() as Seat;
         expect(seat.callings).toEqual(['Bishop']);
-        expect(seat.sort_order).toBe(7);
+        expect(seat.sort_order).toBe(42);
         const access = (
           await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
         ).data() as Access;
@@ -2124,12 +2105,6 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
 
       it('idempotent: re-applying the same promote yields the same seat + access shape', async () => {
         await seedManager();
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 5,
-        });
         await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
         const { db } = requireEmulators();
         await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: 'Bishop' });
@@ -2157,7 +2132,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         expect(seat.type).toBe('auto');
         expect(seat.callings).toEqual(['Bishop']);
         expect(seat.reason).toBeUndefined();
-        expect(seat.sort_order).toBe(5);
+        expect(seat.sort_order).toBe(42);
 
         const access = (
           await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
@@ -2169,21 +2144,15 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
     describe("code='type-mismatch' flipping away from auto", () => {
       it('auto → manual with no manual_grants: clears sort_order and deletes the access doc', async () => {
         await seedManager();
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 5,
-        });
         await seedSeat({
           scope: 'CO',
           type: 'auto',
           callings: ['Bishop'],
-          sort_order: 5,
+          sort_order: 42,
         });
         await seedAccess({
           importer_callings: { CO: ['Bishop'] },
-          sort_order: 5,
+          sort_order: 42,
         });
 
         await syncApplyFix.run(
@@ -2216,17 +2185,11 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
 
       it('auto → manual with manual_grants present: clears sort_order and clears importer_callings[scope] but keeps the doc', async () => {
         await seedManager();
-        await seedTemplate({
-          scope: 'CO',
-          calling_name: 'Bishop',
-          give_app_access: true,
-          sheet_order: 5,
-        });
         await seedSeat({
           scope: 'CO',
           type: 'auto',
           callings: ['Bishop'],
-          sort_order: 5,
+          sort_order: 42,
         });
         await seedAccess({
           importer_callings: { CO: ['Bishop'] },
@@ -2240,7 +2203,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
               },
             ],
           },
-          sort_order: 5,
+          sort_order: 42,
         });
 
         await syncApplyFix.run(

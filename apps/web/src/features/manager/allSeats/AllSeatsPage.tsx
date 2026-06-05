@@ -23,7 +23,8 @@ import { useNavigate } from '@tanstack/react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import type { KindooSite, Seat, Ward } from '@kindoo/shared';
+import { resolveWardSite } from '@kindoo/shared';
+import type { Building, KindooSite, Seat, Ward } from '@kindoo/shared';
 import {
   useAllSeats,
   useBuildings,
@@ -213,11 +214,13 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   // continue to diverge. Spec §15 Phase B.
   const allSeats = seats.data ?? [];
   const stakeSeatCap = stake.data?.stake_seat_cap;
-  const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wardsList);
-  const foreignWardCodes = useMemo(
-    () => new Set(wardsList.filter((w) => w.kindoo_site_id != null).map((w) => w.ward_code)),
-    [wardsList],
-  );
+  const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wardsList, buildingsList);
+  const foreignWardCodes = useMemo(() => {
+    const byName = new Map(buildingsList.map((b) => [b.building_name, b]));
+    return new Set(
+      wardsList.filter((w) => resolveWardSite(w, byName) != null).map((w) => w.ward_code),
+    );
+  }, [wardsList, buildingsList]);
   const wardDoc = ward && ward !== 'stake' ? wardsList.find((w) => w.ward_code === ward) : null;
   const utilizationLabel = !ward
     ? 'Entire-stake utilization'
@@ -310,6 +313,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
               key={row.rowKey}
               row={row}
               wards={wardsList}
+              buildings={buildingsList}
               sites={sitesList}
               principal={principal}
               activeStakeId={activeStakeId}
@@ -329,15 +333,24 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
 interface GrantRowCardProps {
   row: GrantRow;
   wards: readonly Ward[];
+  buildings: readonly Building[];
   sites: readonly KindooSite[];
   principal: ReturnType<typeof usePrincipal>;
   activeStakeId: string | null;
   onEdit: () => void;
 }
 
-function GrantRowCard({ row, wards, sites, principal, activeStakeId, onEdit }: GrantRowCardProps) {
+function GrantRowCard({
+  row,
+  wards,
+  buildings,
+  sites,
+  principal,
+  activeStakeId,
+  onEdit,
+}: GrantRowCardProps) {
   const { seat, grant } = row;
-  const siteLabel = siteLabelForGrant(grant, wards, sites);
+  const siteLabel = siteLabelForGrant(grant, wards, buildings, sites);
   const canRemoveScope =
     activeStakeId !== null && isScopeAllowed(principal, activeStakeId, grant.scope);
   // Edit affordance: shown only on the primary row of manual / temp

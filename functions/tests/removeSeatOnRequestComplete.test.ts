@@ -86,6 +86,9 @@ async function seedStake(
   await db.doc(`stakes/${STAKE_ID}`).set(body, { merge: true });
 }
 
+// Seed a ward (and, when `kindoo_site_id` is given, its building). A
+// ward's Kindoo site now derives from its building, so the over-cap
+// recompute reads the buildings collection to classify home vs foreign.
 async function seedWard(opts: {
   ward_code: string;
   building_name?: string;
@@ -93,17 +96,29 @@ async function seedWard(opts: {
   kindoo_site_id?: string | null;
 }): Promise<void> {
   const { db } = requireEmulators();
+  const buildingName = opts.building_name ?? `${opts.ward_code} Building`;
   const doc: Record<string, unknown> = {
     ward_code: opts.ward_code,
     ward_name: `${opts.ward_code} Ward`,
-    building_name: opts.building_name ?? `${opts.ward_code} Building`,
+    building_name: buildingName,
     seat_cap: opts.seat_cap ?? 0,
     created_at: Timestamp.now(),
     last_modified_at: Timestamp.now(),
     lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
   };
-  if (opts.kindoo_site_id !== undefined) doc.kindoo_site_id = opts.kindoo_site_id;
   await db.doc(`stakes/${STAKE_ID}/wards/${opts.ward_code}`).set(doc);
+  if (opts.kindoo_site_id !== undefined) {
+    const buildingId = buildingName.toLowerCase().replace(/\s+/g, '-');
+    await db.doc(`stakes/${STAKE_ID}/buildings/${buildingId}`).set({
+      building_id: buildingId,
+      building_name: buildingName,
+      address: '123 Test St',
+      kindoo_site_id: opts.kindoo_site_id,
+      created_at: Timestamp.now(),
+      last_modified_at: Timestamp.now(),
+      lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    });
+  }
 }
 
 function removeEvent(opts: {

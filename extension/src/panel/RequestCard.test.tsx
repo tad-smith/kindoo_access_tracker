@@ -351,12 +351,21 @@ describe('RequestCard', () => {
     const base = bundle();
     return {
       ...base,
+      // A ward's site derives from its building; Pine Building → 'east-stake'.
+      buildings: [
+        ...base.buildings,
+        {
+          building_id: 'pine',
+          building_name: 'Pine Building',
+          kindoo_site_id: 'east-stake',
+          kindoo_rule: { rule_id: 6249, rule_name: 'Pine Doors' },
+        } as unknown as StakeConfigBundle['buildings'][number],
+      ],
       wards: [
         {
           ward_code: 'FN',
           ward_name: 'Foreign Ward',
           building_name: 'Pine Building',
-          kindoo_site_id: 'east-stake',
         } as unknown as StakeConfigBundle['wards'][number],
       ],
       kindooSites: [
@@ -521,9 +530,9 @@ describe('RequestCard', () => {
     expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
   });
 
-  it('proceeds without populate when ward has no kindoo_site_id and session is on home', async () => {
-    // Ward-scope request on a home-site ward (kindoo_site_id absent) —
-    // active session is home → check returns ok=true, no populate.
+  it("proceeds without populate when the ward's building resolves to home and session is on home", async () => {
+    // Ward-scope request on a home-site ward (its building has no
+    // kindoo_site_id) — active session is home → ok=true, no populate.
     const base = bundle();
     const customBundle: StakeConfigBundle = {
       ...base,

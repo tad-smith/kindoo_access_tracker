@@ -7,6 +7,7 @@ import type { AccessRequest, Seat, Ward } from '@kindoo/shared';
 import { makeRequest, makeSeat, makeWard } from '../../../test/fixtures';
 
 const useStakeWardsMock = vi.fn();
+const useStakeBuildingsMock = vi.fn();
 const useWardSeatsMock = vi.fn();
 const useKindooSitesMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
@@ -17,6 +18,7 @@ const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./hooks', () => ({
   useStakeWards: () => useStakeWardsMock(),
+  useStakeBuildings: () => useStakeBuildingsMock(),
   useWardSeats: (ward: string | null) => useWardSeatsMock(ward),
   useKindooSites: () => useKindooSitesMock(),
 }));
@@ -127,6 +129,21 @@ function mockSeats(seats: Seat[] | undefined, isLoading = false) {
   });
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mockBuildings(buildings: any[]) {
+  useStakeBuildingsMock.mockReturnValue({
+    data: buildings,
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  });
+}
+
 function mockPendingRequests(requests: AccessRequest[]) {
   usePendingRequestsForScopeMock.mockReturnValue({
     data: requests,
@@ -148,9 +165,10 @@ beforeEach(() => {
   mockPendingRequests([]);
   // Default: no pending remove requests for any seat.
   mockNoPendingRemoves();
-  // Default: empty Kindoo Sites catalogue. The badge tests below
-  // override via mockKindooSites.
+  // Default: empty Kindoo Sites + buildings catalogues. The badge tests
+  // below override via mockKindooSites / mockBuildings.
   useKindooSitesMock.mockReturnValue(stakeListResult);
+  mockBuildings([]);
   submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
   // Default principal: bishopric of CO (the ward most tests target).
   // Tests that need a different authority shape override via
@@ -546,14 +564,17 @@ describe('<WardRostersPage /> — Kindoo Sites label (spec §15)', () => {
     });
   }
 
-  it('renders the foreign-site badge on a seat whose ward.kindoo_site_id points at a foreign site', () => {
+  it('renders the foreign-site badge on a seat whose ward building is on a foreign site', () => {
     mockWards([
       makeWard({
         ward_code: 'FN',
         ward_name: 'Pine',
         seat_cap: 20,
-        kindoo_site_id: 'foreign-1',
-      } as Partial<Ward>),
+        building_name: 'Pine Building',
+      }),
+    ]);
+    mockBuildings([
+      { building_id: 'pine', building_name: 'Pine Building', kindoo_site_id: 'foreign-1' },
     ]);
     mockSeats([
       makeSeat({

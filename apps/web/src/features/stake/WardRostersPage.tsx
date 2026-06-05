@@ -18,7 +18,7 @@ import { useNavigate } from '@tanstack/react-router';
 import type { Seat } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { useActiveStake } from '../../lib/useActiveStake';
-import { useKindooSites, useStakeWards, useWardSeats } from './hooks';
+import { useKindooSites, useStakeBuildings, useStakeWards, useWardSeats } from './hooks';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
@@ -40,6 +40,7 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
   const principal = usePrincipal();
   const activeStakeId = useActiveStake();
   const wards = useStakeWards();
+  const buildings = useStakeBuildings();
   const kindooSites = useKindooSites();
   const navigate = useNavigate();
   const [selected, setSelected] = useState<string | null>(initialWard ?? null);
@@ -175,6 +176,7 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
                         canRemove={canRemove}
                         isPendingRemoval={isPendingRemoval}
                         wards={wardsList}
+                        buildings={buildings.data ?? []}
                         sites={kindooSites.data ?? []}
                       />
                     );

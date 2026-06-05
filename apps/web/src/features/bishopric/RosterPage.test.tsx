@@ -21,6 +21,7 @@ const useFirestoreOnceMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
 const usePendingRemoveRequestsMock = vi.fn();
 const useStakeWardsMock = vi.fn();
+const useStakeBuildingsMock = vi.fn();
 const useKindooSitesMock = vi.fn();
 const submitMutateAsyncMock = vi.fn();
 // Real navigate returns a Promise; the page calls `.catch(...)` on it.
@@ -51,6 +52,7 @@ const stakeListResult = {
 vi.mock('./hooks', () => ({
   useBishopricRoster: (ward: string | null) => useBishopricRosterMock(ward),
   useStakeWards: () => useStakeWardsMock(),
+  useStakeBuildings: () => useStakeBuildingsMock(),
   useKindooSites: () => useKindooSitesMock(),
 }));
 
@@ -181,9 +183,11 @@ beforeEach(() => {
   // Default: no pending remove requests for any seat (the per-row
   // RemovalAffordance subscription).
   mockNoPendingRemoves();
-  // Default: empty wards / Kindoo Sites catalogues. The Kindoo-site
-  // badge tests override via mockStakeWards / mockKindooSites.
+  // Default: empty wards / buildings / Kindoo Sites catalogues. The
+  // Kindoo-site badge tests override via mockStakeWards /
+  // mockStakeBuildings / mockKindooSites.
   useStakeWardsMock.mockReturnValue(stakeListResult);
+  useStakeBuildingsMock.mockReturnValue(stakeListResult);
   useKindooSitesMock.mockReturnValue(stakeListResult);
   submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
 });
@@ -886,6 +890,21 @@ describe('<BishopricRosterPage /> — Kindoo Sites label (spec §15)', () => {
     });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function mockStakeBuildings(buildings: any[]) {
+    useStakeBuildingsMock.mockReturnValue({
+      data: buildings,
+      error: null,
+      status: 'success',
+      isPending: false,
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      isFetching: false,
+      fetchStatus: 'idle',
+    });
+  }
+
   function mockKindooSites(sites: Array<{ id: string; display_name: string }>) {
     useKindooSitesMock.mockReturnValue({
       data: sites.map((s) => ({
@@ -912,7 +931,7 @@ describe('<BishopricRosterPage /> — Kindoo Sites label (spec §15)', () => {
     });
   }
 
-  it('renders the foreign-site badge on a ward seat whose ward.kindoo_site_id points at a foreign site', () => {
+  it('renders the foreign-site badge on a ward seat whose ward building is on a foreign site', () => {
     usePrincipalMock.mockReturnValue(principal(['FN']));
     mockSeats([
       makeSeat({
@@ -924,18 +943,17 @@ describe('<BishopricRosterPage /> — Kindoo Sites label (spec §15)', () => {
     ]);
     mockWardDoc(makeWard({ ward_code: 'FN', ward_name: 'Pine', seat_cap: 20 }));
     mockStakeWards([
-      makeWard({
-        ward_code: 'FN',
-        ward_name: 'Pine',
-        kindoo_site_id: 'foreign-1',
-      } as Partial<Ward>),
+      makeWard({ ward_code: 'FN', ward_name: 'Pine', building_name: 'Pine Building' }),
+    ]);
+    mockStakeBuildings([
+      { building_id: 'pine', building_name: 'Pine Building', kindoo_site_id: 'foreign-1' },
     ]);
     mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Pine)' }]);
     render(<BishopricRosterPage initialWard="FN" />);
     expect(screen.getByTestId('kindoo-site-badge-a@x.com')).toHaveTextContent('East Stake (Pine)');
   });
 
-  it('omits the foreign-site badge when the ward is on the home site (kindoo_site_id null)', () => {
+  it('omits the foreign-site badge when the ward building is on the home site', () => {
     usePrincipalMock.mockReturnValue(principal(['CO']));
     mockSeats([
       makeSeat({
@@ -946,7 +964,10 @@ describe('<BishopricRosterPage /> — Kindoo Sites label (spec §15)', () => {
       }),
     ]);
     mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
-    mockStakeWards([makeWard({ ward_code: 'CO' } as Partial<Ward>)]);
+    mockStakeWards([makeWard({ ward_code: 'CO', building_name: 'Maple Building' })]);
+    mockStakeBuildings([
+      { building_id: 'maple', building_name: 'Maple Building', kindoo_site_id: null },
+    ]);
     mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Pine)' }]);
     render(<BishopricRosterPage initialWard="CO" />);
     expect(screen.queryByTestId('kindoo-site-badge-a@x.com')).toBeNull();

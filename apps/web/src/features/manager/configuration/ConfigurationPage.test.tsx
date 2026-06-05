@@ -12,19 +12,9 @@ const useStakeDocMock = vi.fn();
 const useWardsMock = vi.fn();
 const useBuildingsMock = vi.fn();
 const useManagersMock = vi.fn();
-const useWardCallingTemplatesMock = vi.fn();
-const useStakeCallingTemplatesMock = vi.fn();
 const useKindooSitesMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
-const addWardCallingTemplateMock = vi.fn();
-const upsertWardCallingTemplateMock = vi.fn();
-const deleteWardCallingTemplateWithResequenceMock = vi.fn();
-const reorderWardCallingTemplatesMock = vi.fn();
-const addStakeCallingTemplateMock = vi.fn();
-const upsertStakeCallingTemplateMock = vi.fn();
-const deleteStakeCallingTemplateWithResequenceMock = vi.fn();
-const reorderStakeCallingTemplatesMock = vi.fn();
 const upsertKindooSiteMock = vi.fn();
 const deleteKindooSiteMock = vi.fn();
 const upsertWardMock = vi.fn();
@@ -35,8 +25,6 @@ vi.mock('./hooks', () => ({
   useWards: () => useWardsMock(),
   useBuildings: () => useBuildingsMock(),
   useManagers: () => useManagersMock(),
-  useWardCallingTemplates: () => useWardCallingTemplatesMock(),
-  useStakeCallingTemplates: () => useStakeCallingTemplatesMock(),
   useKindooSites: () => useKindooSitesMock(),
   useUpsertWardMutation: () => ({ mutateAsync: upsertWardMock, isPending: false }),
   useDeleteWardMutation: () => ({ mutateAsync: vi.fn() }),
@@ -49,34 +37,6 @@ vi.mock('./hooks', () => ({
     isPending: false,
   }),
   useDeleteKindooSiteMutation: () => ({ mutateAsync: deleteKindooSiteMock }),
-  useAddWardCallingTemplateMutation: () => ({
-    mutateAsync: addWardCallingTemplateMock,
-    isPending: false,
-  }),
-  useUpsertWardCallingTemplateMutation: () => ({
-    mutateAsync: upsertWardCallingTemplateMock,
-    isPending: false,
-  }),
-  useDeleteWardCallingTemplateWithResequenceMutation: () => ({
-    mutateAsync: deleteWardCallingTemplateWithResequenceMock,
-  }),
-  useReorderWardCallingTemplatesMutation: () => ({
-    mutateAsync: reorderWardCallingTemplatesMock,
-  }),
-  useAddStakeCallingTemplateMutation: () => ({
-    mutateAsync: addStakeCallingTemplateMock,
-    isPending: false,
-  }),
-  useUpsertStakeCallingTemplateMutation: () => ({
-    mutateAsync: upsertStakeCallingTemplateMock,
-    isPending: false,
-  }),
-  useDeleteStakeCallingTemplateWithResequenceMutation: () => ({
-    mutateAsync: deleteStakeCallingTemplateWithResequenceMock,
-  }),
-  useReorderStakeCallingTemplatesMutation: () => ({
-    mutateAsync: reorderStakeCallingTemplatesMock,
-  }),
   useUpdateStakeConfigMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
@@ -143,8 +103,6 @@ beforeEach(() => {
   useWardsMock.mockReturnValue(liveResult<Ward>([]));
   useBuildingsMock.mockReturnValue(liveResult<Building>([]));
   useManagersMock.mockReturnValue(liveResult<KindooManager>([]));
-  useWardCallingTemplatesMock.mockReturnValue(liveResult([]));
-  useStakeCallingTemplatesMock.mockReturnValue(liveResult([]));
   useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([]));
 });
 
@@ -205,24 +163,65 @@ describe('<ConfigurationPage />', () => {
     expect(screen.queryByTestId('config-triggers')).toBeNull();
   });
 
-  it('renders tabs in the operator-specified order', () => {
+  it('renders tabs in the operator-specified order (Buildings before Wards)', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
     const labels = Array.from(document.querySelectorAll('.kd-config-tab')).map(
       (el) => el.textContent,
     );
-    expect(labels).toEqual([
-      'Config',
-      'Managers',
-      'Kindoo Sites',
-      'Wards',
-      'Buildings',
-      'Auto Ward Callings',
-      'Auto Stake Callings',
-    ]);
+    expect(labels).toEqual(['Config', 'Managers', 'Kindoo Sites', 'Buildings', 'Wards']);
+  });
+
+  it('does not render the Auto Ward / Stake Callings tabs', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.queryByTestId('config-tab-ward-callings')).toBeNull();
+    expect(screen.queryByTestId('config-tab-stake-callings')).toBeNull();
+    expect(screen.queryByText('Auto Ward Callings')).toBeNull();
+    expect(screen.queryByText('Auto Stake Callings')).toBeNull();
+  });
+
+  it('disables Add Ward and shows a hint when no buildings exist', () => {
+    useBuildingsMock.mockReturnValue(liveResult<Building>([]));
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-wards-add-button')).toBeDisabled();
+    expect(screen.getByTestId('config-wards-no-buildings-hint')).toHaveTextContent(
+      /Add a building first/i,
+    );
+  });
+
+  it('enables Add Ward once at least one building exists', () => {
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        {
+          building_id: 'maple-building',
+          building_name: 'Maple Building',
+          address: '',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-wards-add-button')).not.toBeDisabled();
+    expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
+  });
+
+  it('does not flash the no-buildings hint or disable Add Ward while buildings load', () => {
+    // Deep-linking ?tab=wards lands before the buildings snapshot
+    // arrives. The empty-state must not fire on undefined data, or
+    // stakes that DO have buildings briefly show "Add a building first".
+    useBuildingsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-wards-add-button')).not.toBeDisabled();
+    expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
   });
 
   it('shows ward-form validation error on empty submit (modal-driven)', async () => {
     const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-wards-add-button'));
     await user.click(screen.getByTestId('config-ward-submit'));
@@ -231,6 +230,12 @@ describe('<ConfigurationPage />', () => {
 
   it('opens the Add Ward modal from the section header', async () => {
     const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     expect(screen.queryByTestId('config-ward-form')).toBeNull();
     await user.click(screen.getByTestId('config-wards-add-button'));
@@ -330,110 +335,6 @@ describe('<ConfigurationPage />', () => {
   it('wraps the page in the wide-width container (1023px max)', () => {
     const { container } = render(<ConfigurationPage />, { wrapper: Wrapper });
     expect(container.querySelector('section.kd-page-wide')).not.toBeNull();
-  });
-});
-
-describe('Auto Ward Callings tab', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mkTpl = (calling_name: string, sheet_order: number, overrides: any = {}) => ({
-    calling_name,
-    give_app_access: false,
-    auto_kindoo_access: false,
-    sheet_order,
-    ...overrides,
-  });
-
-  it('renders rows in sheet_order ascending', () => {
-    useWardCallingTemplatesMock.mockReturnValue(
-      liveResult([mkTpl('B', 2), mkTpl('A', 1), mkTpl('C', 3)]),
-    );
-    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
-    const rows = Array.from(
-      document.querySelectorAll('[data-testid^="config-ward-callings-row-"]'),
-    );
-    expect(rows.map((r) => r.getAttribute('data-testid'))).toEqual([
-      'config-ward-callings-row-A',
-      'config-ward-callings-row-B',
-      'config-ward-callings-row-C',
-    ]);
-  });
-
-  it('opens the Add modal with both flags blank and submits via Add Calling', async () => {
-    const user = userEvent.setup();
-    useWardCallingTemplatesMock.mockReturnValue(liveResult([mkTpl('A', 1)]));
-    addWardCallingTemplateMock.mockResolvedValue(undefined);
-    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-ward-callings-add-button'));
-    expect(screen.getByRole('heading', { name: 'Add calling' })).toBeInTheDocument();
-    const callingName = screen.getByLabelText(/Calling name/i);
-    await user.type(callingName, 'Bishop');
-    await user.click(screen.getByLabelText('Auto Kindoo Access'));
-    await user.click(screen.getByLabelText('Can Request Access'));
-    await user.click(screen.getByRole('button', { name: 'Add Calling' }));
-    expect(addWardCallingTemplateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        calling_name: 'Bishop',
-        give_app_access: true,
-        auto_kindoo_access: true,
-        existing: expect.any(Array),
-      }),
-    );
-  });
-
-  it('opens the Edit modal pre-populated with calling_name read-only', async () => {
-    const user = userEvent.setup();
-    useWardCallingTemplatesMock.mockReturnValue(
-      liveResult([mkTpl('Bishop', 1, { auto_kindoo_access: true, give_app_access: true })]),
-    );
-    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-ward-callings-edit-Bishop'));
-    expect(screen.getByRole('heading', { name: /Edit calling — Bishop/ })).toBeInTheDocument();
-    const nameInput = screen.getByLabelText(/Calling name/i) as HTMLInputElement;
-    expect(nameInput.value).toBe('Bishop');
-    expect(nameInput).toHaveAttribute('readonly');
-    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeInTheDocument();
-  });
-
-  it('Edit submit calls upsert with original sheet_order preserved', async () => {
-    const user = userEvent.setup();
-    useWardCallingTemplatesMock.mockReturnValue(
-      liveResult([mkTpl('Bishop', 7, { auto_kindoo_access: true, give_app_access: true })]),
-    );
-    upsertWardCallingTemplateMock.mockResolvedValue(undefined);
-    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-ward-callings-edit-Bishop'));
-    await user.click(screen.getByLabelText('Auto Kindoo Access')); // toggle off
-    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
-    expect(upsertWardCallingTemplateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        calling_name: 'Bishop',
-        auto_kindoo_access: false,
-        give_app_access: true,
-        sheet_order: 7,
-      }),
-    );
-  });
-
-  it('Delete calls the resequence mutation with current snapshot', async () => {
-    const user = userEvent.setup();
-    const tpls = [mkTpl('A', 1), mkTpl('B', 2), mkTpl('C', 3)];
-    useWardCallingTemplatesMock.mockReturnValue(liveResult(tpls));
-    deleteWardCallingTemplateWithResequenceMock.mockResolvedValue(undefined);
-    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-ward-callings-delete-B'));
-    expect(deleteWardCallingTemplateWithResequenceMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        callingName: 'B',
-        current: expect.any(Array),
-      }),
-    );
-  });
-
-  it('renders the grip handle button on every row', () => {
-    useWardCallingTemplatesMock.mockReturnValue(liveResult([mkTpl('A', 1), mkTpl('B', 2)]));
-    render(<ConfigurationPage initialTab="ward-callings" />, { wrapper: Wrapper });
-    expect(screen.getByTestId('config-ward-callings-grip-A')).toBeInTheDocument();
-    expect(screen.getByTestId('config-ward-callings-grip-B')).toBeInTheDocument();
   });
 });
 
@@ -545,60 +446,41 @@ describe('Kindoo Sites tab', () => {
     expect(upsertKindooSiteMock.mock.calls[0]?.[0]).not.toHaveProperty('kindoo_eid');
   });
 
-  it('Delete calls the delete mutation with the doc id and live wards/buildings snapshots', async () => {
+  it('Delete calls the delete mutation with the doc id and live buildings snapshot', async () => {
     const user = userEvent.setup();
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
-    const wardRef = {
-      ward_code: 'OT',
-      ward_name: 'Other',
-      building_name: 'Other Building',
-      seat_cap: 20,
-      kindoo_site_id: null,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any;
     const buildingRef = {
       building_id: 'other-building',
       building_name: 'Other Building',
       kindoo_site_id: null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
-    useWardsMock.mockReturnValue(liveResult<Ward>([wardRef]));
     useBuildingsMock.mockReturnValue(liveResult<Building>([buildingRef]));
     deleteKindooSiteMock.mockResolvedValue(undefined);
     render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-kindoo-site-delete-east-stake'));
     expect(deleteKindooSiteMock).toHaveBeenCalledWith({
       kindooSiteId: 'east-stake',
-      wards: [wardRef],
       buildings: [buildingRef],
     });
   });
 
-  it('Delete surfaces the FK ref-guard error via toast when wards / buildings still reference the site', async () => {
+  it('Delete surfaces the FK ref-guard error via toast when a building still references the site', async () => {
     const { useToastStore } = await import('../../../lib/store/toast');
     useToastStore.getState().clear();
     const user = userEvent.setup();
     useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
-    const blockingWard = {
-      ward_code: 'CO',
-      ward_name: 'Maple',
-      building_name: 'Maple Building',
-      seat_cap: 20,
-      kindoo_site_id: 'east-stake',
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any;
     const blockingBuilding = {
       building_id: 'pine',
       building_name: 'Pine Stake Center',
       kindoo_site_id: 'east-stake',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
-    useWardsMock.mockReturnValue(liveResult<Ward>([blockingWard]));
     useBuildingsMock.mockReturnValue(liveResult<Building>([blockingBuilding]));
-    // Mimic the real hook: throw the blocker string when refs exist.
+    // Mimic the real hook: throw the blocker string when a building refs.
     deleteKindooSiteMock.mockImplementation(async (input: { kindooSiteId: string }) => {
       throw new Error(
-        `Cannot delete Kindoo site "${input.kindooSiteId}". The following wards and buildings still reference this site: Wards: Maple (CO) Buildings: Pine Stake Center Unassign these wards / buildings from this site before deleting.`,
+        `Cannot delete Kindoo site "${input.kindooSiteId}". The following buildings still reference this site: Pine Stake Center Unassign these buildings from this site before deleting.`,
       );
     });
     render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
@@ -609,115 +491,8 @@ describe('Kindoo Sites tab', () => {
       const errorToasts = useToastStore.getState().toasts.filter((t) => t.kind === 'error');
       expect(errorToasts).toHaveLength(1);
       expect(errorToasts[0]!.message).toContain('Cannot delete Kindoo site "east-stake"');
-      expect(errorToasts[0]!.message).toContain('Maple (CO)');
       expect(errorToasts[0]!.message).toContain('Pine Stake Center');
     });
-  });
-});
-
-describe('Ward dialog Kindoo Site field', () => {
-  // The `kindoo_site_id` dropdown moved off the inline list rows and
-  // into the Ward create/edit dialog. The dialog submits the full ward
-  // payload via the existing upsert mutation — there is no dedicated
-  // dropdown-only mutation any more.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ward = (overrides: Partial<Ward> = {}): Ward => ({
-    ward_code: 'CO',
-    ward_name: 'Maple',
-    building_name: 'Maple Building',
-    seat_cap: 22,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ...(overrides as any),
-  });
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const site = (overrides: Partial<KindooSite> = {}): KindooSite => ({
-    id: 'east',
-    display_name: 'East',
-    kindoo_expected_site_name: 'East CS',
-    kindoo_eid: 5,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ...(overrides as any),
-  });
-
-  it('does not render a Kindoo Site dropdown on the list row', () => {
-    useWardsMock.mockReturnValue(liveResult<Ward>([ward()]));
-    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
-    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    expect(screen.queryByTestId('config-ward-kindoo-site-CO')).toBeNull();
-  });
-
-  it('Edit dialog defaults Kindoo Site to Home for a home-site ward', async () => {
-    const user = userEvent.setup();
-    useWardsMock.mockReturnValue(liveResult<Ward>([ward()]));
-    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
-    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-ward-edit-CO'));
-    const dd = screen.getByTestId('config-ward-kindoo-site') as HTMLSelectElement;
-    expect(Array.from(dd.options).map((o) => o.text)).toEqual(['Home', 'East']);
-    expect(dd.value).toBe('__home__');
-  });
-
-  it('Edit dialog pre-selects the existing kindoo_site_id', async () => {
-    const user = userEvent.setup();
-    useWardsMock.mockReturnValue(liveResult<Ward>([ward({ kindoo_site_id: 'east' })]));
-    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
-    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-ward-edit-CO'));
-    const dd = screen.getByTestId('config-ward-kindoo-site') as HTMLSelectElement;
-    expect(dd.value).toBe('east');
-  });
-
-  it('Edit submit writes the selected kindoo_site_id through the ward upsert', async () => {
-    const user = userEvent.setup();
-    useWardsMock.mockReturnValue(liveResult<Ward>([ward()]));
-    useBuildingsMock.mockReturnValue(
-      liveResult<Building>([
-        {
-          building_id: 'maple-building',
-          building_name: 'Maple Building',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any,
-      ]),
-    );
-    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
-    upsertWardMock.mockResolvedValue(undefined);
-    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-ward-edit-CO'));
-    await user.selectOptions(screen.getByTestId('config-ward-kindoo-site'), 'east');
-    await user.click(screen.getByTestId('config-ward-submit'));
-    expect(upsertWardMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ward_code: 'CO',
-        ward_name: 'Maple',
-        building_name: 'Maple Building',
-        seat_cap: 22,
-        kindoo_site_id: 'east',
-      }),
-    );
-  });
-
-  it('Edit submit writes null when the operator picks Home', async () => {
-    const user = userEvent.setup();
-    useWardsMock.mockReturnValue(liveResult<Ward>([ward({ kindoo_site_id: 'east' })]));
-    useBuildingsMock.mockReturnValue(
-      liveResult<Building>([
-        {
-          building_id: 'maple-building',
-          building_name: 'Maple Building',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any,
-      ]),
-    );
-    useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([site()]));
-    upsertWardMock.mockResolvedValue(undefined);
-    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-ward-edit-CO'));
-    await user.selectOptions(screen.getByTestId('config-ward-kindoo-site'), '__home__');
-    await user.click(screen.getByTestId('config-ward-submit'));
-    expect(upsertWardMock).toHaveBeenCalledWith(
-      expect.objectContaining({ ward_code: 'CO', kindoo_site_id: null }),
-    );
   });
 });
 
@@ -835,38 +610,26 @@ describe('Configuration Delete buttons gated on FK snapshots', () => {
     }) as Building;
 
   describe('KindooSitesTab', () => {
-    it('disables Delete while wards snapshot is loading', () => {
+    it('disables Delete while the buildings snapshot is loading', () => {
       useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
-      useWardsMock.mockReturnValue(loadingResult());
-      useBuildingsMock.mockReturnValue(liveResult<Building>([]));
+      useBuildingsMock.mockReturnValue(loadingResult());
       render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
       const btn = screen.getByTestId('config-kindoo-site-delete-east-stake');
       expect(btn).toBeDisabled();
       expect(btn).toHaveAttribute('title', 'Loading…');
     });
 
-    it('disables Delete while buildings snapshot is loading', () => {
-      useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
-      useWardsMock.mockReturnValue(liveResult<Ward>([]));
-      useBuildingsMock.mockReturnValue(loadingResult());
-      render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
-      const btn = screen.getByTestId('config-kindoo-site-delete-east-stake');
-      expect(btn).toBeDisabled();
-    });
-
     it('does NOT call the delete mutation when clicked while loading', async () => {
       const user = userEvent.setup();
       useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
-      useWardsMock.mockReturnValue(loadingResult());
-      useBuildingsMock.mockReturnValue(liveResult<Building>([]));
+      useBuildingsMock.mockReturnValue(loadingResult());
       render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
       await user.click(screen.getByTestId('config-kindoo-site-delete-east-stake'));
       expect(deleteKindooSiteMock).not.toHaveBeenCalled();
     });
 
-    it('enables Delete once both FK snapshots are loaded (even when empty)', () => {
+    it('enables Delete once the buildings snapshot is loaded (even when empty)', () => {
       useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([mkSite()]));
-      useWardsMock.mockReturnValue(liveResult<Ward>([]));
       useBuildingsMock.mockReturnValue(liveResult<Building>([]));
       render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
       const btn = screen.getByTestId('config-kindoo-site-delete-east-stake');

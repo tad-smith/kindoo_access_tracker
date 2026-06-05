@@ -7,7 +7,7 @@
 // The card is presentational. Callers compute the matched grant,
 // pending-removal flag, edit / remove gates; we render.
 
-import type { Seat, KindooSite, Ward } from '@kindoo/shared';
+import type { Building, Seat, KindooSite, Ward } from '@kindoo/shared';
 import { Badge } from '../ui/Badge';
 import type { GrantView } from '../../lib/grants';
 import { siteLabelForGrant } from '../../lib/kindooSites';
@@ -24,6 +24,7 @@ export interface PerGrantRosterCardProps {
   /** True iff the matching grant has a pending remove request. */
   isPendingRemoval: boolean;
   wards: readonly Ward[];
+  buildings: readonly Building[];
   sites: readonly KindooSite[];
 }
 
@@ -34,9 +35,10 @@ export function PerGrantRosterCard({
   canRemove,
   isPendingRemoval,
   wards,
+  buildings,
   sites,
 }: PerGrantRosterCardProps) {
-  const siteLabel = siteLabelForGrant(grant, wards, sites);
+  const siteLabel = siteLabelForGrant(grant, wards, buildings, sites);
 
   const memberInner = seat.member_name ? (
     <>

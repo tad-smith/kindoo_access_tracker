@@ -1,7 +1,6 @@
 // Manager Configuration route. CRUD over every editable table — config
-// keys, managers, wards, buildings, ward + stake calling templates.
-// Sub-tab is a search param `?tab=<key>` so deep-links land on the
-// right section.
+// keys, managers, Kindoo sites, buildings, wards. Sub-tab is a search
+// param `?tab=<key>` so deep-links land on the right section.
 
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
@@ -12,15 +11,7 @@ import {
 import { useRequireRole } from '../../../lib/useRequireRole';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 
-const tabSchema = z.enum([
-  'config',
-  'managers',
-  'wards',
-  'buildings',
-  'kindoo-sites',
-  'ward-callings',
-  'stake-callings',
-]);
+const tabSchema = z.enum(['config', 'managers', 'wards', 'buildings', 'kindoo-sites']);
 
 const searchSchema = z.object({
   tab: tabSchema.optional(),

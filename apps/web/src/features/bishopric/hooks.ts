@@ -19,10 +19,10 @@
 
 import { query, where, orderBy } from 'firebase/firestore';
 import { useMemo } from 'react';
-import type { AccessRequest, KindooSite, Seat, Ward } from '@kindoo/shared';
+import type { AccessRequest, Building, KindooSite, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreCollection } from '../../lib/data';
 import { db } from '../../lib/firebase';
-import { kindooSitesCol, requestsCol, seatsCol, wardsCol } from '../../lib/docs';
+import { buildingsCol, kindooSitesCol, requestsCol, seatsCol, wardsCol } from '../../lib/docs';
 import { useActiveStake } from '../../lib/useActiveStake';
 import { mergeSeatsByCanonical, type RosterResult } from '../../lib/rosters';
 
@@ -62,6 +62,20 @@ export function useStakeWards() {
   const activeStakeId = useActiveStake();
   const q = useMemo(() => (activeStakeId ? wardsCol(db, activeStakeId) : null), [activeStakeId]);
   return useFirestoreCollection<Ward>(q);
+}
+
+/**
+ * Live buildings catalogue — a ward's Kindoo site is derived from its
+ * building, so the roster's foreign-site label needs this alongside
+ * the wards list.
+ */
+export function useStakeBuildings() {
+  const activeStakeId = useActiveStake();
+  const q = useMemo(
+    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
+  return useFirestoreCollection<Building>(q);
 }
 
 /**

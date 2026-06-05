@@ -67,12 +67,17 @@ test.describe('Manager admin pages (Phase 7)', () => {
     await expect(page.getByRole('link', { name: /^Configuration$/ })).toBeVisible();
   });
 
-  test('Configuration route renders the Wards tab by default', async ({ page }) => {
+  test('Configuration renders the tabs with Buildings before Wards and no calling tabs', async ({
+    page,
+  }) => {
     await signInAsManager(page, 'mgr-cfg@example.com');
     await page.getByRole('link', { name: /^Configuration$/ }).click();
     await expect(page.getByRole('heading', { name: /^Configuration$/ })).toBeVisible();
-    // Default tab is wards — heading "Wards" rendered.
-    await expect(page.getByTestId('config-tab-wards')).toBeVisible();
+    const labels = await page.locator('.kd-config-tab').allTextContents();
+    expect(labels).toEqual(['Config', 'Managers', 'Kindoo Sites', 'Buildings', 'Wards']);
+    // The Auto Ward / Stake Callings tabs are gone.
+    await expect(page.getByTestId('config-tab-ward-callings')).toHaveCount(0);
+    await expect(page.getByTestId('config-tab-stake-callings')).toHaveCount(0);
   });
 
   test('Configuration deep-link to ?tab=managers lands on the Managers panel', async ({ page }) => {
@@ -81,59 +86,29 @@ test.describe('Manager admin pages (Phase 7)', () => {
     await expect(page.getByRole('heading', { name: /Kindoo Managers/i })).toBeVisible();
   });
 
-  test('Auto Ward Callings tab renders the table + Add modal with both flag checkboxes', async ({
+  test('Wards tab blocks Add Ward and hints to add a building first when none exist', async ({
     page,
   }) => {
-    await signInAsManager(page, 'mgr-callings@example.com');
-    await writeDoc('stakes/csnorth/wardCallingTemplates/Bishop', {
-      calling_name: 'Bishop',
-      give_app_access: true,
-      auto_kindoo_access: true,
-      sheet_order: 1,
-      created_at: new Date().toISOString(),
-      lastActor: { email: 'seed@example.com', canonical: 'seed@example.com' },
-    });
-    await writeDoc('stakes/csnorth/wardCallingTemplates/Counselor%20%2A', {
-      calling_name: 'Counselor *',
-      give_app_access: false,
-      auto_kindoo_access: true,
-      sheet_order: 2,
-      created_at: new Date().toISOString(),
-      lastActor: { email: 'seed@example.com', canonical: 'seed@example.com' },
-    });
-    await page.goto('/manager/configuration?tab=ward-callings');
-    await expect(page.getByRole('heading', { name: /Auto Ward Callings/ })).toBeVisible();
-    await expect(page.getByTestId('config-ward-callings-row-Bishop')).toBeVisible();
-    await expect(page.getByTestId('config-ward-callings-row-Counselor *')).toBeVisible();
-    // Order: Bishop (1) before Counselor * (2).
-    const rows = page.locator('[data-testid^="config-ward-callings-row-"]');
-    await expect(rows.first()).toHaveAttribute('data-testid', 'config-ward-callings-row-Bishop');
-    // Add modal exposes both flag checkboxes labeled per the rename.
-    await page.getByTestId('config-ward-callings-add-button').click();
-    const form = page.getByTestId('config-ward-callings-form');
-    await expect(form.getByLabel('Auto Kindoo Access', { exact: true })).toBeVisible();
-    await expect(form.getByLabel('Can Request Access', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Add Calling' })).toBeVisible();
+    await signInAsManager(page, 'mgr-wards@example.com');
+    await page.goto('/manager/configuration?tab=wards');
+    await expect(page.getByTestId('config-wards-add-button')).toBeDisabled();
+    await expect(page.getByTestId('config-wards-no-buildings-hint')).toContainText(
+      'Add a building first',
+    );
   });
 
-  test('Auto Ward Callings Edit modal pre-populates with calling_name read-only', async ({
-    page,
-  }) => {
-    await signInAsManager(page, 'mgr-callings-edit@example.com');
-    await writeDoc('stakes/csnorth/wardCallingTemplates/Bishop', {
-      calling_name: 'Bishop',
-      give_app_access: true,
-      auto_kindoo_access: true,
-      sheet_order: 1,
+  test('Wards tab enables Add Ward once a building exists', async ({ page }) => {
+    await signInAsManager(page, 'mgr-wards2@example.com');
+    await writeDoc('stakes/csnorth/buildings/maple-building', {
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      address: '123 Main',
       created_at: new Date().toISOString(),
+      last_modified_at: new Date().toISOString(),
       lastActor: { email: 'seed@example.com', canonical: 'seed@example.com' },
     });
-    await page.goto('/manager/configuration?tab=ward-callings');
-    await page.getByTestId('config-ward-callings-edit-Bishop').click();
-    await expect(page.getByRole('heading', { name: /Edit calling — Bishop/ })).toBeVisible();
-    const nameInput = page.getByLabel('Calling name');
-    await expect(nameInput).toHaveValue('Bishop');
-    await expect(nameInput).toHaveAttribute('readonly', '');
-    await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible();
+    await page.goto('/manager/configuration?tab=wards');
+    await expect(page.getByTestId('config-wards-add-button')).toBeEnabled();
+    await expect(page.getByTestId('config-wards-no-buildings-hint')).toHaveCount(0);
   });
 });
