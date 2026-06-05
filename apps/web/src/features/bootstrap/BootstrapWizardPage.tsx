@@ -364,7 +364,9 @@ function Step2Buildings() {
 
   async function onAdd(input: BuildingForm) {
     try {
-      await addMutation.mutateAsync(input);
+      // Pass the live buildings snapshot so the unique-display-name
+      // guard fires against the same list the wizard just rendered.
+      await addMutation.mutateAsync({ ...input, existingBuildings: buildings.data ?? [] });
       reset();
       toast('Building added.', 'success');
     } catch (err) {

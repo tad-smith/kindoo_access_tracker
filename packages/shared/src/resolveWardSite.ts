@@ -9,14 +9,24 @@ import type { Building } from './types/building.js';
 
 /**
  * Resolve the `Building` a ward is assigned to. **Id-first:** when
- * `ward.building_id` is set, match `building.building_id`; otherwise
- * fall back to matching `building.building_name`. Returns `undefined`
- * when neither resolves (unknown / orphaned reference).
+ * `ward.building_id` is set, match `building.building_id` first. On an
+ * id miss — and whenever `building_id` is absent — fall back to matching
+ * `building.building_name`. Returns `undefined` only when BOTH paths
+ * miss (unknown / orphaned reference).
  *
  * `building_id` is the immutable slug — once written it never drifts,
  * so an id match survives a building's display-name being edited. The
  * name fallback covers legacy wards that predate the slug FK (and stale
  * bundles mid-migration).
+ *
+ * The id-miss → name fallback is INTENTIONAL, not a bug: a ward whose
+ * slug points at a building that no longer exists (deleted, or a slug
+ * from an un-migrated/stale bundle) still resolves when its
+ * `building_name` snapshot matches a live building. This keeps
+ * mid-migration data legible at the cost of a soft rebind if a name
+ * happens to collide — acceptable while the additive transition keeps
+ * `building_name` populated. `undefined` is returned only when neither
+ * the slug nor the name resolves.
  */
 export function resolveWardBuilding(
   ward: Pick<Ward, 'building_id' | 'building_name'>,

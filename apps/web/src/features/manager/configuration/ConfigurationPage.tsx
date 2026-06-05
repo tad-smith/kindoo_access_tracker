@@ -25,7 +25,7 @@
 // The Config tab is single-document; it keeps its inline form, no
 // modal.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -180,23 +180,31 @@ function WardsTab() {
     [wards.data],
   );
 
-  // A ward must reference an existing building. Block Add until at
-  // least one building exists. Gate on the buildings snapshot having
-  // arrived (mirrors `deleteReady` elsewhere): while `buildings.data`
-  // is undefined (loading) we must NOT flash the hint or disable Add —
-  // deep-linking ?tab=wards would otherwise show "Add a building first"
-  // on stakes that do have buildings.
-  const noBuildings = buildings.data !== undefined && buildings.data.length === 0;
+  // A ward must reference an existing building. Gate Add on the
+  // buildings snapshot having arrived (mirrors `deleteReady`
+  // elsewhere): while `buildings.data` is undefined (loading) we must
+  // NOT flash the "Add a building first" hint — deep-linking ?tab=wards
+  // would otherwise show it on stakes that DO have buildings — but we
+  // also must not open the dialog against an unhydrated catalogue (the
+  // <Select> would be empty and the submit resolver couldn't map the
+  // chosen `building_id` to its current display name). So Add stays
+  // disabled until the snapshot lands; once it does, the known-empty
+  // case shows the hint and the populated case enables Add.
+  const buildingsReady = buildings.data !== undefined;
+  const noBuildings = buildingsReady && buildings.data!.length === 0;
 
   return (
     <div className="kd-config-section">
       <SectionHeader
         title="Wards"
         addLabel="Add Ward"
-        onAdd={() => setOpenMode('add')}
+        onAdd={() => {
+          if (!buildingsReady || noBuildings) return;
+          setOpenMode('add');
+        }}
         testid="config-wards"
-        addDisabled={noBuildings}
-        addDisabledHint="Add a building first."
+        addDisabled={!buildingsReady || noBuildings}
+        addDisabledHint={noBuildings ? 'Add a building first.' : 'Loading…'}
       />
       {noBuildings ? (
         <p className="kd-form-hint" data-testid="config-wards-no-buildings-hint">
@@ -348,12 +356,25 @@ function WardFormDialog({
   });
   const { register, handleSubmit, reset, formState } = form;
 
-  // Reset whenever the dialog flips open/closed or the editing target
-  // changes — RHF doesn't automatically re-pick up new defaultValues.
+  // Keep the latest buildings snapshot in a ref so the reset effect can
+  // read it at open-time WITHOUT depending on its identity. The
+  // catalogue is only needed to resolve a legacy ward's `building_id`
+  // from its `building_name` once, when the dialog opens — listing
+  // `buildingOptions` in the effect deps would re-fire reset() on every
+  // buildings-collection snapshot (an unrelated building add/edit in
+  // another tab, or the next hydration snapshot) and clobber a
+  // manager's in-progress edit. The <Select> options below stay live
+  // off `buildingOptions` directly; only the reset is decoupled.
+  const buildingOptionsRef = useRef(buildingOptions);
+  buildingOptionsRef.current = buildingOptions;
+
+  // Reset only when the dialog flips open or the editing target changes
+  // — RHF drives the form after the first reset; later buildings
+  // snapshots must not stomp on user edits.
   useEffect(() => {
     if (!open) return;
-    reset(wardFormDefaults(editingWard, buildingOptions));
-  }, [open, editingWard, buildingOptions, reset]);
+    reset(wardFormDefaults(editingWard, buildingOptionsRef.current));
+  }, [open, editingWard, reset]);
 
   const submit = handleSubmit(async (input) => {
     try {
@@ -460,13 +481,24 @@ function BuildingsTab() {
   // deletes a building that real wards still reference.
   const deleteReady = wards.data !== undefined;
 
+  // Gate Add on the buildings snapshot arriving (mirrors `deleteReady`).
+  // Deep-linking ?tab=buildings can land a click before buildings.data
+  // hydrates; without this gate the unique-display-name guard runs
+  // against [] and a duplicate name slips through on the first click.
+  const buildingsReady = buildings.data !== undefined;
+
   return (
     <div className="kd-config-section">
       <SectionHeader
         title="Buildings"
         addLabel="Add Building"
-        onAdd={() => setOpenMode('add')}
+        onAdd={() => {
+          if (!buildingsReady) return;
+          setOpenMode('add');
+        }}
         testid="config-buildings"
+        addDisabled={!buildingsReady}
+        addDisabledHint="Loading…"
       />
       <ul className="kd-config-rows" data-testid="config-buildings-list">
         {sorted.map((b) => (
