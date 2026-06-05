@@ -10,12 +10,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Building, Ward } from '@kindoo/shared';
+import type { AccessRequest, Building, Seat, Ward } from '@kindoo/shared';
 
 // ---- Pure helpers ---------------------------------------------------
 
 import {
   buildingDeleteBlocker,
+  buildingRenameBlocker,
   duplicateBuildingNameBlocker,
   kindooSiteDeleteBlocker,
 } from './hooks';
@@ -38,6 +39,38 @@ function building(overrides: Partial<Building> = {}): Building {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ...(overrides as any),
   } as Building;
+}
+
+function seat(overrides: Partial<Seat> = {}): Seat {
+  return {
+    member_canonical: 'a@x.com',
+    member_email: 'a@x.com',
+    member_name: 'A',
+    scope: 'CO',
+    type: 'manual',
+    callings: [],
+    building_names: ['Black Forest'],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ...(overrides as any),
+  } as Seat;
+}
+
+function request(overrides: Partial<AccessRequest> = {}): AccessRequest {
+  return {
+    request_id: 'r1',
+    type: 'add_manual',
+    scope: 'CO',
+    member_email: 'a@x.com',
+    member_canonical: 'a@x.com',
+    member_name: 'A',
+    reason: 'Calling',
+    building_names: ['Black Forest'],
+    status: 'pending',
+    requester_email: 'a@x.com',
+    requester_canonical: 'a@x.com',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ...(overrides as any),
+  } as AccessRequest;
 }
 
 describe('configuration buildingDeleteBlocker', () => {
@@ -78,6 +111,98 @@ describe('configuration duplicateBuildingNameBlocker', () => {
 
   it('matches case-insensitively and trims', () => {
     expect(duplicateBuildingNameBlocker('  pine building ', buildings, undefined)).not.toBeNull();
+  });
+});
+
+describe('configuration buildingRenameBlocker', () => {
+  it('returns null when nothing references the current name', () => {
+    expect(
+      buildingRenameBlocker('Black Forest', [seat({ building_names: ['Maple'] })], []),
+    ).toBeNull();
+  });
+
+  it('blocks when an active seat snapshots the current name', () => {
+    const msg = buildingRenameBlocker(
+      'Black Forest',
+      [seat({ building_names: ['Black Forest'] })],
+      [],
+    );
+    expect(msg).toContain('Can\'t rename "Black Forest"');
+    expect(msg).toContain('1 seat');
+    expect(msg).toContain('Remove or reassign them first.');
+  });
+
+  it('blocks when a pending request snapshots the current name', () => {
+    const msg = buildingRenameBlocker(
+      'Black Forest',
+      [],
+      [request({ status: 'pending', building_names: ['Black Forest'] })],
+    );
+    expect(msg).toContain('1 pending request');
+  });
+
+  it('allows the rename when the only reference is a completed request (historical)', () => {
+    expect(
+      buildingRenameBlocker(
+        'Black Forest',
+        [],
+        [request({ status: 'complete', building_names: ['Black Forest'] })],
+      ),
+    ).toBeNull();
+  });
+
+  it('allows the rename when the only reference is a rejected request (historical)', () => {
+    expect(
+      buildingRenameBlocker(
+        'Black Forest',
+        [],
+        [request({ status: 'rejected', building_names: ['Black Forest'] })],
+      ),
+    ).toBeNull();
+  });
+
+  it('allows the rename when the only reference is a cancelled request (historical)', () => {
+    expect(
+      buildingRenameBlocker(
+        'Black Forest',
+        [],
+        [request({ status: 'cancelled', building_names: ['Black Forest'] })],
+      ),
+    ).toBeNull();
+  });
+
+  it('counts and pluralizes seats + pending requests in the message', () => {
+    const msg = buildingRenameBlocker(
+      'Black Forest',
+      [
+        seat({ member_canonical: 's1@x.com', building_names: ['Black Forest'] }),
+        seat({ member_canonical: 's2@x.com', building_names: ['Black Forest'] }),
+        seat({ member_canonical: 's3@x.com', building_names: ['Other'] }),
+      ],
+      [
+        request({ request_id: 'r1', status: 'pending', building_names: ['Black Forest'] }),
+        request({ request_id: 'r2', status: 'pending', building_names: ['Other'] }),
+      ],
+    );
+    // 2 seats reference it, 1 pending request references it.
+    expect(msg).toContain('2 seats');
+    expect(msg).toContain('1 pending request');
+    expect(msg).toBe(
+      'Can\'t rename "Black Forest" — 2 seats and 1 pending request reference it. ' +
+        'Remove or reassign them first.',
+    );
+  });
+
+  it('tolerates a seat / request with an absent building_names array', () => {
+    expect(
+      buildingRenameBlocker(
+        'Black Forest',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        [{ ...seat(), building_names: undefined } as any],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        [{ ...request(), building_names: undefined } as any],
+      ),
+    ).toBeNull();
   });
 });
 
@@ -633,6 +758,78 @@ describe('useUpsertBuildingMutation', () => {
       }),
     ).rejects.toThrow(/Building name is required/i);
     expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  // ---- Rename ref-guard (T-68 prevent-rename) -----------------------
+
+  it('blocks a rename while an active seat references the old name', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        building_id: 'maple-building',
+        building_name: 'Oak Building', // rename
+        address: '123 Main',
+        kindoo_site_id: null,
+        previousBuildingName: 'Maple Building',
+        seats: [seat({ building_names: ['Maple Building'] })],
+        pendingRequests: [],
+      }),
+    ).rejects.toThrow(/Can't rename "Maple Building"/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks a rename while a pending request references the old name', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        building_id: 'maple-building',
+        building_name: 'Oak Building', // rename
+        address: '123 Main',
+        kindoo_site_id: null,
+        previousBuildingName: 'Maple Building',
+        seats: [],
+        pendingRequests: [request({ status: 'pending', building_names: ['Maple Building'] })],
+      }),
+    ).rejects.toThrow(/1 pending request/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('allows an address-only edit even while seats reference the name (name unchanged)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_id: 'maple-building',
+      building_name: 'Maple Building', // unchanged
+      address: '999 New Address',
+      kindoo_site_id: null,
+      previousBuildingName: 'Maple Building',
+      seats: [seat({ building_names: ['Maple Building'] })],
+      pendingRequests: [request({ status: 'pending', building_names: ['Maple Building'] })],
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body).toMatchObject({ building_name: 'Maple Building', address: '999 New Address' });
+  });
+
+  it('allows a rename when no active seat / pending request references the old name', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_id: 'maple-building',
+      building_name: 'Oak Building', // rename
+      address: '123 Main',
+      kindoo_site_id: null,
+      previousBuildingName: 'Maple Building',
+      // Only a COMPLETED request references the old name — historical,
+      // does not block.
+      seats: [seat({ building_names: ['Pine Building'] })],
+      pendingRequests: [request({ status: 'complete', building_names: ['Maple Building'] })],
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body).toMatchObject({ building_id: 'maple-building', building_name: 'Oak Building' });
   });
 });
 
