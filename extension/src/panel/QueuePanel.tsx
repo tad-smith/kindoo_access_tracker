@@ -20,10 +20,9 @@
 // renders the queue sections and its Refresh control only.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AccessRequest } from '@kindoo/shared';
+import { partitionPendingRequests, type AccessRequest, type QueueSections } from '@kindoo/shared';
 import { getMyPendingRequests, getSeatByEmail, type StakeConfigBundle } from '../lib/extensionApi';
 import { RequestCard } from './RequestCard';
-import { partitionPendingRequests, type QueueSections } from './sections';
 
 interface QueuePanelProps {
   /** Active stake — threaded from App's resolution step. */
