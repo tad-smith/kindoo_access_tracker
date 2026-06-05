@@ -264,6 +264,85 @@ describe('<ConfigurationPage />', () => {
     expect(screen.getByRole('heading', { name: /Edit ward — CO/ })).toBeInTheDocument();
   });
 
+  it('preselects the building by building_id when editing a migrated ward', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'pine-building', building_name: 'Pine Building', address: '' } as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'CO',
+          ward_name: 'Maple',
+          building_id: 'maple-building',
+          building_name: 'Maple Building',
+          seat_cap: 22,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const select = screen.getByLabelText('Building') as HTMLSelectElement;
+    // The option value is the immutable slug, not the display name.
+    expect(select.value).toBe('maple-building');
+  });
+
+  it('preselects the building for a legacy ward (no building_id) via the name fallback', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'CO',
+          ward_name: 'Maple',
+          // No building_id — legacy ward; resolve the slug from the name.
+          building_name: 'Maple Building',
+          seat_cap: 22,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const select = screen.getByLabelText('Building') as HTMLSelectElement;
+    expect(select.value).toBe('maple-building');
+  });
+
+  it('writes both building_id and building_name when a ward is saved', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    await user.type(screen.getByLabelText(/Ward code/i), 'CO');
+    await user.type(screen.getByLabelText(/Ward name/i), 'Maple');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByTestId('config-ward-submit'));
+    await vi.waitFor(() => expect(upsertWardMock).toHaveBeenCalled());
+    expect(upsertWardMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ward_code: 'CO',
+        building_id: 'maple-building',
+        building_name: 'Maple Building',
+      }),
+    );
+  });
+
   it('renders an Edit button on each Building row; building_id is never shown in form', async () => {
     const user = userEvent.setup();
     useBuildingsMock.mockReturnValue(

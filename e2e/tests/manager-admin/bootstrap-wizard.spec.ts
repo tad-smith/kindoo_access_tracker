@@ -242,7 +242,8 @@ test.describe('Bootstrap wizard gate', () => {
     await expect(step3.getByRole('option', { name: 'Main Building' })).toHaveCount(1);
     await step3.getByLabel(/^Ward code$/).fill('CO');
     await step3.getByLabel(/^Ward name$/).fill('Maple Ward');
-    await step3.locator('select').selectOption('Main Building');
+    // The option value is the immutable building_id slug; select by label.
+    await step3.locator('select').selectOption({ label: 'Main Building' });
     await step3.getByLabel(/^Seat cap$/).fill('20');
     await step3.getByRole('button', { name: /^Add ward$/ }).click();
 
@@ -290,7 +291,8 @@ test.describe('Bootstrap wizard gate', () => {
     await expect(step3.getByRole('option', { name: 'Maple Building' })).toHaveCount(1);
     await step3.getByLabel(/^Ward code$/).fill('CO');
     await step3.getByLabel(/^Ward name$/).fill('Maple Ward');
-    await step3.locator('select').selectOption('Maple Building');
+    // The option value is the immutable building_id slug; select by label.
+    await step3.locator('select').selectOption({ label: 'Maple Building' });
     await step3.getByLabel(/^Seat cap$/).fill('20');
     await step3.getByRole('button', { name: /^Add ward$/ }).click();
     await expect(

@@ -29,6 +29,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { resolveWardBuilding } from '@kindoo/shared';
 import type { Building, KindooSite, Ward } from '@kindoo/shared';
 import {
   buildingSchema,
@@ -241,7 +242,18 @@ function WardsTab() {
         buildingOptions={buildings.data ?? []}
         isPending={upsert.isPending}
         onSubmit={async (input) => {
-          await upsert.mutateAsync(input);
+          // The form carries the immutable `building_id`; resolve the
+          // selected building's current display name and write both
+          // (id-first FK + legacy name snapshot for stale bundles).
+          const selected = (buildings.data ?? []).find((b) => b.building_id === input.building_id);
+          if (!selected) throw new Error('Selected building no longer exists.');
+          await upsert.mutateAsync({
+            ward_code: input.ward_code,
+            ward_name: input.ward_name,
+            building_id: input.building_id,
+            building_name: selected.building_name,
+            seat_cap: input.seat_cap,
+          });
           toast('Ward saved.', 'success');
         }}
         onClose={() => setOpenMode('closed')}
@@ -298,20 +310,25 @@ interface WardFormDialogProps {
   onClose: () => void;
 }
 
-function wardFormDefaults(editingWard: Ward | null): WardForm {
-  return editingWard
-    ? {
-        ward_code: editingWard.ward_code,
-        ward_name: editingWard.ward_name,
-        building_name: editingWard.building_name,
-        seat_cap: editingWard.seat_cap,
-      }
-    : {
-        ward_code: '',
-        ward_name: '',
-        building_name: '',
-        seat_cap: 20,
-      };
+function wardFormDefaults(editingWard: Ward | null, buildings: readonly Building[]): WardForm {
+  if (!editingWard) {
+    return {
+      ward_code: '',
+      ward_name: '',
+      building_id: '',
+      seat_cap: 20,
+    };
+  }
+  // Preselect by `building_id`; on a legacy ward (id absent) resolve it
+  // from the building catalogue by `building_name` so the dropdown lands
+  // on the right option.
+  const resolved = resolveWardBuilding(editingWard, buildings);
+  return {
+    ward_code: editingWard.ward_code,
+    ward_name: editingWard.ward_name,
+    building_id: editingWard.building_id ?? resolved?.building_id ?? '',
+    seat_cap: editingWard.seat_cap,
+  };
 }
 
 function WardFormDialog({
@@ -327,7 +344,7 @@ function WardFormDialog({
 
   const form = useForm<WardForm>({
     resolver: zodResolver(wardSchema),
-    defaultValues: wardFormDefaults(editingWard),
+    defaultValues: wardFormDefaults(editingWard, buildingOptions),
   });
   const { register, handleSubmit, reset, formState } = form;
 
@@ -335,8 +352,8 @@ function WardFormDialog({
   // changes — RHF doesn't automatically re-pick up new defaultValues.
   useEffect(() => {
     if (!open) return;
-    reset(wardFormDefaults(editingWard));
-  }, [open, editingWard, reset]);
+    reset(wardFormDefaults(editingWard, buildingOptions));
+  }, [open, editingWard, buildingOptions, reset]);
 
   const submit = handleSubmit(async (input) => {
     try {
@@ -382,18 +399,18 @@ function WardFormDialog({
         ) : null}
         <label>
           Building
-          <Select {...register('building_name')}>
+          <Select {...register('building_id')}>
             <option value="">— Select —</option>
             {buildingOptions.map((b) => (
-              <option key={b.building_id} value={b.building_name}>
+              <option key={b.building_id} value={b.building_id}>
                 {b.building_name}
               </option>
             ))}
           </Select>
         </label>
-        {formState.errors.building_name ? (
+        {formState.errors.building_id ? (
           <p role="alert" className="kd-form-error">
-            {formState.errors.building_name.message}
+            {formState.errors.building_id.message}
           </p>
         ) : null}
         <label>
@@ -494,8 +511,14 @@ function BuildingsTab() {
         mode={openMode}
         kindooSiteOptions={kindooSites.data ?? []}
         isPending={upsert.isPending}
-        onSubmit={async (input) => {
-          await upsert.mutateAsync(input);
+        onSubmit={async (input, editingBuildingId) => {
+          await upsert.mutateAsync({
+            ...input,
+            // Carry the original slug through on edit so the write hits
+            // the SAME doc and never re-slugs a renamed building.
+            ...(editingBuildingId ? { building_id: editingBuildingId } : {}),
+            existingBuildings: buildings.data ?? [],
+          });
           toast('Building saved.', 'success');
         }}
         onClose={() => setOpenMode('closed')}
@@ -508,7 +531,8 @@ interface BuildingFormDialogProps {
   mode: 'closed' | 'add' | { kind: 'edit'; building: Building };
   kindooSiteOptions: readonly KindooSite[];
   isPending: boolean;
-  onSubmit: (input: BuildingForm) => Promise<void>;
+  /** `editingBuildingId` is the immutable slug on edit, `null` on create. */
+  onSubmit: (input: BuildingForm, editingBuildingId: string | null) => Promise<void>;
   onClose: () => void;
 }
 
@@ -546,7 +570,7 @@ function BuildingFormDialog({
 
   const submit = handleSubmit(async (input) => {
     try {
-      await onSubmit(input);
+      await onSubmit(input, editingBuilding?.building_id ?? null);
       onClose();
     } catch (err) {
       toast(errorMessage(err), 'error');

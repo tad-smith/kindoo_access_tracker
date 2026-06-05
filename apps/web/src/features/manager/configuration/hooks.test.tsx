@@ -14,7 +14,11 @@ import type { Building, Ward } from '@kindoo/shared';
 
 // ---- Pure helpers ---------------------------------------------------
 
-import { buildingDeleteBlocker, kindooSiteDeleteBlocker } from './hooks';
+import {
+  buildingDeleteBlocker,
+  duplicateBuildingNameBlocker,
+  kindooSiteDeleteBlocker,
+} from './hooks';
 
 function ward(overrides: Partial<Ward> = {}): Ward {
   return {
@@ -50,6 +54,30 @@ describe('configuration buildingDeleteBlocker', () => {
     expect(msg).toContain('2 ward(s)');
     expect(msg).toContain('Maple (CO)');
     expect(msg).toContain('Prairie (PR)');
+  });
+});
+
+describe('configuration duplicateBuildingNameBlocker', () => {
+  const buildings = [
+    building({ building_id: 'maple-building', building_name: 'Maple Building' }),
+    building({ building_id: 'pine-building', building_name: 'Pine Building' }),
+  ];
+
+  it('returns null when the name is free', () => {
+    expect(duplicateBuildingNameBlocker('Oak Building', buildings, undefined)).toBeNull();
+  });
+
+  it('blocks when another building (different slug) uses the name', () => {
+    const msg = duplicateBuildingNameBlocker('Pine Building', buildings, 'maple-building');
+    expect(msg).toContain('Building names must be unique');
+  });
+
+  it('ignores the building being edited (same slug)', () => {
+    expect(duplicateBuildingNameBlocker('Maple Building', buildings, 'maple-building')).toBeNull();
+  });
+
+  it('matches case-insensitively and trims', () => {
+    expect(duplicateBuildingNameBlocker('  pine building ', buildings, undefined)).not.toBeNull();
   });
 });
 
@@ -154,6 +182,7 @@ vi.mock('../../../lib/useActiveStake', () => ({
 }));
 
 import {
+  useDeleteBuildingMutation,
   useDeleteKindooSiteMutation,
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
@@ -415,6 +444,7 @@ describe('useUpsertWardMutation', () => {
     await result.current.mutateAsync({
       ward_code: 'CO',
       ward_name: 'Maple',
+      building_id: 'main',
       building_name: 'Main',
       seat_cap: 20,
     });
@@ -424,6 +454,8 @@ describe('useUpsertWardMutation', () => {
     expect(body).toMatchObject({
       ward_code: 'CO',
       ward_name: 'Maple',
+      // Both the immutable slug FK and the legacy name snapshot.
+      building_id: 'main',
       building_name: 'Main',
       seat_cap: 20,
       created_at: '__server_timestamp__',
@@ -440,6 +472,7 @@ describe('useUpsertWardMutation', () => {
     await result.current.mutateAsync({
       ward_code: 'CO',
       ward_name: 'Maple Renamed',
+      building_id: 'main',
       building_name: 'Main',
       seat_cap: 22,
     });
@@ -459,6 +492,7 @@ describe('useUpsertWardMutation', () => {
     await result.current.mutateAsync({
       ward_code: 'CO',
       ward_name: 'Maple',
+      building_id: 'main',
       building_name: 'Main',
       seat_cap: 20,
     });
@@ -472,6 +506,7 @@ describe('useUpsertWardMutation', () => {
     await result.current.mutateAsync({
       ward_code: 'co',
       ward_name: 'Maple',
+      building_id: 'main',
       building_name: 'Main',
       seat_cap: 20,
     });
@@ -509,6 +544,7 @@ describe('useUpsertBuildingMutation', () => {
     getDocMock.mockResolvedValue({ exists: () => true });
     const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
     await result.current.mutateAsync({
+      building_id: 'maple-building',
       building_name: 'Maple Building',
       address: '456 Other',
       kindoo_site_id: 'east-stake',
@@ -521,6 +557,58 @@ describe('useUpsertBuildingMutation', () => {
       address: '456 Other',
       last_modified_at: '__server_timestamp__',
     });
+  });
+
+  it('keeps the original slug on edit even when the display name changes', async () => {
+    // The core defect this PR fixes: editing the display name must NOT
+    // re-slug, or the write lands on a new doc and orphans the old one
+    // plus every ward / seat reference keyed on the original slug.
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_id: 'maple-building',
+      building_name: 'Oak Building', // renamed
+      address: '123 Main',
+      kindoo_site_id: null,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [ref, body] = setDocMock.mock.calls[0]!;
+    // Same doc — slug is frozen at 'maple-building', not re-derived from
+    // the new name ('oak-building').
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/buildings/maple-building' });
+    expect(body).toMatchObject({ building_id: 'maple-building', building_name: 'Oak Building' });
+  });
+
+  it('blocks the save when another building already uses the chosen name', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        building_id: 'maple-building',
+        building_name: 'Pine Building', // collides with another building
+        address: '123 Main',
+        kindoo_site_id: null,
+        existingBuildings: [
+          building({ building_id: 'pine-building', building_name: 'Pine Building' }),
+        ],
+      }),
+    ).rejects.toThrow(/Building names must be unique/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('allows the save when the only name match is the building itself', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_id: 'maple-building',
+      building_name: 'Maple Building', // unchanged name, same building
+      address: '999 New',
+      kindoo_site_id: null,
+      existingBuildings: [
+        building({ building_id: 'maple-building', building_name: 'Maple Building' }),
+      ],
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
   });
 
   it('wraps the read + write in a runTransaction (race-safe)', async () => {
@@ -545,5 +633,45 @@ describe('useUpsertBuildingMutation', () => {
       }),
     ).rejects.toThrow(/Building name is required/i);
     expect(setDocMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('useDeleteBuildingMutation — transitional OR ref-guard', () => {
+  it('blocks the delete when a ward references the building by building_id', async () => {
+    const { result } = renderHook(() => useDeleteBuildingMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        buildingId: 'maple-building',
+        buildingName: 'Maple Building',
+        // The ward's legacy name snapshot is stale (building was renamed),
+        // but its slug FK still matches → delete must block.
+        wards: [ward({ ward_code: 'CO', ward_name: 'Maple', building_id: 'maple-building' })],
+      }),
+    ).rejects.toThrow(/Cannot delete/i);
+    expect(deleteDocMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks the delete when a legacy ward references the building by name only', async () => {
+    const { result } = renderHook(() => useDeleteBuildingMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        buildingId: 'maple-building',
+        buildingName: 'Maple Building',
+        wards: [ward({ ward_code: 'CO', ward_name: 'Maple', building_name: 'Maple Building' })],
+      }),
+    ).rejects.toThrow(/Cannot delete/i);
+    expect(deleteDocMock).not.toHaveBeenCalled();
+  });
+
+  it('allows the delete when no ward references the building by id or name', async () => {
+    const { result } = renderHook(() => useDeleteBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      buildingId: 'maple-building',
+      buildingName: 'Maple Building',
+      wards: [ward({ ward_code: 'CO', ward_name: 'Maple', building_id: 'pine-building' })],
+    });
+    await waitFor(() => expect(deleteDocMock).toHaveBeenCalled());
+    const [ref] = deleteDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/buildings/maple-building' });
   });
 });

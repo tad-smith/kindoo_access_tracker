@@ -3,13 +3,24 @@
 // can't silently weaken validation.
 
 import { describe, expect, it } from 'vitest';
-import type { Ward } from '@kindoo/shared';
+import type { Building, Ward } from '@kindoo/shared';
 import {
+  clampWardDefaultsToVisible,
+  defaultBuildingsForScope,
   editSeatSchema,
+  isCrossWardSelection,
   makeNewRequestSchema,
   newRequestSchema,
   removeRequestSchema,
 } from '../schemas';
+
+// Minimal Building / Ward factories — only the fields the helpers read.
+function building(partial: Partial<Building> & Pick<Building, 'building_id'>): Building {
+  return { building_name: partial.building_id, address: '', ...partial } as Building;
+}
+function ward(partial: Partial<Ward> & Pick<Ward, 'ward_code' | 'building_name'>): Ward {
+  return partial as Ward;
+}
 
 describe('newRequestSchema', () => {
   it('accepts a valid add_manual ward-scope submission with at least one building', () => {
@@ -174,6 +185,77 @@ describe('newRequestSchema', () => {
       urgent: true,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('defaultBuildingsForScope — id-first ward→building resolution', () => {
+  const buildings = [
+    building({ building_id: 'maple-building', building_name: 'Maple Building' }),
+    building({ building_id: 'cedar-building', building_name: 'Cedar Building' }),
+  ];
+
+  it('resolves a migrated ward by building_id and returns the current display name', () => {
+    // The building was renamed after the ward was written; the slug FK
+    // still resolves and yields the building's CURRENT name.
+    const renamed = [building({ building_id: 'maple-building', building_name: 'Oak Building' })];
+    const wards = [
+      ward({ ward_code: 'CO', building_id: 'maple-building', building_name: 'Maple Building' }),
+    ];
+    expect(defaultBuildingsForScope('CO', wards, renamed)).toEqual(['Oak Building']);
+  });
+
+  it('resolves a legacy ward (no building_id) by name fallback', () => {
+    const wards = [ward({ ward_code: 'CO', building_name: 'Maple Building' })];
+    expect(defaultBuildingsForScope('CO', wards, buildings)).toEqual(['Maple Building']);
+  });
+
+  it('falls back to the ward name snapshot when the catalogue is empty', () => {
+    const wards = [ward({ ward_code: 'CO', building_name: 'Maple Building' })];
+    expect(defaultBuildingsForScope('CO', wards, [])).toEqual(['Maple Building']);
+  });
+
+  it('returns every visible building name for stake scope', () => {
+    expect(defaultBuildingsForScope('stake', [], buildings)).toEqual([
+      'Maple Building',
+      'Cedar Building',
+    ]);
+  });
+});
+
+describe('isCrossWardSelection — id-first default building', () => {
+  it('does not flag the ward default even when the building was renamed', () => {
+    // The ward references the building by slug; the building was renamed
+    // to "Oak Building". A selection of the current name is NOT cross-ward.
+    const buildings = [building({ building_id: 'maple-building', building_name: 'Oak Building' })];
+    const wards = [
+      ward({ ward_code: 'CO', building_id: 'maple-building', building_name: 'Maple Building' }),
+    ];
+    expect(isCrossWardSelection('CO', ['Oak Building'], wards, buildings)).toBe(false);
+  });
+
+  it('flags a building outside the ward default set', () => {
+    const buildings = [
+      building({ building_id: 'maple-building', building_name: 'Maple Building' }),
+      building({ building_id: 'cedar-building', building_name: 'Cedar Building' }),
+    ];
+    const wards = [
+      ward({ ward_code: 'CO', building_id: 'maple-building', building_name: 'Maple Building' }),
+    ];
+    expect(isCrossWardSelection('CO', ['Cedar Building'], wards, buildings)).toBe(true);
+  });
+});
+
+describe('clampWardDefaultsToVisible', () => {
+  it('drops a default whose building name is not in the visible set', () => {
+    const visible = [building({ building_id: 'maple-building', building_name: 'Maple Building' })];
+    expect(clampWardDefaultsToVisible('CO', ['Cedar Building'], visible)).toEqual([]);
+  });
+
+  it('keeps a default present in the visible set', () => {
+    const visible = [building({ building_id: 'maple-building', building_name: 'Maple Building' })];
+    expect(clampWardDefaultsToVisible('CO', ['Maple Building'], visible)).toEqual([
+      'Maple Building',
+    ]);
   });
 });
 

@@ -436,21 +436,31 @@ function Step3Wards() {
 
   const form = useForm<WardForm>({
     resolver: zodResolver(wardSchema),
-    defaultValues: { ward_code: '', ward_name: '', building_name: '', seat_cap: 20 },
+    defaultValues: { ward_code: '', ward_name: '', building_id: '', seat_cap: 20 },
   });
   const { register, handleSubmit, reset, formState } = form;
 
+  const buildingOptions = buildings.data ?? [];
+
   async function onAdd(input: WardForm) {
     try {
-      await addMutation.mutateAsync(input);
+      // The form carries the immutable `building_id`; resolve the
+      // building's current display name and write both fields.
+      const selected = buildingOptions.find((b) => b.building_id === input.building_id);
+      if (!selected) throw new Error('Selected building no longer exists.');
+      await addMutation.mutateAsync({
+        ward_code: input.ward_code,
+        ward_name: input.ward_name,
+        building_id: input.building_id,
+        building_name: selected.building_name,
+        seat_cap: input.seat_cap,
+      });
       reset();
       toast('Ward added.', 'success');
     } catch (err) {
       toast(errorMessage(err), 'error');
     }
   }
-
-  const buildingOptions = buildings.data ?? [];
 
   return (
     <div className="kd-wizard-form">
@@ -501,18 +511,18 @@ function Step3Wards() {
         ) : null}
         <label>
           Building
-          <Select {...register('building_name')}>
+          <Select {...register('building_id')}>
             <option value="">— Select a building —</option>
             {buildingOptions.map((b) => (
-              <option key={b.building_id} value={b.building_name}>
+              <option key={b.building_id} value={b.building_id}>
                 {b.building_name}
               </option>
             ))}
           </Select>
         </label>
-        {formState.errors.building_name ? (
+        {formState.errors.building_id ? (
           <p role="alert" className="kd-form-error">
-            {formState.errors.building_name.message}
+            {formState.errors.building_id.message}
           </p>
         ) : null}
         <label>

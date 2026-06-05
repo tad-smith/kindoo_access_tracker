@@ -149,12 +149,13 @@ export function useAddBuildingMutation() {
   });
 }
 
-// Block deletes when any ward references the building by name. Wards
-// FK on `building_name` (per firebase-schema.md §4) — orphaning a ward
-// silently breaks its building lookup. Firestore Security Rules can't
-// iterate a sibling collection so we cannot enforce this at the rules
-// layer; this client guard is the only line of defense (documented in
-// docs/firebase-migration.md as a known gap).
+// Block deletes when any ward references the building. Wards FK on the
+// immutable `building_id` slug (preferred) plus the legacy
+// `building_name`; the guard matches on EITHER during the transition.
+// Orphaning a ward silently breaks its building lookup. Firestore
+// Security Rules can't iterate a sibling collection so we cannot enforce
+// this at the rules layer; this client guard is the only line of defense
+// (documented in docs/firebase-migration.md as a known gap).
 //
 // The caller passes the live wards list (already subscribed via
 // useWards) so we don't need an extra getDocs round-trip; the ref-guard
@@ -170,7 +171,9 @@ export function useDeleteBuildingMutation() {
   return useMutation({
     mutationFn: async (input: DeleteBuildingInput) => {
       const sid = requireActiveStake(activeStakeId);
-      const refs = input.wards.filter((w) => w.building_name === input.buildingName);
+      const refs = input.wards.filter(
+        (w) => w.building_id === input.buildingId || w.building_name === input.buildingName,
+      );
       const blocker = buildingDeleteBlocker(refs);
       if (blocker) throw new Error(blocker);
       await deleteDoc(buildingRef(db, sid, input.buildingId));
@@ -198,6 +201,10 @@ export function buildingDeleteBlocker(referencingWards: ReadonlyArray<Ward>): st
 export interface WardInput {
   ward_code: string;
   ward_name: string;
+  /** Immutable slug FK to the selected building (preferred). */
+  building_id: string;
+  /** The selected building's current display name; written alongside
+   *  `building_id` so stale browser bundles keep resolving. */
   building_name: string;
   seat_cap: number;
 }
@@ -215,6 +222,8 @@ export function useAddWardMutation() {
       await setDoc(wardRef(db, sid, code), {
         ward_code: code,
         ward_name: input.ward_name.trim(),
+        // Write BOTH: id-first FK + legacy name snapshot.
+        building_id: input.building_id,
         building_name: input.building_name,
         seat_cap: input.seat_cap,
         created_at: serverTimestamp(),

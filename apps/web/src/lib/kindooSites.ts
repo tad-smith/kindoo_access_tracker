@@ -28,19 +28,12 @@ function normaliseSiteId(value: string | null | undefined): string | null {
   return value;
 }
 
-/** Index a building catalogue by `building_name` (the wards' FK). */
-function buildingsByName(
-  buildings: readonly Building[],
-): ReadonlyMap<string, Pick<Building, 'kindoo_site_id'>> {
-  return new Map(buildings.map((b) => [b.building_name, b]));
-}
-
 /**
  * Resolve a submission scope to the Kindoo site id it targets. Stake-
  * scope is locked to home (`null`) per spec §15 (Phase 2). Ward-scope
- * resolves through the ward's building. Returns `null` (home) when the
- * ward isn't in the catalogue — the form's empty-state will tell the
- * user no buildings are available.
+ * resolves through the ward's building (id-first via `resolveWardSite`).
+ * Returns `null` (home) when the ward isn't in the catalogue — the
+ * form's empty-state will tell the user no buildings are available.
  */
 export function siteIdForScope(
   scope: string,
@@ -51,7 +44,7 @@ export function siteIdForScope(
   if (scope === 'stake') return null;
   const ward = wards.find((w) => w.ward_code === scope);
   if (!ward) return null;
-  return resolveWardSite(ward, buildingsByName(buildings));
+  return resolveWardSite(ward, buildings);
 }
 
 /**
@@ -82,7 +75,7 @@ export function siteLabelForSeat(
   if (!seat.scope || seat.scope === 'stake') return null;
   const ward = wards.find((w) => w.ward_code === seat.scope);
   if (!ward) return null;
-  const siteId = resolveWardSite(ward, buildingsByName(buildings));
+  const siteId = resolveWardSite(ward, buildings);
   if (!siteId) return null;
   const site = sites.find((s) => s.id === siteId);
   if (!site) return null;
@@ -113,7 +106,7 @@ export function siteLabelForGrant(
   // Legacy / un-migrated fallback: resolve through the ward's building.
   const ward = wards.find((w) => w.ward_code === grant.scope);
   if (!ward) return null;
-  const wardSiteId = resolveWardSite(ward, buildingsByName(buildings));
+  const wardSiteId = resolveWardSite(ward, buildings);
   if (!wardSiteId) return null;
   const site = sites.find((s) => s.id === wardSiteId);
   return site ? site.display_name : null;

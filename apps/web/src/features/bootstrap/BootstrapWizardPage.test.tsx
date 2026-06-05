@@ -430,6 +430,30 @@ describe('<BootstrapWizardPage />', () => {
     );
   });
 
+  it('writes both building_id and building_name when a ward is added', async () => {
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    await user.type(screen.getByLabelText(/Ward code/i), 'CO');
+    await user.type(screen.getByLabelText(/Ward name/i), 'Maple');
+    // The select value is the immutable slug, not the display name.
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByRole('button', { name: /Add ward/i }));
+    await vi.waitFor(() => expect(addWardMutate).toHaveBeenCalled());
+    expect(addWardMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ward_code: 'CO',
+        building_id: 'maple-building',
+        building_name: 'Maple Building',
+      }),
+    );
+  });
+
   it('surfaces an error toast when manager delete fails', async () => {
     deleteManagerMutate.mockRejectedValue(new Error('Permission denied: delete kindooManagers'));
     useManagersMock.mockReturnValue(
