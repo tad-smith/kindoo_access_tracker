@@ -501,13 +501,19 @@ describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
     });
   });
 
+  // T-66: client seat updates are denied wholesale. Seats are mutated
+  // server-side only via the Admin SDK (request-completion through
+  // `markRequestComplete`, removal through `removeSeatOnRequestComplete`,
+  // import-sync callables) — all rules-bypassing. Editing a seat is
+  // request-only; there is no `allow update` clause, so omission denies.
+  // The Admin-SDK path bypasses rules entirely and is not covered here.
   describe('update', () => {
-    it('manager updates allowlisted fields → ok', async () => {
+    it('manager direct update of an allowlisted field (member_name) is denied', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
       });
       const db = managerContext(env, STAKE_ID).firestore();
-      await assertSucceeds(
+      await assertFails(
         db.doc(SEAT_PATH).update({
           member_name: 'Alice Updated',
           reason: 'Updated reason',
@@ -519,63 +525,22 @@ describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
       );
     });
 
-    it('manager mutates immutable scope → denied', async () => {
+    it('manager direct update of reason on a manual seat is denied', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
       });
       const db = managerContext(env, STAKE_ID).firestore();
       await assertFails(
         db.doc(SEAT_PATH).update({
-          scope: '01',
+          reason: 'Updated reason',
           last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
           lastActor: lastActorOf(personas.manager),
         }),
       );
     });
 
-    it('manager mutates immutable type → denied', async () => {
-      await seedAsAdmin(env, async (ctx) => {
-        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
-      });
-      const db = managerContext(env, STAKE_ID).firestore();
-      await assertFails(
-        db.doc(SEAT_PATH).update({
-          type: 'temp',
-          last_modified_at: new Date(),
-          lastActor: lastActorOf(personas.manager),
-        }),
-      );
-    });
-
-    it('manager mutates immutable member_canonical → denied', async () => {
-      await seedAsAdmin(env, async (ctx) => {
-        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
-      });
-      const db = managerContext(env, STAKE_ID).firestore();
-      await assertFails(
-        db.doc(SEAT_PATH).update({
-          member_canonical: 'bob@gmail.com',
-          last_modified_at: new Date(),
-          lastActor: lastActorOf(personas.manager),
-        }),
-      );
-    });
-
-    it('manager update with bad lastActor → denied', async () => {
-      await seedAsAdmin(env, async (ctx) => {
-        await ctx.firestore().doc(SEAT_PATH).set(manualSeatDoc());
-      });
-      const db = managerContext(env, STAKE_ID).firestore();
-      await assertFails(
-        db.doc(SEAT_PATH).update({
-          member_name: 'X',
-          last_modified_at: new Date(),
-          lastActor: { email: 'X@x.com', canonical: 'y@x.com' },
-        }),
-      );
-    });
-
-    it('manager updates an auto seat → denied (only manual/temp updatable)', async () => {
+    it('manager direct update of an auto seat is denied', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx
           .firestore()
@@ -601,49 +566,6 @@ describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
         db.doc(SEAT_PATH).update({
           member_name: 'X',
           lastActor: lastActorOf(personas.stakeMember),
-        }),
-      );
-    });
-
-    // T-43 reviewer fix: a client write that touches
-    // `duplicate_grants` must also touch `duplicate_scopes` so the
-    // server-maintained primitive mirror stays in lockstep. The rule
-    // allows the coordinated pair (server writers do this); rejects
-    // either field alone.
-    it('client update mutating duplicate_grants without duplicate_scopes is denied (mirror coupling)', async () => {
-      await seedAsAdmin(env, async (ctx) => {
-        await ctx
-          .firestore()
-          .doc(SEAT_PATH)
-          .set(manualSeatDoc({ duplicate_grants: [], duplicate_scopes: [] }));
-      });
-      const db = managerContext(env, STAKE_ID).firestore();
-      await assertFails(
-        db.doc(SEAT_PATH).update({
-          duplicate_grants: [
-            { scope: 'CO', type: 'manual', callings: [], detected_at: new Date() },
-          ],
-          last_modified_at: new Date(),
-          last_modified_by: lastActorOf(personas.manager),
-          lastActor: lastActorOf(personas.manager),
-        }),
-      );
-    });
-
-    it('client update mutating duplicate_scopes without duplicate_grants is denied (mirror coupling)', async () => {
-      await seedAsAdmin(env, async (ctx) => {
-        await ctx
-          .firestore()
-          .doc(SEAT_PATH)
-          .set(manualSeatDoc({ duplicate_grants: [], duplicate_scopes: [] }));
-      });
-      const db = managerContext(env, STAKE_ID).firestore();
-      await assertFails(
-        db.doc(SEAT_PATH).update({
-          duplicate_scopes: ['CO'],
-          last_modified_at: new Date(),
-          last_modified_by: lastActorOf(personas.manager),
-          lastActor: lastActorOf(personas.manager),
         }),
       );
     });

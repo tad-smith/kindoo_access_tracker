@@ -759,16 +759,13 @@ service cloud.firestore {
                                      memberCanonical,
                                      request.resource.data.type);
 
-        // Inline edit by manager — only certain fields, primary scope/type/email immutable
-        allow update: if isManager(stakeId)
-          && resource.data.type in ['manual', 'temp']
-          && request.resource.data.member_canonical == resource.data.member_canonical
-          && request.resource.data.scope == resource.data.scope
-          && request.resource.data.type == resource.data.type
-          && lastActorMatchesAuth(request.resource.data)
-          && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['member_name', 'reason', 'building_names', 'start_date', 'end_date',
-                       'duplicate_grants', 'last_modified_by', 'last_modified_at', 'lastActor']);
+        // Updates: denied for clients (no `allow update` clause). Seats are
+        // mutated server-side only via the Admin SDK — request-completion
+        // (`markRequestComplete`), removal (`removeSeatOnRequestComplete`),
+        // and the import-sync callables — all of which bypass rules. Editing
+        // a seat is request-only (an `edit_*` request completed by the
+        // callable). T-66 removed the formerly-orphaned manager direct-update
+        // allowlist (it had no UI exercising it after PR #197).
 
         // Direct delete from manager UI — only when no collisions remain.
         // The remove-request flow handles deletion via a Cloud Function (Admin SDK bypass) instead,

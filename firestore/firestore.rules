@@ -447,9 +447,9 @@ service cloud.firestore {
       // seats are written by the Importer via Admin SDK and bypass
       // rules entirely; client-create only allows manual/temp.
       //
-      // Updates: managers can edit a small allowlist of fields on
-      // existing manual/temp seats. Primary scope/type/canonical are
-      // immutable post-creation (a re-scope is a new request).
+      // Updates: denied for clients. Seats are mutated server-side only
+      // via the Admin SDK (request-completion / removal / import-sync),
+      // which bypasses rules. Editing a seat is request-only.
       //
       // Deletes: managers can delete a manual/temp seat with no
       // duplicate_grants. Remove-request completions go through a
@@ -498,34 +498,14 @@ service cloud.firestore {
                                      memberCanonical,
                                      request.resource.data.type);
 
-        // `duplicate_scopes` joins the allowlist alongside
-        // `duplicate_grants` so a coordinated mirror update is
-        // permitted, but the two are also coupled: if either is in
-        // the diff, the other must be too. That prevents a client
-        // from mutating `duplicate_grants` alone and leaving the
-        // primitive mirror stale (which would silently break
-        // bishopric reads + Phase B utilization counts). Server
-        // writers (Importer, `markRequestComplete`,
-        // `removeSeatOnRequestComplete`) update both together; the
-        // rule tightens the gate against any future client write.
-        allow update: if isManager(stakeId)
-          && resource.data.type in ['manual', 'temp']
-          && request.resource.data.member_canonical == resource.data.member_canonical
-          && request.resource.data.scope == resource.data.scope
-          && request.resource.data.type == resource.data.type
-          && lastActorMatchesAuth(request.resource.data)
-          && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['member_name', 'reason', 'building_names', 'start_date', 'end_date',
-                       'duplicate_grants', 'duplicate_scopes',
-                       'last_modified_by', 'last_modified_at', 'lastActor'])
-          && (
-            !('duplicate_grants' in request.resource.data.diff(resource.data).affectedKeys())
-            || 'duplicate_scopes' in request.resource.data.diff(resource.data).affectedKeys()
-          )
-          && (
-            !('duplicate_scopes' in request.resource.data.diff(resource.data).affectedKeys())
-            || 'duplicate_grants' in request.resource.data.diff(resource.data).affectedKeys()
-          );
+        // Updates: client writes are denied. Seats are mutated only
+        // server-side via the Admin SDK (request-completion through
+        // `markRequestComplete`, removal through
+        // `removeSeatOnRequestComplete`, and the import-sync callables),
+        // all of which bypass rules. Editing a seat is request-only —
+        // an `edit_*` request completed by the callable — so no client
+        // `update` path exists. No `allow update` clause: omission
+        // denies.
 
         allow delete: if isManager(stakeId)
           && resource.data.type in ['manual', 'temp']
