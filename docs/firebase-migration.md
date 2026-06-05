@@ -1304,6 +1304,8 @@ Six items shipped over seven commits (one shared-schema prep, four feature batch
 
 ## Phase 10.4 — Auto Kindoo Access overhaul
 
+> **Superseded 2026-06-04 (PR #192 / `architecture.md` D17).** The entire calling-template mechanism this phase built — the `wardCallingTemplates` / `stakeCallingTemplates` collections, their Configuration tabs, and the `give_app_access` / `auto_kindoo_access` / `sheet_order` fields — was removed. App access is now a hard-coded churchwide calling list (`packages/shared/src/appAccessCallings.ts`); seat type is role + door-grant derived (D14); sort uses the canonical `callingSortOrder` table. This section is retained as the historical record of what 10.4 shipped. Live behaviour: `spec.md` §8, `firebase-schema.md` §4.5 / §4.8, D17.
+
 **Goal:** Decouple "auto-seat creation" from "matched-a-template" by introducing a new `auto_kindoo_access: boolean` field on calling-template docs alongside the existing `give_app_access`. The Auto Ward Callings + Auto Stake Callings tabs are rebuilt as table views with three columns (Calling Name, Auto Kindoo Access, Can Request Access) and drag-to-reorder (mouse) / tap-and-hold + arrows (touch). The `give_app_access` field is renamed in the UI to "Can Request Access" (Firestore field name unchanged).
 
 **Owner:** web-engineer (web + shared schema + UI + drag-and-drop + post-deploy runbook); backend-engineer (importer gate change).
