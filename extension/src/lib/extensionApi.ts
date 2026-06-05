@@ -31,6 +31,8 @@ import type {
   DataGetStakeConfigResponse,
   DataGetSyncDataRequest,
   DataGetSyncDataResponse,
+  DataRejectRequestRequest,
+  DataRejectRequestResponse,
   DataResolveEidStakesRequest,
   DataResolveEidStakesResponse,
   DataSyncApplyFixRequest,
@@ -230,6 +232,27 @@ export async function getSeatByEmail(stakeId: string, canonical: string): Promis
   const req: DataGetSeatByEmailRequest = { type: 'data.getSeatByEmail', stakeId, canonical };
   const res: DataGetSeatByEmailResponse = await sendMessage(req);
   return unwrap(res);
+}
+
+/**
+ * Reject a pending request with a required reason. SW-side write —
+ * mirrors the web SPA's `useRejectRequest`. Throws `ExtensionApiError`
+ * on auth / rule / precondition failure (e.g. the request is no longer
+ * pending); the caller surfaces the message inline.
+ */
+export async function rejectRequest(
+  stakeId: string,
+  requestId: string,
+  rejectionReason: string,
+): Promise<void> {
+  const req: DataRejectRequestRequest = {
+    type: 'data.rejectRequest',
+    stakeId,
+    requestId,
+    rejectionReason,
+  };
+  const res: DataRejectRequestResponse = await sendMessage(req);
+  unwrap(res);
 }
 
 /**

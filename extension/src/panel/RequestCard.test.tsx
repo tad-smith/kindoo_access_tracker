@@ -20,6 +20,7 @@ const readKindooSessionMock = vi.fn();
 const markRequestCompleteMock = vi.fn();
 const getSeatByEmailMock = vi.fn();
 const writeKindooSiteEidMock = vi.fn();
+const rejectRequestMock = vi.fn();
 
 vi.mock('../content/kindoo/provision', async () => {
   const actual = await vi.importActual<typeof import('../content/kindoo/provision')>(
@@ -54,6 +55,7 @@ vi.mock('../lib/extensionApi', async () => {
     markRequestComplete: (...args: unknown[]) => markRequestCompleteMock(...args),
     getSeatByEmail: (...args: unknown[]) => getSeatByEmailMock(...args),
     writeKindooSiteEid: (...args: unknown[]) => writeKindooSiteEidMock(...args),
+    rejectRequest: (...args: unknown[]) => rejectRequestMock(...args),
   };
 });
 
@@ -110,7 +112,11 @@ function removeReq(overrides: Partial<AccessRequest> = {}): AccessRequest {
 }
 
 async function renderCard(
-  opts: { request?: AccessRequest; onDismissed?: (id: string) => void } = {},
+  opts: {
+    request?: AccessRequest;
+    onDismissed?: (id: string) => void;
+    memberHasSeat?: boolean;
+  } = {},
 ) {
   const { RequestCard } = await import('./RequestCard');
   return render(
@@ -118,6 +124,7 @@ async function renderCard(
       stakeId="csnorth"
       request={opts.request ?? addRequest()}
       bundle={bundle()}
+      memberHasSeat={opts.memberHasSeat ?? false}
       onDismissed={opts.onDismissed ?? vi.fn()}
     />,
   );
@@ -133,6 +140,7 @@ describe('RequestCard', () => {
     markRequestCompleteMock.mockReset();
     getSeatByEmailMock.mockReset();
     writeKindooSiteEidMock.mockReset();
+    rejectRequestMock.mockReset();
     readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 'tok', eid: 27994 } });
     getEnvironmentsMock.mockResolvedValue([
       { EID: 27994, Name: 'Colorado Springs North Stake', TimeZone: 'Mountain Standard Time' },
@@ -369,6 +377,7 @@ describe('RequestCard', () => {
         stakeId="csnorth"
         request={request}
         bundle={customBundle}
+        memberHasSeat={false}
         onDismissed={vi.fn()}
       />,
     );
@@ -558,5 +567,102 @@ describe('RequestCard', () => {
     await user.click(screen.getByTestId('sba-result-dismiss'));
 
     expect(onDismissed).toHaveBeenCalledWith('r1');
+  });
+
+  // ---- Reject (every card) ------------------------------------------
+
+  it('renders a Reject button on every card alongside the provision button', async () => {
+    await renderCard();
+    expect(screen.getByTestId('sba-add-r1')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-reject-r1')).toBeInTheDocument();
+  });
+
+  it('also renders a Reject button on remove cards', async () => {
+    await renderCard({ request: removeReq() });
+    expect(screen.getByTestId('sba-remove-r2')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-reject-r2')).toBeInTheDocument();
+  });
+
+  it('opens the reject dialog with confirm disabled until a reason is typed', async () => {
+    const user = userEvent.setup();
+    await renderCard();
+    await user.click(screen.getByTestId('sba-reject-r1'));
+
+    expect(screen.getByTestId('sba-reject-dialog-r1')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-reject-confirm-r1')).toBeDisabled();
+
+    await user.type(screen.getByTestId('sba-reject-reason-r1'), 'Wrong building');
+    expect(screen.getByTestId('sba-reject-confirm-r1')).toBeEnabled();
+  });
+
+  it('keeps confirm disabled when the reason is only whitespace', async () => {
+    const user = userEvent.setup();
+    await renderCard();
+    await user.click(screen.getByTestId('sba-reject-r1'));
+    await user.type(screen.getByTestId('sba-reject-reason-r1'), '   ');
+    expect(screen.getByTestId('sba-reject-confirm-r1')).toBeDisabled();
+    expect(rejectRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects with the trimmed reason and calls onDismissed on success', async () => {
+    rejectRequestMock.mockResolvedValue(undefined);
+    const onDismissed = vi.fn();
+
+    const user = userEvent.setup();
+    await renderCard({ onDismissed });
+    await user.click(screen.getByTestId('sba-reject-r1'));
+    await user.type(screen.getByTestId('sba-reject-reason-r1'), '  Not eligible  ');
+    await user.click(screen.getByTestId('sba-reject-confirm-r1'));
+
+    await waitFor(() => expect(rejectRequestMock).toHaveBeenCalledTimes(1));
+    expect(rejectRequestMock).toHaveBeenCalledWith('csnorth', 'r1', 'Not eligible');
+    expect(onDismissed).toHaveBeenCalledWith('r1');
+    // Provision flow must not run on a reject.
+    expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
+    expect(markRequestCompleteMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a reject error inline and keeps the card', async () => {
+    rejectRequestMock.mockRejectedValue(
+      new Error('Request is no longer pending (current status: complete).'),
+    );
+    const onDismissed = vi.fn();
+
+    const user = userEvent.setup();
+    await renderCard({ onDismissed });
+    await user.click(screen.getByTestId('sba-reject-r1'));
+    await user.type(screen.getByTestId('sba-reject-reason-r1'), 'Duplicate');
+    await user.click(screen.getByTestId('sba-reject-confirm-r1'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sba-reject-error-r1')).toHaveTextContent(/no longer pending/),
+    );
+    expect(onDismissed).not.toHaveBeenCalled();
+    expect(screen.getByTestId('sba-reject-dialog-r1')).toBeInTheDocument();
+  });
+
+  // ---- Add for an existing user → Reject-only -----------------------
+
+  it('hides the provision button and shows the existing-seat notice when memberHasSeat (add type)', async () => {
+    await renderCard({ memberHasSeat: true });
+    expect(screen.queryByTestId('sba-add-r1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('sba-existing-seat-r1')).toHaveTextContent(
+      /Member already has a seat/,
+    );
+    // Reject is still available.
+    expect(screen.getByTestId('sba-reject-r1')).toBeInTheDocument();
+  });
+
+  it('still shows the provision button for remove type even when memberHasSeat', async () => {
+    await renderCard({ request: removeReq(), memberHasSeat: true });
+    expect(screen.getByTestId('sba-remove-r2')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-existing-seat-r2')).not.toBeInTheDocument();
+    expect(screen.getByTestId('sba-reject-r2')).toBeInTheDocument();
+  });
+
+  it('shows the provision button for add type when memberHasSeat is false', async () => {
+    await renderCard({ memberHasSeat: false });
+    expect(screen.getByTestId('sba-add-r1')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-existing-seat-r1')).not.toBeInTheDocument();
   });
 });

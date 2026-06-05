@@ -27,6 +27,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   writeBatch,
@@ -392,6 +393,65 @@ export async function loadSeatByEmail(stakeId: string, canonical: string): Promi
   const snap = await getDoc(seatRef);
   if (!snap.exists()) return null;
   return snap.data() as Seat;
+}
+
+/**
+ * Reject a pending request — flip `status` pending → rejected with a
+ * required reason. Mirrors the web SPA's `useRejectRequest`. Runs as a
+ * `runTransaction` so the pending-status precondition is enforced
+ * atomically (a concurrent complete / cancel surfaces as a friendly
+ * precondition error rather than a silent overwrite).
+ *
+ * The Firestore reject rule's `hasOnly` allowlist is
+ * `['status', 'completer_email', 'completer_canonical', 'completed_at',
+ *   'rejection_reason', 'lastActor']` — the `tx.update` below writes
+ * EXACTLY that set (and `lastActorMatchesAuth` requires `lastActor` to
+ * mirror the authed user). Adding any other field would trip `hasOnly`
+ * and yield permission-denied, so this set is load-bearing.
+ *
+ * Manager authorisation is claim-based (`isManager(stakeId)` reads the
+ * SW's Firebase Auth token claims, same as the web). The SW already
+ * performs authenticated manager writes, so the claim is present.
+ */
+export async function rejectRequest(
+  stakeId: string,
+  requestId: string,
+  rejectionReason: string,
+  actor: User,
+): Promise<void> {
+  if (!actor.email) {
+    throw new Error('signed-in user has no email; cannot write actor ref');
+  }
+  const reason = rejectionReason.trim();
+  if (!reason) {
+    throw new Error('A rejection reason is required.');
+  }
+  const actorRef = {
+    email: actor.email,
+    canonical: canonicalEmail(actor.email),
+  };
+  const db = firestore();
+  const requestRef = doc(db, 'stakes', stakeId, 'requests', requestId);
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(requestRef);
+    if (!snap.exists()) {
+      throw new Error('Request not found.');
+    }
+    const cur = snap.data() as { status?: string };
+    if (cur.status !== 'pending') {
+      throw new Error(`Request is no longer pending (current status: ${cur.status}).`);
+    }
+    // EXACTLY the rule's `hasOnly` allowlist — see the doc comment.
+    tx.update(requestRef, {
+      status: 'rejected',
+      completer_email: actor.email,
+      completer_canonical: actorRef.canonical,
+      completed_at: serverTimestamp(),
+      rejection_reason: reason,
+      lastActor: actorRef,
+    });
+  });
 }
 
 /**

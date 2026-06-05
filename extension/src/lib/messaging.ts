@@ -204,6 +204,25 @@ export interface DataGetSyncDataRequest {
 }
 
 /**
+ * Reject a pending request. SW-side write that mirrors the web's
+ * `useRejectRequest`: a transaction flips `status` pending → rejected
+ * with a required `rejectionReason`. The Firestore rule's reject
+ * transition gates on `isManager(stakeId)`, a non-empty
+ * `rejection_reason`, `completer_canonical == auth canonical`, and a
+ * `hasOnly` allowlist of exactly the six written fields — the SW
+ * handler stamps that set and nothing else.
+ */
+export interface DataRejectRequestRequest {
+  type: 'data.rejectRequest';
+  /** Stake the request lives under. */
+  stakeId: string;
+  /** `requests/{requestId}` doc id. */
+  requestId: string;
+  /** Required free-text reason. Trimmed + non-empty checked SW-side. */
+  rejectionReason: string;
+}
+
+/**
  * Apply a single per-row Sync Phase 2 fix on the SBA side. The callable
  * itself stamps the seat write with the `SyncActor:<code>` sentinel;
  * the extension just shuttles the operator's discriminated payload
@@ -300,7 +319,8 @@ export type ExtensionRequest =
   | DataGetSyncDataRequest
   | DataSyncApplyFixRequest
   | DataWriteKindooSiteEidRequest
-  | DataResolveEidStakesRequest;
+  | DataResolveEidStakesRequest
+  | DataRejectRequestRequest;
 
 // ---- Response envelopes ------------------------------------------------
 
@@ -318,6 +338,7 @@ export type DataGetSyncDataResponse = Result<SyncDataBundle>;
 export type DataSyncApplyFixResponse = Result<SyncApplyFixResult>;
 export type DataWriteKindooSiteEidResponse = Result<{ ok: true }>;
 export type DataResolveEidStakesResponse = Result<ResolveEidStakesPayload>;
+export type DataRejectRequestResponse = Result<{ ok: true }>;
 
 /** Lookup from a request `type` to its response shape. */
 export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequest
@@ -344,7 +365,9 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
                       ? DataWriteKindooSiteEidResponse
                       : R extends DataResolveEidStakesRequest
                         ? DataResolveEidStakesResponse
-                        : never;
+                        : R extends DataRejectRequestRequest
+                          ? DataRejectRequestResponse
+                          : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 

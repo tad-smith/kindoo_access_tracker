@@ -21,6 +21,7 @@ import {
   loadSeatByEmail,
   loadStakeConfig,
   loadSyncData,
+  rejectRequest,
   resolveEidStakes,
   writeKindooConfig,
   writeKindooSiteEid,
@@ -150,6 +151,21 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
       try {
         const seat = await loadSeatByEmail(req.stakeId, req.canonical);
         return { ok: true, data: seat };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.rejectRequest': {
+      try {
+        const user = currentUser();
+        if (!user) {
+          return {
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before rejecting a request' },
+          };
+        }
+        await rejectRequest(req.stakeId, req.requestId, req.rejectionReason, user);
+        return { ok: true, data: { ok: true } };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }
