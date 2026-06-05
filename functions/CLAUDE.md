@@ -1,6 +1,6 @@
 # functions — Claude Code guidance
 
-Cloud Functions: Firestore triggers, scheduled jobs (expiry, audit reconciliation), HTTPS callables, email send, push send, audit fan-in, custom-claims sync. All server-side compute lives here.
+Cloud Functions: Firestore triggers, scheduled jobs (audit reconciliation), HTTPS callables, email send, push send, audit fan-in, custom-claims sync. All server-side compute lives here.
 
 **Owner agent:** `backend-engineer`. Also responsible for `firestore/` (rules + indexes).
 
@@ -31,7 +31,6 @@ src/
 │   ├── pushOnRequestSubmit.ts         # FCM push on new request submission
 │   └── removeSeatOnRequestComplete.ts # Admin-SDK delete for remove-request completions
 ├── scheduled/
-│   ├── runExpiry.ts                   # hourly fire; loops over stakes per expiry_hour
 │   └── reconcileAuditGaps.ts          # nightly; alerts on audit-log gaps
 ├── callable/
 │   ├── installScheduledJobs.ts        # manager-only; no-op verifier — single-loop scheduler pattern means there's nothing per-stake to install
@@ -39,7 +38,7 @@ src/
 │   ├── markRequestComplete.ts         # manager-invoked; completes a request + writes seats
 │   ├── syncApplyFix.ts                # extension Sync per-row fix applier (auto + manual + temp paths)
 │   └── backfillKindooSiteId.ts        # one-shot migration helper for Kindoo Sites
-├── services/                          # business logic (Expiry, EmailService)
+├── services/                          # business logic (EmailService)
 ├── lib/                               # admin SDK init, resend client, audit diff, helpers
 ├── tests/                             # vitest suites mirroring src/
 └── index.ts                           # function exports for Firebase deploy
@@ -55,11 +54,11 @@ No Sheets-client wrapper, no importer service, no `runImporter` / `runImportNow`
 - **Canonical email helper from `packages/shared/canonicalEmail.ts`.** Don't re-implement.
 - **Wrap all multi-doc writes in `db.runTransaction(...)`** — same atomicity guarantees as client transactions.
 - **All secrets via env injection** (`process.env.RESEND_API_KEY`); never in code.
-- **Cloud Functions 2nd gen** for everything (Cloud Run under the hood). Default timeout 60s; bump to 540s for `runExpiry` and any long-running callable. Default memory 256MB.
+- **Cloud Functions 2nd gen** for everything (Cloud Run under the hood). Default timeout 60s; bump to 540s for any long-running scheduled job or callable. Default memory 256MB.
 
 ## Don't
 
-- **Don't write audit rows directly from non-audit functions.** The parameterized `auditTrigger` handles it. Server-driven writes stamp the synthetic actor (e.g. `ExpiryTrigger`, `RemoveTrigger`) on the entity's `lastActor` and let the trigger emit the audit row. **Exception:** `createStake` writes the `platformAuditLog` row directly (per F19). The `auditTrigger` only fans per-stake `auditLog`, not the cross-stake `platformAuditLog`, and sub-1-write-a-year doesn't justify a separate trigger — keep this in-callable.
+- **Don't write audit rows directly from non-audit functions.** The parameterized `auditTrigger` handles it. Server-driven writes stamp the synthetic actor (e.g. `RemoveTrigger`) on the entity's `lastActor` and let the trigger emit the audit row. **Exception:** `createStake` writes the `platformAuditLog` row directly (per F19). The `auditTrigger` only fans per-stake `auditLog`, not the cross-stake `platformAuditLog`, and sub-1-write-a-year doesn't justify a separate trigger — keep this in-callable.
 - **Don't reach into Firestore from outside `src/services/` helpers.** Keeps test boundaries clean and audit traceable.
 - **Don't store secrets in code.** Use Secret Manager + env vars.
 - **Don't bypass `packages/shared/` types.** Define new types there.

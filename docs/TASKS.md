@@ -7,11 +7,13 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-69] Scrub `functions/CLAUDE.md` of retired-expiry references
-Status: open
+Status: done (2026-06-05 — fixed in PR #210)
 Owner: @backend-engineer
 Phase: cross-cutting
 
 The temp-seat expiry scheduler was removed in PR #210 (see `docs/changelog/remove-temp-seat-expiry-scheduler.md`, `architecture.md` D19), but `functions/CLAUDE.md` still references the deleted symbols in three places: the header line ("scheduled jobs (expiry, audit reconciliation)"), the `src/` file-layout block (`scheduled/runExpiry.ts`, `services/` "Expiry"), the don't-write-audit note (`ExpiryTrigger` example), and the deploy note ("bump to 540s for `runExpiry`"). `functions/CLAUDE.md` content is owned by `@backend-engineer`; docs-keeper owns only its structure. Replace the `runExpiry` / `Expiry.ts` / `ExpiryTrigger` mentions (the surviving synthetic actor example is `RemoveTrigger`; the only scheduled job is `reconcileAuditGaps`).
+
+Closed 2026-06-05 in the same PR: header line → "scheduled jobs (audit reconciliation)"; dropped `scheduled/runExpiry.ts` and `services/` "Expiry" from the file-layout block; `ExpiryTrigger` example → `RemoveTrigger`; deploy note → "bump to 540s for any long-running scheduled job or callable."
 
 ## [T-01] Reconcile `stamp-version.js` with workspace `version.ts` shape
 Status: done (2026-04-28)
