@@ -104,6 +104,15 @@ describe('firestore.rules — stakes/{sid}/wards/{wardCode}', () => {
       await assertSucceeds(db.doc(PATH).set(freshWardDoc()));
     });
 
+    it('manager write carrying the additive building_id slug FK → ok', async () => {
+      // Wards have no field-shape validation, so the optional `building_id`
+      // (T-67) writes freely under the role + lastActor gates. This test
+      // pins that: a future field-shape rule cannot silently reject the
+      // slug FK without turning this red.
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(db.doc(PATH).set(freshWardDoc({ building_id: 'maple-building' })));
+    });
+
     it('manager write with mismatched lastActor → denied', async () => {
       const db = managerContext(env, STAKE_ID).firestore();
       await assertFails(

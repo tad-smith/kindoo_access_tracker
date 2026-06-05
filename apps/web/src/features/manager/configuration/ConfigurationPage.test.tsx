@@ -204,13 +204,19 @@ describe('<ConfigurationPage />', () => {
     expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
   });
 
-  it('does not flash the no-buildings hint or disable Add Ward while buildings load', () => {
+  it('does not flash the no-buildings hint while buildings load (but Add stays gated)', () => {
     // Deep-linking ?tab=wards lands before the buildings snapshot
-    // arrives. The empty-state must not fire on undefined data, or
+    // arrives. The empty-state hint must not fire on undefined data, or
     // stakes that DO have buildings briefly show "Add a building first".
+    // Add itself stays disabled until the snapshot lands — opening the
+    // dialog against an unhydrated catalogue would leave an empty
+    // <Select> with no way to map the chosen building_id to a name.
     useBuildingsMock.mockReturnValue(loadingResult());
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    expect(screen.getByTestId('config-wards-add-button')).not.toBeDisabled();
+    const btn = screen.getByTestId('config-wards-add-button');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Loading…');
+    // The known-empty hint must NOT show while loading.
     expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
   });
 
@@ -262,6 +268,85 @@ describe('<ConfigurationPage />', () => {
     expect(wardCodeInput.value).toBe('CO');
     expect(wardCodeInput).toHaveAttribute('readonly');
     expect(screen.getByRole('heading', { name: /Edit ward — CO/ })).toBeInTheDocument();
+  });
+
+  it('preselects the building by building_id when editing a migrated ward', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'pine-building', building_name: 'Pine Building', address: '' } as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'CO',
+          ward_name: 'Maple',
+          building_id: 'maple-building',
+          building_name: 'Maple Building',
+          seat_cap: 22,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const select = screen.getByLabelText('Building') as HTMLSelectElement;
+    // The option value is the immutable slug, not the display name.
+    expect(select.value).toBe('maple-building');
+  });
+
+  it('preselects the building for a legacy ward (no building_id) via the name fallback', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'CO',
+          ward_name: 'Maple',
+          // No building_id — legacy ward; resolve the slug from the name.
+          building_name: 'Maple Building',
+          seat_cap: 22,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const select = screen.getByLabelText('Building') as HTMLSelectElement;
+    expect(select.value).toBe('maple-building');
+  });
+
+  it('writes both building_id and building_name when a ward is saved', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    await user.type(screen.getByLabelText(/Ward code/i), 'CO');
+    await user.type(screen.getByLabelText(/Ward name/i), 'Maple');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByTestId('config-ward-submit'));
+    await vi.waitFor(() => expect(upsertWardMock).toHaveBeenCalled());
+    expect(upsertWardMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ward_code: 'CO',
+        building_id: 'maple-building',
+        building_name: 'Maple Building',
+      }),
+    );
   });
 
   it('renders an Edit button on each Building row; building_id is never shown in form', async () => {
@@ -666,5 +751,101 @@ describe('Configuration Delete buttons gated on FK snapshots', () => {
       const btn = screen.getByTestId('config-building-delete-maple-building');
       expect(btn).not.toBeDisabled();
     });
+  });
+});
+
+// ---- Add Building gated on the buildings snapshot hydrating ---------
+//
+// The unique-display-name guard runs against the buildings snapshot the
+// caller passes. Deep-linking ?tab=buildings can land the Add click
+// before the snapshot hydrates; without a gate the guard runs against
+// [] and a duplicate name slips through on the first click. Add must
+// stay disabled until `buildings.data` is defined.
+
+describe('Add Building gated on buildings snapshot', () => {
+  it('disables Add Building while the buildings snapshot is loading', () => {
+    useBuildingsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    const btn = screen.getByTestId('config-buildings-add-button');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Loading…');
+  });
+
+  it('does not open the Add Building dialog when clicked while loading', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-buildings-add-button'));
+    expect(screen.queryByTestId('config-building-form')).toBeNull();
+  });
+
+  it('enables Add Building once the buildings snapshot is loaded (even when empty)', () => {
+    useBuildingsMock.mockReturnValue(liveResult<Building>([]));
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-buildings-add-button')).not.toBeDisabled();
+  });
+});
+
+// ---- Ward edit survives a buildings-collection snapshot -------------
+//
+// The WardFormDialog's reset() must fire only on dialog-open /
+// editingWard identity change — NOT on every buildings snapshot. An
+// unrelated buildings add/edit in another tab (or the next hydration
+// snapshot) would otherwise re-run reset() and clobber a manager's
+// in-progress ward edit. The <Select> options stay live; only reset is
+// decoupled from buildingOptions identity.
+
+describe('WardFormDialog reset stability across buildings snapshots', () => {
+  const mkWardBuilding = (overrides: Partial<Building> = {}): Building =>
+    ({
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      address: '',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(overrides as any),
+    }) as Building;
+
+  it('does not clobber an in-progress ward edit when the buildings snapshot changes', async () => {
+    const user = userEvent.setup();
+    const initialBuildings = [mkWardBuilding()];
+    useBuildingsMock.mockReturnValue(liveResult<Building>(initialBuildings));
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'CO',
+          ward_name: 'Maple',
+          building_id: 'maple-building',
+          building_name: 'Maple Building',
+          seat_cap: 22,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    const { rerender } = render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+
+    // Open the edit dialog and change the ward name (in-progress edit).
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const nameInput = screen.getByLabelText(/Ward name/i) as HTMLInputElement;
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Maple Renamed');
+    expect(nameInput.value).toBe('Maple Renamed');
+
+    // A new buildings snapshot arrives (a NEW array identity — what
+    // reactfire delivers on any buildings-collection write, even an
+    // unrelated one in another tab). The form must NOT reset.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        mkWardBuilding(),
+        mkWardBuilding({ building_id: 'pine-building', building_name: 'Pine Building' }),
+      ]),
+    );
+    rerender(<ConfigurationPage initialTab="wards" />);
+
+    // The in-progress edit survives — reset() did not fire.
+    expect((screen.getByLabelText(/Ward name/i) as HTMLInputElement).value).toBe('Maple Renamed');
+    // The Building <Select> still reflects the live catalogue (the new
+    // building is now an option), proving the dropdown stayed live.
+    const select = screen.getByLabelText('Building') as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toContain('pine-building');
   });
 });

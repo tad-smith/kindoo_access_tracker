@@ -33,7 +33,7 @@
 // re-applies whatever still differs.
 
 import type { AccessRequest, Building, DuplicateGrant, Seat, Stake, Ward } from '@kindoo/shared';
-import { resolveWardSite } from '@kindoo/shared';
+import { resolveWardBuilding, resolveWardSite } from '@kindoo/shared';
 import type { KindooSession } from './auth';
 import type {
   KindooEditUserPayload,
@@ -173,14 +173,17 @@ function resolveScopeName(scope: string, stake: Stake, wards: Ward[]): string {
  * names. Trust `req.building_names` as the source of truth regardless
  * of scope — SBA's submit form populates it (for stake scope from the
  * requester's selection; for ward scope inheriting from the ward's
- * `building_name`). Fall back to the ward's building only for legacy
- * requests where `req.building_names` is empty on a ward scope.
+ * assigned building). Fall back to the ward's building only for legacy
+ * requests where `req.building_names` is empty on a ward scope. The
+ * fallback resolves the ward's building id-first via `resolveWardBuilding`
+ * so a slug-referencing ward picks up the building's current name.
  */
-function buildingsForRequest(req: AccessRequest, wards: Ward[]): string[] {
+function buildingsForRequest(req: AccessRequest, wards: Ward[], buildings: Building[]): string[] {
   if (req.building_names.length > 0) return [...req.building_names];
   if (req.scope !== 'stake') {
     const ward = wards.find((w) => w.ward_code === req.scope);
-    if (ward) return [ward.building_name];
+    const name = ward ? resolveWardBuilding(ward, buildings)?.building_name : undefined;
+    if (name) return [name];
   }
   return [];
 }
@@ -197,25 +200,17 @@ function uniqueOrdered(a: string[], b: string[]): string[] {
   return out;
 }
 
-/** Build a `building_name → { kindoo_site_id }` lookup for `resolveWardSite`. */
-function buildingsByName(
-  buildings: Building[],
-): ReadonlyMap<string, Pick<Building, 'kindoo_site_id'>> {
-  const m = new Map<string, Pick<Building, 'kindoo_site_id'>>();
-  for (const b of buildings) m.set(b.building_name, b);
-  return m;
-}
-
 /**
  * Resolve a ward's Kindoo site id (a `KindooSite.id`, or `null` for the
  * home site). A ward's site derives from its assigned building
- * (`resolveWardSite`) — ward docs no longer carry `kindoo_site_id`.
- * `stake` scope and unknown wards resolve to `null` (home).
+ * (`resolveWardSite`, id-first) — ward docs no longer carry
+ * `kindoo_site_id`. `stake` scope and unknown wards resolve to `null`
+ * (home).
  */
 function wardSiteId(wardCode: string, wards: Ward[], buildings: Building[]): string | null {
   if (wardCode === 'stake') return null;
   const ward = wards.find((w) => w.ward_code === wardCode);
-  return ward ? resolveWardSite(ward, buildingsByName(buildings)) : null;
+  return ward ? resolveWardSite(ward, buildings) : null;
 }
 
 /**
@@ -714,7 +709,7 @@ export async function provisionAddOrChange(
   // requests target home; ward-scope requests target the ward's site
   // (derived from its building; home wards resolve to `null`).
   const requestSiteId: string | null = wardSiteId(args.request.scope, args.wards, args.buildings);
-  const requestBuildings = buildingsForRequest(args.request, args.wards);
+  const requestBuildings = buildingsForRequest(args.request, args.wards, args.buildings);
   const seatBuildings = currentSeatBuildings(args.seat, requestSiteId, args.wards, args.buildings);
   const targetBuildings = uniqueOrdered(seatBuildings, requestBuildings);
   const targetRIDs = ridsForBuildings(targetBuildings, args.buildings);

@@ -67,7 +67,7 @@ import type {
 } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
 import { computeOverCaps } from '../lib/overCaps.js';
-import { buildingsByName, wardSiteMap } from '../lib/wardSites.js';
+import { wardSiteMap } from '../lib/wardSites.js';
 
 /** R-1 race tag — mirrors `R1_AUTO_NOTE` in `apps/web/.../queue/hooks.ts`. */
 const R1_AUTO_NOTE = 'Seat already removed at completion time (no-op).';
@@ -407,7 +407,6 @@ export const markRequestComplete = onCall(
         const allSeats = allSeatsSnap.docs.map((d) => d.data() as Seat);
         wards = allWardsSnap.docs.map((d) => d.data() as Ward);
         const buildings = allBuildingsSnap.docs.map((d) => d.data() as Building);
-        const buildingSites = buildingsByName(buildings);
         wardSites = wardSiteMap(wards, buildings);
         stakeSeatCap = (stakeSnap.data() as Stake | undefined)?.stake_seat_cap ?? 0;
 
@@ -440,7 +439,7 @@ export const markRequestComplete = onCall(
           } else {
             const wardDoc = wards.find((w) => w.ward_code === cur.scope);
             if (wardDoc) {
-              newSeatSite = resolveWardSite(wardDoc, buildingSites);
+              newSeatSite = resolveWardSite(wardDoc, buildings);
             } else {
               newSeatSite = undefined; // leave the field unset on the seat
               logger.warn(
@@ -504,7 +503,7 @@ export const markRequestComplete = onCall(
           } else {
             const wardDoc = wards.find((w) => w.ward_code === cur.scope);
             if (wardDoc) {
-              requestSiteId = resolveWardSite(wardDoc, buildingSites);
+              requestSiteId = resolveWardSite(wardDoc, buildings);
             } else {
               requestSiteId = undefined; // leave the new duplicate's field unset
               logger.warn(

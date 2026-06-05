@@ -35,7 +35,9 @@ export const wardSchema = z.object({
     .max(8, 'Ward code is too long.')
     .regex(/^[A-Za-z0-9]+$/, 'Ward code is letters/digits only.'),
   ward_name: z.string().trim().min(1, 'Ward name is required.'),
-  building_name: z.string().trim().min(1, 'Building is required.'),
+  // The building `<Select>` value is the immutable `building_id` slug;
+  // the add handler resolves the display name and writes both fields.
+  building_id: z.string().trim().min(1, 'Building is required.'),
   seat_cap: z
     .number({ message: 'Seat cap must be a number.' })
     .int('Seat cap must be an integer.')

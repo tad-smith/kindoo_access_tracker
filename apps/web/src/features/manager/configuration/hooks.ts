@@ -99,6 +99,13 @@ function requireActiveStake(activeStakeId: string | null): string {
 export interface WardInput {
   ward_code: string;
   ward_name: string;
+  /** Immutable slug FK to the selected building (preferred). */
+  building_id: string;
+  /**
+   * The selected building's current display name. Written alongside
+   * `building_id` so stale browser bundles (which still read the
+   * legacy name FK) keep resolving during the transition.
+   */
   building_name: string;
   seat_cap: number;
 }
@@ -124,6 +131,9 @@ export function useUpsertWardMutation() {
         const editBody = {
           ward_code: code,
           ward_name: input.ward_name.trim(),
+          // Write BOTH: id-first resolution prefers `building_id`; the
+          // legacy `building_name` keeps stale bundles working.
+          building_id: input.building_id,
           building_name: input.building_name,
           seat_cap: input.seat_cap,
           last_modified_at: serverTimestamp(),
@@ -170,6 +180,15 @@ export function useDeleteWardMutation() {
 // ---- Buildings mutations --------------------------------------------
 
 export interface BuildingInput {
+  /**
+   * On EDIT, the existing building's immutable slug, carried through so
+   * the write targets the SAME doc even when `building_name` changed.
+   * Absent / undefined on CREATE — the slug is derived once from the
+   * name. The slug is the doc id and NEVER re-derived on edit: re-
+   * slugging a renamed building would write a new doc and orphan the old
+   * one plus every ward / seat reference keyed on the original slug.
+   */
+  building_id?: string;
   building_name: string;
   address: string;
   /**
@@ -179,6 +198,38 @@ export interface BuildingInput {
    * a building back to home overwrites a prior foreign-site assignment.
    */
   kindoo_site_id?: string | null;
+  /**
+   * Live buildings snapshot for the unique-display-name guard. Since the
+   * display name decoupled from the slug on edit, two buildings could
+   * otherwise share a name; wards' legacy `building_name` FK (and every
+   * grant-array display name) would then be ambiguous. The guard blocks
+   * a save when another building (different `building_id`) already uses
+   * the chosen name. Caller passes the snapshot it just rendered — no
+   * extra read.
+   */
+  existingBuildings?: ReadonlyArray<Building>;
+}
+
+/**
+ * Pure guard: returns a user-facing error message when another building
+ * (a different `building_id`) already uses `name`, or `null` when the
+ * name is free. Case-insensitive, trimmed — the display name is the
+ * human key wards / grants render by, so "Maple" and "maple " collide.
+ * `selfBuildingId` is the slug being edited (undefined on create) so a
+ * building doesn't conflict with itself.
+ */
+export function duplicateBuildingNameBlocker(
+  name: string,
+  buildings: ReadonlyArray<Building>,
+  selfBuildingId: string | undefined,
+): string | null {
+  const wanted = name.trim().toLowerCase();
+  if (!wanted) return null;
+  const clash = buildings.find(
+    (b) => b.building_id !== selfBuildingId && b.building_name.trim().toLowerCase() === wanted,
+  );
+  if (!clash) return null;
+  return `Another building already uses the name "${clash.building_name}". Building names must be unique.`;
 }
 
 export function useUpsertBuildingMutation() {
@@ -189,8 +240,20 @@ export function useUpsertBuildingMutation() {
     mutationFn: async (input: BuildingInput) => {
       const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
-      const slug = buildingSlug(input.building_name);
+      const name = input.building_name.trim();
+      // CREATE derives the slug once from the name; EDIT carries the
+      // existing slug through unchanged (never re-slug — the slug is the
+      // immutable doc id every ward / seat reference is keyed on).
+      const slug = input.building_id ?? buildingSlug(name);
       if (!slug) throw new Error('Building name is required.');
+      // Unique display name — blocks two buildings sharing a name now
+      // that the name decoupled from the slug on edit.
+      const dupBlocker = duplicateBuildingNameBlocker(
+        name,
+        input.existingBuildings ?? [],
+        input.building_id,
+      );
+      if (dupBlocker) throw new Error(dupBlocker);
       const ref = buildingRef(db, sid, slug);
       // Stamp `created_at` only on the create path. `merge: true` would
       // otherwise re-stamp it on every edit, silently losing the
@@ -201,7 +264,7 @@ export function useUpsertBuildingMutation() {
         const existing = await tx.get(ref);
         const editBody = {
           building_id: slug,
-          building_name: input.building_name.trim(),
+          building_name: name,
           address: input.address.trim(),
           kindoo_site_id: input.kindoo_site_id ?? null,
           last_modified_at: serverTimestamp(),
@@ -229,10 +292,12 @@ export function useUpsertBuildingMutation() {
   });
 }
 
-// Block deletes when any ward references the building by name. Wards
-// FK on `building_name` (per firebase-schema.md §4) — orphaning a ward
-// silently breaks its building lookup. Firestore Security Rules can't
-// iterate a sibling collection, so this guard is client-side only
+// Block deletes when any ward references the building. Wards FK on the
+// immutable `building_id` slug (preferred) plus the legacy
+// `building_name`; the guard matches on EITHER during the transition so
+// a mid-migration ward (id set, or name only) still blocks. Orphaning a
+// ward silently breaks its building lookup. Firestore Security Rules
+// can't iterate a sibling collection, so this guard is client-side only
 // (documented gap in docs/firebase-migration.md).
 //
 // Caller passes the wards snapshot (already subscribed via useWards) so
@@ -249,7 +314,9 @@ export function useDeleteBuildingMutation() {
   return useMutation({
     mutationFn: async (input: DeleteBuildingInput) => {
       const sid = requireActiveStake(activeStakeId);
-      const refs = input.wards.filter((w) => w.building_name === input.buildingName);
+      const refs = input.wards.filter(
+        (w) => w.building_id === input.buildingId || w.building_name === input.buildingName,
+      );
       const blocker = buildingDeleteBlocker(refs);
       if (blocker) throw new Error(blocker);
       await deleteDoc(buildingRef(db, sid, input.buildingId));

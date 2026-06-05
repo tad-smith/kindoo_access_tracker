@@ -92,7 +92,6 @@ import type {
   Ward,
 } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
-import { buildingsByName } from '../lib/wardSites.js';
 import { syncActor } from '../lib/systemActors.js';
 
 /** Seat type values the callable accepts. Matches `SeatType` in the
@@ -447,7 +446,7 @@ async function applyScopeMismatch(
       if (wardSnap.exists) {
         const ward = wardSnap.data() as Ward;
         const buildings = buildingsSnap.docs.map((d) => d.data() as Building);
-        newSiteId = resolveWardSite(ward, buildingsByName(buildings));
+        newSiteId = resolveWardSite(ward, buildings);
       }
     }
 

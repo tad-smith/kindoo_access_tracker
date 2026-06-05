@@ -200,9 +200,9 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   const stakeSeatCap = stake.data?.stake_seat_cap;
   const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wardsList, buildingsList);
   const foreignWardCodes = useMemo(() => {
-    const byName = new Map(buildingsList.map((b) => [b.building_name, b]));
+    // Id-first ward→building site resolution (slug FK, name fallback).
     return new Set(
-      wardsList.filter((w) => resolveWardSite(w, byName) != null).map((w) => w.ward_code),
+      wardsList.filter((w) => resolveWardSite(w, buildingsList) != null).map((w) => w.ward_code),
     );
   }, [wardsList, buildingsList]);
   const wardDoc = ward && ward !== 'stake' ? wardsList.find((w) => w.ward_code === ward) : null;

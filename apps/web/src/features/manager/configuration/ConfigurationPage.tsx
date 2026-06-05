@@ -25,10 +25,11 @@
 // The Config tab is single-document; it keeps its inline form, no
 // modal.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { resolveWardBuilding } from '@kindoo/shared';
 import type { Building, KindooSite, Ward } from '@kindoo/shared';
 import {
   buildingSchema,
@@ -179,23 +180,31 @@ function WardsTab() {
     [wards.data],
   );
 
-  // A ward must reference an existing building. Block Add until at
-  // least one building exists. Gate on the buildings snapshot having
-  // arrived (mirrors `deleteReady` elsewhere): while `buildings.data`
-  // is undefined (loading) we must NOT flash the hint or disable Add —
-  // deep-linking ?tab=wards would otherwise show "Add a building first"
-  // on stakes that do have buildings.
-  const noBuildings = buildings.data !== undefined && buildings.data.length === 0;
+  // A ward must reference an existing building. Gate Add on the
+  // buildings snapshot having arrived (mirrors `deleteReady`
+  // elsewhere): while `buildings.data` is undefined (loading) we must
+  // NOT flash the "Add a building first" hint — deep-linking ?tab=wards
+  // would otherwise show it on stakes that DO have buildings — but we
+  // also must not open the dialog against an unhydrated catalogue (the
+  // <Select> would be empty and the submit resolver couldn't map the
+  // chosen `building_id` to its current display name). So Add stays
+  // disabled until the snapshot lands; once it does, the known-empty
+  // case shows the hint and the populated case enables Add.
+  const buildingsReady = buildings.data !== undefined;
+  const noBuildings = buildingsReady && buildings.data!.length === 0;
 
   return (
     <div className="kd-config-section">
       <SectionHeader
         title="Wards"
         addLabel="Add Ward"
-        onAdd={() => setOpenMode('add')}
+        onAdd={() => {
+          if (!buildingsReady || noBuildings) return;
+          setOpenMode('add');
+        }}
         testid="config-wards"
-        addDisabled={noBuildings}
-        addDisabledHint="Add a building first."
+        addDisabled={!buildingsReady || noBuildings}
+        addDisabledHint={noBuildings ? 'Add a building first.' : 'Loading…'}
       />
       {noBuildings ? (
         <p className="kd-form-hint" data-testid="config-wards-no-buildings-hint">
@@ -241,7 +250,18 @@ function WardsTab() {
         buildingOptions={buildings.data ?? []}
         isPending={upsert.isPending}
         onSubmit={async (input) => {
-          await upsert.mutateAsync(input);
+          // The form carries the immutable `building_id`; resolve the
+          // selected building's current display name and write both
+          // (id-first FK + legacy name snapshot for stale bundles).
+          const selected = (buildings.data ?? []).find((b) => b.building_id === input.building_id);
+          if (!selected) throw new Error('Selected building no longer exists.');
+          await upsert.mutateAsync({
+            ward_code: input.ward_code,
+            ward_name: input.ward_name,
+            building_id: input.building_id,
+            building_name: selected.building_name,
+            seat_cap: input.seat_cap,
+          });
           toast('Ward saved.', 'success');
         }}
         onClose={() => setOpenMode('closed')}
@@ -298,20 +318,25 @@ interface WardFormDialogProps {
   onClose: () => void;
 }
 
-function wardFormDefaults(editingWard: Ward | null): WardForm {
-  return editingWard
-    ? {
-        ward_code: editingWard.ward_code,
-        ward_name: editingWard.ward_name,
-        building_name: editingWard.building_name,
-        seat_cap: editingWard.seat_cap,
-      }
-    : {
-        ward_code: '',
-        ward_name: '',
-        building_name: '',
-        seat_cap: 20,
-      };
+function wardFormDefaults(editingWard: Ward | null, buildings: readonly Building[]): WardForm {
+  if (!editingWard) {
+    return {
+      ward_code: '',
+      ward_name: '',
+      building_id: '',
+      seat_cap: 20,
+    };
+  }
+  // Preselect by `building_id`; on a legacy ward (id absent) resolve it
+  // from the building catalogue by `building_name` so the dropdown lands
+  // on the right option.
+  const resolved = resolveWardBuilding(editingWard, buildings);
+  return {
+    ward_code: editingWard.ward_code,
+    ward_name: editingWard.ward_name,
+    building_id: editingWard.building_id ?? resolved?.building_id ?? '',
+    seat_cap: editingWard.seat_cap,
+  };
 }
 
 function WardFormDialog({
@@ -327,15 +352,28 @@ function WardFormDialog({
 
   const form = useForm<WardForm>({
     resolver: zodResolver(wardSchema),
-    defaultValues: wardFormDefaults(editingWard),
+    defaultValues: wardFormDefaults(editingWard, buildingOptions),
   });
   const { register, handleSubmit, reset, formState } = form;
 
-  // Reset whenever the dialog flips open/closed or the editing target
-  // changes — RHF doesn't automatically re-pick up new defaultValues.
+  // Keep the latest buildings snapshot in a ref so the reset effect can
+  // read it at open-time WITHOUT depending on its identity. The
+  // catalogue is only needed to resolve a legacy ward's `building_id`
+  // from its `building_name` once, when the dialog opens — listing
+  // `buildingOptions` in the effect deps would re-fire reset() on every
+  // buildings-collection snapshot (an unrelated building add/edit in
+  // another tab, or the next hydration snapshot) and clobber a
+  // manager's in-progress edit. The <Select> options below stay live
+  // off `buildingOptions` directly; only the reset is decoupled.
+  const buildingOptionsRef = useRef(buildingOptions);
+  buildingOptionsRef.current = buildingOptions;
+
+  // Reset only when the dialog flips open or the editing target changes
+  // — RHF drives the form after the first reset; later buildings
+  // snapshots must not stomp on user edits.
   useEffect(() => {
     if (!open) return;
-    reset(wardFormDefaults(editingWard));
+    reset(wardFormDefaults(editingWard, buildingOptionsRef.current));
   }, [open, editingWard, reset]);
 
   const submit = handleSubmit(async (input) => {
@@ -382,18 +420,18 @@ function WardFormDialog({
         ) : null}
         <label>
           Building
-          <Select {...register('building_name')}>
+          <Select {...register('building_id')}>
             <option value="">— Select —</option>
             {buildingOptions.map((b) => (
-              <option key={b.building_id} value={b.building_name}>
+              <option key={b.building_id} value={b.building_id}>
                 {b.building_name}
               </option>
             ))}
           </Select>
         </label>
-        {formState.errors.building_name ? (
+        {formState.errors.building_id ? (
           <p role="alert" className="kd-form-error">
-            {formState.errors.building_name.message}
+            {formState.errors.building_id.message}
           </p>
         ) : null}
         <label>
@@ -443,13 +481,24 @@ function BuildingsTab() {
   // deletes a building that real wards still reference.
   const deleteReady = wards.data !== undefined;
 
+  // Gate Add on the buildings snapshot arriving (mirrors `deleteReady`).
+  // Deep-linking ?tab=buildings can land a click before buildings.data
+  // hydrates; without this gate the unique-display-name guard runs
+  // against [] and a duplicate name slips through on the first click.
+  const buildingsReady = buildings.data !== undefined;
+
   return (
     <div className="kd-config-section">
       <SectionHeader
         title="Buildings"
         addLabel="Add Building"
-        onAdd={() => setOpenMode('add')}
+        onAdd={() => {
+          if (!buildingsReady) return;
+          setOpenMode('add');
+        }}
         testid="config-buildings"
+        addDisabled={!buildingsReady}
+        addDisabledHint="Loading…"
       />
       <ul className="kd-config-rows" data-testid="config-buildings-list">
         {sorted.map((b) => (
@@ -494,8 +543,14 @@ function BuildingsTab() {
         mode={openMode}
         kindooSiteOptions={kindooSites.data ?? []}
         isPending={upsert.isPending}
-        onSubmit={async (input) => {
-          await upsert.mutateAsync(input);
+        onSubmit={async (input, editingBuildingId) => {
+          await upsert.mutateAsync({
+            ...input,
+            // Carry the original slug through on edit so the write hits
+            // the SAME doc and never re-slugs a renamed building.
+            ...(editingBuildingId ? { building_id: editingBuildingId } : {}),
+            existingBuildings: buildings.data ?? [],
+          });
           toast('Building saved.', 'success');
         }}
         onClose={() => setOpenMode('closed')}
@@ -508,7 +563,8 @@ interface BuildingFormDialogProps {
   mode: 'closed' | 'add' | { kind: 'edit'; building: Building };
   kindooSiteOptions: readonly KindooSite[];
   isPending: boolean;
-  onSubmit: (input: BuildingForm) => Promise<void>;
+  /** `editingBuildingId` is the immutable slug on edit, `null` on create. */
+  onSubmit: (input: BuildingForm, editingBuildingId: string | null) => Promise<void>;
   onClose: () => void;
 }
 
@@ -546,7 +602,7 @@ function BuildingFormDialog({
 
   const submit = handleSubmit(async (input) => {
     try {
-      await onSubmit(input);
+      await onSubmit(input, editingBuilding?.building_id ?? null);
       onClose();
     } catch (err) {
       toast(errorMessage(err), 'error');

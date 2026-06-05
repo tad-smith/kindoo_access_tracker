@@ -56,7 +56,7 @@
 // drift in Kindoo's site name doesn't trip the guard.
 
 import type { AccessRequest, Building, KindooSite, Stake, Ward } from '@kindoo/shared';
-import { resolveWardSite as resolveWardSiteId } from '@kindoo/shared';
+import { resolveWardSite } from '@kindoo/shared';
 import type { KindooEnvironment } from './endpoints';
 import type { KindooSession } from './auth';
 
@@ -130,15 +130,6 @@ export interface CheckRequestSiteArgs {
   kindooSites: KindooSite[];
 }
 
-/** Build a `building_name → { kindoo_site_id }` lookup for `resolveWardSite`. */
-function buildingsByName(
-  buildings: Building[],
-): ReadonlyMap<string, Pick<Building, 'kindoo_site_id'>> {
-  const m = new Map<string, Pick<Building, 'kindoo_site_id'>>();
-  for (const b of buildings) m.set(b.building_name, b);
-  return m;
-}
-
 /** Normalise Kindoo site names the same way the v2.1 wizard does. */
 function normaliseName(s: string): string {
   return s.trim().toLowerCase();
@@ -165,7 +156,7 @@ function resolveWardForeignSite(
 ): KindooSite | null {
   const ward = wards.find((w) => w.ward_code === wardCode);
   if (!ward) return null;
-  const siteId = resolveWardSiteId(ward, buildingsByName(buildings));
+  const siteId = resolveWardSite(ward, buildings);
   if (siteId === null) return null;
   const site = kindooSites.find((s) => s.id === siteId);
   if (!site) throw new ProvisionForeignSiteMissingError(siteId);

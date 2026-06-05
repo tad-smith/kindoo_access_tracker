@@ -129,11 +129,11 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
     [], // captured once for `defaultValues`; live updates flow through the scope-driven effect below.
   );
 
-  // Schema closes over the wards catalogue so the cross-ward-comment-
-  // required gate can map a ward code to its default building. Memo
-  // keys on `wards` so the resolver picks up the rule once the live
-  // subscription hydrates.
-  const schema = useMemo(() => makeNewRequestSchema(wards), [wards]);
+  // Schema closes over the wards + buildings catalogues so the cross-
+  // ward-comment-required gate can map a ward code to its default
+  // building (id-first). Memo keys on both so the resolver picks up the
+  // rule once the live subscriptions hydrate.
+  const schema = useMemo(() => makeNewRequestSchema(wards, buildings), [wards, buildings]);
 
   const form = useForm<NewRequestForm>({
     resolver: zodResolver(schema),
@@ -162,7 +162,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   // outside the ward's default set (cross-ward justification rule).
   // Either one flips the field label from "(optional)" to "(required)"
   // so the user sees the constraint before they hit submit.
-  const crossWard = isCrossWardSelection(watchedScope, watchedBuildings, wards);
+  const crossWard = isCrossWardSelection(watchedScope, watchedBuildings, wards, buildings);
   const commentRequired = watchedUrgent || crossWard;
 
   // Open state mirrors the scope-derived rule on every scope change:

@@ -111,4 +111,64 @@ test.describe('Manager admin pages (Phase 7)', () => {
     await expect(page.getByTestId('config-wards-add-button')).toBeEnabled();
     await expect(page.getByTestId('config-wards-no-buildings-hint')).toHaveCount(0);
   });
+
+  test('editing a building name keeps the slug doc; does not orphan it (T-67)', async ({
+    page,
+  }) => {
+    // Core defect this PR fixes: renaming a building must write the SAME
+    // doc (slug frozen), not create a new doc under the re-slugged name.
+    await signInAsManager(page, 'mgr-bldg-rename@example.com');
+    await writeDoc('stakes/csnorth/buildings/maple-building', {
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      address: '123 Main',
+      created_at: new Date().toISOString(),
+      last_modified_at: new Date().toISOString(),
+      lastActor: { email: 'seed@example.com', canonical: 'seed@example.com' },
+    });
+    await page.goto('/manager/configuration?tab=buildings');
+    await page.getByTestId('config-building-edit-maple-building').click();
+    await page.getByLabel(/^Name$/).fill('Oak Building');
+    await page.getByTestId('config-building-submit').click();
+
+    // The row keeps the same testid (slug 'maple-building'), now showing
+    // the new display name. No 'oak-building' row exists — the slug never
+    // re-derived, so the doc was updated in place rather than orphaned.
+    const list = page.getByTestId('config-buildings-list');
+    await expect(list.getByText('Oak Building')).toBeVisible();
+    await expect(page.getByTestId('config-building-edit-maple-building')).toBeVisible();
+    await expect(page.getByTestId('config-building-edit-oak-building')).toHaveCount(0);
+  });
+
+  test('blocks a building rename that collides with another building name (T-67)', async ({
+    page,
+  }) => {
+    await signInAsManager(page, 'mgr-bldg-dup@example.com');
+    await writeDoc('stakes/csnorth/buildings/maple-building', {
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      address: '123 Main',
+      created_at: new Date().toISOString(),
+      last_modified_at: new Date().toISOString(),
+      lastActor: { email: 'seed@example.com', canonical: 'seed@example.com' },
+    });
+    await writeDoc('stakes/csnorth/buildings/pine-building', {
+      building_id: 'pine-building',
+      building_name: 'Pine Building',
+      address: '456 Pine',
+      created_at: new Date().toISOString(),
+      last_modified_at: new Date().toISOString(),
+      lastActor: { email: 'seed@example.com', canonical: 'seed@example.com' },
+    });
+    await page.goto('/manager/configuration?tab=buildings');
+    await page.getByTestId('config-building-edit-maple-building').click();
+    await page.getByLabel(/^Name$/).fill('Pine Building');
+    await page.getByTestId('config-building-submit').click();
+
+    await expect(page.getByText(/Building names must be unique/i)).toBeVisible();
+    // The original building name is unchanged in the list.
+    await expect(
+      page.getByTestId('config-buildings-list').getByText('Maple Building'),
+    ).toBeVisible();
+  });
 });
