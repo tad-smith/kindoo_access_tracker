@@ -13,10 +13,19 @@
 
 import { Link } from '@tanstack/react-router';
 import { isAutomatedActor } from '@kindoo/shared';
-import type { AccessRequest, AuditLog, OverCapEntry, Seat, Stake, Ward } from '@kindoo/shared';
+import type {
+  AccessRequest,
+  AuditLog,
+  Building,
+  OverCapEntry,
+  Seat,
+  Stake,
+  Ward,
+} from '@kindoo/shared';
 import {
   usePendingRequests,
   useRecentAuditLog,
+  useStakeBuildings,
   useStakeDoc,
   useStakeSeats,
   useStakeWards,
@@ -64,6 +73,7 @@ export function ManagerDashboardPage() {
   const audit = useRecentAuditLog();
   const seats = useStakeSeats();
   const wards = useStakeWards();
+  const buildings = useStakeBuildings();
   const stake = useStakeDoc();
 
   return (
@@ -82,6 +92,7 @@ export function ManagerDashboardPage() {
           loading={seats.isLoading || wards.isLoading || stake.isLoading}
           seats={seats.data ?? []}
           wards={wards.data ?? []}
+          buildings={buildings.data ?? []}
           stakeSeatCap={stake.data?.stake_seat_cap}
         />
         <WarningsCard loading={stake.isLoading} overCaps={stake.data?.last_over_caps_json ?? []} />
@@ -157,10 +168,11 @@ interface UtilizationCardProps {
   loading: boolean;
   seats: readonly Seat[];
   wards: readonly Ward[];
+  buildings: readonly Building[];
   stakeSeatCap: number | undefined;
 }
 
-function UtilizationCard({ loading, seats, wards, stakeSeatCap }: UtilizationCardProps) {
+function UtilizationCard({ loading, seats, wards, buildings, stakeSeatCap }: UtilizationCardProps) {
   if (loading) {
     return (
       <Card data-testid="dashboard-card-utilization">
@@ -200,7 +212,7 @@ function UtilizationCard({ loading, seats, wards, stakeSeatCap }: UtilizationCar
   const sortedWards = [...wards].sort((a, b) => a.ward_code.localeCompare(b.ward_code));
 
   // Stake pool denominator nets out wards' pre-allocated reservations.
-  const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wards);
+  const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wards, buildings);
 
   return (
     <Card data-testid="dashboard-card-utilization">

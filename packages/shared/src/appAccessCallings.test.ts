@@ -31,7 +31,9 @@ describe('appAccessCallingsForScope', () => {
 
 describe('filterAppAccessCallings', () => {
   it('ward scope keeps Bishop and drops Elders Quorum President', () => {
-    expect(filterAppAccessCallings('CO', ['Bishop', 'Elders Quorum President'])).toEqual(['Bishop']);
+    expect(filterAppAccessCallings('CO', ['Bishop', 'Elders Quorum President'])).toEqual([
+      'Bishop',
+    ]);
   });
 
   it('stake scope keeps Stake Clerk and Stake High Councilor, drops Stake Young Men President', () => {

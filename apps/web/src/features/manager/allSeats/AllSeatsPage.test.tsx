@@ -126,6 +126,20 @@ function mockAll(opts: {
   });
 }
 
+function makeBuilding(building_name: string, kindoo_site_id: string | null): Building {
+  const stamp = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+  return {
+    building_id: building_name.toLowerCase().replace(/\s+/g, '-'),
+    building_name,
+    address: '',
+    kindoo_site_id,
+    created_at: stamp,
+    last_modified_at: stamp,
+    lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+}
+
 const NOW: DuplicateGrant['detected_at'] = {
   seconds: 0,
   nanoseconds: 0,
@@ -280,11 +294,13 @@ describe('<AllSeatsPage />', () => {
         makeSeat({ scope: 'FN', member_canonical: 'fn2@x.com', member_email: 'fn2@x.com' }),
       ],
       wards: [
-        makeWard({ ward_code: 'CO', seat_cap: 20 }),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        makeWard({ ward_code: 'FN', seat_cap: 20, kindoo_site_id: 'east-stake' } as any),
+        makeWard({ ward_code: 'CO', seat_cap: 20, building_name: 'Home Building' }),
+        makeWard({ ward_code: 'FN', seat_cap: 20, building_name: 'Foreign Building' }),
       ],
-      buildings: [],
+      buildings: [
+        makeBuilding('Home Building', null),
+        makeBuilding('Foreign Building', 'east-stake'),
+      ],
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage />);
@@ -353,16 +369,18 @@ describe('<AllSeatsPage />', () => {
     expect(host).toHaveTextContent(/1 \/ 50 seats used/);
   });
 
-  it('excludes foreign-site ward caps from the Stake-scope pool denominator', () => {
+  it('excludes foreign-site ward caps (resolved via the ward building) from the Stake-scope pool denominator', () => {
     // 200 - 50 (CO, home) - 0 (FN, foreign) = 150.
     mockAll({
       seats: [makeSeat({ scope: 'stake' })],
       wards: [
-        makeWard({ ward_code: 'CO', seat_cap: 50 }),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        makeWard({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' } as any),
+        makeWard({ ward_code: 'CO', seat_cap: 50, building_name: 'Home Building' }),
+        makeWard({ ward_code: 'FN', seat_cap: 50, building_name: 'Foreign Building' }),
       ],
-      buildings: [],
+      buildings: [
+        makeBuilding('Home Building', null),
+        makeBuilding('Foreign Building', 'east-stake'),
+      ],
       stake: { stake_seat_cap: 200 },
     });
     render(<AllSeatsPage initialWard="stake" />);

@@ -1,8 +1,9 @@
 // Manager Configuration page — multi-tab CRUD over every editable
 // table.
 //
-// Tabs (left → right): Config, Managers, Kindoo Sites, Wards,
-// Buildings, Auto Ward Callings, Auto Stake Callings.
+// Tabs (left → right): Config, Managers, Kindoo Sites, Buildings, Wards.
+// Buildings precede Wards because a ward must reference an existing
+// building.
 //
 // Sub-tabs are selected via a query param `?tab=<key>` so the URL
 // remains deep-linkable. The TanStack Router file-route validates the
@@ -17,9 +18,9 @@
 // id is similarly slugged from `display_name` at create time and pinned
 // for the doc's life.
 //
-// Wards and Buildings rows expose an inline Kindoo Site dropdown that
-// writes only the `kindoo_site_id` field — toggling between home (null)
-// and a foreign-site row does NOT round-trip through the Edit dialog.
+// Buildings carry a Kindoo Site selector in their Edit dialog; a ward's
+// site is derived from its assigned building, so wards have no site
+// field.
 //
 // The Config tab is single-document; it keeps its inline form, no
 // modal.
@@ -28,13 +29,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import type {
-  Building,
-  KindooSite,
-  StakeCallingTemplate,
-  Ward,
-  WardCallingTemplate,
-} from '@kindoo/shared';
+import type { Building, KindooSite, Ward } from '@kindoo/shared';
 import {
   buildingSchema,
   configSchema,
@@ -48,34 +43,21 @@ import {
   type WardForm,
 } from './schemas';
 import {
-  useAddStakeCallingTemplateMutation,
-  useAddWardCallingTemplateMutation,
   useBuildings,
   useDeleteBuildingMutation,
   useDeleteKindooSiteMutation,
   useDeleteManagerMutation,
-  useDeleteStakeCallingTemplateWithResequenceMutation,
-  useDeleteWardCallingTemplateWithResequenceMutation,
   useDeleteWardMutation,
   useKindooSites,
   useManagers,
-  useReorderStakeCallingTemplatesMutation,
-  useReorderWardCallingTemplatesMutation,
-  useStakeCallingTemplates,
   useStakeDoc,
   useUpdateStakeConfigMutation,
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
   useUpsertManagerMutation,
-  useUpsertStakeCallingTemplateMutation,
-  useUpsertWardCallingTemplateMutation,
   useUpsertWardMutation,
-  useWardCallingTemplates,
   useWards,
 } from './hooks';
-import { CallingTemplateFormDialog } from './CallingTemplateFormDialog';
-import type { CallingTemplateDialogMode } from './CallingTemplateFormDialog';
-import { CallingTemplatesTable } from './CallingTemplatesTable';
 import { TimezoneCombobox } from '../../../components/TimezoneCombobox';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
@@ -85,23 +67,14 @@ import { Switch } from '../../../components/ui/Switch';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { toast } from '../../../lib/store/toast';
 
-export type ConfigTabKey =
-  | 'config'
-  | 'managers'
-  | 'wards'
-  | 'buildings'
-  | 'kindoo-sites'
-  | 'ward-callings'
-  | 'stake-callings';
+export type ConfigTabKey = 'config' | 'managers' | 'wards' | 'buildings' | 'kindoo-sites';
 
 const TABS: Array<{ key: ConfigTabKey; label: string }> = [
   { key: 'config', label: 'Config' },
   { key: 'managers', label: 'Managers' },
   { key: 'kindoo-sites', label: 'Kindoo Sites' },
-  { key: 'wards', label: 'Wards' },
   { key: 'buildings', label: 'Buildings' },
-  { key: 'ward-callings', label: 'Auto Ward Callings' },
-  { key: 'stake-callings', label: 'Auto Stake Callings' },
+  { key: 'wards', label: 'Wards' },
 ];
 
 function errorMessage(err: unknown): string {
@@ -126,7 +99,7 @@ export function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
     <section className="kd-page-wide">
       <h1>Configuration</h1>
       <p className="kd-page-subtitle">
-        Edit Wards, Buildings, Managers, Calling Templates, and stake-level config.
+        Edit Buildings, Wards, Managers, Kindoo Sites, and stake-level config.
       </p>
 
       <nav className="kd-config-tabs" aria-label="Configuration sections">
@@ -150,8 +123,6 @@ export function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
         {tab === 'wards' ? <WardsTab /> : null}
         {tab === 'buildings' ? <BuildingsTab /> : null}
         {tab === 'kindoo-sites' ? <KindooSitesTab /> : null}
-        {tab === 'ward-callings' ? <WardCallingsTab /> : null}
-        {tab === 'stake-callings' ? <StakeCallingsTab /> : null}
       </div>
     </section>
   );
@@ -164,13 +135,27 @@ interface SectionHeaderProps {
   addLabel: string;
   onAdd: () => void;
   testid: string;
+  addDisabled?: boolean;
+  addDisabledHint?: string;
 }
 
-function SectionHeader({ title, addLabel, onAdd, testid }: SectionHeaderProps) {
+function SectionHeader({
+  title,
+  addLabel,
+  onAdd,
+  testid,
+  addDisabled,
+  addDisabledHint,
+}: SectionHeaderProps) {
   return (
     <div className="kd-config-section-header">
       <h2>{title}</h2>
-      <Button onClick={onAdd} data-testid={`${testid}-add-button`}>
+      <Button
+        onClick={onAdd}
+        disabled={addDisabled}
+        title={addDisabled ? addDisabledHint : undefined}
+        data-testid={`${testid}-add-button`}
+      >
         {addLabel}
       </Button>
     </div>
@@ -182,7 +167,6 @@ function SectionHeader({ title, addLabel, onAdd, testid }: SectionHeaderProps) {
 function WardsTab() {
   const wards = useWards();
   const buildings = useBuildings();
-  const kindooSites = useKindooSites();
   const upsert = useUpsertWardMutation();
   const del = useDeleteWardMutation();
 
@@ -195,6 +179,10 @@ function WardsTab() {
     [wards.data],
   );
 
+  // A ward must reference an existing building. Block Add until at
+  // least one building exists.
+  const noBuildings = (buildings.data ?? []).length === 0;
+
   return (
     <div className="kd-config-section">
       <SectionHeader
@@ -202,7 +190,14 @@ function WardsTab() {
         addLabel="Add Ward"
         onAdd={() => setOpenMode('add')}
         testid="config-wards"
+        addDisabled={noBuildings}
+        addDisabledHint="Add a building first."
       />
+      {noBuildings ? (
+        <p className="kd-form-hint" data-testid="config-wards-no-buildings-hint">
+          Add a building first.
+        </p>
+      ) : null}
       <ul className="kd-config-rows" data-testid="config-wards-list">
         {sorted.map((w) => (
           <li key={w.ward_code}>
@@ -240,7 +235,6 @@ function WardsTab() {
       <WardFormDialog
         mode={openMode}
         buildingOptions={buildings.data ?? []}
-        kindooSiteOptions={kindooSites.data ?? []}
         isPending={upsert.isPending}
         onSubmit={async (input) => {
           await upsert.mutateAsync(input);
@@ -252,10 +246,10 @@ function WardsTab() {
   );
 }
 
-// Kindoo Site form field rendered inside the Ward / Building dialogs.
-// "Home" (form value = `null`) is the default option; foreign sites
-// follow. The dialog form persists `kindoo_site_id` alongside the rest
-// of the entity's fields via the existing upsert mutation — no inline
+// Kindoo Site form field rendered inside the Building dialog. "Home"
+// (form value = `null`) is the default option; foreign sites follow.
+// The dialog form persists `kindoo_site_id` alongside the rest of the
+// building's fields via the existing upsert mutation — no inline
 // auto-save on the list rows.
 //
 // Wrapped over the `<select>` so the form-control hidden-value carries
@@ -295,7 +289,6 @@ function KindooSiteFormField({ value, sites, onChange, testid }: KindooSiteFormF
 interface WardFormDialogProps {
   mode: 'closed' | 'add' | { kind: 'edit'; ward: Ward };
   buildingOptions: readonly Building[];
-  kindooSiteOptions: readonly KindooSite[];
   isPending: boolean;
   onSubmit: (input: WardForm) => Promise<void>;
   onClose: () => void;
@@ -308,21 +301,18 @@ function wardFormDefaults(editingWard: Ward | null): WardForm {
         ward_name: editingWard.ward_name,
         building_name: editingWard.building_name,
         seat_cap: editingWard.seat_cap,
-        kindoo_site_id: editingWard.kindoo_site_id ?? null,
       }
     : {
         ward_code: '',
         ward_name: '',
         building_name: '',
         seat_cap: 20,
-        kindoo_site_id: null,
       };
 }
 
 function WardFormDialog({
   mode,
   buildingOptions,
-  kindooSiteOptions,
   isPending,
   onSubmit,
   onClose,
@@ -335,7 +325,7 @@ function WardFormDialog({
     resolver: zodResolver(wardSchema),
     defaultValues: wardFormDefaults(editingWard),
   });
-  const { control, register, handleSubmit, reset, formState } = form;
+  const { register, handleSubmit, reset, formState } = form;
 
   // Reset whenever the dialog flips open/closed or the editing target
   // changes — RHF doesn't automatically re-pick up new defaultValues.
@@ -411,21 +401,6 @@ function WardFormDialog({
             {formState.errors.seat_cap.message}
           </p>
         ) : null}
-        <label>
-          Kindoo site
-          <Controller
-            name="kindoo_site_id"
-            control={control}
-            render={({ field }) => (
-              <KindooSiteFormField
-                value={field.value ?? null}
-                sites={kindooSiteOptions}
-                onChange={field.onChange}
-                testid="config-ward-kindoo-site"
-              />
-            )}
-          />
-        </label>
         <Dialog.Footer>
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>
           <Button type="submit" disabled={isPending} data-testid="config-ward-submit">
@@ -626,16 +601,15 @@ function BuildingFormDialog({
 //
 // Foreign Kindoo environments this stake's managers can write to. Home
 // site is implicit (lives on the parent stake doc); the UI only edits
-// the foreign-site rows. Wards and Buildings carry a `kindoo_site_id`
-// that points at a row here (or `null` for home) — Phase 1 stores the
-// value; downstream phases consume it.
+// the foreign-site rows. Buildings carry a `kindoo_site_id` that points
+// at a row here (or `null` for home); a ward's site is derived from its
+// building.
 
 function KindooSitesTab() {
   const sites = useKindooSites();
-  // Subscribe to wards + buildings so the delete ref-guard can block
-  // when either side still points at this site (wards / buildings carry
+  // Subscribe to buildings so the delete ref-guard can block when a
+  // building still points at this site (buildings carry the
   // kindoo_site_id FK; rules don't enforce field-level integrity).
-  const wards = useWards();
   const buildings = useBuildings();
   const upsert = useUpsertKindooSiteMutation();
   const del = useDeleteKindooSiteMutation();
@@ -649,12 +623,11 @@ function KindooSitesTab() {
     [sites.data],
   );
 
-  // Gate Delete on both FK snapshots arriving. Deep-linking into
-  // ?tab=kindoo-sites can land the Delete button before wards.data /
-  // buildings.data are defined; without this gate the FK ref-guard
-  // runs against [] and deletes a site that real wards / buildings
-  // still reference.
-  const deleteReady = wards.data !== undefined && buildings.data !== undefined;
+  // Gate Delete on the buildings snapshot arriving. Deep-linking into
+  // ?tab=kindoo-sites can land the Delete button before buildings.data
+  // is defined; without this gate the FK ref-guard runs against [] and
+  // deletes a site that real buildings still reference.
+  const deleteReady = buildings.data !== undefined;
 
   return (
     <div className="kd-config-section">
@@ -665,14 +638,14 @@ function KindooSitesTab() {
         testid="config-kindoo-sites"
       />
       <p className="kd-form-hint">
-        Additional Kindoo sites your managers operate alongside the home site. Wards and buildings
-        can be assigned to a Kindoo site so the extension knows which site to provision against. The
-        home site is implicit — leave wards / buildings on “Home” unless they belong to a different
-        Kindoo environment.
+        Additional Kindoo sites your managers operate alongside the home site. Buildings can be
+        assigned to a Kindoo site so the extension knows which site to provision against; a ward
+        inherits its building's site. The home site is implicit — leave buildings on “Home” unless
+        they belong to a different Kindoo environment.
       </p>
       {sorted.length === 0 ? (
         <p className="kd-empty-state" data-testid="config-kindoo-sites-empty">
-          No foreign Kindoo sites configured. All wards and buildings default to the home site.
+          No foreign Kindoo sites configured. All buildings default to the home site.
         </p>
       ) : (
         <ul className="kd-config-rows" data-testid="config-kindoo-sites-list">
@@ -699,7 +672,6 @@ function KindooSitesTab() {
                     del
                       .mutateAsync({
                         kindooSiteId: s.id,
-                        wards: wards.data ?? [],
                         buildings: buildings.data ?? [],
                       })
                       .then(() => toast('Kindoo site deleted.', 'success'))
@@ -941,183 +913,6 @@ function ManagerFormDialog({ open, isPending, onSubmit, onClose }: ManagerFormDi
         </Dialog.Footer>
       </form>
     </Dialog>
-  );
-}
-
-// ---- Calling templates (ward + stake) -------------------------------
-//
-// Two tabs share the same table + dialog component. Order column NOT
-// shown — implicit from row position; lower `sheet_order` renders
-// higher. Drag-to-reorder is mouse + keyboard via @dnd-kit; touch goes
-// through the per-row long-press path inside `CallingTemplatesTable`.
-
-function WardCallingsTab() {
-  const templates = useWardCallingTemplates();
-  const add = useAddWardCallingTemplateMutation();
-  const upsert = useUpsertWardCallingTemplateMutation();
-  const del = useDeleteWardCallingTemplateWithResequenceMutation();
-  const reorder = useReorderWardCallingTemplatesMutation();
-  return (
-    <CallingTemplatesPanel
-      title="Auto Ward Callings"
-      addLabel="Add Ward Calling"
-      testid="ward-callings"
-      data={templates.data}
-      isPending={add.isPending || upsert.isPending}
-      onAdd={async (input) => {
-        await add.mutateAsync({
-          calling_name: input.calling_name,
-          give_app_access: input.give_app_access,
-          auto_kindoo_access: input.auto_kindoo_access,
-          existing: templates.data ?? [],
-        });
-        toast('Calling added.', 'success');
-      }}
-      onEdit={async (input) => {
-        await upsert.mutateAsync({
-          calling_name: input.calling_name,
-          give_app_access: input.give_app_access,
-          auto_kindoo_access: input.auto_kindoo_access,
-          sheet_order: input.sheet_order,
-        });
-        toast('Calling saved.', 'success');
-      }}
-      onDelete={async (template) => {
-        await del.mutateAsync({
-          callingName: template.calling_name,
-          current: templates.data ?? [],
-        });
-        toast('Calling deleted.', 'success');
-      }}
-      onReorder={async (orderedCallingNames) => {
-        await reorder.mutateAsync({
-          orderedCallingNames,
-          current: templates.data ?? [],
-        });
-      }}
-      hint="Wildcards (`Counselor *`) are supported. Sheet order breaks ties between wildcard matches. Drag rows to reorder."
-    />
-  );
-}
-
-function StakeCallingsTab() {
-  const templates = useStakeCallingTemplates();
-  const add = useAddStakeCallingTemplateMutation();
-  const upsert = useUpsertStakeCallingTemplateMutation();
-  const del = useDeleteStakeCallingTemplateWithResequenceMutation();
-  const reorder = useReorderStakeCallingTemplatesMutation();
-  return (
-    <CallingTemplatesPanel
-      title="Auto Stake Callings"
-      addLabel="Add Stake Calling"
-      testid="stake-callings"
-      data={templates.data}
-      isPending={add.isPending || upsert.isPending}
-      onAdd={async (input) => {
-        await add.mutateAsync({
-          calling_name: input.calling_name,
-          give_app_access: input.give_app_access,
-          auto_kindoo_access: input.auto_kindoo_access,
-          existing: templates.data ?? [],
-        });
-        toast('Calling added.', 'success');
-      }}
-      onEdit={async (input) => {
-        await upsert.mutateAsync({
-          calling_name: input.calling_name,
-          give_app_access: input.give_app_access,
-          auto_kindoo_access: input.auto_kindoo_access,
-          sheet_order: input.sheet_order,
-        });
-        toast('Calling saved.', 'success');
-      }}
-      onDelete={async (template) => {
-        await del.mutateAsync({
-          callingName: template.calling_name,
-          current: templates.data ?? [],
-        });
-        toast('Calling deleted.', 'success');
-      }}
-      onReorder={async (orderedCallingNames) => {
-        await reorder.mutateAsync({
-          orderedCallingNames,
-          current: templates.data ?? [],
-        });
-      }}
-      hint="Same shape as ward callings; applied to the Stake tab of the LCR sheet. Drag rows to reorder."
-    />
-  );
-}
-
-interface CallingTemplatesPanelProps {
-  title: string;
-  addLabel: string;
-  testid: string;
-  data: readonly (WardCallingTemplate | StakeCallingTemplate)[] | undefined;
-  isPending: boolean;
-  onAdd: (input: {
-    calling_name: string;
-    give_app_access: boolean;
-    auto_kindoo_access: boolean;
-    sheet_order: number;
-  }) => Promise<void>;
-  onEdit: (input: {
-    calling_name: string;
-    give_app_access: boolean;
-    auto_kindoo_access: boolean;
-    sheet_order: number;
-  }) => Promise<void>;
-  onDelete: (template: WardCallingTemplate) => Promise<void>;
-  onReorder: (orderedCallingNames: string[]) => Promise<void>;
-  hint: string;
-}
-
-function CallingTemplatesPanel({
-  title,
-  addLabel,
-  testid,
-  data,
-  isPending,
-  onAdd,
-  onEdit,
-  onDelete,
-  onReorder,
-  hint,
-}: CallingTemplatesPanelProps) {
-  const [mode, setMode] = useState<CallingTemplateDialogMode>('closed');
-
-  const sorted = useMemo(
-    () => [...(data ?? [])].sort((a, b) => a.sheet_order - b.sheet_order),
-    [data],
-  );
-
-  return (
-    <div className="kd-config-section">
-      <SectionHeader
-        title={title}
-        addLabel={addLabel}
-        onAdd={() => setMode('add')}
-        testid={`config-${testid}`}
-      />
-      <p className="kd-form-hint">{hint}</p>
-      <CallingTemplatesTable
-        testid={testid}
-        templates={sorted}
-        onEdit={(t) => setMode({ kind: 'edit', template: t })}
-        onDelete={(t) => onDelete(t).catch((err) => toast(errorMessage(err), 'error'))}
-        onReorder={(orderedCallingNames) =>
-          onReorder(orderedCallingNames).catch((err) => toast(errorMessage(err), 'error'))
-        }
-      />
-      <CallingTemplateFormDialog
-        mode={mode}
-        isPending={isPending}
-        testid={testid}
-        onSubmitAdd={onAdd}
-        onSubmitEdit={onEdit}
-        onClose={() => setMode('closed')}
-      />
-    </div>
   );
 }
 

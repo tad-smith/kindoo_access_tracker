@@ -19,6 +19,7 @@ const usePendingMock = vi.fn();
 const useRecentAuditMock = vi.fn();
 const useStakeSeatsMock = vi.fn();
 const useStakeWardsMock = vi.fn();
+const useStakeBuildingsMock = vi.fn();
 const useStakeDocMock = vi.fn();
 
 vi.mock('./hooks', () => ({
@@ -26,6 +27,7 @@ vi.mock('./hooks', () => ({
   useRecentAuditLog: () => useRecentAuditMock(),
   useStakeSeats: () => useStakeSeatsMock(),
   useStakeWards: () => useStakeWardsMock(),
+  useStakeBuildings: () => useStakeBuildingsMock(),
   useStakeDoc: () => useStakeDocMock(),
 }));
 
@@ -56,6 +58,8 @@ function mockAll(opts: {
   audit?: AuditLog[];
   seats?: Seat[];
   wards?: Ward[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  buildings?: any[];
   stake?: Partial<Stake>;
   loading?: boolean;
 }) {
@@ -64,6 +68,7 @@ function mockAll(opts: {
   useRecentAuditMock.mockReturnValue(liveResult(opts.audit ?? [], loading));
   useStakeSeatsMock.mockReturnValue(liveResult(opts.seats ?? [], loading));
   useStakeWardsMock.mockReturnValue(liveResult(opts.wards ?? [], loading));
+  useStakeBuildingsMock.mockReturnValue(liveResult(opts.buildings ?? [], loading));
   useStakeDocMock.mockReturnValue({
     data: opts.stake,
     error: null,
@@ -176,15 +181,18 @@ describe('<ManagerDashboardPage />', () => {
     expect(within(util).getByText(/1 \/ 50 seats used/)).toBeInTheDocument();
   });
 
-  it('excludes foreign-site ward caps from the Stake-bar denominator', async () => {
-    // CO is home (50 cap); FN is on a foreign Kindoo site (50 cap,
-    // excluded). Home portion = 200 - 50 = 150.
+  it('excludes foreign-site ward caps (resolved via the ward building) from the Stake-bar denominator', async () => {
+    // CO's building is home (50 cap); FN's building is on a foreign
+    // Kindoo site (50 cap, excluded). Home portion = 200 - 50 = 150.
     mockAll({
       seats: [makeSeat({ scope: 'stake', member_canonical: 's1@x.com', member_email: 's1@x.com' })],
       wards: [
-        makeWard({ ward_code: 'CO', seat_cap: 50 }),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        makeWard({ ward_code: 'FN', seat_cap: 50, kindoo_site_id: 'east-stake' } as any),
+        makeWard({ ward_code: 'CO', seat_cap: 50, building_name: 'Home Building' }),
+        makeWard({ ward_code: 'FN', seat_cap: 50, building_name: 'Foreign Building' }),
+      ],
+      buildings: [
+        { building_id: 'home', building_name: 'Home Building', kindoo_site_id: null },
+        { building_id: 'foreign', building_name: 'Foreign Building', kindoo_site_id: 'east-stake' },
       ],
       stake: { stake_seat_cap: 200, last_over_caps_json: [] },
     });

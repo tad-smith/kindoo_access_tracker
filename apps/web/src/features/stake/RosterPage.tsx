@@ -16,7 +16,7 @@ import { stakeRef } from '../../lib/docs';
 import { db } from '../../lib/firebase';
 import { useActiveStake } from '../../lib/useActiveStake';
 import { usePrincipal } from '../../lib/principal';
-import { useKindooSites, useStakeRoster, useStakeWards } from './hooks';
+import { useKindooSites, useStakeBuildings, useStakeRoster, useStakeWards } from './hooks';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { stakeAvailablePoolSize } from '../../lib/render/stakePool';
@@ -34,6 +34,7 @@ export function StakeRosterPage() {
   const activeStakeId = useActiveStake();
   const seats = useStakeRoster();
   const wards = useStakeWards();
+  const buildings = useStakeBuildings();
   // Live subscription for the stake doc — `useFirestoreOnce` was
   // empty in production for this page; live keeps the cap fresh.
   const stakeDocResult = useFirestoreDoc(activeStakeId ? stakeRef(db, activeStakeId) : null);
@@ -77,7 +78,11 @@ export function StakeRosterPage() {
     () => partitionPendingForRoster(pendingRequests.data ?? [], 'stake'),
     [pendingRequests.data],
   );
-  const cap = stakeAvailablePoolSize(stakeDoc?.stake_seat_cap, wards.data ?? []);
+  const cap = stakeAvailablePoolSize(
+    stakeDoc?.stake_seat_cap,
+    wards.data ?? [],
+    buildings.data ?? [],
+  );
 
   return (
     <section>
@@ -123,6 +128,7 @@ export function StakeRosterPage() {
                     canRemove={canRemove}
                     isPendingRemoval={isPendingRemoval}
                     wards={wards.data ?? []}
+                    buildings={buildings.data ?? []}
                     sites={kindooSites.data ?? []}
                   />
                 );

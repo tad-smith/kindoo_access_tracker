@@ -5,59 +5,24 @@
 //   no cross-scope overlap in real data, so the importer-denormalised
 //   doc-level `sort_order` (MIN of `sheet_order` across `importer_callings`)
 //   equals the only-scope's calling order.
-// - Table view: per-row scope-banded sort using a (scope, calling)
-//   `sheet_order` lookup built from the live calling-template
-//   collections. Manual grants (free-text reasons that don't match a
-//   template) and wildcard-matched callings fall through to
-//   `+Infinity` and sort to the bottom of their scope band.
-//
-// Wildcard handling: NOT supported in v1. The importer's `matchTemplate`
-// (functions/src/lib/parser.ts) handles `Counselor *` at write time
-// and denormalises `sort_order` onto the seat / access docs anyway.
-// Most callings are exact ("Bishop", "EQ President"); upgrade to
-// wildcard semantics (port `matchTemplate` from the importer) if the
-// operator surfaces a problem.
+// - Table view: per-row scope-banded sort using the canonical churchwide
+//   calling order (`callingSortOrder`). Manual grants (free-text reasons
+//   that aren't callings) fall through to `+Infinity` and sort to the
+//   bottom of their scope band.
 
-import type { Access, CallingTemplate } from '@kindoo/shared';
+import { callingSortOrder } from '@kindoo/shared';
+import type { Access } from '@kindoo/shared';
 
 /**
- * Map key shape: `${scope}::${calling}` for stake (scope === 'stake')
- * and ward scopes alike. Ward calling templates are stake-wide
- * (per-stake collection, not per-ward) so every ward scope reuses the
- * same `wardTemplates` pool — we replicate the calling under each
- * ward_code to keep the lookup uniform.
+ * Calling sort priority for a row. Trimmed + case-insensitive exact
+ * match against the canonical churchwide order; `+Infinity` when the
+ * calling isn't in the table (manual free-text reasons) — same orphan
+ * convention as `lib/sort/seats.ts`. The `scope` argument is accepted
+ * for call-site symmetry but the order is scope-independent.
  */
-export type SheetOrderLookup = ReadonlyMap<string, number>;
-
-/**
- * Build a `(scope, calling) → sheet_order` lookup from the live
- * template collections. Pass the wards' `ward_code` list so each ward
- * scope inherits the ward-templates pool. Wildcard names (`Counselor *`)
- * skip — see file-level comment.
- */
-export function buildSheetOrderLookup(opts: {
-  stakeTemplates: ReadonlyArray<CallingTemplate>;
-  wardTemplates: ReadonlyArray<CallingTemplate>;
-  wardCodes: ReadonlyArray<string>;
-}): SheetOrderLookup {
-  const map = new Map<string, number>();
-  for (const t of opts.stakeTemplates) {
-    if (!t.calling_name || t.calling_name.indexOf('*') !== -1) continue;
-    map.set(`stake::${t.calling_name}`, t.sheet_order);
-  }
-  for (const t of opts.wardTemplates) {
-    if (!t.calling_name || t.calling_name.indexOf('*') !== -1) continue;
-    for (const code of opts.wardCodes) {
-      map.set(`${code}::${t.calling_name}`, t.sheet_order);
-    }
-  }
-  return map;
-}
-
-/** `+Infinity` when missing — same orphan convention as `lib/sort/seats.ts`. */
-export function lookupSheetOrder(map: SheetOrderLookup, scope: string, calling: string): number {
-  const v = map.get(`${scope}::${calling}`);
-  return typeof v === 'number' ? v : Number.POSITIVE_INFINITY;
+export function lookupSheetOrder(_scope: string, calling: string): number {
+  const order = callingSortOrder(calling);
+  return order === null ? Number.POSITIVE_INFINITY : order;
 }
 
 /**

@@ -104,7 +104,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   // scope's site. Stake scope → home only; ward scope → that ward's
   // site. Legacy buildings without the field are treated as home.
   const initialVisibleBuildings = useMemo(
-    () => filterBuildingsBySite(buildings, siteIdForScope(initialScope, wards)),
+    () => filterBuildingsBySite(buildings, siteIdForScope(initialScope, wards, buildings)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [], // captured once for `defaultValues`; live updates flow through the scope-driven effect below.
   );
@@ -175,7 +175,7 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
   // dependency list stays stable and the checkbox list re-renders only
   // when the underlying inputs change.
   const visibleBuildings = useMemo(
-    () => filterBuildingsBySite(buildings, siteIdForScope(watchedScope, wards)),
+    () => filterBuildingsBySite(buildings, siteIdForScope(watchedScope, wards, buildings)),
     [buildings, wards, watchedScope],
   );
 
@@ -256,7 +256,10 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
         start_date: '',
         end_date: '',
         building_names: (() => {
-          const vis = filterBuildingsBySite(buildings, siteIdForScope(input.scope, wards));
+          const vis = filterBuildingsBySite(
+            buildings,
+            siteIdForScope(input.scope, wards, buildings),
+          );
           return clampWardDefaultsToVisible(
             input.scope,
             defaultBuildingsForScope(input.scope, wards, vis),

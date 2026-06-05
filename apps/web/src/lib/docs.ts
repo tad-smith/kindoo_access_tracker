@@ -42,10 +42,8 @@ import type {
   PlatformSuperadmin,
   Seat,
   Stake,
-  StakeCallingTemplate,
   UserIndexEntry,
   Ward,
-  WardCallingTemplate,
 } from '@kindoo/shared';
 
 // Shared converter factory. The converter is a structural projection —
@@ -218,52 +216,6 @@ export function requestRef(
 export function requestsCol(db: Firestore, stakeId: string): CollectionReference<AccessRequest> {
   return collection(db, 'stakes', stakeId, 'requests').withConverter(
     passthroughConverter<AccessRequest>(),
-  );
-}
-
-export function wardCallingTemplateRef(
-  db: Firestore,
-  stakeId: string,
-  callingName: string,
-): DocumentReference<WardCallingTemplate> {
-  return doc(
-    db,
-    'stakes',
-    stakeId,
-    'wardCallingTemplates',
-    encodeURIComponent(callingName),
-  ).withConverter(passthroughConverter<WardCallingTemplate>());
-}
-
-export function wardCallingTemplatesCol(
-  db: Firestore,
-  stakeId: string,
-): CollectionReference<WardCallingTemplate> {
-  return collection(db, 'stakes', stakeId, 'wardCallingTemplates').withConverter(
-    passthroughConverter<WardCallingTemplate>(),
-  );
-}
-
-export function stakeCallingTemplateRef(
-  db: Firestore,
-  stakeId: string,
-  callingName: string,
-): DocumentReference<StakeCallingTemplate> {
-  return doc(
-    db,
-    'stakes',
-    stakeId,
-    'stakeCallingTemplates',
-    encodeURIComponent(callingName),
-  ).withConverter(passthroughConverter<StakeCallingTemplate>());
-}
-
-export function stakeCallingTemplatesCol(
-  db: Firestore,
-  stakeId: string,
-): CollectionReference<StakeCallingTemplate> {
-  return collection(db, 'stakes', stakeId, 'stakeCallingTemplates').withConverter(
-    passthroughConverter<StakeCallingTemplate>(),
   );
 }
 

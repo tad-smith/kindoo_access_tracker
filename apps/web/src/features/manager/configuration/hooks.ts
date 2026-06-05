@@ -15,20 +15,11 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
-  writeBatch,
 } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
-import type {
-  Building,
-  KindooManager,
-  KindooSite,
-  Stake,
-  Ward,
-  WardCallingTemplate,
-  StakeCallingTemplate,
-} from '@kindoo/shared';
+import type { Building, KindooManager, KindooSite, Stake, Ward } from '@kindoo/shared';
 import { useFirestoreCollection, useFirestoreDoc } from '../../../lib/data';
 import { db } from '../../../lib/firebase';
 import {
@@ -38,11 +29,7 @@ import {
   kindooManagersCol,
   kindooSiteRef,
   kindooSitesCol,
-  stakeCallingTemplateRef,
-  stakeCallingTemplatesCol,
   stakeRef,
-  wardCallingTemplateRef,
-  wardCallingTemplatesCol,
   wardRef,
   wardsCol,
 } from '../../../lib/docs';
@@ -82,24 +69,6 @@ export function useManagers() {
   return useFirestoreCollection<KindooManager>(q);
 }
 
-export function useWardCallingTemplates() {
-  const activeStakeId = useActiveStake();
-  const q = useMemo(
-    () => (activeStakeId ? wardCallingTemplatesCol(db, activeStakeId) : null),
-    [activeStakeId],
-  );
-  return useFirestoreCollection<WardCallingTemplate>(q);
-}
-
-export function useStakeCallingTemplates() {
-  const activeStakeId = useActiveStake();
-  const q = useMemo(
-    () => (activeStakeId ? stakeCallingTemplatesCol(db, activeStakeId) : null),
-    [activeStakeId],
-  );
-  return useFirestoreCollection<StakeCallingTemplate>(q);
-}
-
 export function useKindooSites() {
   const activeStakeId = useActiveStake();
   const q = useMemo(
@@ -132,13 +101,6 @@ export interface WardInput {
   ward_name: string;
   building_name: string;
   seat_cap: number;
-  /**
-   * Kindoo Sites — `null` (or absent) means the home site; a string
-   * value points at a doc id under `stakes/{stakeId}/kindooSites/`.
-   * Always pass an explicit value (including `null`) so that toggling
-   * a ward back to home overwrites a prior foreign-site assignment.
-   */
-  kindoo_site_id?: string | null;
 }
 
 export function useUpsertWardMutation() {
@@ -164,7 +126,6 @@ export function useUpsertWardMutation() {
           ward_name: input.ward_name.trim(),
           building_name: input.building_name,
           seat_cap: input.seat_cap,
-          kindoo_site_id: input.kindoo_site_id ?? null,
           last_modified_at: serverTimestamp(),
           lastActor: actor,
         };
@@ -376,431 +337,6 @@ export function useDeleteManagerMutation() {
   });
 }
 
-// ---- Calling-template mutations -------------------------------------
-
-export interface CallingTemplateInput {
-  calling_name: string;
-  give_app_access: boolean;
-  auto_kindoo_access: boolean;
-  sheet_order: number;
-}
-
-export function useUpsertWardCallingTemplateMutation() {
-  const principal = usePrincipal();
-  const activeStakeId = useActiveStake();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: CallingTemplateInput) => {
-      const sid = requireActiveStake(activeStakeId);
-      const actor = actorOf(principal);
-      const name = input.calling_name.trim();
-      if (!name) throw new Error('Calling name is required.');
-      const ref = wardCallingTemplateRef(db, sid, name);
-      // Stamp `created_at` only on the create path. `merge: true` would
-      // otherwise re-stamp it on every edit, silently losing the
-      // original creation timestamp. `runTransaction` makes the
-      // existence read + write atomic, so the create/edit branch
-      // decision can't race itself within this transaction.
-      await runTransaction(db, async (tx) => {
-        const existing = await tx.get(ref);
-        const editBody = {
-          calling_name: name,
-          give_app_access: input.give_app_access,
-          auto_kindoo_access: input.auto_kindoo_access,
-          sheet_order: input.sheet_order,
-          lastActor: actor,
-        };
-        if (existing.exists()) {
-          tx.set(ref, editBody as unknown as WardCallingTemplate, { merge: true });
-        } else {
-          tx.set(
-            ref,
-            {
-              ...editBody,
-              created_at: serverTimestamp(),
-            } as unknown as WardCallingTemplate,
-            { merge: true },
-          );
-        }
-      });
-    },
-    onSuccess: () => {
-      // Fire-and-forget; live hooks have a never-resolving queryFn,
-      // so awaiting invalidateQueries would hang the mutation.
-      void qc.invalidateQueries();
-    },
-  });
-}
-
-export function useDeleteWardCallingTemplateMutation() {
-  const activeStakeId = useActiveStake();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (callingName: string) => {
-      const sid = requireActiveStake(activeStakeId);
-      await deleteDoc(wardCallingTemplateRef(db, sid, callingName));
-    },
-    onSuccess: () => {
-      // Fire-and-forget; live hooks have a never-resolving queryFn,
-      // so awaiting invalidateQueries would hang the mutation.
-      void qc.invalidateQueries();
-    },
-  });
-}
-
-export function useUpsertStakeCallingTemplateMutation() {
-  const principal = usePrincipal();
-  const activeStakeId = useActiveStake();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: CallingTemplateInput) => {
-      const sid = requireActiveStake(activeStakeId);
-      const actor = actorOf(principal);
-      const name = input.calling_name.trim();
-      if (!name) throw new Error('Calling name is required.');
-      const ref = stakeCallingTemplateRef(db, sid, name);
-      // Stamp `created_at` only on the create path. `merge: true` would
-      // otherwise re-stamp it on every edit, silently losing the
-      // original creation timestamp. `runTransaction` makes the
-      // existence read + write atomic, so the create/edit branch
-      // decision can't race itself within this transaction.
-      await runTransaction(db, async (tx) => {
-        const existing = await tx.get(ref);
-        const editBody = {
-          calling_name: name,
-          give_app_access: input.give_app_access,
-          auto_kindoo_access: input.auto_kindoo_access,
-          sheet_order: input.sheet_order,
-          lastActor: actor,
-        };
-        if (existing.exists()) {
-          tx.set(ref, editBody as unknown as StakeCallingTemplate, { merge: true });
-        } else {
-          tx.set(
-            ref,
-            {
-              ...editBody,
-              created_at: serverTimestamp(),
-            } as unknown as StakeCallingTemplate,
-            { merge: true },
-          );
-        }
-      });
-    },
-    onSuccess: () => {
-      // Fire-and-forget; live hooks have a never-resolving queryFn,
-      // so awaiting invalidateQueries would hang the mutation.
-      void qc.invalidateQueries();
-    },
-  });
-}
-
-export function useDeleteStakeCallingTemplateMutation() {
-  const activeStakeId = useActiveStake();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (callingName: string) => {
-      const sid = requireActiveStake(activeStakeId);
-      await deleteDoc(stakeCallingTemplateRef(db, sid, callingName));
-    },
-    onSuccess: () => {
-      // Fire-and-forget; live hooks have a never-resolving queryFn,
-      // so awaiting invalidateQueries would hang the mutation.
-      void qc.invalidateQueries();
-    },
-  });
-}
-
-// ---- Calling-template reorder + add-at-end + delete-resequence ------
-//
-// The Auto Callings tabs render a sortable table: lower `sheet_order`
-// renders higher. Three additional mutations shape the field:
-//
-// - `useReorder*Mutation` — write a new contiguous ordering across N
-//   rows. Atomic via Firestore `writeBatch`. Caller passes the
-//   already-reordered list of `calling_name` values; the mutation
-//   assigns 1..N. Optimistic update + rollback live on the caller via
-//   the standard TanStack `onMutate`/`onError` pattern.
-// - `useAdd*CallingTemplateMutation` — append a new row at
-//   `sheet_order = max(existing)+1`. Caller does not pass
-//   `sheet_order`; the hook reads the live cache through the passed
-//   `existing` array. Edits use the existing upsert mutation.
-// - `useDelete*WithResequenceMutation` — delete the row, then rewrite
-//   the remaining rows to 1..N-1 contiguous. One batch.
-//
-// Reorders touch only changed rows when possible; the helper
-// `assignSheetOrders` returns the {ref, sheet_order} writes that
-// actually differ from the current list.
-
-export interface ReorderInput {
-  /**
-   * The full ordered list of calling_names AFTER the reorder. Index 0
-   * gets sheet_order 1, index 1 gets 2, etc.
-   */
-  orderedCallingNames: string[];
-  /**
-   * The current list AS THE OPERATOR SAW IT — used to skip writes for
-   * rows whose position didn't change.
-   */
-  current: ReadonlyArray<{ calling_name: string; sheet_order: number }>;
-}
-
-function buildReorderBatch(
-  refForName: (name: string) => ReturnType<typeof wardCallingTemplateRef>,
-  input: ReorderInput,
-  actor: { email: string; canonical: string },
-) {
-  const writes = planReorderWrites(input.orderedCallingNames, input.current);
-  const batch = writeBatch(db);
-  for (const w of writes) {
-    batch.set(
-      refForName(w.calling_name),
-      { sheet_order: w.sheet_order, lastActor: actor },
-      { merge: true },
-    );
-  }
-  return { batch, writes: writes.length };
-}
-
-export function useReorderWardCallingTemplatesMutation() {
-  const principal = usePrincipal();
-  const activeStakeId = useActiveStake();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: ReorderInput) => {
-      const sid = requireActiveStake(activeStakeId);
-      const actor = actorOf(principal);
-      const { batch, writes } = buildReorderBatch(
-        (name) => wardCallingTemplateRef(db, sid, name),
-        input,
-        actor,
-      );
-      if (writes === 0) return;
-      await batch.commit();
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries();
-    },
-  });
-}
-
-export function useReorderStakeCallingTemplatesMutation() {
-  const principal = usePrincipal();
-  const activeStakeId = useActiveStake();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: ReorderInput) => {
-      const sid = requireActiveStake(activeStakeId);
-      const actor = actorOf(principal);
-      const { batch, writes } = buildReorderBatch(
-        (name) => stakeCallingTemplateRef(db, sid, name),
-        input,
-        actor,
-      );
-      if (writes === 0) return;
-      await batch.commit();
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries();
-    },
-  });
-}
-
-export interface AddCallingTemplateInput {
-  calling_name: string;
-  give_app_access: boolean;
-  auto_kindoo_access: boolean;
-  /**
-   * The current list — the new row gets `max(existing.sheet_order) + 1`.
-   * Pass the caller's already-subscribed live snapshot so the mutation
-   * doesn't issue an extra read.
-   */
-  existing: ReadonlyArray<{ sheet_order: number }>;
-}
-
-export function nextSheetOrder(existing: ReadonlyArray<{ sheet_order: number }>): number {
-  let max = 0;
-  for (const e of existing) if (e.sheet_order > max) max = e.sheet_order;
-  return max + 1;
-}
-
-/**
- * Pure planner: given a current ordered list and a desired ordered list
- * of names, return the {calling_name, sheet_order} pairs that need to
- * be written to make the desired order contiguous 1..N. Skips rows
- * whose new order matches the current order.
- *
- * Exposed for testing; the reorder mutations build the same thing
- * internally and feed a Firestore writeBatch.
- */
-export function planReorderWrites(
-  orderedCallingNames: ReadonlyArray<string>,
-  current: ReadonlyArray<{ calling_name: string; sheet_order: number }>,
-): Array<{ calling_name: string; sheet_order: number }> {
-  const currentByName = new Map(current.map((c) => [c.calling_name, c.sheet_order]));
-  const writes: Array<{ calling_name: string; sheet_order: number }> = [];
-  for (let i = 0; i < orderedCallingNames.length; i++) {
-    const name = orderedCallingNames[i]!;
-    const newOrder = i + 1;
-    if (currentByName.get(name) === newOrder) continue;
-    writes.push({ calling_name: name, sheet_order: newOrder });
-  }
-  return writes;
-}
-
-/**
- * Pure planner: given a current list and a name to delete, return the
- * {calling_name, sheet_order} writes that renumber the survivors to
- * 1..N-1 contiguous. Excludes the deleted row from the writes list
- * (caller emits a separate delete for that doc).
- */
-export function planDeleteResequenceWrites(
-  callingName: string,
-  current: ReadonlyArray<{ calling_name: string; sheet_order: number }>,
-): Array<{ calling_name: string; sheet_order: number }> {
-  const remaining = [...current]
-    .filter((c) => c.calling_name !== callingName)
-    .sort((a, b) => a.sheet_order - b.sheet_order);
-  const writes: Array<{ calling_name: string; sheet_order: number }> = [];
-  for (let i = 0; i < remaining.length; i++) {
-    const expected = i + 1;
-    const row = remaining[i]!;
-    if (row.sheet_order === expected) continue;
-    writes.push({ calling_name: row.calling_name, sheet_order: expected });
-  }
-  return writes;
-}
-
-export function useAddWardCallingTemplateMutation() {
-  const principal = usePrincipal();
-  const activeStakeId = useActiveStake();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: AddCallingTemplateInput) => {
-      const sid = requireActiveStake(activeStakeId);
-      const actor = actorOf(principal);
-      const name = input.calling_name.trim();
-      if (!name) throw new Error('Calling name is required.');
-      const ref = wardCallingTemplateRef(db, sid, name);
-      const existing = await getDoc(ref);
-      if (existing.exists()) throw new Error('A calling with that name already exists.');
-      await setDoc(
-        ref,
-        {
-          calling_name: name,
-          give_app_access: input.give_app_access,
-          auto_kindoo_access: input.auto_kindoo_access,
-          sheet_order: nextSheetOrder(input.existing),
-          created_at: serverTimestamp(),
-          lastActor: actor,
-        } as unknown as WardCallingTemplate,
-        { merge: true },
-      );
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries();
-    },
-  });
-}
-
-export function useAddStakeCallingTemplateMutation() {
-  const principal = usePrincipal();
-  const activeStakeId = useActiveStake();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: AddCallingTemplateInput) => {
-      const sid = requireActiveStake(activeStakeId);
-      const actor = actorOf(principal);
-      const name = input.calling_name.trim();
-      if (!name) throw new Error('Calling name is required.');
-      const ref = stakeCallingTemplateRef(db, sid, name);
-      const existing = await getDoc(ref);
-      if (existing.exists()) throw new Error('A calling with that name already exists.');
-      await setDoc(
-        ref,
-        {
-          calling_name: name,
-          give_app_access: input.give_app_access,
-          auto_kindoo_access: input.auto_kindoo_access,
-          sheet_order: nextSheetOrder(input.existing),
-          created_at: serverTimestamp(),
-          lastActor: actor,
-        } as unknown as StakeCallingTemplate,
-        { merge: true },
-      );
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries();
-    },
-  });
-}
-
-export interface DeleteWithResequenceInput {
-  callingName: string;
-  /** Current ordered list (any order). The remaining rows are renumbered 1..N-1. */
-  current: ReadonlyArray<{ calling_name: string; sheet_order: number }>;
-}
-
-function buildDeleteWithResequenceBatch(
-  refForName: (name: string) => ReturnType<typeof wardCallingTemplateRef>,
-  input: DeleteWithResequenceInput,
-  actor: { email: string; canonical: string },
-) {
-  const batch = writeBatch(db);
-  batch.delete(refForName(input.callingName));
-  const writes = planDeleteResequenceWrites(input.callingName, input.current);
-  for (const w of writes) {
-    batch.set(
-      refForName(w.calling_name),
-      { sheet_order: w.sheet_order, lastActor: actor },
-      { merge: true },
-    );
-  }
-  return batch;
-}
-
-export function useDeleteWardCallingTemplateWithResequenceMutation() {
-  const principal = usePrincipal();
-  const activeStakeId = useActiveStake();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: DeleteWithResequenceInput) => {
-      const sid = requireActiveStake(activeStakeId);
-      const actor = actorOf(principal);
-      const batch = buildDeleteWithResequenceBatch(
-        (name) => wardCallingTemplateRef(db, sid, name),
-        input,
-        actor,
-      );
-      await batch.commit();
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries();
-    },
-  });
-}
-
-export function useDeleteStakeCallingTemplateWithResequenceMutation() {
-  const principal = usePrincipal();
-  const activeStakeId = useActiveStake();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: DeleteWithResequenceInput) => {
-      const sid = requireActiveStake(activeStakeId);
-      const actor = actorOf(principal);
-      const batch = buildDeleteWithResequenceBatch(
-        (name) => stakeCallingTemplateRef(db, sid, name),
-        input,
-        actor,
-      );
-      await batch.commit();
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries();
-    },
-  });
-}
-
 // ---- Stake-doc / Config-keys mutation -------------------------------
 
 export interface ConfigInput {
@@ -919,16 +455,16 @@ export function useUpsertKindooSiteMutation() {
   });
 }
 
-// Block deletes when any ward or building still references this site.
-// Wards and buildings carry `kindoo_site_id: string | null` — orphaning
-// either side silently severs the foreign-key string without a server-
+// Block deletes when any building still references this site. Only
+// buildings carry `kindoo_site_id`; a ward's site is derived from its
+// building, so the building guard transitively covers wards. Orphaning
+// a building silently severs the foreign-key string without a server-
 // rules check (rules don't iterate sibling collections; field-level FK
 // is the UI's concern per firebase-schema.md §4.11). Caller passes the
-// live wards + buildings snapshots so the guard fires against the exact
-// rows the operator just saw — no extra Firestore reads.
+// live buildings snapshot so the guard fires against the exact rows the
+// operator just saw — no extra Firestore read.
 export interface DeleteKindooSiteInput {
   kindooSiteId: string;
-  wards: ReadonlyArray<Ward>;
   buildings: ReadonlyArray<Building>;
 }
 export function useDeleteKindooSiteMutation() {
@@ -937,9 +473,8 @@ export function useDeleteKindooSiteMutation() {
   return useMutation({
     mutationFn: async (input: DeleteKindooSiteInput) => {
       const sid = requireActiveStake(activeStakeId);
-      const wardRefs = input.wards.filter((w) => w.kindoo_site_id === input.kindooSiteId);
       const buildingRefs = input.buildings.filter((b) => b.kindoo_site_id === input.kindooSiteId);
-      const blocker = kindooSiteDeleteBlocker(input.kindooSiteId, wardRefs, buildingRefs);
+      const blocker = kindooSiteDeleteBlocker(input.kindooSiteId, buildingRefs);
       if (blocker) throw new Error(blocker);
       await deleteDoc(kindooSiteRef(db, sid, input.kindooSiteId));
     },
@@ -951,26 +486,17 @@ export function useDeleteKindooSiteMutation() {
 
 /**
  * Pure guard helper — symmetric with `buildingDeleteBlocker`. Returns
- * null when no ward or building still points at the site; otherwise a
- * human-readable message listing the blocking refs grouped by kind.
+ * null when no building still points at the site; otherwise a
+ * human-readable message listing the blocking buildings.
  */
 export function kindooSiteDeleteBlocker(
   kindooSiteId: string,
-  referencingWards: ReadonlyArray<Ward>,
   referencingBuildings: ReadonlyArray<Building>,
 ): string | null {
-  if (referencingWards.length === 0 && referencingBuildings.length === 0) return null;
-  const lines: string[] = [
-    `Cannot delete Kindoo site "${kindooSiteId}". The following wards and buildings still reference this site:`,
-  ];
-  if (referencingWards.length > 0) {
-    const labels = referencingWards.map((w) => `${w.ward_name} (${w.ward_code})`);
-    lines.push(`Wards: ${labels.join(', ')}`);
-  }
-  if (referencingBuildings.length > 0) {
-    const labels = referencingBuildings.map((b) => b.building_name);
-    lines.push(`Buildings: ${labels.join(', ')}`);
-  }
-  lines.push('Unassign these wards / buildings from this site before deleting.');
-  return lines.join(' ');
+  if (referencingBuildings.length === 0) return null;
+  const labels = referencingBuildings.map((b) => b.building_name);
+  return (
+    `Cannot delete Kindoo site "${kindooSiteId}". The following buildings still reference ` +
+    `this site: ${labels.join(', ')} Unassign these buildings from this site before deleting.`
+  );
 }
