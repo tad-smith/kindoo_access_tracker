@@ -2,9 +2,9 @@
 //
 // - Card view: scope-banded grouping (stake first, wards alpha), then
 //   doc-level `sort_order` ascending within each band. Operator confirms
-//   no cross-scope overlap in real data, so the importer-denormalised
-//   doc-level `sort_order` (MIN of `sheet_order` across `importer_callings`)
-//   equals the only-scope's calling order.
+//   no cross-scope overlap in real data, so the Sync-denormalised
+//   doc-level `sort_order` (MIN canonical `seatCallingOrder` across
+//   `importer_callings`) equals the only-scope's calling order.
 // - Table view: per-row scope-banded sort using the canonical churchwide
 //   calling order (`callingSortOrder`). Manual grants (free-text reasons
 //   that aren't callings) fall through to `+Infinity` and sort to the
@@ -61,10 +61,10 @@ export function primaryScopeFor(a: Access): string {
  * Comparator for the card view: scope band → `sort_order` ascending
  * (null/undefined → bottom of band) → alpha by `member_email`.
  *
- * Uses the doc-level `sort_order` (importer-denormalised MIN of
- * `sheet_order` across `importer_callings`) — under the no-cross-scope-
- * overlap assumption that's the order of the user's only relevant
- * calling.
+ * Uses the doc-level `sort_order` (Sync-denormalised MIN canonical
+ * `seatCallingOrder` across `importer_callings`) — under the
+ * no-cross-scope-overlap assumption that's the order of the user's only
+ * relevant calling.
  */
 export function compareAccessForCard(a: Access, b: Access): number {
   const aScope = primaryScopeFor(a);

@@ -47,4 +47,3 @@ Two pieces of orphaned data are left in place deliberately and cleaned up post-m
 ## Known issues / deferred work
 
 - **T-65** — purge orphaned `wardCallingTemplates` / `stakeCallingTemplates` docs and strip stale `ward.kindoo_site_id` from existing ward docs.
-- **Stale code comments (non-blocking).** A few shared-type comments still reference the old mechanism — `packages/shared/src/types/access.ts` (`give_app_access=true` / `sheet_order` on `importer_callings` and `sort_order`) and `packages/shared/src/types/seat.ts` (ward-scope seat site "take the ward's own `kindoo_site_id`"). These are comments only; the code is correct. Owning agents (`packages/shared` co-owners) to sweep — noted for the next shared-types touch, not separately ticketed.

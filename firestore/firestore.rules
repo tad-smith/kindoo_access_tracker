@@ -357,8 +357,8 @@ service cloud.firestore {
       // introduce a new role.
       //
       // Field-level referential integrity (does the `kindoo_site_id` a
-      // building references actually exist? do buildings / seats still
-      // point at a site being deleted? — wards are covered transitively
+      // building references actually exist? do buildings still point at
+      // a site being deleted? — wards are covered transitively
       // via their building) is the UI's concern; rules gate WHO can
       // write, not field-level FK checks.
       match /kindooSites/{kindooSiteId} {
