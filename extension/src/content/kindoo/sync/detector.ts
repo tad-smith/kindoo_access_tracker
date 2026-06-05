@@ -6,7 +6,7 @@
 // content-script's paginated Kindoo loop. Outputs are rendered by
 // `SyncPanel.tsx`.
 
-import { canonicalEmail, resolveWardSite } from '@kindoo/shared';
+import { canonicalEmail, resolveWardBuilding, resolveWardSite } from '@kindoo/shared';
 import type { Building, DuplicateGrant, Seat, SeatType, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
 import {
@@ -43,19 +43,6 @@ function intendedShape(segment: ParsedSegment, isTempUser: boolean): IntendedSea
     callings: [],
     freeText: segment.calling,
   };
-}
-
-/**
- * Build a `building_name → { kindoo_site_id }` lookup from the buildings
- * catalogue. Feeds `resolveWardSite`, which derives a ward's Kindoo site
- * from its assigned building (ward docs no longer carry `kindoo_site_id`).
- */
-function buildingsByName(
-  buildings: Building[],
-): ReadonlyMap<string, Pick<Building, 'kindoo_site_id'>> {
-  const m = new Map<string, Pick<Building, 'kindoo_site_id'>>();
-  for (const b of buildings) m.set(b.building_name, b);
-  return m;
 }
 
 export type DiscrepancyCode =
@@ -261,11 +248,10 @@ function projectSeatForSite(
   activeSite: ActiveSite | undefined,
 ): SbaBlock | null {
   if (!activeSite || activeSite.kind === 'unknown') return null;
-  const byName = buildingsByName(buildings);
   const wardSite = (wardCode: string): string | null => {
     if (wardCode === 'stake') return null;
     const ward = wards.find((w) => w.ward_code === wardCode);
-    return ward ? resolveWardSite(ward, byName) : null;
+    return ward ? resolveWardSite(ward, buildings) : null;
   };
   // Match by seat-level field when present; fall back to scope→ward
   // lookup so legacy seats (pre-migration) still classify.
@@ -309,9 +295,9 @@ function projectSeatForSite(
       callings: dup.callings ?? [],
       reason: dup.reason,
       // Within-site duplicates may leave `building_names` unset and
-      // inherit from the ward's `building_name`. Parallel-site
+      // inherit from the ward's assigned building. Parallel-site
       // duplicates always carry their own `building_names`.
-      buildings: dup.building_names ?? wardBuildingsForScope(dup.scope, wards),
+      buildings: dup.building_names ?? wardBuildingsForScope(dup.scope, wards, buildings),
     });
   }
   if (contributors.length === 0) return null;
@@ -334,14 +320,18 @@ function projectSeatForSite(
   };
 }
 
-/** Lookup ward → its declared `building_name` (single string) → array
- *  for downstream union math. Returns an empty array when the ward
- *  isn't in the catalogue or carries no building. */
-function wardBuildingsForScope(scope: string, wards: Ward[]): string[] {
+/** Lookup ward → its assigned building name (single string) → array
+ *  for downstream union math. Id-first via `resolveWardBuilding` so a
+ *  ward referencing its building by the immutable `building_id` slug
+ *  resolves to the building's current display name even after a rename.
+ *  Returns an empty array when the ward isn't in the catalogue or its
+ *  building doesn't resolve. */
+function wardBuildingsForScope(scope: string, wards: Ward[], buildings: Building[]): string[] {
   if (scope === 'stake') return [];
   const w = wards.find((x) => x.ward_code === scope);
-  if (!w || !w.building_name) return [];
-  return [w.building_name];
+  if (!w) return [];
+  const name = resolveWardBuilding(w, buildings)?.building_name;
+  return name ? [name] : [];
 }
 
 /**
@@ -358,13 +348,12 @@ function pickSegmentForSite(
   activeSite: ActiveSite | undefined,
 ): ParsedSegment | null {
   if (!activeSite || activeSite.kind === 'unknown') return null;
-  const byName = buildingsByName(buildings);
   const wantSiteId: string | null = activeSite.kind === 'home' ? null : activeSite.siteId;
   const segmentSite = (segment: ParsedSegment): string | null | undefined => {
     if (!segment.resolvedScope || segment.scope === null) return undefined;
     if (segment.scope === 'stake') return null; // stake-scope is home-only.
     const w = wards.find((x) => x.ward_code === segment.scope);
-    return w ? resolveWardSite(w, byName) : undefined;
+    return w ? resolveWardSite(w, buildings) : undefined;
   };
   const filtered = parsed.segments.filter((s) => segmentSite(s) === wantSiteId);
   if (filtered.length === 0) return null;

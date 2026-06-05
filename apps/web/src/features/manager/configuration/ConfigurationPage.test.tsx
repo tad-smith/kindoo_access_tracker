@@ -6,13 +6,23 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import type { Building, KindooManager, KindooSite, Stake, Ward } from '@kindoo/shared';
+import type {
+  AccessRequest,
+  Building,
+  KindooManager,
+  KindooSite,
+  Seat,
+  Stake,
+  Ward,
+} from '@kindoo/shared';
 
 const useStakeDocMock = vi.fn();
 const useWardsMock = vi.fn();
 const useBuildingsMock = vi.fn();
 const useManagersMock = vi.fn();
 const useKindooSitesMock = vi.fn();
+const useSeatsMock = vi.fn();
+const useRequestsMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 const upsertKindooSiteMock = vi.fn();
@@ -26,6 +36,8 @@ vi.mock('./hooks', () => ({
   useBuildings: () => useBuildingsMock(),
   useManagers: () => useManagersMock(),
   useKindooSites: () => useKindooSitesMock(),
+  useSeats: () => useSeatsMock(),
+  useRequests: () => useRequestsMock(),
   useUpsertWardMutation: () => ({ mutateAsync: upsertWardMock, isPending: false }),
   useDeleteWardMutation: () => ({ mutateAsync: vi.fn() }),
   useUpsertBuildingMutation: () => ({ mutateAsync: upsertBuildingMock, isPending: false }),
@@ -104,6 +116,8 @@ beforeEach(() => {
   useBuildingsMock.mockReturnValue(liveResult<Building>([]));
   useManagersMock.mockReturnValue(liveResult<KindooManager>([]));
   useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([]));
+  useSeatsMock.mockReturnValue(liveResult<Seat>([]));
+  useRequestsMock.mockReturnValue(liveResult<AccessRequest>([]));
 });
 
 describe('<ConfigurationPage />', () => {
@@ -204,13 +218,19 @@ describe('<ConfigurationPage />', () => {
     expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
   });
 
-  it('does not flash the no-buildings hint or disable Add Ward while buildings load', () => {
+  it('does not flash the no-buildings hint while buildings load (but Add stays gated)', () => {
     // Deep-linking ?tab=wards lands before the buildings snapshot
-    // arrives. The empty-state must not fire on undefined data, or
+    // arrives. The empty-state hint must not fire on undefined data, or
     // stakes that DO have buildings briefly show "Add a building first".
+    // Add itself stays disabled until the snapshot lands — opening the
+    // dialog against an unhydrated catalogue would leave an empty
+    // <Select> with no way to map the chosen building_id to a name.
     useBuildingsMock.mockReturnValue(loadingResult());
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
-    expect(screen.getByTestId('config-wards-add-button')).not.toBeDisabled();
+    const btn = screen.getByTestId('config-wards-add-button');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Loading…');
+    // The known-empty hint must NOT show while loading.
     expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
   });
 
@@ -262,6 +282,85 @@ describe('<ConfigurationPage />', () => {
     expect(wardCodeInput.value).toBe('CO');
     expect(wardCodeInput).toHaveAttribute('readonly');
     expect(screen.getByRole('heading', { name: /Edit ward — CO/ })).toBeInTheDocument();
+  });
+
+  it('preselects the building by building_id when editing a migrated ward', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'pine-building', building_name: 'Pine Building', address: '' } as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'CO',
+          ward_name: 'Maple',
+          building_id: 'maple-building',
+          building_name: 'Maple Building',
+          seat_cap: 22,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const select = screen.getByLabelText('Building') as HTMLSelectElement;
+    // The option value is the immutable slug, not the display name.
+    expect(select.value).toBe('maple-building');
+  });
+
+  it('preselects the building for a legacy ward (no building_id) via the name fallback', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'CO',
+          ward_name: 'Maple',
+          // No building_id — legacy ward; resolve the slug from the name.
+          building_name: 'Maple Building',
+          seat_cap: 22,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const select = screen.getByLabelText('Building') as HTMLSelectElement;
+    expect(select.value).toBe('maple-building');
+  });
+
+  it('writes both building_id and building_name when a ward is saved', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    await user.type(screen.getByLabelText(/Ward code/i), 'CO');
+    await user.type(screen.getByLabelText(/Ward name/i), 'Maple');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByTestId('config-ward-submit'));
+    await vi.waitFor(() => expect(upsertWardMock).toHaveBeenCalled());
+    expect(upsertWardMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ward_code: 'CO',
+        building_id: 'maple-building',
+        building_name: 'Maple Building',
+      }),
+    );
   });
 
   it('renders an Edit button on each Building row; building_id is never shown in form', async () => {
@@ -666,5 +765,257 @@ describe('Configuration Delete buttons gated on FK snapshots', () => {
       const btn = screen.getByTestId('config-building-delete-maple-building');
       expect(btn).not.toBeDisabled();
     });
+  });
+});
+
+// ---- Add Building gated on the buildings snapshot hydrating ---------
+//
+// The unique-display-name guard runs against the buildings snapshot the
+// caller passes. Deep-linking ?tab=buildings can land the Add click
+// before the snapshot hydrates; without a gate the guard runs against
+// [] and a duplicate name slips through on the first click. Add must
+// stay disabled until `buildings.data` is defined.
+
+describe('Add Building gated on buildings snapshot', () => {
+  it('disables Add Building while the buildings snapshot is loading', () => {
+    useBuildingsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    const btn = screen.getByTestId('config-buildings-add-button');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Loading…');
+  });
+
+  it('does not open the Add Building dialog when clicked while loading', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-buildings-add-button'));
+    expect(screen.queryByTestId('config-building-form')).toBeNull();
+  });
+
+  it('enables Add Building once the buildings snapshot is loaded (even when empty)', () => {
+    useBuildingsMock.mockReturnValue(liveResult<Building>([]));
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-buildings-add-button')).not.toBeDisabled();
+  });
+});
+
+// ---- Ward edit survives a buildings-collection snapshot -------------
+//
+// The WardFormDialog's reset() must fire only on dialog-open /
+// editingWard identity change — NOT on every buildings snapshot. An
+// unrelated buildings add/edit in another tab (or the next hydration
+// snapshot) would otherwise re-run reset() and clobber a manager's
+// in-progress ward edit. The <Select> options stay live; only reset is
+// decoupled from buildingOptions identity.
+
+describe('WardFormDialog reset stability across buildings snapshots', () => {
+  const mkWardBuilding = (overrides: Partial<Building> = {}): Building =>
+    ({
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      address: '',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(overrides as any),
+    }) as Building;
+
+  it('does not clobber an in-progress ward edit when the buildings snapshot changes', async () => {
+    const user = userEvent.setup();
+    const initialBuildings = [mkWardBuilding()];
+    useBuildingsMock.mockReturnValue(liveResult<Building>(initialBuildings));
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'CO',
+          ward_name: 'Maple',
+          building_id: 'maple-building',
+          building_name: 'Maple Building',
+          seat_cap: 22,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      ]),
+    );
+    const { rerender } = render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+
+    // Open the edit dialog and change the ward name (in-progress edit).
+    await user.click(screen.getByTestId('config-ward-edit-CO'));
+    const nameInput = screen.getByLabelText(/Ward name/i) as HTMLInputElement;
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Maple Renamed');
+    expect(nameInput.value).toBe('Maple Renamed');
+
+    // A new buildings snapshot arrives (a NEW array identity — what
+    // reactfire delivers on any buildings-collection write, even an
+    // unrelated one in another tab). The form must NOT reset.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        mkWardBuilding(),
+        mkWardBuilding({ building_id: 'pine-building', building_name: 'Pine Building' }),
+      ]),
+    );
+    rerender(<ConfigurationPage initialTab="wards" />);
+
+    // The in-progress edit survives — reset() did not fire.
+    expect((screen.getByLabelText(/Ward name/i) as HTMLInputElement).value).toBe('Maple Renamed');
+    // The Building <Select> still reflects the live catalogue (the new
+    // building is now an option), proving the dropdown stayed live.
+    const select = screen.getByLabelText('Building') as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toContain('pine-building');
+  });
+});
+
+// ---- Buildings tab: prevent-rename ref-guard (T-68) -----------------
+//
+// Renaming a building while active seats / pending requests snapshot its
+// display name is blocked (the snapshots are display-name arrays — §3.2
+// — and a rename would orphan them). The page passes the live seats +
+// requests catalogues + the building's current name into the upsert
+// mutation, which throws the block message; the page surfaces it as a
+// toast and does not write. Address-only edits and renames of
+// unreferenced buildings still go through.
+
+describe('Buildings tab rename ref-guard', () => {
+  const mkBuilding = (overrides: Partial<Building> = {}): Building =>
+    ({
+      building_id: 'black-forest',
+      building_name: 'Black Forest',
+      address: '123 Main',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(overrides as any),
+    }) as Building;
+
+  const mkSeat = (overrides: Partial<Seat> = {}): Seat =>
+    ({
+      member_canonical: 'a@x.com',
+      member_email: 'a@x.com',
+      member_name: 'A',
+      scope: 'CO',
+      type: 'manual',
+      callings: [],
+      building_names: ['Black Forest'],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(overrides as any),
+    }) as Seat;
+
+  // Mimic the real mutation: throw the block message when the name
+  // changes AND a passed seat / pending request references the old name.
+  function installRealisticUpsert() {
+    upsertBuildingMock.mockImplementation(
+      async (input: {
+        building_name: string;
+        previousBuildingName?: string;
+        seats?: Seat[];
+        pendingRequests?: AccessRequest[];
+      }) => {
+        const prev = input.previousBuildingName;
+        if (prev !== undefined && input.building_name.trim() !== prev) {
+          const refs =
+            (input.seats ?? []).some((s) => (s.building_names ?? []).includes(prev)) ||
+            (input.pendingRequests ?? []).some(
+              (r) => r.status === 'pending' && (r.building_names ?? []).includes(prev),
+            );
+          if (refs) {
+            throw new Error(
+              `Can't rename "${prev}" — 1 seat references it. Remove or reassign them first.`,
+            );
+          }
+        }
+      },
+    );
+  }
+
+  it('disables Edit while the seats snapshot is loading', () => {
+    useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+    useSeatsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    const btn = screen.getByTestId('config-building-edit-black-forest');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Loading…');
+  });
+
+  it('disables Edit while the requests snapshot is loading', () => {
+    useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+    useRequestsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-building-edit-black-forest')).toBeDisabled();
+  });
+
+  it('enables Edit once seats + requests snapshots are loaded (even when empty)', () => {
+    useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+    useSeatsMock.mockReturnValue(liveResult<Seat>([]));
+    useRequestsMock.mockReturnValue(liveResult<AccessRequest>([]));
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-building-edit-black-forest')).not.toBeDisabled();
+  });
+
+  it('blocks the rename and toasts when an active seat references the building', async () => {
+    const { useToastStore } = await import('../../../lib/store/toast');
+    useToastStore.getState().clear();
+    const user = userEvent.setup();
+    installRealisticUpsert();
+    useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+    useSeatsMock.mockReturnValue(liveResult<Seat>([mkSeat()]));
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-building-edit-black-forest'));
+    const nameInput = screen.getByLabelText(/^Name$/i);
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Schwarzwald');
+    await user.click(screen.getByTestId('config-building-submit'));
+    await vi.waitFor(() => {
+      const errors = useToastStore.getState().toasts.filter((t) => t.kind === 'error');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.message).toContain('Can\'t rename "Black Forest"');
+    });
+    // The mutation was called with the rename-guard inputs.
+    expect(upsertBuildingMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        building_name: 'Schwarzwald',
+        previousBuildingName: 'Black Forest',
+        seats: [expect.objectContaining({ building_names: ['Black Forest'] })],
+      }),
+    );
+  });
+
+  it('saves an address-only edit even while a seat references the building (name unchanged)', async () => {
+    const user = userEvent.setup();
+    installRealisticUpsert();
+    useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+    useSeatsMock.mockReturnValue(liveResult<Seat>([mkSeat()]));
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-building-edit-black-forest'));
+    const addressInput = screen.getByLabelText(/Address/i);
+    await user.clear(addressInput);
+    await user.type(addressInput, '999 New Address');
+    await user.click(screen.getByTestId('config-building-submit'));
+    await vi.waitFor(() => expect(upsertBuildingMock).toHaveBeenCalled());
+    // Name is unchanged → the guard does not fire → it saved.
+    expect(upsertBuildingMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        building_name: 'Black Forest',
+        address: '999 New Address',
+        previousBuildingName: 'Black Forest',
+      }),
+    );
+  });
+
+  it('saves a rename of an unreferenced building', async () => {
+    const user = userEvent.setup();
+    installRealisticUpsert();
+    // The building being renamed has no seat / request referencing it.
+    useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+    useSeatsMock.mockReturnValue(liveResult<Seat>([mkSeat({ building_names: ['Other'] })]));
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-building-edit-black-forest'));
+    const nameInput = screen.getByLabelText(/^Name$/i);
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Schwarzwald');
+    await user.click(screen.getByTestId('config-building-submit'));
+    await vi.waitFor(() => expect(upsertBuildingMock).toHaveBeenCalled());
+    expect(upsertBuildingMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        building_name: 'Schwarzwald',
+        previousBuildingName: 'Black Forest',
+      }),
+    );
   });
 });

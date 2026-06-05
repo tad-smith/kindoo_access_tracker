@@ -62,7 +62,8 @@ describe('wardSchema', () => {
     const r = wardSchema.safeParse({
       ward_code: 'CO',
       ward_name: 'Maple',
-      building_name: 'Main',
+      // The form value is the immutable building_id slug.
+      building_id: 'main',
       seat_cap: 20,
     });
     expect(r.success).toBe(true);
@@ -71,7 +72,7 @@ describe('wardSchema', () => {
     const r = wardSchema.safeParse({
       ward_code: 'C-O',
       ward_name: 'X',
-      building_name: 'Main',
+      building_id: 'main',
       seat_cap: 1,
     });
     expect(r.success).toBe(false);
@@ -80,7 +81,7 @@ describe('wardSchema', () => {
     const r = wardSchema.safeParse({
       ward_code: 'CO',
       ward_name: 'X',
-      building_name: '',
+      building_id: '',
       seat_cap: 1,
     });
     expect(r.success).toBe(false);

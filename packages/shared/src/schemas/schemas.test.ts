@@ -206,10 +206,24 @@ describe('stakeSchema', () => {
 });
 
 describe('wardSchema', () => {
-  it('parses a representative entry', () => {
+  it('parses a legacy entry without building_id', () => {
     const seed = {
       ward_code: '01',
       ward_name: '1st Ward',
+      building_name: 'Maple Building',
+      seat_cap: 30,
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(wardSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a migrated entry carrying both building_id and building_name', () => {
+    const seed = {
+      ward_code: '01',
+      ward_name: '1st Ward',
+      building_id: 'maple-building',
       building_name: 'Maple Building',
       seat_cap: 30,
       created_at: T,

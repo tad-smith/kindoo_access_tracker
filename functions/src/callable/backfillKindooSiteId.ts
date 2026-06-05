@@ -34,10 +34,9 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
-import { canonicalEmail, resolveWardSite } from '@kindoo/shared';
+import { canonicalEmail, resolveWardBuilding } from '@kindoo/shared';
 import type { Building, DuplicateGrant, KindooManager, Seat, Ward } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
-import { buildingsByName } from '../lib/wardSites.js';
 import { MIGRATION_BACKFILL_KINDOO_SITE_ID_ACTOR } from '../lib/systemActors.js';
 
 export interface BackfillKindooSiteIdInput {
@@ -84,25 +83,28 @@ export interface BackfillKindooSiteIdOutput {
  * Returns `undefined` (skip sentinel) when the scope can't be safely
  * resolved — the caller skips the entry rather than writing a value:
  *   - scope is a ward code with no matching ward doc, OR
- *   - the ward's `building_name` has no matching building doc.
+ *   - the ward resolves to no building (neither its `building_id` slug
+ *     nor its `building_name` matches a building doc).
  *
  * The missing-building case must NOT collapse to home. `resolveWardSite`
  * folds "building found, site null" and "building not found" into the
  * same `null`; leaning on that here would silently demote a previously
  * foreign-site seat to home whenever its building is renamed/deleted. We
- * check building existence explicitly so a missing building skips-and-
- * warns, symmetric with the unknown-ward path.
+ * resolve the building explicitly (id-first via `resolveWardBuilding`) so
+ * a missing building skips-and-warns, symmetric with the unknown-ward
+ * path; a found building uses its `kindoo_site_id` (absent ⇒ home).
  */
 function resolveExpectedSite(
   scope: string,
   wardsByCode: Map<string, Ward>,
-  buildingSites: Map<string, Pick<Building, 'kindoo_site_id'>>,
+  buildings: Building[],
 ): string | null | undefined {
   if (scope === 'stake') return null;
   const ward = wardsByCode.get(scope);
   if (!ward) return undefined;
-  if (!buildingSites.has(ward.building_name)) return undefined;
-  return resolveWardSite(ward, buildingSites);
+  const building = resolveWardBuilding(ward, buildings);
+  if (!building) return undefined;
+  return building.kindoo_site_id ?? null;
 }
 
 /**
@@ -126,8 +128,8 @@ export async function backfillKindooSiteIdForStake(
     wardsByCode.set(w.ward_code, w);
   }
   // `ward.kindoo_site_id` was removed — a ward's site derives from its
-  // building. Build the `building_name → { kindoo_site_id }` map once.
-  const buildingSites = buildingsByName(buildingsSnap.docs.map((d) => d.data() as Building));
+  // building (id-first via the ward's `building_id` slug, name fallback).
+  const buildings = buildingsSnap.docs.map((d) => d.data() as Building);
 
   const out: BackfillKindooSiteIdOutput = {
     ok: true,
@@ -156,7 +158,7 @@ export async function backfillKindooSiteIdForStake(
     // become home-categorised (the ward/building may be foreign-site once
     // the operator restores it). The downstream ward-fallback resolver
     // handles classification until the operator fixes the data.
-    const primaryDerived = resolveExpectedSite(seat.scope, wardsByCode, buildingSites);
+    const primaryDerived = resolveExpectedSite(seat.scope, wardsByCode, buildings);
     const primaryCurrent = (seat as Seat).kindoo_site_id ?? null;
     let primaryDiffers = false;
     let primaryTarget: string | null = primaryCurrent;
@@ -176,7 +178,7 @@ export async function backfillKindooSiteIdForStake(
     let dupesDiffer = false;
     let dupesUpdatedThisSeat = 0;
     for (const dup of curDupes) {
-      const dupDerived = resolveExpectedSite(dup.scope, wardsByCode, buildingSites);
+      const dupDerived = resolveExpectedSite(dup.scope, wardsByCode, buildings);
       if (dupDerived === undefined) {
         // Same uniform skip-with-warning policy as the primary side.
         // Preserve the entry as-is so the next importer cycle can

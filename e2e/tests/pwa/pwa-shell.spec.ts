@@ -1,16 +1,16 @@
-// PWA shell E2E. Exercises the user-visible install + offline + update
-// surfaces against the production-style preview build (where Workbox
-// wires the real service worker; `pnpm dev` mode is opted out in
-// vite.config.ts).
+// PWA shell E2E. Exercises the user-visible install + offline surfaces
+// against the production-style preview build (where Workbox wires the
+// real service worker; `pnpm dev` mode is opted out in vite.config.ts).
 //
-// The install + update flows can't be driven from the browser shell
-// directly under headless Chromium — `beforeinstallprompt` only fires
-// once a heuristic engagement threshold is met, and Workbox detects an
-// SW update only when an actual new revision is precached. We assert
-// the deterministic surfaces here (manifest exposed, all icon assets
+// The install flow can't be driven from the browser shell directly under
+// headless Chromium — `beforeinstallprompt` only fires once a heuristic
+// engagement threshold is met. Silent auto-update (registerType:
+// 'autoUpdate') likewise only triggers when an actual new revision is
+// precached, which a single preview build can't produce. We assert the
+// deterministic surfaces here (manifest exposed, all icon assets
 // reachable, SW registers on the landing page); the install-button
-// gating, update-prompt rendering, and offline-indicator behaviour
-// are covered exhaustively by unit tests against jsdom.
+// gating and offline-indicator behaviour are covered exhaustively by
+// unit tests against jsdom.
 
 import { expect, test } from '@playwright/test';
 
@@ -56,9 +56,9 @@ test.describe('PWA shell', () => {
 
   test('registers the service worker on first load', async ({ page }) => {
     await page.goto('/');
-    // The PWA registration component is mounted at the root in main.tsx,
-    // so the SW registers regardless of auth state. Workbox registers on
-    // window-load — give it a generous budget.
+    // vite-plugin-pwa's auto-injected `registerSW.js` (injectRegister:
+    // 'auto') registers the SW on window-load regardless of auth state —
+    // give it a generous budget.
     await page.waitForFunction(
       async () => {
         if (!('serviceWorker' in navigator)) return false;

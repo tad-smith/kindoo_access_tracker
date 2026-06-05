@@ -24,12 +24,10 @@ export function stakeAvailablePoolSize(
   buildings: ReadonlyArray<Building>,
 ): number | null {
   if (typeof stakeSeatCap !== 'number') return null;
-  const buildingsByName = new Map<string, Pick<Building, 'kindoo_site_id'>>(
-    buildings.map((b) => [b.building_name, b]),
-  );
   let reserved = 0;
   for (const w of wards) {
-    if (resolveWardSite(w, buildingsByName) != null) continue;
+    // Id-first ward→building resolution (slug FK, name fallback).
+    if (resolveWardSite(w, buildings) != null) continue;
     reserved += typeof w.seat_cap === 'number' ? w.seat_cap : 0;
   }
   return stakeSeatCap - reserved;

@@ -11,7 +11,7 @@
 // load via `ensureBootstrapAdmin`, which gives the
 // `syncManagersClaims` trigger something to mint a manager claim from.
 
-import { deleteDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { deleteDoc, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
@@ -120,6 +120,35 @@ export function useStep1Mutation() {
 export interface BuildingInput {
   building_name: string;
   address: string;
+  /**
+   * Live buildings snapshot for the unique-display-name guard. Building
+   * display names must be unique across the stake (the slug FK and every
+   * grant-array display name key off them). The wizard's Step 2 already
+   * subscribes to `buildings`; it passes the snapshot it just rendered
+   * so the guard fires without an extra read. Defaults to `[]` so an
+   * un-hydrated caller is treated as "no known buildings" (the create
+   * transaction's existence pre-check is the backstop).
+   */
+  existingBuildings?: ReadonlyArray<Building>;
+}
+
+/**
+ * Pure guard: returns a user-facing error message when another building
+ * (a different `building_id`) already uses `name`, or `null` when the
+ * name is free. Case-insensitive, trimmed. Mirrors the Configuration
+ * page's `duplicateBuildingNameBlocker`; duplicated here rather than
+ * imported to respect the feature boundary (bootstrap must not reach
+ * into manager/configuration internals).
+ */
+export function duplicateBuildingNameBlocker(
+  name: string,
+  buildings: ReadonlyArray<Building>,
+): string | null {
+  const wanted = name.trim().toLowerCase();
+  if (!wanted) return null;
+  const clash = buildings.find((b) => b.building_name.trim().toLowerCase() === wanted);
+  if (!clash) return null;
+  return `Another building already uses the name "${clash.building_name}". Building names must be unique.`;
 }
 
 export function useAddBuildingMutation() {
@@ -130,16 +159,37 @@ export function useAddBuildingMutation() {
     mutationFn: async (input: BuildingInput) => {
       const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
-      const slug = buildingSlug(input.building_name);
+      const name = input.building_name.trim();
+      // CREATE derives the immutable slug once from the name and pins it
+      // as the doc id; it is never re-derived afterward (matches the
+      // Configuration building mutation).
+      const slug = buildingSlug(name);
       if (!slug) throw new Error('Building name is required.');
-      await setDoc(buildingRef(db, sid, slug), {
-        building_id: slug,
-        building_name: input.building_name.trim(),
-        address: input.address.trim(),
-        created_at: serverTimestamp(),
-        last_modified_at: serverTimestamp(),
-        lastActor: actor,
-      } as unknown as Building);
+      // Unique display name — blocks two buildings sharing a name (the
+      // legacy `building_name` FK + grant-array display names would
+      // otherwise be ambiguous). Same guard the Configuration path runs.
+      const dupBlocker = duplicateBuildingNameBlocker(name, input.existingBuildings ?? []);
+      if (dupBlocker) throw new Error(dupBlocker);
+      const ref = buildingRef(db, sid, slug);
+      // Race-safe create: the existence pre-check + write run in one
+      // transaction so a duplicate name that slugs to an EXISTING doc
+      // can't silently overwrite it (the old `setDoc` without `merge`
+      // clobbered the original — resetting `created_at` and wiping
+      // fields). A slug collision now surfaces an explicit error.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists()) {
+          throw new Error(`A building named "${input.building_name.trim()}" already exists.`);
+        }
+        tx.set(ref, {
+          building_id: slug,
+          building_name: name,
+          address: input.address.trim(),
+          created_at: serverTimestamp(),
+          last_modified_at: serverTimestamp(),
+          lastActor: actor,
+        } as unknown as Building);
+      });
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn so
@@ -149,12 +199,13 @@ export function useAddBuildingMutation() {
   });
 }
 
-// Block deletes when any ward references the building by name. Wards
-// FK on `building_name` (per firebase-schema.md §4) — orphaning a ward
-// silently breaks its building lookup. Firestore Security Rules can't
-// iterate a sibling collection so we cannot enforce this at the rules
-// layer; this client guard is the only line of defense (documented in
-// docs/firebase-migration.md as a known gap).
+// Block deletes when any ward references the building. Wards FK on the
+// immutable `building_id` slug (preferred) plus the legacy
+// `building_name`; the guard matches on EITHER during the transition.
+// Orphaning a ward silently breaks its building lookup. Firestore
+// Security Rules can't iterate a sibling collection so we cannot enforce
+// this at the rules layer; this client guard is the only line of defense
+// (documented in docs/firebase-migration.md as a known gap).
 //
 // The caller passes the live wards list (already subscribed via
 // useWards) so we don't need an extra getDocs round-trip; the ref-guard
@@ -170,7 +221,9 @@ export function useDeleteBuildingMutation() {
   return useMutation({
     mutationFn: async (input: DeleteBuildingInput) => {
       const sid = requireActiveStake(activeStakeId);
-      const refs = input.wards.filter((w) => w.building_name === input.buildingName);
+      const refs = input.wards.filter(
+        (w) => w.building_id === input.buildingId || w.building_name === input.buildingName,
+      );
       const blocker = buildingDeleteBlocker(refs);
       if (blocker) throw new Error(blocker);
       await deleteDoc(buildingRef(db, sid, input.buildingId));
@@ -198,6 +251,10 @@ export function buildingDeleteBlocker(referencingWards: ReadonlyArray<Ward>): st
 export interface WardInput {
   ward_code: string;
   ward_name: string;
+  /** Immutable slug FK to the selected building (preferred). */
+  building_id: string;
+  /** The selected building's current display name; written alongside
+   *  `building_id` so stale browser bundles keep resolving. */
   building_name: string;
   seat_cap: number;
 }
@@ -215,6 +272,8 @@ export function useAddWardMutation() {
       await setDoc(wardRef(db, sid, code), {
         ward_code: code,
         ward_name: input.ward_name.trim(),
+        // Write BOTH: id-first FK + legacy name snapshot.
+        building_id: input.building_id,
         building_name: input.building_name,
         seat_cap: input.seat_cap,
         created_at: serverTimestamp(),

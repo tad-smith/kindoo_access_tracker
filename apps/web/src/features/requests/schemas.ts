@@ -18,6 +18,7 @@
 // or future callable validation needs it) the server side.
 
 import { z } from 'zod';
+import { resolveWardBuilding } from '@kindoo/shared';
 import type { Building, Ward } from '@kindoo/shared';
 
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -27,16 +28,21 @@ const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
  * Stake-scope defaults to every building in the passed catalogue —
  * stake-scope means "everywhere," so the manager unchecks specific
  * buildings to exclude rather than ticking N every time (B-11). Ward-
- * scope resolves to the single `building_name` on the ward doc, or
- * empty when the ward isn't in the catalogue or has no building bound.
+ * scope resolves the ward's building id-first (`resolveWardBuilding`)
+ * and returns its current display name; empty when the ward isn't in
+ * the catalogue or has no building bound.
+ *
+ * Grant arrays stay display-name strings, so this returns the building's
+ * `building_name` (resolved from the immutable `building_id` when set,
+ * else the ward's legacy name snapshot).
  *
  * The form passes its *visible* (site-filtered) catalogue so stake-
- * scope picks only home buildings (spec §15) — the cross-ward predicate
- * passes `[]` because it only needs membership tests against the ward's
- * own home building. The form additionally clamps the ward-scope
- * default via `clampWardDefaultsToVisible` so a ward whose
- * `building_name` is hidden by the site filter (legacy mid-migration
- * state) does not pre-check an invisible building.
+ * scope picks only home buildings (spec §15). The cross-ward predicate
+ * passes the full catalogue so it can id-resolve the ward's building.
+ * The form additionally clamps the ward-scope default via
+ * `clampWardDefaultsToVisible` so a ward whose building is hidden by the
+ * site filter (legacy mid-migration state) does not pre-check an
+ * invisible building.
  */
 export function defaultBuildingsForScope(
   scope: string,
@@ -46,8 +52,14 @@ export function defaultBuildingsForScope(
   if (!scope) return [];
   if (scope === 'stake') return buildings.map((b) => b.building_name);
   const ward = wards.find((w) => w.ward_code === scope);
-  if (!ward || !ward.building_name) return [];
-  return [ward.building_name];
+  if (!ward) return [];
+  // Id-first: resolve the ward's building and use its current display
+  // name. Fall back to the ward's own `building_name` snapshot when the
+  // catalogue can't resolve it (e.g. catalogue not hydrated yet) so the
+  // pre-check still works mid-load.
+  const resolved = resolveWardBuilding(ward, buildings);
+  const name = resolved?.building_name ?? ward.building_name;
+  return name ? [name] : [];
 }
 
 /**
@@ -77,15 +89,19 @@ export function clampWardDefaultsToVisible(
  * AND at least one selected building is NOT in that ward's default
  * set. Stake scope (and any combination of `building_names` inside the
  * default set) returns `false`. The comment-required gate fires on
- * `true`.
+ * `true`. The buildings catalogue is threaded so the ward's default
+ * building resolves id-first (`resolveWardBuilding`); pass `[]` only
+ * where id resolution isn't needed (the ward's legacy name snapshot is
+ * then used as the default).
  */
 export function isCrossWardSelection(
   scope: string,
   buildingNames: readonly string[],
   wards: readonly Ward[],
+  buildings: readonly Building[] = [],
 ): boolean {
   if (!scope || scope === 'stake') return false;
-  const defaults = defaultBuildingsForScope(scope, wards);
+  const defaults = defaultBuildingsForScope(scope, wards, buildings);
   return buildingNames.some((name) => !defaults.includes(name));
 }
 
@@ -162,17 +178,17 @@ export const newRequestSchema = z
 export type NewRequestForm = z.infer<typeof newRequestSchema>;
 
 /**
- * Schema factory that closes over the wards catalogue so the
- * cross-ward-comment-required gate can resolve a ward code to its
- * default building. The form constructs the schema in a `useMemo`
- * keyed on the wards subscription. Server-side validation should
- * keep using `newRequestSchema` directly — the cross-ward rule is a
- * UX nudge, not a defense-in-depth gate.
+ * Schema factory that closes over the wards + buildings catalogues so
+ * the cross-ward-comment-required gate can resolve a ward code to its
+ * default building (id-first). The form constructs the schema in a
+ * `useMemo` keyed on the wards + buildings subscriptions. Server-side
+ * validation should keep using `newRequestSchema` directly — the
+ * cross-ward rule is a UX nudge, not a defense-in-depth gate.
  */
-export function makeNewRequestSchema(wards: readonly Ward[]) {
+export function makeNewRequestSchema(wards: readonly Ward[], buildings: readonly Building[] = []) {
   return newRequestSchema.superRefine((val, ctx) => {
     if (val.urgent) return; // urgent path already requires a comment.
-    if (!isCrossWardSelection(val.scope, val.building_names, wards)) return;
+    if (!isCrossWardSelection(val.scope, val.building_names, wards, buildings)) return;
     if (val.comment.trim().length > 0) return;
     ctx.addIssue({
       code: 'custom',

@@ -87,9 +87,12 @@ async function seedBaseStake(): Promise<void> {
   });
   // Two wards seeded so we can prove the dropdown filter holds even
   // when the wards catalogue carries entries the user does NOT hold.
+  // CO carries the migrated `building_id` slug FK (id-first path); BA is
+  // a legacy name-only ward (name-fallback path) — both must resolve.
   await writeDoc('stakes/csnorth/wards/CO', {
     ward_code: 'CO',
     ward_name: 'Cottonwood',
+    building_id: 'maple-building',
     building_name: 'Maple Building',
     seat_cap: 20,
     lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
