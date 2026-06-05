@@ -58,6 +58,24 @@ function liveDocResult<T>(data: T | undefined) {
   };
 }
 
+// Seat subscription still in flight: `data` is undefined but the query
+// is `pending`, NOT `success`. Used to assert the edit-missing-seat
+// chip stays hidden during load (it must gate on `isSuccess`, not on
+// `!data` — both states have `data === undefined`).
+function loadingDocResult() {
+  return {
+    data: undefined,
+    error: null,
+    status: 'pending',
+    isPending: true,
+    isLoading: true,
+    isSuccess: false,
+    isError: false,
+    isFetching: true,
+    fetchStatus: 'fetching',
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
@@ -671,6 +689,140 @@ describe('<ManagerQueuePage /> edit request rendering', () => {
     const row = screen.getByTestId('queue-buildings-r-add');
     expect(row.textContent).not.toMatch(/→/);
     expect(row.textContent).toMatch(/^Buildings:/);
+  });
+});
+
+describe('<ManagerQueuePage /> edit-missing-seat chip', () => {
+  function editSeat(overrides: Record<string, unknown> = {}) {
+    return {
+      member_canonical: 'a@x.com',
+      member_email: 'a@x.com',
+      member_name: 'A',
+      scope: 'stake',
+      type: 'manual',
+      callings: [],
+      building_names: ['Maple Building'],
+      duplicate_grants: [],
+      created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+      last_modified_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+      last_modified_by: { email: 'a@b.c', canonical: 'a@b.c' },
+      lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+      ...overrides,
+    };
+  }
+
+  it('shows the edit-missing-seat chip on an edit_* card whose seat subscription resolves to no seat', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'edit_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+        building_names: ['Maple Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    // Subscription resolved (isSuccess) with no doc → target seat gone.
+    useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
+    render(<ManagerQueuePage />);
+    const chip = screen.getByTestId('queue-edit-missing-seat-r1');
+    expect(chip).toBeInTheDocument();
+    expect(chip).toHaveAttribute('role', 'alert');
+    expect(chip).toHaveClass('kd-queue-card-error');
+    expect(chip.textContent).toMatch(/This request edits a seat that no longer exists\./);
+    // No action affordances — the queue is read-only.
+    expect(screen.queryByTestId('queue-complete-r1')).toBeNull();
+    expect(screen.queryByTestId('queue-reject-r1')).toBeNull();
+  });
+
+  it('does not show the edit-missing-seat chip on an edit_* card whose seat still exists', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'edit_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+        building_names: ['Maple Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useSeatForMemberMock.mockReturnValue(liveDocResult(editSeat()));
+    render(<ManagerQueuePage />);
+    expect(screen.queryByTestId('queue-edit-missing-seat-r1')).toBeNull();
+  });
+
+  it('does not show the edit-missing-seat chip while the seat subscription is still loading', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'edit_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+        building_names: ['Maple Building'],
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    // Loading: data is undefined but the subscription has NOT resolved.
+    // Gating on `!data` alone would flash the chip here; gating on
+    // `isSuccess` keeps it hidden until the seat actually resolves absent.
+    useSeatForMemberMock.mockReturnValue(loadingDocResult());
+    render(<ManagerQueuePage />);
+    expect(screen.queryByTestId('queue-edit-missing-seat-r1')).toBeNull();
+  });
+
+  it('shows the edit-missing-seat chip for edit_auto and edit_temp types too', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'auto1',
+        type: 'edit_auto',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+        building_names: ['Maple Building'],
+      }),
+      makeRequest({
+        request_id: 'temp1',
+        type: 'edit_temp',
+        scope: 'CO',
+        member_email: 'b@x.com',
+        member_canonical: 'b@x.com',
+        building_names: ['Maple Building'],
+        start_date: '2026-05-01',
+        end_date: '2026-05-15',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
+    render(<ManagerQueuePage />);
+    expect(screen.getByTestId('queue-edit-missing-seat-auto1')).toBeInTheDocument();
+    expect(screen.getByTestId('queue-edit-missing-seat-temp1')).toBeInTheDocument();
+  });
+
+  it('does not show the edit-missing-seat chip on add or remove cards with no seat', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r-add',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+      }),
+      makeRequest({
+        request_id: 'r-remove',
+        type: 'remove',
+        scope: 'CO',
+        member_email: 'b@x.com',
+        member_canonical: 'b@x.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
+    render(<ManagerQueuePage />);
+    expect(screen.queryByTestId('queue-edit-missing-seat-r-add')).toBeNull();
+    expect(screen.queryByTestId('queue-edit-missing-seat-r-remove')).toBeNull();
   });
 });
 
