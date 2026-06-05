@@ -106,7 +106,7 @@ export type Seat = {
    * absent) means the home site; a string value points at a doc ID
    * under `stakes/{stakeId}/kindooSites/`. Stake-scope primary grants
    * resolve to home (spec §15 Phase 1 policy); ward-scope primary
-   * grants take the ward's own `kindoo_site_id`. T-42.
+   * grants inherit the site of the ward's assigned building. T-42.
    */
   kindoo_site_id?: string | null;
 
