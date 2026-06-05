@@ -343,20 +343,24 @@ service cloud.firestore {
       // kindooManagers can write to (e.g. a building physically
       // governed by another stake's Kindoo environment). The HOME site
       // lives on the parent stake doc (no `KindooSite` record); `null`
-      // / missing `kindoo_site_id` on a ward / building means home.
+      // / missing `kindoo_site_id` on a BUILDING means home. Wards no
+      // longer carry `kindoo_site_id` — a ward's site derives from its
+      // assigned building.
       //
       // Read: any stake member (the SPA's bootstrap response surfaces
       // the site map alongside wards / buildings). Write: managers
-      // only — same gating as `wardCallingTemplates` / `kindooManagers`
-      // because authority over WHICH Kindoo environments this stake
-      // can target is a stake-level configuration concern, not a
-      // ward-level one. Existing csnorth `kindooManagers` allow-list
-      // governs all Kindoo writes regardless of which site they
-      // target; this rule does not introduce a new role.
+      // only — same gating as `kindooManagers` because authority over
+      // WHICH Kindoo environments this stake can target is a
+      // stake-level configuration concern, not a ward-level one.
+      // Existing csnorth `kindooManagers` allow-list governs all Kindoo
+      // writes regardless of which site they target; this rule does not
+      // introduce a new role.
       //
-      // Field-level referential integrity (does the `kindoo_site_id`
-      // a ward / building references actually exist?) is the UI's
-      // concern; rules gate WHO can write, not field-level FK checks.
+      // Field-level referential integrity (does the `kindoo_site_id` a
+      // building references actually exist? do buildings / seats still
+      // point at a site being deleted? — wards are covered transitively
+      // via their building) is the UI's concern; rules gate WHO can
+      // write, not field-level FK checks.
       match /kindooSites/{kindooSiteId} {
         allow read: if isAnyMember(stakeId);
         allow create, update: if isManager(stakeId)
@@ -721,32 +725,6 @@ service cloud.firestore {
           );
 
         allow delete: if false;
-      }
-
-      // ----- Calling templates -----
-      // Manager-only on both reads and writes. Templates seed the
-      // importer's mapping from calling-name → app-access; they're
-      // configuration data, not member data, so non-managers don't
-      // need read access.
-      //
-      // Create + update carry the `lastActorMatchesAuth` integrity
-      // check; delete cannot (no `request.resource.data` on delete) and
-      // is gated only by the role predicate. Same split applied to
-      // wards / buildings / kindooManagers above. The audit trigger
-      // reads `lastActor` from the BEFORE snapshot for deletes, so the
-      // pre-delete row's stamp surfaces in the audit log.
-      match /wardCallingTemplates/{callingName} {
-        allow read: if isManager(stakeId);
-        allow create, update: if isManager(stakeId)
-          && lastActorMatchesAuth(request.resource.data);
-        allow delete: if isManager(stakeId);
-      }
-
-      match /stakeCallingTemplates/{callingName} {
-        allow read: if isManager(stakeId);
-        allow create, update: if isManager(stakeId)
-          && lastActorMatchesAuth(request.resource.data);
-        allow delete: if isManager(stakeId);
       }
 
       // ----- AuditLog -----

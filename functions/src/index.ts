@@ -16,9 +16,7 @@ export {
   auditManagerWrites,
   auditRequestWrites,
   auditSeatWrites,
-  auditStakeCallingTemplateWrites,
   auditStakeWrites,
-  auditWardCallingTemplateWrites,
   auditWardWrites,
 } from './triggers/auditTrigger.js';
 

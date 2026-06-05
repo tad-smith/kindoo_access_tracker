@@ -118,11 +118,14 @@ async function seedStake(
 }
 
 /**
- * Seed a ward doc. `seat_cap` is the per-ward Kindoo cap; the callable
- * reads the wards collection inside its transaction to recompute
- * over-caps against the post-write seat set. `building_name` is also
- * used by the legacy ward-scope fallback when a request has empty
- * `building_names`.
+ * Seed a ward doc (and, when `kindoo_site_id` is given, its building).
+ * `seat_cap` is the per-ward Kindoo cap; the callable reads the wards +
+ * buildings collections inside its transaction to recompute over-caps
+ * and derive each seat's site. `building_name` is also used by the
+ * legacy ward-scope fallback when a request has empty `building_names`.
+ *
+ * A ward's Kindoo site now derives from its building, so passing
+ * `kindoo_site_id` here seeds a matching building carrying that site.
  */
 async function seedWard(opts: {
   ward_code: string;
@@ -131,17 +134,39 @@ async function seedWard(opts: {
   kindoo_site_id?: string | null;
 }): Promise<void> {
   const { db } = requireEmulators();
+  const buildingName = opts.building_name ?? `${opts.ward_code} Building`;
   const doc: Record<string, unknown> = {
     ward_code: opts.ward_code,
     ward_name: `${opts.ward_code} Ward`,
-    building_name: opts.building_name ?? `${opts.ward_code} Building`,
+    building_name: buildingName,
     seat_cap: opts.seat_cap ?? 0,
     created_at: Timestamp.now(),
     last_modified_at: Timestamp.now(),
     lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
   };
-  if (opts.kindoo_site_id !== undefined) doc.kindoo_site_id = opts.kindoo_site_id;
   await db.doc(`stakes/${STAKE_ID}/wards/${opts.ward_code}`).set(doc);
+  if (opts.kindoo_site_id !== undefined) {
+    await seedBuilding({ building_name: buildingName, kindoo_site_id: opts.kindoo_site_id });
+  }
+}
+
+/** Seed a building doc. `kindoo_site_id` null/absent = home site. */
+async function seedBuilding(opts: {
+  building_name: string;
+  kindoo_site_id?: string | null;
+}): Promise<void> {
+  const { db } = requireEmulators();
+  const buildingId = opts.building_name.toLowerCase().replace(/\s+/g, '-');
+  const body: Record<string, unknown> = {
+    building_id: buildingId,
+    building_name: opts.building_name,
+    address: '123 Test St',
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+  };
+  if (opts.kindoo_site_id !== undefined) body.kindoo_site_id = opts.kindoo_site_id;
+  await db.doc(`stakes/${STAKE_ID}/buildings/${buildingId}`).set(body);
 }
 
 function callableReq(opts: { auth?: { email: string } | null; data: unknown }): never {
@@ -687,6 +712,66 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         expect(seat.kindoo_site_id).toBe('east-stake');
         // T-42 / T-43: new seat carries the empty primitive mirror.
         expect(seat.duplicate_scopes).toEqual([]);
+      });
+
+      it('derives the new seat site from the ward BUILDING (foreign building → foreign site)', async () => {
+        await seedManager();
+        await seedStake();
+        // Ward + building seeded independently: the seat site comes from
+        // the ward's building, not from the ward doc.
+        await seedWard({ ward_code: 'FT', building_name: 'Pine Building' });
+        await seedBuilding({ building_name: 'Pine Building', kindoo_site_id: 'east-stake' });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'FT',
+          building_names: ['Pine Building'],
+          reason: 'foreign-building grant',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.kindoo_site_id).toBe('east-stake');
+      });
+
+      it('derives the new seat site from the ward BUILDING (home building → null)', async () => {
+        await seedManager();
+        await seedStake();
+        // The ward's building is on the home site (no kindoo_site_id) →
+        // seat resolves to home (explicit null).
+        await seedWard({ ward_code: 'CO', building_name: 'Maple Building' });
+        await seedBuilding({ building_name: 'Maple Building' });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'CO',
+          building_names: ['Maple Building'],
+          reason: 'home-building grant',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.kindoo_site_id).toBe(null);
       });
 
       it('T-42: new seat create with unknown-ward scope leaves kindoo_site_id unset (uniform skip-with-warning)', async () => {

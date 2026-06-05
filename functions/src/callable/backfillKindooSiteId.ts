@@ -34,9 +34,10 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
-import { canonicalEmail } from '@kindoo/shared';
-import type { DuplicateGrant, KindooManager, Seat, Ward } from '@kindoo/shared';
+import { canonicalEmail, resolveWardSite } from '@kindoo/shared';
+import type { Building, DuplicateGrant, KindooManager, Seat, Ward } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
+import { buildingsByName } from '../lib/wardSites.js';
 import { MIGRATION_BACKFILL_KINDOO_SITE_ID_ACTOR } from '../lib/systemActors.js';
 
 export interface BackfillKindooSiteIdInput {
@@ -77,9 +78,9 @@ export interface BackfillKindooSiteIdOutput {
 
 /**
  * Resolve a scope's expected `kindoo_site_id`. Stake-scope → home
- * (`null`); ward-scope → that ward's `kindoo_site_id` (`null` /
- * undefined on home wards becomes `null`). Returns `undefined` when
- * the scope is a ward code that doesn't resolve — caller decides
+ * (`null`); ward-scope → the site of the ward's assigned building
+ * (home building / unknown building → `null`). Returns `undefined`
+ * when the scope is a ward code that doesn't resolve — caller decides
  * whether to skip the entry (duplicates) or coerce to home (primary
  * scope, where this can only happen on legacy data and a "skip
  * everything" outcome would be worse than a controlled fallback).
@@ -87,11 +88,12 @@ export interface BackfillKindooSiteIdOutput {
 function resolveExpectedSite(
   scope: string,
   wardsByCode: Map<string, Ward>,
+  buildingSites: Map<string, Pick<Building, 'kindoo_site_id'>>,
 ): string | null | undefined {
   if (scope === 'stake') return null;
   const ward = wardsByCode.get(scope);
   if (!ward) return undefined;
-  return ward.kindoo_site_id ?? null;
+  return resolveWardSite(ward, buildingSites);
 }
 
 /**
@@ -103,8 +105,9 @@ export async function backfillKindooSiteIdForStake(
   db: Firestore,
   stakeId: string,
 ): Promise<BackfillKindooSiteIdOutput> {
-  const [wardsSnap, seatsSnap] = await Promise.all([
+  const [wardsSnap, buildingsSnap, seatsSnap] = await Promise.all([
     db.collection(`stakes/${stakeId}/wards`).get(),
+    db.collection(`stakes/${stakeId}/buildings`).get(),
     db.collection(`stakes/${stakeId}/seats`).get(),
   ]);
 
@@ -113,6 +116,9 @@ export async function backfillKindooSiteIdForStake(
     const w = d.data() as Ward;
     wardsByCode.set(w.ward_code, w);
   }
+  // `ward.kindoo_site_id` was removed — a ward's site derives from its
+  // building. Build the `building_name → { kindoo_site_id }` map once.
+  const buildingSites = buildingsByName(buildingsSnap.docs.map((d) => d.data() as Building));
 
   const out: BackfillKindooSiteIdOutput = {
     ok: true,
@@ -142,7 +148,7 @@ export async function backfillKindooSiteIdForStake(
     // The seat keeps its (likely absent) `kindoo_site_id` and the
     // downstream ward-fallback resolver handles classification until
     // the operator fixes the ward.
-    const primaryDerived = resolveExpectedSite(seat.scope, wardsByCode);
+    const primaryDerived = resolveExpectedSite(seat.scope, wardsByCode, buildingSites);
     const primaryCurrent = (seat as Seat).kindoo_site_id ?? null;
     let primaryDiffers = false;
     let primaryTarget: string | null = primaryCurrent;
@@ -162,7 +168,7 @@ export async function backfillKindooSiteIdForStake(
     let dupesDiffer = false;
     let dupesUpdatedThisSeat = 0;
     for (const dup of curDupes) {
-      const dupDerived = resolveExpectedSite(dup.scope, wardsByCode);
+      const dupDerived = resolveExpectedSite(dup.scope, wardsByCode, buildingSites);
       if (dupDerived === undefined) {
         // Same uniform skip-with-warning policy as the primary side.
         // Preserve the entry as-is so the next importer cycle can
