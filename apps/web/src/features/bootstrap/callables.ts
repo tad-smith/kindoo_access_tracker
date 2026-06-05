@@ -1,7 +1,9 @@
 // Cloud Function callable wrappers used by the bootstrap wizard.
 //   - `installScheduledJobs` — bootstrap-wizard "Complete Setup" calls
-//     this to install the `reconcileAuditGaps` Cloud Scheduler job;
-//     idempotent (Cloud Scheduler jobs are platform-managed).
+//     this as a setup-completion guard. It performs no creates (the
+//     surviving `reconcileAuditGaps` Scheduler job is platform-managed);
+//     it just verifies the caller is an active manager and that the
+//     stake's `timezone` is set.
 //
 // The wrapper `httpsCallable`s the function and surfaces a friendly
 // error message when the function isn't deployed yet ("not-found").
