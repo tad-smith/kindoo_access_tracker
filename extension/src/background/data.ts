@@ -27,7 +27,6 @@ import {
   doc,
   getDoc,
   getDocs,
-  runTransaction,
   serverTimestamp,
   updateDoc,
   writeBatch,
@@ -45,6 +44,34 @@ import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
 import type { EidStakeCandidate, WriteKindooConfigPayload } from '../lib/messaging';
+
+/** Actor reference written onto every client-originated doc write. */
+interface ActorRef {
+  email: string;
+  canonical: string;
+}
+
+/**
+ * Build the `lastActor` / `completer_*` reference the rules' integrity
+ * check expects. Mirrors the web SPA's `readActor()`
+ * (`apps/web/.../queue/hooks.ts`): `email` is the raw Firebase Auth
+ * email verbatim (the rule compares `lastActor.email ==
+ * request.auth.token.email`, the typed email Google delivers — NOT the
+ * canonical form), and `canonical` is the token's `canonical` custom
+ * claim (the rule's `authedCanonical()` reads exactly that claim).
+ * `canonicalEmail(user.email)` is only a fallback for the window before
+ * the sync triggers stamp the claim — recomputing it locally can
+ * diverge from the stored claim, which would fail the rule.
+ */
+async function readActor(user: User): Promise<ActorRef> {
+  if (!user.email) {
+    throw new Error('signed-in user has no email; cannot write actor ref');
+  }
+  const tokenResult = await user.getIdTokenResult();
+  const canonical =
+    (tokenResult.claims as { canonical?: string }).canonical ?? canonicalEmail(user.email);
+  return { email: user.email, canonical };
+}
 
 interface StakeConfigBundle {
   stake: Stake;
@@ -397,17 +424,32 @@ export async function loadSeatByEmail(stakeId: string, canonical: string): Promi
 
 /**
  * Reject a pending request — flip `status` pending → rejected with a
- * required reason. Mirrors the web SPA's `useRejectRequest`. Runs as a
- * `runTransaction` so the pending-status precondition is enforced
- * atomically (a concurrent complete / cancel surfaces as a friendly
- * precondition error rather than a silent overwrite).
+ * required reason. Mirrors the web SPA's `useRejectRequest`.
+ *
+ * Implemented as `getDoc` + `updateDoc`, NOT `runTransaction`. Firestore
+ * transactions (like real-time listeners) ride the WebChannel transport,
+ * which needs `XMLHttpRequest`; MV3 service workers don't provide it, so
+ * `runTransaction` throws `ReferenceError: XMLHttpRequest is not defined`
+ * before the write ever reaches the rules. Discrete one-shot ops
+ * (`getDoc` / `updateDoc`) use fetch and work fine in the SW — the same
+ * reason `loadSeatByEmail` and `writeKindooSiteEid` already work here.
+ *
+ * Dropping the transaction loses no safety: the reject rule requires
+ * `resource.data.status == 'pending'` at write time, so a concurrent
+ * complete / cancel landing between the `getDoc` and the `updateDoc`
+ * makes the rule reject the stale write (permission-denied) — the
+ * pending invariant is enforced server-side, not by a client
+ * transaction. The pre-read here only buys a friendlier "no longer
+ * pending" message for the common case.
  *
  * The Firestore reject rule's `hasOnly` allowlist is
  * `['status', 'completer_email', 'completer_canonical', 'completed_at',
- *   'rejection_reason', 'lastActor']` — the `tx.update` below writes
+ *   'rejection_reason', 'lastActor']` — the `updateDoc` below writes
  * EXACTLY that set (and `lastActorMatchesAuth` requires `lastActor` to
- * mirror the authed user). Adding any other field would trip `hasOnly`
- * and yield permission-denied, so this set is load-bearing.
+ * mirror the authed user; `completer_canonical` must equal the token's
+ * `canonical` claim — see `readActor`). Adding any other field would
+ * trip `hasOnly` and yield permission-denied, so this set is
+ * load-bearing.
  *
  * Manager authorisation is claim-based (`isManager(stakeId)` reads the
  * SW's Firebase Auth token claims, same as the web). The SW already
@@ -419,22 +461,16 @@ export async function rejectRequest(
   rejectionReason: string,
   actor: User,
 ): Promise<void> {
-  if (!actor.email) {
-    throw new Error('signed-in user has no email; cannot write actor ref');
-  }
-  const reason = rejectionReason.trim();
-  if (!reason) {
-    throw new Error('A rejection reason is required.');
-  }
-  const actorRef = {
-    email: actor.email,
-    canonical: canonicalEmail(actor.email),
-  };
-  const db = firestore();
-  const requestRef = doc(db, 'stakes', stakeId, 'requests', requestId);
+  try {
+    const reason = rejectionReason.trim();
+    if (!reason) {
+      throw new Error('A rejection reason is required.');
+    }
+    const actorRef = await readActor(actor);
+    const db = firestore();
+    const requestRef = doc(db, 'stakes', stakeId, 'requests', requestId);
 
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(requestRef);
+    const snap = await getDoc(requestRef);
     if (!snap.exists()) {
       throw new Error('Request not found.');
     }
@@ -442,16 +478,21 @@ export async function rejectRequest(
     if (cur.status !== 'pending') {
       throw new Error(`Request is no longer pending (current status: ${cur.status}).`);
     }
+
     // EXACTLY the rule's `hasOnly` allowlist — see the doc comment.
-    tx.update(requestRef, {
+    await updateDoc(requestRef, {
       status: 'rejected',
-      completer_email: actor.email,
+      completer_email: actorRef.email,
       completer_canonical: actorRef.canonical,
       completed_at: serverTimestamp(),
       rejection_reason: reason,
       lastActor: actorRef,
     });
-  });
+  } catch (err) {
+    // Grep-able from Chrome DevTools even when the panel UI is missed.
+    console.error('[sba-ext] reject failed', err);
+    throw err;
+  }
 }
 
 /**
