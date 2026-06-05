@@ -14,7 +14,11 @@
 //     here, not in `public/`, because `public/` is a static-copy step
 //     with no env substitution.
 //   - `vite-plugin-pwa` last so its `injectManifest` build pass picks up
-//     the final asset list. Workbox strategies:
+//     the final asset list. `registerType: 'autoUpdate'`: a new SW
+//     skip-waits, claims clients, and the page silently reloads onto the
+//     new bundle on activation (registration via `virtual:pwa-register`
+//     in `src/lib/pwa/registerServiceWorker.ts`) — no update prompt.
+//     Workbox strategies:
 //       * cache-first for fingerprinted static assets (JS/CSS/fonts/images)
 //       * network-first for `index.html` (avoid stale-shell lockout)
 //       * never cache Firebase traffic (Firestore/Auth/Installations)
@@ -108,7 +112,23 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       firebaseMessagingSwPlugin(env),
       VitePWA({
-        registerType: 'prompt',
+        // `autoUpdate`: a new SW installs, skips waiting, claims clients,
+        // and the registration reloads the page when the new worker
+        // activates. No user-facing "Update available" prompt. The no-cache
+        // Hosting headers on `index.html` / `sw.js` (see `firebase.json`)
+        // guarantee the browser/CDN revalidate the shell and worker on every
+        // load, so a fresh deploy's SW is actually seen.
+        registerType: 'autoUpdate',
+        // We register the SW ourselves via `virtual:pwa-register` (see
+        // `src/lib/pwa/registerServiceWorker.ts`), so disable the plugin's
+        // own script injection. The plugin's bare `registerSW.js` script
+        // injection only calls `navigator.serviceWorker.register` and does
+        // NOT wire the autoUpdate reload handler — only `registerSW()` from
+        // `virtual:pwa-register` does. In autoUpdate mode that handler
+        // reloads on the Workbox `activated`/`isUpdate` event, which fires
+        // whenever the new worker activates — NOT on `controllerchange` /
+        // `controlling`, the event the old prompt path waited on that never
+        // fired for uncontrolled desktop tabs (the version-thrash bug).
         injectRegister: null,
         includeAssets: [
           'favicon.ico',
@@ -139,18 +159,17 @@ export default defineConfig(({ mode }) => {
           ],
         },
         workbox: {
-          // Claim open clients as soon as a new SW activates. The
-          // generated SW does NOT call `clients.claim()` by default,
-          // which means a newly-activated worker never takes control of
-          // an already-open tab — so the `controllerchange` event that a
-          // naive update flow waits on never fires on desktop. We do not
-          // rely on that event (see `useServiceWorker.activateAndReload`,
-          // which drives skip-waiting + a manual reload), but claiming
-          // clients makes the new bundle authoritative for any tab that
-          // does NOT explicitly reload, and is harmless for the one that
-          // does. We deliberately do NOT set `skipWaiting: true` here —
-          // that would silently auto-activate every deploy and bypass the
-          // user-gated "Update now" prompt (`registerType: 'prompt'`).
+          // autoUpdate lifecycle, pinned explicitly so it does not depend on
+          // the plugin's `injectRegister`-conditional defaults:
+          //   - `skipWaiting`: a freshly-installed worker activates
+          //     immediately instead of sitting in `waiting`. This is what
+          //     fixes the desktop version-thrash — the new SW takes over
+          //     without a user gesture, so `registerSW()`'s
+          //     `activated`/`isUpdate` handler fires and reloads the page.
+          //   - `clientsClaim`: the activated worker takes control of every
+          //     open tab, so the new bundle is authoritative even for a tab
+          //     that has not yet reloaded.
+          skipWaiting: true,
           clientsClaim: true,
           navigateFallback: '/index.html',
           // Paths that must NOT be rewritten to `index.html`. The

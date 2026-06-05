@@ -77,14 +77,6 @@ vi.mock('../../lib/docs', () => ({
   stakeRef: () => ({ id: 'csnorth' }) as unknown,
 }));
 
-vi.mock('virtual:pwa-register/react', () => ({
-  useRegisterSW: () => ({
-    needRefresh: [false, () => {}],
-    offlineReady: [false, () => {}],
-    updateServiceWorker: async () => {},
-  }),
-}));
-
 // Breakpoint mock — defaults to desktop. Individual tests can swap.
 type BreakpointKind = 'phone' | 'tablet' | 'desktop';
 const mockedBreakpoint: { current: BreakpointKind } = { current: 'desktop' };
