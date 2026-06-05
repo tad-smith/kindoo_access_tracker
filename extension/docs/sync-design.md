@@ -286,7 +286,7 @@ Each discrepancy row gains one or two specific-action buttons. Per-row only — 
 
 Every backend-side seat write made by `syncApplyFix` is stamped with `lastActor: SyncActor:<code>` where `<code>` is the discrepancy code that triggered it. The parameterised `auditTrigger` fans an audit row off the resulting Firestore write the same way every other write goes through audit — Sync writes don't bypass anything.
 
-The `SyncActor:` prefix is recognised by the web renderer's `isAutomatedActor` helper and rendered with the automated-actor chip in the audit log + dashboard, alongside `Importer` / `ExpiryTrigger` / `RemoveTrigger` / `OutOfBand`. Helpers (`syncActorName`, `parseSyncActorCode`, `SYNC_DISCREPANCY_CODES`) live in `packages/shared/src/systemActors.ts`.
+The `SyncActor:` prefix is recognised by the web renderer's `isAutomatedActor` helper and rendered with the automated-actor chip in the audit log + dashboard, alongside `Importer` / `RemoveTrigger` / `OutOfBand`. Helpers (`syncActorName`, `parseSyncActorCode`, `SYNC_DISCREPANCY_CODES`) live in `packages/shared/src/systemActors.ts`.
 
 Every fix now flows through `syncApplyFix` and lands an SBA-side seat write, so every fix produces an audit row — including `sba-only`. The orphan delete uses the Expiry-style stamp-then-delete (stamp `lastActor: SyncActor:sba-only` in a committed write, then delete) so the audit trigger reads the stamped BEFORE snapshot and attributes the `delete_seat` row to the Sync actor; the duplicate-grant-promotion branch fans an `update_seat` row instead. There are no longer any Kindoo-side Sync writes that bypass Firestore.
 
