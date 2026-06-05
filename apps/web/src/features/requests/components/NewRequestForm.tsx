@@ -179,6 +179,37 @@ export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps
     [buildings, wards, watchedScope],
   );
 
+  // TEMP INSTRUMENTATION (remove after capturing prod values) — diagnoses
+  // the "foreign-site ward shows home buildings" report. Logs, at every
+  // resolution-input change, the exact values that decide which buildings
+  // the checklist shows. JSON.stringify on every name so whitespace /
+  // casing / hidden-char mismatches between the ward FK and the building
+  // doc are visible (the prime suspect now that the hydration-ordering
+  // repro does NOT reproduce). Logs once per (scope × wards × buildings)
+  // change, not per keystroke.
+  useEffect(() => {
+    const ward = wards.find((w) => w.ward_code === watchedScope);
+    const buildingNames = buildings.map((b) => b.building_name);
+    const wardBuildingName = ward?.building_name ?? null;
+    const matchedBuilding =
+      wardBuildingName != null
+        ? buildings.find((b) => b.building_name === wardBuildingName)
+        : undefined;
+    // eslint-disable-next-line no-console
+    console.log('[NewRequestForm/site-resolution]', {
+      watchedScope,
+      wardsCount: wards.length,
+      wardCodes: wards.map((w) => w.ward_code),
+      wardFoundForScope: ward != null,
+      wardBuildingName: JSON.stringify(wardBuildingName),
+      buildingNames: JSON.stringify(buildingNames),
+      wardBuildingFoundInCatalogue: matchedBuilding != null,
+      matchedBuildingSiteId: matchedBuilding ? (matchedBuilding.kindoo_site_id ?? null) : null,
+      siteIdForScope: siteIdForScope(watchedScope, wards, buildings),
+      visibleBuildingNames: JSON.stringify(visibleBuildings.map((b) => b.building_name)),
+    });
+  }, [watchedScope, wards, buildings, visibleBuildings]);
+
   // Drive both the selection and the open state from `watchedScope`.
   // Two separate effects on purpose — the selection effect also
   // depends on `wards` and `buildings` (live subscription late-
