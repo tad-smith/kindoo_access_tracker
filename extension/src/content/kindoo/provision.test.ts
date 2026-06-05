@@ -698,6 +698,60 @@ describe('provisionAddOrChange — guards', () => {
     expect(saveAccessRuleMock).toHaveBeenCalledWith(SESSION, 'new-uid', [6248], undefined);
   });
 
+  it('appends the " Ward" suffix when ward_name is stored without it', async () => {
+    // SBA stores ward_name without the trailing " Ward" (production
+    // data: "Pine Creek", "Maple"). Kindoo's canonical Description form
+    // (matching the church auto-provisioned callings) carries the
+    // suffix. The write side must append it so manual seats land as
+    // "Pine Creek Ward (...)", mirroring the read-side parseDescription
+    // which resolves both forms.
+    lookupUserByEmailMock.mockResolvedValue(null);
+    inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    const unsuffixedWards: Ward[] = [
+      {
+        ward_code: 'PC',
+        ward_name: 'Pine Creek',
+        building_name: 'Pine Creek Building',
+      } as unknown as Ward,
+    ];
+
+    await provisionAddOrChange({
+      request: addManualRequest({ scope: 'PC', building_names: [] }),
+      seat: null,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: unsuffixedWards,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    const invitePayload = inviteUserMock.mock.calls[0]![1];
+    expect(invitePayload.Description).toBe('Pine Creek Ward (Sunday School Teacher)');
+  });
+
+  it('does not double the " Ward" suffix when ward_name already ends in it', async () => {
+    // Idempotency guard: a ward_name already carrying the suffix
+    // ("Pine Creek Ward") must not become "Pine Creek Ward Ward (...)".
+    lookupUserByEmailMock.mockResolvedValue(null);
+    inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    await provisionAddOrChange({
+      request: addManualRequest({ scope: 'PC', building_names: [] }),
+      seat: null,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: WARDS, // PC fixture is the suffixed "Pine Creek Ward"
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    const invitePayload = inviteUserMock.mock.calls[0]![1];
+    expect(invitePayload.Description).toBe('Pine Creek Ward (Sunday School Teacher)');
+  });
+
   it('respects req.building_names on ward-scope requests with multiple buildings', async () => {
     // Regression for the bug where buildingsForRequest ignored
     // req.building_names for non-stake scope and only returned the

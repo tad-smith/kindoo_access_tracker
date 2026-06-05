@@ -140,11 +140,24 @@ export class ProvisionStakeAutoEditError extends Error {
 // ---- Compute helpers -------------------------------------------------
 
 /**
+ * Kindoo renders ward scopes with a trailing " Ward" in the Description
+ * field ("Pine Creek Ward") while SBA stores `ward_name` without it
+ * ("Pine Creek"). Append the suffix so written seats match the church
+ * auto-provisioned form and the read-side `parseDescription` (which
+ * resolves both forms). Idempotent: a `ward_name` already ending in
+ * " Ward" is returned unchanged.
+ */
+function wardScopeDisplayName(wardName: string): string {
+  return /\sward$/i.test(wardName.trimEnd()) ? wardName : `${wardName} Ward`;
+}
+
+/**
  * Pick the display name shown in the Kindoo "Description" field for a
  * given scope. Stake scope mirrors the v2.1 wizard's resolution
  * (`kindoo_expected_site_name` takes precedence over `stake_name`);
- * ward scope reads the matching ward doc by `ward_code`. Falls back
- * to the scope string verbatim when no ward doc matches.
+ * ward scope reads the matching ward doc by `ward_code` and applies the
+ * canonical " Ward" suffix. Falls back to the scope string verbatim
+ * when no ward doc matches.
  */
 function resolveScopeName(scope: string, stake: Stake, wards: Ward[]): string {
   if (scope === 'stake') {
@@ -152,7 +165,7 @@ function resolveScopeName(scope: string, stake: Stake, wards: Ward[]): string {
     return override && override.length > 0 ? override : stake.stake_name;
   }
   const ward = wards.find((w) => w.ward_code === scope);
-  return ward ? ward.ward_name : scope;
+  return ward ? wardScopeDisplayName(ward.ward_name) : scope;
 }
 
 /**
