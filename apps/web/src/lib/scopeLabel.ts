@@ -33,6 +33,10 @@ export function scopeLabel(scope: string, wards: readonly Ward[]): string {
  * threading the wards array through every component. Wards default to an
  * empty list while the subscription hydrates — unresolved scopes fall
  * back to the raw code until the names arrive.
+ *
+ * Prefer the pure `scopeLabel(scope, wards)` form when the caller already
+ * subscribes to the wards catalogue; this hook spawns its own
+ * subscription, so use it only on pages that don't already read wards.
  */
 export function useScopeLabel(): (scope: string) => string {
   const activeStakeId = useActiveStake();
