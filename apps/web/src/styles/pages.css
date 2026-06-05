@@ -31,21 +31,30 @@
   margin: 0 0 16px;
 }
 
-/* Page header row: subtitle (or ward name) on the left, primary action
-   button on the right. Wraps on narrow viewports so the button drops
-   below the subtitle instead of squishing the text. Used by the
-   bishopric Roster header. */
+/* Page header row: subtitle (or ward name), left-aligned so it lines up
+   with the utilization-bar labels below. Used by the roster headers. */
 .kd-page-header-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   margin: 0 0 12px;
 }
 
 .kd-page-header-row .kd-page-subtitle {
   margin: 0;
+}
+
+/* Primary-action row: a left-aligned button placed directly above the
+   utilization host so it lines up with the bar labels (the left edge of
+   `.kd-utilization-host` / `.kd-utilization-label`) instead of being
+   flung to the far-right page edge by a space-between header. Shared by
+   the roster pages that carry the "New Request" button. */
+.kd-page-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
 }
 
 .kd-ward-select-row {
