@@ -31,30 +31,25 @@
   margin: 0 0 16px;
 }
 
-/* Page header row: subtitle (or ward name), left-aligned so it lines up
-   with the utilization-bar labels below. Used by the roster headers. */
+/* Page header row: subtitle (or ward name) on the left, primary action
+   button on the right. Wraps on narrow viewports so the button drops
+   below the subtitle instead of squishing the text. `max-width` mirrors
+   `.kd-utilization-host` (via the shared `--kd-roster-width` token) so
+   the button's right edge aligns with the utilization bar below it
+   instead of being flung to the far-right page edge. Used by the roster
+   headers. */
 .kd-page-header-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   margin: 0 0 12px;
+  max-width: var(--kd-roster-width);
 }
 
 .kd-page-header-row .kd-page-subtitle {
   margin: 0;
-}
-
-/* Primary-action row: a left-aligned button placed directly above the
-   utilization host so it lines up with the bar labels (the left edge of
-   `.kd-utilization-host` / `.kd-utilization-label`) instead of being
-   flung to the far-right page edge by a space-between header. Shared by
-   the roster pages that carry the "New Request" button. */
-.kd-page-action-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 0 12px;
 }
 
 .kd-ward-select-row {
@@ -74,7 +69,7 @@
 
 .kd-utilization-host {
   margin: 0 0 16px;
-  max-width: 820px;
+  max-width: var(--kd-roster-width);
 }
 
 .kd-utilization-label {

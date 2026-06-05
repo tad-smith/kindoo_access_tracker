@@ -32,6 +32,26 @@ vi.mock('../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
 }));
 
+vi.mock('@tanstack/react-router', () => ({
+  // Render an `<a>` with `to` → `href` and the typed `search` object
+  // surfaced as `data-scope` so tests can assert the pre-select target
+  // without spreading the object onto the DOM node.
+  Link: ({
+    to,
+    search,
+    children,
+    ...rest
+  }: {
+    to: string;
+    search?: { scope?: string };
+    children?: React.ReactNode;
+  } & Record<string, unknown>) => (
+    <a href={to} data-scope={search?.scope} {...rest}>
+      {children}
+    </a>
+  ),
+}));
+
 // EditSeatDialog (mounted on Edit click) subscribes to stake-wide ward
 // + building catalogues; stub them so the dialog can render without a
 // real Firestore listener. The dialog has its own focused test file.
@@ -199,6 +219,32 @@ describe('<StakeRosterPage />', () => {
     mockStakeDoc({ stake_seat_cap: 200 });
     render(<StakeRosterPage />);
     expect(screen.getByText(/no stake seats yet/i)).toBeInTheDocument();
+  });
+
+  describe('New Request header action', () => {
+    it('renders the "New Request" link pre-selecting the stake scope for a stake member', () => {
+      usePrincipalMock.mockReturnValue(principal({ stake: true }));
+      mockSeats([]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      const link = screen.getByTestId('stake-roster-new-request');
+      expect(link).toHaveTextContent('New Request');
+      expect(link).toHaveAttribute('href', '/new');
+      expect(link).toHaveAttribute('data-scope', 'stake');
+    });
+
+    it('hides the New Request link for a non-stake (manager-only) principal', () => {
+      // Manager status alone does not grant stake-scope request rights
+      // (B-3) — same predicate that gates the 'stake' New Request option.
+      usePrincipalMock.mockReturnValue({
+        ...(principal() as object),
+        managerStakes: ['csnorth'],
+      });
+      mockSeats([]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.queryByTestId('stake-roster-new-request')).toBeNull();
+    });
   });
 
   it('renders one card per stake seat', () => {

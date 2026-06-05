@@ -51,10 +51,10 @@ vi.mock('../../../lib/docs', () => ({
 }));
 
 // Render the form as a deterministic stub so we can assert on the
-// scope list passed in.
+// scope list (and the forwarded initialScope) passed in.
 vi.mock('../components/NewRequestForm', () => ({
-  NewRequestForm: ({ scopes }: { scopes: ScopeOption[] }) => (
-    <div data-testid="form-stub">
+  NewRequestForm: ({ scopes, initialScope }: { scopes: ScopeOption[]; initialScope?: string }) => (
+    <div data-testid="form-stub" data-initial-scope={initialScope ?? ''}>
       {scopes.length === 0 ? (
         <p>NO_SCOPES</p>
       ) : (
@@ -168,5 +168,17 @@ describe('NewRequestPage — wires the role-filtered scope list (B-3)', () => {
     setPrincipal({ stakeMemberStakes: ['csnorth'] });
     const { container } = render(<NewRequestPage />);
     expect(container.querySelector('section.kd-page-narrow')).not.toBeNull();
+  });
+
+  it('forwards initialScope (from ?scope=) to the form', () => {
+    setPrincipal({ stakeMemberStakes: ['csnorth'], bishopricWards: { csnorth: ['CO'] } });
+    render(<NewRequestPage initialScope="CO" />);
+    expect(screen.getByTestId('form-stub')).toHaveAttribute('data-initial-scope', 'CO');
+  });
+
+  it('omits initialScope when no ?scope= is present', () => {
+    setPrincipal({ stakeMemberStakes: ['csnorth'] });
+    render(<NewRequestPage />);
+    expect(screen.getByTestId('form-stub')).toHaveAttribute('data-initial-scope', '');
   });
 });
