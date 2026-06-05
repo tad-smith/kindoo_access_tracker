@@ -195,7 +195,8 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 {
   ward_code: string;       // = doc.id
   ward_name: string;
-  building_name: string;   // FK to buildings (by building_name natural key)
+  building_id?: string;    // Preferred FK to buildings/{building_id} (immutable slug). Optional during the additive transition; new writes always populate it.
+  building_name: string;   // Legacy display-name FK + display snapshot. Still required + populated.
   seat_cap: number;
   created_at: Timestamp;
   last_modified_at: Timestamp;
@@ -206,18 +207,20 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 **Written by:** Bootstrap wizard; manager via Configuration page.
 **Read by:** Roster pages (utilization); Sync's `syncApplyFix` (scope resolution).
 
-**No `kindoo_site_id` on the ward.** A ward does **not** store its Kindoo site. The site is **derived from the ward's assigned building**: `ward.building_name → building.kindoo_site_id` (`null` / absent = home — §4.11), via `resolveWardSite(ward, buildingsByName)` in `packages/shared` (and the `wardSiteMap` helper in `functions/src/lib/wardSites.ts` for the server consumers — `syncApplyFix`, `markRequestComplete`, over-cap calc). The building is the single source of a ward's site; an unknown building resolves to home.
+**Ward → building FK is id-first.** A ward references its building two ways during the additive transition. `building_id` — the immutable building slug — is the **preferred** FK; `building_name` is the **legacy** display-name FK, still required and kept populated. Resolution is **id-first with a name fallback**: `resolveWardBuilding(ward, buildings)` in `packages/shared` matches `building.building_id` when `ward.building_id` is set, and falls back to matching `building.building_name` otherwise (a stale slug that matches nothing also falls through to the name path). Un-migrated wards (id absent) keep resolving via the name fallback, so the change is safe against stale browser bundles and the migration window. `buildingNameById(buildings, building_id)` renders a slug FK as the building's current display name. The one-time operator-run backfill `functions/scripts/backfill-ward-building-id.mjs` populates `building_id` from `building_name`; `building_name` stays for now and dropping it from wards is a deliberate later follow-up.
+
+**No `kindoo_site_id` on the ward.** A ward does **not** store its Kindoo site. The site is **derived from the ward's assigned building** (`null` / absent on the building = home — §4.11), via `resolveWardSite(ward, buildings)` in `packages/shared` — id-first, layered on `resolveWardBuilding` (and the `wardSiteMap` helper in `functions/src/lib/wardSites.ts` for the server consumers — `syncApplyFix`, `markRequestComplete`, over-cap calc). Both helpers take the `buildings` array directly; the old pre-built `buildingsByName` Map form is gone. The building is the single source of a ward's site; an unknown building resolves to home.
 
 ### 4.3 `stakes/{stakeId}/buildings/{buildingId}`
 
-**Doc ID:** URL-safe slug derived from `building_name` (e.g. `Maple Building` → `maple-building`).
+**Doc ID:** URL-safe slug derived from `building_name` (e.g. `Maple Building` → `maple-building`). **Immutable post-create.** The slug (`= building_id = doc.id`) is derived once on create and is the doc ID every ward / seat reference is keyed on. Building **edit** carries the original `building_id` through unchanged and writes the same doc — it never re-derives the slug from a renamed building. (Re-slugging on rename was the core defect: it wrote a new doc and orphaned the old one plus every reference keyed on the original slug.) The display name, address, and `kindoo_site_id` are mutable on the frozen slug; only the slug is locked.
 
 **Fields:**
 
 ```typescript
 {
-  building_id: string;     // = doc.id (slug)
-  building_name: string;   // display form
+  building_id: string;     // = doc.id (slug) — immutable post-create
+  building_name: string;   // display form — mutable; unique across the stake (enforced by the Buildings UI)
   address: string;
   kindoo_site_id?: string | null;  // §4.11 — `null` / absent = home site
   created_at: Timestamp;
@@ -229,7 +232,9 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 **Written by:** Bootstrap wizard; manager via Configuration page.
 **Read by:** Wards (FK), seat building_names defaults.
 
-**`kindoo_site_id`** identifies the Kindoo site that physically governs this building. `null` / absent means home site; a string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. A foreign-site building is one whose physical access doors are managed by a different stake's Kindoo environment than the SBA stake's home site, even though the building hosts SBA-stake wards. The building is also the **source of a ward's site**: a ward inherits this value from its assigned building (`ward.building_name`; §4.2). Phase 1 of the Kindoo Sites feature stored the value only; downstream phases (request-form filters, extension orchestrator enforcement, sync filtering) consume it.
+**Unique display name.** The Buildings UI enforces a unique, case-insensitive, trimmed `building_name` across the stake (`duplicateBuildingNameBlocker` in `apps/web/src/features/manager/configuration/hooks.ts`, with the live buildings snapshot passed by the caller). Since the display name decoupled from the slug on edit, two buildings could otherwise share a name and make the wards' legacy `building_name` FK (and every grant-array display name) ambiguous. This is a client-side guard only — Firestore rules can't iterate the sibling collection.
+
+**`kindoo_site_id`** identifies the Kindoo site that physically governs this building. `null` / absent means home site; a string value points at a doc ID under `stakes/{stakeId}/kindooSites/`. A foreign-site building is one whose physical access doors are managed by a different stake's Kindoo environment than the SBA stake's home site, even though the building hosts SBA-stake wards. The building is also the **source of a ward's site**: a ward inherits this value from its assigned building (referenced id-first by `ward.building_id`, name-fallback by `ward.building_name`; §4.2). Phase 1 of the Kindoo Sites feature stored the value only; downstream phases (request-form filters, extension orchestrator enforcement, sync filtering) consume it.
 
 ### 4.4 `stakes/{stakeId}/kindooManagers/{canonicalEmail}`
 
