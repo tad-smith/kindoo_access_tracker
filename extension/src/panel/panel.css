@@ -173,6 +173,26 @@ main.sba-panel {
   font-size: 12px;
 }
 
+/* Priority sections (Urgent / Outstanding / Future). Each section
+ * stacks a header above its request list; sections are separated by a
+ * little vertical rhythm. Empty sections are not rendered. */
+.sba-queue-section {
+  margin-top: 0.75rem;
+}
+
+.sba-queue-section:first-child {
+  margin-top: 0;
+}
+
+.sba-queue-section-header {
+  margin: 0 0 0.4rem 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--sba-fg-muted);
+}
+
 .sba-request-list {
   list-style: none;
   margin: 0;
@@ -180,6 +200,17 @@ main.sba-panel {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+/* Single-line text input — matches the dialog textarea border / radius
+ * so the reject-reason field reads as part of the same form family. */
+.sba-input {
+  font: inherit;
+  padding: 0.4rem;
+  border: 1px solid var(--sba-border);
+  border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .sba-request-card {

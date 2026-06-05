@@ -267,7 +267,7 @@ describe('App', () => {
 
     await renderApp();
 
-    await waitFor(() => expect(screen.getByTestId('sba-queue-list')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('sba-queue-sections')).toBeInTheDocument());
     expect(screen.getByTestId('sba-request-r1')).toBeInTheDocument();
     expect(screen.getByText('Subject Name')).toBeInTheDocument();
     expect(screen.getByText(/Elders Quorum President/)).toBeInTheDocument();
