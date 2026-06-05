@@ -2,7 +2,7 @@
 // path + the severity sort + the seat / kindoo counters.
 
 import { describe, expect, it } from 'vitest';
-import type { Building, CallingTemplate, Seat, Stake, Ward } from '@kindoo/shared';
+import type { Building, Seat, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
 import {
   detect,
@@ -91,7 +91,7 @@ describe('kindooRole', () => {
   });
 });
 
-function ts(): CallingTemplate['created_at'] {
+function ts(): Ward['created_at'] {
   return {
     seconds: 0,
     nanoseconds: 0,
@@ -132,25 +132,20 @@ function ward(code: string, name: string, building: string): Ward {
   };
 }
 
-function building(id: string, name: string, ruleId: number | null): Building {
+function building(
+  id: string,
+  name: string,
+  ruleId: number | null,
+  kindooSiteId: string | null = null,
+): Building {
   return {
     building_id: id,
     building_name: name,
     address: '123 Main',
+    kindoo_site_id: kindooSiteId,
     ...(ruleId !== null ? { kindoo_rule: { rule_id: ruleId, rule_name: `${name} Doors` } } : {}),
     created_at: ts(),
     last_modified_at: ts(),
-    lastActor: { email: 'sys@example.com', canonical: 'sys@example.com' },
-  };
-}
-
-function template(name: string, auto = true): CallingTemplate {
-  return {
-    calling_name: name,
-    give_app_access: true,
-    auto_kindoo_access: auto,
-    sheet_order: 1,
-    created_at: ts(),
     lastActor: { email: 'sys@example.com', canonical: 'sys@example.com' },
   };
 }
@@ -213,8 +208,6 @@ const BUILDINGS = [
   building('maple', 'Maple Building', 6248),
   building('pinecreek', 'Pine Creek Building', 6249),
 ];
-const WARD_TEMPLATES = [template('Sunday School Teacher'), template('Elders Quorum President')];
-const STAKE_TEMPLATES = [template('Stake Clerk')];
 
 function baseInputs(overrides: { seats?: Seat[]; kindooUsers?: KindooEnvironmentUser[] }) {
   return {
@@ -222,8 +215,6 @@ function baseInputs(overrides: { seats?: Seat[]; kindooUsers?: KindooEnvironment
     wards: WARDS,
     buildings: BUILDINGS,
     seats: overrides.seats ?? [],
-    wardCallingTemplates: WARD_TEMPLATES,
-    stakeCallingTemplates: STAKE_TEMPLATES,
     kindooUsers: overrides.kindooUsers ?? [],
   };
 }
@@ -1822,13 +1813,12 @@ describe('detect', () => {
     expect(result.discrepancies).toEqual([]);
   });
 
-  it('emits no scope-mismatch when stake segment is non-auto but ward segment auto-matches the seat (two-segment ward-priority shape)', () => {
-    // Live false-positive case before the auto-preference primary
-    // pick: SBA seat is scope=CO/auto/Sunday School Teacher; Kindoo
-    // description carries a non-auto stake calling alongside the auto
-    // ward calling. The pre-fix rule picked the stake segment as
-    // primary and reported scope-mismatch. Post-fix, the auto ward
-    // segment wins and no row emits.
+  it('picks the stake segment as primary on a multi-segment description (stake-first ordering)', () => {
+    // Template-based auto-preference was retired; the primary-segment
+    // pick is now purely stake-first then ward-alphabetical. A
+    // `Stake (...) | Maple Ward (...)` description picks the stake
+    // segment, so a CO-scope seat surfaces a scope-mismatch (SBA=CO,
+    // Kindoo=stake).
     const result = detect(
       baseInputs({
         seats: [
@@ -1851,7 +1841,9 @@ describe('detect', () => {
       }),
     );
     const rowsForEmail = result.discrepancies.filter((d) => d.canonical === 'user2@example.com');
-    expect(rowsForEmail).toEqual([]);
+    expect(rowsForEmail).toHaveLength(1);
+    expect(rowsForEmail[0]!.code).toBe('scope-mismatch');
+    expect(rowsForEmail[0]!.kindoo?.primaryScope).toBe('stake');
   });
 
   it('counts kindoo-only users with unresolvable descriptions as kindoo-only (not unparseable)', () => {
@@ -1872,14 +1864,16 @@ describe('detect', () => {
   // --------------------------------------------------------------------
 
   // Mixed home + foreign fixture. Two wards: Maple (home) and Pine
-  // (foreign-site 'east-stake'). Plus stake-scope seats and Kindoo users
-  // on each side.
+  // (foreign-site 'east-stake'). A ward's site derives from its building,
+  // so Pine Ward sits on 'Pine Building', whose `kindoo_site_id` is
+  // 'east-stake'. Plus stake-scope seats and Kindoo users on each side.
   const WARDS_MIXED: Ward[] = [
     ward('CO', 'Maple Ward', 'Maple Building'),
-    {
-      ...ward('FT', 'Pine Ward', 'Pine Building'),
-      kindoo_site_id: 'east-stake',
-    },
+    ward('FT', 'Pine Ward', 'Pine Building'),
+  ];
+  const BUILDINGS_MIXED: Building[] = [
+    ...BUILDINGS,
+    building('pine', 'Pine Building', 6250, 'east-stake'),
   ];
 
   function mixedInputs(overrides: {
@@ -1890,10 +1884,8 @@ describe('detect', () => {
     return {
       stake: STAKE,
       wards: WARDS_MIXED,
-      buildings: BUILDINGS,
+      buildings: BUILDINGS_MIXED,
       seats: overrides.seats ?? [],
-      wardCallingTemplates: WARD_TEMPLATES,
-      stakeCallingTemplates: STAKE_TEMPLATES,
       kindooUsers: overrides.kindooUsers ?? [],
       ...(overrides.activeSite !== undefined ? { activeSite: overrides.activeSite } : {}),
     };
@@ -2200,14 +2192,13 @@ describe('detect', () => {
     // include BOTH foreign buildings, not just one.
     const wardsTwoForeign: Ward[] = [
       ward('CO', 'Maple Ward', 'Maple Building'),
-      {
-        ...ward('FT', 'Pine Ward', 'Pine Building'),
-        kindoo_site_id: 'east-stake',
-      },
-      {
-        ...ward('MV', 'Mountain View Ward', 'Mountain View Building'),
-        kindoo_site_id: 'east-stake',
-      },
+      ward('FT', 'Pine Ward', 'Pine Building'),
+      ward('MV', 'Mountain View Ward', 'Mountain View Building'),
+    ];
+    const buildingsTwoForeign: Building[] = [
+      ...BUILDINGS,
+      building('pine', 'Pine Building', 6250, 'east-stake'),
+      building('mtnview', 'Mountain View Building', 6251, 'east-stake'),
     ];
     const multiSeat = seat({
       member_canonical: 'multi@example.com',
@@ -2238,10 +2229,8 @@ describe('detect', () => {
     const result = detect({
       stake: STAKE,
       wards: wardsTwoForeign,
-      buildings: BUILDINGS,
+      buildings: buildingsTwoForeign,
       seats: [multiSeat],
-      wardCallingTemplates: WARD_TEMPLATES,
-      stakeCallingTemplates: STAKE_TEMPLATES,
       kindooUsers: [],
       activeSite: { kind: 'foreign', siteId: 'east-stake' },
     });

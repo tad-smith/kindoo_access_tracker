@@ -17,7 +17,7 @@
 // caller.
 
 import { describe, expect, it } from 'vitest';
-import type { AccessRequest, KindooSite, Stake, Ward } from '@kindoo/shared';
+import type { AccessRequest, Building, KindooSite, Stake, Ward } from '@kindoo/shared';
 import {
   checkRequestSite,
   ProvisionForeignSiteMissingError,
@@ -43,15 +43,20 @@ const HOME_WARD: Ward = {
   ward_code: 'CO',
   ward_name: 'Maple Ward',
   building_name: 'Maple Building',
-  // kindoo_site_id absent → home
 } as unknown as Ward;
 
 const FOREIGN_WARD: Ward = {
   ward_code: 'FN',
   ward_name: 'Foreign Ward',
   building_name: 'Pine Building',
-  kindoo_site_id: 'east-stake',
 } as unknown as Ward;
+
+// A ward's Kindoo site derives from its building. Maple Building → home
+// (null); Pine Building → foreign site 'east-stake'.
+const BUILDINGS: Building[] = [
+  { building_name: 'Maple Building', kindoo_site_id: null } as unknown as Building,
+  { building_name: 'Pine Building', kindoo_site_id: 'east-stake' } as unknown as Building,
+];
 
 const FOREIGN_SITE_WITH_EID: KindooSite = {
   id: 'east-stake',
@@ -103,6 +108,7 @@ describe('checkRequestSite — stake-scope', () => {
       envs: homeEnvs(),
       stake: STAKE,
       wards: [HOME_WARD],
+      buildings: BUILDINGS,
       kindooSites: [],
     });
     expect(result).toEqual({ ok: true });
@@ -115,6 +121,7 @@ describe('checkRequestSite — stake-scope', () => {
       envs: foreignEnvs(),
       stake: STAKE,
       wards: [HOME_WARD],
+      buildings: BUILDINGS,
       kindooSites: [FOREIGN_SITE_WITH_EID],
     });
     expect(result.ok).toBe(false);
@@ -136,6 +143,7 @@ describe('checkRequestSite — stake-scope', () => {
       envs: foreignEnvs(),
       stake,
       wards: [HOME_WARD],
+      buildings: BUILDINGS,
       kindooSites: [FOREIGN_SITE_WITH_EID],
     });
     expect(result.ok).toBe(false);
@@ -157,6 +165,7 @@ describe('checkRequestSite — stake-scope', () => {
         envs: homeEnvs(),
         stake,
         wards: [HOME_WARD],
+        buildings: BUILDINGS,
         kindooSites: [],
       }),
     ).toThrow(ProvisionHomeSiteNotConfiguredError);
@@ -171,19 +180,20 @@ describe('checkRequestSite — ward-scope, home ward', () => {
       envs: homeEnvs(),
       stake: STAKE,
       wards: [HOME_WARD],
+      buildings: BUILDINGS,
       kindooSites: [],
     });
     expect(result).toEqual({ ok: true });
   });
 
-  it('proceeds when ward kindoo_site_id is explicitly null', () => {
-    const ward: Ward = { ...HOME_WARD, kindoo_site_id: null } as unknown as Ward;
+  it("proceeds when the ward's building resolves to the home site (kindoo_site_id null)", () => {
     const result = checkRequestSite({
       request: wardRequest('CO'),
       session: { token: 'tok', eid: HOME_EID },
       envs: homeEnvs(),
       stake: STAKE,
-      wards: [ward],
+      wards: [HOME_WARD],
+      buildings: BUILDINGS,
       kindooSites: [],
     });
     expect(result).toEqual({ ok: true });
@@ -196,6 +206,7 @@ describe('checkRequestSite — ward-scope, home ward', () => {
       envs: foreignEnvs(),
       stake: STAKE,
       wards: [HOME_WARD],
+      buildings: BUILDINGS,
       kindooSites: [FOREIGN_SITE_WITH_EID],
     });
     expect(result.ok).toBe(false);
@@ -214,6 +225,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
       envs: foreignEnvs(),
       stake: STAKE,
       wards: [FOREIGN_WARD],
+      buildings: BUILDINGS,
       kindooSites: [FOREIGN_SITE_WITH_EID],
     });
     expect(result).toEqual({ ok: true });
@@ -226,6 +238,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
       envs: homeEnvs(),
       stake: STAKE,
       wards: [FOREIGN_WARD],
+      buildings: BUILDINGS,
       kindooSites: [FOREIGN_SITE_WITH_EID],
     });
     expect(result.ok).toBe(false);
@@ -247,6 +260,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
       envs: foreignEnvs('East Stake'),
       stake: STAKE,
       wards: [FOREIGN_WARD],
+      buildings: BUILDINGS,
       kindooSites: [FOREIGN_SITE_NO_EID],
     });
     expect(result).toEqual({
@@ -262,6 +276,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
       envs: foreignEnvs('  east stake  '),
       stake: STAKE,
       wards: [FOREIGN_WARD],
+      buildings: BUILDINGS,
       kindooSites: [FOREIGN_SITE_NO_EID],
     });
     expect(result.ok).toBe(true);
@@ -276,6 +291,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
       envs: homeEnvs(), // session is on home; foreign site expects 'East Stake'
       stake: STAKE,
       wards: [FOREIGN_WARD],
+      buildings: BUILDINGS,
       kindooSites: [FOREIGN_SITE_NO_EID],
     });
     expect(result.ok).toBe(false);
@@ -285,22 +301,30 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
     expect(result.error.expectedSiteName).toBe('East Stake (Pine Building)');
   });
 
-  it('refuses with ProvisionForeignSiteMissingError when ward references a kindoo_site_id not in the loaded set', () => {
+  it("refuses with ProvisionForeignSiteMissingError when the ward's building resolves to a site not in the loaded set", () => {
     // The site isn't configured in SBA at all — switching Kindoo sites
     // won't help. Surface the dedicated missing-site error so the card
     // formatter can direct the operator to Configuration → Kindoo Sites
     // rather than telling them to switch sites.
     const stranded: Ward = {
       ...FOREIGN_WARD,
-      kindoo_site_id: 'never-configured',
+      building_name: 'Stranded Building',
     } as unknown as Ward;
+    const strandedBuildings: Building[] = [
+      ...BUILDINGS,
+      {
+        building_name: 'Stranded Building',
+        kindoo_site_id: 'never-configured',
+      } as unknown as Building,
+    ];
     const result = checkRequestSite({
       request: wardRequest('FN'),
       session: { token: 'tok', eid: HOME_EID },
       envs: homeEnvs(),
       stake: STAKE,
       wards: [stranded],
-      kindooSites: [], // empty — ward points at a site that was never added
+      buildings: strandedBuildings,
+      kindooSites: [], // empty — building points at a site that was never added
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -337,6 +361,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
       envs: homeEnvs('Colorado Springs North Stake'),
       stake: STAKE,
       wards: [FOREIGN_WARD],
+      buildings: BUILDINGS,
       kindooSites: [collidingForeign],
     });
     expect(result.ok).toBe(false);
@@ -356,6 +381,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
       envs: foreignEnvs('East Stake'),
       stake: STAKE,
       wards: [FOREIGN_WARD],
+      buildings: BUILDINGS,
       kindooSites: [FOREIGN_SITE_NO_EID],
     });
     expect(result).toEqual({
@@ -384,6 +410,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
       envs: foreignEnvs('East Stake'),
       stake: STAKE,
       wards: [FOREIGN_WARD],
+      buildings: BUILDINGS,
       // Target = FOREIGN_SITE_NO_EID; another foreign doc already
       // carries the session's EID.
       kindooSites: [FOREIGN_SITE_NO_EID, otherForeign],
@@ -402,6 +429,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
       envs: [], // no env match for the active eid
       stake: STAKE,
       wards: [FOREIGN_WARD],
+      buildings: BUILDINGS,
       kindooSites: [FOREIGN_SITE_NO_EID],
     });
     expect(result.ok).toBe(false);
