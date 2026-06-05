@@ -1,7 +1,8 @@
 // Signed-in manager view. Renders the pending-request queue, matched
 // to the app's manager Requests Queue: three priority sections
 // (Urgent → Outstanding → Future), per-card Reject (reason required),
-// and add-for-existing-seat → Reject-only.
+// add-for-existing-seat → Reject-only, and edit-for-nonexistent-seat →
+// Reject-only.
 //
 // Each card runs its own Provision & Complete flow (RequestCard owns
 // the Kindoo orchestration + the result dialog). When the operator
@@ -9,11 +10,16 @@
 // the local list and refetch the queue to pick up any sibling changes.
 //
 // Seat-existence: after the request list loads we fetch `getSeatByEmail`
-// for each `add_manual` / `add_temp` request and build a
-// `request_id → hasSeat` map. A handful of extra reads is fine at this
-// scale. Lookups are resilient — a failed read resolves to `false` so
-// the provision button stays visible rather than blocking the queue on
-// a transient miss.
+// for every non-`remove` request and build a `request_id → 'present' |
+// 'absent'` map. A handful of extra reads is fine at this scale. The
+// map is three-state by omission: a lookup that resolved records
+// `'present'` (seat found) or `'absent'` (returned null); a lookup that
+// FAILED is left out of the map entirely → "unknown". RequestCard maps
+// each state to its gate:
+//   - add-for-existing blocks only on `'present'` (unknown → not blocked)
+//   - edit-for-nonexistent blocks only on `'absent'` (unknown → not blocked)
+// Either way a failed lookup never blocks — the provision button stays
+// visible and the server-side preconditions are the backstop.
 //
 // Body-only: chrome (sign-out button, email, reconfigure / sync nav)
 // has moved to the shared toolbar + tab bar in TabbedShell. This file
@@ -42,30 +48,39 @@ type FetchState =
   | { status: 'ready'; requests: AccessRequest[] }
   | { status: 'error'; message: string };
 
-/** `request_id → member already holds an SBA seat`. */
-type SeatMap = Record<string, boolean>;
+/**
+ * Three-state seat existence keyed by `request_id`:
+ *   - `'present'` — `getSeatByEmail` returned a seat
+ *   - `'absent'`  — `getSeatByEmail` returned null
+ *   - (key omitted) — lookup failed or hasn't resolved → "unknown"
+ * Each gate (add-for-existing, edit-for-nonexistent) reads the explicit
+ * state it cares about; an omitted key is "unknown" → never blocked.
+ */
+type SeatExistence = 'present' | 'absent';
+type SeatMap = Record<string, SeatExistence>;
 
 /**
- * Resolve seat-existence for every add request. Non-add types are not
- * in the map (the caller defaults absent → false). Each lookup is
- * caught individually so one failed read can't reject the batch or
- * block the queue — an unknown lookup falls back to `false`, leaving
- * the provision button visible.
+ * Resolve seat-existence for every request that operates on a seat —
+ * `add_*` (block on present) and `edit_*` (block on absent). `remove`
+ * is skipped: it targets an existing seat by design and has no gate.
+ * Each lookup is caught individually so one failed read can't reject the
+ * batch or block the queue — a failed lookup is OMITTED from the map
+ * ("unknown"), and both gates treat unknown as not-blocked.
  */
 async function fetchSeatMap(stakeId: string, requests: readonly AccessRequest[]): Promise<SeatMap> {
-  const addRequests = requests.filter((r) => r.type === 'add_manual' || r.type === 'add_temp');
+  const seatRequests = requests.filter((r) => r.type !== 'remove');
   const entries = await Promise.all(
-    addRequests.map(async (r): Promise<[string, boolean]> => {
+    seatRequests.map(async (r): Promise<[string, SeatExistence] | null> => {
       try {
         const seat = await getSeatByEmail(stakeId, r.member_canonical);
-        return [r.request_id, seat !== null];
+        return [r.request_id, seat !== null ? 'present' : 'absent'];
       } catch {
-        // Resilient: treat a lookup failure as "unknown" → not blocked.
-        return [r.request_id, false];
+        // Resilient: a failed lookup is omitted → "unknown" → not blocked.
+        return null;
       }
     }),
   );
-  return Object.fromEntries(entries);
+  return Object.fromEntries(entries.filter((e): e is [string, SeatExistence] => e !== null));
 }
 
 export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelProps) {
@@ -214,7 +229,8 @@ function QueueSection({
               stakeId={stakeId}
               request={req}
               bundle={bundle}
-              memberHasSeat={seatMap[req.request_id] === true}
+              memberHasSeat={seatMap[req.request_id] === 'present'}
+              memberSeatAbsent={seatMap[req.request_id] === 'absent'}
               onDismissed={onDismissed}
             />
           </li>

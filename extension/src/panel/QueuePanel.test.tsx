@@ -5,8 +5,9 @@
 //     counts, empty sections hidden
 //   - cards within a section in comparison-date order
 //   - overall empty-state + Refresh
-//   - seat-existence map threaded into each card's `memberHasSeat`,
-//     resilient to per-lookup failures
+//   - three-state seat-existence map threaded into each card's
+//     `memberHasSeat` (present) + `memberSeatAbsent` (absent), with a
+//     failed lookup omitted from the map → both flags false ("unknown")
 //
 // The provision / reject behaviour itself lives in RequestCard.test.tsx.
 
@@ -26,14 +27,21 @@ vi.mock('../lib/extensionApi', async () => {
   };
 });
 
-// Stub RequestCard — render its id + memberHasSeat as test markers so
-// QueuePanel's wiring is observable without exercising the provision
-// machinery.
+// Stub RequestCard — render its id + the two seat-existence flags as
+// test markers so QueuePanel's three-state wiring is observable without
+// exercising the provision machinery. `data-has-seat` reflects
+// `memberHasSeat` (present); `data-seat-absent` reflects
+// `memberSeatAbsent` (positively absent). Both false = "unknown".
 vi.mock('./RequestCard', () => ({
-  RequestCard: (props: { request: { request_id: string }; memberHasSeat: boolean }) => (
+  RequestCard: (props: {
+    request: { request_id: string };
+    memberHasSeat: boolean;
+    memberSeatAbsent: boolean;
+  }) => (
     <div
       data-testid={`card-${props.request.request_id}`}
       data-has-seat={props.memberHasSeat ? 'true' : 'false'}
+      data-seat-absent={props.memberSeatAbsent ? 'true' : 'false'}
     />
   ),
 }));
@@ -145,7 +153,7 @@ describe('QueuePanel', () => {
     vi.useRealTimers();
   });
 
-  it('threads seat-existence into each add card and ignores lookup failures', async () => {
+  it('threads three-state seat-existence into add cards and omits failed lookups', async () => {
     getMyPendingRequestsMock.mockResolvedValue({
       requests: [
         req({ request_id: 'has-seat', member_canonical: 'a@x' }),
@@ -161,13 +169,54 @@ describe('QueuePanel', () => {
     await renderPanel();
 
     await waitFor(() => expect(screen.getByTestId('card-has-seat')).toBeInTheDocument());
+    // Present → has-seat true, absent false.
     expect(screen.getByTestId('card-has-seat')).toHaveAttribute('data-has-seat', 'true');
+    expect(screen.getByTestId('card-has-seat')).toHaveAttribute('data-seat-absent', 'false');
+    // Positively absent → has-seat false, absent true.
     expect(screen.getByTestId('card-no-seat')).toHaveAttribute('data-has-seat', 'false');
-    // Failed lookup falls back to "not blocked".
+    expect(screen.getByTestId('card-no-seat')).toHaveAttribute('data-seat-absent', 'true');
+    // Failed lookup is omitted from the map → both flags false ("unknown").
     expect(screen.getByTestId('card-errored')).toHaveAttribute('data-has-seat', 'false');
+    expect(screen.getByTestId('card-errored')).toHaveAttribute('data-seat-absent', 'false');
   });
 
-  it('does not run seat lookups for non-add request types', async () => {
+  it('threads three-state seat-existence into edit cards (absent → seat-absent flag)', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({
+      requests: [
+        req({ request_id: 'edit-has', type: 'edit_manual', member_canonical: 'a@x' }),
+        req({ request_id: 'edit-missing', type: 'edit_auto', member_canonical: 'b@x' }),
+        req({ request_id: 'edit-errored', type: 'edit_temp', member_canonical: 'c@x' }),
+      ],
+    });
+    getSeatByEmailMock.mockImplementation((_stakeId: string, canonical: string) => {
+      if (canonical === 'a@x') return Promise.resolve({ member_canonical: 'a@x' });
+      if (canonical === 'b@x') return Promise.resolve(null);
+      return Promise.reject(new Error('read failed'));
+    });
+    await renderPanel();
+
+    await waitFor(() => expect(screen.getByTestId('card-edit-has')).toBeInTheDocument());
+    // Edit with a present seat → not absent (provision button stays).
+    expect(screen.getByTestId('card-edit-has')).toHaveAttribute('data-has-seat', 'true');
+    expect(screen.getByTestId('card-edit-has')).toHaveAttribute('data-seat-absent', 'false');
+    // Edit with no seat → seat-absent flag set (edit gate fires).
+    expect(screen.getByTestId('card-edit-missing')).toHaveAttribute('data-seat-absent', 'true');
+    expect(screen.getByTestId('card-edit-missing')).toHaveAttribute('data-has-seat', 'false');
+    // Failed lookup omitted → unknown → not blocked (fail-safe).
+    expect(screen.getByTestId('card-edit-errored')).toHaveAttribute('data-seat-absent', 'false');
+    expect(screen.getByTestId('card-edit-errored')).toHaveAttribute('data-has-seat', 'false');
+  });
+
+  it('runs the seat lookup for edit types as well as adds', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({
+      requests: [req({ request_id: 'ed', type: 'edit_manual', member_canonical: 'e@x' })],
+    });
+    await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('card-ed')).toBeInTheDocument());
+    expect(getSeatByEmailMock).toHaveBeenCalledWith('csnorth', 'e@x');
+  });
+
+  it('does not run seat lookups for remove request types', async () => {
     getMyPendingRequestsMock.mockResolvedValue({
       requests: [req({ request_id: 'rm', type: 'remove' })],
     });

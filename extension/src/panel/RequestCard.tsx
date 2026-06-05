@@ -60,6 +60,18 @@ interface RequestCardProps {
    * the queue on a transient read miss.
    */
   memberHasSeat: boolean;
+  /**
+   * True when the request subject has NO SBA seat (lookup positively
+   * resolved to null). For `edit_auto` / `edit_manual` / `edit_temp`
+   * this blocks completion — the server's `planEditSeat` throws
+   * `failed-precondition` ("no editable slot") when there's no seat to
+   * edit — so the provision button is hidden and only Reject is offered.
+   * Parent (`QueuePanel`) derives this from `getSeatByEmail`. Fail-safe
+   * is the opposite of `memberHasSeat`: an unknown/failed lookup resolves
+   * to `false` so we do NOT false-block an editable request on a
+   * transient miss — the server-side precondition is the backstop.
+   */
+  memberSeatAbsent: boolean;
   /** Called after the operator dismisses the result dialog OR after a
    * successful reject; parent drops the card from the queue list and
    * refetches. */
@@ -77,6 +89,7 @@ export function RequestCard({
   request,
   bundle,
   memberHasSeat,
+  memberSeatAbsent,
   onDismissed,
 }: RequestCardProps) {
   const [state, setState] = useState<CardState>({ kind: 'idle' });
@@ -236,6 +249,18 @@ export function RequestCard({
   const isAdd = request.type === 'add_manual' || request.type === 'add_temp';
   const blockedByExistingSeat = isAdd && memberHasSeat;
 
+  // Edit-side analog: an edit_* request edits an EXISTING seat. If the
+  // member has no seat, `markRequestComplete`'s `planEditSeat` throws
+  // `failed-precondition` ("no editable slot"). Hide the provision
+  // button and offer only Reject when the seat is positively absent.
+  // Fail-safe: only block on a definitive null lookup — an unknown /
+  // failed lookup leaves `memberSeatAbsent` false, so the button stays
+  // visible and the server precondition is the backstop.
+  const blockedByMissingSeat = isEdit && memberSeatAbsent;
+
+  // Either gate hides the provision button and leaves Reject only.
+  const provisionBlocked = blockedByExistingSeat || blockedByMissingSeat;
+
   return (
     <div
       className="sba-request-card"
@@ -306,8 +331,17 @@ export function RequestCard({
           Member already has a seat — reject this request.
         </p>
       ) : null}
+      {blockedByMissingSeat ? (
+        <p
+          role="alert"
+          className="sba-error"
+          data-testid={`sba-missing-seat-${request.request_id}`}
+        >
+          This request edits a seat that no longer exists — reject it.
+        </p>
+      ) : null}
       <div className="sba-request-actions">
-        {blockedByExistingSeat ? null : (
+        {provisionBlocked ? null : (
           <button
             type="button"
             className={buttonClass}

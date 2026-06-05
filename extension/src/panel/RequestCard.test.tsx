@@ -111,11 +111,16 @@ function removeReq(overrides: Partial<AccessRequest> = {}): AccessRequest {
   return addRequest({ request_id: 'r2', type: 'remove', ...overrides });
 }
 
+function editReq(overrides: Partial<AccessRequest> = {}): AccessRequest {
+  return addRequest({ request_id: 'r3', type: 'edit_manual', ...overrides });
+}
+
 async function renderCard(
   opts: {
     request?: AccessRequest;
     onDismissed?: (id: string) => void;
     memberHasSeat?: boolean;
+    memberSeatAbsent?: boolean;
   } = {},
 ) {
   const { RequestCard } = await import('./RequestCard');
@@ -125,6 +130,7 @@ async function renderCard(
       request={opts.request ?? addRequest()}
       bundle={bundle()}
       memberHasSeat={opts.memberHasSeat ?? false}
+      memberSeatAbsent={opts.memberSeatAbsent ?? false}
       onDismissed={opts.onDismissed ?? vi.fn()}
     />,
   );
@@ -378,6 +384,7 @@ describe('RequestCard', () => {
         request={request}
         bundle={customBundle}
         memberHasSeat={false}
+        memberSeatAbsent={false}
         onDismissed={vi.fn()}
       />,
     );
@@ -673,5 +680,46 @@ describe('RequestCard', () => {
     await renderCard({ memberHasSeat: false });
     expect(screen.getByTestId('sba-add-r1')).toBeInTheDocument();
     expect(screen.queryByTestId('sba-existing-seat-r1')).not.toBeInTheDocument();
+  });
+
+  // ---- Edit for a nonexistent seat → Reject-only --------------------
+
+  it('hides the provision button and shows the missing-seat notice when memberSeatAbsent (edit type)', async () => {
+    await renderCard({ request: editReq(), memberSeatAbsent: true });
+    expect(screen.queryByTestId('sba-edit-r3')).not.toBeInTheDocument();
+    expect(screen.getByTestId('sba-missing-seat-r3')).toHaveTextContent(
+      /edits a seat that no longer exists — reject it/,
+    );
+    // Reject is still available.
+    expect(screen.getByTestId('sba-reject-r3')).toBeInTheDocument();
+  });
+
+  it('shows the Update button for edit type when the seat is present (memberSeatAbsent false)', async () => {
+    await renderCard({ request: editReq(), memberSeatAbsent: false });
+    expect(screen.getByTestId('sba-edit-r3')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-missing-seat-r3')).not.toBeInTheDocument();
+  });
+
+  it('fail-safe: shows the Update button for edit type when seat-existence is unknown', async () => {
+    // Unknown lookup ⇒ both flags false ⇒ NOT blocked (opposite default
+    // from the add gate — we don't false-block an editable request on a
+    // transient miss; the server-side planEditSeat is the backstop).
+    await renderCard({ request: editReq(), memberHasSeat: false, memberSeatAbsent: false });
+    expect(screen.getByTestId('sba-edit-r3')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-missing-seat-r3')).not.toBeInTheDocument();
+  });
+
+  it('does not show the missing-seat notice for add type even when memberSeatAbsent (add path is first-time-add)', async () => {
+    // An absent seat is the NORMAL case for an add — the edit gate must
+    // not fire for add types.
+    await renderCard({ memberSeatAbsent: true });
+    expect(screen.getByTestId('sba-add-r1')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-missing-seat-r1')).not.toBeInTheDocument();
+  });
+
+  it('does not show the missing-seat notice for remove type even when memberSeatAbsent', async () => {
+    await renderCard({ request: removeReq(), memberSeatAbsent: true });
+    expect(screen.getByTestId('sba-remove-r2')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-missing-seat-r2')).not.toBeInTheDocument();
   });
 });
