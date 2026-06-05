@@ -1,21 +1,15 @@
 // Vitest config for the Stake Building Access SPA.
 //
-// jsdom for component-style tests. The `virtual:pwa-register/react`
-// alias points at a hand-rolled stub because vite-plugin-pwa only
-// synthesises that module during a real Vite build/dev — under vitest
-// we substitute a pass-through hook so SW-aware components mount.
+// jsdom for component-style tests. The only `virtual:pwa-register` importer
+// is `src/lib/pwa/registerServiceWorker.ts`, which is imported solely by the
+// `main.tsx` entrypoint — and no test loads `main.tsx`. So vitest never has
+// to resolve that build-only virtual module, and needs no alias/stub for it.
 
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
-import { resolve } from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    alias: {
-      'virtual:pwa-register/react': resolve(__dirname, 'test/stubs/pwa-register-react.ts'),
-    },
-  },
   test: {
     environment: 'jsdom',
     globals: true,
