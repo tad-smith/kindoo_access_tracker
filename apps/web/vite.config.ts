@@ -139,6 +139,19 @@ export default defineConfig(({ mode }) => {
           ],
         },
         workbox: {
+          // Claim open clients as soon as a new SW activates. The
+          // generated SW does NOT call `clients.claim()` by default,
+          // which means a newly-activated worker never takes control of
+          // an already-open tab — so the `controllerchange` event that a
+          // naive update flow waits on never fires on desktop. We do not
+          // rely on that event (see `useServiceWorker.activateAndReload`,
+          // which drives skip-waiting + a manual reload), but claiming
+          // clients makes the new bundle authoritative for any tab that
+          // does NOT explicitly reload, and is harmless for the one that
+          // does. We deliberately do NOT set `skipWaiting: true` here —
+          // that would silently auto-activate every deploy and bypass the
+          // user-gated "Update now" prompt (`registerType: 'prompt'`).
+          clientsClaim: true,
           navigateFallback: '/index.html',
           // Paths that must NOT be rewritten to `index.html`. The
           // default navigation fallback turns every same-origin

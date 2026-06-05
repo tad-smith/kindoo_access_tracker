@@ -1,11 +1,13 @@
-// PWA update prompt. Mounts a non-blocking inline toast above the main
+// PWA update prompt. Mounts a non-blocking inline strip above the main
 // content area when the service worker has a new version waiting.
 // Critical against the cache-first shell strategy — without this users
 // stay on the stale shell forever after a deploy.
 //
-// Distinct from the generic Toast queue because the message is
-// dismiss-on-action, not auto-expire, and tapping the action triggers
-// an SW skip-waiting + page reload.
+// Single-action by design: only "Update now". There is no "Later" /
+// dismiss affordance — the prompt persists until the user updates, which
+// is the intent (a stale bundle can resolve removed fields and show wrong
+// data, so we never let the user defer indefinitely). Tapping the action
+// drives an SW skip-waiting + page reload via `sw.update()`.
 
 import { useServiceWorker } from '../../lib/pwa/useServiceWorker';
 import './PwaUpdatePrompt.css';
@@ -26,15 +28,7 @@ export function PwaUpdatePrompt() {
             void sw.update();
           }}
         >
-          Refresh
-        </button>
-        <button
-          type="button"
-          className="btn btn-secondary kd-pwa-update-dismiss"
-          onClick={sw.dismissNeedRefresh}
-          aria-label="Dismiss update prompt"
-        >
-          Later
+          Update now
         </button>
       </div>
     </div>
