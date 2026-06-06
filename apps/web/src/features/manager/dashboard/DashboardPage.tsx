@@ -1,7 +1,6 @@
-// Manager Dashboard page (live). Four live cards:
+// Manager Dashboard page (live). Three live cards:
 //   - Pending Requests (per-type counts; deep-links to /manager/queue)
 //   - Utilization (per-ward + stake bars)
-//   - Warnings (over-cap pools from stake.last_over_caps_json)
 //   - Recent Activity (last 10 audit rows; deep-links to audit log
 //     filtered by entity_id)
 //
@@ -12,7 +11,7 @@
 
 import { Link } from '@tanstack/react-router';
 import { isAutomatedActor } from '@kindoo/shared';
-import type { AccessRequest, AuditLog, Building, OverCapEntry, Seat, Ward } from '@kindoo/shared';
+import type { AccessRequest, AuditLog, Building, Seat, Ward } from '@kindoo/shared';
 import {
   usePendingRequests,
   useRecentAuditLog,
@@ -25,7 +24,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { UtilizationBar } from '../../../lib/render/UtilizationBar';
 import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
-import { scopeLabel } from '../../../lib/scopeLabel';
 import { summariseAuditRow } from '../auditLog/summarise';
 
 /**
@@ -86,11 +84,6 @@ export function ManagerDashboardPage() {
           wards={wards.data ?? []}
           buildings={buildings.data ?? []}
           stakeSeatCap={stake.data?.stake_seat_cap}
-        />
-        <WarningsCard
-          loading={stake.isLoading}
-          overCaps={stake.data?.last_over_caps_json ?? []}
-          wards={wards.data ?? []}
         />
         <RecentActivityCard
           loading={audit.isLoading || audit.data === undefined}
@@ -246,61 +239,6 @@ function UtilizationCard({ loading, seats, wards, buildings, stakeSeatCap }: Uti
               </li>
             );
           })}
-        </ul>
-      </CardContent>
-    </Card>
-  );
-}
-
-interface WarningsCardProps {
-  loading: boolean;
-  overCaps: readonly OverCapEntry[];
-  wards: readonly Ward[];
-}
-
-function WarningsCard({ loading, overCaps, wards }: WarningsCardProps) {
-  if (loading) {
-    return (
-      <Card data-testid="dashboard-card-warnings">
-        <CardHeader>
-          <CardTitle>Warnings</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-4" />
-        </CardContent>
-      </Card>
-    );
-  }
-  if (overCaps.length === 0) {
-    return (
-      <Card data-testid="dashboard-card-warnings">
-        <CardHeader>
-          <CardTitle>Warnings</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="kd-dashboard-card-empty">No warnings. All pools within cap.</p>
-        </CardContent>
-      </Card>
-    );
-  }
-  return (
-    <Card data-testid="dashboard-card-warnings">
-      <CardHeader>
-        <CardTitle>Warnings</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ul className="kd-dashboard-list">
-          {overCaps.map((p) => (
-            <li key={p.pool}>
-              <span>
-                <strong>{scopeLabel(p.pool, wards)}</strong>: {p.count} / {p.cap} (over by{' '}
-                {p.over_by})
-              </span>
-              <Link to="/manager/seats" search={{ ward: p.pool }}>
-                view
-              </Link>
-            </li>
-          ))}
         </ul>
       </CardContent>
     </Card>

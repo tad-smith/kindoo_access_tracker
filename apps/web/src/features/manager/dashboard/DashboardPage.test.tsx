@@ -1,5 +1,5 @@
 // Component tests for the Manager Dashboard. Mocks every hook so the
-// test exercises the rendering shape across all four cards in both
+// test exercises the rendering shape across all three cards in both
 // empty and populated states.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -112,14 +112,11 @@ beforeEach(() => {
 });
 
 describe('<ManagerDashboardPage />', () => {
-  it('renders all four cards in their empty-state form', async () => {
+  it('renders all three cards in their empty-state form', async () => {
     mockAll({ stake: { stake_seat_cap: 200, last_over_caps_json: [] } });
     await renderWithRouter();
     expect(
       within(screen.getByTestId('dashboard-card-pending')).getByText(/no pending requests/i),
-    ).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId('dashboard-card-warnings')).getByText(/no warnings/i),
     ).toBeInTheDocument();
     expect(
       within(screen.getByTestId('dashboard-card-recent')).getByText(/no recent activity/i),
@@ -198,25 +195,6 @@ describe('<ManagerDashboardPage />', () => {
     await renderWithRouter();
     const util = screen.getByTestId('dashboard-card-utilization');
     expect(within(util).getByText(/1 \/ 150 seats used/)).toBeInTheDocument();
-  });
-
-  it('renders the warnings card with one row per over-cap pool, ward by name', async () => {
-    mockAll({
-      wards: [makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })],
-      stake: {
-        stake_seat_cap: 200,
-        last_over_caps_json: [
-          { pool: 'stake', count: 210, cap: 200, over_by: 10 },
-          { pool: 'CO', count: 22, cap: 20, over_by: 2 },
-        ],
-      },
-    });
-    await renderWithRouter();
-    const warn = screen.getByTestId('dashboard-card-warnings');
-    expect(within(warn).getByText(/Stake/)).toBeInTheDocument();
-    expect(within(warn).getByText(/Maple/)).toBeInTheDocument();
-    expect(within(warn).getByText(/over by 10/)).toBeInTheDocument();
-    expect(within(warn).getByText(/over by 2/)).toBeInTheDocument();
   });
 
   it('renders the recent-activity card with one row per audit entry', async () => {

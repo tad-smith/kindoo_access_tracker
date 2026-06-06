@@ -6,6 +6,13 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-70] Update D19's "four cards remain" claim after Warnings-card removal
+Status: open
+Owner: @docs-keeper
+Phase: cross-cutting
+
+`architecture.md` D19 (added 2026-06-05, PR #210) records the expiry-scheduler removal and notes "The manager Dashboard drops its fifth 'Last Operations' card … four cards remain." PR #215 then removed the over-cap Warnings card, so the count is now three. `spec.md` §5.3 and `TASKS.md` T-54 were updated in PR #215; `architecture.md` is docs-keeper-owned, so the D19 count is left for you. A one-line addendum (e.g., "(over-cap Warnings card later removed in PR #215 — three cards)") keeps a future reader of D19 from being misled.
+
 ## [T-69] Scrub `functions/CLAUDE.md` of retired-expiry references
 Status: done (2026-06-05 — fixed in PR #210)
 Owner: @backend-engineer
@@ -881,7 +888,7 @@ Phase: Apps Script era
 Status: open
 Owner: @web-engineer
 
-**Why / what.** The manager Dashboard (the default landing for the `manager` role) needs a redesign. Today it's five cards per `spec.md` §5.3: pending-request counts, recent activity, per-scope utilization, over-cap warnings, and last-operations timestamps, all driven by live Firestore subscriptions through DIY hooks. The user has flagged this as wanting a rebuild; the *what* of the rebuild is still open.
+**Why / what.** The manager Dashboard (the default landing for the `manager` role) needs a redesign. Today it's three cards per `spec.md` §5.3: pending-request counts, recent activity, and per-scope utilization, all driven by live Firestore subscriptions through DIY hooks. (The last-operations card was removed with the expiry scheduler in PR #210; the over-cap warnings card was removed in PR #215.) The user has flagged this as wanting a rebuild; the *what* of the rebuild is still open.
 
 **Decisions to make before coding.**
 
