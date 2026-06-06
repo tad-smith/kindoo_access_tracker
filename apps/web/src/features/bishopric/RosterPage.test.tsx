@@ -62,25 +62,29 @@ vi.mock('../../lib/data', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
-  // Match the public Link API enough to render an `<a>` with the `to`
-  // prop turned into an `href` for accessible-name queries; surface the
-  // typed `search` object as `data-scope` so tests can assert the pre-
-  // select target without spreading the object onto the DOM node.
-  Link: ({
-    to,
-    search,
-    children,
-    ...rest
-  }: {
-    to: string;
-    search?: { scope?: string };
-    children?: React.ReactNode;
-  } & Record<string, unknown>) => (
-    <a href={to} data-scope={search?.scope} {...rest}>
-      {children}
-    </a>
-  ),
 }));
+
+// The New Request header button is now a modal trigger. Stub the
+// affordance with a button that surfaces the forwarded scope as
+// `data-scope` and, on click, reveals a marker so tests can assert the
+// modal opens (instead of the old route navigation). The dialog itself
+// is covered by NewRequestDialog.test.tsx.
+vi.mock('../requests/components/NewRequestAffordance', async () => {
+  const { useState } = await import('react');
+  return {
+    NewRequestAffordance: ({ scope, testId }: { scope: string; testId: string }) => {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button data-testid={testId} data-scope={scope} onClick={() => setOpen(true)}>
+            New Request
+          </button>
+          {open ? <div data-testid="new-request-dialog-open" /> : null}
+        </>
+      );
+    },
+  };
+});
 
 vi.mock('../requests/hooks', () => ({
   usePendingRemoveRequests: (canonical: string | null, scope: string | null) =>
@@ -319,10 +323,10 @@ describe('<BishopricRosterPage />', () => {
   });
 
   describe('New Request header action', () => {
-    it('renders a "New Request" link in the page header that targets /new', () => {
+    it('renders a "New Request" button in the page header', () => {
       // Bishopric Roster is the post-login default for bishopric
       // principals (per `routing.defaultLandingFor`). The header
-      // carries a quick affordance back to the New Request form.
+      // carries a quick affordance that opens the New Request modal.
       // The `bishopric-roster-new-request` testid lets the E2E suite
       // disambiguate this button from the nav-rail "New Request" Quick
       // Link (both read identically by accessible name).
@@ -330,15 +334,14 @@ describe('<BishopricRosterPage />', () => {
       mockSeats([]);
       mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
       render(<BishopricRosterPage />);
-      const link = screen.getByTestId('bishopric-roster-new-request');
-      expect(link).toBeInTheDocument();
-      expect(link).toHaveTextContent('New Request');
-      expect(link).toHaveAttribute('href', '/new');
+      const btn = screen.getByTestId('bishopric-roster-new-request');
+      expect(btn).toBeInTheDocument();
+      expect(btn).toHaveTextContent('New Request');
     });
 
     it('pre-selects the active ward as the request scope', () => {
-      // The header link carries `?scope=<activeWard>` so the New Request
-      // form lands on the ward the bishop was just looking at.
+      // The button forwards `scope=<activeWard>` so the New Request
+      // modal lands on the ward the bishop was just looking at.
       usePrincipalMock.mockReturnValue(principal(['CO']));
       mockSeats([]);
       mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
@@ -347,6 +350,17 @@ describe('<BishopricRosterPage />', () => {
         'data-scope',
         'CO',
       );
+    });
+
+    it('opens the New Request modal when the button is clicked (no route change)', async () => {
+      const user = userEvent.setup();
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      expect(screen.queryByTestId('new-request-dialog-open')).toBeNull();
+      await user.click(screen.getByTestId('bishopric-roster-new-request'));
+      expect(screen.getByTestId('new-request-dialog-open')).toBeInTheDocument();
     });
 
     it('does not render the New Request action when the principal has no bishopric wards', () => {

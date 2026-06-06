@@ -10,7 +10,6 @@
 // AC #10) handles the bishopric surface.
 
 import { useMemo } from 'react';
-import { Link } from '@tanstack/react-router';
 import type { Seat } from '@kindoo/shared';
 import { useFirestoreDoc } from '../../lib/data';
 import { stakeRef } from '../../lib/docs';
@@ -23,9 +22,9 @@ import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { stakeAvailablePoolSize } from '../../lib/render/stakePool';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../lib/render/EmptyState';
-import { Button } from '../../components/ui/Button';
 import { PerGrantRosterCard } from '../../components/roster/PerGrantRosterCard';
 import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
+import { NewRequestAffordance } from '../requests/components/NewRequestAffordance';
 import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterPending';
 import { canEditSeat, isScopeAllowed } from '../requests/scopeOptions';
@@ -94,15 +93,10 @@ export function StakeRosterPage() {
 
   return (
     <section>
-      <h1>Stake Roster</h1>
-      <div className="kd-page-header-row">
-        <p className="kd-page-subtitle">Stake</p>
+      <div className="kd-page-title-row">
+        <h1>Stake Roster</h1>
         {canRequest ? (
-          <Button asChild variant="default">
-            <Link to="/new" search={{ scope: 'stake' }} data-testid="stake-roster-new-request">
-              New Request
-            </Link>
-          </Button>
+          <NewRequestAffordance scope="stake" testId="stake-roster-new-request" />
         ) : null}
       </div>
 
