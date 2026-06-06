@@ -124,7 +124,7 @@ export function computeOverCaps(opts: {
       // home-ward-primary seat with a stake duplicate is skipped here —
       // it's already in `homeWardSeatsN` — so each member contributes at
       // most one unit to the home pool.
-      if (cls === 'foreign' && s.duplicate_grants.some((d) => d.scope === 'stake')) {
+      if (cls === 'foreign' && (s.duplicate_grants ?? []).some((d) => d.scope === 'stake')) {
         stakeN += 1;
       }
     }

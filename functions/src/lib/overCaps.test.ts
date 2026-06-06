@@ -282,4 +282,22 @@ describe('computeOverCaps', () => {
     });
     expect(out).toEqual([]);
   });
+
+  it('tolerates a legacy seat missing duplicate_grants (no throw; contributes 0)', () => {
+    // Legacy Firestore docs predate `duplicate_grants` and ship without
+    // the field. `computeOverCaps` runs inside the markRequestComplete /
+    // removeSeatOnRequestComplete transaction, so an unguarded read would
+    // throw and block every request completion. The seat must not throw
+    // and must add 0 to the stake pool (no stake duplicate to count).
+    const legacy = seat({ member_canonical: 'legacy@gmail.com', scope: 'FN' });
+    delete (legacy as { duplicate_grants?: unknown }).duplicate_grants;
+    const wards = [ward({ ward_code: 'FN', seat_cap: 50 })];
+    const out = computeOverCaps({
+      seats: [legacy],
+      wards,
+      stakeSeatCap: 1,
+      wardSites: sites({ FN: 'east-stake' }),
+    });
+    expect(out).toEqual([]);
+  });
 });
