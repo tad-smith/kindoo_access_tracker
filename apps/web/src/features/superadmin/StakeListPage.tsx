@@ -21,6 +21,7 @@ import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../lib/render/EmptyState';
 import { formatDate } from '../../lib/render/formatDate';
 import { CreateStakeForm } from './CreateStakeForm';
+import { ApplyFixesMenu } from './ApplyFixesMenu';
 import { useStakes } from './hooks';
 
 /**
@@ -114,7 +115,10 @@ function StakeRow({ stake }: StakeRowProps) {
         </div>
         <div className="text-xs text-gray-600">Created {created || '—'}</div>
       </div>
-      <SetupPill complete={setupComplete} />
+      <div className="flex items-center gap-3 sm:justify-end">
+        <SetupPill complete={setupComplete} />
+        <ApplyFixesMenu stake={stake} />
+      </div>
     </li>
   );
 }

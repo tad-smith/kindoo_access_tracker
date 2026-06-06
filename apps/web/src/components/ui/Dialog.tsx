@@ -32,9 +32,25 @@ export interface DialogProps {
   children: ReactNode;
   /** Optional override for the unique stack ID (defaults to a generated one). */
   stackId?: string;
+  /**
+   * When `false`, blocks the two implicit dismissal paths — Escape key
+   * and pointer-down outside the content — so the dialog stays open
+   * until the caller flips `open` itself. Use for in-flight async work
+   * where dismissing mid-operation would desync UI from the pending
+   * result. Defaults to `true` (normal dismissable modal).
+   */
+  dismissable?: boolean;
 }
 
-export function Dialog({ open, onOpenChange, title, description, children, stackId }: DialogProps) {
+export function Dialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  children,
+  stackId,
+  dismissable = true,
+}: DialogProps) {
   const generatedId = useId();
   const id = stackId ?? generatedId;
   const push = useModalStackStore((state) => state.push);
@@ -48,11 +64,21 @@ export function Dialog({ open, onOpenChange, title, description, children, stack
     return undefined;
   }, [open, id, push, pop]);
 
+  // When not dismissable, swallow the implicit close gestures. Radix
+  // still fires `onOpenChange(false)` for the Close affordance (the
+  // Cancel button), so the caller's explicit controls keep working.
+  const blockIfLocked = dismissable ? undefined : (e: Event) => e.preventDefault();
+
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="kd-modal" />
-        <RadixDialog.Content className="kd-modal-positioner">
+        <RadixDialog.Content
+          className="kd-modal-positioner"
+          {...(blockIfLocked
+            ? { onEscapeKeyDown: blockIfLocked, onPointerDownOutside: blockIfLocked }
+            : {})}
+        >
           <div className="kd-modal-inner">
             <RadixDialog.Title className="kd-modal-title">{title}</RadixDialog.Title>
             {description ? (
