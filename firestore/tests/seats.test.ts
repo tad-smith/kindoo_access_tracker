@@ -571,6 +571,162 @@ describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
     });
   });
 
+  // Inline organization edit — the ONLY client-writable seat mutation.
+  // A stake member may set / clear `organization_id` on a `scope ==
+  // 'stake'` seat, bypassing the request flow. The rule's allowlist
+  // (`organization_id`, `last_modified_at`, `last_modified_by`,
+  // `lastActor`) matches the web inline-edit mutation EXACTLY.
+  describe('update — inline organization edit (stake-scope only)', () => {
+    it('stake member CAN set organization_id on a stake-scope seat', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'primary-childrens-hospital',
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.stakeMember),
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    it('stake member CAN clear organization_id (set null) on a stake-scope seat', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake', organization_id: 'youth-conference' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(SEAT_PATH).update({
+          organization_id: null,
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.stakeMember),
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    it('stake member is DENIED organization_id edit on a ward-scope seat', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: '01' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'primary-childrens-hospital',
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.stakeMember),
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    it('stake member is DENIED when the diff touches another field (scope)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'primary-childrens-hospital',
+          scope: '01',
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.stakeMember),
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    it('stake member is DENIED when the diff touches another field (building_names)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'primary-childrens-hospital',
+          building_names: ['Pikes Peak Building'],
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.stakeMember),
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    it('stake member edit with mismatched lastActor → denied', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'primary-childrens-hospital',
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.stakeMember),
+          lastActor: { email: 'Wrong@gmail.com', canonical: 'wrong@gmail.com' },
+        }),
+      );
+    });
+
+    // A manager who is NOT a stake member has no inline-edit surface —
+    // the rule keys on `isStakeMember`, not `isManager`. (Managers edit
+    // seats via the request flow, which the Admin SDK callable applies.)
+    it('manager who is NOT a stake member is DENIED the inline organization edit', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'primary-childrens-hospital',
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('outsider is DENIED the inline organization edit', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = outsiderContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'primary-childrens-hospital',
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.outsider),
+          lastActor: lastActorOf(personas.outsider),
+        }),
+      );
+    });
+  });
+
   describe('delete', () => {
     it('manager deletes a manual seat with no duplicates → ok', async () => {
       await seedAsAdmin(env, async (ctx) => {

@@ -139,6 +139,14 @@ export function planAddMerge(opts: {
      * unchanged.
      */
     duplicate_scopes?: string[];
+    /**
+     * Organization (stake-scope only): set on the seat's top-level
+     * `organization_id` when the merge target is the PRIMARY grant and
+     * the request scope is 'stake'. Absent when the merge lands on a
+     * duplicate (the org rides on the duplicate entry itself) or the
+     * scope isn't 'stake'.
+     */
+    organization_id?: string | null;
   };
   touchedScopes: Set<string>;
 } {
@@ -147,17 +155,31 @@ export function planAddMerge(opts: {
   const reqScope = request.scope;
   const reqBuildings = request.building_names ?? [];
   const touchedScopes = new Set<string>([reqScope]);
+  // Organization is stake-scope-only: the merged grant carries the
+  // request's `organization_id` when (and only when) the request scope
+  // is 'stake'. On non-stake scopes the field is omitted entirely.
+  const reqOrg = reqScope === 'stake' ? (request.organization_id ?? null) : undefined;
 
   // Primary match: scope + type.
   if (existingSeat.scope === reqScope && existingSeat.type === reqType) {
     const merged = mergeBuildings(existingSeat.building_names ?? [], reqBuildings);
-    if (merged.length === (existingSeat.building_names ?? []).length) {
-      // No-op merge — request adds no new building. Still touch the
-      // pool for cap-check purposes; emit an empty update so the
-      // caller knows no seat write is needed.
+    const buildingsChanged = merged.length !== (existingSeat.building_names ?? []).length;
+    const orgChanged = reqOrg !== undefined && (existingSeat.organization_id ?? null) !== reqOrg;
+    if (!buildingsChanged && !orgChanged) {
+      // No-op merge — request adds no new building and no org change.
+      // Still touch the pool for cap-check purposes; emit an empty
+      // update so the caller knows no seat write is needed.
       return { update: {}, touchedScopes };
     }
-    return { update: { building_names: merged }, touchedScopes };
+    const update: {
+      building_names?: string[];
+      organization_id?: string | null;
+    } = {};
+    if (buildingsChanged) update.building_names = merged;
+    // Stake-scope primary: stamp the request's org (authoritative — the
+    // edit-equivalent form pre-fills the current value, so null clears).
+    if (reqOrg !== undefined) update.organization_id = reqOrg;
+    return { update, touchedScopes };
   }
 
   // Walk duplicate_grants[] for a (scope, type) match.
@@ -166,12 +188,19 @@ export function planAddMerge(opts: {
   if (matchIdx >= 0) {
     const matched = dupes[matchIdx]!;
     const merged = mergeBuildings(matched.building_names ?? [], reqBuildings);
-    if (merged.length === (matched.building_names ?? []).length) {
-      // No new building added; skip the write.
+    const buildingsChanged = merged.length !== (matched.building_names ?? []).length;
+    const orgChanged = reqOrg !== undefined && (matched.organization_id ?? null) !== reqOrg;
+    if (!buildingsChanged && !orgChanged) {
+      // No new building added and no org change; skip the write.
       return { update: {}, touchedScopes };
     }
     const next = dupes.slice();
-    next[matchIdx] = { ...matched, building_names: merged };
+    const replacement: DuplicateGrant = { ...matched, building_names: merged };
+    // Stake-scope duplicate: the org rides on the duplicate entry, not
+    // the seat's top-level field. Request value is authoritative (null
+    // clears).
+    if (reqOrg !== undefined) replacement.organization_id = reqOrg;
+    next[matchIdx] = replacement;
     // T-42 / T-43: although the SCOPE set is unchanged (we only
     // extended `building_names` on the matched entry), pre-migration
     // legacy seats may have a missing or stale `duplicate_scopes`
@@ -200,6 +229,10 @@ export function planAddMerge(opts: {
     detected_at: detectedAt as DuplicateGrant['detected_at'],
   };
   if (requestSiteId !== undefined) entry.kindoo_site_id = requestSiteId;
+  // Stake-scope appended duplicate: stamp the request's org on the new
+  // entry (null/undefined: leave the field off — absent means "No
+  // Organization", consistent with seat creation).
+  if (reqOrg) entry.organization_id = reqOrg;
   if (request.reason) entry.reason = request.reason;
   if (request.type === 'add_temp') {
     if (request.start_date) entry.start_date = request.start_date;
@@ -238,6 +271,13 @@ export function planAddMerge(opts: {
  *
  * `edit_temp`: replaces `reason` + `building_names` + `start_date` +
  * `end_date`. All four fields are operator-editable in the modal.
+ *
+ * Organization (`edit_manual` / `edit_temp` only — `edit_auto` is
+ * forbidden at stake scope where org is meaningful): when `fields`
+ * carries `organization_id`, the edit replaces the target grant's
+ * `organization_id` (top-level for a primary match, on the entry for a
+ * duplicate match). The edit form pre-fills the current value, so the
+ * request is authoritative — `null` clears.
  */
 export function planEditSeat(
   existingSeat: Seat,
@@ -248,6 +288,7 @@ export function planEditSeat(
     reason?: string;
     start_date?: string;
     end_date?: string;
+    organization_id?: string | null;
   },
 ): { update: Record<string, unknown>; slot: 'primary' | 'duplicate'; index: number } | null {
   // Primary match: scope + type.
@@ -258,6 +299,7 @@ export function planEditSeat(
     if (fields.reason !== undefined) update.reason = fields.reason;
     if (fields.start_date !== undefined) update.start_date = fields.start_date;
     if (fields.end_date !== undefined) update.end_date = fields.end_date;
+    if (fields.organization_id !== undefined) update.organization_id = fields.organization_id;
     return { update, slot: 'primary', index: -1 };
   }
 
@@ -274,6 +316,7 @@ export function planEditSeat(
     if (fields.reason !== undefined) replacement.reason = fields.reason;
     if (fields.start_date !== undefined) replacement.start_date = fields.start_date;
     if (fields.end_date !== undefined) replacement.end_date = fields.end_date;
+    if (fields.organization_id !== undefined) replacement.organization_id = fields.organization_id;
     next[matchIdx] = replacement;
     return {
       update: { duplicate_grants: next },
@@ -465,6 +508,10 @@ export const markRequestComplete = onCall(
             lastActor: actor,
           };
           if (newSeatSite !== undefined) body.kindoo_site_id = newSeatSite;
+          // Organization is a stake-scope concept: carry the request's
+          // `organization_id` onto the new seat's primary grant only when
+          // the scope is 'stake'; ward-scope seats get null (no org).
+          body.organization_id = cur.scope === 'stake' ? (cur.organization_id ?? null) : null;
           if (cur.type === 'add_temp') {
             if (cur.start_date) body.start_date = cur.start_date;
             if (cur.end_date) body.end_date = cur.end_date;
@@ -526,7 +573,14 @@ export const markRequestComplete = onCall(
             detectedAt,
             requestSiteId,
           });
-          if (plan.update.building_names || plan.update.duplicate_grants) {
+          // `organization_id` may be the SOLE change (stake-scope merge
+          // that only re-stamps the org). Its value can be `null`
+          // (clearing), so test KEY presence rather than truthiness.
+          if (
+            plan.update.building_names ||
+            plan.update.duplicate_grants ||
+            'organization_id' in plan.update
+          ) {
             const seatUpdate: Record<string, unknown> = {
               ...plan.update,
               last_modified_at: FieldValue.serverTimestamp(),
@@ -583,6 +637,7 @@ export const markRequestComplete = onCall(
           reason?: string;
           start_date?: string;
           end_date?: string;
+          organization_id?: string | null;
         } = { building_names: cur.building_names ?? [] };
         if (cur.type === 'edit_manual' || cur.type === 'edit_temp') {
           fields.reason = cur.reason ?? '';
@@ -590,6 +645,15 @@ export const markRequestComplete = onCall(
         if (cur.type === 'edit_temp') {
           if (cur.start_date) fields.start_date = cur.start_date;
           if (cur.end_date) fields.end_date = cur.end_date;
+        }
+        // Organization is stake-scope-only. For stake-scope manual / temp
+        // edits the request is authoritative (the edit form pre-fills the
+        // current value), so carry `organization_id` through — `null`
+        // clears. `edit_auto` is forbidden at stake (handled above), and
+        // ward-scope edits have no org concept, so the field is left off
+        // for them.
+        if (cur.scope === 'stake' && (cur.type === 'edit_manual' || cur.type === 'edit_temp')) {
+          fields.organization_id = cur.organization_id ?? null;
         }
 
         const plan = planEditSeat(existingSeat, targetType, cur.scope, fields);
