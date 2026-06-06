@@ -86,3 +86,56 @@ export async function clearEmulators(): Promise<void> {
     throw new Error(`clearEmulators(Firestore) failed: ${res.status} ${await res.text()}`);
   }
 }
+
+/**
+ * Probe the Functions emulator on the conventional localhost:5001 port.
+ * Returns true iff the port answers.
+ *
+ * The CI integration run boots `--only firestore,auth,functions`, so the
+ * `onAuthUserCreate` v1 auth trigger is live and fires (asynchronously,
+ * via Eventarc) on every `auth.createUser(...)` — its `applyFullClaims`
+ * write then races any in-process claim write a test makes right after
+ * `createUser`. The local-only run (`test:integration:local`) boots only
+ * firestore + auth, so the trigger never fires. Tests that set claims
+ * shortly after `createUser` use this probe to wait for the trigger's
+ * baseline write to settle first (closing the lost-update window) only
+ * when the trigger is actually live.
+ *
+ * The probe uses a short AbortController timeout because the connection
+ * either lands immediately or fails immediately; there is no slow path on
+ * a healthy emulator.
+ */
+export async function hasFunctionsEmulator(): Promise<boolean> {
+  if (!hasEmulators()) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1500);
+  try {
+    // Any HTTP response (even 404) counts as "alive"; we only care that
+    // the socket accepts connections.
+    await fetch('http://127.0.0.1:5001/', { signal: controller.signal });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Poll `predicate` every `intervalMs` until it returns true or the
+ * deadline elapses. Returns whether it became true. Used to wait for an
+ * eventually-consistent emulator state (an Eventarc-delivered trigger
+ * write, a claim round-trip) without an arbitrary fixed sleep.
+ */
+export async function waitFor(
+  predicate: () => Promise<boolean>,
+  timeoutMs: number,
+  intervalMs = 100,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return true;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return false;
+}

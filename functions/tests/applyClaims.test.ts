@@ -18,11 +18,25 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { logger } from 'firebase-functions';
 import { applyFullClaims, applyStakeClaims, applySuperadminClaim } from '../src/lib/applyClaims.js';
-import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.js';
+import {
+  clearEmulators,
+  hasEmulators,
+  hasFunctionsEmulator,
+  requireEmulators,
+  waitFor,
+} from './lib/emulator.js';
 
 // A uid that has never existed in the Auth emulator. `getUser` on it
 // throws `auth/user-not-found` — the exact condition the fix handles.
 const MISSING_UID = 'uid-that-was-deleted-before-the-trigger-fired';
+
+// CI boots this suite under `--only firestore,auth,functions`, so the
+// `onAuthUserCreate` v1 auth trigger is live and fires (async, via
+// Eventarc) on every `auth.createUser(...)` — its `applyFullClaims`
+// write a few hundred ms later races any in-process claim write the
+// test makes right after `createUser`. Snapshot once at module load:
+// the emulator is or isn't up for the suite's lifetime.
+const functionsEmulatorReachable = await hasFunctionsEmulator();
 
 describe.skipIf(!hasEmulators())('applyClaims — deleted auth user is a benign no-op', () => {
   beforeAll(async () => {
@@ -86,14 +100,38 @@ describe.skipIf(!hasEmulators())('applyClaims — deleted auth user is a benign 
     expect(revoke).not.toHaveBeenCalled();
   });
 
-  it('still applies claims normally when the user exists (no false-positive skip)', async () => {
-    const { auth } = requireEmulators();
-    const user = await auth.createUser({ email: 'present@gmail.com' });
+  it(
+    'still applies claims normally when the user exists (no false-positive skip)',
+    { timeout: 30_000 },
+    async () => {
+      const { auth } = requireEmulators();
+      const user = await auth.createUser({ email: 'present@gmail.com' });
 
-    await applySuperadminClaim(user.uid, 'present@gmail.com', true);
+      // `auth.createUser` fires the real `onAuthUserCreate` trigger when
+      // the Functions emulator is up (the CI integration config). That
+      // trigger's one async write — `applyFullClaims` stamping the
+      // baseline `{ canonical }` block — would otherwise land a few
+      // hundred ms after our `applySuperadminClaim` and clobber the flag
+      // we just set, making this assertion flake `undefined`. The trigger
+      // writes exactly once per user, so wait for that baseline to settle
+      // BEFORE applying the superadmin claim; once it has landed it can't
+      // overwrite a later write. Skipped when the Functions emulator
+      // isn't running (the trigger never fires; `customClaims` stays
+      // null), so this stays correct under `test:integration:local` too.
+      if (functionsEmulatorReachable) {
+        const seeded = await waitFor(async () => {
+          const u = await auth.getUser(user.uid);
+          const claims = (u.customClaims ?? {}) as { canonical?: string };
+          return claims.canonical === 'present@gmail.com';
+        }, 20_000);
+        expect(seeded).toBe(true);
+      }
 
-    const refreshed = await auth.getUser(user.uid);
-    const claims = (refreshed.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
-    expect(claims.isPlatformSuperadmin).toBe(true);
-  });
+      await applySuperadminClaim(user.uid, 'present@gmail.com', true);
+
+      const refreshed = await auth.getUser(user.uid);
+      const claims = (refreshed.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
+      expect(claims.isPlatformSuperadmin).toBe(true);
+    },
+  );
 });

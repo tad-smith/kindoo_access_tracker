@@ -27,50 +27,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { FieldValue } from 'firebase-admin/firestore';
-import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.js';
-
-/**
- * Probe the Functions emulator on the conventional localhost:5001 port.
- * Returns true iff the port answers — used to gate the suite so it
- * skips when only firestore + auth are up (e.g. `test:integration:local`).
- *
- * The probe uses a short AbortController timeout because the
- * connection either lands immediately or fails immediately; there is
- * no slow path on a healthy emulator.
- */
-async function hasFunctionsEmulator(): Promise<boolean> {
-  if (!hasEmulators()) return false;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1500);
-  try {
-    // Any HTTP response (even 404) counts as "alive"; we only care
-    // that the socket accepts connections.
-    await fetch('http://127.0.0.1:5001/', { signal: controller.signal });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * Poll `predicate` every 250ms until it returns true or the deadline
- * elapses. Used to wait for the eventually-consistent trigger fire +
- * `setCustomUserClaims` round-trip.
- */
-async function waitFor(
-  predicate: () => Promise<boolean>,
-  timeoutMs: number,
-  intervalMs = 250,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return true;
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  return false;
-}
+import { clearEmulators, hasFunctionsEmulator, requireEmulators, waitFor } from './lib/emulator.js';
 
 // `await hasFunctionsEmulator()` would be ideal but `describe.skipIf`
 // takes a synchronous predicate. We snapshot the result once at module
