@@ -6,6 +6,25 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-17] Claim-sync triggers retry forever (Eventarc storm) when the auth user was deleted before the trigger fired; flakes `syncSuperadminClaims.e2e.test.ts`
+Status: closed (fixed in PR #218)
+Owner: @backend-engineer
+Phase: post Phase 12
+Severity: high (prod: infinite Eventarc retry storm; CI: cross-test flake)
+Branch / PR: `fix/claim-sync-deleted-user-noop` (PR #218)
+
+The three claim appliers in `functions/src/lib/applyClaims.ts` — `applyStakeClaims`, `applySuperadminClaim`, `applyFullClaims` — each began with `auth.getUser(uid)`. When the auth user had been deleted before the claim-sync trigger fired, `getUser` threw `auth/user-not-found`, the trigger raised an unhandled error, and Eventarc retried the delivery forever.
+
+**Symptom (prod):** a role-doc write outlives its auth user — the user is deleted between the role-doc write and the trigger firing — and the matching `syncAccessClaims` / `syncManagersClaims` / `syncSuperadminClaims` trigger enters an infinite retry loop. CI observed ~82 re-throws over ~58s before the run was killed.
+
+**Symptom (CI):** the retry storm saturated the emulator and starved trigger delivery for `functions/tests/syncSuperadminClaims.e2e.test.ts`, which intermittently timed out waiting for a claim that arrived too late. One missing-user race surfaced as two unrelated-looking failures — an infinite retry storm AND a flaky e2e.
+
+**Repro:** delete an auth user, then write (or have a sibling test create-then-delete a user and write) a role doc whose canonical maps to the now-deleted user. The constant in the integration suite is sibling tests creating-then-deleting users under the same emulator; in prod it's a real delete-vs-trigger race.
+
+**Root cause:** the appliers trusted `getUser(uid)` to succeed and let the `auth/user-not-found` throw propagate out of the Firestore trigger. Eventarc treats a thrown trigger as a delivery failure and retries it, so a permanently-missing user produced a permanent retry loop.
+
+**Fix (PR #218):** `getUser` is wrapped by `loadExistingClaims`, which catches `auth/user-not-found` (by Admin SDK error `code`, not message string), emits a `logger.info` skip, and returns a `USER_GONE` sentinel; each applier returns cleanly on the sentinel — no throw, no retry. The claim write is wrapped by `writeClaims`, which tolerates a late `auth/user-not-found` from `setCustomUserClaims` / `revokeRefreshTokens` (the user can vanish mid-apply). Any other error still throws and still retries. Consistent with the existing `uidForCanonical → null` no-op contract the sync triggers already carry (`spec.md` §4). Ships with an emulator-driven test across all three appliers plus a present-user control; de-flakes `syncSuperadminClaims.e2e.test.ts`. See `docs/changelog/fix-claim-sync-deleted-user-noop.md`.
+
 ## [B-16] Per-row Sync fixes write the primary grant's fields even when the row was surfaced via a projected duplicate
 Status: open
 Owner: @backend-engineer
