@@ -159,6 +159,10 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   notifications_reply_to?: string;     // optional reply-to address; when unset, EmailService omits the Reply-To header
 
   // Operational state (`last_over_caps_json` written by request-completion over-cap recomputes; read by manager UI)
+  // The `pool: 'stake'` entry's `count` is the home stake count: stake-primary seats
+  // plus one per foreign-ward-primary seat carrying a parallel-site `scope:'stake'`
+  // duplicate grant (those consume a home Kindoo license). See spec §244 for the
+  // full computation; `cap` is the home stake portion-cap (`stake_seat_cap - home-site ward seats`).
   last_over_caps_json: Array<{
     pool: 'stake' | string;            // string = ward_code
     count: number;
