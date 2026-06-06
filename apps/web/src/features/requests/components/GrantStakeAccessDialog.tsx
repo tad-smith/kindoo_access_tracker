@@ -21,6 +21,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import type { Building, Seat } from '@kindoo/shared';
 import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
+import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { useSubmitRequest, useStakeBuildings } from '../hooks';
 import { grantStakeAccessSchema, type GrantStakeAccessForm } from '../schemas';
 import { filterBuildingsBySite } from '../../../lib/kindooSites';
@@ -46,6 +47,12 @@ export function GrantStakeAccessDialog({ seat, open, onOpenChange }: GrantStakeA
   const submit = useSubmitRequest();
   const buildingsResult = useStakeBuildings();
   const buildings = buildingsResult.data ?? [];
+
+  // Gate on hydration so the building checklist's "No home-site buildings
+  // configured." empty state never flashes during the initial subscribe.
+  // Mirrors `useNewRequestFormData`: `data === undefined` covers the
+  // first-paint window before the snapshot lands.
+  const isLoading = buildingsResult.isLoading || buildingsResult.data === undefined;
 
   // Stake scope is locked to the home site (`null`) per spec §15, so the
   // checklist shows only home-site buildings. Legacy buildings without
@@ -119,7 +126,9 @@ export function GrantStakeAccessDialog({ seat, open, onOpenChange }: GrantStakeA
           <legend>
             Buildings <small>(home-site only — at least one required)</small>
           </legend>
-          {homeBuildings.length === 0 ? (
+          {isLoading ? (
+            <LoadingSpinner variant="block" />
+          ) : homeBuildings.length === 0 ? (
             <p className="kd-empty-state" data-testid="grant-stake-access-buildings-empty">
               No home-site buildings configured.
             </p>
