@@ -613,6 +613,130 @@ describe('firestore.rules — stakes/{sid}/seats/{canonical}', () => {
       );
     });
 
+    // Value-TYPE guards: this is the first client-writable seat-update
+    // path, so the rule constrains the VALUES (not just the key set) of
+    // the four allowlisted fields — mirroring the `requests` block's
+    // `is string` / `is timestamp` rigor. A hand-crafted (non-SDK) write
+    // that lands a malformed value on any of them is denied.
+    it('stake member is DENIED an organization_id written as a NUMBER', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: 42,
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.stakeMember),
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    it('stake member is DENIED an organization_id written as a MAP', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: { slug: 'primary-childrens-hospital' },
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.stakeMember),
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    it('stake member is DENIED a non-timestamp last_modified_at (string)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'primary-childrens-hospital',
+          last_modified_at: '2026-06-06',
+          last_modified_by: lastActorOf(personas.stakeMember),
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    it('stake member is DENIED a last_modified_by written as a STRING', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'primary-childrens-hospital',
+          last_modified_at: new Date(),
+          last_modified_by: 'stakeuser@gmail.com',
+          // lastActor stays valid so the denial is attributable to the
+          // last_modified_by type guard, not the lastActor integrity check.
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    it('stake member is DENIED a last_modified_by missing email/canonical', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(manualSeatDoc({ scope: 'stake' }));
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'primary-childrens-hospital',
+          last_modified_at: new Date(),
+          last_modified_by: { displayName: 'Stake User' },
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
+    // The valid string-id case still PASSES after the type guards — set
+    // an org on a seat that already carries a (valid) last_modified_by,
+    // proving unchanged fields keep their prior valid values and satisfy
+    // the guards.
+    it('stake member CAN set organization_id on a seat that already had last_modified_by (regression)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set(
+            manualSeatDoc({
+              scope: 'stake',
+              last_modified_by: lastActorOf(personas.manager),
+            }),
+          );
+      });
+      const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(SEAT_PATH).update({
+          organization_id: 'youth-conference',
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.stakeMember),
+          lastActor: lastActorOf(personas.stakeMember),
+        }),
+      );
+    });
+
     it('stake member is DENIED organization_id edit on a ward-scope seat', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx
