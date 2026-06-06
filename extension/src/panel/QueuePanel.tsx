@@ -26,7 +26,12 @@
 // renders the queue sections and its Refresh control only.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { partitionPendingRequests, type AccessRequest, type QueueSections } from '@kindoo/shared';
+import {
+  partitionPendingRequests,
+  type AccessRequest,
+  type QueueSections,
+  type Seat,
+} from '@kindoo/shared';
 import { getMyPendingRequests, getSeatByEmail, type StakeConfigBundle } from '../lib/extensionApi';
 import { RequestCard } from './RequestCard';
 
@@ -49,38 +54,52 @@ type FetchState =
   | { status: 'error'; message: string };
 
 /**
- * Three-state seat existence keyed by `request_id`:
- *   - `'present'` — `getSeatByEmail` returned a seat
- *   - `'absent'`  — `getSeatByEmail` returned null
- *   - (key omitted) — lookup failed or hasn't resolved → "unknown"
- * Each gate (add-for-existing, edit-for-nonexistent) reads the explicit
- * state it cares about; an omitted key is "unknown" → never blocked.
+ * Per-request seat snapshot keyed by `request_id`. A present entry
+ * carries:
+ *   - `existence` — `'present'` (seat found) or `'absent'` (returned
+ *     null). A failed / unresolved lookup omits the request entirely →
+ *     "unknown"; both seat gates treat unknown as not-blocked.
+ *   - `hasStakeGrant` — true when the seat already holds a stake-scope
+ *     grant (primary OR any duplicate). Drives the add-for-existing-seat
+ *     carve-out for stake-scope `add_manual` (see RequestCard). Always
+ *     false for an `'absent'` seat.
  */
 type SeatExistence = 'present' | 'absent';
-type SeatMap = Record<string, SeatExistence>;
+interface SeatInfo {
+  existence: SeatExistence;
+  hasStakeGrant: boolean;
+}
+type SeatMap = Record<string, SeatInfo>;
+
+/** True when the seat holds a stake-scope grant — primary or duplicate. */
+function seatHasStakeGrant(seat: Seat): boolean {
+  return seat.scope === 'stake' || (seat.duplicate_grants ?? []).some((g) => g.scope === 'stake');
+}
 
 /**
- * Resolve seat-existence for every request that operates on a seat —
- * `add_*` (block on present) and `edit_*` (block on absent). `remove`
- * is skipped: it targets an existing seat by design and has no gate.
- * Each lookup is caught individually so one failed read can't reject the
- * batch or block the queue — a failed lookup is OMITTED from the map
- * ("unknown"), and both gates treat unknown as not-blocked.
+ * Resolve seat info for every request that operates on a seat —
+ * `add_*` (block on present, minus the stake-grant carve-out) and
+ * `edit_*` (block on absent). `remove` is skipped: it targets an
+ * existing seat by design and has no gate. Each lookup is caught
+ * individually so one failed read can't reject the batch or block the
+ * queue — a failed lookup is OMITTED from the map ("unknown"), and both
+ * gates treat unknown as not-blocked.
  */
 async function fetchSeatMap(stakeId: string, requests: readonly AccessRequest[]): Promise<SeatMap> {
   const seatRequests = requests.filter((r) => r.type !== 'remove');
   const entries = await Promise.all(
-    seatRequests.map(async (r): Promise<[string, SeatExistence] | null> => {
+    seatRequests.map(async (r): Promise<[string, SeatInfo] | null> => {
       try {
         const seat = await getSeatByEmail(stakeId, r.member_canonical);
-        return [r.request_id, seat !== null ? 'present' : 'absent'];
+        if (seat === null) return [r.request_id, { existence: 'absent', hasStakeGrant: false }];
+        return [r.request_id, { existence: 'present', hasStakeGrant: seatHasStakeGrant(seat) }];
       } catch {
         // Resilient: a failed lookup is omitted → "unknown" → not blocked.
         return null;
       }
     }),
   );
-  return Object.fromEntries(entries.filter((e): e is [string, SeatExistence] => e !== null));
+  return Object.fromEntries(entries.filter((e): e is [string, SeatInfo] => e !== null));
 }
 
 export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelProps) {
@@ -229,8 +248,9 @@ function QueueSection({
               stakeId={stakeId}
               request={req}
               bundle={bundle}
-              memberHasSeat={seatMap[req.request_id] === 'present'}
-              memberSeatAbsent={seatMap[req.request_id] === 'absent'}
+              memberHasSeat={seatMap[req.request_id]?.existence === 'present'}
+              memberSeatAbsent={seatMap[req.request_id]?.existence === 'absent'}
+              memberHasStakeGrant={seatMap[req.request_id]?.hasStakeGrant ?? false}
               onDismissed={onDismissed}
             />
           </li>

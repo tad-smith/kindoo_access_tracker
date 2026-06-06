@@ -52,14 +52,27 @@ interface RequestCardProps {
   bundle: StakeConfigBundle;
   /**
    * True when the request subject already has an SBA seat (any scope).
-   * For `add_manual` / `add_temp` this blocks completion — Mark Complete
-   * would create a duplicate seat doc, which fails — so the provision
-   * button is hidden and only Reject is offered. Parent (`QueuePanel`)
-   * derives this from `getSeatByEmail`; a lookup failure resolves to
-   * `false` so the provision button stays visible rather than blocking
-   * the queue on a transient read miss.
+   * For `add_manual` / `add_temp` this blocks completion — `planAddMerge`
+   * merges into the existing seat doc, but every add-on-existing case is
+   * Reject-only by policy EXCEPT the stake-scope carve-out below. The
+   * provision button is hidden and only Reject is offered. Parent
+   * (`QueuePanel`) derives this from `getSeatByEmail`; a lookup failure
+   * resolves to `false` so the provision button stays visible rather than
+   * blocking the queue on a transient read miss.
    */
   memberHasSeat: boolean;
+  /**
+   * True when the seat already holds a stake-scope grant (primary OR any
+   * duplicate). Backstops the stake-scope add carve-out: a stake-scope
+   * `add_manual` for a member who has a seat but NO stake grant is
+   * applyable — `markRequestComplete` → `planAddMerge` appends a
+   * cross-scope `duplicate_grant` and succeeds — so the provision button
+   * stays visible. If the member somehow ALREADY holds a stake grant the
+   * add can't apply cleanly, so we keep blocking. Parent (`QueuePanel`)
+   * derives this from the same seat object it fetches via
+   * `getSeatByEmail`; absent / failed lookup resolves to `false`.
+   */
+  memberHasStakeGrant: boolean;
   /**
    * True when the request subject has NO SBA seat (lookup positively
    * resolved to null). For `edit_auto` / `edit_manual` / `edit_temp`
@@ -90,6 +103,7 @@ export function RequestCard({
   request,
   bundle,
   memberHasSeat,
+  memberHasStakeGrant,
   memberSeatAbsent,
   onDismissed,
 }: RequestCardProps) {
@@ -243,13 +257,23 @@ export function RequestCard({
         ? 'sba-btn sba-btn-primary'
         : 'sba-btn sba-btn-success';
 
-  // Completing an add for someone who already has a seat would create a
-  // duplicate seat doc (the Mark Complete write fails). Mirror the web
-  // app's PR #191: hide the provision button and offer only Reject for
-  // add types whose subject already holds a seat. Edit / remove types
-  // operate on an existing seat by design and are unaffected.
+  // Adds for someone who already has a seat are Reject-only by policy —
+  // hide the provision button and offer only Reject (mirrors the web
+  // app's PR #191). Edit / remove types operate on an existing seat by
+  // design and are unaffected.
+  //
+  // Carve-out: a stake-scope `add_manual` for a member who has a seat but
+  // NO stake grant IS applyable — `markRequestComplete` → `planAddMerge`
+  // appends a cross-scope `duplicate_grant` and succeeds (this is the
+  // "Give Access To Stake Buildings" flow for a foreign-site-only member,
+  // who always already holds their ward seat). `!memberHasStakeGrant` is
+  // the backstop: if a stake grant already exists the add can't apply
+  // cleanly, so keep blocking. Every other add-on-existing case stays
+  // blocked exactly as before.
   const isAdd = request.type === 'add_manual' || request.type === 'add_temp';
-  const blockedByExistingSeat = isAdd && memberHasSeat;
+  const applyableStakeAdd =
+    request.type === 'add_manual' && request.scope === 'stake' && !memberHasStakeGrant;
+  const blockedByExistingSeat = isAdd && memberHasSeat && !applyableStakeAdd;
 
   // Edit-side analog: an edit_* request edits an EXISTING seat. If the
   // member has no seat doc at all, `markRequestComplete` throws
