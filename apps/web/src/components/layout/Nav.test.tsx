@@ -68,7 +68,7 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
-    expect(quick).toEqual(['New Request', 'My Requests']);
+    expect(quick).toEqual(['My Requests']);
     const rosters = sections.find((s) => s.key === 'rosters')?.items.map((i) => i.label);
     expect(rosters).toEqual(['Ward Roster']);
     const account = sections.find((s) => s.key === 'account')?.items.map((i) => i.label);
@@ -82,12 +82,12 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
-    expect(quick).toEqual(['New Request', 'My Requests']);
+    expect(quick).toEqual(['My Requests']);
     const rosters = sections.find((s) => s.key === 'rosters')?.items.map((i) => i.label);
     expect(rosters).toEqual(['Ward Roster', 'Stake Roster']);
   });
 
-  it('manager + bishopric: all four sections; bishopric brings New Request to Quick Links', () => {
+  it('manager + bishopric: all four sections; Quick Links keeps Dashboard/Queue/My Requests', () => {
     const sections = navSectionsForPrincipal(
       makePrincipal({
         managerStakes: ['csnorth'],
@@ -97,9 +97,7 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'settings', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
-    // Manager keeps the leading Dashboard/Queue; New Request appears
-    // because of the bishopric overlay.
-    expect(quick).toEqual(['Dashboard', 'Request Queue', 'New Request', 'My Requests']);
+    expect(quick).toEqual(['Dashboard', 'Request Queue', 'My Requests']);
   });
 
   it('Account section visible to every authorized user (manager / stake / bishopric)', () => {

@@ -129,63 +129,40 @@ beforeEach(() => {
   useSeatForMemberMock.mockReturnValue(liveSeatResult(undefined));
 });
 
-describe('<NewRequestForm /> — initialScope pre-select', () => {
-  // The route forwards `?scope=` as `initialScope`. The form uses it as
-  // the dropdown default only when it matches one of the allowed scopes;
-  // a stale / unauthorized value falls back to the leading scope.
+describe('<NewRequestForm /> — fixed scope label', () => {
+  // The form is always launched from a scoped roster context with a
+  // single allowed scope. It renders that scope as a fixed "Requesting
+  // for: …" label — there is no scope picker.
 
-  function multiScopes(): { value: string; label: string }[] {
-    return [
-      { value: 'stake', label: 'Stake' },
-      { value: 'CO', label: 'Ward CO' },
-      { value: 'GE', label: 'Ward GE' },
-    ];
-  }
-
-  it('pre-selects the requested scope when it matches an allowed scope', () => {
+  it('renders the single scope as a fixed label, never a dropdown', () => {
     render(
       <NewRequestForm
-        scopes={multiScopes()}
+        scopes={[{ value: 'GE', label: 'Ward GE' }]}
         buildings={buildings()}
-        wards={wards([
-          { code: 'CO', building_name: 'Maple Building' },
-          { code: 'GE', building_name: 'Cedar Building' },
-        ])}
+        wards={wards([{ code: 'GE', building_name: 'Cedar Building' }])}
         initialScope="GE"
       />,
     );
-    expect((screen.getByTestId('new-request-scope') as HTMLSelectElement).value).toBe('GE');
+    expect(screen.queryByTestId('new-request-scope')).toBeNull();
+    expect(screen.getByText('Requesting for:')).toBeInTheDocument();
+    expect(screen.getByText('Ward GE')).toBeInTheDocument();
   });
 
-  it('falls back to the leading scope when the requested scope is not allowed', () => {
-    // `?scope=ZZ` — a ward the user has since left. The dropdown lands on
-    // the leading allowed scope ('stake') instead.
+  it('submits the launched scope even when initialScope is omitted', async () => {
+    const user = userEvent.setup();
     render(
       <NewRequestForm
-        scopes={multiScopes()}
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={wards([
-          { code: 'CO', building_name: 'Maple Building' },
-          { code: 'GE', building_name: 'Cedar Building' },
-        ])}
-        initialScope="ZZ"
+        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
       />,
     );
-    expect((screen.getByTestId('new-request-scope') as HTMLSelectElement).value).toBe('stake');
-  });
-
-  it('falls back to the leading scope when no scope is requested', () => {
-    render(
-      <NewRequestForm
-        scopes={multiScopes()}
-        buildings={buildings()}
-        wards={wards([
-          { code: 'CO', building_name: 'Maple Building' },
-          { code: 'GE', building_name: 'Cedar Building' },
-        ])}
-      />,
-    );
-    expect((screen.getByTestId('new-request-scope') as HTMLSelectElement).value).toBe('stake');
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({ scope: 'CO' });
   });
 });
 
@@ -403,35 +380,6 @@ describe('<NewRequestForm /> — buildings selector defaults', () => {
     );
   });
 
-  it('shows the leading ward building by default for a multi-ward bishopric submitter, and the dropdown swap updates the header', async () => {
-    const user = userEvent.setup();
-    render(
-      <NewRequestForm
-        scopes={[
-          { value: 'CO', label: 'Ward CO' },
-          { value: 'GE', label: 'Ward GE' },
-        ]}
-        buildings={buildings()}
-        wards={wards([
-          { code: 'CO', building_name: 'Maple Building' },
-          { code: 'GE', building_name: 'Cedar Building' },
-        ])}
-      />,
-    );
-    const trigger = screen.getByTestId('new-request-buildings-trigger');
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    // First scope is CO → its building is the default.
-    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
-      'Building: Maple Building',
-    );
-    // Switch to ward GE → header now shows GE's building, still collapsed.
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'GE');
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
-      'Building: Cedar Building',
-    );
-  });
-
   it('expands when the trigger is clicked and reveals the full checkbox list with the ward building pre-checked', async () => {
     const user = userEvent.setup();
     render(
@@ -539,171 +487,6 @@ describe('<NewRequestForm /> — buildings selector defaults', () => {
   });
 });
 
-describe('<NewRequestForm /> — scope-driven defaults', () => {
-  // The buildings widget is derived from the *current scope*, not from
-  // role-at-mount. A stake+ward principal toggling the scope dropdown
-  // must live-update both the open state and the default selection.
-  // Manual collapse/expand and manual selection edits since the last
-  // scope change reset on the next scope flip — otherwise a stake-scope
-  // expansion bleeds into the new ward-scope view and confuses the user.
-
-  function multiScopePrincipal() {
-    return [
-      { value: 'stake', label: 'Stake' },
-      { value: 'CO', label: 'Ward CO' },
-    ];
-  }
-
-  it('defaults to only the selected ward building, not the union of every ward the principal holds', async () => {
-    // Principal holds CO + GE, in different buildings. Selecting scope
-    // CO must pre-check ONLY Maple. Selecting GE must swap to ONLY
-    // Cedar. The principal's other ward access never bleeds into the
-    // selection — defaults are a function of the current scope, not
-    // the principal's union of wards.
-    const user = userEvent.setup();
-    render(
-      <NewRequestForm
-        scopes={[
-          { value: 'CO', label: 'Ward CO' },
-          { value: 'GE', label: 'Ward GE' },
-        ]}
-        buildings={buildings()}
-        wards={wards([
-          { code: 'CO', building_name: 'Maple Building' },
-          { code: 'GE', building_name: 'Cedar Building' },
-        ])}
-      />,
-    );
-    // Initial scope = CO → only Maple ticked.
-    await user.click(screen.getByTestId('new-request-buildings-trigger'));
-    expect(screen.getByTestId('new-request-building-maple')).toBeChecked();
-    expect(screen.getByTestId('new-request-building-cedar')).not.toBeChecked();
-
-    // Flip to GE → only Cedar ticked, Maple dropped.
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'GE');
-    // The widget collapses on scope change; expand to inspect.
-    await user.click(screen.getByTestId('new-request-buildings-trigger'));
-    expect(screen.getByTestId('new-request-building-maple')).not.toBeChecked();
-    expect(screen.getByTestId('new-request-building-cedar')).toBeChecked();
-  });
-
-  it('flips from expanded+all-checked to collapsed+ward-default when the scope dropdown moves stake → ward', async () => {
-    const user = userEvent.setup();
-    render(
-      <NewRequestForm
-        scopes={multiScopePrincipal()}
-        buildings={buildings()}
-        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
-      />,
-    );
-    const trigger = screen.getByTestId('new-request-buildings-trigger');
-    // Initial: stake-scope is the first option → expanded, every building checked (B-11).
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
-      'Buildings: Maple Building, Cedar Building',
-    );
-
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'CO');
-
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
-      'Building: Maple Building',
-    );
-  });
-
-  it('flips from collapsed+ward-default to expanded+all-checked when the scope dropdown moves ward → stake', async () => {
-    const user = userEvent.setup();
-    // Render the form with the ward as the leading option so it lands
-    // collapsed-with-ward-default first, then verify the dropdown flip.
-    render(
-      <NewRequestForm
-        scopes={[
-          { value: 'CO', label: 'Ward CO' },
-          { value: 'stake', label: 'Stake' },
-        ]}
-        buildings={buildings()}
-        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
-      />,
-    );
-    const trigger = screen.getByTestId('new-request-buildings-trigger');
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
-      'Building: Maple Building',
-    );
-
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'stake');
-
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    // B-11 — stake-scope defaults to every building checked.
-    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
-      'Buildings: Maple Building, Cedar Building',
-    );
-    expect(screen.getByTestId('new-request-building-maple')).toBeChecked();
-    expect(screen.getByTestId('new-request-building-cedar')).toBeChecked();
-  });
-
-  it('resets a manual stake-scope edit when the user flips to a ward', async () => {
-    const user = userEvent.setup();
-    render(
-      <NewRequestForm
-        scopes={[
-          { value: 'CO', label: 'Ward CO' },
-          { value: 'stake', label: 'Stake' },
-        ]}
-        buildings={buildings()}
-        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
-      />,
-    );
-    const trigger = screen.getByTestId('new-request-buildings-trigger');
-    // Switch to stake → expanded, every building checked (B-11). Untick
-    // Cedar to simulate the manager-narrows-the-grant edit.
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'stake');
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    await user.click(screen.getByTestId('new-request-building-cedar'));
-    expect(screen.getByTestId('new-request-building-cedar')).not.toBeChecked();
-    expect(screen.getByTestId('new-request-building-maple')).toBeChecked();
-
-    // Flip back to ward CO → collapses, defaults to ward building, stake-scope edits dropped.
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'CO');
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
-      'Building: Maple Building',
-    );
-    // Expand and verify only the ward default survived; the stake-scope
-    // untick did not bleed into the ward view.
-    await user.click(trigger);
-    expect(screen.getByTestId('new-request-building-maple')).toBeChecked();
-    expect(screen.getByTestId('new-request-building-cedar')).not.toBeChecked();
-  });
-
-  it('resets a manual ward-scope deselection when the user flips to stake and back', async () => {
-    const user = userEvent.setup();
-    render(
-      <NewRequestForm
-        scopes={[
-          { value: 'CO', label: 'Ward CO' },
-          { value: 'stake', label: 'Stake' },
-        ]}
-        buildings={buildings()}
-        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
-      />,
-    );
-    const trigger = screen.getByTestId('new-request-buildings-trigger');
-    // Expand and untick the default ward building.
-    await user.click(trigger);
-    await user.click(screen.getByTestId('new-request-building-maple'));
-    expect(screen.getByTestId('new-request-building-maple')).not.toBeChecked();
-
-    // Flip to stake → expanded, every building checked (B-11). Then
-    // back to ward → ward default re-applied fresh.
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'stake');
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'CO');
-    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
-      'Building: Maple Building',
-    );
-  });
-});
-
 describe('<NewRequestForm /> — B-11 stake-scope all-buildings default', () => {
   // B-11 — picking `scope === 'stake'` defaults building_names to the
   // stake's full building list (was: []). Manager unchecks specific
@@ -730,32 +513,6 @@ describe('<NewRequestForm /> — B-11 stake-scope all-buildings default', () => 
       scope: 'stake',
       building_names: ['Maple Building', 'Cedar Building'],
     });
-  });
-
-  it('auto-populates building_names to the full catalogue when scope flips ward → stake', async () => {
-    const user = userEvent.setup();
-    render(
-      <NewRequestForm
-        scopes={[
-          { value: 'CO', label: 'Ward CO' },
-          { value: 'stake', label: 'Stake' },
-        ]}
-        buildings={buildings()}
-        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
-      />,
-    );
-    // Initial: ward CO → only Maple ticked.
-    await user.click(screen.getByTestId('new-request-buildings-trigger'));
-    expect(screen.getByTestId('new-request-building-maple')).toBeChecked();
-    expect(screen.getByTestId('new-request-building-cedar')).not.toBeChecked();
-
-    // Flip to stake → every building auto-populated.
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'stake');
-    expect(screen.getByTestId('new-request-building-maple')).toBeChecked();
-    expect(screen.getByTestId('new-request-building-cedar')).toBeChecked();
-    expect(screen.getByTestId('new-request-buildings-summary')).toHaveTextContent(
-      'Buildings: Maple Building, Cedar Building',
-    );
   });
 });
 
@@ -1000,39 +757,6 @@ describe('<NewRequestForm /> — calling typeahead', () => {
     expect(screen.getByText('Stake High Councilor')).toBeInTheDocument();
   });
 
-  it('swaps suggestion list on scope change without clearing the typed value', async () => {
-    const user = userEvent.setup();
-    render(
-      <NewRequestForm
-        scopes={[
-          { value: 'stake', label: 'Stake' },
-          { value: 'CO', label: 'Ward CO' },
-        ]}
-        buildings={buildings()}
-        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
-      />,
-    );
-    const reason = screen.getByTestId('new-request-reason') as HTMLInputElement;
-    // Stake scope: stake list visible.
-    await user.click(reason);
-    expect(await screen.findByText('Stake President')).toBeInTheDocument();
-    expect(screen.queryByText('Bishop')).toBeNull();
-
-    // Stash a free-text value the user typed.
-    await user.type(reason, 'hand-typed reason');
-    expect(reason.value).toBe('hand-typed reason');
-
-    // Switch to ward scope. Typed value survives the scope flip.
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'CO');
-    expect(reason.value).toBe('hand-typed reason');
-
-    // Re-focus the combobox and clear the filter so the ward list shows.
-    await user.click(reason);
-    await user.clear(reason);
-    expect(await screen.findByText('Bishop')).toBeInTheDocument();
-    expect(screen.queryByText('Stake President')).toBeNull();
-  });
-
   it('filters suggestions as the user types', async () => {
     const user = userEvent.setup();
     render(
@@ -1190,32 +914,6 @@ describe('<NewRequestForm /> — reason field is type-conditional', () => {
     // the field is editable post-switch.
     await user.type(reasonBack, 'b');
     expect(await screen.findByText('Bishop')).toBeInTheDocument();
-  });
-
-  it('scope change does not affect the plain input when type is add_temp', async () => {
-    const user = userEvent.setup();
-    render(
-      <NewRequestForm
-        scopes={[
-          { value: 'stake', label: 'Stake' },
-          { value: 'CO', label: 'Ward CO' },
-        ]}
-        buildings={buildings()}
-        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
-      />,
-    );
-    await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
-    const reason = screen.getByTestId('new-request-reason') as HTMLInputElement;
-    await user.type(reason, 'visiting speaker');
-    expect(reason.value).toBe('visiting speaker');
-
-    // Flip scope — no suggestion list, value unchanged.
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'CO');
-    expect((screen.getByTestId('new-request-reason') as HTMLInputElement).value).toBe(
-      'visiting speaker',
-    );
-    expect(screen.queryByRole('listbox')).toBeNull();
-    expect(screen.queryByText('Bishop')).toBeNull();
   });
 });
 
@@ -1501,30 +1199,21 @@ describe('<NewRequestForm /> — Kindoo Sites building filter (spec §15)', () =
     expect(screen.getByTestId('new-request-submit')).toBeDisabled();
   });
 
-  it('switches the visible building set when the scope dropdown moves between home and foreign wards', async () => {
+  it('renders only the foreign-site buildings for a foreign-ward scope', async () => {
+    // The visible building set is derived from the launched scope. A
+    // foreign-ward scope narrows the checklist to that site's buildings;
+    // the home building is hidden.
     const user = userEvent.setup();
     render(
       <NewRequestForm
-        scopes={[
-          { value: 'CO', label: 'Ward CO' },
-          { value: 'FN', label: 'Ward FN' },
-        ]}
+        scopes={[{ value: 'FN', label: 'Ward FN' }]}
         buildings={buildingsWithSites([
           { id: 'maple', name: 'Maple Building', kindoo_site_id: null },
           { id: 'pine', name: 'Pine Building', kindoo_site_id: 'foreign-1' },
         ])}
-        wards={wards([
-          { code: 'CO', building_name: 'Maple Building', kindoo_site_id: null },
-          { code: 'FN', building_name: 'Pine Building', kindoo_site_id: 'foreign-1' },
-        ])}
+        wards={wards([{ code: 'FN', building_name: 'Pine Building', kindoo_site_id: 'foreign-1' }])}
       />,
     );
-    // Initial scope CO (home) → Maple visible, Pine hidden.
-    await user.click(screen.getByTestId('new-request-buildings-trigger'));
-    expect(screen.getByTestId('new-request-building-maple')).toBeInTheDocument();
-    expect(screen.queryByTestId('new-request-building-pine')).toBeNull();
-    // Flip to FN (foreign) → Pine visible, Maple hidden.
-    await user.selectOptions(screen.getByTestId('new-request-scope'), 'FN');
     await user.click(screen.getByTestId('new-request-buildings-trigger'));
     expect(screen.getByTestId('new-request-building-pine')).toBeInTheDocument();
     expect(screen.queryByTestId('new-request-building-maple')).toBeNull();

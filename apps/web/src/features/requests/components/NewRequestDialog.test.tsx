@@ -3,8 +3,10 @@
 // behaviour is covered by NewRequestForm.test.tsx; this file focuses on
 // the dialog shell:
 //
-//   - opens with the passed scope pre-selected
-//   - a successful submit closes the dialog (onOpenChange(false)) + toasts
+//   - locks the launched scope to a fixed label (no dropdown), even for
+//     a multi-scope principal
+//   - a successful submit closes the dialog (onOpenChange(false)),
+//     toasts, and submits the launched scope
 //   - Cancel closes the dialog without submitting
 //   - the spinner renders while the shared data hook is loading
 
@@ -105,9 +107,14 @@ describe('<NewRequestDialog />', () => {
     expect(screen.queryByTestId('new-request-form')).toBeNull();
   });
 
-  it('opens with the passed scope pre-selected', () => {
+  it('locks the launched scope to a fixed label (no dropdown) for a multi-scope principal', () => {
+    // mockFormData() returns a multi-scope principal (stake + CO + GE).
+    // The dialog narrows to the launched scope, so the form shows it as
+    // a fixed label rather than a picker.
     render(<NewRequestDialog open onOpenChange={() => {}} scope="GE" />);
-    expect((screen.getByTestId('new-request-scope') as HTMLSelectElement).value).toBe('GE');
+    expect(screen.queryByTestId('new-request-scope')).toBeNull();
+    expect(screen.getByText('Requesting for:')).toBeInTheDocument();
+    expect(screen.getByText('Ward GE')).toBeInTheDocument();
   });
 
   it('renders a spinner instead of the form while the data hook is loading', () => {
@@ -117,7 +124,7 @@ describe('<NewRequestDialog />', () => {
     expect(screen.getByRole('status')).toBeInTheDocument();
   });
 
-  it('closes the dialog (onOpenChange false) and toasts on a successful submit', async () => {
+  it('closes the dialog (onOpenChange false), toasts, and submits the launched scope', async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
     render(<NewRequestDialog open onOpenChange={onOpenChange} scope="CO" />);
@@ -126,6 +133,7 @@ describe('<NewRequestDialog />', () => {
     await user.type(screen.getByTestId('new-request-reason'), 'visit');
     await user.click(screen.getByTestId('new-request-submit'));
     await waitFor(() => expect(submitMock).toHaveBeenCalledTimes(1));
+    expect(submitMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'CO' }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(toastMock).toHaveBeenCalledWith('Request submitted.', 'success');
   });

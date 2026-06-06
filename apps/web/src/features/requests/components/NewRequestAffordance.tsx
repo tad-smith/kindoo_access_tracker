@@ -3,12 +3,10 @@
 // `EditSeatAffordance`: renders the trigger button, holds local `open`
 // state, and mounts the `NewRequestDialog` while open.
 //
-// The pages drop this in where they previously rendered a `<Link
-// to="/new">`; gating (request authority for the page's scope) stays on
-// the page, so this component only renders the button + dialog. The
-// `testId` keeps each page's distinct data-testid
-// (`bishopric-roster-new-request`, etc.) so the E2E suite can
-// disambiguate the three buttons from the nav-rail "New Request" link.
+// Gating (request authority for the page's scope) stays on the page, so
+// this component only renders the button + dialog. The `testId` keeps
+// each page's distinct data-testid (`bishopric-roster-new-request`,
+// etc.) so the E2E suite can disambiguate the three buttons.
 
 import { useState } from 'react';
 import { Button } from '../../../components/ui/Button';

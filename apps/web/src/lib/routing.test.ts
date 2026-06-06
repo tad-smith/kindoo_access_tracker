@@ -113,12 +113,13 @@ describe('deepLinkPath', () => {
     expect(deepLinkPath('mgr/queue')).toBe('/manager/queue');
   });
 
-  it('resolves all new-request keys to the unified /new route', () => {
-    // `/bishopric/new` and `/stake/new` collapse to `/new`; the legacy
-    // `?p=` keys resolve straight there.
-    expect(deepLinkPath('stake/new')).toBe('/new');
-    expect(deepLinkPath('bish/new')).toBe('/new');
-    expect(deepLinkPath('new')).toBe('/new');
+  it('no longer maps the retired new-request keys (they fall through to the per-role default)', () => {
+    // The standalone `/new` page was removed; New Request is created
+    // from the roster-page modals. The old `?p=` keys resolve to null
+    // and the caller falls back to the principal's default landing.
+    expect(deepLinkPath('stake/new')).toBeNull();
+    expect(deepLinkPath('bish/new')).toBeNull();
+    expect(deepLinkPath('new')).toBeNull();
   });
 
   it('resolves both the legacy and new MyRequests keys to a shared route', () => {

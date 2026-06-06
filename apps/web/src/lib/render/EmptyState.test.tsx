@@ -19,7 +19,7 @@ describe('EmptyState', () => {
   it('renders supplementary children below the message', () => {
     render(
       <EmptyState message="No requests pending.">
-        <a href="/stake/new">Submit a new one</a>
+        <a href="/bishopric/roster">Submit a new one</a>
       </EmptyState>,
     );
     expect(screen.getByRole('link', { name: /Submit a new one/ })).toBeInTheDocument();

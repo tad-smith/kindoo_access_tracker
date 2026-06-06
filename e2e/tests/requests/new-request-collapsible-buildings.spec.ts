@@ -1,7 +1,8 @@
-// Happy-path E2E for the role-aware collapsible buildings selector
-// on /new. A single-ward bishopric submitter:
-//   - Lands on the form and sees the buildings widget collapsed with
-//     their ward's building (Maple) listed in the header summary.
+// Happy-path E2E for the role-aware collapsible buildings selector in
+// the New Request modal. A single-ward bishopric submitter:
+//   - Opens the modal from the roster header and sees the buildings
+//     widget collapsed with their ward's building (Maple) listed in the
+//     header summary.
 //   - Expands the widget and ticks an additional building (Cedar).
 //   - Submits the request.
 //   - The manager's (read-only) Request Queue card lists BOTH buildings
@@ -112,39 +113,38 @@ test.describe('New Request — collapsible buildings selector', () => {
     const managerCtx = await browser.newContext();
     const managerPage = await managerCtx.newPage();
 
-    await createSignedInUser(
-      bishopricPage,
-      'bishop-multi@example.com',
-      { wards: ['CO'] },
-      '/?p=new',
-    );
-    await expect(bishopricPage.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
+    await createSignedInUser(bishopricPage, 'bishop-multi@example.com', { wards: ['CO'] });
+    // Open the New Request modal from the bishopric roster header.
+    await expect(bishopricPage.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
+    await bishopricPage.getByTestId('bishopric-roster-new-request').click();
+    const dialog = bishopricPage.getByRole('dialog');
+    await expect(dialog.getByTestId('new-request-form')).toBeVisible();
 
     // Header summary shows the default ward building, panel collapsed.
-    const trigger = bishopricPage.getByTestId('new-request-buildings-trigger');
+    const trigger = dialog.getByTestId('new-request-buildings-trigger');
     await expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    await expect(bishopricPage.getByTestId('new-request-buildings-summary')).toContainText(
+    await expect(dialog.getByTestId('new-request-buildings-summary')).toContainText(
       'Building: Maple Building',
     );
 
     // Expand → tick Cedar as an additional building.
     await trigger.click();
     await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    await expect(bishopricPage.getByTestId('new-request-building-maple-building')).toBeChecked();
-    await bishopricPage.getByTestId('new-request-building-cedar-building').click();
-    await expect(bishopricPage.getByTestId('new-request-buildings-summary')).toContainText(
+    await expect(dialog.getByTestId('new-request-building-maple-building')).toBeChecked();
+    await dialog.getByTestId('new-request-building-cedar-building').click();
+    await expect(dialog.getByTestId('new-request-buildings-summary')).toContainText(
       'Buildings: Maple Building, Cedar Building',
     );
 
     // Fill the rest of the form. The Cedar pick is cross-ward for a CO
     // bishop, so the comment is required to clear the cross-ward gate.
-    await bishopricPage.getByTestId('new-request-email').fill('multi@example.com');
-    await bishopricPage.getByTestId('new-request-name').fill('Multi Member');
-    await bishopricPage.getByTestId('new-request-reason').fill('Sub teacher');
-    await bishopricPage
+    await dialog.getByTestId('new-request-email').fill('multi@example.com');
+    await dialog.getByTestId('new-request-name').fill('Multi Member');
+    await dialog.getByTestId('new-request-reason').fill('Sub teacher');
+    await dialog
       .getByTestId('new-request-comment')
       .fill('Helping a member from the next ward over.');
-    await bishopricPage.getByTestId('new-request-submit').click();
+    await dialog.getByTestId('new-request-submit').click();
 
     // Bishopric MyRequests shows the row pending.
     await bishopricPage.getByRole('link', { name: /^My Requests$/ }).click();

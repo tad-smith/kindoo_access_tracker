@@ -1,8 +1,7 @@
-// Manager Dashboard data hooks. The dashboard fans out to five live
-// Firestore subscriptions, each rendered in its own card. They share
-// the same WebSocket channel so latency stays predictable.
+// Manager Dashboard data hooks. The dashboard fans out to six live
+// Firestore subscriptions; they share the same WebSocket channel so
+// latency stays predictable.
 //
-// One hook per card:
 //   - usePendingRequests(): all `status == 'pending'` requests, used
 //     for the per-type counts.
 //   - useRecentAuditLog(): the most-recent 10 audit rows. We rely on
@@ -11,8 +10,9 @@
 //     orderBy on `__name__`.
 //   - useStakeSeats(): every seat in the stake (used for utilization).
 //   - useStakeWards(): the ward list (used for utilization labels).
-//   - useStakeDoc(): the parent stake doc (used for warnings + last
-//     ops + stake_seat_cap).
+//   - useStakeBuildings(): the building list (used to net foreign-site
+//     ward caps out of the stake-pool denominator).
+//   - useStakeDoc(): the parent stake doc (used for `stake_seat_cap`).
 
 import { limit, orderBy, query, where } from 'firebase/firestore';
 import { useMemo } from 'react';

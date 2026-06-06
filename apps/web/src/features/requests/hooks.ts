@@ -139,12 +139,11 @@ export interface NewRequestFormData {
 }
 
 /**
- * Shared data source for the New Request form — consumed by both the
- * standalone `/new` page (`NewRequestPage`) and the roster-header
- * `NewRequestDialog`. Subscribes to the same buildings + wards
- * catalogues and derives the principal's allowed scopes, so the two
- * surfaces can never diverge. `isLoading` mirrors the page's original
- * gate: true until the buildings catalogue has hydrated.
+ * Shared data source for the New Request form — consumed by the
+ * roster-header `NewRequestDialog`. Subscribes to the buildings + wards
+ * catalogues and derives the principal's allowed scopes. `isLoading` is
+ * true until the buildings catalogue has hydrated (the dialog gates the
+ * form on it).
  */
 export function useNewRequestFormData(): NewRequestFormData {
   const principal = usePrincipal();

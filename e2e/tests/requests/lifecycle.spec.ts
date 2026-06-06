@@ -120,14 +120,18 @@ test.describe('request lifecycle — bishopric add_manual', () => {
     const managerCtx = await browser.newContext();
     const managerPage = await managerCtx.newPage();
 
-    await createSignedInUser(bishopricPage, 'bishop@example.com', { wards: ['CO'] }, '/?p=new');
-    await expect(bishopricPage.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
+    await createSignedInUser(bishopricPage, 'bishop@example.com', { wards: ['CO'] });
+    // Open the New Request modal from the bishopric roster header.
+    await expect(bishopricPage.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
+    await bishopricPage.getByTestId('bishopric-roster-new-request').click();
+    const bishopricDialog = bishopricPage.getByRole('dialog');
+    await expect(bishopricDialog.getByTestId('new-request-form')).toBeVisible();
 
     // Submit the request.
-    await bishopricPage.getByTestId('new-request-email').fill('bob@example.com');
-    await bishopricPage.getByTestId('new-request-name').fill('Bob Example');
-    await bishopricPage.getByTestId('new-request-reason').fill('Sub Sunday teacher');
-    await bishopricPage.getByTestId('new-request-submit').click();
+    await bishopricDialog.getByTestId('new-request-email').fill('bob@example.com');
+    await bishopricDialog.getByTestId('new-request-name').fill('Bob Example');
+    await bishopricDialog.getByTestId('new-request-reason').fill('Sub Sunday teacher');
+    await bishopricDialog.getByTestId('new-request-submit').click();
     // Toast confirms submit; navigate to MyRequests to see the row.
     await bishopricPage.getByRole('link', { name: /^My Requests$/ }).click();
     await expect(bishopricPage.locator('[data-status="pending"]').first()).toBeVisible();
@@ -162,21 +166,25 @@ test.describe('request lifecycle — stake add_temp with two buildings', () => {
     const managerCtx = await browser.newContext();
     const managerPage = await managerCtx.newPage();
 
-    await createSignedInUser(stakePage, 'sp@example.com', { stake: true }, '/?p=new');
-    await expect(stakePage.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
+    await createSignedInUser(stakePage, 'sp@example.com', { stake: true });
+    // Open the New Request modal from the stake roster header.
+    await expect(stakePage.getByRole('heading', { name: /^Stake Roster$/ })).toBeVisible();
+    await stakePage.getByTestId('stake-roster-new-request').click();
+    const stakeDialog = stakePage.getByRole('dialog');
+    await expect(stakeDialog.getByTestId('new-request-form')).toBeVisible();
 
-    await stakePage.getByTestId('new-request-type').selectOption('add_temp');
-    await stakePage.getByTestId('new-request-start-date').fill('2026-05-01');
-    await stakePage.getByTestId('new-request-end-date').fill('2026-05-08');
-    await stakePage.getByTestId('new-request-email').fill('alice@example.com');
-    await stakePage.getByTestId('new-request-name').fill('Alice Example');
-    await stakePage.getByTestId('new-request-reason').fill('Visiting authority');
+    await stakeDialog.getByTestId('new-request-type').selectOption('add_temp');
+    await stakeDialog.getByTestId('new-request-start-date').fill('2026-05-01');
+    await stakeDialog.getByTestId('new-request-end-date').fill('2026-05-08');
+    await stakeDialog.getByTestId('new-request-email').fill('alice@example.com');
+    await stakeDialog.getByTestId('new-request-name').fill('Alice Example');
+    await stakeDialog.getByTestId('new-request-reason').fill('Visiting authority');
     // B-11 — stake-scope defaults every building checked; both Maple
     // and Cedar are pre-ticked, no manual clicks needed for a
     // stake-wide grant.
-    await expect(stakePage.getByTestId('new-request-building-maple-building')).toBeChecked();
-    await expect(stakePage.getByTestId('new-request-building-cedar-building')).toBeChecked();
-    await stakePage.getByTestId('new-request-submit').click();
+    await expect(stakeDialog.getByTestId('new-request-building-maple-building')).toBeChecked();
+    await expect(stakeDialog.getByTestId('new-request-building-cedar-building')).toBeChecked();
+    await stakeDialog.getByTestId('new-request-submit').click();
 
     // Manager sees the request on the read-only queue, carrying both
     // buildings and the date range.
@@ -204,12 +212,17 @@ test.describe('request lifecycle — cancel from MyRequests', () => {
   test('bishopric submits → cancels from MyRequests → status flips to cancelled live', async ({
     page,
   }) => {
-    await createSignedInUser(page, 'bishop2@example.com', { wards: ['CO'] }, '/?p=new');
+    await createSignedInUser(page, 'bishop2@example.com', { wards: ['CO'] });
+    // Open the New Request modal from the bishopric roster header.
+    await expect(page.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
+    await page.getByTestId('bishopric-roster-new-request').click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByTestId('new-request-form')).toBeVisible();
 
-    await page.getByTestId('new-request-email').fill('bob2@example.com');
-    await page.getByTestId('new-request-name').fill('Bob 2');
-    await page.getByTestId('new-request-reason').fill('reason');
-    await page.getByTestId('new-request-submit').click();
+    await dialog.getByTestId('new-request-email').fill('bob2@example.com');
+    await dialog.getByTestId('new-request-name').fill('Bob 2');
+    await dialog.getByTestId('new-request-reason').fill('reason');
+    await dialog.getByTestId('new-request-submit').click();
 
     await page.getByRole('link', { name: /^My Requests$/ }).click();
     const pendingCard = page.locator('[data-status="pending"]').first();

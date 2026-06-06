@@ -23,7 +23,6 @@ import {
   KeyRound,
   LayoutDashboard,
   LogOut,
-  PlusCircle,
   ScrollText,
   Settings,
   Table,
@@ -111,15 +110,6 @@ export function navSectionsForPrincipal(
       label: 'Request Queue',
       to: '/manager/queue',
       icon: Inbox,
-    });
-  }
-  if (bishopric || stake) {
-    quickLinks.push({
-      kind: 'link',
-      key: 'new-request',
-      label: 'New Request',
-      to: '/new',
-      icon: PlusCircle,
     });
   }
   if (anyRole) {
