@@ -262,14 +262,18 @@ export function RequestCard({
   // app's PR #191). Edit / remove types operate on an existing seat by
   // design and are unaffected.
   //
-  // Carve-out: a stake-scope `add_manual` for a member who has a seat but
-  // NO stake grant IS applyable — `markRequestComplete` → `planAddMerge`
-  // appends a cross-scope `duplicate_grant` and succeeds (this is the
-  // "Give Access To Stake Buildings" flow for a foreign-site-only member,
-  // who always already holds their ward seat). `!memberHasStakeGrant` is
-  // the backstop: if a stake grant already exists the add can't apply
-  // cleanly, so keep blocking. Every other add-on-existing case stays
-  // blocked exactly as before.
+  // Carve-out: ANY `add_manual` + `scope:'stake'` request for a member who
+  // has a seat but NO stake-scope grant IS applyable —
+  // `markRequestComplete` → `planAddMerge` appends a cross-scope stake
+  // grant onto the existing seat rather than colliding with it, so it
+  // succeeds whether the member is foreign-site-only or a home-ward member
+  // (the home-ward case simply gains the stake buildings on their existing
+  // home Kindoo user). The web "Give Access To Stake Buildings" button is
+  // the primary entry point, but other request-creation paths can produce
+  // the same shape and are equally safe to apply. `!memberHasStakeGrant`
+  // is the backstop: if a stake grant already exists the add would be a
+  // true stake duplicate, so keep blocking. Every other add-on-existing
+  // case stays blocked exactly as before.
   const isAdd = request.type === 'add_manual' || request.type === 'add_temp';
   const applyableStakeAdd =
     request.type === 'add_manual' && request.scope === 'stake' && !memberHasStakeGrant;
