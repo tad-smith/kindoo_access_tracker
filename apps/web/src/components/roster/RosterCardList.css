@@ -140,19 +140,35 @@
   .roster-card-line1 {
     gap: 6px;
   }
-  .roster-email {
-    max-width: 180px;
-  }
   /* Stack the bold name above an `email: …` row so the email never
-     wraps into the ugly "(" / email / ")" three-line form. */
+     wraps into the ugly "(" / email / ")" three-line form. Full width so
+     the email row can fill the card (it's inline-flex/content-width on
+     desktop). */
   .roster-card-member {
+    display: flex;
     flex-direction: column;
     align-items: flex-start;
+    width: 100%;
   }
   .roster-email-paren {
     display: none;
   }
+  /* The email owns its own line here, so make the wrapper a full-width
+     flex row: fixed `email:` label, email flexes to fill the rest and
+     ellipsizes at the card's right edge (not the desktop 180/240px cap). */
+  .roster-card-email-wrap {
+    display: flex;
+    align-items: baseline;
+    width: 100%;
+    min-width: 0;
+  }
   .roster-card-email-label {
     display: inline;
+    flex: none;
+  }
+  .roster-email {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
   }
 }
