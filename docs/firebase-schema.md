@@ -337,7 +337,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
   start_date?: string;         // temp only, ISO date (YYYY-MM-DD)
   end_date?: string;           // temp only, ISO date
   building_names: string[];
-  kindoo_site_id?: string | null; // T-42. null / absent ⇒ home site; otherwise doc ID under kindooSites/. Mirrors the building convention. Derived from primary scope + ward → BUILDING → kindoo_site_id (resolveWardSite / wardSiteMap); stake-scope ⇒ home. Pre-migration seats may have the field absent — the ward-fallback resolver handles classification at read time.
+  kindoo_site_id?: string | null; // T-42. null / absent ⇒ home site; otherwise doc ID under kindooSites/. Mirrors the building convention. Derived from primary scope + ward → BUILDING → kindoo_site_id (resolveWardSite / wardSiteMap); stake-scope ⇒ home. Every server seat-writer stamps it per this convention (syncApplyFix kindoo-only / scope-mismatch, markRequestComplete new-seat). A write-time invariant (assertSeatSiteStamped, functions/src/lib/wardSites.ts) refuses to persist a known foreign-ward seat field-absent — it throws rather than mis-classifying as home; it does not fire for stake-scope / home-ward / unknown-ward. Pre-migration seats may have the field absent — the ward-fallback resolver handles classification at read time.
   sort_order: number | null;   // vestigial — still stamped by syncApplyFix, NOT read by the web (render-time calling-order sort). See "Sort order" below.
 
   // Manual/temp linkage

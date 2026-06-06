@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Building, Ward } from '@kindoo/shared';
-import { wardSiteMap } from './wardSites.js';
+import { assertSeatSiteStamped, wardSiteMap } from './wardSites.js';
 
 const ACTOR = { email: 'a@gmail.com', canonical: 'a@gmail.com' };
 const TS = { seconds: 0, nanoseconds: 0 } as unknown as Building['created_at'];
@@ -89,5 +89,124 @@ describe('wardSiteMap', () => {
       ward({ ward_code: 'ZZ', building_id: 'gone', building_name: 'Nonexistent Building' }),
     ];
     expect(wardSiteMap(wards, buildings).get('ZZ')).toBeNull();
+  });
+});
+
+describe('assertSeatSiteStamped', () => {
+  const FOREIGN_WARD = ward({ ward_code: 'MR', building_name: 'Black Forest' });
+  const FOREIGN_BUILDING = building({
+    building_id: 'black-forest',
+    building_name: 'Black Forest',
+    kindoo_site_id: 'east-stake',
+  });
+  const HOME_WARD = ward({ ward_code: 'CO', building_name: 'Maple Building' });
+  const HOME_BUILDING = building({
+    building_id: 'maple-building',
+    building_name: 'Maple Building',
+    kindoo_site_id: null,
+  });
+
+  it('throws when a known foreign-site ward seat has kindoo_site_id absent', () => {
+    expect(() =>
+      assertSeatSiteStamped({
+        scope: 'MR',
+        body: {},
+        wards: [FOREIGN_WARD],
+        buildings: [FOREIGN_BUILDING],
+        context: 'test',
+      }),
+    ).toThrowError(/foreign-site ward 'MR'/);
+  });
+
+  it('throws when a known foreign-site ward seat has kindoo_site_id null', () => {
+    expect(() =>
+      assertSeatSiteStamped({
+        scope: 'MR',
+        body: { kindoo_site_id: null },
+        wards: [FOREIGN_WARD],
+        buildings: [FOREIGN_BUILDING],
+        context: 'test',
+      }),
+    ).toThrowError(/foreign-site ward 'MR'/);
+  });
+
+  it('throws for a non-auto (manual/temp-shaped) foreign-ward seat written field-absent', () => {
+    // The guard is type-agnostic — it keys off scope + resolved site, not
+    // seat type. This documents that a manual/temp kindoo-only seat (the
+    // extension's default) hitting the guard field-absent fails loudly,
+    // closing the bug for every type, not just auto.
+    expect(() =>
+      assertSeatSiteStamped({
+        scope: 'MR',
+        body: { callings: [], reason: 'sub clerk', type: 'manual' } as never,
+        wards: [FOREIGN_WARD],
+        buildings: [FOREIGN_BUILDING],
+        context: 'test',
+      }),
+    ).toThrowError(/foreign-site ward 'MR'/);
+  });
+
+  it('does NOT throw when a foreign-site ward seat carries its site', () => {
+    expect(() =>
+      assertSeatSiteStamped({
+        scope: 'MR',
+        body: { kindoo_site_id: 'east-stake' },
+        wards: [FOREIGN_WARD],
+        buildings: [FOREIGN_BUILDING],
+        context: 'test',
+      }),
+    ).not.toThrow();
+  });
+
+  it('does NOT throw for a home-ward seat with the field absent', () => {
+    expect(() =>
+      assertSeatSiteStamped({
+        scope: 'CO',
+        body: {},
+        wards: [HOME_WARD],
+        buildings: [HOME_BUILDING],
+        context: 'test',
+      }),
+    ).not.toThrow();
+  });
+
+  it('does NOT throw for a stake-scope seat with the field absent', () => {
+    expect(() =>
+      assertSeatSiteStamped({
+        scope: 'stake',
+        body: {},
+        wards: [FOREIGN_WARD],
+        buildings: [FOREIGN_BUILDING],
+        context: 'test',
+      }),
+    ).not.toThrow();
+  });
+
+  it('does NOT throw for an unknown/missing ward (read-time fallback classifies)', () => {
+    expect(() =>
+      assertSeatSiteStamped({
+        scope: 'ZZ',
+        body: {},
+        wards: [FOREIGN_WARD, HOME_WARD],
+        buildings: [FOREIGN_BUILDING, HOME_BUILDING],
+        context: 'test',
+      }),
+    ).not.toThrow();
+  });
+
+  it('throws an HttpsError with code internal', () => {
+    let caught: unknown;
+    try {
+      assertSeatSiteStamped({
+        scope: 'MR',
+        body: {},
+        wards: [FOREIGN_WARD],
+        buildings: [FOREIGN_BUILDING],
+        context: 'test',
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toMatchObject({ code: 'internal' });
   });
 });
