@@ -141,10 +141,12 @@ export function planAddMerge(opts: {
     duplicate_scopes?: string[];
     /**
      * Organization (stake-scope only): set on the seat's top-level
-     * `organization_id` when the merge target is the PRIMARY grant and
-     * the request scope is 'stake'. Absent when the merge lands on a
-     * duplicate (the org rides on the duplicate entry itself) or the
-     * scope isn't 'stake'.
+     * `organization_id` when the merge target is the PRIMARY grant, the
+     * request scope is 'stake', AND the request carries a non-null org.
+     * Add semantics never clear an existing org (the add form doesn't
+     * pre-fill from the seat), so a null request omits this field. Absent
+     * when the merge lands on a duplicate (the org rides on the duplicate
+     * entry itself) or the scope isn't 'stake'.
      */
     organization_id?: string | null;
   };
@@ -158,7 +160,17 @@ export function planAddMerge(opts: {
   // Organization is stake-scope-only: the merged grant carries the
   // request's `organization_id` when (and only when) the request scope
   // is 'stake'. On non-stake scopes the field is omitted entirely.
-  const reqOrg = reqScope === 'stake' ? (request.organization_id ?? null) : undefined;
+  //
+  // ADD semantics are asymmetric with EDIT: the add request form
+  // (`NewRequestForm`) never pre-fills from the existing seat — it
+  // defaults `organization_id` to the picked value or `null`. So on an
+  // auto-merge onto a seat that ALREADY has an org, a `null` from the
+  // request must NOT clear it (silent-data-loss). Re-stamp ONLY when the
+  // request carries a non-null id; never clear an existing org on an add.
+  // (Contrast `planEditSeat`, where the form is authoritative and `null`
+  // legitimately clears.)
+  const reqOrg: string | undefined =
+    reqScope === 'stake' && request.organization_id != null ? request.organization_id : undefined;
 
   // Primary match: scope + type.
   if (existingSeat.scope === reqScope && existingSeat.type === reqType) {
@@ -176,8 +188,8 @@ export function planAddMerge(opts: {
       organization_id?: string | null;
     } = {};
     if (buildingsChanged) update.building_names = merged;
-    // Stake-scope primary: stamp the request's org (authoritative — the
-    // edit-equivalent form pre-fills the current value, so null clears).
+    // Stake-scope primary: re-stamp the request's org ONLY when non-null
+    // (see asymmetric note above). A null add never clears an existing org.
     if (reqOrg !== undefined) update.organization_id = reqOrg;
     return { update, touchedScopes };
   }
@@ -196,9 +208,8 @@ export function planAddMerge(opts: {
     }
     const next = dupes.slice();
     const replacement: DuplicateGrant = { ...matched, building_names: merged };
-    // Stake-scope duplicate: the org rides on the duplicate entry, not
-    // the seat's top-level field. Request value is authoritative (null
-    // clears).
+    // Stake-scope duplicate: the org rides on the duplicate entry. Re-stamp
+    // ONLY when non-null (asymmetric add semantics — null never clears).
     if (reqOrg !== undefined) replacement.organization_id = reqOrg;
     next[matchIdx] = replacement;
     // T-42 / T-43: although the SCOPE set is unchanged (we only

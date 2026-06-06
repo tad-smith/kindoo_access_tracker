@@ -720,6 +720,169 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         expect(seat.organization_id).toBe('youth-conference');
       });
 
+      // Silent-data-loss regression (PR #224 review): the add form never
+      // pre-fills org from the existing seat, so a `null` add must NOT
+      // clear an org the seat already carries. Re-stamp only when non-null.
+      it('stake primary match: null org on the add PRESERVES the existing org (no clear)', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          organization_id: 'org-a',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          // Add form default — no org picked. Must not clobber 'org-a'.
+          organization_id: null,
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
+        // Existing org survives the null add.
+        expect(seat.organization_id).toBe('org-a');
+      });
+
+      it('stake primary match: non-null org on the add UPDATES the existing org', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          organization_id: 'org-a',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          organization_id: 'org-b',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.organization_id).toBe('org-b');
+      });
+
+      it('stake duplicate match: null org on the add PRESERVES the duplicate org (no clear)', async () => {
+        await seedManager();
+        await seedStake();
+        // Primary is ward-scope; an existing stake-scope DUPLICATE already
+        // carries 'org-a'. A null stake add merges onto that duplicate and
+        // must not clear its org.
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          duplicate_grants: [
+            {
+              scope: 'stake',
+              type: 'manual',
+              building_names: ['Maple Building'],
+              organization_id: 'org-a',
+              detected_at: Timestamp.now(),
+            },
+          ],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          organization_id: null,
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants.length).toBe(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('stake');
+        expect(dup.building_names).toEqual(['Maple Building', 'Briargate Building']);
+        // Existing duplicate org survives the null add.
+        expect(dup.organization_id).toBe('org-a');
+      });
+
+      it('stake duplicate match: non-null org on the add UPDATES the duplicate org', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          duplicate_grants: [
+            {
+              scope: 'stake',
+              type: 'manual',
+              building_names: ['Maple Building'],
+              organization_id: 'org-a',
+              detected_at: Timestamp.now(),
+            },
+          ],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          organization_id: 'org-b',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.organization_id).toBe('org-b');
+      });
+
       it('stake append (no match): stamps organization_id on the new duplicate; primary org untouched', async () => {
         await seedManager();
         await seedStake();
