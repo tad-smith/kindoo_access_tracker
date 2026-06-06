@@ -11,6 +11,7 @@ import {
   kindooRole,
   parseKindooCallings,
 } from './detector';
+import { fixActionsFor } from './fix';
 
 describe('isChurchBacked', () => {
   it('true when the member holds ANY church-direct grant', () => {
@@ -337,6 +338,117 @@ describe('detect', () => {
     );
     expect(result.discrepancies[0]?.code).toBe('kindoo-only');
     expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('manual');
+  });
+
+  it('no-seat + blank description + Guest + no grants → kindoo-no-description (review), no fix', () => {
+    // Nothing to derive a seat from: blank description, Guest role, no
+    // church-direct grant. The kindoo-only add would be `manual` — but
+    // there is no seat shape to mint, so it flips to review.
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            description: '',
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-no-description');
+    expect(row.severity).toBe('review');
+    expect(row.sba).toBeNull();
+    expect(row.kindoo).not.toBeNull();
+    expect(fixActionsFor(row)).toEqual([]);
+  });
+
+  it('no-seat + blank description + admin → still kindoo-only drift (auto)', () => {
+    // Admin role force-auto: the seat is church-owned, so a blank
+    // description still yields an actionable add at `auto`.
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            description: '',
+            DepartmentType: 0,
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.severity).toBe('drift');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('auto');
+  });
+
+  it('no-seat + blank description + Guest WITH church grants → still kindoo-only drift (auto)', () => {
+    // A church-direct grant backs the member ⇒ auto. The blank
+    // description does not suppress an otherwise-derivable add.
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            description: '',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.severity).toBe('drift');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('auto');
+  });
+
+  it('no-seat + blank description + temp → still kindoo-only drift (temp)', () => {
+    // IsTempUser wins: a temp add is derivable regardless of the blank
+    // description, so the actionable drift stands.
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            description: '',
+            isTempUser: true,
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]?.severity).toBe('drift');
+    expect(result.discrepancies[0]?.kindoo?.grantTargetType).toBe('temp');
+  });
+
+  it('no-seat + NON-blank description + Guest + no grants → still kindoo-only drift (manual)', () => {
+    // Description present and parses (scope + calling) → the intended
+    // scope/calling is meaningful, so the manual add stays actionable.
+    // Only the truly blank case flips to review.
+    const result = detect(
+      baseInputs({
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: [],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-only');
+    expect(row.severity).toBe('drift');
+    expect(row.kindoo?.grantTargetType).toBe('manual');
+    // Intended scope/calling populated from the parsed primary segment.
+    expect(row.kindoo?.primaryScope).toBe('CO');
+    expect(row.kindoo?.intendedFreeText).toBe('Building Greeter');
   });
 
   it('emits kindoo-unparseable (drift) for a present-but-unparseable description', () => {

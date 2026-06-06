@@ -693,6 +693,27 @@ export function detect(inputs: DetectInputs): DetectResult {
           : grantsBackAuto(kuser.directGrantBuildings ?? null)
             ? 'auto'
             : 'manual';
+      // Blank description AND nothing else to derive a seat from
+      // (`createdType === 'manual'` here means not temp, not admin, no
+      // church-direct grant) → review, not an actionable add. Temp
+      // (`temp`), admin (`auto`), and Guest-with-grants (`auto`) keep
+      // their drift rows; a present-but-unparseable or parseable
+      // description also keeps its `kindoo-only` drift (the parsed
+      // `intended` scope/calling is meaningful). Mirrors the both-sides
+      // blank check so the panel's review guard suppresses the action.
+      if (parsed.unparseable && parsed.segments.length === 0 && createdType === 'manual') {
+        discrepancies.push({
+          canonical: canon,
+          displayEmail,
+          code: 'kindoo-no-description',
+          severity: 'review',
+          reason:
+            'Kindoo description is blank and no church grants back this member — nothing to derive a seat from; manual review.',
+          sba: null,
+          kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings),
+        });
+        continue;
+      }
       discrepancies.push({
         canonical: canon,
         displayEmail,
