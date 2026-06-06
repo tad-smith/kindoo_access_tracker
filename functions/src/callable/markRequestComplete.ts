@@ -66,7 +66,7 @@ import type {
 } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
 import { computeOverCaps } from '../lib/overCaps.js';
-import { wardSiteMap } from '../lib/wardSites.js';
+import { assertSeatSiteStamped, wardSiteMap } from '../lib/wardSites.js';
 
 /** R-1 race tag — mirrors `R1_AUTO_NOTE` in `apps/web/.../queue/hooks.ts`. */
 const R1_AUTO_NOTE = 'Seat already removed at completion time (no-op).';
@@ -470,6 +470,16 @@ export const markRequestComplete = onCall(
             if (cur.end_date) body.end_date = cur.end_date;
           }
           if (cur.reason) body.reason = cur.reason;
+          // Write-time invariant: a known foreign-site ward seat must carry
+          // `kindoo_site_id` (field-absent means home — spec §15). Throws
+          // loudly rather than silently mis-classifying the new seat.
+          assertSeatSiteStamped({
+            scope: cur.scope,
+            body: body as { kindoo_site_id?: string | null },
+            wards,
+            buildings,
+            context: 'markRequestComplete(new-seat)',
+          });
           newSeatRef = seatRef;
           seatBody = body;
 

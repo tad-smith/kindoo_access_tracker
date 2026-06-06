@@ -66,6 +66,7 @@
 // hybrid seat.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { logger } from 'firebase-functions/v2';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import type { DocumentReference, Transaction } from 'firebase-admin/firestore';
 import {
@@ -74,6 +75,7 @@ import {
   resolveWardSite,
   seatCallingOrder,
 } from '@kindoo/shared';
+import { assertSeatSiteStamped } from '../lib/wardSites.js';
 import type {
   Access,
   ActorRef,
@@ -235,12 +237,21 @@ async function applyKindooOnly(
   const db = getDb();
   const seatRef = db.doc(`stakes/${stakeId}/seats/${canonical}`);
   const accessRef = db.doc(`stakes/${stakeId}/access/${canonical}`);
+  // Resolve the new seat's Kindoo site from its ward's building so a
+  // foreign-site ward seat isn't silently persisted as home (T-42 — the
+  // `kindoo-only` path was the one auto-seat creator that never stamped
+  // the field). Mirrors `applyScopeMismatch` / `markRequestComplete`.
+  // Only ward-scope auto seats need the ward/buildings read; stake-scope
+  // short-circuits to home (field left absent).
+  const isAuto = type === 'auto';
+  const needsSiteResolve = isAuto && scope !== 'stake';
+  const wardRef = needsSiteResolve ? db.doc(`stakes/${stakeId}/wards/${scope}`) : null;
+  const buildingsRef = db.collection(`stakes/${stakeId}/buildings`);
   const actor = syncActor('kindoo-only');
   const dedupedCallings = dedupePreserveOrder(callings);
 
   // Auto seats carry a canonical `sort_order` + access-doc parity.
   // Manual / temp seats don't (Sync leaves both fields alone).
-  const isAuto = type === 'auto';
 
   const result = await db.runTransaction<SyncApplyFixResult>(async (tx) => {
     // All transaction reads must precede any write.
@@ -257,6 +268,31 @@ async function applyKindooOnly(
       accessCallings = filterAppAccessCallings(scope, dedupedCallings);
       const accessSnap = await tx.get(accessRef);
       if (accessSnap.exists) priorAccess = accessSnap.data() as Access;
+    }
+
+    // Resolve the ward's site (reads-before-writes). `undefined` ⇒ ward
+    // not found, leave the field absent (read-time fallback classifies it,
+    // matching `markRequestComplete`'s missing-ward precedent); `null` ⇒
+    // home ward, leave absent; a string ⇒ foreign site, stamp it.
+    let wards: Ward[] = [];
+    let buildings: Building[] = [];
+    let newSiteSite: string | null | undefined;
+    if (needsSiteResolve && wardRef) {
+      const [wardSnap, buildingsSnap] = await Promise.all([
+        tx.get(wardRef),
+        tx.get(buildingsRef),
+      ]);
+      buildings = buildingsSnap.docs.map((d) => d.data() as Building);
+      if (wardSnap.exists) {
+        const ward = wardSnap.data() as Ward;
+        wards = [ward];
+        newSiteSite = resolveWardSite(ward, buildings);
+      } else {
+        newSiteSite = undefined;
+        logger.warn(
+          `syncApplyFix(kindoo-only): ward '${scope}' not found while creating seat for ${canonical}; leaving kindoo_site_id unset (ward-fallback handles classification at read time)`,
+        );
+      }
     }
 
     const now = Timestamp.now();
@@ -278,11 +314,24 @@ async function applyKindooOnly(
       lastActor: actor,
     };
     if (isAuto) body.sort_order = sortOrder;
+    // Stamp `kindoo_site_id` only for a non-null (foreign) resolved site;
+    // home (null) and unknown-ward (undefined) leave the field absent —
+    // field-absent is the home representation (spec §15).
+    if (typeof newSiteSite === 'string') body.kindoo_site_id = newSiteSite;
     if (reason !== undefined) body.reason = reason;
     if (type === 'temp') {
       if (startDate !== undefined) body.start_date = startDate;
       if (endDate !== undefined) body.end_date = endDate;
     }
+    // Write-time invariant: a known foreign-site ward seat must carry the
+    // site. Throws loudly rather than silently persisting it as home.
+    assertSeatSiteStamped({
+      scope,
+      body: body as { kindoo_site_id?: string | null },
+      wards,
+      buildings,
+      context: 'syncApplyFix(kindoo-only)',
+    });
     tx.set(seatRef, body);
 
     if (isAuto && accessCallings.length > 0) {
@@ -441,11 +490,14 @@ async function applyScopeMismatch(
     // building so the moved seat carries the right site. Reads happen up
     // front to satisfy reads-before-writes.
     let newSiteId: string | null | undefined; // undefined ⇒ leave field untouched
+    let wards: Ward[] = [];
+    let buildings: Building[] = [];
     if (wardRef) {
       const [wardSnap, buildingsSnap] = await Promise.all([tx.get(wardRef), tx.get(buildingsRef)]);
+      buildings = buildingsSnap.docs.map((d) => d.data() as Building);
       if (wardSnap.exists) {
         const ward = wardSnap.data() as Ward;
-        const buildings = buildingsSnap.docs.map((d) => d.data() as Building);
+        wards = [ward];
         newSiteId = resolveWardSite(ward, buildings);
       }
     }
@@ -470,6 +522,17 @@ async function applyScopeMismatch(
       // field is left untouched and the ward-fallback handles it.
       update.kindoo_site_id = newSiteId;
     }
+    // Write-time invariant: a known foreign-site ward seat must carry the
+    // site after this move. `newSiteId` is the post-write value for a
+    // resolved ward (the stake branch deletes it → home, scope-gated; an
+    // unresolvable ward isn't in `wards`, so the guard short-circuits).
+    assertSeatSiteStamped({
+      scope: newScope,
+      body: { kindoo_site_id: newSiteId ?? null },
+      wards,
+      buildings,
+      context: 'syncApplyFix(scope-mismatch)',
+    });
     tx.update(seatRef, update);
     return { success: true, seatId: canonical };
   });
