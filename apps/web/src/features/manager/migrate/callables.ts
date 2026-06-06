@@ -23,8 +23,7 @@ export interface BackfillKindooSiteIdResult {
 /**
  * Invoke `backfillKindooSiteId` for the named stake. Returns the
  * counters payload the function emits. Surfaces a friendly error when
- * the callable isn't deployed yet (matches the pattern in
- * `features/bootstrap/callables.ts`).
+ * the callable isn't deployed yet ("not-found").
  */
 export async function invokeBackfillKindooSiteId(
   stakeId: string,

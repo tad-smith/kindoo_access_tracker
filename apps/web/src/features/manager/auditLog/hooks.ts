@@ -25,6 +25,7 @@ import type { AuditLog } from '@kindoo/shared';
 import { db } from '../../../lib/firebase';
 import { auditLogCol } from '../../../lib/docs';
 import { useActiveStake } from '../../../lib/useActiveStake';
+import { endOfDayInStakeTz, startOfDayInStakeTz } from '../../../lib/datetime';
 
 export interface AuditLogFilters {
   action?: string | undefined;
@@ -39,8 +40,18 @@ export interface AuditLogFilters {
 export const PAGE_SIZE = 50;
 
 /** Build the constraints for a single page given a cursor (last
- *  page's tail timestamp, or null for the first page). */
-function buildConstraints(filters: AuditLogFilters, cursor: Timestamp | null): QueryConstraint[] {
+ *  page's tail timestamp, or null for the first page).
+ *
+ *  Date-range bounds are interpreted in the stake's IANA timezone:
+ *  `date_from` resolves to start-of-day and `date_to` to end-of-day in
+ *  `timezone`, so the inclusive range matches the stake-tz timestamp
+ *  display (the query runs descending, so `date_to` is the `startAt`
+ *  bound and `date_from` the `endAt` bound). */
+export function buildConstraints(
+  filters: AuditLogFilters,
+  cursor: Timestamp | null,
+  timezone: string | undefined,
+): QueryConstraint[] {
   const constraints: QueryConstraint[] = [];
 
   // Equality filters layer first. At most one — composite indexes
@@ -56,11 +67,11 @@ function buildConstraints(filters: AuditLogFilters, cursor: Timestamp | null): Q
   constraints.push(orderBy('timestamp', 'desc'));
 
   if (filters.date_to) {
-    const end = new Date(`${filters.date_to}T23:59:59.999Z`);
+    const end = endOfDayInStakeTz(filters.date_to, timezone);
     constraints.push(startAt(Timestamp.fromDate(end)));
   }
   if (filters.date_from) {
-    const start = new Date(`${filters.date_from}T00:00:00Z`);
+    const start = startOfDayInStakeTz(filters.date_from, timezone);
     constraints.push(endAt(Timestamp.fromDate(start)));
   }
   if (cursor) constraints.push(startAfter(cursor));
@@ -79,8 +90,12 @@ interface AuditLogPage {
  * `fetchNextPage()` advances when the user nears the bottom of the
  * list. Returns the standard `useInfiniteQuery` result; callers
  * concatenate `data.pages.flatMap(p => p.rows)` for the visible list.
+ *
+ * `timezone` is the stake's IANA zone; it scopes the date-range filter
+ * bounds to stake-local day boundaries (matching the timestamp display)
+ * and is part of the query key so a stake/tz change refetches.
  */
-export function useAuditLogInfinite(filters: AuditLogFilters) {
+export function useAuditLogInfinite(filters: AuditLogFilters, timezone: string | undefined) {
   const activeStakeId = useActiveStake();
   return useInfiniteQuery<AuditLogPage, FirestoreError>({
     queryKey: [
@@ -94,13 +109,17 @@ export function useAuditLogInfinite(filters: AuditLogFilters) {
       filters.member_canonical ?? '',
       filters.date_from ?? '',
       filters.date_to ?? '',
+      timezone ?? '',
     ],
     initialPageParam: null as Timestamp | null,
     enabled: activeStakeId !== null,
     queryFn: async ({ pageParam }) => {
       if (!activeStakeId) return { rows: [], nextCursor: null };
       const cursor = pageParam as Timestamp | null;
-      const q = query(auditLogCol(db, activeStakeId), ...buildConstraints(filters, cursor));
+      const q = query(
+        auditLogCol(db, activeStakeId),
+        ...buildConstraints(filters, cursor, timezone),
+      );
       const snap = await getDocs(q);
       const rows = snap.docs.map((d) => d.data());
       const last = rows[rows.length - 1];

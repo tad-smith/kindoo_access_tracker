@@ -30,13 +30,17 @@ export function AuditLogPage({ initialFilters }: AuditLogPageProps) {
   const navigate = useNavigate();
   const [filters, setFilters] = useState<AuditLogFilters>(initialFilters ?? {});
 
-  const result = useAuditLogInfinite(filters);
+  const stake = useStakeDoc();
+  const tz = stake.data?.timezone;
+
+  // Pass the stake timezone into the query so the date-range filter
+  // resolves its day boundaries in stake-local time (matching the
+  // timestamp display below).
+  const result = useAuditLogInfinite(filters, tz);
   const rows = useMemo<readonly AuditLog[]>(
     () => (result.data?.pages ?? []).flatMap((p) => p.rows),
     [result.data],
   );
-  const stake = useStakeDoc();
-  const tz = stake.data?.timezone;
 
   const onApply = (next: AuditLogFilters) => {
     // Filter changes reset scroll position; the infinite query restarts

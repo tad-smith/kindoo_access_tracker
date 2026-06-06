@@ -16,7 +16,8 @@ vi.mock('./hooks', async () => {
   const actual = await vi.importActual<typeof import('./hooks')>('./hooks');
   return {
     ...actual,
-    useAuditLogInfinite: (filters: unknown) => useAuditLogInfiniteMock(filters),
+    useAuditLogInfinite: (filters: unknown, timezone: unknown) =>
+      useAuditLogInfiniteMock(filters, timezone),
   };
 });
 

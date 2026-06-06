@@ -22,10 +22,9 @@
 //   - ≥1 building
 //   - ≥1 ward
 //
-// Complete Setup flips `setup_complete=true`, invokes the
-// `installScheduledJobs` callable, and lets the routing gate redirect
-// the admin to `/manager/dashboard`. The `setup_complete=true` flip
-// means a post-setup wizard reload is invisible (the gate skips it).
+// Complete Setup flips `setup_complete=true` and lets the routing gate
+// redirect the admin to `/manager/dashboard`. The `setup_complete=true`
+// flip means a post-setup wizard reload is invisible (the gate skips it).
 
 import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -66,8 +65,6 @@ import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
 import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
-import { useActiveStake } from '../../lib/useActiveStake';
-import { invokeInstallScheduledJobs } from './callables';
 
 type StepNumber = 1 | 2 | 3 | 4;
 
@@ -669,27 +666,10 @@ interface CompleteSetupProps {
 
 function CompleteSetupButton({ enabled, onCompleted }: CompleteSetupProps) {
   const mutation = useCompleteSetupMutation();
-  const activeStakeId = useActiveStake();
 
   async function complete() {
     try {
       await mutation.mutateAsync();
-      if (!activeStakeId) {
-        toast('Setup complete, but no active stake to enable scheduled jobs for.', 'warn');
-        onCompleted();
-        return;
-      }
-      // Best-effort callable. If the function is unavailable we
-      // surface a warn-toast but the setup completion is not rolled
-      // back.
-      try {
-        await invokeInstallScheduledJobs(activeStakeId);
-      } catch (callErr) {
-        toast(
-          `Setup complete, but scheduled jobs could not be enabled: ${errorMessage(callErr)}`,
-          'warn',
-        );
-      }
       toast('Setup complete!', 'success');
       onCompleted();
     } catch (err) {

@@ -412,9 +412,9 @@ export function useEnsureBootstrapAdmin() {
 
 /**
  * Final step — flips `setup_complete=true`. The same updateDoc carries
- * the `lastActor` integrity field. The page wrapper additionally
- * invokes the `installScheduledJobs` callable; this mutation only
- * owns the Firestore flip.
+ * the `lastActor` integrity field; this Firestore flip is the entire
+ * Complete-Setup action (the routing gate redirects once it lands, and
+ * the `auditTrigger` fans the audit row).
  */
 export function useCompleteSetupMutation() {
   const principal = usePrincipal();
