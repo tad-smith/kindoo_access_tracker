@@ -157,6 +157,45 @@ describe('<ApplyFixesMenu />', () => {
     });
   });
 
+  it('invokes the callable with the doc-id-derived stake id for a bootstrap stake', async () => {
+    // `useStakes()` injects the doc id as `stake_id`, so even the
+    // hand-seeded bootstrap stake (whose stored doc omits the field)
+    // arrives here with `stake_id` set. The menu must pass that defined
+    // id straight through — never `undefined`.
+    const stake = makeStake({ stake_id: 'csnorth', stake_name: 'CS North Stake' });
+    mutateAsyncMock.mockResolvedValueOnce({ ok: true });
+    render(<ApplyFixesMenu stake={stake} />);
+    const user = userEvent.setup();
+    await openExplain(user, stake);
+
+    // The Explain dialog names the target stake (slug-backed row).
+    expect(screen.getByTestId('apply-fixes-target')).toHaveTextContent('CS North Stake');
+
+    await user.click(screen.getByTestId('apply-fixes-apply'));
+    expect(mutateAsyncMock).toHaveBeenCalledWith({
+      callable: 'backfillKindooSiteId',
+      stakeId: 'csnorth',
+    });
+  });
+
+  it('surfaces an error without invoking the callable when the stake id is missing', async () => {
+    // Defense-in-depth: a malformed stake whose `stake_id` is falsy must
+    // not send `stakeId: undefined` to the callable (the server rejects
+    // it with a cryptic `invalid-argument: stakeId required`). The Result
+    // dialog shows a clear error instead.
+    const stake = makeStake({ stake_id: '' as Stake['stake_id'] });
+    render(<ApplyFixesMenu stake={stake} />);
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByTestId('apply-fixes-select-'), 'backfill-kindoo-site-id');
+    await user.click(screen.getByTestId('apply-fixes-apply'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('apply-fixes-result-error')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('apply-fixes-error-message')).toHaveTextContent(/missing stake id/i);
+    expect(mutateAsyncMock).not.toHaveBeenCalled();
+  });
+
   it('renders the result generically as key/value rows plus the warnings list on success', async () => {
     const stake = makeStake();
     mutateAsyncMock.mockResolvedValueOnce({

@@ -24,7 +24,11 @@ import { stakesCol } from '../../lib/docs';
  */
 export function useStakes() {
   const q = useMemo(() => stakesCol(db), []);
-  return useFirestoreCollection<Stake>(q);
+  // `stake_id` ≡ doc.id by definition (`Stake.stake_id` is `= doc.id`).
+  // The hand-seeded bootstrap `csnorth` doc predates `createStake` and
+  // omits the stored field, so inject the doc id here — the doc id is
+  // authoritative, making the stored field non-load-bearing.
+  return useFirestoreCollection<Stake>(q, { idField: 'stake_id' });
 }
 
 /**

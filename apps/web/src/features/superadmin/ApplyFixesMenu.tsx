@@ -60,6 +60,19 @@ export function ApplyFixesMenu({ stake }: ApplyFixesMenuProps) {
   }
 
   async function onApply(fix: StakeFix) {
+    // Defense-in-depth: `useStakes()` injects the doc id as `stake_id`, so
+    // this should always be set. If a malformed stake ever slips through,
+    // surface a clear error in the Result dialog rather than invoking the
+    // callable with `stakeId: undefined` (which the server rejects with the
+    // cryptic `invalid-argument: stakeId required`).
+    if (!stake.stake_id) {
+      setPhase({
+        kind: 'error',
+        fix,
+        error: new Error('Missing stake id for this row; cannot run the fix.'),
+      });
+      return;
+    }
     try {
       const result = await mutation.mutateAsync({
         callable: fix.callable,

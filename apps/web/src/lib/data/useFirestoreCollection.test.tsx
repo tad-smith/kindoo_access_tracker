@@ -6,6 +6,8 @@
 //   - Unmount → unsubscribe called.
 //   - Referential stability: re-snapshot with element-wise-equal data
 //     keeps the previous array reference.
+//   - `idField`: the Firestore doc id is merged in under the requested
+//     key and is authoritative (wins over any stored field).
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -33,6 +35,17 @@ function fakeQuery(path: string): FakeQuery {
 function fakeQuerySnapshot(items: unknown[]) {
   return {
     docs: items.map((data) => ({
+      data: () => data,
+    })),
+  };
+}
+
+/** Snapshot whose docs carry both a doc `id` and a `data()` body — for
+ *  the `idField` merge tests. */
+function fakeQuerySnapshotWithIds(items: { id: string; data: unknown }[]) {
+  return {
+    docs: items.map(({ id, data }) => ({
+      id,
       data: () => data,
     })),
   };
@@ -284,6 +297,87 @@ describe('useFirestoreCollection', () => {
     } finally {
       consoleErrorSpy.mockRestore();
     }
+  });
+
+  it('injects the doc id under idField when the document omits the field', async () => {
+    let pushSnapshot: ((s: unknown) => void) | null = null;
+    onSnapshotMock.mockImplementation((_q, onNext) => {
+      pushSnapshot = onNext;
+      return () => {};
+    });
+    const q = fakeQuery('stakes') as unknown as Parameters<
+      typeof useFirestoreCollection<{ stake_id: string; name: string }>
+    >[0];
+
+    const { result } = renderHook(
+      () => useFirestoreCollection<{ stake_id: string; name: string }>(q, { idField: 'stake_id' }),
+      { wrapper },
+    );
+
+    // The bootstrap-doc case: the stored body has no `stake_id` field.
+    await act(async () => {
+      pushSnapshot!(
+        fakeQuerySnapshotWithIds([{ id: 'csnorth', data: { name: 'CS North Stake' } }]),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.data).toEqual([{ stake_id: 'csnorth', name: 'CS North Stake' }]);
+    });
+  });
+
+  it('lets the doc id win over a stored idField value when they differ', async () => {
+    let pushSnapshot: ((s: unknown) => void) | null = null;
+    onSnapshotMock.mockImplementation((_q, onNext) => {
+      pushSnapshot = onNext;
+      return () => {};
+    });
+    const q = fakeQuery('stakes') as unknown as Parameters<
+      typeof useFirestoreCollection<{ stake_id: string; name: string }>
+    >[0];
+
+    const { result } = renderHook(
+      () => useFirestoreCollection<{ stake_id: string; name: string }>(q, { idField: 'stake_id' }),
+      { wrapper },
+    );
+
+    // A stale/wrong stored value must not mislead callers: the doc id
+    // is authoritative.
+    await act(async () => {
+      pushSnapshot!(
+        fakeQuerySnapshotWithIds([
+          { id: 'csnorth', data: { stake_id: 'stale-wrong', name: 'CS North Stake' } },
+        ]),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.data).toEqual([{ stake_id: 'csnorth', name: 'CS North Stake' }]);
+    });
+  });
+
+  it('does not inject the doc id when idField is not supplied', async () => {
+    let pushSnapshot: ((s: unknown) => void) | null = null;
+    onSnapshotMock.mockImplementation((_q, onNext) => {
+      pushSnapshot = onNext;
+      return () => {};
+    });
+    const q = fakeQuery('stakes') as unknown as Parameters<
+      typeof useFirestoreCollection<{ name: string }>
+    >[0];
+
+    const { result } = renderHook(() => useFirestoreCollection<{ name: string }>(q), { wrapper });
+
+    await act(async () => {
+      pushSnapshot!(
+        fakeQuerySnapshotWithIds([{ id: 'csnorth', data: { name: 'CS North Stake' } }]),
+      );
+    });
+
+    await waitFor(() => {
+      // No `idField` → raw `data()` only; the doc id is not merged in.
+      expect(result.current.data).toEqual([{ name: 'CS North Stake' }]);
+    });
   });
 
   it('swallows an unsubscribe throw on unmount without propagating', () => {

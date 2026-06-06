@@ -197,6 +197,22 @@ describe('<SuperadminStakeListPage />', () => {
     expect(screen.getByTestId('apply-fixes-menu-stub-eaststake')).toBeInTheDocument();
   });
 
+  it('renders the slug, deep-link, and Apply Fixes menu from the doc-id-derived stake_id', async () => {
+    // `useStakes()` injects the Firestore doc id as `stake_id`, so the
+    // hand-seeded bootstrap stake (whose stored doc omits the field)
+    // still arrives with `stake_id` set. The page renders the slug, the
+    // `?stake=<slug>` deep-link, and wires the Apply Fixes menu off that
+    // id — none of which may ever be `undefined`.
+    mockStakes([makeStake({ stake_id: 'csnorth', stake_name: 'CS North Stake' })]);
+    await renderPage();
+    expect(screen.getByTestId('superadmin-stake-slug-csnorth')).toHaveTextContent('csnorth');
+    expect(screen.getByTestId('superadmin-stake-link-csnorth')).toHaveAttribute(
+      'href',
+      '/manager/dashboard?stake=csnorth',
+    );
+    expect(screen.getByTestId('apply-fixes-menu-stub-csnorth')).toBeInTheDocument();
+  });
+
   it('sorts rows by created_at ascending (oldest first)', async () => {
     // Pass rows out of order; the page sorts them.
     mockStakes([

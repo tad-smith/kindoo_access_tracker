@@ -36,7 +36,23 @@ type CollectionCacheValue<T> = { value: readonly T[] | undefined };
 export type UseFirestoreCollectionOptions<T> = Omit<
   UseQueryOptions<CollectionCacheValue<T>, FirestoreError, CollectionCacheValue<T>>,
   'queryKey' | 'queryFn' | 'enabled'
->;
+> & {
+  /**
+   * Merge each document's Firestore doc id into the mapped object under
+   * this key (`{ ...d.data(), [idField]: d.id }`). The doc id WINS over
+   * any stored field of the same name, so it stays authoritative even if
+   * a stale/wrong value is persisted.
+   *
+   * Why this exists: `Stake.stake_id` is defined as `= doc.id`, but the
+   * hand-seeded bootstrap `csnorth` stake doc predates `createStake` and
+   * has no stored `stake_id` field. Reading raw `d.data()` then yields
+   * `stake_id: undefined`, which the UI must never depend on. App-created
+   * stakes carry the field, bootstrap docs don't — so the consumer asks
+   * for `{ idField: 'stake_id' }` and the doc id becomes the single
+   * source of truth regardless of the stored shape.
+   */
+  idField?: keyof T & string;
+};
 
 export type FirestoreCollectionResult<T> = {
   data: readonly T[] | undefined;
@@ -60,6 +76,10 @@ export function useFirestoreCollection<T>(
 ): FirestoreCollectionResult<T> {
   const queryClient = useQueryClient();
   const [listenerError, setListenerError] = useState<FirestoreError | null>(null);
+
+  // `idField` is not a TanStack option; pull it out so it isn't spread
+  // into `useQuery`, and so the snapshot effect can depend on it.
+  const { idField, ...queryOptions } = options ?? {};
 
   const key = query ? queryKey(query) : NULL_QUERY_KEY;
 
@@ -89,7 +109,12 @@ export function useFirestoreCollection<T>(
         query,
         (snapshot) => {
           try {
-            const next = snapshot.docs.map((d: QueryDocumentSnapshot<T>) => d.data());
+            // Doc id is authoritative when `idField` is set: it wins over
+            // any stored field of the same name (so bootstrap docs missing
+            // the field, or stale persisted values, can't mislead callers).
+            const next = snapshot.docs.map((d: QueryDocumentSnapshot<T>) =>
+              idField ? { ...d.data(), [idField]: d.id } : d.data(),
+            );
             const cached = queryClient.getQueryData<CollectionCacheValue<T>>(queryKey(query));
             const prev = cached?.value;
             // Preserve referential stability when nothing changed at all.
@@ -131,7 +156,7 @@ export function useFirestoreCollection<T>(
         });
       }
     };
-  }, [query, queryClient]);
+  }, [query, queryClient, idField]);
 
   // Placeholder queryFn that never resolves; the listener is the
   // source of truth. See `useFirestoreDoc.ts` for why a resolving
@@ -145,7 +170,7 @@ export function useFirestoreCollection<T>(
     refetchOnReconnect: false,
     staleTime: Infinity,
     gcTime: Infinity,
-    ...options,
+    ...queryOptions,
   });
 
   if (listenerError) {
