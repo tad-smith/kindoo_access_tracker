@@ -119,7 +119,8 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 |---|---|---|
 | seat present | no Kindoo user | `sba-only` |
 | (any) | Kindoo user is an **Installer** (`DepartmentType 3`) | (no row of any kind — the user is skipped entirely; see "Kindoo role" below) |
-| no seat | Kindoo user present | `kindoo-only` |
+| no seat | Kindoo user present, created-seat type derivable (temp / admin / Guest-with-grant / non-blank Description) | `kindoo-only` (drift — Create SBA seat) |
+| no seat | Kindoo user present, **blank** Description (empty / whitespace), Guest, **no** church-direct grant (created-seat type would be `manual` — nothing to derive) | `kindoo-no-description` (review — `sba: null`, no action) |
 | seat (any role) | Kindoo user, Description present but unparseable, **home site + not already stake-aligned** | `kindoo-unparseable` (drift — treat as church-wide stake-scope calling, Update SBA) |
 | seat | Kindoo user, Description present but unparseable, **foreign site** | (no row — suppressed; "apply to stake scope" is a home/stake concept) |
 | seat | Kindoo user, Description present but unparseable, **already stake-aligned** | (no row — seat already matches the Update-SBA target, resolves like any drift) |
@@ -135,9 +136,9 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 Severity:
 - `sba-only`, `kindoo-only`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch`, `callings-mismatch` → **drift** (an unambiguous SBA-side action is available).
 - `kindoo-unparseable` → **drift** for any home-site seat (all roles) with an unaligned seat. On a foreign site or an already-aligned seat it emits no row at all.
-- `kindoo-no-description` → **review** (a blank Kindoo Description yields nothing Sync can reconcile).
+- `kindoo-no-description` → **review** (a blank Kindoo Description yields nothing Sync can reconcile). Two paths reach this code: a member with **both** sides present (seat + blank-Description Kindoo user), and a **no-seat** member whose blank-Description Kindoo add would otherwise be a `manual` `kindoo-only` row (Guest, no church-direct grant — nothing to mint a seat from). In the no-seat case the row's `sba` block is `null`, the same as a `kindoo-only` row.
 
-**Invariant: a `review`-severity row never renders an action.** `fixActionsFor` returns no buttons for any `severity === 'review'` row, regardless of code (a top-of-function guard). The display-only Sync rows are therefore: `kindoo-no-description` (blank Description) and the defensive parsed-but-no-primary fallback (below). Every other discrepancy code offers an SBA-side action.
+**Invariant: a `review`-severity row never renders an action.** `fixActionsFor` returns no buttons for any `severity === 'review'` row, regardless of code (a top-of-function guard). The display-only Sync rows are therefore: `kindoo-no-description` (blank Description — both the both-sides case and the no-seat, no-grant Guest case) and the defensive parsed-but-no-primary fallback (below). Every other discrepancy code offers an SBA-side action.
 
 The split between `kindoo-unparseable` and `kindoo-no-description` is the parser's blank-vs-present distinction (`parsed.segments.length === 0`). A blank Description has no derivable SBA side (`kindoo-no-description`, always review). A present-but-unparseable Description is treated as a church-wide (stake-scope) calling, for **every seat role** — there is no Guest gate (PR #187). The actionable Update-SBA row is gated two ways in the detector:
 
@@ -601,7 +602,19 @@ temp (`IsTempUser`) → temp; else **Admin** (Administrator / Manager) → `auto
 backing; else **Guest** → `grantsBackAuto(directGrantBuildings)` → auto when the member holds ANY
 church-direct grant, else manual. The seat's building set no longer enters the type decision (a
 `null` derivation falls through to manual — the born-manual default; we don't mint auto on unknown
-provenance). The seat is shaped to match the request flow /
+provenance).
+
+**Blank-Description, no-grant Guest → review, not a `manual` `kindoo-only` (no-seat side).** A gate
+at the top of the kindoo-only branch (after the created-type is computed) flips the row to
+`kindoo-no-description` (`review`, `sba: null`) when the Description is **blank**
+(`parsed.unparseable && parsed.segments.length === 0`, mirroring the both-sides check) **and** the
+created type is `manual`. In this branch `manual` is exactly the case where nothing is derivable —
+not temp, not admin, no church-direct grant — so there is no scope/calling to mint a seat from.
+Temp (`temp`), admin (`auto`), and Guest-with-grants (`auto`) keep their actionable `kindoo-only`
+drift; a non-blank Description (parseable, or present-but-unparseable) also keeps the `kindoo-only`
+drift because the parsed intended scope/calling is meaningful. Only the truly blank + nothing-to-
+derive case becomes review. (The created type never depends on the Description, so a blank-Description
+Guest with no grant always computes `manual` and always falls into this gate.) The seat is shaped to match the request flow /
 `markRequestComplete` (`docs/spec.md` §6.1): an **auto** seat carries the FULL parsed primary-segment
 calling list (matched ∪ unmatched) in `callings[]` and no `reason`; a **manual / temp** seat carries
 `callings: []` and the full parsed calling text in the single free-text `reason`. Writing the
