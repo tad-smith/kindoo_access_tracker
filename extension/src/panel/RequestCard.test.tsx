@@ -121,6 +121,7 @@ async function renderCard(
     bundle?: StakeConfigBundle;
     onDismissed?: (id: string) => void;
     memberHasSeat?: boolean;
+    memberHasStakeGrant?: boolean;
     memberSeatAbsent?: boolean;
   } = {},
 ) {
@@ -131,6 +132,7 @@ async function renderCard(
       request={opts.request ?? addRequest()}
       bundle={opts.bundle ?? bundle()}
       memberHasSeat={opts.memberHasSeat ?? false}
+      memberHasStakeGrant={opts.memberHasStakeGrant ?? false}
       memberSeatAbsent={opts.memberSeatAbsent ?? false}
       onDismissed={opts.onDismissed ?? vi.fn()}
     />,
@@ -425,6 +427,7 @@ describe('RequestCard', () => {
         request={request}
         bundle={customBundle}
         memberHasSeat={false}
+        memberHasStakeGrant={false}
         memberSeatAbsent={false}
         onDismissed={vi.fn()}
       />,
@@ -719,13 +722,24 @@ describe('RequestCard', () => {
 
   // ---- Add for an existing user → Reject-only -----------------------
 
-  it('hides the provision button and shows the existing-seat notice when memberHasSeat (add type)', async () => {
-    await renderCard({ memberHasSeat: true });
+  it('hides the provision button and shows the existing-seat notice for a temp add when memberHasSeat', async () => {
+    // add_temp is never carved out — always Reject-only on an existing
+    // seat, regardless of stake-grant state.
+    await renderCard({ request: addRequest({ type: 'add_temp' }), memberHasSeat: true });
     expect(screen.queryByTestId('sba-add-r1')).not.toBeInTheDocument();
     expect(screen.getByTestId('sba-existing-seat-r1')).toHaveTextContent(
       /Member already has a seat/,
     );
     // Reject is still available.
+    expect(screen.getByTestId('sba-reject-r1')).toBeInTheDocument();
+  });
+
+  it('hides the provision button for a ward-scope manual add when memberHasSeat', async () => {
+    // Carve-out is stake-scope only; a ward-scope add_manual on an
+    // existing seat stays Reject-only.
+    await renderCard({ request: addRequest({ scope: 'CO' }), memberHasSeat: true });
+    expect(screen.queryByTestId('sba-add-r1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('sba-existing-seat-r1')).toBeInTheDocument();
     expect(screen.getByTestId('sba-reject-r1')).toBeInTheDocument();
   });
 
@@ -740,6 +754,34 @@ describe('RequestCard', () => {
     await renderCard({ memberHasSeat: false });
     expect(screen.getByTestId('sba-add-r1')).toBeInTheDocument();
     expect(screen.queryByTestId('sba-existing-seat-r1')).not.toBeInTheDocument();
+  });
+
+  // ---- Stake-scope add carve-out (Give Access To Stake Buildings) ---
+
+  it('shows the provision button for a stake-scope manual add on an existing seat WITHOUT a stake grant', async () => {
+    // The foreign-site-only member always holds a ward seat; the
+    // stake-scope add is applyable (planAddMerge appends a cross-scope
+    // duplicate grant). Provision button must NOT be blocked.
+    await renderCard({
+      request: addRequest({ type: 'add_manual', scope: 'stake' }),
+      memberHasSeat: true,
+      memberHasStakeGrant: false,
+    });
+    expect(screen.getByTestId('sba-add-r1')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-existing-seat-r1')).not.toBeInTheDocument();
+  });
+
+  it('still blocks a stake-scope manual add when the member ALREADY has a stake grant', async () => {
+    // Backstop: a stake grant already exists → the add can't apply
+    // cleanly, so keep Reject-only.
+    await renderCard({
+      request: addRequest({ type: 'add_manual', scope: 'stake' }),
+      memberHasSeat: true,
+      memberHasStakeGrant: true,
+    });
+    expect(screen.queryByTestId('sba-add-r1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('sba-existing-seat-r1')).toBeInTheDocument();
+    expect(screen.getByTestId('sba-reject-r1')).toBeInTheDocument();
   });
 
   // ---- Edit for a nonexistent seat → Reject-only --------------------

@@ -27,21 +27,24 @@ vi.mock('../lib/extensionApi', async () => {
   };
 });
 
-// Stub RequestCard — render its id + the two seat-existence flags as
-// test markers so QueuePanel's three-state wiring is observable without
+// Stub RequestCard — render its id + the seat-existence / stake-grant
+// flags as test markers so QueuePanel's wiring is observable without
 // exercising the provision machinery. `data-has-seat` reflects
 // `memberHasSeat` (present); `data-seat-absent` reflects
-// `memberSeatAbsent` (positively absent). Both false = "unknown".
+// `memberSeatAbsent` (positively absent); `data-has-stake-grant`
+// reflects `memberHasStakeGrant`. Existence flags both false = "unknown".
 vi.mock('./RequestCard', () => ({
   RequestCard: (props: {
     request: { request_id: string };
     memberHasSeat: boolean;
     memberSeatAbsent: boolean;
+    memberHasStakeGrant: boolean;
   }) => (
     <div
       data-testid={`card-${props.request.request_id}`}
       data-has-seat={props.memberHasSeat ? 'true' : 'false'}
       data-seat-absent={props.memberSeatAbsent ? 'true' : 'false'}
+      data-has-stake-grant={props.memberHasStakeGrant ? 'true' : 'false'}
     />
   ),
 }));
@@ -178,6 +181,51 @@ describe('QueuePanel', () => {
     // Failed lookup is omitted from the map → both flags false ("unknown").
     expect(screen.getByTestId('card-errored')).toHaveAttribute('data-has-seat', 'false');
     expect(screen.getByTestId('card-errored')).toHaveAttribute('data-seat-absent', 'false');
+  });
+
+  it('derives memberHasStakeGrant from the seat (primary stake / duplicate stake / neither)', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({
+      requests: [
+        req({ request_id: 'primary-stake', member_canonical: 'a@x' }),
+        req({ request_id: 'dup-stake', member_canonical: 'b@x' }),
+        req({ request_id: 'ward-only', member_canonical: 'c@x' }),
+        req({ request_id: 'no-seat', member_canonical: 'd@x' }),
+      ],
+    });
+    getSeatByEmailMock.mockImplementation((_stakeId: string, canonical: string) => {
+      if (canonical === 'a@x') {
+        return Promise.resolve({ member_canonical: 'a@x', scope: 'stake', duplicate_grants: [] });
+      }
+      if (canonical === 'b@x') {
+        return Promise.resolve({
+          member_canonical: 'b@x',
+          scope: 'CO',
+          duplicate_grants: [{ scope: 'stake' }],
+        });
+      }
+      if (canonical === 'c@x') {
+        return Promise.resolve({
+          member_canonical: 'c@x',
+          scope: 'CO',
+          duplicate_grants: [{ scope: 'DT' }],
+        });
+      }
+      return Promise.resolve(null);
+    });
+    await renderPanel();
+
+    await waitFor(() => expect(screen.getByTestId('card-primary-stake')).toBeInTheDocument());
+    // Primary-scope stake → has stake grant.
+    expect(screen.getByTestId('card-primary-stake')).toHaveAttribute(
+      'data-has-stake-grant',
+      'true',
+    );
+    // Ward primary + stake duplicate → has stake grant.
+    expect(screen.getByTestId('card-dup-stake')).toHaveAttribute('data-has-stake-grant', 'true');
+    // Ward primary + non-stake duplicate → no stake grant (the applyable case).
+    expect(screen.getByTestId('card-ward-only')).toHaveAttribute('data-has-stake-grant', 'false');
+    // No seat at all → no stake grant.
+    expect(screen.getByTestId('card-no-seat')).toHaveAttribute('data-has-stake-grant', 'false');
   });
 
   it('threads three-state seat-existence into edit cards (absent → seat-absent flag)', async () => {
