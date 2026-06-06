@@ -22,8 +22,7 @@
 //     `update_seat`). One audit row per seat write.
 //   - Scope. Per-stake; the callable takes a `stakeId` parameter.
 //
-// Auth: same authority check as `installScheduledJobs` — read the
-// `kindooManagers/{canonical}` doc directly. The migration is a
+// Auth: read the `kindooManagers/{canonical}` doc directly. The migration is a
 // manager-only operation; it does not require platform-superadmin (the
 // platform-superadmin role is reserved for cross-stake operations and
 // hasn't shipped in single-stake v1).

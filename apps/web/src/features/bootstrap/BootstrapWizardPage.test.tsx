@@ -69,14 +69,8 @@ vi.mock('../../lib/store/toast', () => {
 vi.mock('../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
 }));
-vi.mock('../../lib/useActiveStake', () => ({
-  useActiveStake: () => 'csnorth',
-}));
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
-}));
-vi.mock('./callables', () => ({
-  invokeInstallScheduledJobs: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 import { BootstrapWizardPage } from './BootstrapWizardPage';
@@ -196,6 +190,32 @@ describe('<BootstrapWizardPage />', () => {
     );
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     expect(screen.getByTestId('bootstrap-complete-setup')).not.toBeDisabled();
+  });
+
+  it('completes setup via the Firestore flip alone and surfaces the success toast', async () => {
+    // Complete Setup is now the single `setup_complete=true` flip — no
+    // scheduled-jobs callable. Clicking it must run the flip mutation,
+    // surface "Setup complete!", and navigate home for the gate to
+    // redirect.
+    useStakeDocMock.mockReturnValue(
+      stakeResult(makeStake({ stake_name: 'My Stake', stake_seat_cap: 200 })),
+    );
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'main', building_name: 'Main', address: '1 St' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        { ward_code: 'CO', ward_name: 'Maple', building_name: 'Main', seat_cap: 20 } as Ward,
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('bootstrap-complete-setup'));
+    await vi.waitFor(() => expect(completeSetupMutate).toHaveBeenCalledTimes(1));
+    expect(toastSpy).toHaveBeenCalledWith('Setup complete!', 'success');
+    expect(navigateMock).toHaveBeenCalled();
   });
 
   it('switches to step 2 when the Buildings tab is clicked', async () => {

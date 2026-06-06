@@ -142,7 +142,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   stake_seat_cap: number;              // license total
 
   // Schedules
-  timezone: string;                    // IANA tz, e.g. 'America/Denver'. Used for audit-log date filtering (the daily expiry scheduler was retired — `architecture.md` D19).
+  timezone: string;                    // IANA tz, e.g. 'America/Denver'. Consumed only by stake-local time rendering: the Audit Log timestamp display + date-range filter boundaries, and the superadmin stake-list `created_at`. Not a scheduler input — the daily expiry scheduler was retired (`architecture.md` D19).
 
   // Deprecated (LCR Sheet importer removed — see `architecture.md` D14,
   // `spec.md` §8). New stake docs do not set these fields; existing

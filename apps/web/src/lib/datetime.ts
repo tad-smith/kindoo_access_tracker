@@ -61,6 +61,100 @@ export function formatDateInStakeTz(value: unknown, timezone: string | undefined
   }).format(date);
 }
 
+/**
+ * Absolute instant for the **start of the calendar day** named by
+ * `dateStr` (`YYYY-MM-DD`) in the stake's IANA timezone — the wall-clock
+ * moment `00:00:00.000` of that day in `tz`.
+ *
+ * Used to convert an Audit Log "from" filter into a Firestore-queryable
+ * `Timestamp` boundary so the inclusive date range matches the
+ * stake-timezone display (per spec.md §5.3). Falls back to
+ * `America/Denver` when `tz` is undefined — the same default the display
+ * formatters use, so behaviour is unchanged for the current Denver stake.
+ *
+ * A sub-millisecond skew is possible right at a DST transition (the
+ * offset is sampled at noon to dodge the ambiguous/absent midnight hour);
+ * acceptable at v1 scale.
+ */
+export function startOfDayInStakeTz(dateStr: string, timezone: string | undefined): Date {
+  return dayBoundaryInStakeTz(dateStr, timezone, 0, 0, 0, 0);
+}
+
+/**
+ * Absolute instant for the **end of the calendar day** named by
+ * `dateStr` (`YYYY-MM-DD`) in the stake's IANA timezone — the wall-clock
+ * moment `23:59:59.999` of that day in `tz`. Inclusive upper bound for
+ * the Audit Log "to" filter. Same `America/Denver` fallback as
+ * `startOfDayInStakeTz`.
+ */
+export function endOfDayInStakeTz(dateStr: string, timezone: string | undefined): Date {
+  return dayBoundaryInStakeTz(dateStr, timezone, 23, 59, 59, 999);
+}
+
+/**
+ * Resolve a wall-clock time (`h:m:s.ms`) on calendar day `dateStr` in
+ * timezone `tz` to its absolute UTC instant. We can't build the instant
+ * directly from a tz name, so: form the naive UTC instant for that
+ * wall-clock time, measure how far `tz` sits from UTC at that day (via
+ * `Intl`), and subtract the offset. The offset is sampled at noon of the
+ * target day so DST transitions near midnight don't land us in the
+ * absent/duplicated hour.
+ */
+function dayBoundaryInStakeTz(
+  dateStr: string,
+  timezone: string | undefined,
+  hours: number,
+  minutes: number,
+  seconds: number,
+  ms: number,
+): Date {
+  const tz = timezone || DEFAULT_STAKE_TZ;
+  const [yStr, mStr, dStr] = dateStr.split('-');
+  const y = Number.parseInt(yStr ?? '', 10);
+  const m = Number.parseInt(mStr ?? '', 10);
+  const d = Number.parseInt(dStr ?? '', 10);
+  // Naive instant: pretend the wall-clock time is UTC.
+  const naiveUtc = Date.UTC(y, m - 1, d, hours, minutes, seconds, ms);
+  // Offset of `tz` from UTC on this calendar day (sampled at noon UTC to
+  // avoid the DST-transition edge). Positive = tz is ahead of UTC.
+  const offsetMs = tzOffsetMs(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)), tz);
+  return new Date(naiveUtc - offsetMs);
+}
+
+/**
+ * Signed offset, in milliseconds, of `tz` from UTC at the given instant.
+ * Positive when `tz` is east of UTC. Computed by formatting the same
+ * instant in `tz` and differencing its wall-clock fields against the
+ * instant's true UTC value — the inverse of what the display formatters
+ * do.
+ */
+function tzOffsetMs(at: Date, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(at);
+  const get = (type: string): number =>
+    Number.parseInt(parts.find((p) => p.type === type)?.value ?? '0', 10);
+  let hour = get('hour');
+  // `hour12: false` renders midnight as `24` in some engines; normalise.
+  if (hour === 24) hour = 0;
+  const asUtc = Date.UTC(
+    get('year'),
+    get('month') - 1,
+    get('day'),
+    hour,
+    get('minute'),
+    get('second'),
+  );
+  return asUtc - at.getTime();
+}
+
 function toDate(value: unknown): Date | null {
   if (value == null) return null;
   if (value instanceof Date) return value;
