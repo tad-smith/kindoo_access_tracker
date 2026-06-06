@@ -109,17 +109,15 @@ describe('configuration configSchema', () => {
     const r = configSchema.safeParse({
       stake_name: 'My Stake',
       stake_seat_cap: 200,
-      expiry_hour: 4,
       timezone: 'America/Denver',
       notifications_enabled: true,
     });
     expect(r.success).toBe(true);
   });
-  it('rejects out-of-range expiry_hour', () => {
+  it('rejects a negative seat cap', () => {
     const r = configSchema.safeParse({
       stake_name: 'X',
-      stake_seat_cap: 0,
-      expiry_hour: 25,
+      stake_seat_cap: -1,
       timezone: 'X',
       notifications_enabled: false,
     });

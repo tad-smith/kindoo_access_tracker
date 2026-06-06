@@ -66,7 +66,6 @@ export const configSchema = z.object({
     .number({ message: 'Seat cap must be a number.' })
     .int()
     .min(0, 'Seat cap must be 0 or greater.'),
-  expiry_hour: z.number().int().min(0).max(23),
   timezone: z.string().trim().min(1, 'Timezone is required.'),
   notifications_enabled: z.boolean(),
 });

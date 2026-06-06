@@ -7,7 +7,6 @@ export const auditActionSchema = z.enum([
   'create_seat',
   'update_seat',
   'delete_seat',
-  'auto_expire',
   'create_access',
   'update_access',
   'delete_access',

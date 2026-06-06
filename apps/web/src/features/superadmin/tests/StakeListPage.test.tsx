@@ -63,7 +63,6 @@ function makeStake(overrides: Partial<Stake> = {}): Stake {
     bootstrap_admin_email: 'admin@csnorth.org',
     setup_complete: true,
     stake_seat_cap: 200,
-    expiry_hour: 4,
     timezone: 'America/Denver',
     notifications_enabled: true,
     last_over_caps_json: [],

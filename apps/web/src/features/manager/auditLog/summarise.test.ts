@@ -446,7 +446,6 @@ describe('auditActionCategory', () => {
   });
 
   it('categorises system events as "system"', () => {
-    expect(auditActionCategory('auto_expire')).toBe('system');
     expect(auditActionCategory('over_cap_warning')).toBe('system');
     expect(auditActionCategory('setup_complete')).toBe('system');
   });

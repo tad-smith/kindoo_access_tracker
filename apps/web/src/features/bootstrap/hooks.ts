@@ -89,9 +89,9 @@ export interface Step1Input {
 /**
  * Step 1 — write stake-level config fields. The stake doc is created
  * by the platform superadmin via `createStake` callable; the wizard
- * only updates it. Defaults for `expiry_hour` / `timezone` /
- * `notifications_enabled` are seeded by `createStake` (or assumed
- * already present); we only touch what the wizard exposes.
+ * only updates it. Defaults for `timezone` / `notifications_enabled`
+ * are seeded by `createStake` (or assumed already present); we only
+ * touch what the wizard exposes.
  */
 export function useStep1Mutation() {
   const principal = usePrincipal();

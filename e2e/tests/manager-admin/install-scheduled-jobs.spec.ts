@@ -80,10 +80,10 @@ test.describe('Bootstrap wizard install-scheduled-jobs (live Functions emulator)
     const adminEmail = 'admin@example.com';
 
     // Pre-seed a stake doc with `setup_complete=false` plus the
-    // schedule fields the callable's defensive checks require. Step 1
-    // of the wizard only collects `stake_name + stake_seat_cap`; the
-    // rest are seeded by `createStake` (Phase 12). Mirror that here so
-    // the callable's `failed-precondition` checks pass after Complete
+    // `timezone` the callable's defensive check requires. Step 1 of the
+    // wizard only collects `stake_name + stake_seat_cap`; the rest are
+    // seeded by `createStake` (Phase 12). Mirror that here so the
+    // callable's `failed-precondition` check passes after Complete
     // Setup flips setup_complete.
     await writeDoc(`stakes/${STAKE_ID}`, {
       stake_id: STAKE_ID,
@@ -91,7 +91,6 @@ test.describe('Bootstrap wizard install-scheduled-jobs (live Functions emulator)
       bootstrap_admin_email: adminEmail,
       setup_complete: false,
       stake_seat_cap: 0,
-      expiry_hour: 3,
       timezone: 'America/Denver',
       notifications_enabled: true,
     });

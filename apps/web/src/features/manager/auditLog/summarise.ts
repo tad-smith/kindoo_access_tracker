@@ -62,12 +62,6 @@ export function summariseAuditRow(row: AuditLog): string {
     if (typeof o.error === 'string' && o.error) bits.push(`ERROR: ${o.error}`);
     if (bits.length > 0) return bits.join(', ');
   }
-  if (action === 'auto_expire' && before && typeof before === 'object') {
-    const b = before as Record<string, unknown>;
-    const who = (b.member_name as string) || (b.member_email as string) || '(unknown)';
-    const end = b.end_date ? ` (end ${b.end_date as string})` : '';
-    return `expired temp seat for ${who}${end}`;
-  }
   if (before == null && after && typeof after === 'object') {
     return `insert: ${topKeysSummary(after as Record<string, unknown>)}`;
   }
@@ -445,7 +439,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  *
  *  - `crud`    — create_*, update_*, delete_* on entity docs
  *  - `request` — submit / complete / reject / cancel request
- *  - `system`  — auto_expire, over_cap_warning, setup_complete, ...
+ *  - `system`  — over_cap_warning, setup_complete, ...
  *  - `import`  — import_start, import_end
  *  - `default` — fallback (unknown action; renders neutral grey)
  */
@@ -462,7 +456,6 @@ export function auditActionCategory(action: AuditLog['action']): AuditActionCate
   // `*_request` lifecycle events. `reject_request` is excluded above.
   if (action.endsWith('_request')) return 'request';
   if (action.startsWith('import_')) return 'import';
-  if (action === 'auto_expire' || action === 'over_cap_warning' || action === 'setup_complete')
-    return 'system';
+  if (action === 'over_cap_warning' || action === 'setup_complete') return 'system';
   return 'default';
 }
