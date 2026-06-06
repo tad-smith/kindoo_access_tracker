@@ -326,10 +326,10 @@ describe('<BishopricRosterPage />', () => {
     it('renders a "New Request" button in the page header', () => {
       // Bishopric Roster is the post-login default for bishopric
       // principals (per `routing.defaultLandingFor`). The header
-      // carries a quick affordance that opens the New Request modal.
-      // The `bishopric-roster-new-request` testid lets the E2E suite
-      // disambiguate this button from the nav-rail "New Request" Quick
-      // Link (both read identically by accessible name).
+      // carries the New Request affordance — the sole entry point for
+      // creating a request — which opens the modal on click. The
+      // `bishopric-roster-new-request` testid lets the E2E suite target
+      // this specific button.
       usePrincipalMock.mockReturnValue(principal(['CO']));
       mockSeats([]);
       mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
