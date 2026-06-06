@@ -4,7 +4,12 @@
 import { describe, expect, it } from 'vitest';
 import type { DuplicateGrant } from '@kindoo/shared';
 import { makeSeat } from '../../test/fixtures';
-import { collapseSameScopeGrants, grantsForDisplay, pickGrantForScope } from './grants';
+import {
+  collapseSameScopeGrants,
+  grantsForDisplay,
+  pickGrantForScope,
+  resolveGrantOrgId,
+} from './grants';
 
 const NOW: DuplicateGrant['detected_at'] = {
   seconds: 0,
@@ -398,5 +403,50 @@ describe('collapseSameScopeGrants', () => {
     const views = collapseSameScopeGrants(grantsForDisplay(seat));
     expect(views).toHaveLength(1);
     expect(views[0]!.building_names).toEqual(['B1', 'B2', 'B3', 'B4']);
+  });
+});
+
+describe('resolveGrantOrgId', () => {
+  it('reads the seat top-level organization_id for the primary grant', () => {
+    const seat = makeSeat({ scope: 'stake', organization_id: 'choir', duplicate_grants: [] });
+    const [primary] = grantsForDisplay(seat);
+    expect(resolveGrantOrgId(seat, primary!)).toBe('choir');
+  });
+
+  it('returns null for a primary grant with no organization', () => {
+    const seat = makeSeat({ scope: 'stake', duplicate_grants: [] });
+    const [primary] = grantsForDisplay(seat);
+    expect(resolveGrantOrgId(seat, primary!)).toBeNull();
+  });
+
+  it("reads the duplicate's own organization_id for a duplicate grant", () => {
+    const seat = makeSeat({
+      scope: 'CO',
+      organization_id: 'choir',
+      duplicate_grants: [
+        {
+          scope: 'stake',
+          type: 'manual',
+          kindoo_site_id: null,
+          organization_id: 'youth',
+          detected_at: NOW,
+        },
+      ],
+    });
+    const [, dup] = grantsForDisplay(seat);
+    // The duplicate carries its own org, not the seat's primary org.
+    expect(resolveGrantOrgId(seat, dup!)).toBe('youth');
+  });
+
+  it('returns null when a duplicate grant has no organization', () => {
+    const seat = makeSeat({
+      scope: 'CO',
+      organization_id: 'choir',
+      duplicate_grants: [
+        { scope: 'stake', type: 'manual', kindoo_site_id: null, detected_at: NOW },
+      ],
+    });
+    const [, dup] = grantsForDisplay(seat);
+    expect(resolveGrantOrgId(seat, dup!)).toBeNull();
   });
 });
