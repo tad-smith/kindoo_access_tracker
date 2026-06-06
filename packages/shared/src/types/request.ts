@@ -140,5 +140,14 @@ export type AccessRequest = {
    */
   kindoo_site_id?: string | null;
 
+  /**
+   * Organization the requested stake-scope grant belongs to. Optional;
+   * meaningful only on stake-scope requests (the optional org selector
+   * on add/edit). `null` / absent means "No Organization". Immutable
+   * slug id pointing at a doc under `stakes/{stakeId}/organizations/`;
+   * resolves id→name at render time.
+   */
+  organization_id?: string | null;
+
   lastActor: ActorRef;
 };
