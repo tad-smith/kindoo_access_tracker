@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeOverCaps } from './overCaps.js';
-import type { Seat, Ward } from '@kindoo/shared';
+import type { DuplicateGrant, Seat, Ward } from '@kindoo/shared';
 
 const seat = (overrides: Partial<Seat> = {}): Seat =>
   ({
@@ -27,6 +27,20 @@ const ward = (overrides: Partial<Ward> = {}): Ward =>
 /** `ward_code → kindoo_site_id`. Wards omitted here classify as home. */
 const sites = (entries: Record<string, string | null> = {}): Map<string, string | null> =>
   new Map(Object.entries(entries));
+
+/** A `duplicate_grants[]` entry. */
+const dup = (overrides: Partial<DuplicateGrant> = {}): DuplicateGrant =>
+  ({
+    scope: 'stake',
+    type: 'auto',
+    kindoo_site_id: null,
+    detected_at: 0,
+    ...overrides,
+  }) as DuplicateGrant;
+
+/** A parallel-site (home) stake grant entry for `duplicate_grants[]`. */
+const stakeDup = (overrides: Partial<DuplicateGrant> = {}): DuplicateGrant =>
+  dup({ scope: 'stake', type: 'manual', kindoo_site_id: null, ...overrides });
 
 describe('computeOverCaps', () => {
   it('returns empty when nothing is over', () => {
@@ -140,5 +154,132 @@ describe('computeOverCaps', () => {
     const wards = [ward({ ward_code: 'CO', seat_cap: 50 })];
     const out = computeOverCaps({ seats, wards, stakeSeatCap: 20, wardSites: sites() }); // CO un-mapped
     expect(out).toContainEqual({ pool: 'stake', count: 16, cap: 15, over_by: 1 });
+  });
+
+  it('counts a foreign-ward primary with a stake duplicate toward the stake pool', () => {
+    // One foreign-ward-primary seat carrying a parallel-site stake grant.
+    // Its primary is foreign (excluded from homeWardSeatsN) and isn't
+    // 'stake', so before the fix stakeN was 0. The stake duplicate
+    // consumes a home license → stakeN = 1. portionCap = 1 → not over.
+    const seats = [
+      seat({
+        member_canonical: 'f@gmail.com',
+        scope: 'FN',
+        duplicate_grants: [stakeDup()],
+      }),
+    ];
+    const wards = [ward({ ward_code: 'FN', seat_cap: 50 })];
+    const out = computeOverCaps({
+      seats,
+      wards,
+      stakeSeatCap: 1,
+      wardSites: sites({ FN: 'east-stake' }),
+    });
+    expect(out).toEqual([]);
+    // Drop the home portion to 0: the single parallel-site dup is over by 1.
+    const overOut = computeOverCaps({
+      seats: [
+        ...seats,
+        seat({ member_canonical: 'h@gmail.com', scope: 'CO' }), // home ward shrinks portion to 0
+      ],
+      wards: [...wards, ward({ ward_code: 'CO', seat_cap: 50 })],
+      stakeSeatCap: 1,
+      wardSites: sites({ FN: 'east-stake', CO: null }),
+    });
+    expect(overOut).toContainEqual({ pool: 'stake', count: 1, cap: 0, over_by: 1 });
+  });
+
+  it('does not double-count a stake-primary seat that also has ward duplicates', () => {
+    // Stake-primary already lands in stakeN via primary scope; ward
+    // duplicates on it must not bump it again. 1 stake seat, portion = 1
+    // → exactly at cap, not over.
+    const seats = [
+      seat({
+        member_canonical: 's@gmail.com',
+        scope: 'stake',
+        duplicate_grants: [dup({ scope: 'CO', kindoo_site_id: null })],
+      }),
+    ];
+    const wards = [ward({ ward_code: 'CO', seat_cap: 50 })];
+    const out = computeOverCaps({
+      seats,
+      wards,
+      stakeSeatCap: 1,
+      wardSites: sites({ CO: null }),
+    });
+    expect(out).toEqual([]);
+  });
+
+  it('does not double-count a home-ward primary that also has a stake duplicate', () => {
+    // Home-ward-primary is already in homeWardSeatsN; its stake duplicate
+    // must not also bump stakeN. 1 home-ward seat (portion = cap - 1 = 0)
+    // + 0 stake-scope. If the stake dup leaked into stakeN it would read
+    // 1 > 0 and fire a false over-cap. It must NOT.
+    const seats = [
+      seat({
+        member_canonical: 'h@gmail.com',
+        scope: 'CO',
+        duplicate_grants: [stakeDup()],
+      }),
+    ];
+    const wards = [ward({ ward_code: 'CO', seat_cap: 50 })];
+    const out = computeOverCaps({
+      seats,
+      wards,
+      stakeSeatCap: 1,
+      wardSites: sites({ CO: null }),
+    });
+    expect(out).toEqual([]);
+  });
+
+  it('parallel-site stake dups push the stake pool over the portion-cap', () => {
+    // 5 home-ward seats → portion = 20 - 5 = 15. 10 stake-primary +
+    // 6 foreign-ward-primary seats each carrying a stake duplicate.
+    // stakeN = 10 + 6 = 16 > 15 → over by 1. Without the fix stakeN
+    // would be 10 (the six parallel-site licenses invisible) and no
+    // warning would fire.
+    const seats = [
+      ...Array.from({ length: 5 }, (_, i) => seat({ member_canonical: `h${i}`, scope: 'CO' })),
+      ...Array.from({ length: 10 }, (_, i) => seat({ member_canonical: `s${i}`, scope: 'stake' })),
+      ...Array.from({ length: 6 }, (_, i) =>
+        seat({ member_canonical: `f${i}`, scope: 'FN', duplicate_grants: [stakeDup()] }),
+      ),
+    ];
+    const wards = [
+      ward({ ward_code: 'CO', seat_cap: 50 }),
+      ward({ ward_code: 'FN', seat_cap: 50 }),
+    ];
+    const out = computeOverCaps({
+      seats,
+      wards,
+      stakeSeatCap: 20,
+      wardSites: sites({ CO: null, FN: 'east-stake' }),
+    });
+    expect(out).toContainEqual({ pool: 'stake', count: 16, cap: 15, over_by: 1 });
+  });
+
+  it('ignores a within-site (non-stake) duplicate on a foreign-ward primary', () => {
+    // Foreign-ward-primary with a foreign-ward duplicate (no stake grant)
+    // consumes no home license. stakeN stays 0 → no stake over-cap, and
+    // the foreign primary stays out of homeWardSeatsN. Confirms the fix
+    // keys off scope === 'stake', not "any duplicate present".
+    const seats = [
+      seat({
+        member_canonical: 'f@gmail.com',
+        scope: 'FN',
+        duplicate_grants: [dup({ scope: 'GN', kindoo_site_id: 'east-stake' })],
+      }),
+    ];
+    const wards = [
+      ward({ ward_code: 'FN', seat_cap: 50 }),
+      ward({ ward_code: 'GN', seat_cap: 50 }),
+    ];
+    const out = computeOverCaps({
+      seats,
+      wards,
+      stakeSeatCap: 1,
+      wardSites: sites({ FN: 'east-stake', GN: 'east-stake' }),
+    });
+    expect(out).toEqual([]);
   });
 });
