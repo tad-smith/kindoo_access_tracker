@@ -145,7 +145,7 @@ describe('<ManagerQueuePage />', () => {
     expect(screen.queryByTestId('queue-reject-r2')).toBeNull();
   });
 
-  it('renders the member on a "Give Access To" row with name + (email) format', () => {
+  it('renders the member on a "Give Access To" row via the shared name/email line', () => {
     const requests = [
       makeRequest({
         request_id: 'r1',
@@ -159,10 +159,15 @@ describe('<ManagerQueuePage />', () => {
     render(<ManagerQueuePage />);
     const card = screen.getByTestId('queue-card-r1');
     expect(within(card).getByText(/Give Access To:/)).toBeInTheDocument();
-    expect(card.textContent).toMatch(/Test User \(tad\.e\.smith@gmail\.com\)/);
+    // jsdom has no media queries, so both forms exist in the DOM: the bold
+    // name, the desktop parens, the mobile `email:` label, and the email.
+    const member = card.querySelector('.roster-card-member');
+    expect(member?.querySelector('.roster-card-name')?.textContent).toBe('Test User');
+    expect(member?.querySelector('.roster-card-email-label')?.textContent).toBe('email:');
+    expect(member?.querySelector('.roster-email')?.textContent).toBe('tad.e.smith@gmail.com');
   });
 
-  it('falls back to bare email on the Give Access To row when member_name is empty (add)', () => {
+  it('falls back to bare email (no name, no label) on the Give Access To row when member_name is empty (add)', () => {
     const requests = [
       makeRequest({
         request_id: 'r1',
@@ -177,7 +182,10 @@ describe('<ManagerQueuePage />', () => {
     render(<ManagerQueuePage />);
     const card = screen.getByTestId('queue-card-r1');
     expect(within(card).getByText(/Give Access To:/)).toBeInTheDocument();
-    expect(card.textContent).toMatch(/Give Access To:\s*a@x\.com/);
+    const member = card.querySelector('.roster-card-member');
+    expect(member?.querySelector('.roster-card-name')).toBeNull();
+    expect(member?.querySelector('.roster-card-email-label')).toBeNull();
+    expect(member?.querySelector('.roster-email')?.textContent).toBe('a@x.com');
   });
 
   it('uses "Remove Access For:" — not "Give Access To:" — on remove requests', () => {

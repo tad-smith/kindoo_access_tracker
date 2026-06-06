@@ -36,6 +36,7 @@ import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
 import { Select } from '../../../components/ui/Select';
 import { Badge } from '../../../components/ui/Badge';
+import { RosterMemberLine } from '../../../components/roster/RosterMemberLine';
 import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
 import { isScopeAllowed } from '../../requests/scopeOptions';
 import { usePrincipal } from '../../../lib/principal';
@@ -413,23 +414,6 @@ function GrantRowCard({
     <div className="roster-card-line2">{buildingsChip}</div>
   ) : null;
 
-  const memberInner = seat.member_name ? (
-    <>
-      <span className="roster-card-name">{seat.member_name}</span>{' '}
-      <span>
-        (
-        <span className="roster-email" title={seat.member_email}>
-          {seat.member_email}
-        </span>
-        )
-      </span>
-    </>
-  ) : (
-    <span className="roster-email" title={seat.member_email}>
-      {seat.member_email}
-    </span>
-  );
-
   return (
     <div
       className={`roster-card roster-card--two-line type-${grant.type}`}
@@ -479,7 +463,9 @@ function GrantRowCard({
         </span>
       </div>
       <div className="roster-card-member-line">
-        <span className="roster-card-member">{memberInner}</span>
+        <span className="roster-card-member">
+          <RosterMemberLine name={seat.member_name} email={seat.member_email} />
+        </span>
       </div>
       {callingLine}
       {buildingsLine}

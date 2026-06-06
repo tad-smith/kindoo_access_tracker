@@ -97,6 +97,42 @@ describe('<MyRequestsPage />', () => {
     expect(screen.getByTestId('myrequest-r2')).toHaveAttribute('data-status', 'complete');
   });
 
+  it('renders the member via the shared name/email line', () => {
+    usePrincipalMock.mockReturnValue(principal());
+    mockRequests([
+      makeRequest({
+        request_id: 'r1',
+        status: 'pending',
+        member_name: 'Bob Example',
+        member_email: 'bob@example.com',
+      }),
+    ]);
+    render(<MyRequestsPage />);
+    // jsdom has no media queries, so assert DOM presence: the bold name,
+    // the mobile `email:` label, and the email all exist in the markup.
+    const member = screen.getByTestId('myrequest-r1').querySelector('.roster-card-member');
+    expect(member?.querySelector('.roster-card-name')?.textContent).toBe('Bob Example');
+    expect(member?.querySelector('.roster-card-email-label')?.textContent).toBe('email:');
+    expect(member?.querySelector('.roster-email')?.textContent).toBe('bob@example.com');
+  });
+
+  it('renders just the email (no name, no label) when member_name is empty', () => {
+    usePrincipalMock.mockReturnValue(principal());
+    mockRequests([
+      makeRequest({
+        request_id: 'r1',
+        status: 'pending',
+        member_name: '',
+        member_email: 'bare@example.com',
+      }),
+    ]);
+    render(<MyRequestsPage />);
+    const member = screen.getByTestId('myrequest-r1').querySelector('.roster-card-member');
+    expect(member?.querySelector('.roster-card-name')).toBeNull();
+    expect(member?.querySelector('.roster-card-email-label')).toBeNull();
+    expect(member?.querySelector('.roster-email')?.textContent).toBe('bare@example.com');
+  });
+
   it('labels edit_* requests with the right edit-family badge text', () => {
     usePrincipalMock.mockReturnValue(principal());
     mockRequests([

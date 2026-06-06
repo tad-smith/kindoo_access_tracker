@@ -88,6 +88,17 @@ describe('PerGrantRosterCard layout', () => {
     expect(memberLine?.textContent).toContain('member.one@example.com');
   });
 
+  it('renders the mobile email: label and bold name in the member block', () => {
+    // jsdom skips media queries; assert the label DOM exists (CSS toggles
+    // its visibility at ≤480px) rather than its computed display.
+    const { container } = renderCard();
+
+    const member = container.querySelector('.roster-card-member');
+    expect(member?.querySelector('.roster-card-name')?.textContent).toBe('Member One');
+    expect(member?.querySelector('.roster-card-email-label')?.textContent).toBe('email:');
+    expect(member?.querySelector('.roster-email')?.textContent).toBe('member.one@example.com');
+  });
+
   it('keeps the member line present even when there are no actions', () => {
     const { container } = renderCard({ canEdit: false, canRemove: false });
 
