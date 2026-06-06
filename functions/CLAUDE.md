@@ -33,7 +33,6 @@ src/
 ├── scheduled/
 │   └── reconcileAuditGaps.ts          # nightly; alerts on audit-log gaps
 ├── callable/
-│   ├── installScheduledJobs.ts        # manager-only; no-op verifier — single-loop scheduler pattern means there's nothing per-stake to install
 │   ├── getMyPendingRequests.ts        # signed-in caller's pending requests across roles
 │   ├── markRequestComplete.ts         # manager-invoked; completes a request + writes seats
 │   ├── syncApplyFix.ts                # extension Sync per-row fix applier (auto + manual + temp paths)
