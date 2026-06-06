@@ -52,11 +52,37 @@
   margin: 0;
 }
 
+/* Page-title row: the page `<h1>` on the left with a primary action
+   right-aligned on the same line. `max-width` caps the row at
+   `--kd-roster-width` so the button's right edge aligns with the
+   utilization bar below it, matching `.kd-page-header-row`. Wraps on
+   narrow viewports so the button drops below the title. */
+.kd-page-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  max-width: var(--kd-roster-width);
+}
+
+.kd-page-title-row h1 {
+  margin: 0;
+}
+
 .kd-ward-select-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
   margin: 14px 0 18px;
+  max-width: var(--kd-roster-width);
+}
+
+/* New Request affordance pinned to the end of the ward-selection line,
+   right-aligned to the row's `--kd-roster-width` edge. */
+.kd-ward-select-action {
+  margin-left: auto;
 }
 
 .kd-ward-select-row label {

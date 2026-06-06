@@ -40,6 +40,7 @@ vi.mock('../../../lib/store/toast', () => ({
 }));
 
 import { NewRequestForm } from '../components/NewRequestForm';
+import { Dialog } from '../../../components/ui/Dialog';
 
 function liveSeatResult(seat: Seat | undefined) {
   return {
@@ -1527,5 +1528,72 @@ describe('<NewRequestForm /> — Kindoo Sites building filter (spec §15)', () =
     await user.click(screen.getByTestId('new-request-buildings-trigger'));
     expect(screen.getByTestId('new-request-building-pine')).toBeInTheDocument();
     expect(screen.queryByTestId('new-request-building-maple')).toBeNull();
+  });
+});
+
+describe('<NewRequestForm /> — dialog mode', () => {
+  // Dialog mode is keyed off `onSubmitted` being supplied. The actions
+  // then render inside a Dialog.Footer (Cancel + Submit); a successful
+  // submit calls `onSubmitted` (the dialog closes + unmounts the form,
+  // so no post-submit reset) and Cancel calls `onCancel` without
+  // submitting. Page mode (both props omitted) is unchanged and covered
+  // by the rest of this file. The footer's Cancel button wraps
+  // Radix's Dialog.Close, which requires a Dialog Root ancestor — so
+  // dialog-mode renders wrap the form in a real <Dialog>.
+
+  function renderDialogMode(props: {
+    onSubmitted: () => void;
+    onCancel: () => void;
+    scopes?: { value: string; label: string }[];
+  }) {
+    const scopes = props.scopes ?? [{ value: 'CO', label: 'Ward CO' }];
+    return render(
+      <Dialog open onOpenChange={() => {}} title="New Request">
+        <NewRequestForm
+          scopes={scopes}
+          buildings={buildings()}
+          wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
+          onSubmitted={props.onSubmitted}
+          onCancel={props.onCancel}
+        />
+      </Dialog>,
+    );
+  }
+
+  it('renders a Cancel button in dialog mode', () => {
+    renderDialogMode({ onSubmitted: () => {}, onCancel: () => {} });
+    expect(screen.getByTestId('new-request-cancel')).toBeInTheDocument();
+  });
+
+  it('does not render a Cancel button in page mode', () => {
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
+      />,
+    );
+    expect(screen.queryByTestId('new-request-cancel')).toBeNull();
+  });
+
+  it('calls onSubmitted on a successful submit', async () => {
+    const user = userEvent.setup();
+    const onSubmitted = vi.fn();
+    renderDialogMode({ onSubmitted, onCancel: () => {} });
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(onSubmitted).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onCancel and does not submit when Cancel is clicked', async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    renderDialogMode({ onSubmitted: () => {}, onCancel });
+    await user.click(screen.getByTestId('new-request-cancel'));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(submitMock).not.toHaveBeenCalled();
   });
 });

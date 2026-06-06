@@ -18,17 +18,14 @@
 // paths route here via TanStack-Router redirects so external links
 // keep working. `?scope=` (forwarded as `initialScope`) pre-selects the
 // scope dropdown when it matches one of the principal's allowed scopes.
+//
+// The form data (scopes / buildings / wards) comes from the shared
+// `useNewRequestFormData` hook — the same hook the roster-header
+// `NewRequestDialog` consumes, so page and dialog can't diverge.
 
-import { useMemo } from 'react';
-import { usePrincipal } from '../../../lib/principal';
-import { useActiveStake } from '../../../lib/useActiveStake';
-import { useFirestoreCollection } from '../../../lib/data';
-import { buildingsCol, wardsCol } from '../../../lib/docs';
-import { db } from '../../../lib/firebase';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
-import type { Building, Ward } from '@kindoo/shared';
 import { NewRequestForm } from '../components/NewRequestForm';
-import { allowedScopesFor } from '../scopeOptions';
+import { useNewRequestFormData } from '../hooks';
 
 export interface NewRequestPageProps {
   /** Pre-selected scope from `?scope=...`. Applied by the form only if
@@ -37,42 +34,19 @@ export interface NewRequestPageProps {
 }
 
 export function NewRequestPage({ initialScope }: NewRequestPageProps = {}) {
-  const principal = usePrincipal();
-  const activeStakeId = useActiveStake();
-
-  // Buildings catalogue (for stake-scope checkbox group). The form
-  // needs it whenever 'stake' is one of the available scopes; cheap
-  // no-op subscription otherwise.
-  const buildingsQuery = useMemo(
-    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
-    [activeStakeId],
-  );
-  const buildings = useFirestoreCollection<Building>(buildingsQuery);
-
-  // Wards catalogue. Used by the form to auto-populate building_names
-  // for ward-scope requests from each ward's `building_name`.
-  const wardsQuery = useMemo(
-    () => (activeStakeId ? wardsCol(db, activeStakeId) : null),
-    [activeStakeId],
-  );
-  const wards = useFirestoreCollection<Ward>(wardsQuery);
-
-  const scopes = useMemo(
-    () => (activeStakeId ? allowedScopesFor(principal, activeStakeId, wards.data ?? []) : []),
-    [principal, activeStakeId, wards.data],
-  );
+  const { scopes, buildings, wards, isLoading } = useNewRequestFormData();
 
   return (
     <section className="kd-page-narrow">
       <h1>New Request</h1>
       <p className="kd-page-subtitle">Submit a manual or temporary access request.</p>
-      {buildings.isLoading || buildings.data === undefined ? (
+      {isLoading ? (
         <LoadingSpinner />
       ) : (
         <NewRequestForm
           scopes={scopes}
-          buildings={buildings.data}
-          wards={wards.data ?? []}
+          buildings={buildings}
+          wards={wards}
           {...(initialScope !== undefined ? { initialScope } : {})}
         />
       )}

@@ -54,24 +54,29 @@ vi.mock('../../lib/principal', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
-  // Render an `<a>` with `to` → `href` and the typed `search` object
-  // surfaced as `data-scope` so tests can assert the pre-select target
-  // without spreading the object onto the DOM node.
-  Link: ({
-    to,
-    search,
-    children,
-    ...rest
-  }: {
-    to: string;
-    search?: { scope?: string };
-    children?: React.ReactNode;
-  } & Record<string, unknown>) => (
-    <a href={to} data-scope={search?.scope} {...rest}>
-      {children}
-    </a>
-  ),
 }));
+
+// The New Request header button is now a modal trigger. Stub the
+// affordance with a button that surfaces the forwarded scope as
+// `data-scope` and, on click, reveals a marker so tests can assert the
+// modal opens (instead of the old route navigation). The dialog itself
+// is covered by NewRequestDialog.test.tsx.
+vi.mock('../requests/components/NewRequestAffordance', async () => {
+  const { useState } = await import('react');
+  return {
+    NewRequestAffordance: ({ scope, testId }: { scope: string; testId: string }) => {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button data-testid={testId} data-scope={scope} onClick={() => setOpen(true)}>
+            New Request
+          </button>
+          {open ? <div data-testid="new-request-dialog-open" /> : null}
+        </>
+      );
+    },
+  };
+});
 
 function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
   return {
@@ -202,18 +207,40 @@ describe('<WardRostersPage />', () => {
   });
 
   describe('New Request header action', () => {
-    it('shows the "New Request" link pre-selecting the selected ward when the viewer is in its bishopric', () => {
+    it('shows the "New Request" button pre-selecting the selected ward when the viewer is in its bishopric', () => {
       usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
       mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([makeSeat({ scope: 'CO' })]);
       render(<WardRostersPage initialWard="CO" />);
-      const link = screen.getByTestId('ward-rosters-new-request');
-      expect(link).toHaveTextContent('New Request');
-      expect(link).toHaveAttribute('href', '/new');
-      expect(link).toHaveAttribute('data-scope', 'CO');
+      const btn = screen.getByTestId('ward-rosters-new-request');
+      expect(btn).toHaveTextContent('New Request');
+      expect(btn).toHaveAttribute('data-scope', 'CO');
     });
 
-    it('hides the New Request link when a ward outside the viewer’s bishopric is selected', () => {
+    it('opens the New Request modal when the button is clicked (no route change)', async () => {
+      const user = userEvent.setup();
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'CO' })]);
+      render(<WardRostersPage initialWard="CO" />);
+      expect(screen.queryByTestId('new-request-dialog-open')).toBeNull();
+      await user.click(screen.getByTestId('ward-rosters-new-request'));
+      expect(screen.getByTestId('new-request-dialog-open')).toBeInTheDocument();
+    });
+
+    it('renders the New Request button at the end of the ward-selection row', () => {
+      // Placement: the affordance lives inside `.kd-ward-select-row`
+      // (same line as the Ward: label + combobox), not in a separate
+      // header row.
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'CO' })]);
+      render(<WardRostersPage initialWard="CO" />);
+      const btn = screen.getByTestId('ward-rosters-new-request');
+      expect(btn.closest('.kd-ward-select-row')).not.toBeNull();
+    });
+
+    it('hides the New Request button when a ward outside the viewer’s bishopric is selected', () => {
       usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
       mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
       mockSeats([makeSeat({ scope: 'GE' })]);
@@ -221,7 +248,7 @@ describe('<WardRostersPage />', () => {
       expect(screen.queryByTestId('ward-rosters-new-request')).toBeNull();
     });
 
-    it('hides the New Request link when no ward is selected', () => {
+    it('hides the New Request button when no ward is selected', () => {
       usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
       mockWards([makeWard({ ward_code: 'CO' })]);
       mockSeats(undefined);
@@ -229,7 +256,7 @@ describe('<WardRostersPage />', () => {
       expect(screen.queryByTestId('ward-rosters-new-request')).toBeNull();
     });
 
-    it('hides the New Request link for a stake-only viewer (stake authority does not extend to wards)', () => {
+    it('hides the New Request button for a stake-only viewer (stake authority does not extend to wards)', () => {
       usePrincipalMock.mockReturnValue(principal({ stake: true }));
       mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([makeSeat({ scope: 'CO' })]);

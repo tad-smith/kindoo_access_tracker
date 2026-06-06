@@ -19,7 +19,7 @@
 //                        principal isn't in that ward.
 
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from '@tanstack/react-router';
+import { useNavigate } from '@tanstack/react-router';
 import type { Seat } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { useActiveStake } from '../../lib/useActiveStake';
@@ -35,6 +35,7 @@ import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { PerGrantRosterCard } from '../../components/roster/PerGrantRosterCard';
 import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
+import { NewRequestAffordance } from '../requests/components/NewRequestAffordance';
 import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterPending';
 import { canEditSeat, isScopeAllowed } from '../requests/scopeOptions';
@@ -143,15 +144,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
         <p className="kd-page-subtitle">
           {activeWard ? scopeLabel(activeWard, wardsCatalogue.data ?? []) : 'Select a ward'}
         </p>
-        <Button asChild variant="default">
-          <Link
-            to="/new"
-            {...(activeWard ? { search: { scope: activeWard } } : {})}
-            data-testid="bishopric-roster-new-request"
-          >
-            New Request
-          </Link>
-        </Button>
+        <NewRequestAffordance scope={activeWard ?? ''} testId="bishopric-roster-new-request" />
       </div>
 
       {wards.length > 1 ? (
