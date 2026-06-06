@@ -159,6 +159,10 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   notifications_reply_to?: string;     // optional reply-to address; when unset, EmailService omits the Reply-To header
 
   // Operational state (`last_over_caps_json` written by request-completion over-cap recomputes; read by manager UI)
+  // The `pool: 'stake'` entry's `count` is the home stake count: stake-primary seats
+  // plus one per foreign-ward-primary seat carrying a parallel-site `scope:'stake'`
+  // duplicate grant (those consume a home Kindoo license). See spec §244 for the
+  // full computation; `cap` is the home stake portion-cap (`stake_seat_cap - home-site ward seats`).
   last_over_caps_json: Array<{
     pool: 'stake' | string;            // string = ward_code
     count: number;
@@ -446,6 +450,7 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 - For `remove`, server-side guards (rules + client tx): no pending-pending duplicate for same (scope, member); no remove against a non-existent manual/temp seat (the latter caught by client tx, not rules).
 - `urgent` is set at create time (rules validate `urgent is bool`) and immutable thereafter — the cancel/complete/reject `affectedKeys()` allowlists exclude it.
 - Edit types (`edit_auto`, `edit_manual`, `edit_temp`) — see [`spec.md`](spec.md) §6.1. `edit_auto` is forbidden at `scope == 'stake'` (Policy 1) at three layers: web UI, rules, and the `markRequestComplete` callable. `edit_temp` carries `start_date` + `end_date` with the same ISO YYYY-MM-DD + start <= end shape as `add_temp`. All three edit types require a non-empty `comment` at creation time, enforced by the shared zod schema, the Firestore rule, and the web form.
+- A Kindoo Manager may create an `add_manual` / `scope: 'stake'` request without a stake claim — the "Give Access To Stake Buildings" carve-out (§6 create rule, [`spec.md`](spec.md) §6.1 / §15, PR #223). This is the only request type for which manager status alone authorises a stake-scope create; every other stake-scope type requires the stake claim.
 
 ### 4.8 `wardCallingTemplates` / `stakeCallingTemplates` — REMOVED
 
@@ -872,6 +877,15 @@ service cloud.firestore {
           && (
                (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
             || (request.resource.data.scope in bishopricWardOf(stakeId))
+            // Narrow "Give Access To Stake Buildings" carve-out: a manager
+            // may create a stake-scope request WITHOUT a stake claim, but
+            // ONLY for add_manual (every other stake-scope type still
+            // requires the stake claim through the branch above).
+            || (
+                 request.resource.data.scope == 'stake'
+              && request.resource.data.type == 'add_manual'
+              && isManager(stakeId)
+            )
           );
 
         // State transition: pending → {complete, rejected, cancelled}
@@ -916,6 +930,7 @@ service cloud.firestore {
 - **Cross-stake denial is automatic** — `isAnyMember(stakeId)` returns false when the user has no claims for that stakeId, so reads are denied at the stake-doc level and inherit through.
 - **Admin SDK writes bypass everything** — the Cloud Functions (audit triggers, claim sync, request-completion callables) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
 - **Requests-create role-for-scope gate (B-3 / T-36)** — the submit predicate requires the caller hold the role matching the scope being written: `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. Manager status alone does NOT grant creation rights — a pure-manager user with no stake / no ward claim has no submit surface. A manager who also holds `stake: true` or a bishopric ward inherits creation rights through those branches. The SPA's `allowedScopesFor` filter (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer.
+- **Manager `add_manual` stake carve-out ("Give Access To Stake Buildings")** — one narrow exception to the role-for-scope gate above: a Kindoo Manager (no stake claim required) may create a request when `request.resource.data.scope == 'stake' && request.resource.data.type == 'add_manual'`. This is the third branch of the create predicate's role-for-scope `&& (...)` clause. It backs the manager-only All Seats affordance that grants a foreign-site-only member home-site stake access (`spec.md` §6.1 / §15). Manager creation stays BLOCKED for every other stake-scope type — `add_temp`, `edit_auto`, `edit_manual`, `edit_temp`, and `remove` still require the stake claim through the first branch. The web mirror is `GrantStakeAccessDialog` (which submits exactly `add_manual` / `scope: 'stake'`); this rule is the defense-in-depth layer that keeps a hand-crafted POST inside the same carve-out. PR #223.
 
 #### Bootstrap-admin gate
 

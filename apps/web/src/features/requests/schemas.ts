@@ -300,3 +300,21 @@ export const editSeatSchema = z
   });
 
 export type EditSeatForm = z.infer<typeof editSeatSchema>;
+
+/**
+ * "Give Access To Stake Buildings" modal schema — the manager-only
+ * affordance on All Seats that grants a foreign-site-only member a
+ * stake-scope seat (home-site buildings). Scope is locked to `'stake'`
+ * by the dialog, so it carries no scope field. Reason is a required
+ * free-text Input (the calling typeahead is intentionally NOT used —
+ * a stake building grant isn't calling-derived). Comment is optional.
+ * At least one building must be selected. Submits as `add_manual` /
+ * `scope: 'stake'` through the existing submit path.
+ */
+export const grantStakeAccessSchema = z.object({
+  reason: z.string().trim().min(1, 'Reason is required.'),
+  comment: z.string(),
+  building_names: z.array(z.string()).min(1, 'Pick at least one building.'),
+});
+
+export type GrantStakeAccessForm = z.infer<typeof grantStakeAccessSchema>;

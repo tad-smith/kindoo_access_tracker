@@ -298,6 +298,19 @@
   font-size: 0.92em;
 }
 
+/* Prominent danger banner at the top of a dialog body (e.g. the
+   license-consumption warning on the Give Access To Stake Buildings
+   modal). Mirrors .kd-queue-card-warning with the danger palette. */
+.kd-danger-banner {
+  margin: 0 0 8px;
+  color: var(--kd-danger-fg);
+  background: var(--kd-danger-bg);
+  border-left: 3px solid var(--kd-danger);
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+
 @media (max-width: 480px) {
   .kd-queue-card {
     padding: 12px;
