@@ -22,6 +22,16 @@ const useStakesMock = vi.fn();
 vi.mock('../hooks', () => ({
   useStakes: () => useStakesMock(),
   useCreateStake: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useApplyStakeFix: () => ({ mutateAsync: vi.fn(), reset: vi.fn(), isPending: false }),
+}));
+
+// ApplyFixesMenu has its own dedicated test file; stub it to a per-row
+// sentinel so the page-level tests stay focused on the list rendering
+// shape and confirm the menu is wired into every row.
+vi.mock('../ApplyFixesMenu', () => ({
+  ApplyFixesMenu: ({ stake }: { stake: { stake_id: string } }) => (
+    <div data-testid={`apply-fixes-menu-stub-${stake.stake_id}`} />
+  ),
 }));
 
 // CreateStakeForm has its own dedicated test file; here we stub it to a
@@ -175,6 +185,16 @@ describe('<SuperadminStakeListPage />', () => {
       'href',
       '/manager/dashboard?stake=eaststake',
     );
+  });
+
+  it('mounts the Apply Fixes menu on every stake row', async () => {
+    mockStakes([
+      makeStake({ stake_id: 'csnorth' }),
+      makeStake({ stake_id: 'eaststake', created_at: ts('2026-04-10T12:00:00Z') }),
+    ]);
+    await renderPage();
+    expect(screen.getByTestId('apply-fixes-menu-stub-csnorth')).toBeInTheDocument();
+    expect(screen.getByTestId('apply-fixes-menu-stub-eaststake')).toBeInTheDocument();
   });
 
   it('sorts rows by created_at ascending (oldest first)', async () => {
