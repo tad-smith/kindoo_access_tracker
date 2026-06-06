@@ -13,6 +13,7 @@ import type { GrantView } from '../../lib/grants';
 import { siteLabelForGrant } from '../../lib/kindooSites';
 import { EditSeatAffordance } from '../../features/requests/components/EditSeatAffordance';
 import { RemovalAffordance } from '../../features/requests/components/RemovalAffordance';
+import { RosterMemberLine } from './RosterMemberLine';
 
 export interface PerGrantRosterCardProps {
   seat: Seat;
@@ -39,23 +40,6 @@ export function PerGrantRosterCard({
   sites,
 }: PerGrantRosterCardProps) {
   const siteLabel = siteLabelForGrant(grant, wards, buildings, sites);
-
-  const memberInner = seat.member_name ? (
-    <>
-      <span className="roster-card-name">{seat.member_name}</span>{' '}
-      <span>
-        (
-        <span className="roster-email" title={seat.member_email}>
-          {seat.member_email}
-        </span>
-        )
-      </span>
-    </>
-  ) : (
-    <span className="roster-email" title={seat.member_email}>
-      {seat.member_email}
-    </span>
-  );
 
   const callingChip =
     grant.type === 'auto' && grant.callings.length > 0 ? (
@@ -140,7 +124,9 @@ export function PerGrantRosterCard({
         ) : null}
       </div>
       <div className="roster-card-member-line">
-        <span className="roster-card-member">{memberInner}</span>
+        <span className="roster-card-member">
+          <RosterMemberLine name={seat.member_name} email={seat.member_email} />
+        </span>
       </div>
       {callingLine}
       {buildingsLine}

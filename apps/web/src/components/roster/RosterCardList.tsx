@@ -40,6 +40,7 @@ import type { Seat, Ward } from '@kindoo/shared';
 import { Badge } from '../ui/Badge';
 import { EmptyState } from '../../lib/render/EmptyState';
 import { scopeLabel } from '../../lib/scopeLabel';
+import { RosterMemberLine } from './RosterMemberLine';
 
 export interface RosterCardListProps {
   seats: readonly Seat[];
@@ -99,25 +100,6 @@ function RosterCard({ seat, showScope, wards, actions, extraBadges, rowClass }: 
   const typeVariant = seat.type;
   const typeLabel = seat.type;
 
-  // Line 1 member block — name + (email) when name present, bare
-  // email otherwise.
-  const memberInner = seat.member_name ? (
-    <>
-      <span className="roster-card-name">{seat.member_name}</span>{' '}
-      <span>
-        (
-        <span className="roster-email" title={seat.member_email}>
-          {seat.member_email}
-        </span>
-        )
-      </span>
-    </>
-  ) : (
-    <span className="roster-email" title={seat.member_email}>
-      {seat.member_email}
-    </span>
-  );
-
   // Line 2: calling (auto) / reason (manual/temp) chip.
   // Line 3: buildings chip on its own row below.
   // Each chip renders only when the underlying field has data.
@@ -176,7 +158,9 @@ function RosterCard({ seat, showScope, wards, actions, extraBadges, rowClass }: 
             </span>
           ) : null}
         </span>
-        <span className="roster-card-member">{memberInner}</span>
+        <span className="roster-card-member">
+          <RosterMemberLine name={seat.member_name} email={seat.member_email} />
+        </span>
         {actionNode ? <span className="roster-card-actions">{actionNode}</span> : null}
       </div>
       {callingLine}
