@@ -72,14 +72,14 @@ const SEAT = makeSeat({
 
 describe('<GrantStakeAccessDialog />', () => {
   it('renders the exact license-consumption banner at the top', () => {
-    render(<GrantStakeAccessDialog seat={SEAT} onOpenChange={() => {}} />);
+    render(<GrantStakeAccessDialog seat={SEAT} open onOpenChange={() => {}} />);
     expect(screen.getByTestId('grant-stake-access-banner')).toHaveTextContent(
       'Giving this user access to these buildings will consume an additional Kindoo license.',
     );
   });
 
   it('shows the scope as a read-only "Stake" value, not a selectable control', () => {
-    render(<GrantStakeAccessDialog seat={SEAT} onOpenChange={() => {}} />);
+    render(<GrantStakeAccessDialog seat={SEAT} open onOpenChange={() => {}} />);
     const scope = screen.getByTestId('grant-stake-access-scope') as HTMLInputElement;
     expect(scope.value).toBe('Stake');
     expect(scope.readOnly).toBe(true);
@@ -87,7 +87,7 @@ describe('<GrantStakeAccessDialog />', () => {
   });
 
   it('limits the building checklist to home-site buildings', () => {
-    render(<GrantStakeAccessDialog seat={SEAT} onOpenChange={() => {}} />);
+    render(<GrantStakeAccessDialog seat={SEAT} open onOpenChange={() => {}} />);
     expect(screen.getByTestId('grant-stake-access-building-home-building')).toBeInTheDocument();
     expect(screen.getByTestId('grant-stake-access-building-stake-center')).toBeInTheDocument();
     // The foreign-site building is filtered out.
@@ -96,7 +96,7 @@ describe('<GrantStakeAccessDialog />', () => {
 
   it('disables submit until at least one building is selected', async () => {
     const user = userEvent.setup();
-    render(<GrantStakeAccessDialog seat={SEAT} onOpenChange={() => {}} />);
+    render(<GrantStakeAccessDialog seat={SEAT} open onOpenChange={() => {}} />);
     expect(screen.getByTestId('grant-stake-access-confirm')).toBeDisabled();
     await user.click(screen.getByTestId('grant-stake-access-building-home-building'));
     expect(screen.getByTestId('grant-stake-access-confirm')).toBeEnabled();
@@ -105,7 +105,7 @@ describe('<GrantStakeAccessDialog />', () => {
   it('submits an add_manual / scope:"stake" request with the checked buildings + reason + comment', async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
-    render(<GrantStakeAccessDialog seat={SEAT} onOpenChange={onOpenChange} />);
+    render(<GrantStakeAccessDialog seat={SEAT} open onOpenChange={onOpenChange} />);
     await user.type(screen.getByTestId('grant-stake-access-reason'), 'Stake activities helper');
     await user.type(screen.getByTestId('grant-stake-access-comment'), 'approved by SP');
     await user.click(screen.getByTestId('grant-stake-access-building-home-building'));
@@ -128,7 +128,7 @@ describe('<GrantStakeAccessDialog />', () => {
 
   it('blocks submit and surfaces a reason error when reason is empty', async () => {
     const user = userEvent.setup();
-    render(<GrantStakeAccessDialog seat={SEAT} onOpenChange={() => {}} />);
+    render(<GrantStakeAccessDialog seat={SEAT} open onOpenChange={() => {}} />);
     // Select a building so the disabled gate doesn't mask the reason gate.
     await user.click(screen.getByTestId('grant-stake-access-building-home-building'));
     await user.click(screen.getByTestId('grant-stake-access-confirm'));
@@ -138,8 +138,8 @@ describe('<GrantStakeAccessDialog />', () => {
     expect(submitMutateAsync).not.toHaveBeenCalled();
   });
 
-  it('renders nothing when seat is null', () => {
-    const { container } = render(<GrantStakeAccessDialog seat={null} onOpenChange={() => {}} />);
-    expect(container).toBeEmptyDOMElement();
+  it('renders no dialog content when open is false', () => {
+    render(<GrantStakeAccessDialog seat={SEAT} open={false} onOpenChange={() => {}} />);
+    expect(screen.queryByTestId('grant-stake-access-banner')).toBeNull();
   });
 });

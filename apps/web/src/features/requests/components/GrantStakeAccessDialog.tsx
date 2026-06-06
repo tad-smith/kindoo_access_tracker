@@ -34,13 +34,15 @@ const BANNER_TEXT =
   'Giving this user access to these buildings will consume an additional Kindoo license.';
 
 export interface GrantStakeAccessDialogProps {
-  /** Member being granted access. `null` closes the dialog. */
-  seat: Seat | null;
+  /** Member being granted access. */
+  seat: Seat;
+  /** Whether the dialog is open. */
+  open: boolean;
   /** Open / close handle from the parent affordance. */
   onOpenChange: (next: boolean) => void;
 }
 
-export function GrantStakeAccessDialog({ seat, onOpenChange }: GrantStakeAccessDialogProps) {
+export function GrantStakeAccessDialog({ seat, open, onOpenChange }: GrantStakeAccessDialogProps) {
   const submit = useSubmitRequest();
   const buildingsResult = useStakeBuildings();
   const buildings = buildingsResult.data ?? [];
@@ -54,10 +56,8 @@ export function GrantStakeAccessDialog({ seat, onOpenChange }: GrantStakeAccessD
     resolver: zodResolver(grantStakeAccessSchema),
     defaultValues: { reason: '', comment: '', building_names: [] },
   });
-  const { register, handleSubmit, watch, setValue, formState, reset } = form;
+  const { register, handleSubmit, watch, setValue, formState } = form;
   const watchedBuildings = watch('building_names') ?? [];
-
-  if (!seat) return null;
 
   const onSubmit = handleSubmit(async (input) => {
     try {
@@ -71,7 +71,6 @@ export function GrantStakeAccessDialog({ seat, onOpenChange }: GrantStakeAccessD
         building_names: input.building_names,
       });
       toast('Stake access request submitted.', 'success');
-      reset({ reason: '', comment: '', building_names: [] });
       onOpenChange(false);
     } catch (err) {
       toast(errorMessage(err), 'error');
@@ -80,7 +79,7 @@ export function GrantStakeAccessDialog({ seat, onOpenChange }: GrantStakeAccessD
 
   return (
     <Dialog
-      open={seat !== null}
+      open={open}
       onOpenChange={onOpenChange}
       title={`Give access to stake buildings — ${seat.member_name || seat.member_email}`}
       description={`Submits a stake-scope access request for ${seat.member_email}. A Kindoo Manager reviews and completes it.`}
