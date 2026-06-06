@@ -185,6 +185,11 @@ export function StakeRosterPage() {
                       // duplicate stake grant's org is set via the
                       // request form, so render it read-only.
                       editable: hasStakeAccess && grant.isPrimary,
+                      // Gate the interactive select + name resolution on
+                      // the catalogue snapshot landing — `data ?? []`
+                      // above can't tell "loading" (undefined) from
+                      // "loaded, empty" ([]).
+                      orgsReady: organizations.data !== undefined,
                     }}
                   />
                 );

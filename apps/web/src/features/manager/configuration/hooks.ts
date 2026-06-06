@@ -854,6 +854,14 @@ function seatReferencesOrganization(seat: Seat, orgId: string): boolean {
  * Pure guard helper — symmetric with `buildingDeleteBlocker`. Returns
  * null when no seat references the org; otherwise a human-readable
  * message with the blocking-seat count.
+ *
+ * Scope is seats-only BY DESIGN. A pending request that references the
+ * org-to-be-deleted is NOT checked: at 1–2 requests/week the overlap is
+ * rare, and the gap degrades benignly — if such a request is later
+ * approved, its now-dangling `organization_id` resolves to "No
+ * Organization" on the seat and the operator reassigns it inline. This
+ * is an accepted gap, not an oversight; do not "fix" it by walking
+ * pending requests.
  */
 export function organizationDeleteBlocker(
   organizationId: string,
