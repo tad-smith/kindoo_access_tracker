@@ -7,7 +7,7 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-70] Update D19's "four cards remain" claim after Warnings-card removal
-Status: open
+Status: done (2026-06-06 — D19 addendum added noting PR #215 removed the over-cap Warnings card; three cards remain)
 Owner: @docs-keeper
 Phase: cross-cutting
 
@@ -885,8 +885,10 @@ Phase: Apps Script era
 **Files touched.** `src/ui/manager/Config.html` only.
 
 ## [T-54] Rebuild the Dashboard screen
-Status: open
+Status: done (2026-06-06 — closed by the Dashboard card-removal cleanup: PR #210 removed the Last Operations card, PR #215 removed the over-cap Warnings card)
 Owner: @web-engineer
+
+**Resolution.** The operator scoped the "rebuild" down to a cleanup. The manager Dashboard now shows three cards — pending-request counts, per-scope utilization, and recent activity. No heavier redesign (new aggregates, feed layout, inline drill-down) was pursued; the design questions below are retained as historical context should a future rebuild be revived.
 
 **Why / what.** The manager Dashboard (the default landing for the `manager` role) needs a redesign. Today it's three cards per `spec.md` §5.3: pending-request counts, recent activity, and per-scope utilization, all driven by live Firestore subscriptions through DIY hooks. (The last-operations card was removed with the expiry scheduler in PR #210; the over-cap warnings card was removed in PR #215.) The user has flagged this as wanting a rebuild; the *what* of the rebuild is still open.
 
