@@ -102,18 +102,21 @@ test.describe('Phase 5 default landings', () => {
     });
     await expect(page).toHaveURL(/\/bishopric\/roster$/);
     await expect(page.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
-    // The header carries the previously-default `/new` form as a
-    // one-click affordance. Scope to the page-header button via testid
-    // so we don't accidentally exercise the nav-rail Quick Link (which
-    // also reads "New Request" for bishopric principals).
-    const newRequestLink = page.getByTestId('bishopric-roster-new-request');
-    await expect(newRequestLink).toBeVisible();
-    await expect(newRequestLink).toHaveText('New Request');
-    await newRequestLink.click();
-    // The header button pre-selects the bishop's ward as the request
-    // scope via `?scope=CO`.
-    await expect(page).toHaveURL(/\/new\?scope=CO$/);
-    await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
+    // The header button opens the New Request form in an in-page modal.
+    // Scope to the page-header button via testid so we don't accidentally
+    // exercise the nav-rail Quick Link (which also reads "New Request"
+    // for bishopric principals — that one still navigates to /new).
+    const newRequestBtn = page.getByTestId('bishopric-roster-new-request');
+    await expect(newRequestBtn).toBeVisible();
+    await expect(newRequestBtn).toHaveText('New Request');
+    await newRequestBtn.click();
+    // The modal opens in place — the URL stays on the roster (no route
+    // change) and the dialog renders the form pre-selecting the bishop's
+    // ward as the request scope.
+    await expect(page).toHaveURL(/\/bishopric\/roster$/);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
+    await expect(dialog.getByTestId('new-request-form')).toBeVisible();
   });
 });
 
@@ -144,7 +147,7 @@ test.describe('Phase 5 nav click-through', () => {
     await expect(page.getByRole('heading', { name: /^Access$/ })).toBeVisible();
   });
 
-  test('stake can click through Stake Roster → New Request → Ward Roster → My Requests', async ({
+  test('stake can click through Stake Roster → New Request modal → Ward Roster → My Requests', async ({
     page,
   }) => {
     await signInWithClaims(page, 'stake-nav@example.com', {
@@ -154,14 +157,19 @@ test.describe('Phase 5 nav click-through', () => {
     await expect(page.getByRole('heading', { name: /^Stake Roster$/ })).toBeVisible();
 
     // The Stake Roster header carries a "New Request" button (gated by
-    // stake-scope request authority) that pre-selects the stake scope.
+    // stake-scope request authority) that opens the New Request modal
+    // pre-selecting the stake scope — no route change.
     const stakeNewRequest = page.getByTestId('stake-roster-new-request');
     await expect(stakeNewRequest).toBeVisible();
     await stakeNewRequest.click();
-    await expect(page).toHaveURL(/\/new\?scope=stake$/);
-    await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
+    await expect(page).toHaveURL(/\/stake\/roster$/);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
+    await expect(dialog.getByTestId('new-request-form')).toBeVisible();
 
-    await page.goBack();
+    // Close the modal via Cancel and confirm we're still on the roster.
+    await dialog.getByTestId('new-request-cancel').click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: /^Stake Roster$/ })).toBeVisible();
 
     // Phase 10.1: single "Ward Roster" nav entry; for stake users it

@@ -20,6 +20,9 @@ import { useFirestoreDoc, useFirestoreCollection } from '../../lib/data';
 import { db, auth } from '../../lib/firebase';
 import { buildingsCol, requestsCol, seatRef, wardsCol } from '../../lib/docs';
 import { useActiveStake } from '../../lib/useActiveStake';
+import { usePrincipal } from '../../lib/principal';
+import { allowedScopesFor } from './scopeOptions';
+import type { ScopeOption } from './components/NewRequestForm';
 
 /**
  * Live duplicate-warning hook. Per `docs/spec.md` §5.1: inline
@@ -121,6 +124,55 @@ export function useStakeBuildings() {
     [activeStakeId],
   );
   return useFirestoreCollection<Building>(q);
+}
+
+export interface NewRequestFormData {
+  /** Allowed request scopes for the principal in the active stake. */
+  scopes: ScopeOption[];
+  /** Buildings catalogue (checkbox group). `[]` until loaded. */
+  buildings: readonly Building[];
+  /** Wards catalogue (resolves ward-scope default buildings). `[]` until loaded. */
+  wards: readonly Ward[];
+  /** True while the buildings catalogue is still loading (the page /
+   *  dialog gates the form on this). */
+  isLoading: boolean;
+}
+
+/**
+ * Shared data source for the New Request form — consumed by both the
+ * standalone `/new` page (`NewRequestPage`) and the roster-header
+ * `NewRequestDialog`. Subscribes to the same buildings + wards
+ * catalogues and derives the principal's allowed scopes, so the two
+ * surfaces can never diverge. `isLoading` mirrors the page's original
+ * gate: true until the buildings catalogue has hydrated.
+ */
+export function useNewRequestFormData(): NewRequestFormData {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+
+  const buildingsQuery = useMemo(
+    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
+  const buildings = useFirestoreCollection<Building>(buildingsQuery);
+
+  const wardsQuery = useMemo(
+    () => (activeStakeId ? wardsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
+  const wards = useFirestoreCollection<Ward>(wardsQuery);
+
+  const scopes = useMemo(
+    () => (activeStakeId ? allowedScopesFor(principal, activeStakeId, wards.data ?? []) : []),
+    [principal, activeStakeId, wards.data],
+  );
+
+  return {
+    scopes,
+    buildings: buildings.data ?? [],
+    wards: wards.data ?? [],
+    isLoading: buildings.isLoading || buildings.data === undefined,
+  };
 }
 
 // ---- Submit ---------------------------------------------------------

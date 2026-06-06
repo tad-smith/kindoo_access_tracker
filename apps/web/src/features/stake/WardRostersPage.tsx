@@ -14,7 +14,7 @@
 // scope, they can also REMOVE for it.
 
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from '@tanstack/react-router';
+import { useNavigate } from '@tanstack/react-router';
 import type { Seat } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { useActiveStake } from '../../lib/useActiveStake';
@@ -24,9 +24,9 @@ import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../lib/render/EmptyState';
 import { Select } from '../../components/ui/Select';
-import { Button } from '../../components/ui/Button';
 import { PerGrantRosterCard } from '../../components/roster/PerGrantRosterCard';
 import { PendingAddRequestsSection } from '../requests/components/PendingAddRequestsSection';
+import { NewRequestAffordance } from '../requests/components/NewRequestAffordance';
 import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterPending';
 import { canEditSeat, isScopeAllowed } from '../requests/scopeOptions';
@@ -145,20 +145,15 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
             </option>
           ))}
         </Select>
+        {canRequest && selected ? (
+          <span className="kd-ward-select-action">
+            <NewRequestAffordance scope={selected} testId="ward-rosters-new-request" />
+          </span>
+        ) : null}
       </div>
 
       {selected ? (
         <>
-          {canRequest ? (
-            <div className="kd-page-header-row">
-              <p className="kd-page-subtitle">{wardDoc?.ward_name ?? selected}</p>
-              <Button asChild variant="default">
-                <Link to="/new" search={{ scope: selected }} data-testid="ward-rosters-new-request">
-                  New Request
-                </Link>
-              </Button>
-            </div>
-          ) : null}
           <div className="kd-utilization-host">
             <RosterUtilization
               committedTotal={seatCount}
