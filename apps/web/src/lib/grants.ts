@@ -208,6 +208,24 @@ export function collapseSameScopeGrants(views: readonly GrantView[]): GrantView[
 }
 
 /**
+ * Resolve the `organization_id` for a rendered grant view. The primary
+ * grant carries the org on the seat top level; a duplicate grant carries
+ * it on its `duplicate_grants[]` entry (addressed by `duplicateIndex`).
+ *
+ * Returns `null` ("No Organization") when the field is unset, absent, or
+ * the duplicate index doesn't resolve (defensive — a collapsed view
+ * whose chosen grant was a duplicate still maps to a real entry).
+ *
+ * Org ids are meaningful only on stake-scope grants; callers gate this
+ * to the stake roster. For any other scope the value is informational.
+ */
+export function resolveGrantOrgId(seat: Seat, grant: GrantView): string | null {
+  if (grant.isPrimary) return seat.organization_id ?? null;
+  const dup = seat.duplicate_grants?.[grant.duplicateIndex];
+  return dup?.organization_id ?? null;
+}
+
+/**
  * Pick the single `GrantView` that matches a roster page's scope.
  * Used by per-scope roster pages (Bishopric Roster, Stake Roster,
  * Ward Rosters) for the broadened-inclusion render: one row per

@@ -63,6 +63,14 @@ export interface UtilizationBarProps {
    * red over-cap stays the priority signal.
    */
   accent?: UtilizationBarAccent;
+  /**
+   * Optional leading name (e.g. an organization name) prepended to the
+   * label as `"{name}: "`. Used by `<RosterUtilization>` to label the
+   * per-organization bars under the "Stake Total" bar. Renders inside
+   * the same label cell, so the shared grid keeps every bar's fill
+   * column at an identical width regardless of name length.
+   */
+  name?: string;
 }
 
 export function UtilizationBar({
@@ -73,14 +81,16 @@ export function UtilizationBar({
   verb = 'used',
   tone = 'primary',
   accent = 'auto',
+  name,
 }: UtilizationBarProps) {
   const safeTotal = Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0;
   const hasCap = typeof cap === 'number' && Number.isFinite(cap) && cap > 0;
+  const namePrefix = name ? `${name}: ` : '';
 
   const wrapperClass = `utilization layout-${layout}${tone === 'muted' ? ' tone-muted' : ''}`;
 
   if (!hasCap) {
-    const seatsLabel = `${safeTotal} seat${safeTotal === 1 ? '' : 's'}`;
+    const seatsLabel = `${namePrefix}${safeTotal} seat${safeTotal === 1 ? '' : 's'}`;
     // Cap-unset has no bar to put the label beside. In the inline
     // variant the wrapper uses `display: contents`, so emit a
     // single label that spans both grid columns; otherwise stack as
@@ -114,7 +124,7 @@ export function UtilizationBar({
       ? 'utilization-fill near'
       : 'utilization-fill';
 
-  const labelText = `${safeTotal} / ${safeCap} seats ${verb}`;
+  const labelText = `${namePrefix}${safeTotal} / ${safeCap} seats ${verb}`;
   const overCapFlag = overCap ? <span className="over-cap-flag">OVER CAP</span> : null;
   const bar = (
     <div className="utilization-bar">

@@ -10,10 +10,10 @@
 // only the card's row grouping is under test here.
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { PerGrantRosterCard } from './PerGrantRosterCard';
 import type { GrantView } from '../../lib/grants';
-import type { Seat } from '@kindoo/shared';
+import type { Organization, Seat } from '@kindoo/shared';
 
 vi.mock('../../features/requests/components/EditSeatAffordance', () => ({
   EditSeatAffordance: (_props: Record<string, unknown>) => (
@@ -25,6 +25,19 @@ vi.mock('../../features/requests/components/RemovalAffordance', () => ({
     <button data-testid="remove-affordance">Remove</button>
   ),
 }));
+
+// `<OrganizationChip>` (rendered when the `org` prop is passed) calls the
+// inline-edit mutation; stub it so the chip's render + onChange wiring is
+// under test here, not the Firestore write path.
+const setOrgMock = vi.fn();
+vi.mock('../../features/stake/hooks', () => ({
+  useSetSeatOrganization: () => ({ mutate: setOrgMock, isPending: false }),
+}));
+
+const orgs: Organization[] = [
+  { organization_id: 'youth', name: 'Youth Program' } as Organization,
+  { organization_id: 'choir', name: 'Stake Choir' } as Organization,
+];
 
 const seat = {
   member_name: 'Member One',
@@ -145,5 +158,72 @@ describe('PerGrantRosterCard same-scope-duplicate badge', () => {
   it('renders no badge when the row has no same-scope duplicates', () => {
     renderCard({ grant: { ...grant, hasSameScopeDuplicates: false } });
     expect(screen.queryByTestId('grant-duplicate-badge-memberone@example.com')).toBeNull();
+  });
+});
+
+// Organization chip — Stake Roster only (passed via the `org` prop).
+// Shows the resolved org name (or "No Organization"), exposes the inline
+// editor only when editable, and writes immediately on change.
+describe('PerGrantRosterCard organization chip', () => {
+  const chipId = 'org-chip-memberone@example.com';
+  const selectId = 'org-select-memberone@example.com';
+
+  it('renders no chip when the org prop is omitted (non-stake surfaces)', () => {
+    renderCard();
+    expect(screen.queryByTestId(chipId)).toBeNull();
+  });
+
+  it('shows the resolved organization name', () => {
+    renderCard({ org: { orgs, orgId: 'choir', editable: false } });
+    const chip = screen.getByTestId(chipId);
+    expect(chip.textContent).toContain('Stake Choir');
+  });
+
+  it('shows "No Organization" when the grant has no org', () => {
+    renderCard({ org: { orgs, orgId: null, editable: false } });
+    expect(screen.getByTestId(chipId).textContent).toContain('No Organization');
+  });
+
+  it('renders the editable select (dropdown affordance) when editable', () => {
+    renderCard({ org: { orgs, orgId: 'choir', editable: true } });
+    const select = screen.getByTestId(selectId) as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect(select.value).toBe('choir');
+    // Menu lists every org plus "No Organization", alpha-sorted.
+    const optionLabels = Array.from(select.options).map((o) => o.textContent);
+    expect(optionLabels).toEqual(['No Organization', 'Stake Choir', 'Youth Program']);
+  });
+
+  it('renders read-only (no select) when not editable', () => {
+    renderCard({ org: { orgs, orgId: 'choir', editable: false } });
+    expect(screen.queryByTestId(selectId)).toBeNull();
+    expect(screen.getByTestId(chipId).getAttribute('data-editable')).toBe('false');
+  });
+
+  it('calls the mutation with the chosen org id on change', () => {
+    setOrgMock.mockClear();
+    renderCard({ org: { orgs, orgId: null, editable: true } });
+    fireEvent.change(screen.getByTestId(selectId), { target: { value: 'youth' } });
+    expect(setOrgMock).toHaveBeenCalledWith({
+      memberCanonical: 'memberone@example.com',
+      organizationId: 'youth',
+    });
+  });
+
+  it('writes null when "No Organization" is chosen', () => {
+    setOrgMock.mockClear();
+    renderCard({ org: { orgs, orgId: 'youth', editable: true } });
+    fireEvent.change(screen.getByTestId(selectId), { target: { value: '__none__' } });
+    expect(setOrgMock).toHaveBeenCalledWith({
+      memberCanonical: 'memberone@example.com',
+      organizationId: null,
+    });
+  });
+
+  it('does not write when the selection is unchanged', () => {
+    setOrgMock.mockClear();
+    renderCard({ org: { orgs, orgId: 'youth', editable: true } });
+    fireEvent.change(screen.getByTestId(selectId), { target: { value: 'youth' } });
+    expect(setOrgMock).not.toHaveBeenCalled();
   });
 });
