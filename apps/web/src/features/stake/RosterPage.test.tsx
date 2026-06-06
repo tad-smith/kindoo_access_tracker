@@ -32,25 +32,27 @@ vi.mock('../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
 }));
 
-vi.mock('@tanstack/react-router', () => ({
-  // Render an `<a>` with `to` → `href` and the typed `search` object
-  // surfaced as `data-scope` so tests can assert the pre-select target
-  // without spreading the object onto the DOM node.
-  Link: ({
-    to,
-    search,
-    children,
-    ...rest
-  }: {
-    to: string;
-    search?: { scope?: string };
-    children?: React.ReactNode;
-  } & Record<string, unknown>) => (
-    <a href={to} data-scope={search?.scope} {...rest}>
-      {children}
-    </a>
-  ),
-}));
+// The New Request header button is now a modal trigger. Stub the
+// affordance with a button that surfaces the forwarded scope as
+// `data-scope` and, on click, reveals a marker so tests can assert the
+// modal opens (instead of the old route navigation). The dialog itself
+// is covered by NewRequestDialog.test.tsx.
+vi.mock('../requests/components/NewRequestAffordance', async () => {
+  const { useState } = await import('react');
+  return {
+    NewRequestAffordance: ({ scope, testId }: { scope: string; testId: string }) => {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button data-testid={testId} data-scope={scope} onClick={() => setOpen(true)}>
+            New Request
+          </button>
+          {open ? <div data-testid="new-request-dialog-open" /> : null}
+        </>
+      );
+    },
+  };
+});
 
 // EditSeatDialog (mounted on Edit click) subscribes to stake-wide ward
 // + building catalogues; stub them so the dialog can render without a
@@ -222,18 +224,28 @@ describe('<StakeRosterPage />', () => {
   });
 
   describe('New Request header action', () => {
-    it('renders the "New Request" link pre-selecting the stake scope for a stake member', () => {
+    it('renders the "New Request" button pre-selecting the stake scope for a stake member', () => {
       usePrincipalMock.mockReturnValue(principal({ stake: true }));
       mockSeats([]);
       mockStakeDoc({ stake_seat_cap: 200 });
       render(<StakeRosterPage />);
-      const link = screen.getByTestId('stake-roster-new-request');
-      expect(link).toHaveTextContent('New Request');
-      expect(link).toHaveAttribute('href', '/new');
-      expect(link).toHaveAttribute('data-scope', 'stake');
+      const btn = screen.getByTestId('stake-roster-new-request');
+      expect(btn).toHaveTextContent('New Request');
+      expect(btn).toHaveAttribute('data-scope', 'stake');
     });
 
-    it('hides the New Request link for a non-stake (manager-only) principal', () => {
+    it('opens the New Request modal when the button is clicked (no route change)', async () => {
+      const user = userEvent.setup();
+      usePrincipalMock.mockReturnValue(principal({ stake: true }));
+      mockSeats([]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.queryByTestId('new-request-dialog-open')).toBeNull();
+      await user.click(screen.getByTestId('stake-roster-new-request'));
+      expect(screen.getByTestId('new-request-dialog-open')).toBeInTheDocument();
+    });
+
+    it('hides the New Request button for a non-stake (manager-only) principal', () => {
       // Manager status alone does not grant stake-scope request rights
       // (B-3) — same predicate that gates the 'stake' New Request option.
       usePrincipalMock.mockReturnValue({

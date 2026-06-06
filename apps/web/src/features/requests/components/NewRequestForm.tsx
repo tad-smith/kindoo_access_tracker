@@ -1,7 +1,16 @@
 // `NewRequestForm` — the shared add_manual / add_temp form rendered on
-// `/bishopric/new` and `/stake/new`. Forks per role solely on which
-// scopes are available (single role → implicit scope; multi-role →
-// dropdown); every other behaviour is identical between roles.
+// the `/new` page and inside the roster-header `NewRequestDialog`.
+// Forks per role solely on which scopes are available (single role →
+// implicit scope; multi-role → dropdown); every other behaviour is
+// identical between roles.
+//
+// Two presentation modes, keyed off the `onSubmitted` prop:
+//   - Page mode (default): inline Submit button; success toasts +
+//     resets + stays mounted.
+//   - Dialog mode (`onSubmitted` + `onCancel` supplied): actions render
+//     inside a `Dialog.Footer` (Cancel + Submit); success toasts then
+//     closes via `onSubmitted` (the dialog unmounts the form, so no
+//     post-submit reset). Cancel does not submit.
 //
 // Field set:
 //   - Request type (add_manual / add_temp)
@@ -44,6 +53,7 @@ import {
 } from '../schemas';
 import { useSubmitRequest, useSeatForMember } from '../hooks';
 import { CallingCombobox } from './CallingCombobox';
+import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { Button } from '../../../components/ui/Button';
@@ -80,6 +90,14 @@ export interface NewRequestFormProps {
    *  otherwise the leading scope is used. Guards stale / unauthorized
    *  deep links (e.g. a ward the user has since left). */
   initialScope?: string;
+  /** Dialog mode: called after a SUCCESSFUL submit. When provided (with
+   *  `onCancel`), the actions render inside a `Dialog.Footer` and the
+   *  form skips its post-submit reset (it unmounts on close). Omit both
+   *  for page mode (inline submit button, toast + reset + stay). */
+  onSubmitted?: () => void;
+  /** Dialog mode: called when the Cancel button is clicked. Cancel does
+   *  NOT submit the form. */
+  onCancel?: () => void;
 }
 
 function errorMessage(err: unknown): string {
@@ -106,8 +124,14 @@ export function NewRequestForm({
   buildings,
   wards,
   initialScope: requestedScope,
+  onSubmitted,
+  onCancel,
 }: NewRequestFormProps) {
   const submit = useSubmitRequest();
+  // Dialog mode is keyed off the success callback being supplied; in
+  // that mode the actions render inside a Dialog.Footer (Cancel +
+  // Submit) and the post-submit reset is skipped (the form unmounts).
+  const dialogMode = onSubmitted !== undefined;
   // Pre-select the requested scope only when the principal actually
   // holds it; otherwise fall back to the leading allowed scope. Guards
   // stale / unauthorized deep links.
@@ -260,9 +284,16 @@ export function NewRequestForm({
         urgent: input.urgent,
       });
       toast('Request submitted.', 'success');
-      // Reset clears user edits, so re-apply the scope-driven defaults
-      // for buildings; otherwise a single-ward bishop would lose the
-      // pre-checked ward building between submissions.
+      if (dialogMode) {
+        // Dialog mode: close on success. The dialog unmounts the form
+        // (fresh mount each open), so the post-submit reset below is
+        // unnecessary — skip it.
+        onSubmitted?.();
+        return;
+      }
+      // Page mode: reset clears user edits, so re-apply the scope-driven
+      // defaults for buildings; otherwise a single-ward bishop would lose
+      // the pre-checked ward building between submissions.
       reset({
         type: 'add_manual',
         scope: input.scope,
@@ -521,15 +552,30 @@ export function NewRequestForm({
         ) : null}
       </div>
 
-      <div className="form-actions">
-        <Button
-          type="submit"
-          disabled={submit.isPending || watchedBuildings.length === 0 || dupHit != null}
-          data-testid="new-request-submit"
-        >
-          {submit.isPending ? 'Submitting…' : 'Submit request'}
-        </Button>
-      </div>
+      {dialogMode ? (
+        <Dialog.Footer>
+          <Dialog.CancelButton onClick={() => onCancel?.()} data-testid="new-request-cancel">
+            Cancel
+          </Dialog.CancelButton>
+          <Dialog.ConfirmButton
+            type="submit"
+            disabled={submit.isPending || watchedBuildings.length === 0 || dupHit != null}
+            data-testid="new-request-submit"
+          >
+            {submit.isPending ? 'Submitting…' : 'Submit request'}
+          </Dialog.ConfirmButton>
+        </Dialog.Footer>
+      ) : (
+        <div className="form-actions">
+          <Button
+            type="submit"
+            disabled={submit.isPending || watchedBuildings.length === 0 || dupHit != null}
+            data-testid="new-request-submit"
+          >
+            {submit.isPending ? 'Submitting…' : 'Submit request'}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }
