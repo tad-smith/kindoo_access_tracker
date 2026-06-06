@@ -75,6 +75,11 @@ export interface NewRequestFormProps {
    *  while loading → defaults fall back to empty and the manager picks
    *  at completion. */
   wards: readonly Ward[];
+  /** Scope to pre-select (from `?scope=` on the route). Used as the
+   *  dropdown default ONLY when it matches one of `scopes` by value;
+   *  otherwise the leading scope is used. Guards stale / unauthorized
+   *  deep links (e.g. a ward the user has since left). */
+  initialScope?: string;
 }
 
 function errorMessage(err: unknown): string {
@@ -96,9 +101,20 @@ function buildingsHeaderParts(selected: readonly string[]): {
   return { label: word, value: selected.join(', ') };
 }
 
-export function NewRequestForm({ scopes, buildings, wards }: NewRequestFormProps) {
+export function NewRequestForm({
+  scopes,
+  buildings,
+  wards,
+  initialScope: requestedScope,
+}: NewRequestFormProps) {
   const submit = useSubmitRequest();
-  const initialScope = scopes[0]?.value ?? '';
+  // Pre-select the requested scope only when the principal actually
+  // holds it; otherwise fall back to the leading allowed scope. Guards
+  // stale / unauthorized deep links.
+  const initialScope =
+    requestedScope !== undefined && scopes.some((s) => s.value === requestedScope)
+      ? requestedScope
+      : (scopes[0]?.value ?? '');
 
   // Kindoo-site filter (spec §15 Phase 2): the building checklist is
   // narrowed to buildings whose `kindoo_site_id` matches the current

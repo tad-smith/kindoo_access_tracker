@@ -311,18 +311,6 @@ function resolveAction(
     return resolveRequestAction(before, after);
   }
 
-  // Seat deletes by the daily expiry trigger map to `auto_expire`.
-  // Detection: Expiry stamps `lastActor.canonical='ExpiryTrigger'` on
-  // the seat just before deleting; the bookkeeping-only update is
-  // skipped by `isNoOpUpdate`, then this trigger fires on the delete
-  // with that stamped BEFORE state.
-  if (ctx.entityType === 'seat' && before && !after) {
-    const lastActor = before['lastActor'] as { canonical?: unknown } | undefined;
-    if (lastActor?.canonical === 'ExpiryTrigger') {
-      return 'auto_expire';
-    }
-  }
-
   // T-42 one-shot migration: writes stamped by `backfillKindooSiteId`
   // surface under their own action so the migration's rows are
   // filterable in the audit history (vs being lost in generic
@@ -413,7 +401,7 @@ const DELETE_ACTION: Record<AuditEntityType, AuditAction> = {
  *     `lastActor` values on both sides — a false positive that tags
  *     legitimate in-band writes as OutOfBand (B-5 follow-up).
  *
- *   - Every in-band writer (SPA, callable, importer, expiry trigger)
+ *   - Every in-band writer (SPA, callable, remove trigger, Sync fix)
  *     stamps `last_modified_at` as `FieldValue.serverTimestamp()`. Two
  *     consecutive in-band writes always produce distinct resolved
  *     timestamps, so requiring BOTH fields unchanged narrows the

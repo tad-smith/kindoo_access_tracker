@@ -8,7 +8,7 @@
 - **Authorization:** Custom claims on the auth token, set by Cloud Function triggers on role-data writes.
 - **Data path (reads):** Client uses Firestore JS SDK directly. Firestore Security Rules enforce per-document access using claims from the auth token.
 - **Data path (writes):** Same — client writes via Firestore SDK; rules enforce field-level invariants and cross-doc invariants via `getAfter()`.
-- **Server-side compute:** Cloud Functions only, for: daily temp-seat expiry, email send (Resend), audit-log fan-in, custom-claims sync, FCM push fanout, callable wrappers (request-completion, `syncApplyFix`), and a nightly audit-gap reconciliation. Mirror inventory in §7. Auto-seat ingestion runs through the Chrome extension's Sync feature (see `spec.md` §8), not a server-side importer.
+- **Server-side compute:** Cloud Functions only, for: email send (Resend), audit-log fan-in, custom-claims sync, FCM push fanout, callable wrappers (request-completion, `syncApplyFix`), and a nightly audit-gap reconciliation. Mirror inventory in §7. Auto-seat ingestion runs through the Chrome extension's Sync feature (see `spec.md` §8), not a server-side importer.
 - **Hosting:** Firebase Hosting serves the static SPA build.
 
 No Cloud Run. No Express. No persistent server-side process for the request path.
@@ -142,8 +142,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   stake_seat_cap: number;              // license total
 
   // Schedules
-  expiry_hour: number;                 // 0–23, local stake time
-  timezone: string;                    // IANA tz, e.g. 'America/Denver'
+  timezone: string;                    // IANA tz, e.g. 'America/Denver'. Used for audit-log date filtering (the daily expiry scheduler was retired — `architecture.md` D19).
 
   // Deprecated (LCR Sheet importer removed — see `architecture.md` D14,
   // `spec.md` §8). New stake docs do not set these fields; existing
@@ -159,15 +158,13 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   notifications_enabled: boolean;
   notifications_reply_to?: string;     // optional reply-to address; when unset, EmailService omits the Reply-To header
 
-  // Operational state (`last_over_caps_json` written by request-completion over-cap recomputes; `last_expiry_*` by the daily expiry trigger; read by manager UI)
+  // Operational state (`last_over_caps_json` written by request-completion over-cap recomputes; read by manager UI)
   last_over_caps_json: Array<{
     pool: 'stake' | string;            // string = ward_code
     count: number;
     cap: number;
     over_by: number;
   }>;
-  last_expiry_at?: Timestamp;
-  last_expiry_summary?: string;
 
   // Deprecated (LCR Sheet importer removed — see notes above)
   last_import_at?: Timestamp;          // deprecated
@@ -181,7 +178,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 }
 ```
 
-**Written by:** Bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); expiry trigger (`last_expiry_*`).
+**Written by:** Bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute).
 
 **Read by:** every page (stake metadata is in the bootstrap response).
 
@@ -373,7 +370,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
 }
 ```
 
-**Written by:** Sync's `syncApplyFix` callable (auto seats — Admin SDK, bypasses rules); manager via request completion (manual/temp); expiry trigger (deletes expired temp seats). (There is no manager direct-write inline edit — All Seats is view-only for edits; seat edits flow through the `edit_*` request → completion path. See `spec.md` §212.)
+**Written by:** Sync's `syncApplyFix` callable (auto seats — Admin SDK, bypasses rules; also removes orphaned temp seats via its `sba-only` path once Kindoo expires them); manager via request completion (manual/temp). (There is no manager direct-write inline edit — All Seats is view-only for edits; seat edits flow through the `edit_*` request → completion path. See `spec.md` §212.)
 
 **Read by:** All roster pages (bishopric, stake, all-seats), manager dashboard, manager queue (for duplicate-warning), audit log entity-history view.
 
@@ -465,12 +462,12 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
 {
   audit_id: string;            // = doc.id
   timestamp: Timestamp;
-  actor_email: string;         // 'ExpiryTrigger' (canonical automated actor) or canonical email.
-                               // Legacy 'Importer' rows remain in the audit log from the pre-removal era
+  actor_email: string;         // automated actor ('RemoveTrigger', 'OutOfBand', 'Migration', a 'SyncActor:<code>' stamp) or a typed user email.
+                               // Legacy 'Importer' rows remain in the audit log from the pre-Sync era
                                // (see `architecture.md` D14); no fresh code path writes that value.
   actor_canonical: string;     // canonical form of actor_email; same value for automated actors
   action:
-    | 'create_seat' | 'update_seat' | 'delete_seat' | 'auto_expire'
+    | 'create_seat' | 'update_seat' | 'delete_seat'
     | 'create_access' | 'update_access' | 'delete_access'
     | 'create_request' | 'submit_request' | 'complete_request' | 'reject_request' | 'cancel_request'
     | 'create_manager' | 'update_manager' | 'delete_manager'
@@ -858,7 +855,7 @@ service cloud.firestore {
 - **No client writes to auto seats** — auto seats are written only by the `syncApplyFix` callable via Admin SDK, which bypasses rules. The rules' `seats.create` only allows `type in ['manual', 'temp']`.
 - **No client writes to importer_callings** — same pattern. `access.update` rules verify it's unchanged on every client write.
 - **Cross-stake denial is automatic** — `isAnyMember(stakeId)` returns false when the user has no claims for that stakeId, so reads are denied at the stake-doc level and inherit through.
-- **Admin SDK writes bypass everything** — the Cloud Functions (expiry, audit triggers, claim sync, request-completion callables) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
+- **Admin SDK writes bypass everything** — the Cloud Functions (audit triggers, claim sync, request-completion callables) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
 - **Requests-create role-for-scope gate (B-3 / T-36)** — the submit predicate requires the caller hold the role matching the scope being written: `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. Manager status alone does NOT grant creation rights — a pure-manager user with no stake / no ward claim has no submit surface. A manager who also holds `stake: true` or a bishopric ward inherits creation rights through those branches. The SPA's `allowedScopesFor` filter (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer.
 
 #### Bootstrap-admin gate
@@ -896,7 +893,6 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `syncManagersClaims` | Firestore write on `stakes/{sid}/kindooManagers/{memberCanonical}` | Recomputes `stakes[sid].manager` claim; revokes |
 | `syncSuperadminClaims` | Firestore write on `platformSuperadmins/{canonicalEmail}` | Toggles `isPlatformSuperadmin` claim |
 | `auditTrigger` | Firestore write on `stakes/{sid}/{collection}/{docId}` for audited collections | Writes deterministic audit row to `stakes/{sid}/auditLog` |
-| `runExpiry` | Cloud Scheduler hourly + manager callable | Scans seats with type='temp' and end_date<today, deletes |
 | `markRequestComplete` | Callable (manager-invoked) | Resolves seat slot, writes the add/edit, flips the request to `complete` in one transaction |
 | `syncApplyFix` | Callable (operator-invoked from the extension's Sync panel) | Applies one classifier-derived fix to `access` + `seats` via Admin SDK; sole auto-seat writer |
 | `notifyOnRequestWrite` | Firestore write on `stakes/{sid}/requests/{rid}` | Sends Resend email per spec.md §9 (submit, complete, reject, cancel) |
@@ -966,7 +962,7 @@ Q2 (duplicate manual/temp blocking), Q3 (multi-calling collapse + utilization re
 For completeness, here's what was actively considered and resolved during the conversation, so future readers don't reopen them by mistake:
 
 - **Q1 — Migration commitment (2026-04-27):** User committed to the Firebase migration on 2026-04-27. `docs/firebase-migration.md` is the active plan (rewritten from the prior Cloud Run + Express architecture to direct-to-Firestore + custom claims; the rewrite superseded the prior plan in the same file path).
-- **Audit-log strategy:** Option A (trigger-written audit, flat `auditLog` collection per stake) chosen over Option B (embedded `history` subcollections with `getAfter()` rules). Reasoning: B's atomicity advantage applies only to client writes; Admin SDK writes (Sync's `syncApplyFix`, expiry, request-completion callables) bypass rules either way. Option D (best-effort + nightly reconciliation) kept as fallback.
+- **Audit-log strategy:** Option A (trigger-written audit, flat `auditLog` collection per stake) chosen over Option B (embedded `history` subcollections with `getAfter()` rules). Reasoning: B's atomicity advantage applies only to client writes; Admin SDK writes (Sync's `syncApplyFix`, request-completion callables) bypass rules either way. Option D (best-effort + nightly reconciliation) kept as fallback.
 - **Seat ID format:** canonical email. Not `{type}__{scope}__{canonical}`, not UUIDs.
 - **Access ID format:** canonical email. Not composite key.
 - **Source-row hash:** dropped. Doc ID is the natural key.

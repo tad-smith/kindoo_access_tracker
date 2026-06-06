@@ -62,9 +62,7 @@ export type Stake = {
   stake_seat_cap: number;
 
   // ----- Schedules -----
-  /** Local-time hour (0–23) at which the daily expiry trigger fires for this stake. */
-  expiry_hour: number;
-  /** IANA tz identifier (e.g. `'America/Denver'`). All schedule fields evaluate in this tz. */
+  /** IANA tz identifier (e.g. `'America/Denver'`). Used for audit-log date filtering. */
   timezone: string;
 
   // ----- Extension v2.1 — Kindoo site config -----
@@ -84,8 +82,6 @@ export type Stake = {
   // ----- Operational state (server-written) -----
   /** Pools currently over cap; written at end of the over-cap recompute path. Empty array == all clear. */
   last_over_caps_json: OverCapEntry[];
-  last_expiry_at?: TimestampLike;
-  last_expiry_summary?: string;
 
   // ----- Bookkeeping -----
   last_modified_at: TimestampLike;
@@ -95,7 +91,7 @@ export type Stake = {
    * rules verify `lastActor.canonical == request.auth.token.canonical`
    * and `lastActor.email == request.auth.token.email` on every client
    * write. Server-side (Admin SDK) writes set this to a synthetic
-   * actor (e.g. `'ExpiryTrigger'`).
+   * actor (e.g. `'RemoveTrigger'`).
    */
   lastActor: ActorRef;
 };

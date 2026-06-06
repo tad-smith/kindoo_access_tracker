@@ -28,7 +28,7 @@ You do NOT:
 - **PWA from day one** via vite-plugin-pwa configured in `apps/web/vite.config.ts`.
 - **PITR is enabled on prod Firestore.** Weekly GCS export; 90-day bucket lifecycle.
 - **Firestore TTL on `auditLog` = 365 days.**
-- **Cloud Scheduler:** stake-looping scheduled functions — `runExpiry` hourly, `reconcileAuditGaps` nightly. HTTP-triggered Scheduler job — `firestore-weekly-export` weekly (calls the Firestore admin export API directly; no stake loop). Three jobs total within free tier.
+- **Cloud Scheduler:** stake-looping scheduled function — `reconcileAuditGaps` nightly. HTTP-triggered Scheduler job — `firestore-weekly-export` weekly (calls the Firestore admin export API directly; no stake loop). Two jobs total within free tier.
 
 ## Invariants
 

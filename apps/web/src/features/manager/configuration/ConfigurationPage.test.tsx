@@ -99,7 +99,6 @@ beforeEach(() => {
     data: {
       stake_name: 'My Stake',
       stake_seat_cap: 200,
-      expiry_hour: 4,
       timezone: 'America/Denver',
       notifications_enabled: true,
     } satisfies Partial<Stake>,

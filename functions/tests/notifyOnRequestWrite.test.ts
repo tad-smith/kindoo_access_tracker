@@ -77,7 +77,6 @@ async function seedStake(overrides: Partial<Stake> = {}): Promise<void> {
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: true,
     stake_seat_cap: 200,
-    expiry_hour: 3,
     timezone: 'America/Denver',
     notifications_enabled: true,
     last_over_caps_json: [],

@@ -62,17 +62,21 @@ vi.mock('../../lib/data', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
-  // Match the public Link API enough to render an `<a>` with the
-  // `to` prop turned into an `href` for accessible-name queries.
+  // Match the public Link API enough to render an `<a>` with the `to`
+  // prop turned into an `href` for accessible-name queries; surface the
+  // typed `search` object as `data-scope` so tests can assert the pre-
+  // select target without spreading the object onto the DOM node.
   Link: ({
     to,
+    search,
     children,
     ...rest
   }: {
     to: string;
+    search?: { scope?: string };
     children?: React.ReactNode;
   } & Record<string, unknown>) => (
-    <a href={to} {...rest}>
+    <a href={to} data-scope={search?.scope} {...rest}>
       {children}
     </a>
   ),
@@ -330,6 +334,19 @@ describe('<BishopricRosterPage />', () => {
       expect(link).toBeInTheDocument();
       expect(link).toHaveTextContent('New Request');
       expect(link).toHaveAttribute('href', '/new');
+    });
+
+    it('pre-selects the active ward as the request scope', () => {
+      // The header link carries `?scope=<activeWard>` so the New Request
+      // form lands on the ward the bishop was just looking at.
+      usePrincipalMock.mockReturnValue(principal(['CO']));
+      mockSeats([]);
+      mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+      render(<BishopricRosterPage />);
+      expect(screen.getByTestId('bishopric-roster-new-request')).toHaveAttribute(
+        'data-scope',
+        'CO',
+      );
     });
 
     it('does not render the New Request action when the principal has no bishopric wards', () => {

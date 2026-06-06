@@ -16,7 +16,8 @@
 //
 // Mounts at `/new`. The legacy `/bishopric/new` and `/stake/new`
 // paths route here via TanStack-Router redirects so external links
-// keep working.
+// keep working. `?scope=` (forwarded as `initialScope`) pre-selects the
+// scope dropdown when it matches one of the principal's allowed scopes.
 
 import { useMemo } from 'react';
 import { usePrincipal } from '../../../lib/principal';
@@ -29,7 +30,13 @@ import type { Building, Ward } from '@kindoo/shared';
 import { NewRequestForm } from '../components/NewRequestForm';
 import { allowedScopesFor } from '../scopeOptions';
 
-export function NewRequestPage() {
+export interface NewRequestPageProps {
+  /** Pre-selected scope from `?scope=...`. Applied by the form only if
+   *  it matches one of the principal's allowed scopes. */
+  initialScope?: string;
+}
+
+export function NewRequestPage({ initialScope }: NewRequestPageProps = {}) {
   const principal = usePrincipal();
   const activeStakeId = useActiveStake();
 
@@ -62,7 +69,12 @@ export function NewRequestPage() {
       {buildings.isLoading || buildings.data === undefined ? (
         <LoadingSpinner />
       ) : (
-        <NewRequestForm scopes={scopes} buildings={buildings.data} wards={wards.data ?? []} />
+        <NewRequestForm
+          scopes={scopes}
+          buildings={buildings.data}
+          wards={wards.data ?? []}
+          {...(initialScope !== undefined ? { initialScope } : {})}
+        />
       )}
     </section>
   );

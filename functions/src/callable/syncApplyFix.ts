@@ -749,8 +749,8 @@ async function applyBuildingsMismatch(
  * Mirrors `removeSeatOnRequestComplete`'s seat-removal semantics:
  *   - No `duplicate_grants[]` (the common orphan case) → delete the
  *     seat. To attribute the deletion to `SyncActor:sba-only` in the
- *     audit log we follow the Expiry precedent: stamp `lastActor`
- *     (a bookkeeping-only write the audit trigger no-ops), then delete.
+ *     audit log we stamp `lastActor` (a bookkeeping-only write the audit
+ *     trigger no-ops), then delete.
  *     Stamp + reap happen in ONE transaction; the bare `delete()` is a
  *     separate second committed write. They can't share a transaction —
  *     a stamp + delete inside one tx collapses to a bare delete whose

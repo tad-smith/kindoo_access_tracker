@@ -280,18 +280,6 @@ describe('<AuditLogPage />', () => {
       expect(actor?.className).toContain('actor-automated');
     });
 
-    it('paints ExpiryTrigger the same way', () => {
-      useAuditLogInfiniteMock.mockReturnValue(
-        infiniteResult({
-          pages: [[makeAuditLog({ audit_id: 'a1', actor_email: 'ExpiryTrigger' })]],
-        }),
-      );
-      render(<AuditLogPage />);
-      const card = screen.getByTestId('audit-row-a1');
-      const actor = card.querySelector('.kd-audit-card-actor');
-      expect(actor?.className).toContain('actor-automated');
-    });
-
     it('paints OutOfBand the same way (B-5 sentinel for Console / CLI edits)', () => {
       useAuditLogInfiniteMock.mockReturnValue(
         infiniteResult({

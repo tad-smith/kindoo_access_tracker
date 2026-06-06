@@ -373,32 +373,6 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
 
   // -------- Seats --------
 
-  it('seat delete with lastActor=ExpiryTrigger emits auto_expire', async () => {
-    const before = {
-      member_canonical: 's@gmail.com',
-      member_email: 's@gmail.com',
-      member_name: 'Sam',
-      scope: 'GE',
-      type: 'temp',
-      callings: [],
-      building_names: ['Greenwood'],
-      duplicate_grants: [],
-      end_date: '2026-04-25',
-      lastActor: { email: 'ExpiryTrigger', canonical: 'ExpiryTrigger' },
-    };
-    await auditSeatWrites.run(
-      makeEvent({
-        params: { stakeId: STAKE_ID, memberCanonical: 's@gmail.com' },
-        before,
-        after: null,
-      }),
-    );
-    const rows = await readAuditRows();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.action).toBe('auto_expire');
-    expect(rows[0]!.actor_canonical).toBe('ExpiryTrigger');
-  });
-
   it('T-42 / T-43: seat update with lastActor=Migration emits migration_backfill_kindoo_site_id action', async () => {
     // The auditTrigger recognises the `Migration` sentinel actor and
     // substitutes the dedicated migration action code so the rows
@@ -592,7 +566,6 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: false,
       stake_seat_cap: 0,
-      expiry_hour: 4,
       timezone: 'America/Denver',
       notifications_enabled: true,
       last_over_caps_json: [],
@@ -796,7 +769,7 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
       setup_complete: true,
       stake_name: 'CS North Stake',
       kindoo_expected_site_name: 'STAGING - Colorado Springs North Stake',
-      lastActor: { email: 'ExpiryTrigger', canonical: 'ExpiryTrigger' },
+      lastActor: { email: 'mgr@gmail.com', canonical: 'mgr@gmail.com' },
       last_modified_at: 't1',
     };
     const after = {

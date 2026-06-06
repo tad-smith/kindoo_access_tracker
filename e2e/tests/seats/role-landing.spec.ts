@@ -110,7 +110,9 @@ test.describe('Phase 5 default landings', () => {
     await expect(newRequestLink).toBeVisible();
     await expect(newRequestLink).toHaveText('New Request');
     await newRequestLink.click();
-    await expect(page).toHaveURL(/\/new$/);
+    // The header button pre-selects the bishop's ward as the request
+    // scope via `?scope=CO`.
+    await expect(page).toHaveURL(/\/new\?scope=CO$/);
     await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
   });
 });
@@ -151,11 +153,16 @@ test.describe('Phase 5 nav click-through', () => {
     // Stake principals default-land on /stake/roster (spec §5).
     await expect(page.getByRole('heading', { name: /^Stake Roster$/ })).toBeVisible();
 
-    await page
-      .getByRole('link', { name: /^New Request$/ })
-      .first()
-      .click();
+    // The Stake Roster header carries a "New Request" button (gated by
+    // stake-scope request authority) that pre-selects the stake scope.
+    const stakeNewRequest = page.getByTestId('stake-roster-new-request');
+    await expect(stakeNewRequest).toBeVisible();
+    await stakeNewRequest.click();
+    await expect(page).toHaveURL(/\/new\?scope=stake$/);
     await expect(page.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
+
+    await page.goBack();
+    await expect(page.getByRole('heading', { name: /^Stake Roster$/ })).toBeVisible();
 
     // Phase 10.1: single "Ward Roster" nav entry; for stake users it
     // routes to the all-wards picker, whose page H1 is "Ward Rosters".

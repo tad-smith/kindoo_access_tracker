@@ -1,7 +1,7 @@
 // Synthetic actor refs for system-driven writes. Stamped on `lastActor`
-// (daily expiry, remove-trigger, migration backfills, Sync fixes) or
-// substituted by the audit trigger (out-of-band) so the audit log
-// picks them up via the same path real users take.
+// (remove-trigger, migration backfills, Sync fixes) or substituted by
+// the audit trigger (out-of-band) so the audit log picks them up via
+// the same path real users take.
 //
 // `canonical` matches `email` for the synthetic actors — they aren't
 // real email addresses, but the doc shape requires both. The web
@@ -12,11 +12,6 @@
 
 import { syncActorName, type SyncDiscrepancyCode } from '@kindoo/shared';
 import type { ActorRef } from '@kindoo/shared';
-
-export const EXPIRY_ACTOR: ActorRef = {
-  email: 'ExpiryTrigger',
-  canonical: 'ExpiryTrigger',
-};
 
 // Stamped by `removeSeatOnRequestComplete` when it edits or deletes a
 // seat in response to a completed remove request. The human completer

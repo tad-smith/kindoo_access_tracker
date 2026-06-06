@@ -6,6 +6,15 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-69] Scrub `functions/CLAUDE.md` of retired-expiry references
+Status: done (2026-06-05 — fixed in PR #210)
+Owner: @backend-engineer
+Phase: cross-cutting
+
+The temp-seat expiry scheduler was removed in PR #210 (see `docs/changelog/remove-temp-seat-expiry-scheduler.md`, `architecture.md` D19), but `functions/CLAUDE.md` still references the deleted symbols in three places: the header line ("scheduled jobs (expiry, audit reconciliation)"), the `src/` file-layout block (`scheduled/runExpiry.ts`, `services/` "Expiry"), the don't-write-audit note (`ExpiryTrigger` example), and the deploy note ("bump to 540s for `runExpiry`"). `functions/CLAUDE.md` content is owned by `@backend-engineer`; docs-keeper owns only its structure. Replace the `runExpiry` / `Expiry.ts` / `ExpiryTrigger` mentions (the surviving synthetic actor example is `RemoveTrigger`; the only scheduled job is `reconcileAuditGaps`).
+
+Closed 2026-06-05 in the same PR: header line → "scheduled jobs (audit reconciliation)"; dropped `scheduled/runExpiry.ts` and `services/` "Expiry" from the file-layout block; `ExpiryTrigger` example → `RemoveTrigger`; deploy note → "bump to 540s for any long-running scheduled job or callable."
+
 ## [T-01] Reconcile `stamp-version.js` with workspace `version.ts` shape
 Status: done (2026-04-28)
 Owner: @infra-engineer
@@ -474,6 +483,8 @@ Owner: TBD (depends on chosen fix path — `@web-engineer` for A/B, `@backend-en
 Phase: post v2.2 design scoping
 
 Originally filed as B-9; reclassified as a task on 2026-05-12 because this is deferred future feature work, not a defect against currently-shipping behavior. The v2.2 extension design explicitly adopts a one-way temp→permanent promotion rule and accepts the sync gap described below as a known consequence — operator decision when the rule was locked in.
+
+**Mechanism note (2026-06-05).** This entry was written against the old SBA-side expiry trigger, which was removed in PR #210 (`architecture.md` D19, `docs/changelog/remove-temp-seat-expiry-scheduler.md`). The body below still says "SBA's existing expiry trigger removes the temp grant" — that trigger no longer exists. Under the current model Kindoo expires the temp user and the extension's Sync removes the orphaned SBA seat via the `sba-only` path (`spec.md` §7 / §8). The underlying drift this task describes is unchanged in substance — Sync removing the SBA seat still doesn't demote a permanent Kindoo user — so the task stays open; only the trigger mechanism it cites is now stale. Fix path A ("expiry-time push from the SBA trigger") is moot; B / C / D still apply.
 
 **The rule (operator wording).** If v2.2 is processing a manual (permanent) request and finds the Kindoo user is temporary, it promotes them to permanent; if v2.2 is processing a temp request and finds the user already permanent, it leaves them permanent (does not demote):
 
