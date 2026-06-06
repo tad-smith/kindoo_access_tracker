@@ -540,11 +540,12 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.kindoo_site_id).toBeUndefined();
     });
 
-    it('does NOT stamp kindoo_site_id on a manual seat (sync leaves the field alone)', async () => {
+    it('stamps kindoo_site_id on a MANUAL seat for a foreign-site ward', async () => {
       await seedManager();
-      // A manual kindoo-only seat on a foreign-site ward: the field is not
-      // stamped (only auto ward seats resolve the site), and the guard
-      // does not fire for a non-auto seat.
+      // The extension defaults the kindoo-only `type` to `manual`, so a
+      // manual foreign-ward seat is the common case — it MUST carry the
+      // site, not be silently persisted as home. Site resolution runs for
+      // every ward-scope seat type, not just auto.
       await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
       await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
 
@@ -576,7 +577,48 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
       ).data() as Seat & { kindoo_site_id?: unknown };
       expect(seat.type).toBe('manual');
-      expect(seat.kindoo_site_id).toBeUndefined();
+      expect(seat.kindoo_site_id).toBe('east-stake');
+    });
+
+    it('stamps kindoo_site_id on a TEMP seat for a foreign-site ward', async () => {
+      await seedManager();
+      // Time-boxed kindoo-only grants come through as `temp`; they too must
+      // carry the foreign site (and keep their dates).
+      await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+      await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-only',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                memberName: 'Alice',
+                scope: 'MR',
+                type: 'temp',
+                callings: [],
+                buildingNames: ['Black Forest'],
+                startDate: '2026-06-01',
+                endDate: '2026-06-30',
+                isTempUser: true,
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.type).toBe('temp');
+      expect(seat.kindoo_site_id).toBe('east-stake');
+      expect(seat.start_date).toBe('2026-06-01');
+      expect(seat.end_date).toBe('2026-06-30');
     });
   });
 

@@ -240,11 +240,15 @@ async function applyKindooOnly(
   // Resolve the new seat's Kindoo site from its ward's building so a
   // foreign-site ward seat isn't silently persisted as home (T-42 — the
   // `kindoo-only` path was the one auto-seat creator that never stamped
-  // the field). Mirrors `applyScopeMismatch` / `markRequestComplete`.
-  // Only ward-scope auto seats need the ward/buildings read; stake-scope
-  // short-circuits to home (field left absent).
+  // the field). Mirrors `applyScopeMismatch` / `markRequestComplete`,
+  // which resolve/stamp the site for EVERY seat type. EVERY ward-scope
+  // kindoo-only seat (auto/manual/temp) needs the ward/buildings read —
+  // the extension defaults the kindoo-only `type` to `manual` (and sends
+  // `temp` for time-boxed grants), so foreign-ward manual/temp seats are
+  // the common case, not an edge. Stake-scope short-circuits to home
+  // (field left absent).
   const isAuto = type === 'auto';
-  const needsSiteResolve = isAuto && scope !== 'stake';
+  const needsSiteResolve = scope !== 'stake';
   const wardRef = needsSiteResolve ? db.doc(`stakes/${stakeId}/wards/${scope}`) : null;
   const buildingsRef = db.collection(`stakes/${stakeId}/buildings`);
   const actor = syncActor('kindoo-only');
@@ -276,16 +280,16 @@ async function applyKindooOnly(
     // home ward, leave absent; a string ⇒ foreign site, stamp it.
     let wards: Ward[] = [];
     let buildings: Building[] = [];
-    let newSiteSite: string | null | undefined;
+    let newSeatSite: string | null | undefined;
     if (needsSiteResolve && wardRef) {
       const [wardSnap, buildingsSnap] = await Promise.all([tx.get(wardRef), tx.get(buildingsRef)]);
       buildings = buildingsSnap.docs.map((d) => d.data() as Building);
       if (wardSnap.exists) {
         const ward = wardSnap.data() as Ward;
         wards = [ward];
-        newSiteSite = resolveWardSite(ward, buildings);
+        newSeatSite = resolveWardSite(ward, buildings);
       } else {
-        newSiteSite = undefined;
+        newSeatSite = undefined;
         logger.warn(
           `syncApplyFix(kindoo-only): ward '${scope}' not found while creating seat for ${canonical}; leaving kindoo_site_id unset (ward-fallback handles classification at read time)`,
         );
@@ -314,7 +318,7 @@ async function applyKindooOnly(
     // Stamp `kindoo_site_id` only for a non-null (foreign) resolved site;
     // home (null) and unknown-ward (undefined) leave the field absent —
     // field-absent is the home representation (spec §15).
-    if (typeof newSiteSite === 'string') body.kindoo_site_id = newSiteSite;
+    if (typeof newSeatSite === 'string') body.kindoo_site_id = newSeatSite;
     if (reason !== undefined) body.reason = reason;
     if (type === 'temp') {
       if (startDate !== undefined) body.start_date = startDate;
