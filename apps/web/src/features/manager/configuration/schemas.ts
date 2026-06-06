@@ -60,6 +60,19 @@ export const managerSchema = z.object({
 });
 export type ManagerForm = z.infer<typeof managerSchema>;
 
+// Organizations — stake-level seat pools managers track alongside
+// wards / buildings. `organization_id` (the slug) is NOT a form input;
+// it's derived from `name` via `buildingSlug()` at create time and
+// pinned for the doc's life. The form edits only `name` + `seat_cap`.
+export const organizationFormSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required.'),
+  seat_cap: z
+    .number({ message: 'Seat cap must be a number.' })
+    .int('Seat cap must be an integer.')
+    .min(0, 'Seat cap must be 0 or greater.'),
+});
+export type OrganizationForm = z.infer<typeof organizationFormSchema>;
+
 export const configSchema = z.object({
   stake_name: z.string().trim().min(1, 'Stake name is required.'),
   stake_seat_cap: z

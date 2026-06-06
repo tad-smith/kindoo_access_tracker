@@ -126,6 +126,10 @@ export const newRequestSchema = z
     end_date: z.string(),
     building_names: z.array(z.string()),
     urgent: z.boolean(),
+    // Optional org selector — meaningful only at stake scope. The slug
+    // id of the chosen organization, or null = "No Organization". The
+    // submit hook drops it for ward scope (see useSubmitRequest).
+    organization_id: z.string().nullable().optional(),
   })
   .superRefine((val, ctx) => {
     if (val.type === 'add_temp') {
@@ -238,6 +242,11 @@ export const editSeatSchema = z
     building_names: z.array(z.string()),
     start_date: z.string(),
     end_date: z.string(),
+    // Optional org selector — meaningful only at stake scope, and only
+    // for edit_manual / edit_temp (edit_auto is forbidden at stake, so
+    // the selector is never rendered there). Slug id or null = "No
+    // Organization".
+    organization_id: z.string().nullable().optional(),
   })
   .superRefine((val, ctx) => {
     if (val.type !== 'edit_auto' && val.reason.trim().length === 0) {

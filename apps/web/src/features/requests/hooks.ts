@@ -200,6 +200,15 @@ export interface SubmitRequestInput {
    * that case.
    */
   kindoo_site_id?: string | null;
+  /**
+   * Organization the requested stake-scope grant belongs to. Meaningful
+   * only when `scope === 'stake'` on an add/edit request; the optional
+   * org selector supplies it (slug id, or null = "No Organization").
+   * The mutation writes it ONLY for stake scope and only on add/edit
+   * types — ward scope and `remove` / `edit_auto` never carry a stray
+   * org id. Absent / undefined → not written.
+   */
+  organization_id?: string | null;
 }
 
 /**
@@ -297,6 +306,16 @@ export function useSubmitRequest() {
         // Stamp only when truthy; missing field reads as false. Keeps
         // the on-disk doc lean for the common non-urgent path.
         body.urgent = true;
+      }
+      // Organization is meaningful only at stake scope on an add/edit
+      // request. `edit_auto` is forbidden at stake (the selector is
+      // never rendered there) and `remove` doesn't carry one, so the
+      // org id only lands on the four stake-scope add/edit types.
+      // Non-stake requests never carry a stray org id — we explicitly
+      // write `null` so a stale value can't leak from a reused form.
+      const ORG_BEARING_TYPES = ['add_manual', 'add_temp', 'edit_manual', 'edit_temp'] as const;
+      if ((ORG_BEARING_TYPES as readonly string[]).includes(input.type)) {
+        body.organization_id = input.scope === 'stake' ? (input.organization_id ?? null) : null;
       }
       // Diagnostic log: pasted into staging by the operator to surface
       // which rule predicate denied a permission-error submit. Pairs

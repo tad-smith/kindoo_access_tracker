@@ -24,6 +24,7 @@ import type {
   Building,
   KindooManager,
   KindooSite,
+  Organization,
   RequestStatus,
   Seat,
   Stake,
@@ -38,6 +39,7 @@ import {
   kindooManagersCol,
   kindooSiteRef,
   kindooSitesCol,
+  organizationRef,
   requestsCol,
   seatsCol,
   stakeRef,
@@ -698,5 +700,169 @@ export function kindooSiteDeleteBlocker(
   return (
     `Cannot delete Kindoo site "${kindooSiteId}". The following buildings still reference ` +
     `this site: ${labels.join(', ')} Unassign these buildings from this site before deleting.`
+  );
+}
+
+// ---- Organizations mutations ----------------------------------------
+//
+// Organizations are stake-level seat pools managers track alongside
+// wards / buildings. Slug strategy mirrors buildings / Kindoo sites:
+// derive `organization_id` from `name` via `buildingSlug()` at create
+// time and pin it for the doc's life. Editing the name does NOT re-slug
+// — the slug is the immutable doc id every seat / request references via
+// `organization_id`, so re-slugging would orphan those references.
+
+export interface OrganizationInput {
+  /**
+   * On EDIT, the existing organization's immutable slug, carried
+   * through so the write targets the SAME doc even when `name` changed.
+   * Absent / undefined on CREATE — the slug is derived once from the
+   * name and NEVER re-derived on edit.
+   */
+  organization_id?: string;
+  name: string;
+  seat_cap: number;
+  /**
+   * Live organizations snapshot for the unique-name guard. The display
+   * name is the human key seats / requests render by, so two orgs must
+   * not share a name. Caller passes the snapshot it just rendered — no
+   * extra read.
+   */
+  existingOrganizations?: ReadonlyArray<Organization>;
+}
+
+/**
+ * Pure guard: returns a user-facing error message when another
+ * organization (a different `organization_id`) already uses `name`, or
+ * `null` when the name is free. Case-insensitive, trimmed — symmetric
+ * with `duplicateBuildingNameBlocker`. `selfOrgId` is the slug being
+ * edited (undefined on create) so an org doesn't conflict with itself.
+ */
+export function duplicateOrganizationNameBlocker(
+  name: string,
+  orgs: ReadonlyArray<Organization>,
+  selfOrgId: string | undefined,
+): string | null {
+  const wanted = name.trim().toLowerCase();
+  if (!wanted) return null;
+  const clash = orgs.find(
+    (o) => o.organization_id !== selfOrgId && o.name.trim().toLowerCase() === wanted,
+  );
+  if (!clash) return null;
+  return `Another organization already uses the name "${clash.name}". Organization names must be unique.`;
+}
+
+export function useUpsertOrganizationMutation() {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: OrganizationInput) => {
+      const sid = requireActiveStake(activeStakeId);
+      const actor = actorOf(principal);
+      const name = input.name.trim();
+      // CREATE derives the slug once from the name; EDIT carries the
+      // existing slug through unchanged (never re-slug — the slug is the
+      // immutable doc id every seat / request references).
+      const slug = input.organization_id ?? buildingSlug(name);
+      if (!slug) throw new Error('Organization name is required.');
+      const dupBlocker = duplicateOrganizationNameBlocker(
+        name,
+        input.existingOrganizations ?? [],
+        input.organization_id,
+      );
+      if (dupBlocker) throw new Error(dupBlocker);
+      const ref = organizationRef(db, sid, slug);
+      // Stamp `created_at` only on the create path. `merge: true` would
+      // otherwise re-stamp it on every edit, silently losing the
+      // original creation timestamp. `runTransaction` makes the
+      // existence read + write atomic.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        const editBody = {
+          organization_id: slug,
+          name,
+          seat_cap: input.seat_cap,
+          last_modified_at: serverTimestamp(),
+          lastActor: actor,
+        };
+        if (existing.exists()) {
+          tx.set(ref, editBody as unknown as Organization, { merge: true });
+        } else {
+          tx.set(
+            ref,
+            {
+              ...editBody,
+              created_at: serverTimestamp(),
+            } as unknown as Organization,
+            { merge: true },
+          );
+        }
+      });
+    },
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+// Block deletes while any seat references the organization via its
+// primary `organization_id` OR any `duplicate_grants[].organization_id`.
+// Orphaning a seat's org reference silently breaks its org lookup; rules
+// can't iterate a sibling collection, so this guard is client-side only
+// (mirrors `buildingDeleteBlocker`). Caller passes the live seats
+// snapshot (already subscribed via useSeats) so the guard fires against
+// the exact list the operator just saw — no extra Firestore read.
+export interface DeleteOrganizationInput {
+  organizationId: string;
+  seats: ReadonlyArray<Seat>;
+}
+export function useDeleteOrganizationMutation() {
+  const activeStakeId = useActiveStake();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: DeleteOrganizationInput) => {
+      const sid = requireActiveStake(activeStakeId);
+      const blocker = organizationDeleteBlocker(input.organizationId, input.seats);
+      if (blocker) throw new Error(blocker);
+      await deleteDoc(organizationRef(db, sid, input.organizationId));
+    },
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+/**
+ * True when a seat references `orgId` anywhere — the primary grant's
+ * `organization_id` OR any `duplicate_grants[].organization_id`. A
+ * member can hold a primary stake-scope seat in one org plus a
+ * duplicate-site grant in another, where the org reference lives ONLY
+ * in `duplicate_grants[].organization_id`; deleting that org would
+ * orphan the reference, so the guard walks both.
+ */
+function seatReferencesOrganization(seat: Seat, orgId: string): boolean {
+  if (seat.organization_id === orgId) return true;
+  return (seat.duplicate_grants ?? []).some((g) => g.organization_id === orgId);
+}
+
+/**
+ * Pure guard helper — symmetric with `buildingDeleteBlocker`. Returns
+ * null when no seat references the org; otherwise a human-readable
+ * message with the blocking-seat count.
+ */
+export function organizationDeleteBlocker(
+  organizationId: string,
+  seats: ReadonlyArray<Seat>,
+): string | null {
+  const count = seats.filter((s) => seatReferencesOrganization(s, organizationId)).length;
+  if (count === 0) return null;
+  return (
+    `Cannot delete: ${count} ${count === 1 ? 'seat' : 'seats'} still reference this ` +
+    `organization. Reassign or remove them first.`
   );
 }

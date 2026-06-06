@@ -6,6 +6,7 @@ import {
   configSchema,
   kindooSiteFormSchema,
   managerSchema,
+  organizationFormSchema,
   wardSchema,
 } from './schemas';
 
@@ -100,6 +101,33 @@ describe('configuration kindooSiteFormSchema', () => {
       display_name: 'X',
       kindoo_expected_site_name: '',
     });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe('configuration organizationFormSchema', () => {
+  it('accepts a valid organization', () => {
+    const r = organizationFormSchema.safeParse({ name: 'Primary Children', seat_cap: 25 });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts a zero seat cap', () => {
+    const r = organizationFormSchema.safeParse({ name: 'Scouts', seat_cap: 0 });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects an empty name', () => {
+    const r = organizationFormSchema.safeParse({ name: '   ', seat_cap: 5 });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects a negative seat cap', () => {
+    const r = organizationFormSchema.safeParse({ name: 'Scouts', seat_cap: -1 });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects a non-integer seat cap', () => {
+    const r = organizationFormSchema.safeParse({ name: 'Scouts', seat_cap: 2.5 });
     expect(r.success).toBe(false);
   });
 });

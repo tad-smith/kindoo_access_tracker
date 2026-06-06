@@ -95,6 +95,27 @@ vi.mock('../requests/hooks', () => ({
   useStakeBuildings: () => stakeListResult,
 }));
 
+// The EditSeatDialog the roster opens subscribes to the organizations
+// catalogue. Bishopric scope never shows the org selector (it's stake-
+// only), but the hook still runs — return an empty live result.
+vi.mock('../organizations/hooks', async () => {
+  const actual = await vi.importActual<object>('../organizations/hooks');
+  return {
+    ...actual,
+    useOrganizations: () => ({
+      data: [],
+      error: null,
+      status: 'success',
+      isPending: false,
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      isFetching: false,
+      fetchStatus: 'idle',
+    }),
+  };
+});
+
 function mockNoPendingRemoves() {
   usePendingRemoveRequestsMock.mockReturnValue({
     data: [],
