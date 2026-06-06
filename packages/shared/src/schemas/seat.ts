@@ -25,6 +25,9 @@ export const duplicateGrantSchema = z.object({
   // duplicates (those whose value differs from the seat's primary);
   // within-site duplicates may still leave it unset.
   kindoo_site_id: z.string().nullable().optional(),
+  // Organization slug id; meaningful only on stake-scope grants.
+  // `null` / absent means "No Organization".
+  organization_id: z.string().nullable().optional(),
   detected_at: timestampLikeSchema,
 });
 
@@ -49,6 +52,10 @@ export const seatSchema = z.object({
   // means home site. Top-level reflects the primary grant's site;
   // duplicates carry their own `kindoo_site_id`.
   kindoo_site_id: z.string().nullable().optional(),
+
+  // Organization slug id for the primary grant; meaningful only on
+  // stake-scope grants. `null` / absent means "No Organization".
+  organization_id: z.string().nullable().optional(),
 
   duplicate_grants: z.array(duplicateGrantSchema),
   // T-42 / T-43: denormalised mirror of `duplicate_grants[].scope` —

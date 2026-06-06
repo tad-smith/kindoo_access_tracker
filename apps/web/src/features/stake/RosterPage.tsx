@@ -17,6 +17,8 @@ import { db } from '../../lib/firebase';
 import { useActiveStake } from '../../lib/useActiveStake';
 import { usePrincipal } from '../../lib/principal';
 import { useKindooSites, useStakeBuildings, useStakeRoster, useStakeWards } from './hooks';
+import { sortOrganizations, useOrganizations } from '../organizations/hooks';
+import { resolveGrantOrgId } from '../../lib/grants';
 import { sortSeatsWithinScope } from '../../lib/sort/seats';
 import { RosterUtilization } from '../../lib/render/RosterUtilization';
 import { stakeAvailablePoolSize } from '../../lib/render/stakePool';
@@ -41,6 +43,13 @@ export function StakeRosterPage() {
   const stakeDocResult = useFirestoreDoc(activeStakeId ? stakeRef(db, activeStakeId) : null);
   const stakeDoc = stakeDocResult.data;
   const kindooSites = useKindooSites();
+  const organizations = useOrganizations();
+
+  // Stake app access gates the inline org-edit affordance (defense/UX —
+  // the page is already stake-member-gated; this mirrors the rule's
+  // `request.auth.token.stakes[sid].stake === true` check).
+  const hasStakeAccess =
+    activeStakeId !== null && principal.stakeMemberStakes.includes(activeStakeId);
 
   // Pair every seat with the grant that matched the stake scope.
   const seatsWithGrant = useMemo(() => {
@@ -73,6 +82,20 @@ export function StakeRosterPage() {
 
   const seatCount = sortedRows.length;
 
+  // Committed per-organization counts, keyed on each row's resolved
+  // stake-grant `organization_id`. `null` (No Organization) is tracked
+  // too but not surfaced as a bar. Committed-only — pending adds/removes
+  // are NOT split per org (locked design).
+  const orgCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const { seat, grant } of sortedRows) {
+      const orgId = resolveGrantOrgId(seat, grant);
+      if (orgId == null) continue;
+      counts.set(orgId, (counts.get(orgId) ?? 0) + 1);
+    }
+    return counts;
+  }, [sortedRows]);
+
   // Pending requests for the stake scope.
   const pendingRequests = usePendingRequestsForScope('stake');
   const { pendingAdds, pendingRemovesByKey } = useMemo(
@@ -83,6 +106,19 @@ export function StakeRosterPage() {
     stakeDoc?.stake_seat_cap,
     wards.data ?? [],
     buildings.data ?? [],
+  );
+
+  // One committed bar per organization (alpha-sorted). Orgs with zero
+  // matching seats still render a bar (`total` falls back to 0). Cap is
+  // display-only; the bar's ratio drives ok / warn / over.
+  const orgRows = useMemo(
+    () =>
+      sortOrganizations(organizations.data).map((org) => ({
+        name: org.name,
+        total: orgCounts.get(org.organization_id) ?? 0,
+        cap: org.seat_cap,
+      })),
+    [organizations.data, orgCounts],
   );
 
   // The header "New Request" affordance shows only for principals with
@@ -107,6 +143,7 @@ export function StakeRosterPage() {
           pendingAdds={pendingAdds.length}
           pendingRemoves={pendingRemovesByKey.size}
           committedOverCap={typeof cap === 'number' && cap > 0 && seatCount > cap}
+          orgRows={orgRows}
         />
       </div>
 
@@ -141,6 +178,19 @@ export function StakeRosterPage() {
                     wards={wards.data ?? []}
                     buildings={buildings.data ?? []}
                     sites={kindooSites.data ?? []}
+                    org={{
+                      orgs: organizations.data ?? [],
+                      orgId: resolveGrantOrgId(seat, grant),
+                      // Editable only on the primary stake grant; a
+                      // duplicate stake grant's org is set via the
+                      // request form, so render it read-only.
+                      editable: hasStakeAccess && grant.isPrimary,
+                      // Gate the interactive select + name resolution on
+                      // the catalogue snapshot landing — `data ?? []`
+                      // above can't tell "loading" (undefined) from
+                      // "loaded, empty" ([]).
+                      orgsReady: organizations.data !== undefined,
+                    }}
                   />
                 );
               })}

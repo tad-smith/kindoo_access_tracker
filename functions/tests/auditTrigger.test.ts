@@ -15,6 +15,7 @@ import {
   auditBuildingWrites,
   auditKindooSiteWrites,
   auditManagerWrites,
+  auditOrganizationWrites,
   auditRequestWrites,
   auditSeatWrites,
   auditStakeWrites,
@@ -248,6 +249,83 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.action).toBe('update_stake');
     expect(rows[0]!.entity_id).toBe('kindooSite:east-stake');
+    expect(rows[0]!.after).toBeNull();
+    expect(rows[0]!.actor_canonical).toBe('carol@gmail.com');
+  });
+
+  // -------- Organizations --------
+
+  it('create on an organization emits a row with entity_id=organization:<slug>', async () => {
+    const after = {
+      organization_id: 'primary-childrens-hospital',
+      name: "Primary Children's Hospital",
+      seat_cap: 25,
+      lastActor: lastActor('alice@gmail.com'),
+    };
+    await auditOrganizationWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, organizationId: 'primary-childrens-hospital' },
+        before: null,
+        after,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('update_stake');
+    expect(rows[0]!.entity_type).toBe('stake');
+    expect(rows[0]!.entity_id).toBe('organization:primary-childrens-hospital');
+    expect(rows[0]!.before).toBeNull();
+    expect(rows[0]!.after).toMatchObject({ name: "Primary Children's Hospital" });
+    expect(rows[0]!.actor_canonical).toBe('alice@gmail.com');
+    expect(rows[0]!.member_canonical).toBeUndefined();
+  });
+
+  it('update on an organization emits an audit row with diff in before/after', async () => {
+    const before = {
+      organization_id: 'primary-childrens-hospital',
+      name: "Primary Children's Hospital",
+      seat_cap: 25,
+      lastActor: lastActor('alice@gmail.com'),
+    };
+    const after = {
+      ...before,
+      seat_cap: 30,
+      lastActor: lastActor('bob@gmail.com'),
+    };
+    await auditOrganizationWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, organizationId: 'primary-childrens-hospital' },
+        before,
+        after,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('update_stake');
+    expect(rows[0]!.entity_id).toBe('organization:primary-childrens-hospital');
+    expect((rows[0]!.before as Record<string, unknown>)['seat_cap']).toBe(25);
+    expect((rows[0]!.after as Record<string, unknown>)['seat_cap']).toBe(30);
+    expect(rows[0]!.actor_canonical).toBe('bob@gmail.com');
+  });
+
+  it('delete on an organization pulls actor from the BEFORE snapshot', async () => {
+    const before = {
+      organization_id: 'primary-childrens-hospital',
+      name: "Primary Children's Hospital",
+      seat_cap: 25,
+      lastActor: lastActor('carol@gmail.com'),
+    };
+    await auditOrganizationWrites.run(
+      makeEvent({
+        params: { stakeId: STAKE_ID, organizationId: 'primary-childrens-hospital' },
+        before,
+        after: null,
+      }),
+    );
+    const rows = await readAuditRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('update_stake');
+    expect(rows[0]!.entity_id).toBe('organization:primary-childrens-hospital');
     expect(rows[0]!.after).toBeNull();
     expect(rows[0]!.actor_canonical).toBe('carol@gmail.com');
   });

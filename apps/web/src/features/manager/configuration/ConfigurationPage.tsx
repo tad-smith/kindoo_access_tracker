@@ -1,9 +1,10 @@
 // Manager Configuration page — multi-tab CRUD over every editable
 // table.
 //
-// Tabs (left → right): Config, Managers, Kindoo Sites, Buildings, Wards.
-// Buildings precede Wards because a ward must reference an existing
-// building.
+// Tabs (left → right): Config, Managers, Kindoo Sites, Buildings, Wards,
+// Organizations. Buildings precede Wards because a ward must reference an
+// existing building. Organizations sit last — a free-standing seat pool
+// with no dependency on the other tables.
 //
 // Sub-tabs are selected via a query param `?tab=<key>` so the URL
 // remains deep-linkable. The TanStack Router file-route validates the
@@ -30,17 +31,19 @@ import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { resolveWardBuilding } from '@kindoo/shared';
-import type { Building, KindooSite, Ward } from '@kindoo/shared';
+import type { Building, KindooSite, Organization, Ward } from '@kindoo/shared';
 import {
   buildingSchema,
   configSchema,
   kindooSiteFormSchema,
   managerSchema,
+  organizationFormSchema,
   wardSchema,
   type BuildingForm,
   type ConfigForm,
   type KindooSiteForm,
   type ManagerForm,
+  type OrganizationForm,
   type WardForm,
 } from './schemas';
 import {
@@ -48,6 +51,7 @@ import {
   useDeleteBuildingMutation,
   useDeleteKindooSiteMutation,
   useDeleteManagerMutation,
+  useDeleteOrganizationMutation,
   useDeleteWardMutation,
   useKindooSites,
   useManagers,
@@ -58,9 +62,11 @@ import {
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
   useUpsertManagerMutation,
+  useUpsertOrganizationMutation,
   useUpsertWardMutation,
   useWards,
 } from './hooks';
+import { useOrganizations, sortOrganizations } from '../../organizations/hooks';
 import { TimezoneCombobox } from '../../../components/TimezoneCombobox';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
@@ -70,7 +76,13 @@ import { Switch } from '../../../components/ui/Switch';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { toast } from '../../../lib/store/toast';
 
-export type ConfigTabKey = 'config' | 'managers' | 'wards' | 'buildings' | 'kindoo-sites';
+export type ConfigTabKey =
+  | 'config'
+  | 'managers'
+  | 'wards'
+  | 'buildings'
+  | 'kindoo-sites'
+  | 'organizations';
 
 const TABS: Array<{ key: ConfigTabKey; label: string }> = [
   { key: 'config', label: 'Config' },
@@ -78,6 +90,7 @@ const TABS: Array<{ key: ConfigTabKey; label: string }> = [
   { key: 'kindoo-sites', label: 'Kindoo Sites' },
   { key: 'buildings', label: 'Buildings' },
   { key: 'wards', label: 'Wards' },
+  { key: 'organizations', label: 'Organizations' },
 ];
 
 function errorMessage(err: unknown): string {
@@ -102,7 +115,7 @@ export function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
     <section className="kd-page-wide">
       <h1>Configuration</h1>
       <p className="kd-page-subtitle">
-        Edit Buildings, Wards, Managers, Kindoo Sites, and stake-level config.
+        Edit Buildings, Wards, Managers, Kindoo Sites, Organizations, and stake-level config.
       </p>
 
       <nav className="kd-config-tabs" aria-label="Configuration sections">
@@ -126,6 +139,7 @@ export function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
         {tab === 'wards' ? <WardsTab /> : null}
         {tab === 'buildings' ? <BuildingsTab /> : null}
         {tab === 'kindoo-sites' ? <KindooSitesTab /> : null}
+        {tab === 'organizations' ? <OrganizationsTab /> : null}
       </div>
     </section>
   );
@@ -866,6 +880,204 @@ function KindooSiteFormDialog({ mode, isPending, onSubmit, onClose }: KindooSite
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>
           <Button type="submit" disabled={isPending} data-testid="config-kindoo-site-submit">
             {isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create Kindoo site'}
+          </Button>
+        </Dialog.Footer>
+      </form>
+    </Dialog>
+  );
+}
+
+// ---- Organizations tab ----------------------------------------------
+//
+// Stake-level seat pools managers track alongside wards / buildings.
+// `organization_id` is a slug derived from `name` at create time and
+// pinned for the doc's life (renaming does NOT re-slug — seats /
+// requests reference the immutable slug via `organization_id`). The
+// form edits only `name` + `seat_cap`. Delete is blocked while any seat
+// references the org (primary `organization_id` or any
+// `duplicate_grants[].organization_id`); the guard runs client-side
+// against the live seats snapshot (rules can't iterate siblings).
+
+function OrganizationsTab() {
+  const orgs = useOrganizations();
+  // Subscribe to seats so the delete ref-guard can block when any seat
+  // references this org (primary or duplicate-grant organization_id).
+  const seats = useSeats();
+  const upsert = useUpsertOrganizationMutation();
+  const del = useDeleteOrganizationMutation();
+
+  const [openMode, setOpenMode] = useState<'closed' | 'add' | { kind: 'edit'; org: Organization }>(
+    'closed',
+  );
+
+  const sorted = useMemo(() => sortOrganizations(orgs.data), [orgs.data]);
+
+  // Gate Add on the organizations snapshot arriving (mirrors the
+  // Buildings tab). Deep-linking ?tab=organizations can land a click
+  // before orgs.data hydrates; without this gate the unique-name guard
+  // runs against [] and a duplicate name slips through on the first
+  // click.
+  const orgsReady = orgs.data !== undefined;
+
+  // Gate Delete on the seats snapshot arriving. Deep-linking can land
+  // the Delete button before seats.data is defined; without this gate
+  // the ref-guard runs against [] and deletes an org that real seats
+  // still reference.
+  const deleteReady = seats.data !== undefined;
+
+  return (
+    <div className="kd-config-section">
+      <SectionHeader
+        title="Organizations"
+        addLabel="Add Organization"
+        onAdd={() => {
+          if (!orgsReady) return;
+          setOpenMode('add');
+        }}
+        testid="config-organizations"
+        addDisabled={!orgsReady}
+        addDisabledHint="Loading…"
+      />
+      {sorted.length === 0 ? (
+        <p className="kd-empty-state" data-testid="config-organizations-empty">
+          No organizations configured. Add one to assign stake-scope seats to it.
+        </p>
+      ) : (
+        <ul className="kd-config-rows" data-testid="config-organizations-list">
+          {sorted.map((o) => (
+            <li
+              key={o.organization_id}
+              data-testid={`config-organizations-row-${o.organization_id}`}
+            >
+              <span>
+                <strong>{o.name}</strong> — cap {o.seat_cap}
+              </span>
+              <span className="kd-config-row-actions">
+                <Button
+                  variant="secondary"
+                  onClick={() => setOpenMode({ kind: 'edit', org: o })}
+                  data-testid={`config-organization-edit-${o.organization_id}`}
+                >
+                  Edit
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={!deleteReady}
+                  title={deleteReady ? undefined : 'Loading…'}
+                  onClick={() => {
+                    if (!deleteReady) return;
+                    del
+                      .mutateAsync({
+                        organizationId: o.organization_id,
+                        seats: seats.data ?? [],
+                      })
+                      .then(() => toast('Organization deleted.', 'success'))
+                      .catch((err) => toast(errorMessage(err), 'error'));
+                  }}
+                  data-testid={`config-organization-delete-${o.organization_id}`}
+                >
+                  {deleteReady ? 'Delete' : 'Loading…'}
+                </Button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <OrganizationFormDialog
+        mode={openMode}
+        isPending={upsert.isPending}
+        onSubmit={async (input, editingOrgId) => {
+          await upsert.mutateAsync({
+            ...input,
+            // Carry the original slug through on edit so the write hits
+            // the SAME doc and never re-slugs a renamed organization.
+            ...(editingOrgId ? { organization_id: editingOrgId } : {}),
+            existingOrganizations: orgs.data ?? [],
+          });
+          toast('Organization saved.', 'success');
+        }}
+        onClose={() => setOpenMode('closed')}
+      />
+    </div>
+  );
+}
+
+interface OrganizationFormDialogProps {
+  mode: 'closed' | 'add' | { kind: 'edit'; org: Organization };
+  isPending: boolean;
+  /** `editingOrgId` is the immutable slug on edit, `null` on create. */
+  onSubmit: (input: OrganizationForm, editingOrgId: string | null) => Promise<void>;
+  onClose: () => void;
+}
+
+function organizationFormDefaults(editingOrg: Organization | null): OrganizationForm {
+  return editingOrg
+    ? { name: editingOrg.name, seat_cap: editingOrg.seat_cap }
+    : { name: '', seat_cap: 0 };
+}
+
+function OrganizationFormDialog({
+  mode,
+  isPending,
+  onSubmit,
+  onClose,
+}: OrganizationFormDialogProps) {
+  const isEdit = typeof mode === 'object' && mode.kind === 'edit';
+  const editingOrg = isEdit ? mode.org : null;
+  const open = mode !== 'closed';
+
+  const form = useForm<OrganizationForm>({
+    resolver: zodResolver(organizationFormSchema),
+    defaultValues: organizationFormDefaults(editingOrg),
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  useEffect(() => {
+    if (!open) return;
+    reset(organizationFormDefaults(editingOrg));
+  }, [open, editingOrg, reset]);
+
+  const submit = handleSubmit(async (input) => {
+    try {
+      await onSubmit(input, editingOrg?.organization_id ?? null);
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title={isEdit ? `Edit organization — ${editingOrg?.name ?? ''}` : 'Add organization'}
+    >
+      <form onSubmit={submit} className="kd-wizard-form" data-testid="config-organization-form">
+        <label>
+          Name
+          <Input {...register('name')} placeholder="Primary Children" />
+        </label>
+        {formState.errors.name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.name.message}
+          </p>
+        ) : null}
+        <label>
+          Seat cap
+          <Input type="number" min={0} {...register('seat_cap', { valueAsNumber: true })} />
+        </label>
+        {formState.errors.seat_cap ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.seat_cap.message}
+          </p>
+        ) : null}
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Button type="submit" disabled={isPending} data-testid="config-organization-submit">
+            {isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create organization'}
           </Button>
         </Dialog.Footer>
       </form>

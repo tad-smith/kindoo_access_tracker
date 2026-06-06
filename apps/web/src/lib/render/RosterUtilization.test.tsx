@@ -182,4 +182,116 @@ describe('<RosterUtilization />', () => {
     // No bars rendered without a cap.
     expect(container.querySelectorAll('.utilization-bar')).toHaveLength(0);
   });
+
+  describe('per-organization bars', () => {
+    it('relabels the committed bar "Stake Total" when org rows are present', () => {
+      render(
+        <RosterUtilization
+          committedTotal={12}
+          cap={25}
+          pendingAdds={0}
+          pendingRemoves={0}
+          orgRows={[{ name: 'Stake Choir', total: 3, cap: 5 }]}
+        />,
+      );
+      expect(screen.getByText(/Stake Total: 12 \/ 25 seats used/)).toBeInTheDocument();
+    });
+
+    it('leaves the committed bar unlabelled when there are no org rows', () => {
+      render(
+        <RosterUtilization
+          committedTotal={12}
+          cap={25}
+          pendingAdds={0}
+          pendingRemoves={0}
+          orgRows={[]}
+        />,
+      );
+      expect(screen.getByText(/^12 \/ 25 seats used$/)).toBeInTheDocument();
+      expect(screen.queryByText(/Stake Total/)).toBeNull();
+    });
+
+    it('renders one bar per organization with its count and cap', () => {
+      render(
+        <RosterUtilization
+          committedTotal={12}
+          cap={25}
+          pendingAdds={0}
+          pendingRemoves={0}
+          orgRows={[
+            { name: 'Stake Choir', total: 3, cap: 5 },
+            { name: 'Youth Program', total: 8, cap: 10 },
+          ]}
+        />,
+      );
+      expect(screen.getByText(/Stake Choir: 3 \/ 5 seats used/)).toBeInTheDocument();
+      expect(screen.getByText(/Youth Program: 8 \/ 10 seats used/)).toBeInTheDocument();
+      // Stake Total + 2 org bars = 3 bars (no pending).
+      expect(fills()).toHaveLength(3);
+    });
+
+    it('renders an org bar with zero count', () => {
+      render(
+        <RosterUtilization
+          committedTotal={5}
+          cap={25}
+          pendingAdds={0}
+          pendingRemoves={0}
+          orgRows={[{ name: 'Empty Org', total: 0, cap: 4 }]}
+        />,
+      );
+      expect(screen.getByText(/Empty Org: 0 \/ 4 seats used/)).toBeInTheDocument();
+    });
+
+    it('shows the amber near signal on an org bar at >=90% of its cap', () => {
+      render(
+        <RosterUtilization
+          committedTotal={20}
+          cap={25}
+          pendingAdds={0}
+          pendingRemoves={0}
+          orgRows={[{ name: 'Near Org', total: 9, cap: 10 }]}
+        />,
+      );
+      // Last fill is the org bar (committed Stake Total bar is first).
+      const orgFill = fills().at(-1);
+      expect(orgFill?.className).toContain('near');
+    });
+
+    it('shows red OVER CAP on an org bar whose count exceeds its cap', () => {
+      render(
+        <RosterUtilization
+          committedTotal={20}
+          cap={25}
+          pendingAdds={0}
+          pendingRemoves={0}
+          orgRows={[{ name: 'Over Org', total: 7, cap: 5 }]}
+        />,
+      );
+      const orgFill = fills().at(-1);
+      expect(orgFill?.className).toContain('over');
+      expect(screen.getByText(/OVER CAP/)).toBeInTheDocument();
+    });
+
+    it('places the org bars inside the same shared grid wrapper as the stake bars', () => {
+      const { container } = render(
+        <RosterUtilization
+          committedTotal={12}
+          cap={25}
+          pendingAdds={2}
+          pendingRemoves={0}
+          orgRows={[{ name: 'Stake Choir', total: 3, cap: 5 }]}
+        />,
+      );
+      const wrapper = container.querySelector('.kd-roster-utilization');
+      const inner = Array.from(
+        wrapper?.querySelectorAll(':scope > .utilization') ?? [],
+      ) as HTMLElement[];
+      // Stake Total (committed) + pending + 1 org = 3 inline bars.
+      expect(inner).toHaveLength(3);
+      for (const el of inner) {
+        expect(el.className).toContain('layout-inline');
+      }
+    });
+  });
 });

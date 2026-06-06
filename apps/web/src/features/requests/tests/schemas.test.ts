@@ -39,6 +39,56 @@ describe('newRequestSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('accepts an optional organization_id (slug) on a stake-scope submission', () => {
+    const result = newRequestSchema.safeParse({
+      type: 'add_manual',
+      scope: 'stake',
+      member_email: 'bob@example.com',
+      member_name: 'Bob',
+      reason: 'sub teacher',
+      comment: '',
+      start_date: '',
+      end_date: '',
+      building_names: ['Maple Building'],
+      urgent: false,
+      organization_id: 'primary-children',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts organization_id=null (No Organization)', () => {
+    const result = newRequestSchema.safeParse({
+      type: 'add_manual',
+      scope: 'stake',
+      member_email: 'bob@example.com',
+      member_name: 'Bob',
+      reason: 'sub teacher',
+      comment: '',
+      start_date: '',
+      end_date: '',
+      building_names: ['Maple Building'],
+      urgent: false,
+      organization_id: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a submission with organization_id omitted entirely', () => {
+    const result = newRequestSchema.safeParse({
+      type: 'add_manual',
+      scope: 'CO',
+      member_email: 'bob@example.com',
+      member_name: 'Bob',
+      reason: 'sub teacher',
+      comment: '',
+      start_date: '',
+      end_date: '',
+      building_names: ['Maple Building'],
+      urgent: false,
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('rejects a ward-scope submission with zero buildings (parity with stake scope)', () => {
     const result = newRequestSchema.safeParse({
       type: 'add_manual',
@@ -372,6 +422,41 @@ describe('removeRequestSchema', () => {
 });
 
 describe('editSeatSchema', () => {
+  it('accepts an optional organization_id on an edit_manual submission', () => {
+    const result = editSeatSchema.safeParse({
+      type: 'edit_manual',
+      reason: 'sub teacher',
+      comment: 'note',
+      building_names: ['Maple Building'],
+      start_date: '',
+      end_date: '',
+      organization_id: 'primary-children',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts organization_id=null and omitted on edit submissions', () => {
+    const withNull = editSeatSchema.safeParse({
+      type: 'edit_manual',
+      reason: 'sub teacher',
+      comment: 'note',
+      building_names: ['Maple Building'],
+      start_date: '',
+      end_date: '',
+      organization_id: null,
+    });
+    expect(withNull.success).toBe(true);
+    const omitted = editSeatSchema.safeParse({
+      type: 'edit_manual',
+      reason: 'sub teacher',
+      comment: 'note',
+      building_names: ['Maple Building'],
+      start_date: '',
+      end_date: '',
+    });
+    expect(omitted.success).toBe(true);
+  });
+
   // edit_auto: only buildings required (reason is empty / Church-managed).
   // Comment is required across all three edit_* types per spec §6.1.
   describe('edit_auto', () => {

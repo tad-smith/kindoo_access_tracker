@@ -35,6 +35,21 @@
 
 import { UtilizationBar } from './UtilizationBar';
 
+/**
+ * A committed per-organization bar rendered below the stake bars.
+ * Display-only cap (ok / warn ≥90% / over via the existing
+ * `UtilizationBar` ratio behaviour). Committed-only — pending
+ * adds/removes are NOT split per org.
+ */
+export interface OrgUtilizationRow {
+  /** Org display name; the bar's leading label. */
+  name: string;
+  /** Committed stake-roster rows whose resolved org id matches this org. */
+  total: number;
+  /** The org's seat cap. */
+  cap: number | null | undefined;
+}
+
 export interface RosterUtilizationProps {
   /** Currently committed seats in the displayed scope. */
   committedTotal: number;
@@ -46,6 +61,13 @@ export interface RosterUtilizationProps {
   pendingRemoves: number;
   /** Pre-computed committed-row over-cap flag (paths already track this). */
   committedOverCap?: boolean;
+  /**
+   * Per-organization committed bars rendered below the stake bars. When
+   * present (Stake Roster), the committed stake bar is relabelled
+   * "Stake Total" to distinguish it from the per-org rows. Already
+   * sorted by the caller (`sortOrganizations`).
+   */
+  orgRows?: readonly OrgUtilizationRow[];
 }
 
 export function RosterUtilization({
@@ -54,11 +76,13 @@ export function RosterUtilization({
   pendingAdds,
   pendingRemoves,
   committedOverCap = false,
+  orgRows,
 }: RosterUtilizationProps) {
   const projected = Math.max(0, committedTotal + pendingAdds - pendingRemoves);
   const projectedOverCap = typeof cap === 'number' && cap > 0 && projected > cap;
   const hasNetChange = projected !== committedTotal;
   const hasPending = pendingAdds > 0 || pendingRemoves > 0;
+  const hasOrgRows = orgRows !== undefined && orgRows.length > 0;
   return (
     <div className="kd-roster-utilization">
       <UtilizationBar
@@ -67,6 +91,10 @@ export function RosterUtilization({
         overCap={committedOverCap}
         layout="inline"
         verb="used"
+        // Relabel the committed stake bar only when per-org bars sit
+        // below it; otherwise other surfaces (ward / bishopric) keep the
+        // unlabelled bar.
+        {...(hasOrgRows ? { name: 'Stake Total' } : {})}
       />
       {hasPending ? (
         <UtilizationBar
@@ -78,6 +106,19 @@ export function RosterUtilization({
           accent={hasNetChange ? 'warn' : 'auto'}
         />
       ) : null}
+      {hasOrgRows
+        ? orgRows.map((row) => (
+            <UtilizationBar
+              key={row.name}
+              name={row.name}
+              total={row.total}
+              cap={row.cap}
+              overCap={typeof row.cap === 'number' && row.cap > 0 && row.total > row.cap}
+              layout="inline"
+              verb="used"
+            />
+          ))
+        : null}
     </div>
   );
 }

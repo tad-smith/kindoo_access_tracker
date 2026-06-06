@@ -128,4 +128,21 @@ describe('UtilizationBar', () => {
       expect(fillEl().className).toBe('utilization-fill');
     });
   });
+
+  describe('name prop', () => {
+    it('prepends "{name}: " to the cap-set label', () => {
+      render(<UtilizationBar total={3} cap={10} name="Stake Choir" />);
+      expect(screen.getByText(/Stake Choir: 3 \/ 10 seats used/)).toBeInTheDocument();
+    });
+
+    it('prepends "{name}: " to the cap-unset label', () => {
+      render(<UtilizationBar total={2} cap={null} name="Stake Choir" />);
+      expect(screen.getByText(/Stake Choir: 2 seats/)).toBeInTheDocument();
+    });
+
+    it('omits the name prefix by default', () => {
+      render(<UtilizationBar total={3} cap={10} />);
+      expect(screen.getByText(/^3 \/ 10 seats used$/)).toBeInTheDocument();
+    });
+  });
 });

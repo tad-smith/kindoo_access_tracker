@@ -7,13 +7,35 @@
 // The card is presentational. Callers compute the matched grant,
 // pending-removal flag, edit / remove gates; we render.
 
-import type { Building, Seat, KindooSite, Ward } from '@kindoo/shared';
+import type { Building, Organization, Seat, KindooSite, Ward } from '@kindoo/shared';
 import { Badge } from '../ui/Badge';
 import type { GrantView } from '../../lib/grants';
 import { siteLabelForGrant } from '../../lib/kindooSites';
 import { EditSeatAffordance } from '../../features/requests/components/EditSeatAffordance';
 import { RemovalAffordance } from '../../features/requests/components/RemovalAffordance';
+import { OrganizationChip } from './OrganizationChip';
 import { RosterMemberLine } from './RosterMemberLine';
+
+/**
+ * Organization-chip props. Opt-in: only the Stake Roster passes this
+ * (the org concept is stake-scope), so ward / bishopric surfaces that
+ * reuse this card render no chip. The caller resolves the grant's org id
+ * (primary → `seat.organization_id`; duplicate → that duplicate's
+ * `organization_id`) and the inline-edit gate.
+ */
+export interface RosterCardOrg {
+  /** Live organizations catalogue (id→name + the menu). */
+  orgs: readonly Organization[];
+  /** Resolved org id for the rendered grant; `null` → "No Organization". */
+  orgId: string | null;
+  /** True iff the inline editor renders (stake access AND primary stake grant). */
+  editable: boolean;
+  /**
+   * True once the org catalogue snapshot has landed. Until then the chip
+   * stays read-only with a neutral placeholder — see `<OrganizationChip>`.
+   */
+  orgsReady: boolean;
+}
 
 export interface PerGrantRosterCardProps {
   seat: Seat;
@@ -27,6 +49,8 @@ export interface PerGrantRosterCardProps {
   wards: readonly Ward[];
   buildings: readonly Building[];
   sites: readonly KindooSite[];
+  /** Organization chip — Stake Roster only; omitted on other surfaces. */
+  org?: RosterCardOrg;
 }
 
 export function PerGrantRosterCard({
@@ -38,6 +62,7 @@ export function PerGrantRosterCard({
   wards,
   buildings,
   sites,
+  org,
 }: PerGrantRosterCardProps) {
   const siteLabel = siteLabelForGrant(grant, wards, buildings, sites);
 
@@ -107,6 +132,15 @@ export function PerGrantRosterCard({
             </Badge>
           ) : null}
         </span>
+        {org ? (
+          <OrganizationChip
+            orgs={org.orgs}
+            orgId={org.orgId}
+            editable={org.editable}
+            orgsReady={org.orgsReady}
+            memberCanonical={seat.member_canonical}
+          />
+        ) : null}
         {canEdit || canRemove ? (
           <span className="roster-card-actions" style={{ display: 'inline-flex', gap: 8 }}>
             {canEdit ? <EditSeatAffordance seat={seat} /> : null}

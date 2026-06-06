@@ -32,6 +32,27 @@ vi.mock('../../../lib/store/toast', () => ({
   toast: (...args: unknown[]) => toastMock(...args),
 }));
 
+// The org selector subscribes to the organizations catalogue. These
+// tests don't exercise org behaviour, so return an empty live result;
+// keep the real pure helpers (sortOrganizations / NO_ORGANIZATION_LABEL).
+vi.mock('../../organizations/hooks', async () => {
+  const actual = await vi.importActual<object>('../../organizations/hooks');
+  return {
+    ...actual,
+    useOrganizations: () => ({
+      data: [],
+      error: null,
+      status: 'success',
+      isPending: false,
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      isFetching: false,
+      fetchStatus: 'idle',
+    }),
+  };
+});
+
 import { NewRequestDialog } from './NewRequestDialog';
 
 const FAKE_TS = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };

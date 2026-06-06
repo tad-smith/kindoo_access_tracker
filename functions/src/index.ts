@@ -14,6 +14,7 @@ export {
   auditBuildingWrites,
   auditKindooSiteWrites,
   auditManagerWrites,
+  auditOrganizationWrites,
   auditRequestWrites,
   auditSeatWrites,
   auditStakeWrites,
