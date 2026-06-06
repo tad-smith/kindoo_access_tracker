@@ -389,16 +389,21 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
     });
 
     // Role-for-scope gate (B-3 / T-36). Manager status alone does NOT
-    // grant creation rights — a pure-manager user with no stake / no
-    // ward claim has no submit surface, server-side. The mirror of the
-    // SPA's `allowedScopesFor` filter on `firestore.rules`. A manager
-    // who also holds `stake: true` or a bishopric ward inherits creation
-    // rights through those branches, like any other user.
-    it('stake-scope submit by a pure manager → denied (no stake claim)', async () => {
+    // grant creation rights for most types — a pure-manager user with no
+    // stake / no ward claim has no submit surface, server-side. The
+    // mirror of the SPA's `allowedScopesFor` filter on `firestore.rules`.
+    // A manager who also holds `stake: true` or a bishopric ward inherits
+    // creation rights through those branches, like any other user.
+    //
+    // The one carve-out (stake-scope `add_manual`, "Give Access To Stake
+    // Buildings") is covered in its own describe block below; this test
+    // uses `add_temp` to confirm the general B-3 restriction still holds.
+    it('stake-scope add_temp submit by a pure manager → denied (no stake claim)', async () => {
       const db = managerContext(env, STAKE_ID).firestore();
       await assertFails(
         db.doc(PATH).set(
-          pendingAddManualByStakeMember({
+          pendingAddTempByBishopric('01', {
+            scope: 'stake',
             requester_email: personas.manager.email,
             requester_canonical: personas.manager.canonical,
             lastActor: lastActorOf(personas.manager),
@@ -431,6 +436,150 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
           }),
         ),
       );
+    });
+
+    // "Give Access To Stake Buildings" — narrow carve-out to B-3 / T-36.
+    // A Kindoo Manager with NO stake claim may create a stake-scope
+    // request, but ONLY for `add_manual` (the flow that grants a
+    // foreign-site-only ward member access to home-site stake buildings).
+    // Every other stake-scope type stays blocked for a pure manager.
+    describe('stake-scope add_manual by manager (Give Access To Stake Buildings)', () => {
+      it('pure manager creates stake-scope add_manual with member_name + ≥1 building → ok', async () => {
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingAddManualByStakeMember({
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      // The exception widens WHO may create, not WHAT the request must
+      // carry. Every other create constraint still applies.
+      it('pure manager stake-scope add_manual with empty member_name → denied', async () => {
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddManualByStakeMember({
+              member_name: '',
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      it('pure manager stake-scope add_manual with empty building_names → denied', async () => {
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddManualByStakeMember({
+              building_names: [],
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      // B-3 stays intact for every non-`add_manual` stake-scope type.
+      it('pure manager stake-scope add_temp → denied', async () => {
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric('01', {
+              scope: 'stake',
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      it('pure manager stake-scope edit_manual → denied', async () => {
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditManualByStakeMember({
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      it('pure manager stake-scope edit_temp → denied', async () => {
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditTempByBishopric('01', {
+              scope: 'stake',
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      // `edit_auto` on stake scope is doubly blocked: Policy 1 forbids it
+      // for everyone, and the manager carve-out is `add_manual`-only.
+      it('pure manager stake-scope edit_auto → denied', async () => {
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditAutoByBishopric('01', {
+              scope: 'stake',
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      it('pure manager stake-scope remove → denied', async () => {
+        const db = managerContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingRemoveByBishopric('01', {
+              scope: 'stake',
+              requester_email: personas.manager.email,
+              requester_canonical: personas.manager.canonical,
+              lastActor: lastActorOf(personas.manager),
+            }),
+          ),
+        );
+      });
+
+      // The carve-out is manager-gated. A non-manager, non-stake-member,
+      // non-bishopric user still cannot create a stake-scope add_manual.
+      it('outsider (no manager/stake/bishopric role) stake-scope add_manual → denied', async () => {
+        const db = outsiderContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddManualByStakeMember({
+              requester_email: personas.outsider.email,
+              requester_canonical: personas.outsider.canonical,
+              lastActor: lastActorOf(personas.outsider),
+            }),
+          ),
+        );
+      });
+
+      // Existing behavior unbroken: a stake-scope member can still create
+      // a stake-scope add_manual through the original stake-claim branch.
+      it('stake-scope member still creates stake-scope add_manual → ok', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingAddManualByStakeMember()));
+      });
     });
 
     // Manager + stake claim → stake-scope submit allowed (inherits
