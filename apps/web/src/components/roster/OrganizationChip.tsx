@@ -17,6 +17,15 @@
 // `editable` (stake access AND `grant.isPrimary`) and the resolved
 // `orgId` (primary → `seat.organization_id`; duplicate → that
 // duplicate's `organization_id`).
+//
+// Hydration gate (`orgsReady`): the org catalogue subscription lands a
+// frame or two after the page. Until it does, the interactive `<select>`
+// is NOT rendered — its only option would be the "No Organization"
+// sentinel, so a click in that sub-second window would fire a `null`
+// write and silently clear the seat's org. While loading we render a
+// neutral placeholder (never "No Organization") so a seat that DOES have
+// an org never flashes the wrong label. Mirrors the Configuration tab,
+// which gates Add/Delete on `orgsReady`/`deleteReady`.
 
 import type { Organization } from '@kindoo/shared';
 import { organizationName, sortOrganizations } from '../../features/organizations/hooks';
@@ -26,6 +35,9 @@ import './OrganizationChip.css';
 /** Sentinel `<option>` value for "No Organization" (`<select>` values must be strings). */
 const NO_ORG_VALUE = '__none__';
 
+/** Neutral placeholder shown while the org catalogue is still hydrating. */
+const LOADING_PLACEHOLDER = '…';
+
 export interface OrganizationChipProps {
   /** Live organizations catalogue (for id→name resolution + the menu). */
   orgs: readonly Organization[];
@@ -33,6 +45,13 @@ export interface OrganizationChipProps {
   orgId: string | null;
   /** True iff the inline editor (the `<select>`) should render. */
   editable: boolean;
+  /**
+   * True once the org catalogue snapshot has landed (`data !== undefined`).
+   * While false the chip stays read-only with a neutral placeholder: the
+   * interactive `<select>` never renders (no accidental clear), and an
+   * org'd seat never flashes "No Organization".
+   */
+  orgsReady: boolean;
   /** Canonical email = seat doc id; the mutation target. Required when editable. */
   memberCanonical: string;
 }
@@ -41,9 +60,32 @@ export function OrganizationChip({
   orgs,
   orgId,
   editable,
+  orgsReady,
   memberCanonical,
 }: OrganizationChipProps) {
   const setOrg = useSetSeatOrganization();
+
+  // Catalogue not yet hydrated: render read-only and never resolve to
+  // "No Organization" — a seat with a non-null org id would otherwise
+  // flash the wrong label, and an editable `<select>` would expose a
+  // one-option (clear-only) menu that silently wipes the org on click.
+  if (!orgsReady) {
+    // `null` org id while loading is genuinely "No Organization" (no id to
+    // resolve), so show it; a non-null id is unresolved → neutral placeholder.
+    const loadingLabel = orgId == null ? organizationName(orgs, orgId) : LOADING_PLACEHOLDER;
+    return (
+      <span
+        className="roster-card-chip roster-org-chip"
+        data-testid={`org-chip-${memberCanonical}`}
+        data-editable="false"
+        data-orgs-ready="false"
+      >
+        <span className="label">Org:</span>
+        <span className="roster-org-name roster-org-name--loading">{loadingLabel}</span>
+      </span>
+    );
+  }
+
   const label = organizationName(orgs, orgId);
 
   if (!editable) {

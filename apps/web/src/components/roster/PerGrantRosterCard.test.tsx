@@ -174,18 +174,18 @@ describe('PerGrantRosterCard organization chip', () => {
   });
 
   it('shows the resolved organization name', () => {
-    renderCard({ org: { orgs, orgId: 'choir', editable: false } });
+    renderCard({ org: { orgs, orgId: 'choir', editable: false, orgsReady: true } });
     const chip = screen.getByTestId(chipId);
     expect(chip.textContent).toContain('Stake Choir');
   });
 
   it('shows "No Organization" when the grant has no org', () => {
-    renderCard({ org: { orgs, orgId: null, editable: false } });
+    renderCard({ org: { orgs, orgId: null, editable: false, orgsReady: true } });
     expect(screen.getByTestId(chipId).textContent).toContain('No Organization');
   });
 
   it('renders the editable select (dropdown affordance) when editable', () => {
-    renderCard({ org: { orgs, orgId: 'choir', editable: true } });
+    renderCard({ org: { orgs, orgId: 'choir', editable: true, orgsReady: true } });
     const select = screen.getByTestId(selectId) as HTMLSelectElement;
     expect(select).not.toBeNull();
     expect(select.value).toBe('choir');
@@ -195,14 +195,14 @@ describe('PerGrantRosterCard organization chip', () => {
   });
 
   it('renders read-only (no select) when not editable', () => {
-    renderCard({ org: { orgs, orgId: 'choir', editable: false } });
+    renderCard({ org: { orgs, orgId: 'choir', editable: false, orgsReady: true } });
     expect(screen.queryByTestId(selectId)).toBeNull();
     expect(screen.getByTestId(chipId).getAttribute('data-editable')).toBe('false');
   });
 
   it('calls the mutation with the chosen org id on change', () => {
     setOrgMock.mockClear();
-    renderCard({ org: { orgs, orgId: null, editable: true } });
+    renderCard({ org: { orgs, orgId: null, editable: true, orgsReady: true } });
     fireEvent.change(screen.getByTestId(selectId), { target: { value: 'youth' } });
     expect(setOrgMock).toHaveBeenCalledWith({
       memberCanonical: 'memberone@example.com',
@@ -212,7 +212,7 @@ describe('PerGrantRosterCard organization chip', () => {
 
   it('writes null when "No Organization" is chosen', () => {
     setOrgMock.mockClear();
-    renderCard({ org: { orgs, orgId: 'youth', editable: true } });
+    renderCard({ org: { orgs, orgId: 'youth', editable: true, orgsReady: true } });
     fireEvent.change(screen.getByTestId(selectId), { target: { value: '__none__' } });
     expect(setOrgMock).toHaveBeenCalledWith({
       memberCanonical: 'memberone@example.com',
@@ -222,8 +222,69 @@ describe('PerGrantRosterCard organization chip', () => {
 
   it('does not write when the selection is unchanged', () => {
     setOrgMock.mockClear();
-    renderCard({ org: { orgs, orgId: 'youth', editable: true } });
+    renderCard({ org: { orgs, orgId: 'youth', editable: true, orgsReady: true } });
     fireEvent.change(screen.getByTestId(selectId), { target: { value: 'youth' } });
     expect(setOrgMock).not.toHaveBeenCalled();
+  });
+});
+
+// Hydration race: while the org catalogue is still loading (`orgsReady`
+// false, the snapshot not yet landed) the chip must NOT expose the
+// interactive `<select>` — its only option is the "No Organization"
+// sentinel, so a click in that window would silently clear the seat's
+// org via a `null` write. An org'd seat must also not flash
+// "No Organization" before the name resolves.
+describe('PerGrantRosterCard organization chip — catalogue hydrating', () => {
+  const chipId = 'org-chip-memberone@example.com';
+  const selectId = 'org-select-memberone@example.com';
+
+  it('does not render the editable select while the catalogue is loading', () => {
+    renderCard({ org: { orgs: [], orgId: 'choir', editable: true, orgsReady: false } });
+    expect(screen.queryByTestId(selectId)).toBeNull();
+    expect(screen.getByTestId(chipId).getAttribute('data-editable')).toBe('false');
+  });
+
+  it('cannot fire a clear (null write) while the catalogue is loading', () => {
+    setOrgMock.mockClear();
+    renderCard({ org: { orgs: [], orgId: 'choir', editable: true, orgsReady: false } });
+    // No select means there is no control to change — the clear path is
+    // unreachable during hydration.
+    expect(screen.queryByTestId(selectId)).toBeNull();
+    expect(setOrgMock).not.toHaveBeenCalled();
+  });
+
+  it('does not flash "No Organization" for an org\'d seat while loading', () => {
+    renderCard({ org: { orgs: [], orgId: 'choir', editable: false, orgsReady: false } });
+    expect(screen.getByTestId(chipId).textContent).not.toContain('No Organization');
+  });
+
+  it('shows "No Organization" for a seat with no org even while loading', () => {
+    // A null org id is genuinely unset — there is no id to resolve later,
+    // so showing the label immediately is correct.
+    renderCard({ org: { orgs: [], orgId: null, editable: false, orgsReady: false } });
+    expect(screen.getByTestId(chipId).textContent).toContain('No Organization');
+  });
+
+  it('resolves to the real name once the catalogue lands', () => {
+    const { rerender } = renderCard({
+      org: { orgs: [], orgId: 'choir', editable: false, orgsReady: false },
+    });
+    expect(screen.getByTestId(chipId).textContent).not.toContain('Stake Choir');
+    rerender(
+      <PerGrantRosterCard
+        seat={seat}
+        grant={grant}
+        canEdit={false}
+        canRemove={false}
+        isPendingRemoval={false}
+        wards={[]}
+        buildings={[]}
+        sites={[]}
+        org={{ orgs, orgId: 'choir', editable: true, orgsReady: true }}
+      />,
+    );
+    expect(screen.getByTestId(chipId).textContent).toContain('Stake Choir');
+    // The editable select returns once the catalogue is ready.
+    expect(screen.queryByTestId(selectId)).not.toBeNull();
   });
 });

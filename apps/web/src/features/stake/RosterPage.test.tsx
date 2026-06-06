@@ -773,6 +773,40 @@ describe('<StakeRosterPage />', () => {
       expect(screen.queryByTestId('org-select-cross@x.com')).toBeNull();
     });
 
+    // Hydration race: the org catalogue snapshot lands a frame or two
+    // after the page. Until then the chip must stay read-only (no
+    // clear-only select) and an org'd seat must not flash "No
+    // Organization". `data: undefined` is the loading sentinel.
+    it('keeps the chip read-only and hides "No Organization" while the catalogue is loading', () => {
+      useOrganizationsMock.mockReturnValue({
+        data: undefined,
+        error: null,
+        status: 'pending',
+        isPending: true,
+        isLoading: true,
+        isSuccess: false,
+        isError: false,
+        isFetching: true,
+        fetchStatus: 'fetching',
+      });
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          organization_id: 'choir',
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      // No interactive select during hydration — the clear path is unreachable.
+      expect(screen.queryByTestId('org-select-a@x.com')).toBeNull();
+      const chip = screen.getByTestId('org-chip-a@x.com');
+      expect(chip.getAttribute('data-editable')).toBe('false');
+      // Org'd seat must not flash the wrong label before the name resolves.
+      expect(chip.textContent).not.toContain('No Organization');
+    });
+
     it('relabels the stake bar "Stake Total" and renders one bar per organization', () => {
       mockSeats([
         makeSeat({

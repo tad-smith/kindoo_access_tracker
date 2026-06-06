@@ -30,6 +30,11 @@ export interface RosterCardOrg {
   orgId: string | null;
   /** True iff the inline editor renders (stake access AND primary stake grant). */
   editable: boolean;
+  /**
+   * True once the org catalogue snapshot has landed. Until then the chip
+   * stays read-only with a neutral placeholder — see `<OrganizationChip>`.
+   */
+  orgsReady: boolean;
 }
 
 export interface PerGrantRosterCardProps {
@@ -132,6 +137,7 @@ export function PerGrantRosterCard({
             orgs={org.orgs}
             orgId={org.orgId}
             editable={org.editable}
+            orgsReady={org.orgsReady}
             memberCanonical={seat.member_canonical}
           />
         ) : null}

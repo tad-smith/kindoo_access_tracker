@@ -14,6 +14,12 @@
   color: var(--kd-fg-1);
 }
 
+/* Org catalogue still hydrating: muted placeholder, never "No Organization". */
+.roster-org-name--loading {
+  font-weight: 400;
+  color: var(--kd-fg-3);
+}
+
 /* The editable `<select>`: compact, chip-sized, inline. Inherits the
    `.kd-select` chevron background (the dropdown-arrow affordance). The
    width is content-driven so the chip hugs the org name. */
