@@ -490,13 +490,8 @@ function GrantRowCard({
           ) : null}
         </span>
       </div>
-      {canGrantStakeAccess && grantOpen ? (
-        <GrantStakeAccessDialog
-          seat={seat}
-          onOpenChange={(next) => {
-            if (!next) setGrantOpen(false);
-          }}
-        />
+      {canGrantStakeAccess ? (
+        <GrantStakeAccessDialog seat={seat} open={grantOpen} onOpenChange={setGrantOpen} />
       ) : null}
       <div className="roster-card-member-line">
         <span className="roster-card-member">
