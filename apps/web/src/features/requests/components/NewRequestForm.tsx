@@ -1,8 +1,7 @@
-// `NewRequestForm` — the shared add_manual / add_temp form rendered on
-// the `/new` page and inside the roster-header `NewRequestDialog`.
-// Forks per role solely on which scopes are available (single role →
-// implicit scope; multi-role → dropdown); every other behaviour is
-// identical between roles.
+// `NewRequestForm` — the shared add_manual / add_temp form rendered
+// inside the roster-header `NewRequestDialog`. The dialog is always
+// launched from a scoped roster context, so the form receives exactly
+// one scope and renders it as a fixed "Requesting for: …" label.
 //
 // Two presentation modes, keyed off the `onSubmitted` prop:
 //   - Page mode (default): inline Submit button; success toasts +
@@ -26,13 +25,9 @@
 //         — stake-scope means "everywhere"; manager unchecks specific
 //         buildings to exclude).
 //       - scope == <ward>   → collapsed, that ward's building pre-selected.
-//     A multi-role principal toggling the scope dropdown live-updates
-//     both the selection and the open state. The user's manual expand
-//     / collapse since the last scope change resets on scope change so
-//     a stake-scope expansion does not bleed into the ward-scope view.
 //
 // Cross-cutting behaviour:
-//   - `Requesting for:` label / dropdown above the form.
+//   - `Requesting for:` fixed scope label above the form.
 //   - Inline blocking duplicate error when a seat already exists for
 //     the entered member in the chosen scope (live via
 //     `useSeatForMember`): surfaces a client-side error and disables
@@ -85,10 +80,10 @@ export interface NewRequestFormProps {
    *  while loading → defaults fall back to empty and the manager picks
    *  at completion. */
   wards: readonly Ward[];
-  /** Scope to pre-select (from `?scope=` on the route). Used as the
-   *  dropdown default ONLY when it matches one of `scopes` by value;
-   *  otherwise the leading scope is used. Guards stale / unauthorized
-   *  deep links (e.g. a ward the user has since left). */
+  /** Scope to pre-select (the launching roster page's scope). Used as
+   *  the active scope ONLY when it matches one of `scopes` by value;
+   *  otherwise the leading scope is used (defensive — the dialog only
+   *  opens when the viewer is authorized for the launched scope). */
   initialScope?: string;
   /** Dialog mode: called after a SUCCESSFUL submit. When provided (with
    *  `onCancel`), the actions render inside a `Dialog.Footer` and the
@@ -132,9 +127,9 @@ export function NewRequestForm({
   // that mode the actions render inside a Dialog.Footer (Cancel +
   // Submit) and the post-submit reset is skipped (the form unmounts).
   const dialogMode = onSubmitted !== undefined;
-  // Pre-select the requested scope only when the principal actually
-  // holds it; otherwise fall back to the leading allowed scope. Guards
-  // stale / unauthorized deep links.
+  // Use the requested scope only when the principal actually holds it;
+  // otherwise fall back to the leading allowed scope (defensive — the
+  // launching affordance only opens this form for authorized scopes).
   const initialScope =
     requestedScope !== undefined && scopes.some((s) => s.value === requestedScope)
       ? requestedScope
@@ -333,22 +328,7 @@ export function NewRequestForm({
   return (
     <form className="kd-wizard-form" onSubmit={onSubmit} data-testid="new-request-form" noValidate>
       <div className="kd-page-subtitle">
-        {scopes.length === 1 ? (
-          <>
-            <strong>Requesting for:</strong> {scopes[0]?.label}
-          </>
-        ) : (
-          <label>
-            <strong>Requesting for:</strong>{' '}
-            <Select {...register('scope')} data-testid="new-request-scope">
-              {scopes.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </Select>
-          </label>
-        )}
+        <strong>Requesting for:</strong> {scopes[0]?.label}
       </div>
 
       <label>

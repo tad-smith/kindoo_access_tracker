@@ -128,7 +128,12 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
 
   return (
     <section>
-      <h1>Ward Rosters</h1>
+      <div className="kd-page-title-row">
+        <h1>Ward Rosters</h1>
+        {canRequest && selected ? (
+          <NewRequestAffordance scope={selected} testId="ward-rosters-new-request" />
+        ) : null}
+      </div>
       <p className="kd-page-subtitle">Read-only view of any ward in the stake.</p>
 
       <div className="kd-ward-select-row">
@@ -145,11 +150,6 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
             </option>
           ))}
         </Select>
-        {canRequest && selected ? (
-          <span className="kd-ward-select-action">
-            <NewRequestAffordance scope={selected} testId="ward-rosters-new-request" />
-          </span>
-        ) : null}
       </div>
 
       {selected ? (

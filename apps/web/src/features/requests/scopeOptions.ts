@@ -1,8 +1,9 @@
 // Pure helper: build the allowed `New Request` scope list from the
-// principal's role union for a given stake. The dropdown on
-// `NewRequestPage` filters strictly by the roles the user actually
-// holds — manager / superadmin status alone does not grant scope
-// options for creating requests (B-3).
+// principal's role union for a given stake. The list filters strictly
+// by the roles the user actually holds — manager / superadmin status
+// alone does not grant scope options for creating requests (B-3).
+// Powers the roster-page New Request affordances' gating and the
+// dialog's scope-label lookup.
 //
 // Rules (per the operator-stated spec):
 //   - `stake` claim          → 'stake' option

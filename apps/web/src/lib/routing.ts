@@ -15,10 +15,10 @@
 //   - stake     → `/stake/roster`
 //   - bishopric → `/bishopric/roster`
 // Multi-role principals resolve to the highest-priority role's default.
-// Non-Kindoo-Manager roles intentionally land on the Roster rather
-// than the leftmost-nav `/new` so the first thing those users see is
-// the current ward (or stake) seat list; a "New Request" button in
-// the Roster header surfaces the previously-default `/new` form.
+// Non-Kindoo-Manager roles land on the Roster so the first thing those
+// users see is the current ward (or stake) seat list; the Roster header
+// carries the "New Request" affordance (an in-page modal) for creating
+// requests.
 
 import type { Principal } from './principal';
 
@@ -28,19 +28,11 @@ import type { Principal } from './principal';
  * Kept so external bookmarks from the pre-cutover UI keep working.
  */
 const DEEP_LINK_TABLE: Record<string, string> = {
-  // Bishopric + stake pages. `/bishopric/new` and `/stake/new` are
-  // both forwarded to the unified `/new` route; the old paths still
-  // exist as redirects so direct-URL bookmarks resolve correctly.
+  // Bishopric + stake pages.
   'bish/roster': '/bishopric/roster',
-  'bish/new': '/new',
   'bish/myreq': '/my-requests',
   'stake/roster': '/stake/roster',
   'stake/wards': '/stake/wards',
-  'stake/new': '/new',
-
-  // Bare `new` — single shared NewRequest page, role-aware scope
-  // dropdown.
-  new: '/new',
 
   // Manager pages
   'mgr/dashboard': '/manager/dashboard',

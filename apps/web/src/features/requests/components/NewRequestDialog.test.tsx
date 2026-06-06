@@ -4,7 +4,7 @@
 // the dialog shell:
 //
 //   - locks the launched scope to a fixed label (no dropdown), even for
-//     a multi-scope principal who would see a dropdown on /new
+//     a multi-scope principal
 //   - a successful submit closes the dialog (onOpenChange(false)),
 //     toasts, and submits the launched scope
 //   - Cancel closes the dialog without submitting
@@ -108,9 +108,9 @@ describe('<NewRequestDialog />', () => {
   });
 
   it('locks the launched scope to a fixed label (no dropdown) for a multi-scope principal', () => {
-    // mockFormData() returns a multi-scope principal (stake + CO + GE);
-    // on the standalone /new page that yields a dropdown. The dialog
-    // narrows to the launched scope, so the form shows it as a label.
+    // mockFormData() returns a multi-scope principal (stake + CO + GE).
+    // The dialog narrows to the launched scope, so the form shows it as
+    // a fixed label rather than a picker.
     render(<NewRequestDialog open onOpenChange={() => {}} scope="GE" />);
     expect(screen.queryByTestId('new-request-scope')).toBeNull();
     expect(screen.getByText('Requesting for:')).toBeInTheDocument();
