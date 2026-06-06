@@ -5,6 +5,7 @@
 // the Copy action.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useSyncExternalStore } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Stake, TimestampLike } from '@kindoo/shared';
@@ -13,18 +14,29 @@ const mutateAsyncMock = vi.fn<(input: { callable: string; stakeId: string }) => 
 const resetMock = vi.fn();
 const toastMock = vi.fn();
 
-// `isPending` is read off the returned object at render time; the harness
-// drives it via a module-level flag the mock closes over.
+// `isPending` is a reactive value: the mock is a real hook backed by a
+// tiny external store so flipping `pending` triggers a component
+// re-render (mirroring TanStack's mutation behaviour). Most tests leave
+// `pending` false; the in-flight tests flip it to exercise the
+// dismissal-lock path.
 let pending = false;
+const pendingListeners = new Set<() => void>();
+function setPending(next: boolean) {
+  pending = next;
+  for (const l of pendingListeners) l();
+}
 
 vi.mock('../hooks', () => ({
-  useApplyStakeFix: () => ({
-    mutateAsync: mutateAsyncMock,
-    reset: resetMock,
-    get isPending() {
-      return pending;
-    },
-  }),
+  useApplyStakeFix: () => {
+    const isPending = useSyncExternalStore(
+      (onChange) => {
+        pendingListeners.add(onChange);
+        return () => pendingListeners.delete(onChange);
+      },
+      () => pending,
+    );
+    return { mutateAsync: mutateAsyncMock, reset: resetMock, isPending };
+  },
 }));
 
 vi.mock('../../../lib/store/toast', () => ({
@@ -68,6 +80,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   pending = false;
 });
+
+/** A promise plus its resolve/reject, for driving an in-flight mutation. */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 // jsdom defines `navigator.clipboard` as a getter-only property, so it
 // can't be assigned directly — install a writeText spy via defineProperty.
@@ -217,7 +240,7 @@ describe('<ApplyFixesMenu />', () => {
   });
 
   it('disables both dialog buttons while the fix is in flight', async () => {
-    pending = true;
+    setPending(true);
     const stake = makeStake();
     render(<ApplyFixesMenu stake={stake} />);
     const user = userEvent.setup();
@@ -226,5 +249,37 @@ describe('<ApplyFixesMenu />', () => {
     expect(screen.getByTestId('apply-fixes-apply')).toBeDisabled();
     expect(screen.getByTestId('apply-fixes-cancel')).toBeDisabled();
     expect(screen.getByTestId('apply-fixes-apply')).toHaveTextContent('Applying…');
+  });
+
+  it('cannot be dismissed via Escape while the fix is in flight, and still renders the result on resolve', async () => {
+    const stake = makeStake();
+    const d = deferred<Record<string, unknown>>();
+    // Keep the mutation in flight and reflect that in `isPending` so the
+    // dialog renders as non-dismissable.
+    mutateAsyncMock.mockImplementationOnce(() => {
+      setPending(true);
+      return d.promise;
+    });
+    render(<ApplyFixesMenu stake={stake} />);
+    const user = userEvent.setup();
+    await openExplain(user, stake);
+    await user.click(screen.getByTestId('apply-fixes-apply'));
+
+    // Mutation is in flight: the explain dialog is still up and Escape
+    // must NOT dismiss it (it would otherwise unmount mid-flight and the
+    // post-await result would reopen a dialog the user thought closed).
+    await waitFor(() => {
+      expect(screen.getByTestId('apply-fixes-apply')).toBeDisabled();
+    });
+    await user.keyboard('{Escape}');
+    expect(screen.getByTestId('apply-fixes-explain')).toBeInTheDocument();
+
+    // Resolve the fix: pending clears and the Result dialog renders.
+    setPending(false);
+    d.resolve({ ok: true, seats_updated: 5 });
+    await waitFor(() => {
+      expect(screen.getByTestId('apply-fixes-result-success')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('apply-fixes-result-rows')).toHaveTextContent('seats_updated');
   });
 });

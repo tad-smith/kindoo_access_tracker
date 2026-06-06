@@ -76,6 +76,44 @@ describe('Dialog', () => {
     expect(dialog.contains(document.activeElement)).toBe(true);
   });
 
+  it('does not close on Escape when dismissable is false', async () => {
+    const user = userEvent.setup();
+    function LockedHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <Dialog open={open} onOpenChange={setOpen} title="Locked" dismissable={false}>
+          <p>Working…</p>
+          <Dialog.Footer>
+            <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          </Dialog.Footer>
+        </Dialog>
+      );
+    }
+    render(<LockedHarness />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    // Still open — the implicit dismissal gesture was blocked.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('still closes via the Cancel button when dismissable is false', async () => {
+    const user = userEvent.setup();
+    function LockedHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <Dialog open={open} onOpenChange={setOpen} title="Locked" dismissable={false}>
+          <Dialog.Footer>
+            <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          </Dialog.Footer>
+        </Dialog>
+      );
+    }
+    render(<LockedHarness />);
+    // The explicit Close affordance keeps working even when locked.
+    await user.click(screen.getByRole('button', { name: /Cancel/ }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('calls onOpenChange(false) when the dialog closes', async () => {
     const onOpenChange = vi.fn();
     function ControlledHarness() {

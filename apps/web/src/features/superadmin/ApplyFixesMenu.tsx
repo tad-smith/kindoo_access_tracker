@@ -98,6 +98,11 @@ export function ApplyFixesMenu({ stake }: ApplyFixesMenuProps) {
             if (!next) close();
           }}
           title={phase.fix.label}
+          // Lock the dialog while the fix runs: Escape / backdrop-click
+          // would otherwise bypass the disabled Cancel button and
+          // unmount mid-flight, so the post-await setPhase would reopen
+          // it with a result the user thought they'd dismissed.
+          dismissable={!mutation.isPending}
         >
           {phase.kind === 'explain' ? (
             <ExplainBody
