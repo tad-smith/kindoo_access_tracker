@@ -22,6 +22,7 @@ import { usePendingRequests } from './hooks';
 import { useSeatForMember } from '../../requests/hooks';
 import { useScopeLabel } from '../../../lib/scopeLabel';
 import { Badge } from '../../../components/ui/Badge';
+import { RosterMemberLine } from '../../../components/roster/RosterMemberLine';
 import { CHROME_WEB_STORE_URL } from '../../../lib/links';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
@@ -267,22 +268,9 @@ function QueueCard({ request, isFocused, labelForScope }: QueueCardProps) {
       <div className="kd-queue-card-meta">
         <span>
           <strong>{request.type === 'remove' ? 'Remove Access For:' : 'Give Access To:'}</strong>{' '}
-          {request.member_name ? (
-            <>
-              <span className="roster-card-name">{request.member_name}</span>{' '}
-              <span>
-                (
-                <span className="roster-email" title={request.member_email}>
-                  {request.member_email}
-                </span>
-                )
-              </span>
-            </>
-          ) : (
-            <span className="roster-email" title={request.member_email}>
-              {request.member_email}
-            </span>
-          )}
+          <span className="roster-card-member">
+            <RosterMemberLine name={request.member_name} email={request.member_email} />
+          </span>
         </span>
       </div>
       {request.reason ? (

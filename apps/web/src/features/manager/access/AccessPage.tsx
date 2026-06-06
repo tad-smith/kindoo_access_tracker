@@ -29,6 +29,7 @@ import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { Dialog } from '../../../components/ui/Dialog';
+import { RosterMemberLine } from '../../../components/roster/RosterMemberLine';
 import { toast } from '../../../lib/store/toast';
 
 function errorMessage(err: unknown): string {
@@ -292,9 +293,7 @@ function AccessTable({ users, scopeFilter, wards, onDeleteRequest }: AccessTable
             <td>{scopeLabel(r.scope, wards)}</td>
             <td>{r.calling}</td>
             <td>
-              <span className="roster-email" title={r.email}>
-                {r.email}
-              </span>
+              <RosterMemberLine name={null} email={r.email} />
             </td>
             <td>
               {r.source === 'manual' ? (
@@ -339,9 +338,8 @@ function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardP
   return (
     <div className="kd-access-card" data-testid={`access-card-${access.member_canonical}`}>
       <div className="kd-access-card-header">
-        {access.member_name ? <strong>{access.member_name}</strong> : null}
-        <span className="roster-email" title={access.member_email}>
-          {access.member_email}
+        <span className="roster-card-member">
+          <RosterMemberLine name={access.member_name} email={access.member_email} />
         </span>
       </div>
 

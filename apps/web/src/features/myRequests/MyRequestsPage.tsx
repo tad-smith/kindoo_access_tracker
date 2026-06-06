@@ -17,6 +17,7 @@ import { useCancelRequest } from './cancelRequest';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../lib/render/EmptyState';
 import { Badge } from '../../components/ui/Badge';
+import { RosterMemberLine } from '../../components/roster/RosterMemberLine';
 import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { Dialog } from '../../components/ui/Dialog';
@@ -131,20 +132,7 @@ function MyRequestCard({ request, labelForScope }: MyRequestCardProps) {
         <Badge variant={badgeVariantForStatus(request.status)}>{request.status}</Badge>
         <span className="roster-card-chip roster-card-scope">{labelForScope(request.scope)}</span>
         <span className="roster-card-member">
-          {request.member_name ? (
-            <>
-              <span className="roster-card-name">{request.member_name}</span>{' '}
-              <span>
-                (
-                <span className="roster-email" title={request.member_email}>
-                  {request.member_email}
-                </span>
-                )
-              </span>
-            </>
-          ) : (
-            <span className="roster-email">{request.member_email}</span>
-          )}
+          <RosterMemberLine name={request.member_name} email={request.member_email} />
         </span>
         {request.status === 'pending' ? (
           <span className="kd-myrequests-card-actions">

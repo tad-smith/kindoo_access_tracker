@@ -79,6 +79,27 @@ describe('<AccessPage />', () => {
     expect(screen.getByTestId('access-card-b@x.com')).toBeInTheDocument();
   });
 
+  it('renders the card header member via the shared name/email line', () => {
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'alice@example.com',
+          member_email: 'alice@example.com',
+          member_name: 'Alice Example',
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    // jsdom has no media queries, so assert DOM presence: bold name, the
+    // mobile `email:` label, and the email all exist in the header markup.
+    const member = screen
+      .getByTestId('access-card-alice@example.com')
+      .querySelector('.roster-card-member');
+    expect(member?.querySelector('.roster-card-name')?.textContent).toBe('Alice Example');
+    expect(member?.querySelector('.roster-card-email-label')?.textContent).toBe('email:');
+    expect(member?.querySelector('.roster-email')?.textContent).toBe('alice@example.com');
+  });
+
   it('orders cards by sort_order ascending; lower sort_order renders higher', () => {
     // Email order (z, a, m) deliberately does NOT match sort_order
     // order (1, 2, 5) — only the sort_order ordering should win.
