@@ -34,6 +34,8 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 
+const useStakeBuildingsMock = vi.fn();
+
 vi.mock('../../requests/hooks', () => ({
   usePendingRemoveRequests: () => ({
     data: [],
@@ -47,6 +49,7 @@ vi.mock('../../requests/hooks', () => ({
     fetchStatus: 'idle',
   }),
   useSubmitRequest: () => ({ mutateAsync: submitMutate, isPending: false }),
+  useStakeBuildings: () => useStakeBuildingsMock(),
 }));
 
 vi.mock('../../../lib/principal', () => ({
@@ -149,6 +152,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   navigateMock.mockResolvedValue(undefined);
   usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO', 'GE', 'BA', 'FN'] }));
+  useStakeBuildingsMock.mockReturnValue(liveResult([]));
 });
 
 describe('<AllSeatsPage />', () => {
@@ -1152,5 +1156,162 @@ describe('<AllSeatsPage /> — Kindoo Sites label (spec §15)', () => {
     });
     render(<AllSeatsPage />);
     expect(screen.queryByTestId('kindoo-site-badge-home@x.com')).toBeNull();
+  });
+});
+
+describe('<AllSeatsPage /> — Give Access To Stake Buildings button', () => {
+  // A foreign-site-only member: FN ward sits on a foreign Kindoo site.
+  function foreignSiteOnlySeat() {
+    return makeSeat({
+      scope: 'FN',
+      type: 'manual',
+      callings: [],
+      member_canonical: 'foreign@x.com',
+      member_email: 'foreign@x.com',
+      member_name: 'Foreign Member',
+      kindoo_site_id: 'east-stake',
+    });
+  }
+
+  const FOREIGN_FIXTURE = {
+    wards: [
+      makeWard({ ward_code: 'CO', building_name: 'Home Building' }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      makeWard({
+        ward_code: 'FN',
+        building_name: 'Foreign Building',
+        kindoo_site_id: 'east-stake',
+      } as any),
+    ],
+    buildings: [
+      makeBuilding('Home Building', null),
+      makeBuilding('Foreign Building', 'east-stake'),
+    ],
+    kindooSites: [{ id: 'east-stake', display_name: 'East Stake' }],
+    stake: { stake_seat_cap: 200 },
+  };
+
+  it('shows the button for a manager on a foreign-site-only member', () => {
+    usePrincipalMock.mockReturnValue(principal({}));
+    mockAll({ seats: [foreignSiteOnlySeat()], ...FOREIGN_FIXTURE });
+    render(<AllSeatsPage />);
+    expect(screen.getByTestId('grant-stake-access-btn-foreign@x.com')).toBeInTheDocument();
+  });
+
+  it('hides the button for a non-manager (stake/bishopric only)', () => {
+    usePrincipalMock.mockReturnValue({
+      isAuthenticated: true,
+      firebaseAuthSignedIn: true,
+      email: 'b@example.com',
+      canonical: 'b@example.com',
+      isPlatformSuperadmin: false,
+      managerStakes: [],
+      stakeMemberStakes: ['csnorth'],
+      bishopricWards: { csnorth: ['FN'] },
+      hasAnyRole: () => true,
+      wardsInStake: () => ['FN'],
+    });
+    mockAll({ seats: [foreignSiteOnlySeat()], ...FOREIGN_FIXTURE });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('grant-stake-access-btn-foreign@x.com')).toBeNull();
+  });
+
+  it('hides the button for a member with a home-site (CO) grant', () => {
+    usePrincipalMock.mockReturnValue(principal({}));
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          member_canonical: 'home@x.com',
+          member_email: 'home@x.com',
+          kindoo_site_id: null,
+        }),
+      ],
+      ...FOREIGN_FIXTURE,
+    });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('grant-stake-access-btn-home@x.com')).toBeNull();
+  });
+
+  it('hides the button for a member who already has a stake-scope grant', () => {
+    usePrincipalMock.mockReturnValue(principal({}));
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'stake',
+          type: 'manual',
+          callings: [],
+          member_canonical: 'stake@x.com',
+          member_email: 'stake@x.com',
+          kindoo_site_id: null,
+        }),
+      ],
+      ...FOREIGN_FIXTURE,
+    });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('grant-stake-access-btn-stake@x.com')).toBeNull();
+  });
+
+  it('hides the button when a foreign member also has a stake-scope duplicate grant', () => {
+    usePrincipalMock.mockReturnValue(principal({}));
+    const seat = foreignSiteOnlySeat();
+    seat.duplicate_grants = [
+      { scope: 'stake', type: 'manual', kindoo_site_id: null, detected_at: NOW },
+    ];
+    mockAll({ seats: [seat], ...FOREIGN_FIXTURE });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('grant-stake-access-btn-foreign@x.com')).toBeNull();
+  });
+
+  it('renders the button only once per member (primary row), not on duplicate rows', () => {
+    usePrincipalMock.mockReturnValue(principal({}));
+    const seat = foreignSiteOnlySeat();
+    // A second foreign-site grant on a different foreign site → two rows,
+    // but the button should appear only on the primary row.
+    seat.duplicate_grants = [
+      {
+        scope: 'FN',
+        type: 'manual',
+        kindoo_site_id: 'west-stake',
+        building_names: ['West Building'],
+        detected_at: NOW,
+      },
+    ];
+    mockAll({
+      seats: [seat],
+      wards: FOREIGN_FIXTURE.wards,
+      buildings: [
+        makeBuilding('Home Building', null),
+        makeBuilding('Foreign Building', 'east-stake'),
+        makeBuilding('West Building', 'west-stake'),
+      ],
+      kindooSites: [
+        { id: 'east-stake', display_name: 'East Stake' },
+        { id: 'west-stake', display_name: 'West Stake' },
+      ],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    expect(screen.getAllByTestId('grant-stake-access-btn-foreign@x.com')).toHaveLength(1);
+  });
+
+  it('opens the dialog and submits an add_manual / scope:"stake" request', async () => {
+    const user = userEvent.setup();
+    usePrincipalMock.mockReturnValue(principal({}));
+    useStakeBuildingsMock.mockReturnValue(liveResult([makeBuilding('Home Building', null)]));
+    mockAll({ seats: [foreignSiteOnlySeat()], ...FOREIGN_FIXTURE });
+    render(<AllSeatsPage />);
+    await user.click(screen.getByTestId('grant-stake-access-btn-foreign@x.com'));
+    await user.type(screen.getByTestId('grant-stake-access-reason'), 'Stake helper');
+    await user.click(screen.getByTestId('grant-stake-access-building-home-building'));
+    await user.click(screen.getByTestId('grant-stake-access-confirm'));
+    expect(submitMutate).toHaveBeenCalled();
+    const payload = submitMutate.mock.calls[0]![0];
+    expect(payload.type).toBe('add_manual');
+    expect(payload.scope).toBe('stake');
+    expect(payload.member_email).toBe('foreign@x.com');
+    expect(payload.building_names).toEqual(['Home Building']);
   });
 });
