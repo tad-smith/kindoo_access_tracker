@@ -278,10 +278,7 @@ async function applyKindooOnly(
     let buildings: Building[] = [];
     let newSiteSite: string | null | undefined;
     if (needsSiteResolve && wardRef) {
-      const [wardSnap, buildingsSnap] = await Promise.all([
-        tx.get(wardRef),
-        tx.get(buildingsRef),
-      ]);
+      const [wardSnap, buildingsSnap] = await Promise.all([tx.get(wardRef), tx.get(buildingsRef)]);
       buildings = buildingsSnap.docs.map((d) => d.data() as Building);
       if (wardSnap.exists) {
         const ward = wardSnap.data() as Ward;

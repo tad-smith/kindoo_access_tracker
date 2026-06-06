@@ -396,6 +396,188 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         ),
       ).rejects.toMatchObject({ code: 'invalid-argument' });
     });
+
+    it('stamps kindoo_site_id when the ward resolves to a foreign Kindoo site', async () => {
+      await seedManager();
+      // Ward MR's building is on a foreign site. The auto seat created by
+      // the kindoo-only fix must carry that site, not be silently home.
+      await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+      await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-only',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                memberName: 'Alice',
+                scope: 'MR',
+                type: 'auto',
+                callings: ['Ward Clerk'],
+                buildingNames: ['Black Forest'],
+                isTempUser: false,
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.scope).toBe('MR');
+      expect(seat.kindoo_site_id).toBe('east-stake');
+    });
+
+    it('leaves kindoo_site_id absent when the ward resolves to the home site', async () => {
+      await seedManager();
+      // Ward CO's building is on the home site (null) → field absent.
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building' });
+      await seedBuilding({ building_name: 'Maple Building', kindoo_site_id: null });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-only',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                memberName: 'Alice',
+                scope: 'CO',
+                type: 'auto',
+                callings: ['Ward Clerk'],
+                buildingNames: ['Maple Building'],
+                isTempUser: false,
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.scope).toBe('CO');
+      // Field-absent is the home representation.
+      expect(seat.kindoo_site_id).toBeUndefined();
+    });
+
+    it('leaves kindoo_site_id absent for a stake-scope seat', async () => {
+      await seedManager();
+      // Stake-scope always resolves to home — no ward/buildings read,
+      // field absent.
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-only',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                memberName: 'Alice',
+                scope: 'stake',
+                type: 'auto',
+                callings: ['Stake Clerk'],
+                buildingNames: ['Maple Building'],
+                isTempUser: false,
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.scope).toBe('stake');
+      expect(seat.kindoo_site_id).toBeUndefined();
+    });
+
+    it('leaves kindoo_site_id absent when the ward is unknown (read-time fallback classifies)', async () => {
+      await seedManager();
+      // No ward doc for ZZ → site unresolvable. The field is left unset
+      // (warn + leave absent); the guard does NOT turn a missing ward
+      // into a hard failure.
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-only',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                memberName: 'Alice',
+                scope: 'ZZ',
+                type: 'auto',
+                callings: ['Ward Clerk'],
+                buildingNames: ['Maple Building'],
+                isTempUser: false,
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.scope).toBe('ZZ');
+      expect(seat.kindoo_site_id).toBeUndefined();
+    });
+
+    it('does NOT stamp kindoo_site_id on a manual seat (sync leaves the field alone)', async () => {
+      await seedManager();
+      // A manual kindoo-only seat on a foreign-site ward: the field is not
+      // stamped (only auto ward seats resolve the site), and the guard
+      // does not fire for a non-auto seat.
+      await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+      await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'kindoo-only',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                memberName: 'Alice',
+                scope: 'MR',
+                type: 'manual',
+                callings: [],
+                buildingNames: ['Black Forest'],
+                reason: 'sub clerk',
+                isTempUser: false,
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { kindoo_site_id?: unknown };
+      expect(seat.type).toBe('manual');
+      expect(seat.kindoo_site_id).toBeUndefined();
+    });
   });
 
   // ----- callings-mismatch -----
