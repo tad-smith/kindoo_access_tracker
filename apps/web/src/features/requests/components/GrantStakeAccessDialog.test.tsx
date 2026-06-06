@@ -5,6 +5,8 @@
 //   - the building checklist limited to home-site buildings
 //   - the add_manual / scope:'stake' submit shape
 //   - reason-required + no-buildings-disabled validation
+//   - the hydration gate: loading spinner while buildings are
+//     unhydrated, "No home-site buildings configured." only after load
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -48,6 +50,23 @@ function liveResult<T>(data: T[]) {
     isError: false,
     isFetching: false,
     fetchStatus: 'idle' as const,
+  };
+}
+
+// The initial-subscribe window: no snapshot has landed yet, so `data` is
+// undefined and `isLoading` is true (mirrors `useNewRequestFormData`'s
+// hydration gate).
+function loadingResult() {
+  return {
+    data: undefined,
+    error: null,
+    status: 'pending' as const,
+    isPending: true,
+    isLoading: true,
+    isSuccess: false,
+    isError: false,
+    isFetching: true,
+    fetchStatus: 'fetching' as const,
   };
 }
 
@@ -141,5 +160,26 @@ describe('<GrantStakeAccessDialog />', () => {
   it('renders no dialog content when open is false', () => {
     render(<GrantStakeAccessDialog seat={SEAT} open={false} onOpenChange={() => {}} />);
     expect(screen.queryByTestId('grant-stake-access-banner')).toBeNull();
+  });
+
+  it('shows a loading state and no empty message while buildings are unhydrated', () => {
+    // Initial-subscribe window: `data` undefined / `isLoading` true.
+    useStakeBuildingsMock.mockReturnValue(loadingResult());
+    render(<GrantStakeAccessDialog seat={SEAT} open onOpenChange={() => {}} />);
+    // Loading affordance is present (LoadingSpinner: role="status").
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    // The false "no buildings" message must NOT flash during hydration.
+    expect(screen.queryByTestId('grant-stake-access-buildings-empty')).toBeNull();
+  });
+
+  it('shows the empty message only after buildings load with no home-site buildings', () => {
+    // Loaded (not loading) but the home-site set is genuinely empty: only
+    // foreign-site buildings exist.
+    useStakeBuildingsMock.mockReturnValue(liveResult([FOREIGN]));
+    render(<GrantStakeAccessDialog seat={SEAT} open onOpenChange={() => {}} />);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByTestId('grant-stake-access-buildings-empty')).toHaveTextContent(
+      'No home-site buildings configured.',
+    );
   });
 });
