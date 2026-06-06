@@ -64,16 +64,27 @@ export function computeOverCaps(opts: {
 }): OverCapEntry[] {
   const { seats, wards, stakeSeatCap, wardSites } = opts;
 
-  // INTENTIONAL DIVERGENCE FROM UI BARS: over-cap warnings count
-  // primary scope only (`s.scope`). The UI's per-ward bars
+  // INTENTIONAL DIVERGENCE FROM UI BARS: per-ward over-cap warnings
+  // count primary scope only (`s.scope`). The UI's per-ward bars
   // (`AllSeatsPage.utilizationTotal`, `DashboardPage.countSeatsForScope`)
   // widen via `duplicate_scopes` for visibility, so a ward bar can
   // render "over cap" without firing `over_cap_warning`. The warning
-  // represents actual home-stake Kindoo-license-pool consumption,
-  // which the primary represents — a within-site duplicate doesn't
-  // consume a second license. If you change one side, change the
-  // other or document why they should continue to diverge. Spec §15
-  // Phase B.
+  // represents actual Kindoo-license-pool consumption, which the
+  // primary represents — a within-site (same-`kindoo_site_id`)
+  // duplicate doesn't consume a second license.
+  //
+  // The ONE exception is the home-stake pool: a parallel-site stake
+  // grant (a `scope === 'stake'` entry in `duplicate_grants`) on a
+  // seat whose PRIMARY is a FOREIGN ward DOES consume a home stake
+  // license that primary-scope counting can't see — the primary is
+  // foreign (drawn from a foreign site's pool) and the stake count
+  // reads primary scope only. That single missed home license is
+  // folded into `stakeN` below. Within-site duplicates stay excluded;
+  // so do stake duplicates on seats already counted in the home pool
+  // (stake-primary → already in `stakeN`; home-ward-primary → already
+  // in `homeWardSeatsN`). Net invariant: each member contributes at
+  // most one unit to the home pool (`stakeN + homeWardSeatsN`). If you
+  // change one side, change the other or document why. Spec §15.
   const counts = new Map<string, number>();
   for (const s of seats) {
     if (!s.scope) continue;
@@ -97,12 +108,25 @@ export function computeOverCaps(opts: {
     const foreignWardCodes = new Set(
       wards.filter((w) => (wardSites.get(w.ward_code) ?? null) != null).map((w) => w.ward_code),
     );
-    const stakeN = counts.get('stake') ?? 0;
+    // Stake-primary seats (already counted by primary scope).
+    let stakeN = counts.get('stake') ?? 0;
     let homeWardSeatsN = 0;
     for (const s of seats) {
       if (!s.scope || s.scope === 'stake') continue;
       const cls = seatSiteClassification(s, homeWardCodes, foreignWardCodes);
-      if (cls === 'home') homeWardSeatsN += 1;
+      if (cls === 'home') {
+        homeWardSeatsN += 1;
+        continue;
+      }
+      // Foreign-ward-primary seat carrying a parallel-site stake grant:
+      // the stake duplicate consumes a home license invisible to primary
+      // counting (primary is foreign, not 'stake'). Add exactly one. A
+      // home-ward-primary seat with a stake duplicate is skipped here —
+      // it's already in `homeWardSeatsN` — so each member contributes at
+      // most one unit to the home pool.
+      if (cls === 'foreign' && s.duplicate_grants.some((d) => d.scope === 'stake')) {
+        stakeN += 1;
+      }
     }
     const portionCap = Math.max(0, stakeSeatCap - homeWardSeatsN);
     if (stakeN > portionCap) {
