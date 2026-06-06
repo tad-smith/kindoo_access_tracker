@@ -105,29 +105,48 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
       const typedEmail = 'Super.Admin@gmail.com';
       const canonical = 'superadmin@gmail.com';
 
-      // Pre-seed `platformSuperadmins/{canonical}` BEFORE `createUser`
-      // so that the `onAuthUserCreate` handler — which runs
-      // `seedClaimsFromRoleData`, which reads
-      // `platformSuperadmins/{canonical}` — finds the doc populated
-      // and includes `isPlatformSuperadmin: true` in the initial
-      // claim set it writes via `setCustomUserClaims`.
+      // Order: createUser → wait for onAuthUserCreate to finish
+      // seeding the baseline claim → THEN write the
+      // `platformSuperadmins/{canonical}` doc and assert
+      // `syncSuperadminClaims` flips the claim.
       //
-      // Why this matters: without the pre-seed, two triggers race to
-      // call `setCustomUserClaims` on the same uid —
-      // `syncSuperadminClaims` (fired by the platformSuperadmins
-      // write) and `onAuthUserCreate` (fired by `createUser`). If
-      // `onAuthUserCreate` lands second, it reads
-      // `platformSuperadmins/{canonical}` while the doc still doesn't
-      // exist and overwrites the freshly-minted claim with one that
-      // lacks `isPlatformSuperadmin: true`. Pre-seeding makes
-      // `onAuthUserCreate` the deterministic claim author and
-      // eliminates the order-dependence: by the time
-      // `onAuthUserCreate` reads the doc, the value is already
-      // there. (`syncSuperadminClaims` still fires from the pre-seed
-      // write but no-ops because `uidForCanonical` returns null —
-      // `userIndex/{canonical}` is written by `onAuthUserCreate`,
-      // which hasn't run yet.)
+      // Why this order (the test was previously
+      // pre-seed-then-createUser, which flaked false under CI load):
       //
+      //   `syncSuperadminClaims` — the trigger this file exists to
+      //   exercise — only does real work once `uidForCanonical`
+      //   resolves, i.e. once `onAuthUserCreate` has written
+      //   `userIndex/{canonical}`. The old pre-seed ordering fired
+      //   `syncSuperadminClaims` from the pre-seed write *before*
+      //   that bridge existed, so it no-op'd permanently (one write =
+      //   one Eventarc delivery, and a clean no-op return is not
+      //   retried). That left `onAuthUserCreate` as the *sole* claim
+      //   author. When its single async delivery ran slow on a loaded
+      //   CI runner, nothing minted the claim inside the 40s budget
+      //   and the assertion saw `false` — not slow propagation, a
+      //   genuinely-never-written claim with no backup author.
+      //
+      //   Seeding `platformSuperadmins` *after* the bridge exists
+      //   makes `syncSuperadminClaims` the deterministic, retry-backed
+      //   author (it now finds the uid every time) and is the real
+      //   production shape: a superadmin doc added to an
+      //   already-signed-in user. The doc-write's Eventarc delivery is
+      //   retried on transient failure, so there is no single-delivery
+      //   cliff.
+      //
+      // Waiting for `customClaims.canonical` before seeding also
+      // closes the lost-update window: it proves `onAuthUserCreate`'s
+      // own `setCustomUserClaims` already landed, so it can't clobber
+      // the superadmin flag `syncSuperadminClaims` is about to add.
+      const user = await auth.createUser({ email: typedEmail });
+
+      const seeded = await waitFor(async () => {
+        const u = await auth.getUser(user.uid);
+        const claims = (u.customClaims ?? {}) as { canonical?: string };
+        return claims.canonical === canonical;
+      }, 40_000);
+      expect(seeded).toBe(true);
+
       // Fields shadow `firebase-schema.md` §3.2: `email` (typed),
       // `addedAt` (server timestamp), `addedBy` (canonical email of
       // the actor — operator-as-bootstrap here).
@@ -136,8 +155,6 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
         addedAt: FieldValue.serverTimestamp(),
         addedBy: 'operator@example.com',
       });
-
-      const user = await auth.createUser({ email: typedEmail });
 
       const flipped = await waitFor(async () => {
         const u = await auth.getUser(user.uid);
@@ -154,20 +171,27 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     const typedEmail = 'Super.Admin@gmail.com';
     const canonical = 'superadmin@gmail.com';
 
-    // Same pre-seed-then-createUser pattern as the mint test: avoid
-    // the `onAuthUserCreate` ↔ `syncSuperadminClaims` race so the
-    // initial claim is deterministically minted by
-    // `onAuthUserCreate`.
+    // Same create-first → wait-for-bridge → seed ordering as the mint
+    // test (see its comment for the full rationale): make
+    // `syncSuperadminClaims` the deterministic, retry-backed claim
+    // author instead of leaving `onAuthUserCreate` as a sole
+    // single-delivery author that flakes under CI load.
+    const user = await auth.createUser({ email: typedEmail });
+
+    const seeded = await waitFor(async () => {
+      const u = await auth.getUser(user.uid);
+      const claims = (u.customClaims ?? {}) as { canonical?: string };
+      return claims.canonical === canonical;
+    }, 40_000);
+    expect(seeded).toBe(true);
+
     await db.doc(`platformSuperadmins/${canonical}`).set({
       email: typedEmail,
       addedAt: FieldValue.serverTimestamp(),
       addedBy: 'operator@example.com',
     });
 
-    const user = await auth.createUser({ email: typedEmail });
-
-    // Step 1: wait for the initial claim mint to land via
-    // `onAuthUserCreate` → `seedClaimsFromRoleData`.
+    // Step 1: wait for the mint to land via `syncSuperadminClaims`.
     const minted = await waitFor(async () => {
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
