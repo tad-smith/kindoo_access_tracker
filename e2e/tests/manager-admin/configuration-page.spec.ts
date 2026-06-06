@@ -74,7 +74,16 @@ test.describe('Manager admin pages (Phase 7)', () => {
     await page.getByRole('link', { name: /^Configuration$/ }).click();
     await expect(page.getByRole('heading', { name: /^Configuration$/ })).toBeVisible();
     const labels = await page.locator('.kd-config-tab').allTextContents();
-    expect(labels).toEqual(['Config', 'Managers', 'Kindoo Sites', 'Buildings', 'Wards']);
+    expect(labels).toEqual([
+      'Config',
+      'Managers',
+      'Kindoo Sites',
+      'Buildings',
+      'Wards',
+      'Organizations',
+    ]);
+    // The Organizations tab sits last and is clickable.
+    await expect(page.getByTestId('config-tab-organizations')).toBeVisible();
     // The Auto Ward / Stake Callings tabs are gone.
     await expect(page.getByTestId('config-tab-ward-callings')).toHaveCount(0);
     await expect(page.getByTestId('config-tab-stake-callings')).toHaveCount(0);
