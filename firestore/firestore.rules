@@ -656,9 +656,22 @@ service cloud.firestore {
           // branches, same as any other user. This matches `scopeOptions.ts`
           // on the SPA so a hand-crafted POST cannot bypass the dropdown
           // filter.
+          //
+          // Narrow exception ("Give Access To Stake Buildings"): a Kindoo
+          // Manager may create a stake-scope request WITHOUT a stake
+          // claim, but ONLY for `add_manual` — the flow that grants a
+          // foreign-site-only ward member access to home-site stake
+          // buildings. B-3 / T-36 stays intact for every other stake-scope
+          // type (add_temp / edit_* / remove); those still require the
+          // stake claim through the branch above.
           && (
                (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
             || (request.resource.data.scope in bishopricWardOf(stakeId))
+            || (
+                 request.resource.data.scope == 'stake'
+              && request.resource.data.type == 'add_manual'
+              && isManager(stakeId)
+            )
           );
 
         // `urgent` is requester-set on submit and immutable afterward.
