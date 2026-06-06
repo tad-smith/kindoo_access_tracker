@@ -11,7 +11,14 @@ import {
 import { useRequireRole } from '../../../lib/useRequireRole';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 
-const tabSchema = z.enum(['config', 'managers', 'wards', 'buildings', 'kindoo-sites']);
+const tabSchema = z.enum([
+  'config',
+  'managers',
+  'wards',
+  'buildings',
+  'kindoo-sites',
+  'organizations',
+]);
 
 const searchSchema = z.object({
   tab: tabSchema.optional(),

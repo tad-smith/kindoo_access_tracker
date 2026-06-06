@@ -37,7 +37,13 @@ import type { Building, Seat } from '@kindoo/shared';
 import { CallingCombobox } from './CallingCombobox';
 import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
+import { Select } from '../../../components/ui/Select';
 import { useSubmitRequest, useStakeBuildings, useStakeWards } from '../hooks';
+import {
+  useOrganizations,
+  sortOrganizations,
+  NO_ORGANIZATION_LABEL,
+} from '../../organizations/hooks';
 import { editSeatSchema, type EditSeatForm } from '../schemas';
 import { filterBuildingsBySite, siteIdForScope } from '../../../lib/kindooSites';
 import { toast } from '../../../lib/store/toast';
@@ -123,6 +129,15 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
   const wards = wardsResult.data ?? [];
   const buildings = buildingsResult.data ?? [];
 
+  // Organizations catalogue — the optional org selector that appears
+  // only at stake scope on edit_manual / edit_temp. Empty until
+  // hydrated; `sortOrganizations` tolerates undefined.
+  const organizationsResult = useOrganizations();
+  const sortedOrganizations = useMemo(
+    () => sortOrganizations(organizationsResult.data),
+    [organizationsResult.data],
+  );
+
   // Visible buildings — site-filtered by the seat's scope per spec §15
   // Phase 2. Ward-scope seats see only their site's buildings; stake-
   // scope manual / temp seats see home buildings only (stake-scope auto
@@ -179,6 +194,7 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
         building_names: [],
         start_date: '',
         end_date: '',
+        organization_id: null,
       };
     }
     const type: EditSeatForm['type'] =
@@ -191,6 +207,10 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
       building_names: seat.building_names.filter((n) => visibleNames.has(n)),
       start_date: seat.start_date ?? '',
       end_date: seat.end_date ?? '',
+      // Pre-fill the org selector from the seat (stake scope only; the
+      // selector renders only there). `edit_auto` is forbidden at stake,
+      // so an auto seat never reaches the selector.
+      organization_id: seat.organization_id ?? null,
     };
   }, [seat, visibleBuildings]);
 
@@ -201,9 +221,14 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
   });
   const { register, handleSubmit, watch, setValue, formState, control, reset } = form;
   const watchedBuildings = watch('building_names') ?? [];
+  const watchedOrganizationId = watch('organization_id') ?? null;
 
   if (!seat) return null;
   const editType = initial.type;
+  // The org selector is meaningful only at stake scope, and only for
+  // edit_manual / edit_temp (edit_auto is forbidden at stake — it never
+  // reaches this dialog).
+  const showOrgSelector = seat.scope === 'stake' && editType !== 'edit_auto';
 
   const onSubmit = handleSubmit(async (input) => {
     if (!seat) return;
@@ -250,6 +275,10 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
         ...(editType === 'edit_temp'
           ? { start_date: input.start_date, end_date: input.end_date }
           : {}),
+        // Org selector value, only when it's actually shown. The submit
+        // hook drops it for non-stake scope; passing it unconditionally
+        // when shown keeps the wire body correct for stake edits.
+        ...(showOrgSelector ? { organization_id: input.organization_id ?? null } : {}),
       });
       toast('Edit request submitted.', 'success');
       reset(initial);
@@ -406,6 +435,29 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
             </p>
           ) : null}
         </fieldset>
+
+        {showOrgSelector ? (
+          <label>
+            Organization
+            <Select
+              value={watchedOrganizationId ?? '__none__'}
+              onChange={(e) => {
+                const next = e.target.value;
+                setValue('organization_id', next === '__none__' ? null : next, {
+                  shouldDirty: true,
+                });
+              }}
+              data-testid="edit-seat-organization"
+            >
+              <option value="__none__">{NO_ORGANIZATION_LABEL}</option>
+              {sortedOrganizations.map((o) => (
+                <option key={o.organization_id} value={o.organization_id}>
+                  {o.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ) : null}
 
         <label>
           Comment

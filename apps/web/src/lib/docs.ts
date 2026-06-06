@@ -38,6 +38,7 @@ import type {
   Building,
   KindooManager,
   KindooSite,
+  Organization,
   PlatformAuditLog,
   PlatformSuperadmin,
   Seat,
@@ -172,6 +173,25 @@ export function kindooSiteRef(
 export function kindooSitesCol(db: Firestore, stakeId: string): CollectionReference<KindooSite> {
   return collection(db, 'stakes', stakeId, 'kindooSites').withConverter(
     passthroughConverter<KindooSite>(),
+  );
+}
+
+export function organizationRef(
+  db: Firestore,
+  stakeId: string,
+  organizationId: string,
+): DocumentReference<Organization> {
+  return doc(db, 'stakes', stakeId, 'organizations', organizationId).withConverter(
+    passthroughConverter<Organization>(),
+  );
+}
+
+export function organizationsCol(
+  db: Firestore,
+  stakeId: string,
+): CollectionReference<Organization> {
+  return collection(db, 'stakes', stakeId, 'organizations').withConverter(
+    passthroughConverter<Organization>(),
   );
 }
 

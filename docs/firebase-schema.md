@@ -342,6 +342,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
   end_date?: string;           // temp only, ISO date
   building_names: string[];
   kindoo_site_id?: string | null; // T-42. null / absent ⇒ home site; otherwise doc ID under kindooSites/. Mirrors the building convention. Derived from primary scope + ward → BUILDING → kindoo_site_id (resolveWardSite / wardSiteMap); stake-scope ⇒ home. Every server seat-writer stamps it per this convention (syncApplyFix kindoo-only / scope-mismatch, markRequestComplete new-seat). A write-time invariant (assertSeatSiteStamped, functions/src/lib/wardSites.ts) refuses to persist a known foreign-ward seat field-absent — it throws rather than mis-classifying as home; it does not fire for stake-scope / home-ward / unknown-ward. Pre-migration seats may have the field absent — the ward-fallback resolver handles classification at read time.
+  organization_id?: string | null; // Org slug FK for the PRIMARY grant (§4.12). Meaningful only on stake-scope grants; null / absent ⇒ "No Organization". Set by the inline roster chip (direct client write — the sole client seat-update path; see §6 seats.update) and by markRequestComplete on stake-scope add/edit completion. Cleared by syncApplyFix when a seat moves off stake scope (applyScopeMismatch → ward).
   sort_order: number | null;   // vestigial — still stamped by syncApplyFix, NOT read by the web (render-time calling-order sort). See "Sort order" below.
 
   // Manual/temp linkage
@@ -360,6 +361,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
     end_date?: string;
     building_names?: string[];      // Within-site Sync-written duplicates may leave this unset and inherit from the primary's ward. Sync-written PARALLEL-SITE duplicates (different kindoo_site_id from the primary) MUST set this — the per-site Kindoo write needs the buildings explicitly. Manual/temp duplicates set this via the request-completion auto-merge.
     kindoo_site_id?: string | null; // T-42. Same convention as the top-level field.
+    organization_id?: string | null; // Org slug FK for THIS duplicate grant (§4.12). Meaningful only on stake-scope grants; null / absent ⇒ "No Organization". Set by markRequestComplete's auto-merge / edit path when the merge target is a duplicate. The roster chip on a parallel-site stake duplicate is read-only — its org is set via the request form, not inline.
     detected_at: Timestamp;
   }>;
   // T-42 / T-43: denormalised mirror of `duplicate_grants[].scope` for Firestore
@@ -374,7 +376,7 @@ The `duplicate_grants[]` field captures both within-site priority losers (inform
 }
 ```
 
-**Written by:** Sync's `syncApplyFix` callable (auto seats — Admin SDK, bypasses rules; also removes orphaned temp seats via its `sba-only` path once Kindoo expires them); manager via request completion (manual/temp). (There is no manager direct-write inline edit — All Seats is view-only for edits; seat edits flow through the `edit_*` request → completion path. See `spec.md` §212.)
+**Written by:** Sync's `syncApplyFix` callable (auto seats — Admin SDK, bypasses rules; also removes orphaned temp seats via its `sba-only` path once Kindoo expires them); manager via request completion (manual/temp). The **one** client direct-write path is the inline organization edit on the Stake Roster (`useSetSeatOrganization`) — any stake member may set / clear `organization_id` on a `scope == 'stake'` seat, gated by the `seats.update` rule's 4-key allowlist (§6, §4.12, `architecture.md` D21). Every other seat field is request-only — All Seats is view-only for edits; seat edits flow through the `edit_*` request → completion path. See `spec.md` §6.
 
 **Read by:** All roster pages (bishopric, stake, all-seats), manager dashboard, manager queue (for duplicate-warning), audit log entity-history view.
 
@@ -417,6 +419,7 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
   start_date?: string;         // add_temp / edit_temp
   end_date?: string;           // add_temp / edit_temp
   building_names: string[];    // requester's selection: stake-scope add types AND every edit type (carries the post-edit set)
+  organization_id?: string | null; // Org slug FK (§4.12). Optional; the stake-scope-only org selector on add_manual / add_temp / edit_manual / edit_temp supplies it. null / absent ⇒ "No Organization". Carried onto the seat on completion (markRequestComplete). The submit hook writes it only for stake-scope add/edit types — ward-scope and remove / edit_auto never carry one.
 
   status: 'pending' | 'complete' | 'rejected' | 'cancelled';
 
@@ -497,7 +500,7 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
 - `auditId` is deterministic from `(collection, docId, writeTime)` so trigger retries are idempotent.
 - `member_canonical` is set whenever the underlying doc has a `member_canonical` field; absent for system actions (`import_start`, `import_end`, `over_cap_warning`, `setup_complete`, `email_send_failed`).
 - Firestore TTL policy on the `ttl` field deletes rows ~24h after their `ttl` timestamp passes.
-- `create_stake` fires only on the parent-doc create path (`before==null`, `entity_type='stake'`, `collection='stake'`). Sub-entity creates under `stakes/{sid}/` (wards, buildings, kindooSites) audit as `entity_type='stake'` with action `update_stake` per the existing `CREATE_ACTION` table in `auditTrigger.ts` — the parent-doc-only branch keeps the `'create_stake'` action unambiguous for audit consumers (Phase 12.3 / F19).
+- `create_stake` fires only on the parent-doc create path (`before==null`, `entity_type='stake'`, `collection='stake'`). Sub-entity creates under `stakes/{sid}/` (wards, buildings, kindooSites, organizations) audit as `entity_type='stake'` with action `update_stake` per the existing `CREATE_ACTION` table in `auditTrigger.ts` — the parent-doc-only branch keeps the `'create_stake'` action unambiguous for audit consumers (Phase 12.3 / F19). Organizations carry a structured `entity_id='organization:<slug>'` (§4.12).
 
 ### 4.11 `stakes/{stakeId}/kindooSites/{kindooSiteId}`
 
@@ -536,6 +539,37 @@ Multi-Kindoo-site management for a single SBA stake. A doc here represents a **f
 - **Delete guard.** The Configuration page blocks deleting a Kindoo Site while any **building** still references it (`kindooSiteDeleteBlocker` in `apps/web/src/features/manager/configuration/hooks.ts`). Wards are covered **transitively**: a ward's site comes from its building, so the building guard also protects every ward on that site — there is no separate ward FK check. Rules gate WHO can delete, not this field-level FK; the guard is client-side.
 - Writes to this collection are audited by `auditKindooSiteWrites` (entity_type=`stake`, entity_id=`kindooSite:<slug>`) and reconciled by the nightly `reconcileAuditGaps` job.
 
+### 4.12 `stakes/{stakeId}/organizations/{orgId}`
+
+Stake-scope seat pools. An organization is a named pool with its own seat cap that stake managers track alongside wards / buildings; seats and stake-scope requests reference one by its immutable slug id. The home stake pool itself is not an organization — `null` / absent `organization_id` on a grant means "No Organization."
+
+**Doc ID:** immutable slug derived from `name` via `buildingSlug()` (`Primary Children` → `primary-children`). Frozen at create; organization **edit** carries the original slug through and writes the same doc, never re-slugging a renamed org — so renames never orphan a seat / request reference.
+
+**Fields:**
+
+```typescript
+{
+  organization_id: string;     // = doc.id; immutable slug
+  name: string;                // display name; resolved from organization_id at render time
+  seat_cap: number;            // per-org seat cap; surfaced as a display-only utilization bar (never blocks)
+
+  created_at: Timestamp;
+  last_modified_at: Timestamp;
+  lastActor: { email: string; canonical: string };
+}
+```
+
+**Written by:** Manager via the Configuration → Organizations tab (`useUpsertOrganizationMutation` / `useDeleteOrganizationMutation`, `apps/web/src/features/manager/configuration/hooks.ts`).
+**Read by:** Configuration → Organizations tab (list + edit); the New Request / Edit Seat forms (the optional stake-scope org selector); the Stake Roster (org chip id → name + the per-organization utilization bars).
+
+**Invariants:**
+- `organization_id` is meaningful only on stake-scope grants. A seat / request at ward scope never carries one; `null` / absent = "No Organization." Seats carry it on the primary grant (`seat.organization_id`) and on each `duplicate_grants[]` entry; requests carry it as `request.organization_id` (§4.6 / §4.7).
+- The slug is the immutable doc id; **renames resolve id → name at render time** (`organizationName(orgs, id)` in `apps/web/src/features/organizations/hooks.ts`). This is the deliberate departure from the `building_names` display-name-snapshot arrays — orgs are referenced by slug, so a rename needs no reference cascade and no rename-time ref-guard (contrast §4.3 buildings; `architecture.md` D21).
+- **Unique display name.** The Configuration tab blocks a save (create or edit) when another org already uses the chosen name, case-insensitive + trimmed (`duplicateOrganizationNameBlocker`). The name is the human key seats / requests render by, so two orgs must not share one. Client-side only — rules can't iterate the sibling collection.
+- **Delete guard.** The Configuration tab blocks deleting an org while any **seat** references it via its primary `organization_id` OR any `duplicate_grants[].organization_id` (`organizationDeleteBlocker`, run against the live seats snapshot — seat-only by design; a pending request referencing a deleted org is an accepted gap, the seat resolves to "No Organization" and the operator reassigns). Client-side only, same reasoning as the Kindoo-site / building guards.
+- **`seat_cap` is display-only.** It drives the per-org utilization bar's ok / warn (≥90%) / over coloring on the Stake Roster but never blocks a write — there is no over-cap enforcement for organizations.
+- Writes to this collection are audited by `auditOrganizationWrites` (entity_type=`stake`, entity_id=`organization:<slug>`) and reconciled by the nightly `reconcileAuditGaps` job (§7).
+
 ## 5. Indexes
 
 ### 5.1 Firestore composite indexes
@@ -566,7 +600,7 @@ Combinations beyond these (e.g. `action AND entity_type AND date range`) Firesto
 
 **`seats`:** single-field on `scope` covers most queries. No composite needed at this scale.
 
-**`access`, `kindooManagers`, `wards`, `buildings`, `kindooSites`:** small enough to load fully and filter client-side. No composite indexes.
+**`access`, `kindooManagers`, `wards`, `buildings`, `kindooSites`, `organizations`:** small enough to load fully and filter client-side. No composite indexes.
 
 ### 5.2 Firestore TTL policy
 
@@ -710,6 +744,19 @@ service cloud.firestore {
         allow delete: if isManager(stakeId);
       }
 
+      // ----- Organizations -----
+      // Stake-scope seat pools (§4.12). Mirrors kindooSites' gating:
+      // any member reads (the org list feeds the No-Organization picker
+      // and the roster chip's id→name resolution), managers write with
+      // the lastActor integrity check. Small unfiltered collection — no
+      // index needed.
+      match /organizations/{organizationId} {
+        allow read: if isAnyMember(stakeId);
+        allow create, update: if isManager(stakeId)
+          && lastActorMatchesAuth(request.resource.data);
+        allow delete: if isManager(stakeId);
+      }
+
       // ----- KindooManagers -----
       // The bootstrap-admin gate breaks the chicken-and-egg: wizard's first action
       // is adding the bootstrap admin to this collection, which fires
@@ -766,13 +813,25 @@ service cloud.firestore {
                                      memberCanonical,
                                      request.resource.data.type);
 
-        // Updates: denied for clients (no `allow update` clause). Seats are
-        // mutated server-side only via the Admin SDK — request-completion
+        // Updates: the ONLY client-writable seat mutation is the inline
+        // organization edit — a stake member may set / clear
+        // `organization_id` on a `scope == 'stake'` seat, bypassing the
+        // request flow (organizations are a stake-scope concept; §4.12,
+        // `architecture.md` D21). The `affectedKeys().hasOnly([...])`
+        // allowlist matches the web inline-edit mutation EXACTLY (those 4
+        // keys, nothing else), so a hand-crafted write can't smuggle other
+        // field changes through this path. Every OTHER seat mutation stays
+        // server-side via the Admin SDK — request-completion
         // (`markRequestComplete`), removal (`removeSeatOnRequestComplete`),
-        // and the import-sync callables — all of which bypass rules. Editing
-        // a seat is request-only (an `edit_*` request completed by the
-        // callable). T-66 removed the formerly-orphaned manager direct-update
-        // allowlist (it had no UI exercising it after PR #197).
+        // import-sync callables — all of which bypass rules. Editing any
+        // other seat field is request-only (an `edit_*` request completed by
+        // the callable). T-66 removed the formerly-orphaned manager
+        // direct-update allowlist.
+        allow update: if isStakeMember(stakeId)
+          && resource.data.scope == 'stake'
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['organization_id', 'last_modified_at', 'last_modified_by', 'lastActor'])
+          && lastActorMatchesAuth(request.resource.data);
 
         // Direct delete from manager UI — only when no collisions remain.
         // The remove-request flow handles deletion via a Cloud Function (Admin SDK bypass) instead,
@@ -918,6 +977,8 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `reconcileAuditGaps` | Cloud Scheduler nightly | Diffs entity collections vs auditLog; pages on gaps |
 
 Total: ~10–12 Cloud Functions. None hot-path; all run on free tier at this scale.
+
+**Organizations deltas (PR #224).** The parameterized `auditTrigger` gains `auditOrganizationWrites` on `stakes/{sid}/organizations/{orgId}`, fanning rows as `entity_type='stake'`, `entity_id='organization:<slug>'` (same pattern as wards / buildings / kindooSites — organizations are not a first-class audit entity type). `reconcileAuditGaps` adds `organizations` to its `AUDITED_COLLECTIONS` list. Inline seat org edits audit automatically as `update_seat` (the existing `auditSeatWrites` path). `markRequestComplete` carries the request's `organization_id` onto the seat on stake-scope add/edit completion (new-seat primary, the stake-grant slot in the auto-merge path, and the resolved edit slot). Add vs edit are asymmetric: an **add** auto-merge onto an existing stake grant re-stamps `organization_id` **only when the request carries a non-null id** (the add form never pre-fills org, so a `null` add must not silently clear an existing org); the brand-new-seat add still writes `null` when none is picked. An **edit** is authoritative — the form pre-fills, so `null` clears. `syncApplyFix` preserves a client-set `organization_id` through auto-seat rewrites and clears it in `applyScopeMismatch` when a seat moves off stake scope to a ward. No new composite index.
 
 ## 8. Open questions / deferred decisions
 

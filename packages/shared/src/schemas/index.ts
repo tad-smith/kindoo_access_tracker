@@ -15,6 +15,7 @@ export {
 export { buildingSchema } from './building.js';
 export { kindooManagerSchema } from './kindooManager.js';
 export { kindooSiteSchema } from './kindooSite.js';
+export { organizationSchema } from './organization.js';
 export { platformSuperadminSchema } from './platformSuperadmin.js';
 export { accessRequestSchema, requestStatusSchema, requestTypeSchema } from './request.js';
 export { duplicateGrantSchema, seatSchema, seatTypeSchema } from './seat.js';

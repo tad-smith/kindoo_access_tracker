@@ -11,6 +11,8 @@ const useStakeRosterMock = vi.fn();
 const useStakeWardsMock = vi.fn();
 const useStakeBuildingsMock = vi.fn();
 const useKindooSitesMock = vi.fn();
+const useOrganizationsMock = vi.fn();
+const setSeatOrgMock = vi.fn();
 const useFirestoreDocMock = vi.fn();
 const usePendingRequestsForScopeMock = vi.fn();
 const usePendingRemoveRequestsMock = vi.fn();
@@ -22,7 +24,18 @@ vi.mock('./hooks', () => ({
   useStakeWards: () => useStakeWardsMock(),
   useStakeBuildings: () => useStakeBuildingsMock(),
   useKindooSites: () => useKindooSitesMock(),
+  useSetSeatOrganization: () => ({ mutate: setSeatOrgMock, isPending: false }),
 }));
+
+// The org catalogue hook is mocked; the pure id→name + sort helpers are
+// the real implementations so the chip + per-org bars exercise them.
+vi.mock('../organizations/hooks', async () => {
+  const actual = await vi.importActual<object>('../organizations/hooks');
+  return {
+    ...actual,
+    useOrganizations: () => useOrganizationsMock(),
+  };
+});
 
 vi.mock('../../lib/data', () => ({
   useFirestoreDoc: (ref: unknown) => useFirestoreDocMock(ref),
@@ -194,6 +207,21 @@ function mockPendingRequests(requests: AccessRequest[]) {
   });
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mockOrganizations(orgs: any[]) {
+  useOrganizationsMock.mockReturnValue({
+    data: orgs,
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // Default: no wards / buildings. Tests that exercise the new pool
@@ -207,6 +235,9 @@ beforeEach(() => {
   mockNoPendingRemoves();
   // Default: empty Kindoo Sites catalogue.
   useKindooSitesMock.mockReturnValue(stakeListResult);
+  // Default: empty organizations catalogue (no per-org bars; chip reads
+  // "No Organization").
+  mockOrganizations([]);
   submitMutateAsyncMock.mockResolvedValue({ id: 'req-new' });
   // Default principal: stake-scope authority. The stake Roster page
   // is reachable only by users with `stake: true`, so this is the
@@ -638,6 +669,194 @@ describe('<StakeRosterPage />', () => {
       // The row's columns reflect the stake duplicate, not the CO
       // primary — calling list reads "Stake Clerk".
       expect(screen.getByText(/Stake Clerk/)).toBeInTheDocument();
+    });
+  });
+
+  // Organization chip + per-organization utilization bars (Web Track 2).
+  describe('organizations', () => {
+    const orgs = [
+      { organization_id: 'youth', name: 'Youth Program', seat_cap: 10 },
+      { organization_id: 'choir', name: 'Stake Choir', seat_cap: 5 },
+    ];
+
+    it('renders an org chip on every card showing the resolved org name', () => {
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          organization_id: 'choir',
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      mockOrganizations(orgs);
+      render(<StakeRosterPage />);
+      const chip = screen.getByTestId('org-chip-a@x.com');
+      expect(chip.textContent).toContain('Stake Choir');
+    });
+
+    it('renders the chip as "No Organization" when the seat has no org', () => {
+      mockSeats([
+        makeSeat({ scope: 'stake', member_canonical: 'a@x.com', member_email: 'a@x.com' }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      mockOrganizations(orgs);
+      render(<StakeRosterPage />);
+      expect(screen.getByTestId('org-chip-a@x.com').textContent).toContain('No Organization');
+    });
+
+    it('makes the chip editable (select present) on a primary stake grant for a stake user', () => {
+      mockSeats([
+        makeSeat({ scope: 'stake', member_canonical: 'a@x.com', member_email: 'a@x.com' }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      mockOrganizations(orgs);
+      render(<StakeRosterPage />);
+      expect(screen.getByTestId('org-select-a@x.com')).toBeInTheDocument();
+    });
+
+    it('writes the chosen org id immediately on change', async () => {
+      const user = userEvent.setup();
+      mockSeats([
+        makeSeat({ scope: 'stake', member_canonical: 'a@x.com', member_email: 'a@x.com' }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      mockOrganizations(orgs);
+      render(<StakeRosterPage />);
+      await user.selectOptions(screen.getByTestId('org-select-a@x.com'), 'youth');
+      expect(setSeatOrgMock).toHaveBeenCalledWith({
+        memberCanonical: 'a@x.com',
+        organizationId: 'youth',
+      });
+    });
+
+    it('renders the chip read-only (no select) for a non-stake principal', () => {
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+      mockSeats([
+        makeSeat({ scope: 'stake', member_canonical: 'a@x.com', member_email: 'a@x.com' }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      mockOrganizations(orgs);
+      render(<StakeRosterPage />);
+      expect(screen.queryByTestId('org-select-a@x.com')).toBeNull();
+      expect(screen.getByTestId('org-chip-a@x.com').getAttribute('data-editable')).toBe('false');
+    });
+
+    it('renders the chip read-only when the matched stake grant is a duplicate (set via the request form)', () => {
+      const NOW = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+      mockSeats([
+        makeSeat({
+          scope: 'CO',
+          type: 'auto',
+          member_canonical: 'cross@x.com',
+          member_email: 'cross@x.com',
+          callings: ['Bishop'],
+          duplicate_grants: [
+            {
+              scope: 'stake',
+              type: 'manual',
+              kindoo_site_id: null,
+              organization_id: 'youth',
+              building_names: ['Stake Center'],
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      mockOrganizations(orgs);
+      render(<StakeRosterPage />);
+      // The chip resolves the duplicate's own org id, read-only.
+      const chip = screen.getByTestId('org-chip-cross@x.com');
+      expect(chip.textContent).toContain('Youth Program');
+      expect(chip.getAttribute('data-editable')).toBe('false');
+      expect(screen.queryByTestId('org-select-cross@x.com')).toBeNull();
+    });
+
+    // Hydration race: the org catalogue snapshot lands a frame or two
+    // after the page. Until then the chip must stay read-only (no
+    // clear-only select) and an org'd seat must not flash "No
+    // Organization". `data: undefined` is the loading sentinel.
+    it('keeps the chip read-only and hides "No Organization" while the catalogue is loading', () => {
+      useOrganizationsMock.mockReturnValue({
+        data: undefined,
+        error: null,
+        status: 'pending',
+        isPending: true,
+        isLoading: true,
+        isSuccess: false,
+        isError: false,
+        isFetching: true,
+        fetchStatus: 'fetching',
+      });
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          organization_id: 'choir',
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      // No interactive select during hydration — the clear path is unreachable.
+      expect(screen.queryByTestId('org-select-a@x.com')).toBeNull();
+      const chip = screen.getByTestId('org-chip-a@x.com');
+      expect(chip.getAttribute('data-editable')).toBe('false');
+      // Org'd seat must not flash the wrong label before the name resolves.
+      expect(chip.textContent).not.toContain('No Organization');
+    });
+
+    it('relabels the stake bar "Stake Total" and renders one bar per organization', () => {
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'a@x.com',
+          member_email: 'a@x.com',
+          organization_id: 'choir',
+        }),
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'b@x.com',
+          member_email: 'b@x.com',
+          organization_id: 'choir',
+        }),
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'c@x.com',
+          member_email: 'c@x.com',
+          organization_id: 'youth',
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      mockOrganizations(orgs);
+      render(<StakeRosterPage />);
+      expect(screen.getByText(/Stake Total: 3 \/ 200 seats used/)).toBeInTheDocument();
+      // Alpha order: Stake Choir then Youth Program.
+      expect(screen.getByText(/Stake Choir: 2 \/ 5 seats used/)).toBeInTheDocument();
+      expect(screen.getByText(/Youth Program: 1 \/ 10 seats used/)).toBeInTheDocument();
+    });
+
+    it('renders a zero-count bar for an organization with no seats', () => {
+      mockSeats([
+        makeSeat({ scope: 'stake', member_canonical: 'a@x.com', member_email: 'a@x.com' }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      mockOrganizations(orgs);
+      render(<StakeRosterPage />);
+      expect(screen.getByText(/Stake Choir: 0 \/ 5 seats used/)).toBeInTheDocument();
+      expect(screen.getByText(/Youth Program: 0 \/ 10 seats used/)).toBeInTheDocument();
+    });
+
+    it('leaves the stake bar unlabelled when the stake has no organizations', () => {
+      mockSeats([
+        makeSeat({ scope: 'stake', member_canonical: 'a@x.com', member_email: 'a@x.com' }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      mockOrganizations([]);
+      render(<StakeRosterPage />);
+      expect(screen.queryByText(/Stake Total/)).toBeNull();
+      expect(screen.getByText(/1 \/ 200 seats used/)).toBeInTheDocument();
     });
   });
 });

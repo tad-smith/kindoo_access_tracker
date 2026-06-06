@@ -68,6 +68,10 @@ export const accessRequestSchema = z
     // matching.
     kindoo_site_id: z.string().nullable().optional(),
 
+    // Organization slug id for stake-scope requests (optional org
+    // selector on add/edit). `null` / absent means "No Organization".
+    organization_id: z.string().nullable().optional(),
+
     lastActor: actorRefSchema,
   })
   // Edit-type requests require a non-empty trimmed `comment` so the

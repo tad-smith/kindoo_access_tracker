@@ -37,6 +37,7 @@ async function seedSeat(opts: {
   callings?: string[];
   building_names?: string[];
   sort_order?: number | null;
+  organization_id?: string | null;
 }): Promise<void> {
   const { db } = requireEmulators();
   const canonical = opts.canonical ?? MEMBER_EMAIL;
@@ -55,6 +56,7 @@ async function seedSeat(opts: {
     lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
   };
   if (opts.sort_order !== undefined) body.sort_order = opts.sort_order;
+  if (opts.organization_id !== undefined) body.organization_id = opts.organization_id;
   await db.doc(`stakes/${STAKE_ID}/seats/${canonical}`).set(body);
 }
 
@@ -660,6 +662,42 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       });
     });
 
+    it('preserves a client-set organization_id on an auto seat (callings-mismatch never touches it)', async () => {
+      await seedManager();
+      // A stake-scope auto seat whose org was set inline by a stake
+      // member. The callings-mismatch path uses `tx.update` with named
+      // fields only, so `organization_id` (unmentioned) must survive.
+      await seedSeat({
+        scope: 'stake',
+        type: 'auto',
+        callings: ['Bishopric First Counselor'],
+        sort_order: 43,
+        organization_id: 'primary-childrens-hospital',
+      });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'callings-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishop'] },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { organization_id?: unknown };
+      expect(seat.callings).toEqual(['Bishop']);
+      // Org survived the fix.
+      expect(seat.organization_id).toBe('primary-childrens-hospital');
+    });
+
     it('rejects an empty callings target with invalid-argument', async () => {
       await seedManager();
       await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'] });
@@ -882,6 +920,71 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.scope).toBe('DZ');
       // Unresolvable ward → field untouched.
       expect(seat.kindoo_site_id).toBe('foreign-site-123');
+    });
+
+    it('clears organization_id when moving from stake scope to a ward scope', async () => {
+      await seedManager();
+      // A stake-scope seat carrying an org moves to a ward scope.
+      // Organization is a stake-scope-only concept, so the move must
+      // shed the org.
+      await seedWard({ ward_code: 'DZ', building_name: 'Maple Building' });
+      await seedBuilding({ building_name: 'Maple Building', kindoo_site_id: null });
+      await seedSeat({
+        scope: 'stake',
+        type: 'manual',
+        callings: ['Ward Clerk'],
+        organization_id: 'primary-childrens-hospital',
+      });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'scope-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, newScope: 'DZ' },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { organization_id?: unknown };
+      expect(seat.scope).toBe('DZ');
+      // Org gone (FieldValue.delete) → No Organization.
+      expect(seat.organization_id).toBeUndefined();
+    });
+
+    it('does not introduce organization_id when moving to stake scope', async () => {
+      await seedManager();
+      // A ward seat (no org) moves to stake. The path doesn't add an
+      // org — there's no source value, and org defaults to absent.
+      await seedSeat({ scope: 'CO', type: 'manual', callings: ['Ward Clerk'] });
+
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'scope-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, newScope: 'stake' },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+      const { db } = requireEmulators();
+      const seat = (
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+      ).data() as Seat & { organization_id?: unknown };
+      expect(seat.scope).toBe('stake');
+      expect(seat.organization_id).toBeUndefined();
     });
 
     it('returns soft failure when the seat is missing', async () => {

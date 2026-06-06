@@ -39,6 +39,7 @@ async function seedRequest(opts: {
   building_names?: string[];
   start_date?: string;
   end_date?: string;
+  organization_id?: string | null;
 }): Promise<void> {
   const { db } = requireEmulators();
   const type = opts.type ?? 'add_manual';
@@ -59,6 +60,7 @@ async function seedRequest(opts: {
     requested_at: Timestamp.fromMillis(1_000),
     lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
   };
+  if (opts.organization_id !== undefined) body.organization_id = opts.organization_id;
   if (type === 'add_temp' || type === 'edit_temp') {
     if (opts.start_date) body.start_date = opts.start_date;
     if (opts.end_date) body.end_date = opts.end_date;
@@ -76,10 +78,11 @@ async function seedSeat(opts: {
   building_names?: string[];
   reason?: string;
   duplicate_grants?: Seat['duplicate_grants'];
+  organization_id?: string | null;
 }): Promise<void> {
   const { db } = requireEmulators();
   const canonical = opts.canonical ?? 'alice@gmail.com';
-  await db.doc(`stakes/${STAKE_ID}/seats/${canonical}`).set({
+  const body: Record<string, unknown> = {
     member_canonical: canonical,
     member_email: canonical,
     member_name: 'Alice',
@@ -94,7 +97,9 @@ async function seedSeat(opts: {
     last_modified_at: Timestamp.now(),
     last_modified_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
     lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
-  });
+  };
+  if (opts.organization_id !== undefined) body.organization_id = opts.organization_id;
+  await db.doc(`stakes/${STAKE_ID}/seats/${canonical}`).set(body);
 }
 
 /**
@@ -505,6 +510,94 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       expect(seat.granted_by_request).toBe('r1');
     });
 
+    // Organization carry on the new-seat add path. Org is a stake-scope
+    // concept: stake-scope requests carry `organization_id` onto the new
+    // seat's primary grant; ward-scope requests never do (the field lands
+    // null regardless of what the request carries).
+    describe('organization_id on new-seat add', () => {
+      it('stake-scope add carries organization_id onto the new seat primary', async () => {
+        await seedManager();
+        await seedStake();
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Maple Building'],
+          organization_id: 'primary-childrens-hospital',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('stake');
+        expect(seat.organization_id).toBe('primary-childrens-hospital');
+      });
+
+      it('stake-scope add with no organization_id sets it null (No Organization)', async () => {
+        await seedManager();
+        await seedStake();
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Maple Building'],
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('stake');
+        expect(seat.organization_id).toBeNull();
+      });
+
+      it('ward-scope add never carries organization_id (null even if request sets one)', async () => {
+        await seedManager();
+        await seedWard({ ward_code: 'CO', building_name: 'Maple Building', seat_cap: 10 });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'CO',
+          building_names: ['Maple Building'],
+          // A misconfigured request that smuggles an org on a ward scope:
+          // it must NOT survive (org is stake-only).
+          organization_id: 'primary-childrens-hospital',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('CO');
+        expect(seat.organization_id).toBeNull();
+      });
+    });
+
     // Extension v2.2 — the callable diverges from the SPA hook when a
     // seat already exists. The SPA throws "reconcile via All Seats
     // first" because it has the reconcile UI; the extension does not,
@@ -553,6 +646,318 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           await db.doc(`stakes/${STAKE_ID}/requests/r1`).get()
         ).data() as AccessRequest;
         expect(after.status).toBe('complete');
+      });
+
+      // Organization carry on the merge path. The stake-scope grant is
+      // the one that gets stamped; non-stake grants get no org.
+      it('stake primary match: stamps organization_id on the seat top-level', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Maple Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          organization_id: 'primary-childrens-hospital',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('stake');
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
+        expect(seat.organization_id).toBe('primary-childrens-hospital');
+      });
+
+      it('stake primary match with only org change (no new building): re-stamps org', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          organization_id: null,
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          // Same building as existing — no building change. Only the org
+          // changes, which must still trigger a seat write.
+          building_names: ['Maple Building'],
+          organization_id: 'youth-conference',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Maple Building']);
+        expect(seat.organization_id).toBe('youth-conference');
+      });
+
+      // Silent-data-loss regression (PR #224 review): the add form never
+      // pre-fills org from the existing seat, so a `null` add must NOT
+      // clear an org the seat already carries. Re-stamp only when non-null.
+      it('stake primary match: null org on the add PRESERVES the existing org (no clear)', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          organization_id: 'org-a',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          // Add form default — no org picked. Must not clobber 'org-a'.
+          organization_id: null,
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
+        // Existing org survives the null add.
+        expect(seat.organization_id).toBe('org-a');
+      });
+
+      it('stake primary match: non-null org on the add UPDATES the existing org', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          organization_id: 'org-a',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          organization_id: 'org-b',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.organization_id).toBe('org-b');
+      });
+
+      it('stake duplicate match: null org on the add PRESERVES the duplicate org (no clear)', async () => {
+        await seedManager();
+        await seedStake();
+        // Primary is ward-scope; an existing stake-scope DUPLICATE already
+        // carries 'org-a'. A null stake add merges onto that duplicate and
+        // must not clear its org.
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          duplicate_grants: [
+            {
+              scope: 'stake',
+              type: 'manual',
+              building_names: ['Maple Building'],
+              organization_id: 'org-a',
+              detected_at: Timestamp.now(),
+            },
+          ],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          organization_id: null,
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants.length).toBe(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('stake');
+        expect(dup.building_names).toEqual(['Maple Building', 'Briargate Building']);
+        // Existing duplicate org survives the null add.
+        expect(dup.organization_id).toBe('org-a');
+      });
+
+      it('stake duplicate match: non-null org on the add UPDATES the duplicate org', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          duplicate_grants: [
+            {
+              scope: 'stake',
+              type: 'manual',
+              building_names: ['Maple Building'],
+              organization_id: 'org-a',
+              detected_at: Timestamp.now(),
+            },
+          ],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          organization_id: 'org-b',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.organization_id).toBe('org-b');
+      });
+
+      it('stake append (no match): stamps organization_id on the new duplicate; primary org untouched', async () => {
+        await seedManager();
+        await seedStake();
+        // Existing primary is a WARD-scope grant; the stake-scope add
+        // lands as a new duplicate carrying the org.
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['Maple Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'stake',
+          building_names: ['Briargate Building'],
+          organization_id: 'primary-childrens-hospital',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        // Ward primary unchanged + no org on it.
+        expect(seat.scope).toBe('CO');
+        expect(seat.organization_id ?? null).toBeNull();
+        // New stake duplicate carries the org.
+        expect(seat.duplicate_grants.length).toBe(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('stake');
+        expect(dup.organization_id).toBe('primary-childrens-hospital');
+      });
+
+      it('ward append (no match): new duplicate carries NO organization_id', async () => {
+        await seedManager();
+        await seedStake();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Maple Building'],
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'add_manual',
+          scope: 'CO',
+          building_names: ['Maple Building'],
+          // Even if smuggled, a ward duplicate must not carry org.
+          organization_id: 'primary-childrens-hospital',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants.length).toBe(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('CO');
+        expect(dup.organization_id ?? null).toBeNull();
       });
 
       it('primary scope-mismatch: appends a new duplicate_grants entry; primary unchanged', async () => {
@@ -1423,6 +1828,110 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
           ),
         ).rejects.toMatchObject({ code: 'failed-precondition' });
       });
+
+      it('stake-scope: carries organization_id from the request onto the seat', async () => {
+        await seedManager();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          reason: 'Visiting authority',
+          organization_id: null,
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_manual',
+          scope: 'stake',
+          building_names: ['Maple Building'],
+          reason: 'Visiting authority',
+          organization_id: 'primary-childrens-hospital',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.organization_id).toBe('primary-childrens-hospital');
+      });
+
+      it('stake-scope: clears organization_id when the request carries none (null clears)', async () => {
+        await seedManager();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          reason: 'Visiting authority',
+          organization_id: 'primary-childrens-hospital',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_manual',
+          scope: 'stake',
+          building_names: ['Maple Building'],
+          reason: 'Visiting authority',
+          // No organization_id on the request → the authoritative form
+          // value is "No Organization", which clears the seat's org.
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.organization_id).toBeNull();
+      });
+
+      it('ward-scope edit leaves organization_id untouched (org is stake-only)', async () => {
+        await seedManager();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['Maple Building'],
+          reason: 'sub teacher',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_manual',
+          scope: 'CO',
+          building_names: ['Maple Building', 'Briargate Building'],
+          reason: 'sub teacher (extended)',
+          // Even if smuggled, a ward edit must not stamp org.
+          organization_id: 'primary-childrens-hospital',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
+        expect(seat.organization_id ?? null).toBeNull();
+      });
     });
 
     describe('edit_temp', () => {
@@ -1462,6 +1971,42 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
         expect(seat.reason).toBe('Visiting speaker (extended)');
         expect(seat.start_date).toBe('2026-06-01');
         expect(seat.end_date).toBe('2026-06-30');
+      });
+
+      it('stake-scope: carries organization_id from the request onto the temp seat', async () => {
+        await seedManager();
+        await seedSeat({
+          canonical: 'alice@gmail.com',
+          scope: 'stake',
+          type: 'temp',
+          building_names: ['Maple Building'],
+          reason: 'Visiting speaker',
+          organization_id: 'youth-conference',
+        });
+        await seedRequest({
+          requestId: 'r1',
+          status: 'pending',
+          type: 'edit_temp',
+          scope: 'stake',
+          building_names: ['Maple Building'],
+          reason: 'Visiting speaker',
+          start_date: '2026-06-01',
+          end_date: '2026-06-30',
+          organization_id: 'primary-childrens-hospital',
+        });
+
+        await markRequestComplete.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: { stakeId: STAKE_ID, requestId: 'r1' },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()
+        ).data() as Seat;
+        expect(seat.organization_id).toBe('primary-childrens-hospital');
       });
 
       it('missing seat: rejects with failed-precondition', async () => {

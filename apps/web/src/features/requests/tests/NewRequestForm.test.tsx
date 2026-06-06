@@ -24,7 +24,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Building, Seat, Ward } from '@kindoo/shared';
+import type { Building, Organization, Seat, Ward } from '@kindoo/shared';
 
 const submitMock = vi.fn().mockResolvedValue({ id: 'req-stub' });
 const useSeatForMemberMock = vi.fn();
@@ -38,6 +38,18 @@ vi.mock('../hooks', () => ({
 vi.mock('../../../lib/store/toast', () => ({
   toast: (...args: unknown[]) => toastMock(...args),
 }));
+
+// The org selector subscribes to the organizations catalogue. Override
+// `useOrganizations` per-test via `useOrganizationsMock`; default to an
+// empty live result. Keep the real pure helpers.
+const useOrganizationsMock = vi.fn();
+vi.mock('../../organizations/hooks', async () => {
+  const actual = await vi.importActual<object>('../../organizations/hooks');
+  return {
+    ...actual,
+    useOrganizations: () => useOrganizationsMock(),
+  };
+});
 
 import { NewRequestForm } from '../components/NewRequestForm';
 import { Dialog } from '../../../components/ui/Dialog';
@@ -124,9 +136,41 @@ function buildingsWithSites(
   );
 }
 
+function liveOrgResult(orgs: Organization[]) {
+  return {
+    data: orgs,
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  } as const;
+}
+
+function organizations(
+  opts: Array<{ id: string; name: string; seat_cap?: number }>,
+): Organization[] {
+  const stamp = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+  return opts.map(
+    ({ id, name, seat_cap }) =>
+      ({
+        organization_id: id,
+        name,
+        seat_cap: seat_cap ?? 0,
+        created_at: stamp,
+        last_modified_at: stamp,
+        lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+      }) as unknown as Organization,
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   useSeatForMemberMock.mockReturnValue(liveSeatResult(undefined));
+  useOrganizationsMock.mockReturnValue(liveOrgResult([]));
 });
 
 describe('<NewRequestForm /> — fixed scope label', () => {
@@ -1284,5 +1328,108 @@ describe('<NewRequestForm /> — dialog mode', () => {
     await user.click(screen.getByTestId('new-request-cancel'));
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(submitMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('<NewRequestForm /> — organization selector (stake scope only)', () => {
+  it('does not render the org Select for a ward-scope form', () => {
+    useOrganizationsMock.mockReturnValue(
+      liveOrgResult(organizations([{ id: 'scouts', name: 'Scouts' }])),
+    );
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
+      />,
+    );
+    expect(screen.queryByTestId('new-request-organization')).toBeNull();
+  });
+
+  it('renders the org Select for a stake-scope form', () => {
+    useOrganizationsMock.mockReturnValue(
+      liveOrgResult(organizations([{ id: 'scouts', name: 'Scouts' }])),
+    );
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    expect(screen.getByTestId('new-request-organization')).toBeInTheDocument();
+  });
+
+  it('defaults to "No Organization" and lists each org sorted by name', () => {
+    useOrganizationsMock.mockReturnValue(
+      liveOrgResult(
+        organizations([
+          { id: 'scouts', name: 'Scouts' },
+          { id: 'primary-children', name: 'Primary Children' },
+        ]),
+      ),
+    );
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    const select = screen.getByTestId('new-request-organization') as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.text)).toEqual([
+      'No Organization',
+      'Primary Children',
+      'Scouts',
+    ]);
+    // Default lands on "No Organization".
+    expect(select.options[select.selectedIndex]!.text).toBe('No Organization');
+  });
+
+  it('submits the chosen organization_id for a stake-scope request', async () => {
+    const user = userEvent.setup();
+    useOrganizationsMock.mockReturnValue(
+      liveOrgResult(organizations([{ id: 'primary-children', name: 'Primary Children' }])),
+    );
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    await user.selectOptions(screen.getByTestId('new-request-organization'), 'primary-children');
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({
+      scope: 'stake',
+      organization_id: 'primary-children',
+    });
+  });
+
+  it('submits organization_id=null when "No Organization" is left selected', async () => {
+    const user = userEvent.setup();
+    useOrganizationsMock.mockReturnValue(
+      liveOrgResult(organizations([{ id: 'primary-children', name: 'Primary Children' }])),
+    );
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+      />,
+    );
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visit');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({
+      scope: 'stake',
+      organization_id: null,
+    });
   });
 });

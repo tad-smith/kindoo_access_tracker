@@ -18,8 +18,21 @@ import {
   buildingDeleteBlocker,
   buildingRenameBlocker,
   duplicateBuildingNameBlocker,
+  duplicateOrganizationNameBlocker,
   kindooSiteDeleteBlocker,
+  organizationDeleteBlocker,
 } from './hooks';
+import type { DuplicateGrant, Organization } from '@kindoo/shared';
+
+function organization(overrides: Partial<Organization> = {}): Organization {
+  return {
+    organization_id: 'primary-children',
+    name: 'Primary Children',
+    seat_cap: 0,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ...(overrides as any),
+  } as Organization;
+}
 
 function ward(overrides: Partial<Ward> = {}): Ward {
   return {
@@ -296,6 +309,97 @@ describe('configuration kindooSiteDeleteBlocker', () => {
   });
 });
 
+describe('configuration duplicateOrganizationNameBlocker', () => {
+  const orgs = [
+    organization({ organization_id: 'primary-children', name: 'Primary Children' }),
+    organization({ organization_id: 'scouts', name: 'Scouts' }),
+  ];
+
+  it('returns null when the name is free', () => {
+    expect(duplicateOrganizationNameBlocker('Youth Council', orgs, undefined)).toBeNull();
+  });
+
+  it('blocks when another organization (different slug) uses the name', () => {
+    const msg = duplicateOrganizationNameBlocker('Scouts', orgs, 'primary-children');
+    expect(msg).toContain('Organization names must be unique');
+  });
+
+  it('ignores the organization being edited (same slug)', () => {
+    expect(
+      duplicateOrganizationNameBlocker('Primary Children', orgs, 'primary-children'),
+    ).toBeNull();
+  });
+
+  it('matches case-insensitively and trims', () => {
+    expect(duplicateOrganizationNameBlocker('  scouts ', orgs, undefined)).not.toBeNull();
+  });
+});
+
+describe('configuration organizationDeleteBlocker', () => {
+  it('returns null when no seat references the org', () => {
+    expect(
+      organizationDeleteBlocker('primary-children', [
+        seat({ organization_id: 'scouts' }),
+        seat({ organization_id: null }),
+      ]),
+    ).toBeNull();
+  });
+
+  it('blocks when a seat references the org via its primary organization_id', () => {
+    const msg = organizationDeleteBlocker('primary-children', [
+      seat({ organization_id: 'primary-children' }),
+    ]);
+    expect(msg).toContain('Cannot delete');
+    expect(msg).toContain('1 seat');
+    expect(msg).toContain('Reassign or remove them first.');
+  });
+
+  it('blocks when a seat references the org ONLY via a duplicate-grant organization_id', () => {
+    const dup: DuplicateGrant = {
+      scope: 'stake',
+      type: 'manual',
+      organization_id: 'primary-children',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const msg = organizationDeleteBlocker('primary-children', [
+      seat({ organization_id: 'scouts', duplicate_grants: [dup] }),
+    ]);
+    expect(msg).toContain('1 seat');
+  });
+
+  it('counts and pluralizes multiple referencing seats', () => {
+    const msg = organizationDeleteBlocker('primary-children', [
+      seat({ member_canonical: 's1@x.com', organization_id: 'primary-children' }),
+      seat({ member_canonical: 's2@x.com', organization_id: 'primary-children' }),
+      seat({ member_canonical: 's3@x.com', organization_id: 'scouts' }),
+    ]);
+    expect(msg).toContain('2 seats');
+  });
+
+  it('counts a seat once when it references via both primary and duplicate-grant', () => {
+    const dup: DuplicateGrant = {
+      scope: 'stake',
+      type: 'manual',
+      organization_id: 'primary-children',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const msg = organizationDeleteBlocker('primary-children', [
+      seat({ organization_id: 'primary-children', duplicate_grants: [dup] }),
+    ]);
+    // One seat, not two.
+    expect(msg).toContain('1 seat');
+  });
+
+  it('tolerates a seat with absent organization_id and duplicate_grants', () => {
+    expect(
+      organizationDeleteBlocker('primary-children', [
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { ...seat(), organization_id: undefined, duplicate_grants: undefined } as any,
+      ]),
+    ).toBeNull();
+  });
+});
+
 // ---- Hook-level: KindooSite mutations -------------------------------
 //
 // The hook-level tests below mock `firebase/firestore` so the
@@ -363,6 +467,11 @@ vi.mock('../../../lib/docs', async () => {
       path: `stakes/csnorth/buildings/${buildingId}`,
       id: buildingId,
     }),
+    organizationRef: (_db: unknown, _stakeId: string, organizationId: string) => ({
+      __sentinel: 'organizationRef',
+      path: `stakes/csnorth/organizations/${organizationId}`,
+      id: organizationId,
+    }),
   };
 });
 
@@ -382,8 +491,10 @@ vi.mock('../../../lib/useActiveStake', () => ({
 import {
   useDeleteBuildingMutation,
   useDeleteKindooSiteMutation,
+  useDeleteOrganizationMutation,
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
+  useUpsertOrganizationMutation,
   useUpsertWardMutation,
 } from './hooks';
 
@@ -943,5 +1054,134 @@ describe('useDeleteBuildingMutation — transitional OR ref-guard', () => {
     await waitFor(() => expect(deleteDocMock).toHaveBeenCalled());
     const [ref] = deleteDocMock.mock.calls[0]!;
     expect(ref).toMatchObject({ path: 'stakes/csnorth/buildings/maple-building' });
+  });
+});
+
+describe('useUpsertOrganizationMutation', () => {
+  it('derives the doc id from name via buildingSlug on create + stamps created_at', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertOrganizationMutation(), { wrapper });
+    await result.current.mutateAsync({ name: 'Primary Children', seat_cap: 25 });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [ref, body, options] = setDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({
+      path: 'stakes/csnorth/organizations/primary-children',
+      id: 'primary-children',
+    });
+    expect(body).toMatchObject({
+      organization_id: 'primary-children',
+      name: 'Primary Children',
+      seat_cap: 25,
+      created_at: '__server_timestamp__',
+      lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
+    });
+    expect(options).toEqual({ merge: true });
+  });
+
+  it('keeps the original slug on edit even when the display name changes (no re-slug)', async () => {
+    // The slug is the immutable doc id every seat / request references
+    // via organization_id; re-slugging a renamed org would orphan them.
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertOrganizationMutation(), { wrapper });
+    await result.current.mutateAsync({
+      organization_id: 'primary-children',
+      name: 'Primary Org Renamed',
+      seat_cap: 30,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [ref, body] = setDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({
+      path: 'stakes/csnorth/organizations/primary-children',
+      id: 'primary-children',
+    });
+    expect(body).toMatchObject({
+      organization_id: 'primary-children',
+      name: 'Primary Org Renamed',
+    });
+  });
+
+  it('omits created_at on edit (preserves original timestamp)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertOrganizationMutation(), { wrapper });
+    await result.current.mutateAsync({
+      organization_id: 'primary-children',
+      name: 'Primary Children',
+      seat_cap: 30,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body).not.toHaveProperty('created_at');
+    expect(body).toHaveProperty('last_modified_at', '__server_timestamp__');
+  });
+
+  it('blocks the save when another organization already uses the chosen name', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertOrganizationMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        organization_id: 'primary-children',
+        name: 'Scouts', // collides with another org
+        seat_cap: 10,
+        existingOrganizations: [organization({ organization_id: 'scouts', name: 'Scouts' })],
+      }),
+    ).rejects.toThrow(/Organization names must be unique/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the slug derived from name is empty', async () => {
+    const { result } = renderHook(() => useUpsertOrganizationMutation(), { wrapper });
+    await expect(result.current.mutateAsync({ name: '   ', seat_cap: 5 })).rejects.toThrow(
+      /Organization name is required/i,
+    );
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('wraps the read + write in a runTransaction (race-safe)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertOrganizationMutation(), { wrapper });
+    await result.current.mutateAsync({ name: 'Primary Children', seat_cap: 25 });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('useDeleteOrganizationMutation', () => {
+  it('deletes the org doc when no seat references it', async () => {
+    const { result } = renderHook(() => useDeleteOrganizationMutation(), { wrapper });
+    await result.current.mutateAsync({
+      organizationId: 'primary-children',
+      seats: [seat({ organization_id: 'scouts' })],
+    });
+    await waitFor(() => expect(deleteDocMock).toHaveBeenCalled());
+    const [ref] = deleteDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/organizations/primary-children' });
+  });
+
+  it('refuses to delete when a seat references the org', async () => {
+    const { result } = renderHook(() => useDeleteOrganizationMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        organizationId: 'primary-children',
+        seats: [seat({ organization_id: 'primary-children' })],
+      }),
+    ).rejects.toThrow(/Cannot delete/i);
+    expect(deleteDocMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to delete when a seat references the org via a duplicate grant', async () => {
+    const dup: DuplicateGrant = {
+      scope: 'stake',
+      type: 'manual',
+      organization_id: 'primary-children',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const { result } = renderHook(() => useDeleteOrganizationMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        organizationId: 'primary-children',
+        seats: [seat({ organization_id: 'scouts', duplicate_grants: [dup] })],
+      }),
+    ).rejects.toThrow(/Cannot delete/i);
+    expect(deleteDocMock).not.toHaveBeenCalled();
   });
 });

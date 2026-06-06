@@ -6,6 +6,19 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-71] Organizations v1 deferrals — per-org pending bars + duplicate-grant inline edit
+Status: open
+Owner: @web-engineer
+Phase: cross-cutting
+
+Two intentional scope cuts from the Organizations feature (PR #224 / D21), tracked so they aren't mistaken for bugs:
+
+1. **Per-organization PENDING utilization bars.** The Stake Roster's per-org bars (`RosterUtilization` / `StakeRosterPage.orgRows`) are committed-only — pending adds/removes are split into the "Pending" stake bar but are NOT attributed per org. A future version could partition pending requests by their `organization_id` and show projected per-org bars, mirroring the stake bar's committed/projected pair.
+
+2. **Inline org editing for parallel-site stake DUPLICATE grants.** The roster org chip (`OrganizationChip`) is editable only on the **primary** stake grant (`grant.isPrimary`); a parallel-site stake *duplicate* grant renders the chip read-only, and its org is set through the request form (`EditSeatDialog`). A future version could make the duplicate's chip editable too, which would need a direct-write path that targets a `duplicate_grants[]` entry's `organization_id` (the current `seats.update` rule allowlists only the top-level `organization_id`, so the rule + mutation would both need extending).
+
+Both are deliberate v1 simplifications at target scale, not defects. See `docs/changelog/stake-organizations.md` "Deferred".
+
 ## [T-70] Update D19's "four cards remain" claim after Warnings-card removal
 Status: done (2026-06-06 — D19 addendum added noting PR #215 removed the over-cap Warnings card; three cards remain)
 Owner: @docs-keeper

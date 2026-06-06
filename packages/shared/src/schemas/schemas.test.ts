@@ -21,6 +21,7 @@ import {
   kindooManagerSchema,
   kindooSiteSchema,
   manualGrantSchema,
+  organizationSchema,
   platformAuditLogSchema,
   platformSuperadminSchema,
   seatSchema,
@@ -322,6 +323,43 @@ describe('kindooSiteSchema', () => {
       lastActor: ACTOR,
     };
     expect(() => kindooSiteSchema.parse(bad)).toThrow();
+  });
+});
+
+describe('organizationSchema', () => {
+  it('parses a representative entry', () => {
+    const seed = {
+      organization_id: 'primary-childrens-hospital',
+      name: "Primary Children's Hospital",
+      seat_cap: 25,
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(organizationSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('rejects a missing name', () => {
+    const bad = {
+      organization_id: 'primary-childrens-hospital',
+      seat_cap: 25,
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(() => organizationSchema.parse(bad)).toThrow();
+  });
+
+  it('rejects a non-numeric seat_cap', () => {
+    const bad = {
+      organization_id: 'primary-childrens-hospital',
+      name: "Primary Children's Hospital",
+      seat_cap: '25',
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(() => organizationSchema.parse(bad)).toThrow();
   });
 });
 
@@ -659,6 +697,95 @@ describe('seatSchema', () => {
       building_names: ['Maple Building'],
       duplicate_grants: [],
       duplicate_scopes: [42],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(() => seatSchema.parse(bad)).toThrow();
+  });
+
+  // Organizations — optional `organization_id` on the primary grant and
+  // on each `duplicate_grants[]` entry. Meaningful only on stake-scope
+  // grants; `null` / absent means "No Organization".
+  it('parses a stake-scope seat with organization_id set on the primary grant', () => {
+    const seed = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'stake',
+      type: 'manual' as const,
+      callings: [],
+      reason: 'Hospital chaplaincy',
+      building_names: ['Maple Building'],
+      organization_id: 'primary-childrens-hospital',
+      duplicate_grants: [],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(seatSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a seat with organization_id explicitly null (No Organization)', () => {
+    const seed = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'stake',
+      type: 'manual' as const,
+      callings: [],
+      reason: 'Visiting authority',
+      building_names: ['Maple Building'],
+      organization_id: null,
+      duplicate_grants: [
+        {
+          scope: 'stake',
+          type: 'manual' as const,
+          reason: 'Other org grant',
+          organization_id: 'youth-conference',
+          detected_at: T,
+        },
+      ],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(seatSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a seat with organization_id field omitted (absent → No Organization)', () => {
+    const seed = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'stake',
+      type: 'auto' as const,
+      callings: ['Stake Clerk'],
+      building_names: ['Maple Building'],
+      duplicate_grants: [],
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(seatSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('rejects a seat whose organization_id is a non-string non-null value', () => {
+    const bad = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      scope: 'stake',
+      type: 'manual' as const,
+      callings: [],
+      reason: 'X',
+      building_names: ['Maple Building'],
+      organization_id: 42,
+      duplicate_grants: [],
       created_at: T,
       last_modified_at: T,
       last_modified_by: ACTOR,
@@ -1046,6 +1173,73 @@ describe('accessRequestSchema', () => {
       lastActor: ACTOR,
     };
     expect(accessRequestSchema.safeParse(seed).success).toBe(false);
+  });
+
+  // Organizations — optional `organization_id` on stake-scope requests
+  // (the optional org selector on add/edit). `null` / absent means "No
+  // Organization".
+  it('parses a stake-scope add request with organization_id set', () => {
+    const seed = {
+      request_id: 'req-org-1',
+      type: 'add_manual' as const,
+      scope: 'stake',
+      member_email: 'Bob@gmail.com',
+      member_canonical: 'bob@gmail.com',
+      member_name: 'Bob Brown',
+      reason: 'Hospital chaplaincy',
+      comment: '',
+      building_names: ['Maple Building'],
+      organization_id: 'primary-childrens-hospital',
+      status: 'pending' as const,
+      requester_email: 'Alice@gmail.com',
+      requester_canonical: 'alice@gmail.com',
+      requested_at: T,
+      lastActor: ACTOR,
+    };
+    expect(accessRequestSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a request with organization_id explicitly null (No Organization)', () => {
+    const seed = {
+      request_id: 'req-org-2',
+      type: 'add_manual' as const,
+      scope: 'stake',
+      member_email: 'Bob@gmail.com',
+      member_canonical: 'bob@gmail.com',
+      member_name: 'Bob Brown',
+      reason: 'Visiting authority',
+      comment: '',
+      building_names: ['Maple Building'],
+      organization_id: null,
+      status: 'pending' as const,
+      requester_email: 'Alice@gmail.com',
+      requester_canonical: 'alice@gmail.com',
+      requested_at: T,
+      lastActor: ACTOR,
+    };
+    expect(accessRequestSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('rejects a non-string non-null organization_id on a request', () => {
+    const bad = {
+      request_id: 'req-org-bad',
+      type: 'add_manual' as const,
+      scope: 'stake',
+      member_email: 'Bob@gmail.com',
+      member_canonical: 'bob@gmail.com',
+      member_name: 'Bob Brown',
+      reason: 'X',
+      comment: '',
+      building_names: ['Maple Building'],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      organization_id: 42 as any,
+      status: 'pending' as const,
+      requester_email: 'Alice@gmail.com',
+      requester_canonical: 'alice@gmail.com',
+      requested_at: T,
+      lastActor: ACTOR,
+    };
+    expect(accessRequestSchema.safeParse(bad).success).toBe(false);
   });
 });
 

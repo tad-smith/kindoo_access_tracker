@@ -368,6 +368,22 @@ service cloud.firestore {
         allow delete: if isManager(stakeId);
       }
 
+      // ----- Organizations -----
+      // A stake-scope concept: a named seat pool with its own (display-
+      // only) seat cap, managed by stake managers. Seats and requests
+      // reference an organization by its immutable slug id
+      // (`organization_id` = doc.id), meaningful only on stake-scope
+      // grants. Mirrors `kindooSites`'s gating: any member reads (the
+      // SPA's bootstrap response surfaces the org list for the
+      // No-Organization picker), managers write with the `lastActor`
+      // integrity check. Small unfiltered collection — no index needed.
+      match /organizations/{organizationId} {
+        allow read: if isAnyMember(stakeId);
+        allow create, update: if isManager(stakeId)
+          && lastActorMatchesAuth(request.resource.data);
+        allow delete: if isManager(stakeId);
+      }
+
       // ----- KindooManagers -----
       // Manager allow-list. Manager-only read so non-managers can't
       // enumerate peers; manager-only write. The bootstrap-admin gate
@@ -498,14 +514,34 @@ service cloud.firestore {
                                      memberCanonical,
                                      request.resource.data.type);
 
-        // Updates: client writes are denied. Seats are mutated only
-        // server-side via the Admin SDK (request-completion through
-        // `markRequestComplete`, removal through
-        // `removeSeatOnRequestComplete`, and the import-sync callables),
-        // all of which bypass rules. Editing a seat is request-only —
-        // an `edit_*` request completed by the callable — so no client
-        // `update` path exists. No `allow update` clause: omission
-        // denies.
+        // Updates: the ONLY client-writable seat mutation is the inline
+        // organization edit — a stake member may set / clear
+        // `organization_id` on a `scope == 'stake'` seat, bypassing the
+        // request flow (organizations are a stake-scope concept). The
+        // `affectedKeys().hasOnly([...])` allowlist matches the web
+        // inline-edit mutation EXACTLY (those 4 keys, nothing else), so a
+        // hand-crafted write can't smuggle other field changes through
+        // this path. The value-type guards mirror the `requests` block's
+        // `is string` / `is timestamp` rigor: `organization_id` is a
+        // string or null (slug or cleared), `last_modified_at` resolves
+        // to a timestamp (`serverTimestamp()` is the value the rule sees,
+        // same as the requests block's `requested_at == request.time`),
+        // and `last_modified_by` carries string `email` / `canonical`.
+        // Every OTHER seat mutation stays server-side via the Admin SDK
+        // (request-completion through `markRequestComplete`, removal
+        // through `removeSeatOnRequestComplete`, import-sync callables),
+        // all of which bypass rules. Editing any other seat field is
+        // request-only — an `edit_*` request completed by the callable.
+        allow update: if isStakeMember(stakeId)
+          && resource.data.scope == 'stake'
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['organization_id', 'last_modified_at', 'last_modified_by', 'lastActor'])
+          && (request.resource.data.organization_id == null
+              || request.resource.data.organization_id is string)
+          && request.resource.data.last_modified_at is timestamp
+          && request.resource.data.last_modified_by.email is string
+          && request.resource.data.last_modified_by.canonical is string
+          && lastActorMatchesAuth(request.resource.data);
 
         allow delete: if isManager(stakeId)
           && resource.data.type in ['manual', 'temp']

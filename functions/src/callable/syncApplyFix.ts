@@ -516,7 +516,15 @@ async function applyScopeMismatch(
       // site id and `projectSeatForSite` would resolve it off-home.
       // Mirrors `applyKindooUnparseable`.
       update.kindoo_site_id = FieldValue.delete();
-    } else if (newSiteId !== undefined) {
+    } else {
+      // Moving to a WARD scope: organization is a stake-scope-only
+      // concept, so a seat carrying an `organization_id` from its prior
+      // stake scope must shed it on the move to ward. Other paths
+      // (update / merge) preserve `organization_id`; only this scope
+      // departure-from-stake clears it.
+      update.organization_id = FieldValue.delete();
+    }
+    if (newScope !== 'stake' && newSiteId !== undefined) {
       // Ward `newScope`: stamp the new ward's building-derived site.
       // `null` (home ward) stores explicit null; a foreign id stores it.
       // An unresolvable ward leaves `newSiteId === undefined`, so the

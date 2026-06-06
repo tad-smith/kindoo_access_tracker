@@ -56,6 +56,13 @@ export type DuplicateGrant = {
    * convention. T-42.
    */
   kindoo_site_id?: string | null;
+  /**
+   * Organization the grant belongs to. Meaningful only on stake-scope
+   * grants; `null` / absent means "No Organization". Immutable slug id
+   * pointing at a doc under `stakes/{stakeId}/organizations/`; resolves
+   * id→name at render time.
+   */
+  organization_id?: string | null;
   detected_at: TimestampLike;
 };
 
@@ -109,6 +116,15 @@ export type Seat = {
    * grants inherit the site of the ward's assigned building. T-42.
    */
   kindoo_site_id?: string | null;
+
+  // ----- Organization (stake-scope only) -----
+  /**
+   * Organization the primary grant belongs to. Meaningful only on
+   * stake-scope grants; `null` / absent means "No Organization".
+   * Immutable slug id pointing at a doc under
+   * `stakes/{stakeId}/organizations/`; resolves id→name at render time.
+   */
+  organization_id?: string | null;
 
   // ----- Duplicates (informational) -----
   duplicate_grants: DuplicateGrant[];
