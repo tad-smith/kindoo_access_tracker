@@ -16,7 +16,6 @@ function ts(): KindooSite['created_at'] {
 
 function stake(homeEid: number | null): Stake {
   return {
-    stake_id: 'csnorth',
     stake_name: 'Colorado Springs North Stake',
     created_at: ts(),
     created_by: 'admin@csnorth.org',
