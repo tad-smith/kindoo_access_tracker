@@ -41,7 +41,7 @@ export function useOrganizations(): FirestoreCollectionResult<Organization> {
  * slug id, never the name.
  */
 export function organizationName(
-  orgs: Organization[] | undefined,
+  orgs: readonly Organization[] | undefined,
   id: string | null | undefined,
 ): string {
   if (id == null) return NO_ORGANIZATION_LABEL;
@@ -53,7 +53,7 @@ export function organizationName(
  * Alpha sort by `name`, case-insensitive. Returns a new array; does not
  * mutate the input.
  */
-export function sortOrganizations(orgs: Organization[] | undefined): Organization[] {
+export function sortOrganizations(orgs: readonly Organization[] | undefined): Organization[] {
   if (!orgs) return [];
   return [...orgs].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }

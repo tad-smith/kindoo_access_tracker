@@ -47,6 +47,11 @@ import {
   type NewRequestForm,
 } from '../schemas';
 import { useSubmitRequest, useSeatForMember } from '../hooks';
+import {
+  useOrganizations,
+  sortOrganizations,
+  NO_ORGANIZATION_LABEL,
+} from '../../organizations/hooks';
 import { CallingCombobox } from './CallingCombobox';
 import { Dialog } from '../../../components/ui/Dialog';
 import { Input } from '../../../components/ui/Input';
@@ -171,6 +176,15 @@ export function NewRequestForm({
   // rule once the live subscriptions hydrate.
   const schema = useMemo(() => makeNewRequestSchema(wards, buildings), [wards, buildings]);
 
+  // Organizations catalogue — the optional org selector that appears
+  // only at stake scope. Empty until hydrated; `sortOrganizations`
+  // tolerates undefined.
+  const organizations = useOrganizations();
+  const sortedOrganizations = useMemo(
+    () => sortOrganizations(organizations.data),
+    [organizations.data],
+  );
+
   const form = useForm<NewRequestForm>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -184,6 +198,7 @@ export function NewRequestForm({
       end_date: '',
       building_names: initialBuildings,
       urgent: false,
+      organization_id: null,
     },
   });
   const { register, handleSubmit, reset, watch, setValue, formState, control } = form;
@@ -192,6 +207,7 @@ export function NewRequestForm({
   const watchedEmail = watch('member_email');
   const watchedBuildings = watch('building_names') ?? [];
   const watchedUrgent = watch('urgent');
+  const watchedOrganizationId = watch('organization_id') ?? null;
 
   // Two independent triggers force a comment: urgent submissions
   // (existing rule) and ward-scope submissions touching buildings
@@ -277,6 +293,9 @@ export function NewRequestForm({
         end_date: input.end_date,
         building_names: input.building_names,
         urgent: input.urgent,
+        // The submit hook writes this only for stake scope; ward scope
+        // sends null. Pass the form value through unconditionally.
+        organization_id: input.organization_id ?? null,
       });
       toast('Request submitted.', 'success');
       if (dialogMode) {
@@ -310,6 +329,7 @@ export function NewRequestForm({
           );
         })(),
         urgent: false,
+        organization_id: null,
       });
       setBuildingsOpen(input.scope === 'stake');
     } catch (err) {
@@ -513,6 +533,29 @@ export function NewRequestForm({
           </p>
         ) : null}
       </Collapsible>
+
+      {watchedScope === 'stake' ? (
+        <label>
+          Organization
+          <Select
+            value={watchedOrganizationId ?? '__none__'}
+            onChange={(e) => {
+              const next = e.target.value;
+              setValue('organization_id', next === '__none__' ? null : next, {
+                shouldDirty: true,
+              });
+            }}
+            data-testid="new-request-organization"
+          >
+            <option value="__none__">{NO_ORGANIZATION_LABEL}</option>
+            {sortedOrganizations.map((o) => (
+              <option key={o.organization_id} value={o.organization_id}>
+                {o.name}
+              </option>
+            ))}
+          </Select>
+        </label>
+      ) : null}
 
       {dupHit ? (
         <p className="kd-form-error" role="alert" data-testid="new-request-duplicate-error">

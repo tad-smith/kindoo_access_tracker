@@ -210,6 +210,110 @@ describe('useSubmitRequest payload shape', () => {
     expect('urgent' in body).toBe(false);
   });
 
+  it('writes organization_id for a stake-scope add request', async () => {
+    const { result } = renderHook(() => useSubmitRequest(), { wrapper });
+    await result.current.mutateAsync({
+      type: 'add_manual',
+      scope: 'stake',
+      member_email: 'subject@example.com',
+      member_name: 'Subject',
+      reason: 'r',
+      comment: '',
+      building_names: ['Maple Building'],
+      organization_id: 'primary-children',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body.organization_id).toBe('primary-children');
+  });
+
+  it('writes organization_id=null on a stake-scope add request with no org chosen', async () => {
+    const { result } = renderHook(() => useSubmitRequest(), { wrapper });
+    await result.current.mutateAsync({
+      type: 'add_manual',
+      scope: 'stake',
+      member_email: 'subject@example.com',
+      member_name: 'Subject',
+      reason: 'r',
+      comment: '',
+      building_names: ['Maple Building'],
+      organization_id: null,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body.organization_id).toBeNull();
+  });
+
+  it('forces organization_id=null on a ward-scope add request even when an org id is passed', async () => {
+    // Defense against a stale org id leaking from a reused form when the
+    // scope is not stake.
+    const { result } = renderHook(() => useSubmitRequest(), { wrapper });
+    await result.current.mutateAsync({
+      type: 'add_manual',
+      scope: 'CO',
+      member_email: 'subject@example.com',
+      member_name: 'Subject',
+      reason: 'r',
+      comment: '',
+      building_names: ['Maple Building'],
+      organization_id: 'primary-children',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body.organization_id).toBeNull();
+  });
+
+  it('writes organization_id for a stake-scope edit_manual request', async () => {
+    const { result } = renderHook(() => useSubmitRequest(), { wrapper });
+    await result.current.mutateAsync({
+      type: 'edit_manual',
+      scope: 'stake',
+      member_email: 'subject@example.com',
+      member_name: 'Subject',
+      reason: 'r',
+      comment: 'note',
+      building_names: ['Maple Building'],
+      organization_id: 'scouts',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body.organization_id).toBe('scouts');
+  });
+
+  it('never carries organization_id on a remove request', async () => {
+    const { result } = renderHook(() => useSubmitRequest(), { wrapper });
+    await result.current.mutateAsync({
+      type: 'remove',
+      scope: 'stake',
+      member_email: 'subject@example.com',
+      member_name: '',
+      reason: 'No longer needed',
+      comment: '',
+      building_names: [],
+      organization_id: 'primary-children',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect('organization_id' in body).toBe(false);
+  });
+
+  it('never carries organization_id on an edit_auto request (stake auto is forbidden)', async () => {
+    const { result } = renderHook(() => useSubmitRequest(), { wrapper });
+    await result.current.mutateAsync({
+      type: 'edit_auto',
+      scope: 'stake',
+      member_email: 'subject@example.com',
+      member_name: 'Subject',
+      reason: '',
+      comment: 'note',
+      building_names: ['Maple Building'],
+      organization_id: 'primary-children',
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect('organization_id' in body).toBe(false);
+  });
+
   it('falls back to canonicalEmail(user.email) when the token lacks a canonical claim', async () => {
     currentUserStub = {
       email: 'Tad.E.Smith@gmail.com',

@@ -14,7 +14,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Building, Ward } from '@kindoo/shared';
+import type { Building, Organization, Ward } from '@kindoo/shared';
 import { makeSeat, makeWard } from '../../../../test/fixtures';
 
 const submitMutateAsync = vi.fn().mockResolvedValue({ id: 'req-new' });
@@ -26,6 +26,18 @@ vi.mock('../hooks', () => ({
   useStakeWards: () => useStakeWardsMock(),
   useStakeBuildings: () => useStakeBuildingsMock(),
 }));
+
+// The org selector (stake-scope edit_manual / edit_temp) subscribes to
+// the organizations catalogue. Override per-test via
+// `useOrganizationsMock`; keep the real pure helpers.
+const useOrganizationsMock = vi.fn();
+vi.mock('../../organizations/hooks', async () => {
+  const actual = await vi.importActual<object>('../../organizations/hooks');
+  return {
+    ...actual,
+    useOrganizations: () => useOrganizationsMock(),
+  };
+});
 
 import { EditSeatDialog } from './EditSeatDialog';
 
@@ -63,9 +75,22 @@ function mockCatalogue(wards: Ward[], buildings: Building[]) {
   useStakeBuildingsMock.mockReturnValue(liveResult(buildings));
 }
 
+function makeOrganization(overrides: Partial<Organization> = {}): Organization {
+  return {
+    organization_id: 'primary-children',
+    name: 'Primary Children',
+    seat_cap: 0,
+    created_at: FAKE_TS,
+    last_modified_at: FAKE_TS,
+    lastActor: FAKE_ACTOR,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   submitMutateAsync.mockResolvedValue({ id: 'req-new' });
+  useOrganizationsMock.mockReturnValue(liveResult([]));
 });
 
 describe('<EditSeatDialog /> — edit_auto sub-type', () => {
@@ -897,5 +922,118 @@ describe('<EditSeatDialog /> — dialog lifecycle', () => {
     mockCatalogue([], []);
     const { container } = render(<EditSeatDialog seat={null} onOpenChange={() => {}} />);
     expect(container.querySelector('[data-testid="edit-seat-dialog-form"]')).toBeNull();
+  });
+});
+
+describe('<EditSeatDialog /> — organization selector (stake scope only)', () => {
+  it('does not render the org selector for a ward-scope manual seat', () => {
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
+    );
+    useOrganizationsMock.mockReturnValue(liveResult([makeOrganization()]));
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'CO',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: ['Maple Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    expect(screen.queryByTestId('edit-seat-organization')).toBeNull();
+  });
+
+  it('renders the org selector for a stake-scope manual seat, defaulting to "No Organization"', () => {
+    mockCatalogue([], [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })]);
+    useOrganizationsMock.mockReturnValue(
+      liveResult([
+        makeOrganization({ organization_id: 'scouts', name: 'Scouts' }),
+        makeOrganization({ organization_id: 'primary-children', name: 'Primary Children' }),
+      ]),
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'stake',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: ['Maple Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    const select = screen.getByTestId('edit-seat-organization') as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.text)).toEqual([
+      'No Organization',
+      'Primary Children',
+      'Scouts',
+    ]);
+    expect(select.options[select.selectedIndex]!.text).toBe('No Organization');
+  });
+
+  it('pre-fills the org selector from the seat.organization_id', () => {
+    mockCatalogue([], [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })]);
+    useOrganizationsMock.mockReturnValue(
+      liveResult([makeOrganization({ organization_id: 'scouts', name: 'Scouts' })]),
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'stake',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: ['Maple Building'],
+      organization_id: 'scouts',
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    const select = screen.getByTestId('edit-seat-organization') as HTMLSelectElement;
+    expect(select.value).toBe('scouts');
+  });
+
+  it('submits the chosen organization_id for a stake-scope edit_manual request', async () => {
+    const user = userEvent.setup();
+    mockCatalogue([], [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })]);
+    useOrganizationsMock.mockReturnValue(
+      liveResult([
+        makeOrganization({ organization_id: 'scouts', name: 'Scouts' }),
+        makeOrganization({ organization_id: 'primary-children', name: 'Primary Children' }),
+      ]),
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'stake',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: ['Maple Building'],
+      organization_id: 'scouts',
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.selectOptions(screen.getByTestId('edit-seat-organization'), 'primary-children');
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
+    const arg = submitMutateAsync.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(arg.type).toBe('edit_manual');
+    expect(arg.scope).toBe('stake');
+    expect(arg.organization_id).toBe('primary-children');
+  });
+
+  it('submits organization_id=null when "No Organization" is chosen on a stake seat', async () => {
+    const user = userEvent.setup();
+    mockCatalogue([], [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })]);
+    useOrganizationsMock.mockReturnValue(
+      liveResult([makeOrganization({ organization_id: 'scouts', name: 'Scouts' })]),
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'stake',
+      callings: [],
+      reason: 'sub teacher',
+      building_names: ['Maple Building'],
+      organization_id: 'scouts',
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.selectOptions(screen.getByTestId('edit-seat-organization'), '__none__');
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
+    const arg = submitMutateAsync.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(arg.organization_id).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ import type {
   Building,
   KindooManager,
   KindooSite,
+  Organization,
   Seat,
   Stake,
   Ward,
@@ -29,6 +30,9 @@ const upsertKindooSiteMock = vi.fn();
 const deleteKindooSiteMock = vi.fn();
 const upsertWardMock = vi.fn();
 const upsertBuildingMock = vi.fn();
+const upsertOrganizationMock = vi.fn();
+const deleteOrganizationMock = vi.fn();
+const useOrganizationsMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   useStakeDoc: () => useStakeDocMock(),
@@ -49,8 +53,20 @@ vi.mock('./hooks', () => ({
     isPending: false,
   }),
   useDeleteKindooSiteMutation: () => ({ mutateAsync: deleteKindooSiteMock }),
+  useUpsertOrganizationMutation: () => ({ mutateAsync: upsertOrganizationMock, isPending: false }),
+  useDeleteOrganizationMutation: () => ({ mutateAsync: deleteOrganizationMock }),
   useUpdateStakeConfigMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
+
+// The Organizations tab reads its list from the neutral organizations
+// module; keep the real pure helpers (sortOrganizations).
+vi.mock('../../organizations/hooks', async () => {
+  const actual = await vi.importActual<object>('../../organizations/hooks');
+  return {
+    ...actual,
+    useOrganizations: () => useOrganizationsMock(),
+  };
+});
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
@@ -117,6 +133,7 @@ beforeEach(() => {
   useKindooSitesMock.mockReturnValue(liveResult<KindooSite>([]));
   useSeatsMock.mockReturnValue(liveResult<Seat>([]));
   useRequestsMock.mockReturnValue(liveResult<AccessRequest>([]));
+  useOrganizationsMock.mockReturnValue(liveResult<Organization>([]));
 });
 
 describe('<ConfigurationPage />', () => {
@@ -176,12 +193,19 @@ describe('<ConfigurationPage />', () => {
     expect(screen.queryByTestId('config-triggers')).toBeNull();
   });
 
-  it('renders tabs in the operator-specified order (Buildings before Wards)', () => {
+  it('renders tabs in the operator-specified order (Buildings before Wards, Organizations last)', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
     const labels = Array.from(document.querySelectorAll('.kd-config-tab')).map(
       (el) => el.textContent,
     );
-    expect(labels).toEqual(['Config', 'Managers', 'Kindoo Sites', 'Buildings', 'Wards']);
+    expect(labels).toEqual([
+      'Config',
+      'Managers',
+      'Kindoo Sites',
+      'Buildings',
+      'Wards',
+      'Organizations',
+    ]);
   });
 
   it('does not render the Auto Ward / Stake Callings tabs', () => {
@@ -1016,5 +1040,157 @@ describe('Buildings tab rename ref-guard', () => {
         previousBuildingName: 'Black Forest',
       }),
     );
+  });
+});
+
+// ---- Organizations tab ----------------------------------------------
+//
+// Stake-level seat pools. Create derives a slug from the name; edit
+// carries the immutable slug through unchanged (no re-slug). Delete is
+// blocked while any seat references the org (primary organization_id or
+// a duplicate-grant organization_id), gated on the seats snapshot.
+
+describe('Organizations tab', () => {
+  const mkOrg = (overrides: Partial<Organization> = {}): Organization =>
+    ({
+      organization_id: 'primary-children',
+      name: 'Primary Children',
+      seat_cap: 25,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(overrides as any),
+    }) as Organization;
+
+  it('shows the empty state when no organizations exist', () => {
+    useOrganizationsMock.mockReturnValue(liveResult<Organization>([]));
+    render(<ConfigurationPage initialTab="organizations" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-organizations-empty')).toBeInTheDocument();
+    expect(screen.queryByTestId('config-organizations-list')).toBeNull();
+  });
+
+  it('renders organization rows with name + seat cap, sorted alphabetically', () => {
+    useOrganizationsMock.mockReturnValue(
+      liveResult<Organization>([
+        mkOrg({ organization_id: 'scouts', name: 'Scouts', seat_cap: 10 }),
+        mkOrg({ organization_id: 'primary-children', name: 'Primary Children', seat_cap: 25 }),
+      ]),
+    );
+    render(<ConfigurationPage initialTab="organizations" />, { wrapper: Wrapper });
+    const list = screen.getByTestId('config-organizations-list');
+    const labels = Array.from(list.querySelectorAll('strong')).map((el) => el.textContent);
+    expect(labels).toEqual(['Primary Children', 'Scouts']);
+    expect(list.textContent).toContain('cap 25');
+  });
+
+  it('opens the Add modal and submits name + seat_cap (slug derived in the mutation)', async () => {
+    const user = userEvent.setup();
+    upsertOrganizationMock.mockResolvedValue(undefined);
+    render(<ConfigurationPage initialTab="organizations" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-organizations-add-button'));
+    expect(screen.getByRole('heading', { name: 'Add organization' })).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/Name/i), 'Primary Children');
+    const capInput = screen.getByLabelText(/Seat cap/i);
+    await user.clear(capInput);
+    await user.type(capInput, '25');
+    await user.click(screen.getByTestId('config-organization-submit'));
+    await vi.waitFor(() => expect(upsertOrganizationMock).toHaveBeenCalled());
+    expect(upsertOrganizationMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Primary Children', seat_cap: 25 }),
+    );
+    // The form never supplies organization_id on create — the mutation
+    // derives the slug from the name.
+    expect(upsertOrganizationMock.mock.calls[0]?.[0]).not.toHaveProperty('organization_id');
+  });
+
+  it('rejects an empty name on Add submit', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage initialTab="organizations" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-organizations-add-button'));
+    await user.click(screen.getByTestId('config-organization-submit'));
+    expect(await screen.findByText(/Name is required/i)).toBeInTheDocument();
+    expect(upsertOrganizationMock).not.toHaveBeenCalled();
+  });
+
+  it('opens the Edit modal pre-populated and carries the immutable slug through on save', async () => {
+    const user = userEvent.setup();
+    upsertOrganizationMock.mockResolvedValue(undefined);
+    useOrganizationsMock.mockReturnValue(liveResult<Organization>([mkOrg()]));
+    render(<ConfigurationPage initialTab="organizations" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-organization-edit-primary-children'));
+    expect(
+      screen.getByRole('heading', { name: /Edit organization — Primary Children/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/Name/i)).toHaveValue('Primary Children');
+    // Rename the org — the slug must still ride through unchanged.
+    const nameInput = screen.getByLabelText(/Name/i);
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Primary Org Renamed');
+    await user.click(screen.getByTestId('config-organization-submit'));
+    await vi.waitFor(() => expect(upsertOrganizationMock).toHaveBeenCalled());
+    expect(upsertOrganizationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organization_id: 'primary-children',
+        name: 'Primary Org Renamed',
+      }),
+    );
+  });
+
+  it('Delete calls the delete mutation with the org id and live seats snapshot', async () => {
+    const user = userEvent.setup();
+    deleteOrganizationMock.mockResolvedValue(undefined);
+    useOrganizationsMock.mockReturnValue(liveResult<Organization>([mkOrg()]));
+    const seatRef = {
+      member_canonical: 'a@x.com',
+      organization_id: 'scouts',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    useSeatsMock.mockReturnValue(liveResult<Seat>([seatRef]));
+    render(<ConfigurationPage initialTab="organizations" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-organization-delete-primary-children'));
+    expect(deleteOrganizationMock).toHaveBeenCalledWith({
+      organizationId: 'primary-children',
+      seats: [seatRef],
+    });
+  });
+
+  it('Delete surfaces the ref-guard error via toast when a seat references the org', async () => {
+    const { useToastStore } = await import('../../../lib/store/toast');
+    useToastStore.getState().clear();
+    const user = userEvent.setup();
+    useOrganizationsMock.mockReturnValue(liveResult<Organization>([mkOrg()]));
+    useSeatsMock.mockReturnValue(
+      liveResult<Seat>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { member_canonical: 'a@x.com', organization_id: 'primary-children' } as any,
+      ]),
+    );
+    deleteOrganizationMock.mockImplementation(async () => {
+      throw new Error(
+        'Cannot delete: 1 seat still reference this organization. Reassign or remove them first.',
+      );
+    });
+    render(<ConfigurationPage initialTab="organizations" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-organization-delete-primary-children'));
+    await vi.waitFor(() => {
+      const errors = useToastStore.getState().toasts.filter((t) => t.kind === 'error');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.message).toContain('Cannot delete');
+    });
+  });
+
+  it('disables Delete while the seats snapshot is loading', () => {
+    useOrganizationsMock.mockReturnValue(liveResult<Organization>([mkOrg()]));
+    useSeatsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="organizations" />, { wrapper: Wrapper });
+    const btn = screen.getByTestId('config-organization-delete-primary-children');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Loading…');
+  });
+
+  it('disables Add while the organizations snapshot is loading', () => {
+    useOrganizationsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="organizations" />, { wrapper: Wrapper });
+    const btn = screen.getByTestId('config-organizations-add-button');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Loading…');
   });
 });
