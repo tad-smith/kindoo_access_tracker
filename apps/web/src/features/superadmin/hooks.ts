@@ -49,3 +49,29 @@ export function useCreateStake() {
     },
   });
 }
+
+/** Input to a stake-fix run: which callable, against which stake. */
+export interface ApplyStakeFixInput {
+  /** The callable to invoke (from a `StakeFix.callable`). */
+  callable: string;
+  /** The stake the fix runs against. */
+  stakeId: string;
+}
+
+/**
+ * Invoke an arbitrary superadmin-gated stake-fix callable as
+ * `fn({ stakeId })`. The result is kept FIX-AGNOSTIC — `Record<string,
+ * unknown>` — so the Result dialog can render any fix's output
+ * generically and adding a new fix needs no hook change. Auth /
+ * permission `HttpsError`s bubble as thrown errors for the dialog's
+ * error branch.
+ */
+export function useApplyStakeFix() {
+  return useMutation<Record<string, unknown>, Error, ApplyStakeFixInput>({
+    mutationFn: async ({ callable, stakeId }) => {
+      const fn = httpsCallable<{ stakeId: string }, Record<string, unknown>>(functions, callable);
+      const res = await fn({ stakeId });
+      return res.data;
+    },
+  });
+}

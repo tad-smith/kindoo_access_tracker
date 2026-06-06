@@ -22,10 +22,14 @@
 //     `update_seat`). One audit row per seat write.
 //   - Scope. Per-stake; the callable takes a `stakeId` parameter.
 //
-// Auth: read the `kindooManagers/{canonical}` doc directly. The migration is a
-// manager-only operation; it does not require platform-superadmin (the
-// platform-superadmin role is reserved for cross-stake operations and
-// hasn't shipped in single-stake v1).
+// Auth: PLATFORM SUPERADMIN ONLY. Gated on the `isPlatformSuperadmin`
+// custom claim (minted by `syncSuperadminClaims` from the
+// `platformSuperadmins/{canonical}` allow-list) — the claim is the
+// canonical role source, so no Firestore read is needed. This is a
+// cross-stake maintenance operation surfaced to superadmins from the
+// Stake List page's "Apply Fixes" menu (spec §5.4); a superadmin runs
+// it against any stake without holding a Kindoo Manager role there. The
+// former manager-of-the-stake gate was removed.
 //
 // Returns a counters summary so the operator can sanity-check the run
 // before / after by counting expected diffs.
@@ -33,8 +37,8 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
-import { canonicalEmail, resolveWardBuilding } from '@kindoo/shared';
-import type { Building, DuplicateGrant, KindooManager, Seat, Ward } from '@kindoo/shared';
+import { resolveWardBuilding } from '@kindoo/shared';
+import type { Building, DuplicateGrant, Seat, Ward } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
 import { MIGRATION_BACKFILL_KINDOO_SITE_ID_ACTOR } from '../lib/systemActors.js';
 
@@ -253,21 +257,12 @@ export const backfillKindooSiteId = onCall(
       throw new HttpsError('invalid-argument', 'stakeId required');
     }
 
-    const typedEmail = req.auth.token.email;
-    if (!typedEmail) {
-      throw new HttpsError('failed-precondition', 'auth token has no email');
-    }
-    const callerCanonical = canonicalEmail(typedEmail);
-    const db = getDb();
-    const mgrSnap = await db.doc(`stakes/${stakeId}/kindooManagers/${callerCanonical}`).get();
-    if (!mgrSnap.exists) {
-      throw new HttpsError('permission-denied', 'caller is not a manager of this stake');
-    }
-    const mgr = mgrSnap.data() as KindooManager;
-    if (mgr.active !== true) {
-      throw new HttpsError('permission-denied', 'manager record is inactive');
+    // Platform-superadmin gate. The claim is the canonical role source —
+    // no Firestore read required.
+    if (req.auth.token.isPlatformSuperadmin !== true) {
+      throw new HttpsError('permission-denied', 'platform superadmin required');
     }
 
-    return backfillKindooSiteIdForStake(db, stakeId);
+    return backfillKindooSiteIdForStake(getDb(), stakeId);
   },
 );

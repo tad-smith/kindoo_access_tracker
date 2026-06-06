@@ -895,6 +895,7 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `auditTrigger` | Firestore write on `stakes/{sid}/{collection}/{docId}` for audited collections | Writes deterministic audit row to `stakes/{sid}/auditLog` |
 | `markRequestComplete` | Callable (manager-invoked) | Resolves seat slot, writes the add/edit, flips the request to `complete` in one transaction |
 | `syncApplyFix` | Callable (operator-invoked from the extension's Sync panel) | Applies one classifier-derived fix to `access` + `seats` via Admin SDK; sole auto-seat writer |
+| `backfillKindooSiteId` | Callable (superadmin-invoked from the Stake List Apply Fixes menu) | Re-derives each seat's `kindoo_site_id` from its ward's building and writes only the diffs (idempotent). **Platform superadmin only** (`isPlatformSuperadmin` claim) — the former active-Kindoo-Manager gate was removed. See `spec.md` §15. |
 | `notifyOnRequestWrite` | Firestore write on `stakes/{sid}/requests/{rid}` | Sends Resend email per spec.md §9 (submit, complete, reject, cancel) |
 | `notifyOnOverCap` | Firestore write on `stakes/{sid}` (`last_over_caps_json` change) | Sends over-cap warning email when the array goes from empty to non-empty |
 | `pushOnRequestSubmit` | Firestore write on `stakes/{sid}/requests/{rid}` (status=`pending` on create) | Fans FCM Web Push to active managers' subscribed devices |

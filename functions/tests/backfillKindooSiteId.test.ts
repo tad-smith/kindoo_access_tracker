@@ -1,6 +1,8 @@
 // Integration tests for the T-42 one-shot migration callable. Runs
 // against the Firestore emulator. Covers:
 //
+//   - Auth gate: PLATFORM SUPERADMIN ONLY (an active Kindoo Manager who
+//     is NOT a superadmin is now denied — this is the behaviour change).
 //   - Skip-if-equal idempotence (second run produces zero writes).
 //   - Missing-ward duplicate skipped with logged warning.
 //   - Missing-building ward skipped (NOT demoted to home); building
@@ -12,11 +14,54 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
 import type { Seat } from '@kindoo/shared';
-import { backfillKindooSiteIdForStake } from '../src/callable/backfillKindooSiteId.js';
+import {
+  backfillKindooSiteId,
+  backfillKindooSiteIdForStake,
+} from '../src/callable/backfillKindooSiteId.js';
 import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.js';
 
 const STAKE_ID = 'csnorth';
 const ACTOR = { email: 'admin@gmail.com', canonical: 'admin@gmail.com' };
+
+/**
+ * Build the `req` argument `onCall(...).run(...)` accepts, mirroring the
+ * `createStake.test.ts` helper. The `isPlatformSuperadmin` flag injects
+ * the custom claim the new auth gate reads.
+ */
+function callableReq(opts: {
+  auth?: { email: string; isPlatformSuperadmin?: boolean } | null;
+  data: unknown;
+}): never {
+  const auth = opts.auth
+    ? {
+        uid: opts.auth.email,
+        token: {
+          email: opts.auth.email,
+          ...(opts.auth.isPlatformSuperadmin === true ? { isPlatformSuperadmin: true } : {}),
+        },
+      }
+    : undefined;
+  return {
+    data: opts.data,
+    auth,
+    rawRequest: {} as unknown,
+    acceptsStreaming: false,
+  } as unknown as never;
+}
+
+/** Seed an active Kindoo Manager doc so the "manager but not superadmin
+ *  is denied" test proves the gate no longer consults manager state. */
+async function seedActiveManager(canonical: string): Promise<void> {
+  const { db } = requireEmulators();
+  await db.doc(`stakes/${STAKE_ID}/kindooManagers/${canonical}`).set({
+    member_canonical: canonical,
+    member_email: canonical,
+    active: true,
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    lastActor: ACTOR,
+  });
+}
 
 // Seed a ward (and, when `kindoo_site_id` is given, its building). The
 // migration derives each scope's expected site from the ward's building,
@@ -340,5 +385,75 @@ describe.skipIf(!hasEmulators())('backfillKindooSiteId (integration)', () => {
     expect(result.seats_updated).toBe(1);
     const alice = (await db.doc(`stakes/${STAKE_ID}/seats/alice@gmail.com`).get()).data() as Seat;
     expect(alice.kindoo_site_id).toBe(null);
+  });
+});
+
+// Auth gate, exercised through the callable wrapper (`.run(req)`). The
+// migration logic above drives the exported pure function directly; this
+// block proves only the authorization surface, which moved from
+// "active Kindoo Manager of the stake" to "platform superadmin only."
+describe.skipIf(!hasEmulators())('backfillKindooSiteId callable auth gate', () => {
+  beforeAll(async () => {
+    await clearEmulators();
+  });
+  afterEach(async () => {
+    await clearEmulators();
+  });
+  afterAll(async () => {
+    await clearEmulators();
+  });
+
+  it('allows a platform superadmin and runs the migration', async () => {
+    await seedWard({ ward_code: 'CO', kindoo_site_id: null });
+    await seedSeat({ canonical: 'alice@gmail.com', scope: 'CO' });
+
+    const result = await backfillKindooSiteId.run(
+      callableReq({
+        auth: { email: 'super@gmail.com', isPlatformSuperadmin: true },
+        data: { stakeId: STAKE_ID },
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.seats_total).toBe(1);
+    // The migration actually ran: the absent duplicate_scopes mirror was
+    // backfilled, producing one seat write.
+    expect(result.seats_updated).toBe(1);
+  });
+
+  it('denies an active Kindoo Manager who is NOT a platform superadmin (behaviour change)', async () => {
+    // Seed an ACTIVE manager doc for the caller. Under the old gate this
+    // caller would have been allowed; the new gate ignores manager state
+    // entirely and denies anyone without the superadmin claim.
+    await seedActiveManager('mgr@gmail.com');
+    await expect(
+      backfillKindooSiteId.run(
+        callableReq({
+          auth: { email: 'mgr@gmail.com' },
+          data: { stakeId: STAKE_ID },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+  });
+
+  it('denies an unauthenticated caller with unauthenticated', async () => {
+    await expect(
+      backfillKindooSiteId.run(
+        callableReq({
+          auth: null,
+          data: { stakeId: STAKE_ID },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'unauthenticated' });
+  });
+
+  it('rejects a missing stakeId with invalid-argument', async () => {
+    await expect(
+      backfillKindooSiteId.run(
+        callableReq({
+          auth: { email: 'super@gmail.com', isPlatformSuperadmin: true },
+          data: {},
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 });
