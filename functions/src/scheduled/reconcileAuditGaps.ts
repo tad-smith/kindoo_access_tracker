@@ -13,6 +13,7 @@ const AUDITED_COLLECTIONS = [
   'wards',
   'buildings',
   'kindooSites',
+  'organizations',
   'kindooManagers',
   'access',
   'seats',

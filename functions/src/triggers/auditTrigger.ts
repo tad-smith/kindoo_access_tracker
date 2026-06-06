@@ -185,6 +185,30 @@ export const auditKindooSiteWrites = onDocumentWritten(
   },
 );
 
+export const auditOrganizationWrites = onDocumentWritten(
+  'stakes/{stakeId}/organizations/{organizationId}',
+  async (event) => {
+    const { stakeId, organizationId } = event.params as {
+      stakeId: string;
+      organizationId: string;
+    };
+    if (!event.data) return;
+    await emitAuditRow({
+      stakeId,
+      collection: 'organizations',
+      docId: organizationId,
+      // Organizations aren't a first-class audit entity type; they audit
+      // as `entity_type='stake'` with a structured `entity_id` (same
+      // pattern as wards / buildings / kindooSites).
+      entityType: 'stake',
+      entityIdOverride: `organization:${organizationId}`,
+      before: snapshotData(event.data.before),
+      after: snapshotData(event.data.after),
+      eventTime: event.time,
+    });
+  },
+);
+
 // ===== Shared helper =====
 
 /** Audit-trigger context — what the per-path wrappers pass to the helper. */
@@ -215,6 +239,7 @@ export type AuditCollection =
   | 'wards'
   | 'buildings'
   | 'kindooSites'
+  | 'organizations'
   | 'kindooManagers'
   | 'access'
   | 'seats'
