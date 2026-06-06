@@ -278,6 +278,78 @@ describe('SyncPanel', () => {
     expect(screen.getByTestId('sba-sync-row-orphan@example.com')).toBeInTheDocument();
   });
 
+  it('renders the ward NAME for the SBA scope when the ward resolves', async () => {
+    const user = userEvent.setup();
+    const b = bundle();
+    // sba-only drift row, ward-scope 'CO' → resolves to "Maple Ward".
+    b.seats.push({
+      member_canonical: 'wardname@example.com',
+      member_email: 'wardname@example.com',
+      member_name: 'Ward Name',
+      scope: 'CO',
+      type: 'auto',
+      callings: [],
+      building_names: [],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+    const row = screen.getByTestId('sba-sync-row-wardname@example.com');
+    expect(row).toHaveTextContent('Maple Ward');
+    // The raw code must not leak into the scope line.
+    expect(row).not.toHaveTextContent('scope: CO');
+  });
+
+  it('falls back to the raw scope code when the ward is not in the catalogue', async () => {
+    const user = userEvent.setup();
+    const b = bundle();
+    // Ward 'ZZ' is absent from bundle().wards → falls back to 'ZZ'.
+    b.seats.push({
+      member_canonical: 'unresolved@example.com',
+      member_email: 'unresolved@example.com',
+      member_name: 'Unresolved',
+      scope: 'ZZ',
+      type: 'auto',
+      callings: [],
+      building_names: [],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-sync-row-unresolved@example.com')).toHaveTextContent(
+      'scope: ZZ',
+    );
+  });
+
+  it('renders "Stake" for the stake scope', async () => {
+    const user = userEvent.setup();
+    const b = bundle();
+    b.seats.push({
+      member_canonical: 'stakescope@example.com',
+      member_email: 'stakescope@example.com',
+      member_name: 'Stake Scope',
+      scope: 'stake',
+      type: 'auto',
+      callings: [],
+      building_names: [],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-sync-row-stakescope@example.com')).toHaveTextContent(
+      'scope: Stake',
+    );
+  });
+
   it('filters drift-only and review-only when chips are clicked', async () => {
     const user = userEvent.setup();
     const b = bundle();

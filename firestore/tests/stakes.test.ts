@@ -41,7 +41,6 @@ function freshStakeDoc(overrides: Partial<Record<string, unknown>> = {}): Record
     bootstrap_admin_email: 'Bishop@example.org',
     setup_complete: true,
     stake_seat_cap: 250,
-    expiry_hour: 4,
     timezone: 'America/Denver',
     notifications_enabled: true,
     last_over_caps_json: [],

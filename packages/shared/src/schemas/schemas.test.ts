@@ -151,7 +151,6 @@ describe('stakeSchema', () => {
       bootstrap_admin_email: 'Bishop@example.org',
       setup_complete: true,
       stake_seat_cap: 250,
-      expiry_hour: 4,
       timezone: 'America/Denver',
       notifications_enabled: true,
       last_over_caps_json: [],
@@ -162,7 +161,7 @@ describe('stakeSchema', () => {
     expect(stakeSchema.parse(seed)).toEqual(seed);
   });
 
-  it('parses with the optional last_* operational fields populated', () => {
+  it('parses with the operational over-cap field populated', () => {
     const seed = {
       stake_id: 'csnorth',
       stake_name: 'CS North Stake',
@@ -171,12 +170,9 @@ describe('stakeSchema', () => {
       bootstrap_admin_email: 'Bishop@example.org',
       setup_complete: true,
       stake_seat_cap: 250,
-      expiry_hour: 4,
       timezone: 'America/Denver',
       notifications_enabled: false,
       last_over_caps_json: [{ pool: 'stake', count: 251, cap: 250, over_by: 1 }],
-      last_expiry_at: T,
-      last_expiry_summary: 'Expired 0 temp seats.',
       last_modified_at: T,
       last_modified_by: ACTOR,
       lastActor: ACTOR,
@@ -184,7 +180,7 @@ describe('stakeSchema', () => {
     expect(stakeSchema.parse(seed)).toEqual(seed);
   });
 
-  it('rejects an out-of-range expiry_hour', () => {
+  it('rejects a missing required field (timezone)', () => {
     const seed = {
       stake_id: 'csnorth',
       stake_name: 'CS North Stake',
@@ -193,8 +189,6 @@ describe('stakeSchema', () => {
       bootstrap_admin_email: 'Bishop@example.org',
       setup_complete: true,
       stake_seat_cap: 250,
-      expiry_hour: 27,
-      timezone: 'America/Denver',
       notifications_enabled: true,
       last_over_caps_json: [],
       last_modified_at: T,

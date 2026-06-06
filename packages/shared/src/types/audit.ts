@@ -12,7 +12,6 @@ export type AuditAction =
   | 'create_seat'
   | 'update_seat'
   | 'delete_seat'
-  | 'auto_expire'
   // Access
   | 'create_access'
   | 'update_access'
@@ -51,8 +50,8 @@ export type AuditLog = {
   /** `= doc.id`. `<ISO-timestamp>_<uuid-suffix>`. */
   audit_id: string;
   timestamp: TimestampLike;
-  /** `'ExpiryTrigger'`, `'RemoveTrigger'`, `'OutOfBand'`, `'Migration'`,
-   * a `'SyncActor:<code>'` stamp, or a typed user email. Legacy
+  /** `'RemoveTrigger'`, `'OutOfBand'`, `'Migration'`, a
+   * `'SyncActor:<code>'` stamp, or a typed user email. Legacy
    * `'Importer'` survives on pre-T-45 rows. */
   actor_email: string;
   /** Canonical form of `actor_email`. Same string for the synthetic actors. */

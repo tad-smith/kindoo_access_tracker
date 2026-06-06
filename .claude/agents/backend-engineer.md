@@ -32,7 +32,7 @@ See `functions/CLAUDE.md` and `firestore/CLAUDE.md` for full conventions.
 ## Invariants
 
 1. **Every multi-doc write wraps in `db.runTransaction(...)`.** Same atomicity guarantees as client transactions.
-2. **Audit rows are written by the parameterized `auditTrigger`**, not directly by feature code. Server-driven writes stamp the synthetic actor (e.g. `ExpiryTrigger`, `RemoveTrigger`) on the entity's `lastActor` and let the trigger emit the audit row.
+2. **Audit rows are written by the parameterized `auditTrigger`**, not directly by feature code. Server-driven writes stamp the synthetic actor (e.g. `RemoveTrigger`) on the entity's `lastActor` and let the trigger emit the audit row.
 3. **Idempotency by deterministic write paths.** Audit trigger uses `{writeTime}_{collection}_{docId}`; retries write the same row.
 4. **Email canonicalization via `packages/shared/canonicalEmail.ts`.** Never compare emails with `===` or `.toLowerCase()`.
 5. **All shared types from `packages/shared/`.** No duplicated `Seat`/`Request`/`Access` types.
@@ -48,7 +48,7 @@ See `functions/CLAUDE.md` and `firestore/CLAUDE.md` for full conventions.
 ## Cloud Functions 2nd gen
 
 - All functions are 2nd gen (Cloud Run under the hood).
-- Default timeout 60s; bump to 540s for long-running scheduled / callable functions (e.g. `runExpiry`, `reconcileAuditGaps`, `backfillKindooSiteId`).
+- Default timeout 60s; bump to 540s for long-running scheduled / callable functions (e.g. `reconcileAuditGaps`, `backfillKindooSiteId`).
 - Default memory 256MB.
 - One file per function or per closely-related group of triggers.
 

@@ -396,7 +396,7 @@
   font-weight: 600;
 }
 
-/* Automated actor chip ("Importer", "ExpiryTrigger"). Mirrors Apps
+/* Automated actor chip ("Importer", "RemoveTrigger"). Mirrors Apps
    Script's `.audit-log-actor-automated` (Styles.html lines 1863-
    1869): primary-tint pill so the synthetic actors stand out from
    real-user emails. */

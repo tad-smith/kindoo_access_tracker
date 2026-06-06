@@ -109,7 +109,6 @@ function stake(overrides: Partial<Stake> = {}): Stake {
     bootstrap_admin_email: 'admin@csnorth.org',
     setup_complete: true,
     stake_seat_cap: 250,
-    expiry_hour: 3,
     timezone: 'America/Denver',
     notifications_enabled: true,
     last_over_caps_json: [],
@@ -465,6 +464,10 @@ describe('detect', () => {
     );
     expect(result.discrepancies).toHaveLength(1);
     expect(result.discrepancies[0]?.code).toBe('scope-mismatch');
+    // The reason renders ward NAMES on both sides, not the raw codes.
+    expect(result.discrepancies[0]?.reason).toBe(
+      'Primary scope differs: SBA=Maple Ward, Kindoo=Pine Creek Ward.',
+    );
   });
 
   it('promotes manual → auto (type-mismatch) when the seat is church-backed via direct grants', () => {

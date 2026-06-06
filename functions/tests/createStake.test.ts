@@ -146,10 +146,9 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
   });
 
   it('returns invalid_timezone for a non-IANA tz; no parent doc, no audit row', async () => {
-    // `runExpiry` calls `Intl.DateTimeFormat(undefined, { timeZone })`
-    // every hour for every stake; a malformed value would throw
-    // `RangeError` and break the expiry trigger for that stake forever.
-    // Catch it here at provisioning time.
+    // The audit-log date filter and other tz-sensitive paths call
+    // `Intl.DateTimeFormat(undefined, { timeZone })`; a malformed value
+    // would throw `RangeError`. Catch it here at provisioning time.
     const result = await createStake.run(
       callableReq({
         auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
@@ -216,7 +215,6 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     expect(stake.bootstrap_admin_email).toBe('admin@example.com');
     expect(stake.setup_complete).toBe(false);
     expect(stake.stake_seat_cap).toBe(0);
-    expect(stake.expiry_hour).toBe(4);
     expect(stake.timezone).toBe('America/Denver');
     expect(stake.notifications_enabled).toBe(true);
     expect(stake.last_over_caps_json).toEqual([]);
@@ -409,7 +407,6 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     expect(after['bootstrap_admin_email']).toBe('admin@example.com');
     expect(after['setup_complete']).toBe(false);
     expect(after['stake_seat_cap']).toBe(0);
-    expect(after['expiry_hour']).toBe(4);
     expect(after['timezone']).toBe('America/Phoenix');
     expect(after['notifications_enabled']).toBe(true);
     expect(after['last_over_caps_json']).toEqual([]);

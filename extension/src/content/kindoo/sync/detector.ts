@@ -6,7 +6,7 @@
 // content-script's paginated Kindoo loop. Outputs are rendered by
 // `SyncPanel.tsx`.
 
-import { canonicalEmail, resolveWardBuilding, resolveWardSite } from '@kindoo/shared';
+import { canonicalEmail, resolveWardBuilding, resolveWardSite, scopeLabel } from '@kindoo/shared';
 import type { Building, DuplicateGrant, Seat, SeatType, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
 import {
@@ -813,7 +813,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         displayEmail,
         code: 'scope-mismatch',
         severity: 'drift',
-        reason: `Primary scope differs: SBA=${sbaBlock.scope}, Kindoo=${primary.scope ?? '(unresolved)'}.`,
+        reason: `Primary scope differs: SBA=${scopeLabel(sbaBlock.scope, inputs.wards)}, Kindoo=${primary.scope !== null ? scopeLabel(primary.scope, inputs.wards) : '(unresolved)'}.`,
         sba: sbaBlock,
         kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
       });

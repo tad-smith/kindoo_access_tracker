@@ -20,7 +20,6 @@ export {
   auditWardWrites,
 } from './triggers/auditTrigger.js';
 
-export { runExpiry } from './scheduled/runExpiry.js';
 export { reconcileAuditGaps } from './scheduled/reconcileAuditGaps.js';
 
 export { installScheduledJobs } from './callable/installScheduledJobs.js';

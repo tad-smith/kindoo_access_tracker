@@ -23,14 +23,11 @@ export const stakeSchema = z.object({
 
   stake_seat_cap: z.number().int().nonnegative(),
 
-  expiry_hour: z.number().int().min(0).max(23),
   timezone: z.string(),
 
   notifications_enabled: z.boolean(),
 
   last_over_caps_json: z.array(overCapEntrySchema),
-  last_expiry_at: timestampLikeSchema.optional(),
-  last_expiry_summary: z.string().optional(),
 
   last_modified_at: timestampLikeSchema,
   last_modified_by: actorRefSchema,

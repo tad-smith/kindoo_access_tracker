@@ -13,19 +13,23 @@
 // Vanilla DOM modal in the same backdrop style as ResultDialog.
 
 import { useState } from 'react';
-import type { AccessRequest } from '@kindoo/shared';
+import { scopeLabel, type AccessRequest, type Ward } from '@kindoo/shared';
 import { ExtensionApiError, rejectRequest } from '../lib/extensionApi';
 
 interface RejectDialogProps {
   stakeId: string;
   request: AccessRequest;
+  /** Wards catalogue (from the loaded config bundle) — resolves the
+   * scope code to its ward name in the summary line. Empty / unresolved
+   * falls back to the raw code. */
+  wards: readonly Ward[];
   /** Close without rejecting. */
   onCancel: () => void;
   /** Reject succeeded — parent drops the card + refetches. */
   onRejected: () => void;
 }
 
-export function RejectDialog({ stakeId, request, onCancel, onRejected }: RejectDialogProps) {
+export function RejectDialog({ stakeId, request, wards, onCancel, onRejected }: RejectDialogProps) {
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +62,7 @@ export function RejectDialog({ stakeId, request, onCancel, onRejected }: RejectD
   const subject = request.member_name
     ? `${request.member_name} (${request.member_email})`
     : request.member_email;
+  const scope = scopeLabel(request.scope, wards);
 
   return (
     <div
@@ -70,7 +75,7 @@ export function RejectDialog({ stakeId, request, onCancel, onRejected }: RejectD
       <div className="sba-dialog">
         <h2 id="sba-reject-dialog-title">Reject request?</h2>
         <p data-testid="sba-reject-summary">
-          Reject {subject}&apos;s {labelForType(request.type)} in {request.scope}.
+          Reject {subject}&apos;s {labelForType(request.type)} in {scope}.
         </p>
         <label>
           Rejection reason

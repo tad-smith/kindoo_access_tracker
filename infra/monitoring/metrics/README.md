@@ -9,9 +9,6 @@ Log-based metric definitions for Cloud Monitoring. Each `*.yaml` file describes 
 | `audit-trigger-failures.yaml` | 1 | Cloud Function exceptions on the audit fan-in trigger. Activated by an alert on count > 0. |
 | `claim-sync-failures.yaml` | 1 | Cloud Function exceptions on `syncAccessClaims`, `syncManagersClaims`, `syncSuperadminClaims`. |
 | `firestore-rules-denied-count.yaml` | 1 | Firestore rules-denied requests visible in Cloud Logging. High-water mark for misconfigured client queries or attempted privilege escalation. |
-| `expiry-duration.yaml` | 8 | Duration distribution for the temp-seat expiry's hourly run. |
-
-(Phase 8 metrics aren't created in Phase 1 — listed here as a forward reference only. Backend-engineer adds them when Phase 8 lands.)
 
 ## How to apply
 
