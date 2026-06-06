@@ -20,7 +20,7 @@
 //   - Remove via the shared <RemovalAffordance>, grant-aware on
 //     duplicate rows. (This is the only write path on this page.)
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { resolveWardSite } from '@kindoo/shared';
 import type { Building, KindooSite, Seat, Ward } from '@kindoo/shared';
@@ -28,6 +28,7 @@ import { useAllSeats, useBuildings, useKindooSites, useWards } from './hooks';
 import { siteLabelForGrant } from '../../../lib/kindooSites';
 import { scopeLabel } from '../../../lib/scopeLabel';
 import { collapseSameScopeGrants, grantsForDisplay, type GrantView } from '../../../lib/grants';
+import { hasStakeScopeGrant, isForeignSiteOnly } from '../../../lib/foreignSiteOnly';
 import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
 import { useStakeDoc } from '../dashboard/hooks';
 import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
@@ -36,8 +37,10 @@ import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
 import { Select } from '../../../components/ui/Select';
 import { Badge } from '../../../components/ui/Badge';
+import { Button } from '../../../components/ui/Button';
 import { RosterMemberLine } from '../../../components/roster/RosterMemberLine';
 import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
+import { GrantStakeAccessDialog } from '../../requests/components/GrantStakeAccessDialog';
 import { isScopeAllowed } from '../../requests/scopeOptions';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
@@ -371,6 +374,22 @@ function GrantRowCard({
       // to the non-auto duplicate.
       (sameScopeAndSiteAsPrimary && seat.type === 'auto'));
 
+  // "Give Access To Stake Buildings" — manager-only affordance that
+  // grants a foreign-site-only member a stake-scope seat (home-site
+  // buildings). Rendered once per seat (primary row only, so a member's
+  // multiple grant rows don't each carry the button) when the manager
+  // holds a manager claim in the active stake AND the seat is
+  // foreign-site-only AND the member doesn't already have a stake-scope
+  // grant. The detection is per-seat (over every grant), so it reads
+  // the same on whichever row hosts the button.
+  const [grantOpen, setGrantOpen] = useState(false);
+  const isManager = activeStakeId !== null && principal.managerStakes.includes(activeStakeId);
+  const canGrantStakeAccess =
+    isPrimaryRow &&
+    isManager &&
+    !hasStakeScopeGrant(seat) &&
+    isForeignSiteOnly(seat, wards, buildings);
+
   const testIdSuffix = isPrimaryRow
     ? seat.member_canonical
     : `${seat.member_canonical}-dup-${grant.duplicateIndex}`;
@@ -449,6 +468,15 @@ function GrantRowCard({
           </span>
         </span>
         <span className="roster-card-actions" style={{ display: 'inline-flex', gap: 8 }}>
+          {canGrantStakeAccess ? (
+            <Button
+              variant="secondary"
+              onClick={() => setGrantOpen(true)}
+              data-testid={`grant-stake-access-btn-${seat.member_canonical}`}
+            >
+              Give Access To Stake Buildings
+            </Button>
+          ) : null}
           {canRemove ? (
             <RemovalAffordance
               seat={seat}
@@ -462,6 +490,14 @@ function GrantRowCard({
           ) : null}
         </span>
       </div>
+      {canGrantStakeAccess && grantOpen ? (
+        <GrantStakeAccessDialog
+          seat={seat}
+          onOpenChange={(next) => {
+            if (!next) setGrantOpen(false);
+          }}
+        />
+      ) : null}
       <div className="roster-card-member-line">
         <span className="roster-card-member">
           <RosterMemberLine name={seat.member_name} email={seat.member_email} />
