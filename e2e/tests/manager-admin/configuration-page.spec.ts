@@ -38,7 +38,6 @@ async function signInViaTestHatch(page: Page, email: string, password: string): 
 async function signInAsManager(page: Page, email: string): Promise<void> {
   // Seed a setup-complete stake so the bootstrap gate is bypassed.
   await writeDoc('stakes/csnorth', {
-    stake_id: 'csnorth',
     stake_name: 'Test Stake',
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: true,

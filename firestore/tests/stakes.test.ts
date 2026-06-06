@@ -34,7 +34,6 @@ const OTHER_PATH = `stakes/${OTHER_STAKE_ID}`;
 
 function freshStakeDoc(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
   return {
-    stake_id: STAKE_ID,
     stake_name: 'CS North Stake',
     created_at: new Date(),
     created_by: 'admin@kindoo.example',
@@ -109,10 +108,7 @@ describe('firestore.rules — stakes/{stakeId} parent doc', () => {
 
     it('cross-stake: manager of stake A is denied reading stake B', async () => {
       await seedAsAdmin(env, async (ctx) => {
-        await ctx
-          .firestore()
-          .doc(OTHER_PATH)
-          .set(freshStakeDoc({ stake_id: OTHER_STAKE_ID }));
+        await ctx.firestore().doc(OTHER_PATH).set(freshStakeDoc());
       });
       const db = managerContext(env, STAKE_ID).firestore();
       await assertFails(db.doc(OTHER_PATH).get());
@@ -176,10 +172,7 @@ describe('firestore.rules — stakes/{stakeId} parent doc', () => {
     // parent doc — proves the new branch is not stake-scoped.
     it('platform superadmin can read any stake parent doc (cross-stake)', async () => {
       await seedAsAdmin(env, async (ctx) => {
-        await ctx
-          .firestore()
-          .doc(OTHER_PATH)
-          .set(freshStakeDoc({ stake_id: OTHER_STAKE_ID }));
+        await ctx.firestore().doc(OTHER_PATH).set(freshStakeDoc());
       });
       const db = superadminContext(env).firestore();
       await assertSucceeds(db.doc(OTHER_PATH).get());
@@ -252,15 +245,10 @@ describe('firestore.rules — stakes/{stakeId} parent doc', () => {
 
     it('cross-stake: manager of stake A is denied updating stake B', async () => {
       await seedAsAdmin(env, async (ctx) => {
-        await ctx
-          .firestore()
-          .doc(OTHER_PATH)
-          .set(freshStakeDoc({ stake_id: OTHER_STAKE_ID }));
+        await ctx.firestore().doc(OTHER_PATH).set(freshStakeDoc());
       });
       const db = managerContext(env, STAKE_ID).firestore();
-      await assertFails(
-        db.doc(OTHER_PATH).set(freshStakeDoc({ stake_id: OTHER_STAKE_ID, stake_name: 'evil' })),
-      );
+      await assertFails(db.doc(OTHER_PATH).set(freshStakeDoc({ stake_name: 'evil' })));
     });
   });
 

@@ -49,7 +49,6 @@ test.describe('Bootstrap wizard gate', () => {
   test('bootstrap admin sees the wizard when setup_complete=false', async ({ page }) => {
     const adminEmail = 'admin@example.com';
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: adminEmail,
       setup_complete: false,
@@ -82,7 +81,6 @@ test.describe('Bootstrap wizard gate', () => {
 
   test('non-admin sees SetupInProgress (distinct from NotAuthorized)', async ({ page }) => {
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: false,
@@ -113,7 +111,6 @@ test.describe('Bootstrap wizard gate', () => {
     // routing — the user MUST land on SetupInProgress, not on the
     // role-default Dashboard.
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: false,
@@ -139,7 +136,6 @@ test.describe('Bootstrap wizard gate', () => {
   test('?p= deep-link is ignored during bootstrap', async ({ page }) => {
     const adminEmail = 'admin2@example.com';
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: adminEmail,
       setup_complete: false,
@@ -168,7 +164,6 @@ test.describe('Bootstrap wizard gate', () => {
   test('wizard add+delete cycle works for buildings', async ({ page }) => {
     const adminEmail = 'admin-bld@example.com';
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: adminEmail,
       setup_complete: false,
@@ -201,7 +196,6 @@ test.describe('Bootstrap wizard gate', () => {
   test('wizard add+delete cycle works for wards', async ({ page }) => {
     const adminEmail = 'admin-ward@example.com';
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: adminEmail,
       setup_complete: false,
@@ -260,7 +254,6 @@ test.describe('Bootstrap wizard gate', () => {
     // collections, so this is enforced client-side only.
     const adminEmail = 'admin-refguard@example.com';
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: adminEmail,
       setup_complete: false,
@@ -314,7 +307,6 @@ test.describe('Bootstrap wizard gate', () => {
   test('wizard add+delete cycle works for managers', async ({ page }) => {
     const adminEmail = 'admin-mgr@example.com';
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: adminEmail,
       setup_complete: false,

@@ -89,7 +89,6 @@ test.describe('auth-flow', () => {
     // (Pre-Phase-7 the gate didn't exist; the implicit default was
     // setup-complete-true.)
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: true,
@@ -108,7 +107,6 @@ test.describe('auth-flow', () => {
     // `apps/web/src/lib/setupGate.ts`, an absent stake doc is treated
     // as setup-incomplete (Option A from the 2026-04-29 staging-bug fix).
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: true,
@@ -140,7 +138,6 @@ test.describe('auth-flow', () => {
   test('Logout from the Dashboard returns to SignInPage', async ({ page }) => {
     // Same Phase 7 setup-complete-gate seed as above.
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: true,

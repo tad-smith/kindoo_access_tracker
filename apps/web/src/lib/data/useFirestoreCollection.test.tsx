@@ -306,15 +306,15 @@ describe('useFirestoreCollection', () => {
       return () => {};
     });
     const q = fakeQuery('stakes') as unknown as Parameters<
-      typeof useFirestoreCollection<{ stake_id: string; name: string }>
+      typeof useFirestoreCollection<{ id: string; name: string }>
     >[0];
 
     const { result } = renderHook(
-      () => useFirestoreCollection<{ stake_id: string; name: string }>(q, { idField: 'stake_id' }),
+      () => useFirestoreCollection<{ id: string; name: string }>(q, { idField: 'id' }),
       { wrapper },
     );
 
-    // The bootstrap-doc case: the stored body has no `stake_id` field.
+    // Stake-doc case: the stored body carries no id field of its own.
     await act(async () => {
       pushSnapshot!(
         fakeQuerySnapshotWithIds([{ id: 'csnorth', data: { name: 'CS North Stake' } }]),
@@ -322,7 +322,7 @@ describe('useFirestoreCollection', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.data).toEqual([{ stake_id: 'csnorth', name: 'CS North Stake' }]);
+      expect(result.current.data).toEqual([{ id: 'csnorth', name: 'CS North Stake' }]);
     });
   });
 
@@ -333,11 +333,11 @@ describe('useFirestoreCollection', () => {
       return () => {};
     });
     const q = fakeQuery('stakes') as unknown as Parameters<
-      typeof useFirestoreCollection<{ stake_id: string; name: string }>
+      typeof useFirestoreCollection<{ id: string; name: string }>
     >[0];
 
     const { result } = renderHook(
-      () => useFirestoreCollection<{ stake_id: string; name: string }>(q, { idField: 'stake_id' }),
+      () => useFirestoreCollection<{ id: string; name: string }>(q, { idField: 'id' }),
       { wrapper },
     );
 
@@ -346,13 +346,13 @@ describe('useFirestoreCollection', () => {
     await act(async () => {
       pushSnapshot!(
         fakeQuerySnapshotWithIds([
-          { id: 'csnorth', data: { stake_id: 'stale-wrong', name: 'CS North Stake' } },
+          { id: 'csnorth', data: { id: 'stale-wrong', name: 'CS North Stake' } },
         ]),
       );
     });
 
     await waitFor(() => {
-      expect(result.current.data).toEqual([{ stake_id: 'csnorth', name: 'CS North Stake' }]);
+      expect(result.current.data).toEqual([{ id: 'csnorth', name: 'CS North Stake' }]);
     });
   });
 

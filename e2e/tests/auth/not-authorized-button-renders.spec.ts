@@ -22,7 +22,6 @@ test.describe('NotAuthorizedPage button renders as a styled, clickable button', 
 
   test('"Sign out" has visible chrome (background, padding, pointer cursor)', async ({ page }) => {
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: true,

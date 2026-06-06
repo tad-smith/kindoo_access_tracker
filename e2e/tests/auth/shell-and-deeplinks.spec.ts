@@ -62,7 +62,6 @@ async function signInAsManager(page: Page, email: string): Promise<void> {
  */
 async function seedSetupCompleteStake(over: Record<string, unknown> = {}): Promise<void> {
   await writeDoc('stakes/csnorth', {
-    stake_id: 'csnorth',
     stake_name: 'Test Stake',
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: true,

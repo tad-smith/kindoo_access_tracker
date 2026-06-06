@@ -86,7 +86,7 @@ describe('firestore.rules — top-level collections', () => {
       entity_type: 'stake',
       entity_id: 'csnorth',
       before: null,
-      after: { stake_id: 'csnorth' },
+      after: { stake_name: 'CS North Stake' },
       ttl: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
     };
 

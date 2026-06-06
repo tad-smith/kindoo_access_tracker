@@ -12,17 +12,16 @@
 // change in `fixes.ts`.
 
 import { useState } from 'react';
-import type { Stake } from '@kindoo/shared';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { Select } from '../../components/ui/Select';
 import { toast } from '../../lib/store/toast';
-import { useApplyStakeFix } from './hooks';
+import { useApplyStakeFix, type StakeWithId } from './hooks';
 import { STAKE_FIXES, findStakeFix, type StakeFix } from './fixes';
 import { formatFixErrorText, formatFixResultText, toFixError, toFixResultView } from './fixResult';
 
 interface ApplyFixesMenuProps {
-  stake: Stake;
+  stake: StakeWithId;
 }
 
 // The dialog runs through three content phases for a single selected
@@ -60,12 +59,12 @@ export function ApplyFixesMenu({ stake }: ApplyFixesMenuProps) {
   }
 
   async function onApply(fix: StakeFix) {
-    // Defense-in-depth: `useStakes()` injects the doc id as `stake_id`, so
+    // Defense-in-depth: `useStakes()` injects the doc id as `stake.id`, so
     // this should always be set. If a malformed stake ever slips through,
     // surface a clear error in the Result dialog rather than invoking the
     // callable with `stakeId: undefined` (which the server rejects with the
     // cryptic `invalid-argument: stakeId required`).
-    if (!stake.stake_id) {
+    if (!stake.id) {
       setPhase({
         kind: 'error',
         fix,
@@ -76,7 +75,7 @@ export function ApplyFixesMenu({ stake }: ApplyFixesMenuProps) {
     try {
       const result = await mutation.mutateAsync({
         callable: fix.callable,
-        stakeId: stake.stake_id,
+        stakeId: stake.id,
       });
       setPhase({ kind: 'success', fix, result });
     } catch (err) {
@@ -87,12 +86,12 @@ export function ApplyFixesMenu({ stake }: ApplyFixesMenuProps) {
   const open = phase !== null;
 
   return (
-    <div data-testid={`apply-fixes-${stake.stake_id}`}>
+    <div data-testid={`apply-fixes-${stake.id}`}>
       <Select
         aria-label={`Apply fix to ${stake.stake_name}`}
         defaultValue=""
         onChange={onSelect}
-        data-testid={`apply-fixes-select-${stake.stake_id}`}
+        data-testid={`apply-fixes-select-${stake.id}`}
       >
         <option value="" disabled>
           Apply Fixes…
@@ -138,7 +137,7 @@ export function ApplyFixesMenu({ stake }: ApplyFixesMenuProps) {
 
 interface ExplainBodyProps {
   fix: StakeFix;
-  stake: Stake;
+  stake: StakeWithId;
   pending: boolean;
   onCancel: () => void;
   onApply: () => void;

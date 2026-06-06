@@ -22,7 +22,7 @@ import { EmptyState } from '../../lib/render/EmptyState';
 import { formatDate } from '../../lib/render/formatDate';
 import { CreateStakeForm } from './CreateStakeForm';
 import { ApplyFixesMenu } from './ApplyFixesMenu';
-import { useStakes } from './hooks';
+import { useStakes, type StakeWithId } from './hooks';
 
 /**
  * Per-stake landing target. Deep-links into the manager Dashboard
@@ -33,8 +33,8 @@ import { useStakes } from './hooks';
  * the user's actual landing for that stake if they don't hold the
  * manager role there.
  */
-function landingTargetFor(stake: Stake): { to: string; search: { stake: string } } {
-  return { to: '/manager/dashboard', search: { stake: stake.stake_id } };
+function landingTargetFor(stake: StakeWithId): { to: string; search: { stake: string } } {
+  return { to: '/manager/dashboard', search: { stake: stake.id } };
 }
 
 function timestampToMillis(value: Stake['created_at']): number {
@@ -74,7 +74,7 @@ export function SuperadminStakeListPage() {
       ) : (
         <ul className="flex flex-col gap-3" data-testid="superadmin-stake-list-items">
           {sorted.map((stake) => (
-            <StakeRow key={stake.stake_id} stake={stake} />
+            <StakeRow key={stake.id} stake={stake} />
           ))}
         </ul>
       )}
@@ -83,7 +83,7 @@ export function SuperadminStakeListPage() {
 }
 
 interface StakeRowProps {
-  stake: Stake;
+  stake: StakeWithId;
 }
 
 function StakeRow({ stake }: StakeRowProps) {
@@ -95,22 +95,19 @@ function StakeRow({ stake }: StakeRowProps) {
   return (
     <li
       className="flex flex-col gap-2 rounded border border-gray-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"
-      data-testid={`superadmin-stake-row-${stake.stake_id}`}
+      data-testid={`superadmin-stake-row-${stake.id}`}
     >
       <div className="flex flex-col gap-1">
         <div className="flex flex-wrap items-baseline gap-2">
           <Link
             {...landingTargetFor(stake)}
             className="text-base font-semibold text-[color:var(--kd-primary)] hover:underline"
-            data-testid={`superadmin-stake-link-${stake.stake_id}`}
+            data-testid={`superadmin-stake-link-${stake.id}`}
           >
             {stake.stake_name}
           </Link>
-          <span
-            className="text-xs text-gray-500"
-            data-testid={`superadmin-stake-slug-${stake.stake_id}`}
-          >
-            {stake.stake_id}
+          <span className="text-xs text-gray-500" data-testid={`superadmin-stake-slug-${stake.id}`}>
+            {stake.id}
           </span>
         </div>
         <div className="text-xs text-gray-600">Created {created || '—'}</div>

@@ -101,7 +101,6 @@ function setStake(over: Partial<StakeResult>) {
 }
 function makeStakeDoc(over: Partial<Stake> = {}): Partial<Stake> {
   return {
-    stake_id: 'csnorth',
     stake_name: 'Test Stake',
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: false,

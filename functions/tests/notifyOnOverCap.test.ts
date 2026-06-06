@@ -40,7 +40,6 @@ function makeEvent(opts: { before: Stake | null; after: Stake | null; time?: str
 
 function buildStake(overrides: Partial<Stake> = {}): Stake {
   return {
-    stake_id: STAKE_ID,
     stake_name: 'CSNorth Stake',
     created_at: Timestamp.now(),
     created_by: 'admin@example.com',

@@ -13,7 +13,7 @@ export const overCapEntrySchema = z.object({
 });
 
 export const stakeSchema = z.object({
-  stake_id: z.string(),
+  // Identity is the Firestore doc id (the slug); there is no stored id field.
   stake_name: z.string(),
   created_at: timestampLikeSchema,
   created_by: z.string(),

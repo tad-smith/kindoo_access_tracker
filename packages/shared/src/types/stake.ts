@@ -32,11 +32,13 @@ export type OverCapEntry = {
   over_by: number;
 };
 
-/** `stakes/{stakeId}` parent doc body — see `firebase-schema.md` §4.1. */
+/** `stakes/{stakeId}` parent doc body — see `firebase-schema.md` §4.1.
+ *
+ * Identity is the Firestore doc id (the slug, e.g. `'csnorth'`); there is
+ * no stored id field. Read layers that need the id alongside the body
+ * inject it from `doc.id` (see `apps/web` `StakeWithId`). */
 export type Stake = {
   // ----- Identity -----
-  /** `= doc.id`. The slug (e.g. `'csnorth'`). */
-  stake_id: string;
   /** Human-readable display name. */
   stake_name: string;
   /**

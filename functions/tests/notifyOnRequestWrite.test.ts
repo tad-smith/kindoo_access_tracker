@@ -70,7 +70,6 @@ const baseRequest: AccessRequest = {
 async function seedStake(overrides: Partial<Stake> = {}): Promise<void> {
   const { db } = requireEmulators();
   const stake: Stake = {
-    stake_id: STAKE_ID,
     stake_name: 'CSNorth Stake',
     created_at: Timestamp.now(),
     created_by: 'admin@example.com',

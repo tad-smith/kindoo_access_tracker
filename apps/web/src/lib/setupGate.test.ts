@@ -23,7 +23,6 @@ function stakeLoaded(over: Partial<Stake> = {}): GateStakeRead {
   return {
     status: 'success',
     data: {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: false,

@@ -45,7 +45,6 @@ async function signInViaTestHatch(page: Page, email: string, password: string): 
 
 async function seedStake(stakeId: string, displayName: string): Promise<void> {
   await writeDoc(`stakes/${stakeId}`, {
-    stake_id: stakeId,
     stake_name: displayName,
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: true,

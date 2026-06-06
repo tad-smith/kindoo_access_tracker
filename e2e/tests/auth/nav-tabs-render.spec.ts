@@ -65,7 +65,6 @@ test.describe('Sectioned rail — active-state styling', () => {
     await clearAuth();
     await clearFirestore();
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: true,

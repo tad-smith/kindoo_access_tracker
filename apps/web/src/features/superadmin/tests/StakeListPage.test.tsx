@@ -15,7 +15,8 @@ import {
   Outlet,
   RouterProvider,
 } from '@tanstack/react-router';
-import type { Stake, TimestampLike } from '@kindoo/shared';
+import type { TimestampLike } from '@kindoo/shared';
+import type { StakeWithId } from '../hooks';
 
 const useStakesMock = vi.fn();
 
@@ -29,8 +30,8 @@ vi.mock('../hooks', () => ({
 // sentinel so the page-level tests stay focused on the list rendering
 // shape and confirm the menu is wired into every row.
 vi.mock('../ApplyFixesMenu', () => ({
-  ApplyFixesMenu: ({ stake }: { stake: { stake_id: string } }) => (
-    <div data-testid={`apply-fixes-menu-stub-${stake.stake_id}`} />
+  ApplyFixesMenu: ({ stake }: { stake: { id: string } }) => (
+    <div data-testid={`apply-fixes-menu-stub-${stake.id}`} />
   ),
 }));
 
@@ -62,11 +63,11 @@ function ts(iso: string): TimestampLike {
   };
 }
 
-function makeStake(overrides: Partial<Stake> = {}): Stake {
+function makeStake(overrides: Partial<StakeWithId> = {}): StakeWithId {
   const actor = { email: 'superadmin@example.com', canonical: 'superadmin@example.com' };
   const created = ts('2026-04-01T12:00:00Z');
   return {
-    stake_id: 'csnorth',
+    id: 'csnorth',
     stake_name: 'CS North Stake',
     created_at: created,
     created_by: 'superadmin@example.com',
@@ -83,7 +84,7 @@ function makeStake(overrides: Partial<Stake> = {}): Stake {
   };
 }
 
-function mockStakes(rows: Stake[] | undefined, isLoading = false) {
+function mockStakes(rows: StakeWithId[] | undefined, isLoading = false) {
   useStakesMock.mockReturnValue({
     data: rows,
     error: null,
@@ -162,9 +163,9 @@ describe('<SuperadminStakeListPage />', () => {
 
   it('renders one row per stake with name, slug, created_at, and deep-link', async () => {
     mockStakes([
-      makeStake({ stake_id: 'csnorth', stake_name: 'CS North Stake' }),
+      makeStake({ id: 'csnorth', stake_name: 'CS North Stake' }),
       makeStake({
-        stake_id: 'eaststake',
+        id: 'eaststake',
         stake_name: 'East Stake',
         created_at: ts('2026-04-10T12:00:00Z'),
       }),
@@ -189,21 +190,21 @@ describe('<SuperadminStakeListPage />', () => {
 
   it('mounts the Apply Fixes menu on every stake row', async () => {
     mockStakes([
-      makeStake({ stake_id: 'csnorth' }),
-      makeStake({ stake_id: 'eaststake', created_at: ts('2026-04-10T12:00:00Z') }),
+      makeStake({ id: 'csnorth' }),
+      makeStake({ id: 'eaststake', created_at: ts('2026-04-10T12:00:00Z') }),
     ]);
     await renderPage();
     expect(screen.getByTestId('apply-fixes-menu-stub-csnorth')).toBeInTheDocument();
     expect(screen.getByTestId('apply-fixes-menu-stub-eaststake')).toBeInTheDocument();
   });
 
-  it('renders the slug, deep-link, and Apply Fixes menu from the doc-id-derived stake_id', async () => {
-    // `useStakes()` injects the Firestore doc id as `stake_id`, so the
-    // hand-seeded bootstrap stake (whose stored doc omits the field)
-    // still arrives with `stake_id` set. The page renders the slug, the
+  it('renders the slug, deep-link, and Apply Fixes menu from the doc-id-derived id', async () => {
+    // `useStakes()` injects the Firestore doc id as `stake.id`, so the
+    // hand-seeded bootstrap stake (whose stored doc carries no id field)
+    // still arrives with `id` set. The page renders the slug, the
     // `?stake=<slug>` deep-link, and wires the Apply Fixes menu off that
     // id — none of which may ever be `undefined`.
-    mockStakes([makeStake({ stake_id: 'csnorth', stake_name: 'CS North Stake' })]);
+    mockStakes([makeStake({ id: 'csnorth', stake_name: 'CS North Stake' })]);
     await renderPage();
     expect(screen.getByTestId('superadmin-stake-slug-csnorth')).toHaveTextContent('csnorth');
     expect(screen.getByTestId('superadmin-stake-link-csnorth')).toHaveAttribute(
@@ -217,17 +218,17 @@ describe('<SuperadminStakeListPage />', () => {
     // Pass rows out of order; the page sorts them.
     mockStakes([
       makeStake({
-        stake_id: 'newer',
+        id: 'newer',
         stake_name: 'Newer Stake',
         created_at: ts('2026-04-20T00:00:00Z'),
       }),
       makeStake({
-        stake_id: 'older',
+        id: 'older',
         stake_name: 'Older Stake',
         created_at: ts('2026-01-05T00:00:00Z'),
       }),
       makeStake({
-        stake_id: 'middle',
+        id: 'middle',
         stake_name: 'Middle Stake',
         created_at: ts('2026-02-15T00:00:00Z'),
       }),
@@ -241,14 +242,14 @@ describe('<SuperadminStakeListPage />', () => {
   });
 
   it('renders the Setup complete pill for `setup_complete === true`', async () => {
-    mockStakes([makeStake({ stake_id: 'csnorth', setup_complete: true })]);
+    mockStakes([makeStake({ id: 'csnorth', setup_complete: true })]);
     await renderPage();
     expect(screen.getByTestId('superadmin-stake-setup-complete')).toBeInTheDocument();
     expect(screen.queryByTestId('superadmin-stake-setup-pending')).toBeNull();
   });
 
   it('renders the Setup pending pill for `setup_complete === false`', async () => {
-    mockStakes([makeStake({ stake_id: 'newish', setup_complete: false })]);
+    mockStakes([makeStake({ id: 'newish', setup_complete: false })]);
     await renderPage();
     expect(screen.getByTestId('superadmin-stake-setup-pending')).toBeInTheDocument();
     expect(screen.queryByTestId('superadmin-stake-setup-complete')).toBeNull();
@@ -261,7 +262,7 @@ describe('<SuperadminStakeListPage />', () => {
     // stake's tz field.
     mockStakes([
       makeStake({
-        stake_id: 'tz-test',
+        id: 'tz-test',
         created_at: ts('2026-04-01T00:30:00Z'),
         timezone: 'America/Denver',
       }),

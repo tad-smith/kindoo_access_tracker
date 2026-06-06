@@ -49,7 +49,6 @@ const BOOTSTRAP_KM_PATH = `${STAKE_PATH}/kindooManagers/${BOOTSTRAP_CANONICAL}`;
 
 function freshStakeDoc(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
   return {
-    stake_id: STAKE_ID,
     stake_name: 'CS North Stake',
     created_at: new Date(),
     created_by: 'admin@kindoo.example',
@@ -503,9 +502,7 @@ describe('firestore.rules — bootstrap-admin gate', () => {
       // is locked to superadmin so the operator's pre-seed remains
       // the single source of truth for `bootstrap_admin_email`.
       const db = bootstrapAdminContext(env).firestore();
-      await assertFails(
-        db.doc('stakes/brand-new-stake').set(freshStakeDoc({ stake_id: 'brand-new-stake' })),
-      );
+      await assertFails(db.doc('stakes/brand-new-stake').set(freshStakeDoc()));
     });
   });
 });
