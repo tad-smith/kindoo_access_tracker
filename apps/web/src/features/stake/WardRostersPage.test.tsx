@@ -228,16 +228,18 @@ describe('<WardRostersPage />', () => {
       expect(screen.getByTestId('new-request-dialog-open')).toBeInTheDocument();
     });
 
-    it('renders the New Request button at the end of the ward-selection row', () => {
-      // Placement: the affordance lives inside `.kd-ward-select-row`
-      // (same line as the Ward: label + combobox), not in a separate
-      // header row.
+    it('renders the New Request button in the page-title row (right of the heading)', () => {
+      // Placement: the affordance lives inside `.kd-page-title-row`
+      // (right of the <h1>, mirroring the Stake Roster header), not in
+      // the ward-selection row — a mobile-layout fix so a wide combobox
+      // can't push the button onto a second line.
       usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
       mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
       mockSeats([makeSeat({ scope: 'CO' })]);
       render(<WardRostersPage initialWard="CO" />);
       const btn = screen.getByTestId('ward-rosters-new-request');
-      expect(btn.closest('.kd-ward-select-row')).not.toBeNull();
+      expect(btn.closest('.kd-page-title-row')).not.toBeNull();
+      expect(btn.closest('.kd-ward-select-row')).toBeNull();
     });
 
     it('hides the New Request button when a ward outside the viewer’s bishopric is selected', () => {

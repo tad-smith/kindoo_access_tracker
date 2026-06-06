@@ -5,17 +5,13 @@
 // live in `Dialog.Footer` inside the form.
 //
 // Data (scopes / buildings / wards) comes from the shared
-// `useNewRequestFormData` hook — the same hook the standalone `/new`
-// page (`NewRequestPage`) consumes, so the dialog and page can never
-// diverge. While the catalogue is loading the dialog renders a spinner
-// in place of the form. The dialog is always launched from a scoped
-// roster context, so it narrows the form's scope list to the single
-// launched scope — the form then renders it as a fixed label (no
-// picker), never the multi-scope dropdown. The `/new` page keeps the
-// full list, so multi-scope users still get the dropdown there. Submit
-// closes the dialog on success; Cancel closes without submitting. The
-// dialog unmounts the form on close (fresh mount each open), so the
-// form's post-submit reset is unnecessary in this path.
+// `useNewRequestFormData` hook. While the catalogue is loading the
+// dialog renders a spinner in place of the form. The dialog is always
+// launched from a scoped roster context, so it narrows the form's scope
+// list to the single launched scope — the form renders it as a fixed
+// label. Submit closes the dialog on success; Cancel closes without
+// submitting. The dialog unmounts the form on close (fresh mount each
+// open), so the form's post-submit reset is unnecessary in this path.
 
 import { Dialog } from '../../../components/ui/Dialog';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';

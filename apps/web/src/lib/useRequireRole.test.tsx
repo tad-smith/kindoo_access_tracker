@@ -167,8 +167,8 @@ describe('useRequireRole', () => {
       isAuthenticated: true,
       stakeMemberStakes: [STAKE_ID],
     });
-    render(<Probe role="manager" redirectTo="/new" onResult={() => {}} />);
-    expect(navigateMock).toHaveBeenCalledWith({ to: '/new', replace: true });
+    render(<Probe role="manager" redirectTo="/my-requests" onResult={() => {}} />);
+    expect(navigateMock).toHaveBeenCalledWith({ to: '/my-requests', replace: true });
   });
 
   it('accepts an either-of array of roles', () => {

@@ -3,10 +3,10 @@
 //
 // Per `spec.md` §5: manager → /manager/dashboard, stake →
 // /stake/roster, bishopric → /bishopric/roster. Non-Kindoo-Manager
-// roles land on the Roster (not the leftmost-nav New Request) so the
-// first surface those users see is the current seat list for their
-// scope; the bishopric Roster header carries a "New Request" button
-// for the previously-default `/new` form.
+// roles land on the Roster so the first surface those users see is the
+// current seat list for their scope; the roster headers carry a "New
+// Request" button that opens the request form in an in-page modal — the
+// sole entry point for creating a request.
 //
 // We exercise:
 //   - Default landing for each role.
@@ -102,10 +102,8 @@ test.describe('Phase 5 default landings', () => {
     });
     await expect(page).toHaveURL(/\/bishopric\/roster$/);
     await expect(page.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
-    // The header button opens the New Request form in an in-page modal.
-    // Scope to the page-header button via testid so we don't accidentally
-    // exercise the nav-rail Quick Link (which also reads "New Request"
-    // for bishopric principals — that one still navigates to /new).
+    // The header button opens the New Request form in an in-page modal —
+    // the only way to create a request.
     const newRequestBtn = page.getByTestId('bishopric-roster-new-request');
     await expect(newRequestBtn).toBeVisible();
     await expect(newRequestBtn).toHaveText('New Request');

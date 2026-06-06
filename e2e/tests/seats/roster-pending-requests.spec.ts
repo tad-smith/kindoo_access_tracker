@@ -110,17 +110,19 @@ test.describe('Roster pending requests', () => {
     const bishopricCtx = await browser.newContext();
     const bishopricPage = await bishopricCtx.newPage();
 
-    await createSignedInUser(bishopricPage, 'bishop-add@example.com', { wards: ['CO'] }, '/?p=new');
-    // Submit the pending add via the New Request page.
-    await expect(bishopricPage.getByRole('heading', { name: /^New Request$/ })).toBeVisible();
-    await bishopricPage.getByTestId('new-request-email').fill('newhire@example.com');
-    await bishopricPage.getByTestId('new-request-name').fill('New Hire');
-    await bishopricPage.getByTestId('new-request-reason').fill('Sub Sunday teacher');
-    await bishopricPage.getByTestId('new-request-submit').click();
+    await createSignedInUser(bishopricPage, 'bishop-add@example.com', { wards: ['CO'] });
+    // Submit the pending add via the New Request modal on the roster.
+    await expect(bishopricPage.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
+    await bishopricPage.getByTestId('bishopric-roster-new-request').click();
+    const dialog = bishopricPage.getByRole('dialog');
+    await expect(dialog.getByTestId('new-request-form')).toBeVisible();
+    await dialog.getByTestId('new-request-email').fill('newhire@example.com');
+    await dialog.getByTestId('new-request-name').fill('New Hire');
+    await dialog.getByTestId('new-request-reason').fill('Sub Sunday teacher');
+    await dialog.getByTestId('new-request-submit').click();
 
-    // Visit the roster — the pending add lands as an Outstanding
+    // The pending add lands on the same roster as an Outstanding
     // Requests card, badged Pending.
-    await bishopricPage.getByRole('link', { name: /^Ward Roster$/ }).click();
     await expect(bishopricPage.getByTestId('roster-pending-adds-section')).toBeVisible({
       timeout: 10_000,
     });
