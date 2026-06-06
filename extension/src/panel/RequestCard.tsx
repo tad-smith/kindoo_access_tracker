@@ -16,7 +16,7 @@
 //                      calls markRequestComplete only
 
 import { useCallback, useState } from 'react';
-import type { AccessRequest } from '@kindoo/shared';
+import { scopeLabel, type AccessRequest } from '@kindoo/shared';
 import {
   getSeatByEmail,
   markRequestComplete,
@@ -274,7 +274,7 @@ export function RequestCard({
     >
       <div className="sba-request-card-head">
         <span className={badgeClass(request.type)}>{typeBadgeLabel(request.type)}</span>
-        <span className="sba-badge">{request.scope}</span>
+        <span className="sba-badge">{scopeLabel(request.scope, bundle.wards)}</span>
         {isUrgent ? <span className="sba-badge sba-badge-urgent">Urgent</span> : null}
         <span>
           {request.member_name ? (
@@ -382,6 +382,7 @@ export function RequestCard({
         <RejectDialog
           stakeId={stakeId}
           request={request}
+          wards={bundle.wards}
           onCancel={() => setRejectOpen(false)}
           onRejected={() => {
             setRejectOpen(false);

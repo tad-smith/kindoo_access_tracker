@@ -118,6 +118,7 @@ function editReq(overrides: Partial<AccessRequest> = {}): AccessRequest {
 async function renderCard(
   opts: {
     request?: AccessRequest;
+    bundle?: StakeConfigBundle;
     onDismissed?: (id: string) => void;
     memberHasSeat?: boolean;
     memberSeatAbsent?: boolean;
@@ -128,12 +129,20 @@ async function renderCard(
     <RequestCard
       stakeId="csnorth"
       request={opts.request ?? addRequest()}
-      bundle={bundle()}
+      bundle={opts.bundle ?? bundle()}
       memberHasSeat={opts.memberHasSeat ?? false}
       memberSeatAbsent={opts.memberSeatAbsent ?? false}
       onDismissed={opts.onDismissed ?? vi.fn()}
     />,
   );
+}
+
+/** Bundle whose wards catalogue resolves the `CO` ward code to a name. */
+function bundleWithWards(): StakeConfigBundle {
+  return {
+    ...bundle(),
+    wards: [{ ward_code: 'CO', ward_name: 'Maple Ward' }] as unknown as StakeConfigBundle['wards'],
+  };
 }
 
 describe('RequestCard', () => {
@@ -174,6 +183,29 @@ describe('RequestCard', () => {
   it('labels remove cards "Remove Kindoo Access"', async () => {
     await renderCard({ request: removeReq() });
     expect(screen.getByTestId('sba-remove-r2')).toHaveTextContent('Remove Kindoo Access');
+  });
+
+  it('renders the ward NAME for a ward-scope request when wards resolve', async () => {
+    await renderCard({ request: addRequest({ scope: 'CO' }), bundle: bundleWithWards() });
+    const card = screen.getByTestId('sba-request-r1');
+    expect(card).toHaveTextContent('Maple Ward');
+    expect(card).not.toHaveTextContent('CO');
+  });
+
+  it('renders "Stake" for the stake scope', async () => {
+    await renderCard({ request: addRequest({ scope: 'stake' }), bundle: bundleWithWards() });
+    expect(screen.getByTestId('sba-request-r1')).toHaveTextContent('Stake');
+  });
+
+  it('falls back to the raw scope code when the ward is not in the catalogue', async () => {
+    await renderCard({ request: addRequest({ scope: 'ZZ' }), bundle: bundleWithWards() });
+    expect(screen.getByTestId('sba-request-r1')).toHaveTextContent('ZZ');
+  });
+
+  it('falls back to the raw scope code when the wards catalogue is empty', async () => {
+    // Default bundle() ships `wards: []`.
+    await renderCard({ request: addRequest({ scope: 'CO' }) });
+    expect(screen.getByTestId('sba-request-r1')).toHaveTextContent('CO');
   });
 
   it('runs provisionAddOrChange and markRequestComplete on click, then shows the result dialog', async () => {
@@ -609,6 +641,25 @@ describe('RequestCard', () => {
 
     await user.type(screen.getByTestId('sba-reject-reason-r1'), 'Wrong building');
     expect(screen.getByTestId('sba-reject-confirm-r1')).toBeEnabled();
+  });
+
+  it('shows the ward NAME in the reject dialog summary when wards resolve', async () => {
+    const user = userEvent.setup();
+    await renderCard({ request: addRequest({ scope: 'CO' }), bundle: bundleWithWards() });
+    await user.click(screen.getByTestId('sba-reject-r1'));
+
+    const summary = screen.getByTestId('sba-reject-summary');
+    expect(summary).toHaveTextContent('in Maple Ward');
+    expect(summary).not.toHaveTextContent('in CO');
+  });
+
+  it('falls back to the raw scope code in the reject dialog summary when wards are empty', async () => {
+    const user = userEvent.setup();
+    // Default bundle() ships `wards: []`.
+    await renderCard({ request: addRequest({ scope: 'CO' }) });
+    await user.click(screen.getByTestId('sba-reject-r1'));
+
+    expect(screen.getByTestId('sba-reject-summary')).toHaveTextContent('in CO');
   });
 
   it('keeps confirm disabled when the reason is only whitespace', async () => {

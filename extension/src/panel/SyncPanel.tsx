@@ -31,6 +31,7 @@
 // Design doc: `extension/docs/sync-design.md`.
 
 import { useCallback, useMemo, useState } from 'react';
+import { scopeLabel, type Ward } from '@kindoo/shared';
 import { ExtensionApiError, getSyncData, type SyncDataBundle } from '../lib/extensionApi';
 import { readKindooSession, type KindooSessionError } from '../content/kindoo/auth';
 import { listAllEnvironmentUsers } from '../content/kindoo/endpoints';
@@ -62,6 +63,9 @@ type Step =
       result: DetectResult;
       ctx: DispatchContext;
       activeSiteLabel: string;
+      /** Wards catalogue from the synced bundle — resolves each row's
+       * SBA scope code to its ward name in the report. */
+      wards: Ward[];
     }
   | { kind: 'error'; message: string }
   | { kind: 'no-kindoo'; error: KindooSessionError }
@@ -206,7 +210,7 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
       const result = detect({ ...bundle, kindooUsers: enriched, activeSite });
       const ctx: DispatchContext = { stakeId };
       const activeSiteLabel = describeActiveSite(activeSite, bundle);
-      setStep({ kind: 'report', result, ctx, activeSiteLabel });
+      setStep({ kind: 'report', result, ctx, activeSiteLabel, wards: bundle.wards });
     } catch (err) {
       const message =
         err instanceof KindooApiError ? describeKindooError(err) : describeExtensionError(err);
@@ -360,6 +364,7 @@ function SyncBody({ step, filter, codeFilter, onRun, onFilter, onCodeFilter }: B
       result={step.result}
       ctx={step.ctx}
       activeSiteLabel={step.activeSiteLabel}
+      wards={step.wards}
       filter={filter}
       codeFilter={codeFilter}
       onFilter={onFilter}
@@ -372,6 +377,7 @@ interface ReportProps {
   result: DetectResult;
   ctx: DispatchContext;
   activeSiteLabel: string;
+  wards: Ward[];
   filter: FilterMode;
   codeFilter: CodeFilter;
   onFilter: (f: FilterMode) => void;
@@ -382,6 +388,7 @@ function ReportView({
   result,
   ctx,
   activeSiteLabel,
+  wards,
   filter,
   codeFilter,
   onFilter,
@@ -485,6 +492,7 @@ function ReportView({
             <li key={d.canonical}>
               <DiscrepancyRow
                 discrepancy={d}
+                wards={wards}
                 state={rowStates[d.canonical] ?? { kind: 'idle' }}
                 onFix={(action) => void handleFix(d, action)}
               />
@@ -520,11 +528,14 @@ function FilterChip({ current, value, label, onFilter }: FilterChipProps) {
 
 interface DiscrepancyRowProps {
   discrepancy: Discrepancy;
+  /** Wards catalogue — resolves the SBA scope code to its ward name.
+   * Empty / unresolved falls back to the raw code. */
+  wards: Ward[];
   state: RowState;
   onFix: (action: FixAction) => void;
 }
 
-function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
+function DiscrepancyRow({ discrepancy, wards, state, onFix }: DiscrepancyRowProps) {
   const severityClass = discrepancy.severity === 'drift' ? 'sba-badge-remove' : 'sba-badge-temp';
   const actions = fixActionsFor(discrepancy);
   // The "Update SBA" button is disabled on ANY buildings-mismatch where
@@ -556,7 +567,7 @@ function DiscrepancyRow({ discrepancy, state, onFix }: DiscrepancyRowProps) {
             discrepancy.sba ? (
               <>
                 <div>
-                  <em>scope:</em> {discrepancy.sba.scope}
+                  <em>scope:</em> {scopeLabel(discrepancy.sba.scope, wards)}
                 </div>
                 <div>
                   <em>type:</em> {discrepancy.sba.type}
