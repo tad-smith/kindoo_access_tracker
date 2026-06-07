@@ -6,6 +6,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
+import { auditId } from '@kindoo/shared';
 import type { AccessRequest, AuditLog, OverCapEntry, Seat, Stake } from '@kindoo/shared';
 import { markRequestComplete } from '../src/callable/markRequestComplete.js';
 import { auditRequestWrites } from '../src/triggers/auditTrigger.js';
@@ -2428,9 +2429,17 @@ describe.skipIf(!hasEmulators())('markRequestComplete callable', () => {
       } as unknown as never;
       await auditRequestWrites.run(event);
 
-      const audit = await db.collection(`stakes/${STAKE_ID}/auditLog`).get();
-      expect(audit.empty).toBe(false);
-      const row = audit.docs[0]!.data() as AuditLog;
+      // Read the forged row by its DETERMINISTIC doc id rather than
+      // `docs[0]` of the whole collection. The real `markRequestComplete`
+      // call above also fired the DEPLOYED `auditRequestWrites` trigger
+      // (and notify/push triggers), fanning extra rows under
+      // `stakes/csnorth/auditLog` at the real wall-clock time; a leftover
+      // row from a sibling file can land here too. `auditId(time, suffix)`
+      // pins us to exactly the row this test wrote.
+      const docId = auditId(new Date(time), 'requests_r1');
+      const rowSnap = await db.doc(`stakes/${STAKE_ID}/auditLog/${docId}`).get();
+      expect(rowSnap.exists).toBe(true);
+      const row = rowSnap.data() as AuditLog;
       expect(row.entity_type).toBe('request');
       expect(row.entity_id).toBe('r1');
       expect(row.actor_canonical).toBe(MANAGER_EMAIL);

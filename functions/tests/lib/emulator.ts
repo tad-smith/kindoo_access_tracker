@@ -63,6 +63,24 @@ export function requireEmulators(): { app: App; db: Firestore; auth: Auth } {
  * `auditTrigger.test.ts`, seen across `B-5 follow-up`, idempotency, and
  * out-of-band tests). The REST endpoint blocks until the emulator has
  * dropped its in-memory store — synchronous and atomic.
+ *
+ * NOTE on the cross-file LEFTOVER race: in the CI integration config
+ * (`--only firestore,auth,functions`) every write to an audited entity
+ * doc under a shared stake (`csnorth`) fires the DEPLOYED `auditXxxWrites`
+ * trigger, which fans an `auditLog` row ASYNCHRONOUSLY via Eventarc. A row
+ * whose trigger was still queued when this blow-away ran lands a few
+ * hundred ms LATER — after `clearEmulators()` returned — and bleeds into
+ * the next file's `stakes/csnorth/auditLog` reads. `clearEmulators()`
+ * cannot close that window: a single blow-away can't catch a write that
+ * hasn't happened yet, and polling for *absence* can't prove "no more
+ * coming" (a fast trigger burst can deliver in gaps). So the fix lives on
+ * the READ side instead — audit-row-counting assertions scope to exactly
+ * the row under test (a dedicated stake id, an action/request-id filter,
+ * or a deterministic `auditId(time, suffix)` doc id) rather than reading
+ * the whole shared-stake collection. See `auditTrigger.test.ts` (private
+ * `audit-trigger-suite` stake), `notifyOnRequestWrite.test.ts`
+ * (`readEmailFailedAudits` request-id filter), and the
+ * `markRequestComplete` / `syncApplyFix` audit smoke checks (doc-id reads).
  */
 export async function clearEmulators(): Promise<void> {
   const { auth } = requireEmulators();
