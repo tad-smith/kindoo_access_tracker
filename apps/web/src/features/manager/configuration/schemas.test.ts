@@ -11,9 +11,8 @@ import {
 } from './schemas';
 
 describe('configuration wardSchema', () => {
-  it('accepts a valid ward', () => {
+  it('accepts a valid ward (no ward_code input — it is derived from the name)', () => {
     const r = wardSchema.safeParse({
-      ward_code: 'CO',
       ward_name: 'Maple',
       // The form value is the immutable building_id slug.
       building_id: 'main',
@@ -24,7 +23,6 @@ describe('configuration wardSchema', () => {
 
   it('rejects a ward with no building selected', () => {
     const r = wardSchema.safeParse({
-      ward_code: 'CO',
       ward_name: 'Maple',
       building_id: '',
       seat_cap: 20,
@@ -32,10 +30,9 @@ describe('configuration wardSchema', () => {
     expect(r.success).toBe(false);
   });
 
-  it('rejects ward code with hyphens', () => {
+  it('rejects a ward with an empty name', () => {
     const r = wardSchema.safeParse({
-      ward_code: 'C-O',
-      ward_name: 'X',
+      ward_name: '   ',
       building_id: 'main',
       seat_cap: 1,
     });

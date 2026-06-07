@@ -411,7 +411,7 @@ describe('<BootstrapWizardPage />', () => {
 
   it('surfaces the ref-guard message when the mutation rejects with it', async () => {
     deleteBuildingMutate.mockRejectedValue(
-      new Error('Cannot delete: referenced by 1 ward(s) — Maple (CO)'),
+      new Error('Cannot delete: referenced by 1 ward(s) — Maple'),
     );
     useBuildingsMock.mockReturnValue(
       liveResult<Building>([
@@ -458,19 +458,48 @@ describe('<BootstrapWizardPage />', () => {
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('wizard-step-tab-3'));
-    await user.type(screen.getByLabelText(/Ward code/i), 'CO');
     await user.type(screen.getByLabelText(/Ward name/i), 'Maple');
     // The select value is the immutable slug, not the display name.
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByRole('button', { name: /Add ward/i }));
     await vi.waitFor(() => expect(addWardMutate).toHaveBeenCalled());
-    expect(addWardMutate).toHaveBeenCalledWith(
+    const arg = addWardMutate.mock.calls[0]![0];
+    expect(arg).toEqual(
       expect.objectContaining({
-        ward_code: 'CO',
+        ward_name: 'Maple',
         building_id: 'maple-building',
         building_name: 'Maple Building',
       }),
     );
+    // The code is derived by the mutation, not typed in the form.
+    expect(arg).not.toHaveProperty('ward_code');
+  });
+
+  it('blocks adding a ward whose name slugs to one already in the list', async () => {
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    // An existing ward whose doc id is the slug of "Maple Ward".
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'maple-ward',
+          ward_name: 'Maple Ward',
+          building_name: 'Maple Building',
+          seat_cap: 20,
+        } as Ward,
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    await user.type(screen.getByLabelText(/Ward name/i), 'Maple Ward');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByRole('button', { name: /Add ward/i }));
+    expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+    expect(addWardMutate).not.toHaveBeenCalled();
   });
 
   it('surfaces an error toast when manager delete fails', async () => {

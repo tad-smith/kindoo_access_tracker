@@ -1,12 +1,18 @@
 // `Ward` — `stakes/{stakeId}/wards/{wardCode}` doc per
-// `docs/firebase-schema.md` §4.2. Doc ID is the 2-letter `ward_code`
-// (matches the LCR Sheet tab name).
+// `docs/firebase-schema.md` §4.2. Doc ID is the `ward_code`.
 
 import type { ActorRef } from './actor.js';
 import type { TimestampLike } from './userIndex.js';
 
 export type Ward = {
-  /** `= doc.id`. The 2-letter LCR tab code. */
+  /**
+   * `= doc.id`. A slug derived from `ward_name` via `buildingSlug()` at
+   * create (`'3rd Ward'` → `'3rd-ward'`); never shown in the UI and
+   * never re-derived afterward. Legacy 2-letter LCR tab codes (e.g.
+   * `'CO'`) are retained as-is on existing wards. Immutable doc ID and a
+   * foreign key by value in `seat.scope` / `request.scope` / the
+   * `access.*` map keys.
+   */
   ward_code: string;
   /** Display name (`"3rd Ward"`, etc.). */
   ward_name: string;

@@ -234,7 +234,8 @@ test.describe('Bootstrap wizard gate', () => {
     // attempting to select it (the Firestore listener may still be
     // catching up after the Step 2 add).
     await expect(step3.getByRole('option', { name: 'Main Building' })).toHaveCount(1);
-    await step3.getByLabel(/^Ward code$/).fill('CO');
+    // The ward code is no longer a user input — it's derived from the
+    // name (`Maple Ward` → `maple-ward`) and never shown.
     await step3.getByLabel(/^Ward name$/).fill('Maple Ward');
     // The option value is the immutable building_id slug; select by label.
     await step3.locator('select').selectOption({ label: 'Main Building' });
@@ -242,9 +243,9 @@ test.describe('Bootstrap wizard gate', () => {
     await step3.getByRole('button', { name: /^Add ward$/ }).click();
 
     const list = page.getByTestId('bootstrap-wards-list');
-    await expect(list.getByText(/Maple Ward \(CO\)/)).toBeVisible();
-    await page.getByTestId('bootstrap-ward-delete-CO').click();
-    await expect(list.getByText(/Maple Ward \(CO\)/)).toHaveCount(0);
+    await expect(list.getByText('Maple Ward')).toBeVisible();
+    await page.getByTestId('bootstrap-ward-delete-maple-ward').click();
+    await expect(list.getByText('Maple Ward')).toHaveCount(0);
   });
 
   test('wizard refuses to delete a building still referenced by a ward', async ({ page }) => {
@@ -282,15 +283,13 @@ test.describe('Bootstrap wizard gate', () => {
     await page.getByTestId('wizard-step-tab-3').click();
     const step3 = page.getByTestId('wizard-step-3');
     await expect(step3.getByRole('option', { name: 'Maple Building' })).toHaveCount(1);
-    await step3.getByLabel(/^Ward code$/).fill('CO');
+    // The ward code is derived from the name (`Maple Ward` → `maple-ward`).
     await step3.getByLabel(/^Ward name$/).fill('Maple Ward');
     // The option value is the immutable building_id slug; select by label.
     await step3.locator('select').selectOption({ label: 'Maple Building' });
     await step3.getByLabel(/^Seat cap$/).fill('20');
     await step3.getByRole('button', { name: /^Add ward$/ }).click();
-    await expect(
-      page.getByTestId('bootstrap-wards-list').getByText(/Maple Ward \(CO\)/),
-    ).toBeVisible();
+    await expect(page.getByTestId('bootstrap-wards-list').getByText('Maple Ward')).toBeVisible();
 
     // Step 2 — attempt to delete the referenced building.
     await page.getByTestId('wizard-step-tab-2').click();

@@ -58,9 +58,8 @@ describe('buildingSchema', () => {
 });
 
 describe('wardSchema', () => {
-  it('accepts a valid ward', () => {
+  it('accepts a valid ward (no ward_code input — it is derived from the name)', () => {
     const r = wardSchema.safeParse({
-      ward_code: 'CO',
       ward_name: 'Maple',
       // The form value is the immutable building_id slug.
       building_id: 'main',
@@ -68,10 +67,9 @@ describe('wardSchema', () => {
     });
     expect(r.success).toBe(true);
   });
-  it('rejects ward code with non-alphanumeric chars', () => {
+  it('rejects an empty ward name', () => {
     const r = wardSchema.safeParse({
-      ward_code: 'C-O',
-      ward_name: 'X',
+      ward_name: '   ',
       building_id: 'main',
       seat_cap: 1,
     });
@@ -79,7 +77,6 @@ describe('wardSchema', () => {
   });
   it('rejects an empty building reference', () => {
     const r = wardSchema.safeParse({
-      ward_code: 'CO',
       ward_name: 'X',
       building_id: '',
       seat_cap: 1,

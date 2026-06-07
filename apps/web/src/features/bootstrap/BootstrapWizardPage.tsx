@@ -63,7 +63,7 @@ import { Select } from '../../components/ui/Select';
 import { ToastHost } from '../../components/ui/Toast';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
-import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
+import { canonicalEmail as canonicalEmailFn, buildingSlug } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 
 type StepNumber = 1 | 2 | 3 | 4;
@@ -435,9 +435,9 @@ function Step3Wards() {
 
   const form = useForm<WardForm>({
     resolver: zodResolver(wardSchema),
-    defaultValues: { ward_code: '', ward_name: '', building_id: '', seat_cap: 20 },
+    defaultValues: { ward_name: '', building_id: '', seat_cap: 20 },
   });
-  const { register, handleSubmit, reset, formState } = form;
+  const { register, handleSubmit, reset, setError, formState } = form;
 
   const buildingOptions = buildings.data ?? [];
 
@@ -447,8 +447,19 @@ function Step3Wards() {
       // building's current display name and write both fields.
       const selected = buildingOptions.find((b) => b.building_id === input.building_id);
       if (!selected) throw new Error('Selected building no longer exists.');
+      // The ward name is now the only visible identifier. Derive the slug
+      // and reject inline a name that collides with a ward already added —
+      // the mutation enforces the same rule server-side, but this surfaces
+      // the error on the field for immediate feedback.
+      const code = buildingSlug(input.ward_name.trim());
+      if ((wards.data ?? []).some((w) => w.ward_code === code)) {
+        setError('ward_name', {
+          type: 'manual',
+          message: `A ward named "${input.ward_name.trim()}" already exists.`,
+        });
+        return;
+      }
       await addMutation.mutateAsync({
-        ward_code: input.ward_code,
         ward_name: input.ward_name,
         building_id: input.building_id,
         building_name: selected.building_name,
@@ -469,10 +480,7 @@ function Step3Wards() {
         {(wards.data ?? []).map((w) => (
           <li key={w.ward_code}>
             <span>
-              <strong>
-                {w.ward_name} ({w.ward_code})
-              </strong>{' '}
-              — building: {w.building_name} · cap {w.seat_cap}
+              <strong>{w.ward_name}</strong> — building: {w.building_name} · cap {w.seat_cap}
             </span>
             <Button
               variant="danger"
@@ -490,15 +498,6 @@ function Step3Wards() {
         ))}
       </ul>
       <form onSubmit={handleSubmit(onAdd)}>
-        <label>
-          Ward code
-          <Input {...register('ward_code')} placeholder="CO" maxLength={8} />
-        </label>
-        {formState.errors.ward_code ? (
-          <p role="alert" className="kd-form-error">
-            {formState.errors.ward_code.message}
-          </p>
-        ) : null}
         <label>
           Ward name
           <Input {...register('ward_name')} placeholder="Maple Ward" />
