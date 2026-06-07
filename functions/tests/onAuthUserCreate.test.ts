@@ -7,14 +7,58 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { UserRecord } from 'firebase-admin/auth';
 import { onAuthUserCreate } from '../src/triggers/onAuthUserCreate.js';
 import { resetStakeIdsCache } from '../src/lib/stakeIds.js';
-import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.js';
+import {
+  clearEmulators,
+  hasEmulators,
+  hasFunctionsEmulator,
+  requireEmulators,
+  waitFor,
+} from './lib/emulator.js';
 
 // `.run` is documented for v2 CloudFunctions and exists at runtime for
 // v1 too (see firebase-functions/v1/cloud-functions). The TypeScript
 // types for v1 mark it private, so we cast through `unknown` to call it.
 type V1Runnable = { run: (data: UserRecord, context: unknown) => Promise<unknown> };
-const runOnAuthUserCreate = (user: UserRecord) =>
-  (onAuthUserCreate as unknown as V1Runnable).run(user, { eventId: 't', timestamp: '' });
+
+// Run the handler IN-PROCESS as the authoritative, last claim writer.
+//
+// `auth.createUser(...)` also fires the DEPLOYED `onAuthUserCreate` v1
+// auth trigger whenever the Functions emulator is up (the CI integration
+// config). That deployed invocation runs `applyFullClaims` ASYNCHRONOUSLY
+// in the functions-emulator process — a few hundred ms later — and can
+// land AFTER this in-process run, clobbering the claims we just resolved.
+// Worse, the deployed process has its own module-scope `getStakeIds`
+// cache that `resetStakeIdsCache()` (vitest-process only) can't clear, so
+// a stale cache there resolves NO stakes and stamps a baseline
+// `{ canonical }` block over our full one (the "expected stakes.csnorth
+// missing" flake). Same class as the #226 applyClaims race.
+//
+// Fix mirrors #226: wait for the deployed trigger's one write to settle
+// FIRST (its write lands exactly once per `createUser`), then run the
+// handler in-process so OUR resolution — done in the cache-fresh vitest
+// process — is the final write and can't be overwritten. Skipped when the
+// Functions emulator isn't running (`test:integration:local`): the
+// deployed trigger never fires there, so the in-process run is already the
+// only writer.
+async function runOnAuthUserCreate(user: UserRecord): Promise<void> {
+  if (await hasFunctionsEmulator()) {
+    const { auth } = requireEmulators();
+    await waitFor(async () => {
+      let u: UserRecord;
+      try {
+        u = await auth.getUser(user.uid);
+      } catch {
+        // No such user (e.g. the synthetic phone-only record that was
+        // never `createUser`'d) → no deployed trigger fired → nothing to
+        // wait for. Treat as settled.
+        return true;
+      }
+      const claims = (u.customClaims ?? {}) as { canonical?: string };
+      return typeof claims.canonical === 'string';
+    }, 20_000);
+  }
+  await (onAuthUserCreate as unknown as V1Runnable).run(user, { eventId: 't', timestamp: '' });
+}
 
 describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
   beforeAll(async () => {
