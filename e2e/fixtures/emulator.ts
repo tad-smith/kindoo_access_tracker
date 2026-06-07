@@ -10,10 +10,17 @@
 //
 // Project ID: matches `VITE_FIREBASE_PROJECT_ID` (defaults to
 // `kindoo-staging`); the emulators namespace data per project.
+//
+// Project + emulator hosts are env-overridable (defaults preserve the
+// shared-stack behaviour). Pointing a run at a unique project / alternate
+// ports gives it an isolated namespace, so a parallel run's
+// `clearAuth()` / `clearFirestore()` can't wipe this run's seeded data
+// mid-test. Set `E2E_FIREBASE_PROJECT`, `E2E_AUTH_HOST`,
+// `E2E_FIRESTORE_HOST` to override.
 
-const PROJECT_ID = 'kindoo-staging';
-const AUTH_HOST = '127.0.0.1:9099';
-const FIRESTORE_HOST = '127.0.0.1:8080';
+const PROJECT_ID = process.env.E2E_FIREBASE_PROJECT ?? 'kindoo-staging';
+const AUTH_HOST = process.env.E2E_AUTH_HOST ?? '127.0.0.1:9099';
+const FIRESTORE_HOST = process.env.E2E_FIRESTORE_HOST ?? '127.0.0.1:8080';
 
 /**
  * Reset all Auth emulator state. The emulator's clear endpoint deletes

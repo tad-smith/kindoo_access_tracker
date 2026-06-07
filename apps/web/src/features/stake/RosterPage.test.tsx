@@ -836,17 +836,15 @@ describe('<StakeRosterPage />', () => {
       const barNames = Array.from(container.querySelectorAll('.utilization-name')).map(
         (el) => el.textContent,
       );
-      expect(barNames).toEqual(expect.arrayContaining(['Stake Total', 'Stake Choir', 'Youth Program']));
+      expect(barNames).toEqual(
+        expect.arrayContaining(['Stake Total', 'Stake Choir', 'Youth Program']),
+      );
       // Counts (un-prefixed) land in the right cells.
       const barCounts = Array.from(container.querySelectorAll('.utilization-label')).map(
         (el) => el.textContent,
       );
       expect(barCounts).toEqual(
-        expect.arrayContaining([
-          '3 / 200 seats used',
-          '2 / 5 seats used',
-          '1 / 10 seats used',
-        ]),
+        expect.arrayContaining(['3 / 200 seats used', '2 / 5 seats used', '1 / 10 seats used']),
       );
       // Never the old combined "{name}: {count}" string.
       expect(screen.queryByText(/Stake Total: /)).toBeNull();
@@ -862,9 +860,7 @@ describe('<StakeRosterPage />', () => {
       const barCounts = Array.from(container.querySelectorAll('.utilization-label')).map(
         (el) => el.textContent,
       );
-      expect(barCounts).toEqual(
-        expect.arrayContaining(['0 / 5 seats used', '0 / 10 seats used']),
-      );
+      expect(barCounts).toEqual(expect.arrayContaining(['0 / 5 seats used', '0 / 10 seats used']));
     });
 
     it('leaves the stake bar unlabelled when the stake has no organizations', () => {
