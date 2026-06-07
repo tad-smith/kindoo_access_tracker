@@ -60,7 +60,6 @@ test.describe('Firestore SDK panic resilience', () => {
     // The expected post-fix outcome: the gate sees `stake.status ===
     // 'error'` and routes to NotAuthorized; the boundary never renders.
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: true,
@@ -112,7 +111,6 @@ test.describe('Firestore SDK panic resilience', () => {
     // though a snapshot listener is in flight against a partially-
     // permitted set of paths.
     await writeDoc('stakes/csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'Test Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: false,

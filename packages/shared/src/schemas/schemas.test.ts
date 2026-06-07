@@ -135,7 +135,7 @@ describe('platformAuditLogSchema', () => {
       entity_type: 'stake' as const,
       entity_id: 'csnorth',
       before: null,
-      after: { stake_id: 'csnorth' },
+      after: { stake_name: 'CS North Stake' },
       ttl: T,
     };
     expect(platformAuditLogSchema.parse(seed)).toEqual(seed);
@@ -145,7 +145,6 @@ describe('platformAuditLogSchema', () => {
 describe('stakeSchema', () => {
   it('parses a representative entry', () => {
     const seed = {
-      stake_id: 'csnorth',
       stake_name: 'CS North Stake',
       created_at: T,
       created_by: 'admin@kindoo.example',
@@ -164,7 +163,6 @@ describe('stakeSchema', () => {
 
   it('parses with the operational over-cap field populated', () => {
     const seed = {
-      stake_id: 'csnorth',
       stake_name: 'CS North Stake',
       created_at: T,
       created_by: 'admin@kindoo.example',
@@ -183,7 +181,6 @@ describe('stakeSchema', () => {
 
   it('rejects a missing required field (timezone)', () => {
     const seed = {
-      stake_id: 'csnorth',
       stake_name: 'CS North Stake',
       created_at: T,
       created_by: 'admin@kindoo.example',
@@ -1271,7 +1268,7 @@ describe('auditLogSchema', () => {
       entity_type: 'system' as const,
       entity_id: 'import-1',
       before: null,
-      after: { stake_id: 'csnorth' },
+      after: { stake_name: 'CS North Stake' },
       ttl: T,
     };
     expect(auditLogSchema.parse(seed)).toEqual(seed);

@@ -11,20 +11,32 @@ import { useMemo } from 'react';
 import { httpsCallable } from 'firebase/functions';
 import { useMutation } from '@tanstack/react-query';
 import type { CreateStakeInput, CreateStakeResult, Stake } from '@kindoo/shared';
+import type { Query } from 'firebase/firestore';
 import { useFirestoreCollection } from '../../lib/data';
 import { db, functions } from '../../lib/firebase';
 import { stakesCol } from '../../lib/docs';
 
 /**
- * Subscribe to every stake parent doc. Restricted by the
- * `isPlatformSuperadmin()` clause on the `stakes/{stakeId}` rule —
- * non-superadmin reads of this query are denied. Callers must already
- * be inside the Superadmin gate (`useRequireRole('platformSuperadmin')`
- * or the equivalent render-level check).
+ * A `Stake` doc body plus its Firestore doc id. Stake identity is the
+ * doc id (the slug); the persisted body carries no id field. This is a
+ * read-layer augmentation — `useStakes()` injects `id` from `doc.id`
+ * via `useFirestoreCollection`'s `idField` — NOT part of the zod schema.
+ */
+export type StakeWithId = Stake & { id: string };
+
+/**
+ * Subscribe to every stake parent doc, each augmented with its doc id
+ * as `id`. Restricted by the `isPlatformSuperadmin()` clause on the
+ * `stakes/{stakeId}` rule — non-superadmin reads of this query are
+ * denied. Callers must already be inside the Superadmin gate
+ * (`useRequireRole('platformSuperadmin')` or the equivalent
+ * render-level check).
  */
 export function useStakes() {
-  const q = useMemo(() => stakesCol(db), []);
-  return useFirestoreCollection<Stake>(q);
+  // The collection ref is typed `Query<Stake>`; the read layer augments
+  // each doc with `id` (= doc.id), so the result type is `StakeWithId`.
+  const q = useMemo(() => stakesCol(db) as unknown as Query<StakeWithId>, []);
+  return useFirestoreCollection<StakeWithId>(q, { idField: 'id' });
 }
 
 /**

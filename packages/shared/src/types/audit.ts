@@ -59,7 +59,7 @@ export type AuditLog = {
 
   action: AuditAction;
   entity_type: AuditEntityType;
-  /** Canonical email for seat/access/manager; UUID for request; stake_id for stake. */
+  /** Canonical email for seat/access/manager; UUID for request; slug (doc id) for stake. */
   entity_id: string;
   /** Denorm — the user this row's underlying doc is *about*. Absent for `entity_type='system'`. */
   member_canonical?: string;

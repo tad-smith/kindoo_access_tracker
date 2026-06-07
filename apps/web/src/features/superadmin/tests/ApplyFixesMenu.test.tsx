@@ -8,7 +8,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSyncExternalStore } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Stake, TimestampLike } from '@kindoo/shared';
+import type { TimestampLike } from '@kindoo/shared';
+import type { StakeWithId } from '../hooks';
 
 const mutateAsyncMock = vi.fn<(input: { callable: string; stakeId: string }) => Promise<unknown>>();
 const resetMock = vi.fn();
@@ -55,11 +56,11 @@ function ts(iso: string): TimestampLike {
   };
 }
 
-function makeStake(overrides: Partial<Stake> = {}): Stake {
+function makeStake(overrides: Partial<StakeWithId> = {}): StakeWithId {
   const actor = { email: 'super@example.com', canonical: 'super@example.com' };
   const created = ts('2026-04-01T12:00:00Z');
   return {
-    stake_id: 'csnorth',
+    id: 'csnorth',
     stake_name: 'CS North Stake',
     created_at: created,
     created_by: 'super@example.com',
@@ -103,9 +104,9 @@ function stubClipboard(): ReturnType<typeof vi.fn> {
   return writeText;
 }
 
-async function openExplain(user: ReturnType<typeof userEvent.setup>, stake: Stake) {
+async function openExplain(user: ReturnType<typeof userEvent.setup>, stake: StakeWithId) {
   await user.selectOptions(
-    screen.getByTestId(`apply-fixes-select-${stake.stake_id}`),
+    screen.getByTestId(`apply-fixes-select-${stake.id}`),
     'backfill-kindoo-site-id',
   );
 }
@@ -114,7 +115,7 @@ describe('<ApplyFixesMenu />', () => {
   it('lists the registered fixes as dropdown options scoped to the stake', () => {
     const stake = makeStake();
     render(<ApplyFixesMenu stake={stake} />);
-    const select = screen.getByTestId(`apply-fixes-select-${stake.stake_id}`);
+    const select = screen.getByTestId(`apply-fixes-select-${stake.id}`);
     expect(select).toHaveAccessibleName(`Apply fix to ${stake.stake_name}`);
     expect(screen.getByRole('option', { name: 'Backfill Kindoo site IDs' })).toBeInTheDocument();
   });
@@ -144,7 +145,7 @@ describe('<ApplyFixesMenu />', () => {
   });
 
   it('invokes the fix callable with the stake id when Apply Fix is clicked', async () => {
-    const stake = makeStake({ stake_id: 'eaststake' });
+    const stake = makeStake({ id: 'eaststake' });
     mutateAsyncMock.mockResolvedValueOnce({ ok: true, seats_total: 1, seats_updated: 0 });
     render(<ApplyFixesMenu stake={stake} />);
     const user = userEvent.setup();
@@ -155,6 +156,45 @@ describe('<ApplyFixesMenu />', () => {
       callable: 'backfillKindooSiteId',
       stakeId: 'eaststake',
     });
+  });
+
+  it('invokes the callable with the doc-id-derived stake id for a bootstrap stake', async () => {
+    // `useStakes()` injects the doc id as `stake.id`, so even the
+    // hand-seeded bootstrap stake (whose stored doc carries no id field)
+    // arrives here with `id` set. The menu must pass that defined id
+    // straight through — never `undefined`.
+    const stake = makeStake({ id: 'csnorth', stake_name: 'CS North Stake' });
+    mutateAsyncMock.mockResolvedValueOnce({ ok: true });
+    render(<ApplyFixesMenu stake={stake} />);
+    const user = userEvent.setup();
+    await openExplain(user, stake);
+
+    // The Explain dialog names the target stake (slug-backed row).
+    expect(screen.getByTestId('apply-fixes-target')).toHaveTextContent('CS North Stake');
+
+    await user.click(screen.getByTestId('apply-fixes-apply'));
+    expect(mutateAsyncMock).toHaveBeenCalledWith({
+      callable: 'backfillKindooSiteId',
+      stakeId: 'csnorth',
+    });
+  });
+
+  it('surfaces an error without invoking the callable when the stake id is missing', async () => {
+    // Defense-in-depth: a malformed stake whose `id` is falsy must not
+    // send `stakeId: undefined` to the callable (the server rejects it
+    // with a cryptic `invalid-argument: stakeId required`). The Result
+    // dialog shows a clear error instead.
+    const stake = makeStake({ id: '' });
+    render(<ApplyFixesMenu stake={stake} />);
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByTestId('apply-fixes-select-'), 'backfill-kindoo-site-id');
+    await user.click(screen.getByTestId('apply-fixes-apply'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('apply-fixes-result-error')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('apply-fixes-error-message')).toHaveTextContent(/missing stake id/i);
+    expect(mutateAsyncMock).not.toHaveBeenCalled();
   });
 
   it('renders the result generically as key/value rows plus the warnings list on success', async () => {

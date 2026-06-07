@@ -62,7 +62,6 @@ async function signInAsManager(page: Page, email: string): Promise<void> {
  */
 async function seedSetupCompleteStake(over: Record<string, unknown> = {}): Promise<void> {
   await writeDoc('stakes/csnorth', {
-    stake_id: 'csnorth',
     stake_name: 'Test Stake',
     bootstrap_admin_email: 'admin@example.com',
     setup_complete: true,
@@ -173,10 +172,17 @@ test.describe('Phase 5 shell + deep-links', () => {
 
     // No horizontal scroll: documentElement.scrollWidth must not
     // exceed clientWidth at the configured viewport.
-    const overflow = await page.evaluate(() => {
+    const { overflow, offenders } = await page.evaluate(() => {
       const doc = document.documentElement;
-      return doc.scrollWidth - doc.clientWidth;
+      const vw = doc.clientWidth;
+      const offenders = [...doc.querySelectorAll('*')]
+        .filter((el) => el.getBoundingClientRect().right > vw + 0.5)
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return `${el.tagName.toLowerCase()}${el.className ? '.' + String(el.className).split(' ').join('.') : ''} right=${r.right.toFixed(1)} w=${r.width.toFixed(1)} text=${(el.textContent ?? '').trim().slice(0, 40)}`;
+        });
+      return { overflow: doc.scrollWidth - doc.clientWidth, offenders };
     });
-    expect(overflow).toBeLessThanOrEqual(0);
+    expect(overflow, `offenders:\n${offenders.join('\n')}`).toBeLessThanOrEqual(0);
   });
 });

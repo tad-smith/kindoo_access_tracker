@@ -103,7 +103,6 @@ function ts(): Ward['created_at'] {
 
 function stake(overrides: Partial<Stake> = {}): Stake {
   return {
-    stake_id: 'csnorth',
     stake_name: 'Colorado Springs North Stake',
     created_at: ts(),
     created_by: 'admin@csnorth.org',

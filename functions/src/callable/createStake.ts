@@ -158,8 +158,7 @@ export const createStake = onCall(
       }
 
       const stakeBody = {
-        // Identity
-        stake_id: slug,
+        // Identity is the doc id (the slug); no stored id field.
         stake_name: stakeName,
         // Setup
         bootstrap_admin_email: bootstrapAdminEmail,

@@ -210,7 +210,8 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     const snap = await db.doc('stakes/cottonwood-south-stake').get();
     expect(snap.exists).toBe(true);
     const stake = snap.data() as Stake;
-    expect(stake.stake_id).toBe('cottonwood-south-stake');
+    // Identity is the doc id; the body carries no stored `stake_id` field.
+    expect('stake_id' in stake).toBe(false);
     expect(stake.stake_name).toBe('Cottonwood South Stake');
     expect(stake.bootstrap_admin_email).toBe('admin@example.com');
     expect(stake.setup_complete).toBe(false);
@@ -324,7 +325,6 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     // care about its content — only that `tx.get(stakeRef).exists` is
     // true.
     await db.doc('stakes/cottonwood-south-stake').set({
-      stake_id: 'cottonwood-south-stake',
       stake_name: 'Pre-existing Cottonwood South Stake',
     });
 
@@ -401,8 +401,9 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
 
     // Spot-check the identity / setup / default fields explicitly so a
     // future stake-schema addition doesn't silently slip out of the
-    // audit snapshot.
-    expect(after['stake_id']).toBe('audit-stake');
+    // audit snapshot. Identity is the doc id, surfaced as `entity_id`
+    // above — the body carries no stored id field.
+    expect('stake_id' in after).toBe(false);
     expect(after['stake_name']).toBe('Audit Stake');
     expect(after['bootstrap_admin_email']).toBe('admin@example.com');
     expect(after['setup_complete']).toBe(false);

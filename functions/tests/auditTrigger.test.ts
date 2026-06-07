@@ -639,7 +639,6 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     // `platformAuditLog` row the callable writes directly. Distinct
     // from `update_stake`, which fires on any subsequent edit.
     const after = {
-      stake_id: STAKE_ID,
       stake_name: 'CS North Stake',
       bootstrap_admin_email: 'admin@example.com',
       setup_complete: false,
@@ -656,10 +655,10 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     const r = rows[0]!;
     expect(r.action).toBe('create_stake');
     expect(r.entity_type).toBe('stake');
+    // entity_id is the doc id (the stakeId param), not a body field.
     expect(r.entity_id).toBe(STAKE_ID);
     expect(r.before).toBeNull();
     expect(r.after).toMatchObject({
-      stake_id: STAKE_ID,
       stake_name: 'CS North Stake',
       setup_complete: false,
     });
@@ -668,7 +667,6 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
 
   it('stake update emits update_stake; setup_complete flip emits setup_complete', async () => {
     const before = {
-      stake_id: STAKE_ID,
       setup_complete: false,
       stake_name: 'Stake A',
       lastActor: lastActor('admin@gmail.com'),
@@ -695,7 +693,6 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
 
   it('stake.kindoo_config write produces an audit row with the new field in the diff', async () => {
     const before = {
-      stake_id: STAKE_ID,
       setup_complete: true,
       stake_name: 'CS North Stake',
       lastActor: lastActor('admin@gmail.com'),
@@ -843,7 +840,6 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
 
   it('update that leaves lastActor + last_modified_at unchanged records the OutOfBand sentinel actor', async () => {
     const before = {
-      stake_id: STAKE_ID,
       setup_complete: true,
       stake_name: 'CS North Stake',
       kindoo_expected_site_name: 'STAGING - Colorado Springs North Stake',

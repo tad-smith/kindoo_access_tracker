@@ -105,7 +105,6 @@ function stakeResult(data: Partial<Stake> | undefined) {
 
 function makeStake(overrides: Partial<Stake> = {}): Partial<Stake> {
   return {
-    stake_id: 'csnorth',
     stake_name: '',
     stake_seat_cap: 0,
     bootstrap_admin_email: 'admin@example.com',

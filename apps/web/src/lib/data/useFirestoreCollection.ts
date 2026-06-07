@@ -36,7 +36,20 @@ type CollectionCacheValue<T> = { value: readonly T[] | undefined };
 export type UseFirestoreCollectionOptions<T> = Omit<
   UseQueryOptions<CollectionCacheValue<T>, FirestoreError, CollectionCacheValue<T>>,
   'queryKey' | 'queryFn' | 'enabled'
->;
+> & {
+  /**
+   * Merge each document's Firestore doc id into the mapped object under
+   * this key (`{ ...d.data(), [idField]: d.id }`). The doc id WINS over
+   * any stored field of the same name, so it stays authoritative even if
+   * a stale/wrong value is persisted.
+   *
+   * Use this for docs whose identity is the doc id with no stored id
+   * field — e.g. `stakes/{slug}`: the `Stake` body carries no id, so
+   * `useStakes()` passes `{ idField: 'id' }` to surface the slug
+   * (`stake.id`) for keys, deep-links, and callable args.
+   */
+  idField?: keyof T & string;
+};
 
 export type FirestoreCollectionResult<T> = {
   data: readonly T[] | undefined;
@@ -60,6 +73,10 @@ export function useFirestoreCollection<T>(
 ): FirestoreCollectionResult<T> {
   const queryClient = useQueryClient();
   const [listenerError, setListenerError] = useState<FirestoreError | null>(null);
+
+  // `idField` is not a TanStack option; pull it out so it isn't spread
+  // into `useQuery`, and so the snapshot effect can depend on it.
+  const { idField, ...queryOptions } = options ?? {};
 
   const key = query ? queryKey(query) : NULL_QUERY_KEY;
 
@@ -89,7 +106,12 @@ export function useFirestoreCollection<T>(
         query,
         (snapshot) => {
           try {
-            const next = snapshot.docs.map((d: QueryDocumentSnapshot<T>) => d.data());
+            // Doc id is authoritative when `idField` is set: it wins over
+            // any stored field of the same name (identity is the doc id;
+            // any persisted value of the same name can't mislead callers).
+            const next = snapshot.docs.map((d: QueryDocumentSnapshot<T>) =>
+              idField ? { ...d.data(), [idField]: d.id } : d.data(),
+            );
             const cached = queryClient.getQueryData<CollectionCacheValue<T>>(queryKey(query));
             const prev = cached?.value;
             // Preserve referential stability when nothing changed at all.
@@ -131,7 +153,7 @@ export function useFirestoreCollection<T>(
         });
       }
     };
-  }, [query, queryClient]);
+  }, [query, queryClient, idField]);
 
   // Placeholder queryFn that never resolves; the listener is the
   // source of truth. See `useFirestoreDoc.ts` for why a resolving
@@ -145,7 +167,7 @@ export function useFirestoreCollection<T>(
     refetchOnReconnect: false,
     staleTime: Infinity,
     gcTime: Infinity,
-    ...options,
+    ...queryOptions,
   });
 
   if (listenerError) {

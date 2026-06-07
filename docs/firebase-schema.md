@@ -128,8 +128,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 
 ```typescript
 {
-  // Identity
-  stake_id: string;                    // = doc.id
+  // Identity is the doc id (the slug); there is no stored id field.
   stake_name: string;                  // display name
   created_at: Timestamp;
   created_by: string;                  // superadmin canonical email
@@ -483,7 +482,7 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
     | 'import_start' | 'import_end' | 'over_cap_warning' | 'email_send_failed';
 
   entity_type: 'seat' | 'request' | 'access' | 'kindooManager' | 'stake' | 'system';
-  entity_id: string;           // canonical email for seat/access/manager; UUID for request; stake_id for stake
+  entity_id: string;           // canonical email for seat/access/manager; UUID for request; slug (doc id) for stake
   member_canonical?: string;   // denormalized; cross-collection per-user filter
 
   before: object | null;

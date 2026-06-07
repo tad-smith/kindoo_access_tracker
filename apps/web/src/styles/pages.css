@@ -332,6 +332,16 @@
   margin: 0 0 16px;
 }
 
+/* Grid items default to `min-width: auto` (= min-content), so an
+   unbreakable token in a card (e.g. a long `key=value` audit summary)
+   expands its `1fr` track past the viewport and forces horizontal
+   scroll. Pinning the items to `min-width: 0` lets the track shrink to
+   the available width regardless of content; the long token then wraps
+   instead of overflowing. */
+.kd-dashboard-grid > * {
+  min-width: 0;
+}
+
 @media (max-width: 640px) {
   .kd-dashboard-grid {
     grid-template-columns: 1fr;
@@ -357,6 +367,11 @@
   justify-content: space-between;
   gap: 8px;
   align-items: baseline;
+  /* Long unbreakable audit tokens (e.g. `key=email@host`) must wrap
+     inside the card rather than force the row — and the grid track —
+     wider than the viewport. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .kd-dashboard-card-total {

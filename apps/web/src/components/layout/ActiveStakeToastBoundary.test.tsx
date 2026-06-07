@@ -114,7 +114,6 @@ describe('ActiveStakeToastBoundary', () => {
     // stake doc and substitutes the display name into the toast.
     window.sessionStorage.setItem('kindoo.activeStake', 'foreign');
     stakeDocFixture.byId.set('csnorth', {
-      stake_id: 'csnorth',
       stake_name: 'CS North Stake',
     });
     render(
@@ -138,7 +137,8 @@ describe('ActiveStakeToastBoundary', () => {
     // The doc exists but stake_name is absent — the boundary uses the
     // slug as the substitution.
     window.sessionStorage.setItem('kindoo.activeStake', 'foreign');
-    stakeDocFixture.byId.set('csnorth', { stake_id: 'csnorth' });
+    // Doc exists but carries no stake_name — the boundary uses the slug.
+    stakeDocFixture.byId.set('csnorth', {});
     render(
       <>
         <ProbeRunningHook />
