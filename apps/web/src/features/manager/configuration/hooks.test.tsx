@@ -19,6 +19,7 @@ import {
   buildingRenameBlocker,
   duplicateBuildingNameBlocker,
   duplicateOrganizationNameBlocker,
+  duplicateWardNameBlocker,
   kindooSiteDeleteBlocker,
   organizationDeleteBlocker,
 } from './hooks';
@@ -103,6 +104,38 @@ describe('configuration buildingDeleteBlocker', () => {
     // The ward code is no longer surfaced in the UI.
     expect(msg).not.toContain('(CO)');
     expect(msg).not.toContain('(PR)');
+  });
+});
+
+describe('configuration duplicateWardNameBlocker', () => {
+  // A legacy ward stored at doc id 'CO' with display name 'Maple' — the
+  // case the slug-only check misses (a new 'Maple' slugs to 'maple', not
+  // 'CO', so only a name-based guard catches it).
+  const wards = [
+    ward({ ward_code: 'CO', ward_name: 'Maple' }),
+    ward({ ward_code: 'PR', ward_name: 'Prairie' }),
+  ];
+
+  it('returns null when the name is free', () => {
+    expect(duplicateWardNameBlocker('Oak', wards, undefined)).toBeNull();
+  });
+
+  it('blocks a new ward whose name matches a legacy 2-letter-coded ward', () => {
+    const msg = duplicateWardNameBlocker('Maple', wards, undefined);
+    expect(msg).toContain('Ward names must be unique');
+  });
+
+  it('blocks a rename onto another existing ward name', () => {
+    // Editing PR (Prairie) and renaming it to Maple must be blocked.
+    expect(duplicateWardNameBlocker('Maple', wards, 'PR')).not.toBeNull();
+  });
+
+  it('ignores the ward being edited (same code)', () => {
+    expect(duplicateWardNameBlocker('Maple', wards, 'CO')).toBeNull();
+  });
+
+  it('matches case-insensitively and trims', () => {
+    expect(duplicateWardNameBlocker('  maple ', wards, undefined)).not.toBeNull();
   });
 });
 
@@ -789,6 +822,42 @@ describe('useUpsertWardMutation', () => {
         seat_cap: 20,
       }),
     ).rejects.toThrow(/already exists/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a create whose name matches a legacy 2-letter-coded ward (slug differs)', async () => {
+    // No doc exists at the derived slug `maple`, but a legacy ward named
+    // "Maple" lives at doc id `CO` — the name guard must still block it.
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        ward_name: 'Maple',
+        building_id: 'main',
+        building_name: 'Main',
+        seat_cap: 20,
+        existingWards: [ward({ ward_code: 'CO', ward_name: 'Maple' })],
+      }),
+    ).rejects.toThrow(/Ward names must be unique/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a rename onto another existing ward name (edit path)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        ward_code: 'PR',
+        ward_name: 'Maple',
+        building_id: 'main',
+        building_name: 'Main',
+        seat_cap: 20,
+        existingWards: [
+          ward({ ward_code: 'CO', ward_name: 'Maple' }),
+          ward({ ward_code: 'PR', ward_name: 'Prairie' }),
+        ],
+      }),
+    ).rejects.toThrow(/Ward names must be unique/i);
     expect(setDocMock).not.toHaveBeenCalled();
   });
 

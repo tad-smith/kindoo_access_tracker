@@ -13,11 +13,11 @@
 // Every list-bearing tab follows the same pattern: a top-right "Add X"
 // button opens a modal with the same react-hook-form + zod form used
 // for create. Wards / Buildings rows expose a per-row Edit button that
-// opens the modal pre-populated. Wards: `ward_code` is read-only when
-// editing (it's the doc id). Buildings: `building_id` is never shown
-// (it's a slug derived from `building_name` server-side). Kindoo Site
-// id is similarly slugged from `display_name` at create time and pinned
-// for the doc's life.
+// opens the modal pre-populated. Wards: `ward_code` is never shown — it's
+// a slug derived from `ward_name` at create and pinned as the doc id.
+// Buildings: `building_id` is never shown (it's a slug derived from
+// `building_name` server-side). Kindoo Site id is similarly slugged from
+// `display_name` at create time and pinned for the doc's life.
 //
 // Buildings carry a Kindoo Site selector in their Edit dialog; a ward's
 // site is derived from its assigned building, so wards have no site
@@ -192,7 +192,10 @@ function WardsTab() {
   );
 
   const sorted = useMemo(
-    () => [...(wards.data ?? [])].sort((a, b) => a.ward_code.localeCompare(b.ward_code)),
+    // Sort by the display name — the code is hidden, and legacy uppercase
+    // codes would otherwise sort before slug-derived lowercase ones,
+    // making the visible order look arbitrary.
+    () => [...(wards.data ?? [])].sort((a, b) => a.ward_name.localeCompare(b.ward_name)),
     [wards.data],
   );
 
@@ -270,13 +273,15 @@ function WardsTab() {
           if (!selected) throw new Error('Selected building no longer exists.');
           // On EDIT pass the existing doc id through so the mutation
           // targets the same ward; on CREATE omit it so the mutation
-          // derives the code from the name.
+          // derives the code from the name. The live wards snapshot drives
+          // the unique-display-name guard.
           await upsert.mutateAsync({
             ...(existingWardCode !== undefined ? { ward_code: existingWardCode } : {}),
             ward_name: input.ward_name,
             building_id: input.building_id,
             building_name: selected.building_name,
             seat_cap: input.seat_cap,
+            existingWards: wards.data ?? [],
           });
           toast('Ward saved.', 'success');
         }}

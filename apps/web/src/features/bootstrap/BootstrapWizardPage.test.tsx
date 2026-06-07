@@ -475,17 +475,19 @@ describe('<BootstrapWizardPage />', () => {
     expect(arg).not.toHaveProperty('ward_code');
   });
 
-  it('blocks adding a ward whose name slugs to one already in the list', async () => {
+  it('blocks adding a ward whose name matches one already in the list (legacy code)', async () => {
     useBuildingsMock.mockReturnValue(
       liveResult<Building>([
         { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
       ]),
     );
-    // An existing ward whose doc id is the slug of "Maple Ward".
+    // A legacy ward at doc id 'CO' named 'Maple Ward' — the name-based
+    // check must catch a re-add of 'Maple Ward' even though it slugs to a
+    // different id ('maple-ward').
     useWardsMock.mockReturnValue(
       liveResult<Ward>([
         {
-          ward_code: 'maple-ward',
+          ward_code: 'CO',
           ward_name: 'Maple Ward',
           building_name: 'Maple Building',
           seat_cap: 20,
@@ -495,7 +497,7 @@ describe('<BootstrapWizardPage />', () => {
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('wizard-step-tab-3'));
-    await user.type(screen.getByLabelText(/Ward name/i), 'Maple Ward');
+    await user.type(screen.getByLabelText(/Ward name/i), 'maple ward');
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByRole('button', { name: /Add ward/i }));
     expect(await screen.findByText(/already exists/i)).toBeInTheDocument();

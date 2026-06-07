@@ -63,7 +63,7 @@ import { Select } from '../../components/ui/Select';
 import { ToastHost } from '../../components/ui/Toast';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
-import { canonicalEmail as canonicalEmailFn, buildingSlug } from '@kindoo/shared';
+import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 
 type StepNumber = 1 | 2 | 3 | 4;
@@ -447,12 +447,13 @@ function Step3Wards() {
       // building's current display name and write both fields.
       const selected = buildingOptions.find((b) => b.building_id === input.building_id);
       if (!selected) throw new Error('Selected building no longer exists.');
-      // The ward name is now the only visible identifier. Derive the slug
-      // and reject inline a name that collides with a ward already added —
-      // the mutation enforces the same rule server-side, but this surfaces
-      // the error on the field for immediate feedback.
-      const code = buildingSlug(input.ward_name.trim());
-      if ((wards.data ?? []).some((w) => w.ward_code === code)) {
+      // The ward name is now the only visible identifier, so reject inline
+      // a name that collides with a ward already added. Match by NAME
+      // (case-insensitive), not by slug — a slug-only check would miss a
+      // legacy 2-letter-coded ward whose name collides but whose doc id
+      // doesn't. The mutation enforces a slug-existence backstop too.
+      const wanted = input.ward_name.trim().toLowerCase();
+      if ((wards.data ?? []).some((w) => w.ward_name.trim().toLowerCase() === wanted)) {
         setError('ward_name', {
           type: 'manual',
           message: `A ward named "${input.ward_name.trim()}" already exists.`,
