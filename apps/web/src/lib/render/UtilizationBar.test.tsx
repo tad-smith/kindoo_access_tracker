@@ -62,16 +62,39 @@ describe('UtilizationBar', () => {
   });
 
   describe('inline layout', () => {
-    it('puts the bar before the label in DOM order so the label sits to the right', () => {
-      const { container } = render(<UtilizationBar total={10} cap={20} layout="inline" />);
+    it('emits three cells — name, bar, count — in left-to-right DOM order when withNameColumn is set', () => {
+      const { container } = render(
+        <UtilizationBar total={10} cap={20} layout="inline" withNameColumn />,
+      );
       const wrapper = container.querySelector('.utilization');
       expect(wrapper?.className).toContain('layout-inline');
       const children = Array.from(wrapper?.children ?? []);
-      // First child is the bar, second is the label — that DOM order
-      // is what produces the "[bar] [label]" reading order with the
-      // flex-row layout.
+      // name | bar | count — the three-column grid reading order.
+      expect(children[0]?.className).toContain('utilization-name');
+      expect(children[1]?.className).toContain('utilization-bar');
+      expect(children[2]?.className).toContain('utilization-label');
+    });
+
+    it('emits only bar + count (no name cell) by default — the two-column layout', () => {
+      const { container } = render(<UtilizationBar total={10} cap={20} layout="inline" />);
+      const wrapper = container.querySelector('.utilization');
+      const children = Array.from(wrapper?.children ?? []);
+      // No leading name track — bar | count, identical to the pre-org
+      // layout, so non-org rosters carry no extra column-gap left-shift.
+      expect(container.querySelector('.utilization-name')).toBeNull();
       expect(children[0]?.className).toContain('utilization-bar');
       expect(children[1]?.className).toContain('utilization-label');
+    });
+
+    it('emits a blank name cell when withNameColumn is set but no name is given', () => {
+      const { container } = render(
+        <UtilizationBar total={10} cap={20} layout="inline" withNameColumn />,
+      );
+      const nameCell = container.querySelector('.utilization-name');
+      // Present (so the three-column grid stays aligned across rows) but
+      // empty — the `auto` track collapses to the widest named row.
+      expect(nameCell).not.toBeNull();
+      expect(nameCell?.textContent).toBe('');
     });
 
     it('keeps stacked layout (label above bar) as the default', () => {
@@ -81,6 +104,8 @@ describe('UtilizationBar', () => {
       const children = Array.from(wrapper?.children ?? []);
       expect(children[0]?.className).toContain('utilization-label');
       expect(children[1]?.className).toContain('utilization-bar');
+      // The stacked layout never emits a name cell.
+      expect(container.querySelector('.utilization-name')).toBeNull();
     });
   });
 
@@ -129,19 +154,34 @@ describe('UtilizationBar', () => {
     });
   });
 
-  describe('name prop', () => {
-    it('prepends "{name}: " to the cap-set label', () => {
-      render(<UtilizationBar total={3} cap={10} name="Stake Choir" />);
-      expect(screen.getByText(/Stake Choir: 3 \/ 10 seats used/)).toBeInTheDocument();
+  describe('name prop (inline layout)', () => {
+    it('renders the name in the LEFT name cell, not inside the count text', () => {
+      const { container } = render(
+        <UtilizationBar total={3} cap={10} layout="inline" withNameColumn name="Stake Choir" />,
+      );
+      // Name lives in its own left cell …
+      expect(container.querySelector('.utilization-name')?.textContent).toBe('Stake Choir');
+      // … and the count text carries NO name prefix.
+      expect(container.querySelector('.utilization-label')?.textContent).toBe('3 / 10 seats used');
+      expect(screen.queryByText(/Stake Choir:/)).toBeNull();
     });
 
-    it('prepends "{name}: " to the cap-unset label', () => {
-      render(<UtilizationBar total={2} cap={null} name="Stake Choir" />);
-      expect(screen.getByText(/Stake Choir: 2 seats/)).toBeInTheDocument();
+    it('renders the name in the left cell on the cap-unset inline row', () => {
+      const { container } = render(
+        <UtilizationBar total={2} cap={null} layout="inline" withNameColumn name="Stake Choir" />,
+      );
+      expect(container.querySelector('.utilization-name')?.textContent).toBe('Stake Choir');
+      // The span-cell count text has no name prefix, and the label spans
+      // from after the name column.
+      const label = container.querySelector('.utilization-label');
+      expect(label?.className).toContain('utilization-label-span--after-name');
+      expect(label?.textContent).toContain('2 seats');
+      expect(label?.textContent).not.toContain('Stake Choir');
     });
 
-    it('omits the name prefix by default', () => {
-      render(<UtilizationBar total={3} cap={10} />);
+    it('omits the name cell and un-prefixes the count when withNameColumn is off', () => {
+      const { container } = render(<UtilizationBar total={3} cap={10} layout="inline" />);
+      expect(container.querySelector('.utilization-name')).toBeNull();
       expect(screen.getByText(/^3 \/ 10 seats used$/)).toBeInTheDocument();
     });
   });

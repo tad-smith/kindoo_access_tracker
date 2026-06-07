@@ -10,10 +10,17 @@
 //
 // Project ID: matches `VITE_FIREBASE_PROJECT_ID` (defaults to
 // `kindoo-staging`); the emulators namespace data per project.
+//
+// Project + emulator hosts are env-overridable (defaults preserve the
+// shared-stack behaviour). Pointing a run at a unique project / alternate
+// ports gives it an isolated namespace, so a parallel run's
+// `clearAuth()` / `clearFirestore()` can't wipe this run's seeded data
+// mid-test. Set `E2E_FIREBASE_PROJECT`, `E2E_AUTH_HOST`,
+// `E2E_FIRESTORE_HOST` to override.
 
-const PROJECT_ID = 'kindoo-staging';
-const AUTH_HOST = '127.0.0.1:9099';
-const FIRESTORE_HOST = '127.0.0.1:8080';
+const PROJECT_ID = process.env.E2E_FIREBASE_PROJECT ?? 'kindoo-staging';
+const AUTH_HOST = process.env.E2E_AUTH_HOST ?? '127.0.0.1:9099';
+const FIRESTORE_HOST = process.env.E2E_FIRESTORE_HOST ?? '127.0.0.1:8080';
 
 /**
  * Reset all Auth emulator state. The emulator's clear endpoint deletes
@@ -89,20 +96,32 @@ export async function createAuthUser(opts: {
  */
 export async function setCustomClaims(uid: string, claims: object): Promise<void> {
   const url = `http://${AUTH_HOST}/identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts:update`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: 'Bearer owner',
-    },
-    body: JSON.stringify({
-      localId: uid,
-      customAttributes: JSON.stringify(claims),
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`setCustomClaims failed: ${res.status} ${await res.text()}`);
+  const body = JSON.stringify({ localId: uid, customAttributes: JSON.stringify(claims) });
+  // The Auth emulator's `accounts:signUp` can return before the user is
+  // queryable by the admin `accounts:update` route under concurrent
+  // load — the update then 400s with USER_NOT_FOUND. The user DOES
+  // exist (signUp returned its uid); this is read-after-write
+  // propagation lag, so a short bounded retry clears it. Also rides out
+  // a brief emulator-restart window (transient fetch failure).
+  let lastErr = '';
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer owner' },
+        body,
+      });
+      if (res.ok) return;
+      lastErr = `${res.status} ${await res.text()}`;
+      // Only USER_NOT_FOUND is the propagation race worth retrying; any
+      // other non-OK status is a real error — fail fast.
+      if (!lastErr.includes('USER_NOT_FOUND')) break;
+    } catch (e) {
+      lastErr = String(e);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  throw new Error(`setCustomClaims failed: ${lastErr}`);
 }
 
 /**

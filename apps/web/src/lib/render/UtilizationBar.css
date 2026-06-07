@@ -13,13 +13,14 @@
   flex-direction: column;
 }
 
-/* Inline variant: bar fills row, label right-aligned. The wrapper
-   uses `display: contents` so its inner bar + label become direct
-   children of the parent — required for `<RosterUtilization>` to
-   share grid columns across stacked rows so the bars line up at
-   identical widths regardless of per-row label length. The wrapper
-   keeps `position: relative` so child absolute positioning, if added
-   later, still resolves against the bar group. */
+/* Inline variant: an optional left name cell, the bar, and the count
+   label. The wrapper uses `display: contents` so its children become
+   direct children of the parent grid — required for
+   `<RosterUtilization>` to share grid columns across stacked rows so
+   the bars line up at identical widths regardless of per-row name /
+   label length. The wrapper keeps `position: relative` so child
+   absolute positioning, if added later, still resolves against the bar
+   group. */
 .utilization.layout-inline {
   display: contents;
 }
@@ -33,10 +34,26 @@
   white-space: nowrap;
 }
 
-/* Cap-unset variant in the inline layout — the row has no bar, so
-   the label spans both grid columns. */
+/* Left name cell (inline only). Holds "Stake Total" / an org name, or
+   nothing — an empty cell collapses the `auto` name track so unnamed
+   bars read as `[bar] count`. */
+.utilization.layout-inline .utilization-name {
+  align-self: center;
+  white-space: nowrap;
+  color: var(--kd-fg-2);
+}
+
+/* Cap-unset variant in the inline layout — the row has no bar, so the
+   count label spans the full row. In the two-column (no-name) grid that
+   is `1 / -1`; in the three-column (with-name) grid the name cell holds
+   column 1, so the label spans `2 / -1`. */
 .utilization.layout-inline .utilization-label.utilization-label-span {
   grid-column: 1 / -1;
+}
+
+.utilization.layout-inline
+  .utilization-label.utilization-label-span.utilization-label-span--after-name {
+  grid-column: 2 / -1;
 }
 
 .utilization-label {
@@ -80,22 +97,32 @@
   color: var(--kd-fg-3, var(--kd-fg-2));
 }
 
-/* Pair wrapper used by the roster pages — two stacked
-   `<UtilizationBar layout='inline'>` so the labels right-align and the
-   bars sit at the same width. Grid (rather than flex) so both rows
-   share the SAME column track widths: the bar column is `1fr` and the
-   label column is `auto`, sized to the widest label across both rows.
-   That guarantees both bars render at byte-identical pixel widths
-   regardless of differing label content (e.g. "10 / 25 seats used"
-   vs "12 / 25 seats pending"). The inner `<UtilizationBar>` wrappers
-   use `display: contents` so their bar + label children are promoted
-   into this grid directly. */
+/* Pair wrapper used by the roster pages — several stacked
+   `<UtilizationBar layout='inline'>` (committed + pending + per-org).
+   Grid (rather than flex) so every row shares the SAME column track
+   widths: a `1fr` bar column and a trailing `auto` count column (sized
+   to the widest count). That guarantees every bar's fill column renders
+   at byte-identical pixel widths regardless of count content. The inner
+   `<UtilizationBar>` wrappers use `display: contents` so their bar +
+   label children are promoted into this grid directly.
+
+   Default is the two-column `bar | count` layout (bishopric / ward
+   roster, stake roster with no orgs) — identical to the pre-org layout,
+   no leading track, no extra `column-gap` shift. */
 .kd-roster-utilization {
   display: grid;
   grid-template-columns: 1fr auto;
   column-gap: 12px;
   row-gap: 6px;
   align-items: center;
+}
+
+/* With per-org bars, add a leading `auto` NAME column (sized to the
+   widest name, e.g. "Stake Total") so each row reads `name | bar |
+   count`. Applied by `<RosterUtilization>` only when org rows are
+   present. */
+.kd-roster-utilization--with-names {
+  grid-template-columns: auto 1fr auto;
 }
 
 .over-cap-flag {

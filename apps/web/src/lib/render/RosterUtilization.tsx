@@ -12,9 +12,11 @@
 // only the committed bar shows so the widget doesn't duplicate the
 // same number twice.
 //
-// Both bars sit inside a CSS grid (`grid-template-columns: 1fr auto`)
-// declared on the wrapper so the bar column resolves to the SAME width
-// across both rows regardless of label-text length. Without the shared
+// Every bar sits inside a CSS grid (`grid-template-columns: auto 1fr
+// auto` — name | bar | count) declared on the wrapper so the bar column
+// resolves to the SAME width across all rows regardless of name / count
+// length. The "Stake Total" + per-org names land in the LEFT cell, the
+// counts on the right, the bar fill aligned between. Without the shared
 // grid the bars would size independently (different label widths →
 // different remaining flex space), which the operator caught as a
 // visual misalignment in PR review.
@@ -42,7 +44,7 @@ import { UtilizationBar } from './UtilizationBar';
  * adds/removes are NOT split per org.
  */
 export interface OrgUtilizationRow {
-  /** Org display name; the bar's leading label. */
+  /** Org display name; rendered in the bar's left name cell. */
   name: string;
   /** Committed stake-roster rows whose resolved org id matches this org. */
   total: number;
@@ -83,14 +85,22 @@ export function RosterUtilization({
   const hasNetChange = projected !== committedTotal;
   const hasPending = pendingAdds > 0 || pendingRemoves > 0;
   const hasOrgRows = orgRows !== undefined && orgRows.length > 0;
+  // Only the per-org variant gets the leading name column. Without org
+  // rows (bishopric / ward roster, stake with no orgs) the grid stays
+  // two-column `bar | count` — identical to the pre-org layout, so those
+  // surfaces have no extra left-shift.
+  const wrapperClass = hasOrgRows
+    ? 'kd-roster-utilization kd-roster-utilization--with-names'
+    : 'kd-roster-utilization';
   return (
-    <div className="kd-roster-utilization">
+    <div className={wrapperClass}>
       <UtilizationBar
         total={committedTotal}
         cap={cap}
         overCap={committedOverCap}
         layout="inline"
         verb="used"
+        withNameColumn={hasOrgRows}
         // Relabel the committed stake bar only when per-org bars sit
         // below it; otherwise other surfaces (ward / bishopric) keep the
         // unlabelled bar.
@@ -104,6 +114,9 @@ export function RosterUtilization({
           layout="inline"
           verb="pending"
           accent={hasNetChange ? 'warn' : 'auto'}
+          // Blank name cell keeps the pending row aligned with the named
+          // rows when per-org bars are present; omitted otherwise.
+          withNameColumn={hasOrgRows}
         />
       ) : null}
       {hasOrgRows
@@ -116,6 +129,7 @@ export function RosterUtilization({
               overCap={typeof row.cap === 'number' && row.cap > 0 && row.total > row.cap}
               layout="inline"
               verb="used"
+              withNameColumn
             />
           ))
         : null}

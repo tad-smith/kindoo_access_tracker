@@ -14,10 +14,12 @@
 // Layout variants:
 //   - 'stacked' (default) — label above bar, used by the Dashboard and
 //     All Seats utilization rows where a vertical stack reads best.
-//   - 'inline' — bar takes the available row width and the label sits
-//     to the right of it. Used by the roster pages where two bars
-//     (committed + pending) stack and right-aligned labels keep the
-//     denominator legible.
+//     `name` is not used here.
+//   - 'inline' — a three-cell row: an optional leading NAME cell, the
+//     bar in the middle, and the count label on the right. Used by the
+//     roster pages where several bars (committed + pending + per-org)
+//     stack inside a shared grid so the bar fill column lines up across
+//     every row regardless of name / count length.
 //
 // `verb` swaps the trailing word in the label ("used" vs "pending") so
 // the same component renders both bars on the roster pages without
@@ -64,13 +66,25 @@ export interface UtilizationBarProps {
    */
   accent?: UtilizationBarAccent;
   /**
-   * Optional leading name (e.g. an organization name) prepended to the
-   * label as `"{name}: "`. Used by `<RosterUtilization>` to label the
-   * per-organization bars under the "Stake Total" bar. Renders inside
-   * the same label cell, so the shared grid keeps every bar's fill
-   * column at an identical width regardless of name length.
+   * Optional leading name (e.g. "Stake Total" or an organization name)
+   * rendered in a LEFT cell, to the left of the bar. Used by
+   * `<RosterUtilization>` to label the "Stake Total" bar and the
+   * per-organization bars below it. Inline layout only; the name lives
+   * in its own grid cell (NOT inside the count label), so the shared
+   * grid keeps every bar's fill column at an identical width regardless
+   * of name / count length. Requires `withNameColumn` to render.
    */
   name?: string;
+  /**
+   * Inline layout only. When true, the bar emits a LEFT name cell (the
+   * `name`, or blank for an unnamed row like the pending bar) so a
+   * shared three-column grid (`name | bar | count`) stays aligned across
+   * rows. When false (the default), NO name cell is emitted — the bar is
+   * just `bar | count`, identical to the pre-org two-column layout, so
+   * non-org rosters (bishopric / ward, stake with no orgs) carry no
+   * empty name track and no extra `column-gap` left-shift.
+   */
+  withNameColumn?: boolean;
 }
 
 export function UtilizationBar({
@@ -82,23 +96,41 @@ export function UtilizationBar({
   tone = 'primary',
   accent = 'auto',
   name,
+  withNameColumn = false,
 }: UtilizationBarProps) {
   const safeTotal = Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0;
   const hasCap = typeof cap === 'number' && Number.isFinite(cap) && cap > 0;
-  const namePrefix = name ? `${name}: ` : '';
 
   const wrapperClass = `utilization layout-${layout}${tone === 'muted' ? ' tone-muted' : ''}`;
 
+  // Inline-only LEFT name cell. Emitted only when `withNameColumn` is on
+  // (org rosters), so the shared three-column grid's `name` track is
+  // populated on every row (blank for unnamed rows like the pending
+  // bar). Without it, no name cell is emitted and the row is a plain
+  // `bar | count` — no empty track, no `column-gap` left-shift on
+  // non-org rosters.
+  const nameCell =
+    layout === 'inline' && withNameColumn ? (
+      <span className="utilization-name">{name ?? ''}</span>
+    ) : null;
+
   if (!hasCap) {
-    const seatsLabel = `${namePrefix}${safeTotal} seat${safeTotal === 1 ? '' : 's'}`;
-    // Cap-unset has no bar to put the label beside. In the inline
-    // variant the wrapper uses `display: contents`, so emit a
-    // single label that spans both grid columns; otherwise stack as
-    // normal.
+    const seatsLabel = `${safeTotal} seat${safeTotal === 1 ? '' : 's'}`;
+    // Cap-unset has no bar to put the count beside. In the inline
+    // variant the wrapper uses `display: contents`, so emit the name
+    // cell plus a label that spans the remaining grid columns;
+    // otherwise stack as normal.
     if (layout === 'inline') {
+      // The count label spans the bar + count columns. With a name
+      // column it starts at col 2 (after the name); without one the
+      // grid is two columns, so it spans the whole row.
+      const spanClass = withNameColumn
+        ? 'utilization-label utilization-label-span utilization-label-span--after-name'
+        : 'utilization-label utilization-label-span';
       return (
         <div className={wrapperClass}>
-          <div className="utilization-label utilization-label-span">
+          {nameCell}
+          <div className={spanClass}>
             <span>{seatsLabel}</span>
             <span>(cap unset)</span>
           </div>
@@ -124,7 +156,7 @@ export function UtilizationBar({
       ? 'utilization-fill near'
       : 'utilization-fill';
 
-  const labelText = `${namePrefix}${safeTotal} / ${safeCap} seats ${verb}`;
+  const labelText = `${safeTotal} / ${safeCap} seats ${verb}`;
   const overCapFlag = overCap ? <span className="over-cap-flag">OVER CAP</span> : null;
   const bar = (
     <div className="utilization-bar">
@@ -133,10 +165,12 @@ export function UtilizationBar({
   );
 
   if (layout === 'inline') {
-    // Bar grows to fill; label sits on the right at a fixed column so
-    // stacked instances align their numerators.
+    // Three cells promoted into the shared grid via `display: contents`:
+    // name on the left, bar in the middle, count on the right. The name
+    // cell collapses when empty, so unnamed bars read `[bar] count`.
     return (
       <div className={wrapperClass}>
+        {nameCell}
         {bar}
         <div className="utilization-label">
           <span>{labelText}</span>
