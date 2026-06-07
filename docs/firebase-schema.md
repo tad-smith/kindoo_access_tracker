@@ -187,14 +187,14 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 
 ### 4.2 `stakes/{stakeId}/wards/{wardCode}`
 
-**Doc ID:** 2-letter `ward_code`, matches LCR tab name. Natural key.
+**Doc ID:** immutable `ward_code`. On create it is derived from `ward_name` via `buildingSlug()` (`'Maple Ward'` → `'maple-ward'`: lowercase, ASCII alnum + internal hyphens), pinned for the doc's life, and never shown or typed. Legacy wards retain their original 2-letter codes (e.g. `CO`, matching the old LCR tab name) as immutable doc IDs — those are not regenerated.
 
 **Fields:**
 
 ```typescript
 {
-  ward_code: string;       // = doc.id
-  ward_name: string;
+  ward_code: string;       // = doc.id; buildingSlug(ward_name) at create (legacy 2-letter codes retained), immutable
+  ward_name: string;       // The only visible ward identifier; unique (case-insensitive, trimmed) across the stake
   building_id?: string;    // Preferred FK to buildings/{building_id} (immutable slug). Optional during the additive transition; new writes always populate it.
   building_name: string;   // Legacy display-name FK + display snapshot. Still required + populated.
   seat_cap: number;
