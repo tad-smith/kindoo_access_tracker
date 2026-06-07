@@ -12,9 +12,11 @@
 // only the committed bar shows so the widget doesn't duplicate the
 // same number twice.
 //
-// Both bars sit inside a CSS grid (`grid-template-columns: 1fr auto`)
-// declared on the wrapper so the bar column resolves to the SAME width
-// across both rows regardless of label-text length. Without the shared
+// Every bar sits inside a CSS grid (`grid-template-columns: auto 1fr
+// auto` — name | bar | count) declared on the wrapper so the bar column
+// resolves to the SAME width across all rows regardless of name / count
+// length. The "Stake Total" + per-org names land in the LEFT cell, the
+// counts on the right, the bar fill aligned between. Without the shared
 // grid the bars would size independently (different label widths →
 // different remaining flex space), which the operator caught as a
 // visual misalignment in PR review.
@@ -42,7 +44,7 @@ import { UtilizationBar } from './UtilizationBar';
  * adds/removes are NOT split per org.
  */
 export interface OrgUtilizationRow {
-  /** Org display name; the bar's leading label. */
+  /** Org display name; rendered in the bar's left name cell. */
   name: string;
   /** Committed stake-roster rows whose resolved org id matches this org. */
   total: number;

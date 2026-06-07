@@ -162,8 +162,10 @@ describe('PerGrantRosterCard same-scope-duplicate badge', () => {
 });
 
 // Organization chip — Stake Roster only (passed via the `org` prop).
-// Shows the resolved org name (or "No Organization"), exposes the inline
-// editor only when editable, and writes immediately on change.
+// The chip is a Badge-style grey pill (matching the seat-type chips):
+// it shows the resolved org name (or "No Organization") with NO "Org:"
+// prefix, exposes an overlaid inline editor (with a ▾ caret) only when
+// editable, and writes immediately on change.
 describe('PerGrantRosterCard organization chip', () => {
   const chipId = 'org-chip-memberone@example.com';
   const selectId = 'org-select-memberone@example.com';
@@ -184,7 +186,19 @@ describe('PerGrantRosterCard organization chip', () => {
     expect(screen.getByTestId(chipId).textContent).toContain('No Organization');
   });
 
-  it('renders the editable select (dropdown affordance) when editable', () => {
+  it('renders as a grey Badge-style pill with no "Org:" prefix', () => {
+    renderCard({ org: { orgs, orgId: 'choir', editable: false, orgsReady: true } });
+    const chip = screen.getByTestId(chipId);
+    // The neutral grey Badge default variant — shares the seat-type
+    // chip's shape/colors via the Badge component's utility classes.
+    expect(chip.className).toContain('roster-org-chip');
+    expect(chip.className).toContain('bg-kd-border-soft');
+    expect(chip.className).toContain('rounded');
+    // No leading "Org:" label.
+    expect(chip.textContent).not.toContain('Org:');
+  });
+
+  it('renders the editable select (overlaid dropdown affordance) when editable', () => {
     renderCard({ org: { orgs, orgId: 'choir', editable: true, orgsReady: true } });
     const select = screen.getByTestId(selectId) as HTMLSelectElement;
     expect(select).not.toBeNull();
@@ -192,6 +206,29 @@ describe('PerGrantRosterCard organization chip', () => {
     // Menu lists every org plus "No Organization", alpha-sorted.
     const optionLabels = Array.from(select.options).map((o) => o.textContent);
     expect(optionLabels).toEqual(['No Organization', 'Stake Choir', 'Youth Program']);
+  });
+
+  it('shows a caret affordance ONLY when editable', () => {
+    const { rerender } = renderCard({
+      org: { orgs, orgId: 'choir', editable: true, orgsReady: true },
+    });
+    // Editable → caret present inside the pill.
+    expect(screen.getByTestId(chipId).querySelector('.roster-org-caret')).not.toBeNull();
+    // Read-only → no caret.
+    rerender(
+      <PerGrantRosterCard
+        seat={seat}
+        grant={grant}
+        canEdit={false}
+        canRemove={false}
+        isPendingRemoval={false}
+        wards={[]}
+        buildings={[]}
+        sites={[]}
+        org={{ orgs, orgId: 'choir', editable: false, orgsReady: true }}
+      />,
+    );
+    expect(screen.getByTestId(chipId).querySelector('.roster-org-caret')).toBeNull();
   });
 
   it('renders read-only (no select) when not editable', () => {

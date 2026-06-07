@@ -1,48 +1,57 @@
-/* Organization chip on the Stake Roster card top line. The read-only
-   form reuses `.roster-card-chip`; the editable form wraps a native
-   `<select>` styled compact so it reads as a chip with a dropdown arrow
-   rather than a full-width form control. */
+/* Organization chip on the Stake Roster card top line. The pill itself
+   is a `<Badge variant="default">` (neutral grey, same height / padding /
+   rounding as the seat-type chips). The editable form adds a tiny ▾
+   caret and overlays a fully-transparent native `<select>` across the
+   whole pill so it reads as a chip-with-caret while a click anywhere on
+   it opens the native menu. */
 
 .roster-org-chip {
-  display: inline-flex;
-  align-items: center;
   gap: 4px;
+}
+
+/* Editable: the pill is the positioning context for the overlaid
+   `<select>`, which sits invisibly on top so a tap / click anywhere on
+   the chip opens the native menu. The caret signals "you can change
+   this." */
+.roster-org-chip--editable {
+  position: relative;
+  cursor: pointer;
 }
 
 .roster-org-name {
   font-weight: 600;
-  color: var(--kd-fg-1);
 }
 
-/* Org catalogue still hydrating: muted placeholder, never "No Organization". */
-.roster-org-name--loading {
-  font-weight: 400;
-  color: var(--kd-fg-3);
+/* Tiny dropdown caret — the only affordance distinguishing the editable
+   pill from the read-only one. Muted so it sits quietly inside the chip. */
+.roster-org-caret {
+  flex: none;
+  opacity: 0.7;
 }
 
-/* The editable `<select>`: compact, chip-sized, inline. Inherits the
-   `.kd-select` chevron background (the dropdown-arrow affordance). The
-   width is content-driven so the chip hugs the org name. */
+/* Invisible native `<select>` overlaid across the entire pill. Keeps the
+   menu keyboard- and mobile-accessible at 375px without a Radix
+   dependency; the pill underneath provides the visible chip styling. */
 .roster-org-select {
-  appearance: none;
-  border: 1px solid var(--kd-border);
-  border-radius: 4px;
-  padding: 1px 22px 1px 6px;
-  font-size: 0.92em;
-  font-weight: 600;
-  color: var(--kd-fg-1);
-  line-height: 1.5;
-  max-width: 200px;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  opacity: 0;
   cursor: pointer;
-}
-
-.roster-org-select:focus {
-  outline: none;
-  border-color: var(--kd-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--kd-primary) 40%, transparent);
+  appearance: none;
 }
 
 .roster-org-select:disabled {
-  opacity: 0.6;
   cursor: progress;
+}
+
+/* Keyboard focus: ring the pill (the select is invisible, so its own
+   outline would be invisible too). */
+.roster-org-chip--editable:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--kd-primary) 40%, transparent);
 }

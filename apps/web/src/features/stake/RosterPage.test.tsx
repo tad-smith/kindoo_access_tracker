@@ -807,7 +807,7 @@ describe('<StakeRosterPage />', () => {
       expect(chip.textContent).not.toContain('No Organization');
     });
 
-    it('relabels the stake bar "Stake Total" and renders one bar per organization', () => {
+    it('puts "Stake Total" and each org name in the LEFT bar cell with counts on the right', () => {
       mockSeats([
         makeSeat({
           scope: 'stake',
@@ -830,11 +830,26 @@ describe('<StakeRosterPage />', () => {
       ]);
       mockStakeDoc({ stake_seat_cap: 200 });
       mockOrganizations(orgs);
-      render(<StakeRosterPage />);
-      expect(screen.getByText(/Stake Total: 3 \/ 200 seats used/)).toBeInTheDocument();
-      // Alpha order: Stake Choir then Youth Program.
-      expect(screen.getByText(/Stake Choir: 2 \/ 5 seats used/)).toBeInTheDocument();
-      expect(screen.getByText(/Youth Program: 1 \/ 10 seats used/)).toBeInTheDocument();
+      const { container } = render(<StakeRosterPage />);
+      // Names land in the utilization bars' left cells (alpha order:
+      // Stake Total, then Stake Choir, then Youth Program).
+      const barNames = Array.from(container.querySelectorAll('.utilization-name')).map(
+        (el) => el.textContent,
+      );
+      expect(barNames).toEqual(expect.arrayContaining(['Stake Total', 'Stake Choir', 'Youth Program']));
+      // Counts (un-prefixed) land in the right cells.
+      const barCounts = Array.from(container.querySelectorAll('.utilization-label')).map(
+        (el) => el.textContent,
+      );
+      expect(barCounts).toEqual(
+        expect.arrayContaining([
+          '3 / 200 seats used',
+          '2 / 5 seats used',
+          '1 / 10 seats used',
+        ]),
+      );
+      // Never the old combined "{name}: {count}" string.
+      expect(screen.queryByText(/Stake Total: /)).toBeNull();
     });
 
     it('renders a zero-count bar for an organization with no seats', () => {
@@ -843,9 +858,13 @@ describe('<StakeRosterPage />', () => {
       ]);
       mockStakeDoc({ stake_seat_cap: 200 });
       mockOrganizations(orgs);
-      render(<StakeRosterPage />);
-      expect(screen.getByText(/Stake Choir: 0 \/ 5 seats used/)).toBeInTheDocument();
-      expect(screen.getByText(/Youth Program: 0 \/ 10 seats used/)).toBeInTheDocument();
+      const { container } = render(<StakeRosterPage />);
+      const barCounts = Array.from(container.querySelectorAll('.utilization-label')).map(
+        (el) => el.textContent,
+      );
+      expect(barCounts).toEqual(
+        expect.arrayContaining(['0 / 5 seats used', '0 / 10 seats used']),
+      );
     });
 
     it('leaves the stake bar unlabelled when the stake has no organizations', () => {

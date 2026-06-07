@@ -31,6 +31,22 @@ describe('<RosterUtilization />', () => {
     expect(screen.queryByText(/seats pending/)).toBeNull();
   });
 
+  it('leaves all name cells empty on a ward / bishopric roster (no org rows) — no visual regression', () => {
+    // Ward / bishopric callers never pass org rows, so every bar's left
+    // name cell must be blank — the `[bar] count` reading these surfaces
+    // had before this change.
+    const { container } = render(
+      <RosterUtilization committedTotal={10} cap={25} pendingAdds={2} pendingRemoves={0} />,
+    );
+    const nameCells = Array.from(container.querySelectorAll('.utilization-name'));
+    // Committed + pending bars each emit a name cell …
+    expect(nameCells).toHaveLength(2);
+    // … and all of them are empty.
+    for (const cell of nameCells) {
+      expect(cell.textContent).toBe('');
+    }
+  });
+
   it('renders both bars when only pendingAdds is non-zero', () => {
     render(<RosterUtilization committedTotal={10} cap={25} pendingAdds={3} pendingRemoves={0} />);
     expect(bars()).toHaveLength(2);
@@ -45,9 +61,10 @@ describe('<RosterUtilization />', () => {
 
   it('places both rows inside one shared grid wrapper so the bars line up at the same width', () => {
     // The bar-width-match guarantee comes from the wrapper's CSS
-    // grid (`grid-template-columns: 1fr auto`) plus each inner
-    // `<UtilizationBar layout='inline'>` using `display: contents` so
-    // its bar + label participate in the grid directly. jsdom does
+    // grid (`grid-template-columns: auto 1fr auto` — name | bar | count)
+    // plus each inner `<UtilizationBar layout='inline'>` using
+    // `display: contents` so its name + bar + label participate in the
+    // grid directly. jsdom does
     // not evaluate stylesheets, so we assert the structural contract
     // that the CSS keys off:
     //   - one `.kd-roster-utilization` wrapper
@@ -184,7 +201,21 @@ describe('<RosterUtilization />', () => {
   });
 
   describe('per-organization bars', () => {
-    it('relabels the committed bar "Stake Total" when org rows are present', () => {
+    // The name and the count now live in SEPARATE grid cells (name on
+    // the left, count on the right) — not one combined "{name}: {count}"
+    // string. These helpers read each cell independently.
+    function nameCells(): string[] {
+      return (Array.from(document.querySelectorAll('.utilization-name')) as HTMLElement[]).map(
+        (el) => el.textContent ?? '',
+      );
+    }
+    function countCells(): string[] {
+      return (Array.from(document.querySelectorAll('.utilization-label')) as HTMLElement[]).map(
+        (el) => el.textContent ?? '',
+      );
+    }
+
+    it('renders "Stake Total" in the LEFT name cell — not inside the count — when org rows are present', () => {
       render(
         <RosterUtilization
           committedTotal={12}
@@ -194,11 +225,14 @@ describe('<RosterUtilization />', () => {
           orgRows={[{ name: 'Stake Choir', total: 3, cap: 5 }]}
         />,
       );
-      expect(screen.getByText(/Stake Total: 12 \/ 25 seats used/)).toBeInTheDocument();
+      // Name on the left, count on the right, never combined.
+      expect(nameCells()).toContain('Stake Total');
+      expect(countCells()).toContain('12 / 25 seats used');
+      expect(screen.queryByText(/Stake Total: /)).toBeNull();
     });
 
-    it('leaves the committed bar unlabelled when there are no org rows', () => {
-      render(
+    it('leaves the committed bar name cell empty when there are no org rows', () => {
+      const { container } = render(
         <RosterUtilization
           committedTotal={12}
           cap={25}
@@ -209,9 +243,11 @@ describe('<RosterUtilization />', () => {
       );
       expect(screen.getByText(/^12 \/ 25 seats used$/)).toBeInTheDocument();
       expect(screen.queryByText(/Stake Total/)).toBeNull();
+      // The single committed bar still emits a (blank) name cell.
+      expect(container.querySelector('.utilization-name')?.textContent).toBe('');
     });
 
-    it('renders one bar per organization with its count and cap', () => {
+    it('renders one bar per organization with the name on the left and count on the right', () => {
       render(
         <RosterUtilization
           committedTotal={12}
@@ -224,8 +260,15 @@ describe('<RosterUtilization />', () => {
           ]}
         />,
       );
-      expect(screen.getByText(/Stake Choir: 3 \/ 5 seats used/)).toBeInTheDocument();
-      expect(screen.getByText(/Youth Program: 8 \/ 10 seats used/)).toBeInTheDocument();
+      // Org names land in left cells …
+      expect(nameCells()).toEqual(expect.arrayContaining(['Stake Choir', 'Youth Program']));
+      // … and the counts (un-prefixed) land in right cells.
+      expect(countCells()).toEqual(
+        expect.arrayContaining(['3 / 5 seats used', '8 / 10 seats used']),
+      );
+      // No combined "{name}: {count}" string anywhere.
+      expect(screen.queryByText(/Stake Choir: /)).toBeNull();
+      expect(screen.queryByText(/Youth Program: /)).toBeNull();
       // Stake Total + 2 org bars = 3 bars (no pending).
       expect(fills()).toHaveLength(3);
     });
@@ -240,7 +283,8 @@ describe('<RosterUtilization />', () => {
           orgRows={[{ name: 'Empty Org', total: 0, cap: 4 }]}
         />,
       );
-      expect(screen.getByText(/Empty Org: 0 \/ 4 seats used/)).toBeInTheDocument();
+      expect(nameCells()).toContain('Empty Org');
+      expect(countCells()).toContain('0 / 4 seats used');
     });
 
     it('shows the amber near signal on an org bar at >=90% of its cap', () => {
