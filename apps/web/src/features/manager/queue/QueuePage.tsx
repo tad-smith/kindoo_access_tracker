@@ -116,7 +116,6 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   return (
     <section className="kd-page-medium">
       <h1>Request Queue</h1>
-      <p className="kd-page-subtitle">Pending requests, sectioned by urgency.</p>
       <ReadOnlyNote />
 
       {total === 0 ? (
@@ -154,7 +153,7 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
 // actionable (complete / reject) workflow, which no longer lives here.
 function ReadOnlyNote() {
   return (
-    <p className="kd-queue-readonly-note" data-testid="queue-readonly-note" role="note">
+    <p className="kd-queue-readonly-note font-bold" data-testid="queue-readonly-note" role="note">
       Requests can only be completed or rejected from the Chrome extension.{' '}
       <a
         href={CHROME_WEB_STORE_URL}
@@ -162,7 +161,7 @@ function ReadOnlyNote() {
         rel="noopener noreferrer"
         data-testid="queue-readonly-note-link"
       >
-        Open the extension
+        Install the extension
       </a>
     </p>
   );
