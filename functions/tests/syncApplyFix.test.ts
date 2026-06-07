@@ -7,6 +7,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
+import { auditId } from '@kindoo/shared';
 import type { Access, AuditLog, Seat } from '@kindoo/shared';
 import { syncApplyFix } from '../src/callable/syncApplyFix.js';
 import { auditSeatWrites } from '../src/triggers/auditTrigger.js';
@@ -2611,9 +2612,16 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       } as unknown as never;
       await auditSeatWrites.run(event);
 
-      const audit = await db.collection(`stakes/${STAKE_ID}/auditLog`).get();
-      expect(audit.empty).toBe(false);
-      const row = audit.docs[0]!.data() as AuditLog;
+      // Read the forged row by its DETERMINISTIC doc id, not `docs[0]` of
+      // the whole collection: the real `syncApplyFix` call above also
+      // fired the DEPLOYED `auditSeatWrites` trigger (plus, via the
+      // seed/request churn, sibling-file leftovers can land here under the
+      // shared `csnorth` stake). `auditId(time, suffix)` pins us to exactly
+      // the row this test wrote.
+      const docId = auditId(new Date(time), `seats_${MEMBER_EMAIL}`);
+      const rowSnap = await db.doc(`stakes/${STAKE_ID}/auditLog/${docId}`).get();
+      expect(rowSnap.exists).toBe(true);
+      const row = rowSnap.data() as AuditLog;
       expect(row.entity_type).toBe('seat');
       expect(row.entity_id).toBe(MEMBER_EMAIL);
       expect(row.action).toBe('create_seat');
@@ -2666,9 +2674,16 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       } as unknown as never;
       await auditSeatWrites.run(event);
 
-      const audit = await db.collection(`stakes/${STAKE_ID}/auditLog`).get();
-      expect(audit.empty).toBe(false);
-      const row = audit.docs[0]!.data() as AuditLog;
+      // Read the forged row by its DETERMINISTIC doc id, not `docs[0]` of
+      // the whole collection: the real `syncApplyFix` call above also
+      // fired the DEPLOYED `auditSeatWrites` trigger (plus, via the
+      // seed/request churn, sibling-file leftovers can land here under the
+      // shared `csnorth` stake). `auditId(time, suffix)` pins us to exactly
+      // the row this test wrote.
+      const docId = auditId(new Date(time), `seats_${MEMBER_EMAIL}`);
+      const rowSnap = await db.doc(`stakes/${STAKE_ID}/auditLog/${docId}`).get();
+      expect(rowSnap.exists).toBe(true);
+      const row = rowSnap.data() as AuditLog;
       expect(row.entity_type).toBe('seat');
       expect(row.entity_id).toBe(MEMBER_EMAIL);
       expect(row.action).toBe('delete_seat');
@@ -2734,9 +2749,16 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       } as unknown as never;
       await auditSeatWrites.run(event);
 
-      const audit = await db.collection(`stakes/${STAKE_ID}/auditLog`).get();
-      expect(audit.empty).toBe(false);
-      const row = audit.docs[0]!.data() as AuditLog;
+      // Read the forged row by its DETERMINISTIC doc id, not `docs[0]` of
+      // the whole collection: the real `syncApplyFix` call above also
+      // fired the DEPLOYED `auditSeatWrites` trigger (plus, via the
+      // seed/request churn, sibling-file leftovers can land here under the
+      // shared `csnorth` stake). `auditId(time, suffix)` pins us to exactly
+      // the row this test wrote.
+      const docId = auditId(new Date(time), `seats_${MEMBER_EMAIL}`);
+      const rowSnap = await db.doc(`stakes/${STAKE_ID}/auditLog/${docId}`).get();
+      expect(rowSnap.exists).toBe(true);
+      const row = rowSnap.data() as AuditLog;
       expect(row.entity_type).toBe('seat');
       expect(row.entity_id).toBe(MEMBER_EMAIL);
       expect(row.action).toBe('update_seat');
@@ -2778,9 +2800,16 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       } as unknown as never;
       await auditSeatWrites.run(event);
 
-      const audit = await db.collection(`stakes/${STAKE_ID}/auditLog`).get();
-      expect(audit.empty).toBe(false);
-      const row = audit.docs[0]!.data() as AuditLog;
+      // Read the forged row by its DETERMINISTIC doc id, not `docs[0]` of
+      // the whole collection: the real `syncApplyFix` call above also
+      // fired the DEPLOYED `auditSeatWrites` trigger (plus, via the
+      // seed/request churn, sibling-file leftovers can land here under the
+      // shared `csnorth` stake). `auditId(time, suffix)` pins us to exactly
+      // the row this test wrote.
+      const docId = auditId(new Date(time), `seats_${MEMBER_EMAIL}`);
+      const rowSnap = await db.doc(`stakes/${STAKE_ID}/auditLog/${docId}`).get();
+      expect(rowSnap.exists).toBe(true);
+      const row = rowSnap.data() as AuditLog;
       expect(row.entity_type).toBe('seat');
       expect(row.action).toBe('update_seat');
       expect(row.actor_email).toBe('SyncActor:scope-mismatch');

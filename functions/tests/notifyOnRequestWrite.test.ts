@@ -123,7 +123,15 @@ async function readEmailFailedAudits(): Promise<AuditLog[]> {
     .collection(`stakes/${STAKE_ID}/auditLog`)
     .where('action', '==', 'email_send_failed')
     .get();
-  return snap.docs.map((d) => d.data() as AuditLog);
+  // Scope to THIS test's request. Under the CI integration config sibling
+  // files write real request docs to `stakes/csnorth/requests/*`, each of
+  // which fires the DEPLOYED `notifyOnRequestWrite` trigger; with no
+  // Resend key in the emulator that trigger writes its own
+  // `email_send_failed` row. Those rows carry a different `request_id`, so
+  // filtering on ours keeps the count immune to cross-file leftovers.
+  return snap.docs
+    .map((d) => d.data() as AuditLog)
+    .filter((row) => (row.after as Record<string, unknown> | null)?.['request_id'] === REQUEST_ID);
 }
 
 describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
