@@ -31,20 +31,19 @@ describe('<RosterUtilization />', () => {
     expect(screen.queryByText(/seats pending/)).toBeNull();
   });
 
-  it('leaves all name cells empty on a ward / bishopric roster (no org rows) — no visual regression', () => {
-    // Ward / bishopric callers never pass org rows, so every bar's left
-    // name cell must be blank — the `[bar] count` reading these surfaces
-    // had before this change.
+  it('emits NO name column on a ward / bishopric roster (no org rows) — no visual regression', () => {
+    // Ward / bishopric callers never pass org rows, so the wrapper uses
+    // the two-column `bar | count` grid (no leading name track, no extra
+    // column-gap left-shift) — the exact layout these surfaces had before
+    // organizations existed.
     const { container } = render(
       <RosterUtilization committedTotal={10} cap={25} pendingAdds={2} pendingRemoves={0} />,
     );
-    const nameCells = Array.from(container.querySelectorAll('.utilization-name'));
-    // Committed + pending bars each emit a name cell …
-    expect(nameCells).toHaveLength(2);
-    // … and all of them are empty.
-    for (const cell of nameCells) {
-      expect(cell.textContent).toBe('');
-    }
+    const wrapper = container.querySelector('.kd-roster-utilization');
+    // Two-column grid: the with-names modifier is absent …
+    expect(wrapper?.className).not.toContain('kd-roster-utilization--with-names');
+    // … and no bar emits a name cell at all.
+    expect(container.querySelectorAll('.utilization-name')).toHaveLength(0);
   });
 
   it('renders both bars when only pendingAdds is non-zero', () => {
@@ -216,7 +215,7 @@ describe('<RosterUtilization />', () => {
     }
 
     it('renders "Stake Total" in the LEFT name cell — not inside the count — when org rows are present', () => {
-      render(
+      const { container } = render(
         <RosterUtilization
           committedTotal={12}
           cap={25}
@@ -225,13 +224,17 @@ describe('<RosterUtilization />', () => {
           orgRows={[{ name: 'Stake Choir', total: 3, cap: 5 }]}
         />,
       );
-      // Name on the left, count on the right, never combined.
+      // The wrapper switches to the three-column (name) grid …
+      expect(container.querySelector('.kd-roster-utilization')?.className).toContain(
+        'kd-roster-utilization--with-names',
+      );
+      // … name on the left, count on the right, never combined.
       expect(nameCells()).toContain('Stake Total');
       expect(countCells()).toContain('12 / 25 seats used');
       expect(screen.queryByText(/Stake Total: /)).toBeNull();
     });
 
-    it('leaves the committed bar name cell empty when there are no org rows', () => {
+    it('emits no name column when the org-rows array is empty', () => {
       const { container } = render(
         <RosterUtilization
           committedTotal={12}
@@ -243,8 +246,12 @@ describe('<RosterUtilization />', () => {
       );
       expect(screen.getByText(/^12 \/ 25 seats used$/)).toBeInTheDocument();
       expect(screen.queryByText(/Stake Total/)).toBeNull();
-      // The single committed bar still emits a (blank) name cell.
-      expect(container.querySelector('.utilization-name')?.textContent).toBe('');
+      // Empty org rows are treated as "no orgs" → two-column grid, no
+      // name cell.
+      expect(container.querySelector('.kd-roster-utilization')?.className).not.toContain(
+        'kd-roster-utilization--with-names',
+      );
+      expect(container.querySelector('.utilization-name')).toBeNull();
     });
 
     it('renders one bar per organization with the name on the left and count on the right', () => {

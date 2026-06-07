@@ -72,11 +72,19 @@ export interface UtilizationBarProps {
    * per-organization bars below it. Inline layout only; the name lives
    * in its own grid cell (NOT inside the count label), so the shared
    * grid keeps every bar's fill column at an identical width regardless
-   * of name / count length. Absent → an empty left cell that collapses
-   * the `auto` track, so unnamed bars read as `[bar] count` exactly as
-   * before.
+   * of name / count length. Requires `withNameColumn` to render.
    */
   name?: string;
+  /**
+   * Inline layout only. When true, the bar emits a LEFT name cell (the
+   * `name`, or blank for an unnamed row like the pending bar) so a
+   * shared three-column grid (`name | bar | count`) stays aligned across
+   * rows. When false (the default), NO name cell is emitted — the bar is
+   * just `bar | count`, identical to the pre-org two-column layout, so
+   * non-org rosters (bishopric / ward, stake with no orgs) carry no
+   * empty name track and no extra `column-gap` left-shift.
+   */
+  withNameColumn?: boolean;
 }
 
 export function UtilizationBar({
@@ -88,17 +96,23 @@ export function UtilizationBar({
   tone = 'primary',
   accent = 'auto',
   name,
+  withNameColumn = false,
 }: UtilizationBarProps) {
   const safeTotal = Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0;
   const hasCap = typeof cap === 'number' && Number.isFinite(cap) && cap > 0;
 
   const wrapperClass = `utilization layout-${layout}${tone === 'muted' ? ' tone-muted' : ''}`;
 
-  // Inline-only LEFT name cell. Always emitted in the inline layout so
-  // the grid's `auto` name track exists; empty when `name` is absent
-  // (the cell collapses to zero width → `[bar] count` reading order).
+  // Inline-only LEFT name cell. Emitted only when `withNameColumn` is on
+  // (org rosters), so the shared three-column grid's `name` track is
+  // populated on every row (blank for unnamed rows like the pending
+  // bar). Without it, no name cell is emitted and the row is a plain
+  // `bar | count` — no empty track, no `column-gap` left-shift on
+  // non-org rosters.
   const nameCell =
-    layout === 'inline' ? <span className="utilization-name">{name ?? ''}</span> : null;
+    layout === 'inline' && withNameColumn ? (
+      <span className="utilization-name">{name ?? ''}</span>
+    ) : null;
 
   if (!hasCap) {
     const seatsLabel = `${safeTotal} seat${safeTotal === 1 ? '' : 's'}`;
@@ -107,10 +121,16 @@ export function UtilizationBar({
     // cell plus a label that spans the remaining grid columns;
     // otherwise stack as normal.
     if (layout === 'inline') {
+      // The count label spans the bar + count columns. With a name
+      // column it starts at col 2 (after the name); without one the
+      // grid is two columns, so it spans the whole row.
+      const spanClass = withNameColumn
+        ? 'utilization-label utilization-label-span utilization-label-span--after-name'
+        : 'utilization-label utilization-label-span';
       return (
         <div className={wrapperClass}>
           {nameCell}
-          <div className="utilization-label utilization-label-span">
+          <div className={spanClass}>
             <span>{seatsLabel}</span>
             <span>(cap unset)</span>
           </div>

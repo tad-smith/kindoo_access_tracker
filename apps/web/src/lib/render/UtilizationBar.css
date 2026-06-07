@@ -44,9 +44,15 @@
 }
 
 /* Cap-unset variant in the inline layout — the row has no bar, so the
-   count label spans the bar + count columns (2 → end), leaving the
-   name cell in column 1. */
+   count label spans the full row. In the two-column (no-name) grid that
+   is `1 / -1`; in the three-column (with-name) grid the name cell holds
+   column 1, so the label spans `2 / -1`. */
 .utilization.layout-inline .utilization-label.utilization-label-span {
+  grid-column: 1 / -1;
+}
+
+.utilization.layout-inline
+  .utilization-label.utilization-label-span.utilization-label-span--after-name {
   grid-column: 2 / -1;
 }
 
@@ -94,20 +100,29 @@
 /* Pair wrapper used by the roster pages — several stacked
    `<UtilizationBar layout='inline'>` (committed + pending + per-org).
    Grid (rather than flex) so every row shares the SAME column track
-   widths: a leading `auto` NAME column (sized to the widest name, e.g.
-   "Stake Total"; collapses to nothing when no row is named), a `1fr`
-   bar column, and a trailing `auto` count column (sized to the widest
-   count). That guarantees every bar's fill column renders at
-   byte-identical pixel widths regardless of differing name / count
-   content. The inner `<UtilizationBar>` wrappers use `display: contents`
-   so their name + bar + label children are promoted into this grid
-   directly. */
+   widths: a `1fr` bar column and a trailing `auto` count column (sized
+   to the widest count). That guarantees every bar's fill column renders
+   at byte-identical pixel widths regardless of count content. The inner
+   `<UtilizationBar>` wrappers use `display: contents` so their bar +
+   label children are promoted into this grid directly.
+
+   Default is the two-column `bar | count` layout (bishopric / ward
+   roster, stake roster with no orgs) — identical to the pre-org layout,
+   no leading track, no extra `column-gap` shift. */
 .kd-roster-utilization {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 1fr auto;
   column-gap: 12px;
   row-gap: 6px;
   align-items: center;
+}
+
+/* With per-org bars, add a leading `auto` NAME column (sized to the
+   widest name, e.g. "Stake Total") so each row reads `name | bar |
+   count`. Applied by `<RosterUtilization>` only when org rows are
+   present. */
+.kd-roster-utilization--with-names {
+  grid-template-columns: auto 1fr auto;
 }
 
 .over-cap-flag {

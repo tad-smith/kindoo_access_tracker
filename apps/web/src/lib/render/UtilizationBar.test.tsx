@@ -62,8 +62,10 @@ describe('UtilizationBar', () => {
   });
 
   describe('inline layout', () => {
-    it('emits three cells — name, bar, count — in left-to-right DOM order', () => {
-      const { container } = render(<UtilizationBar total={10} cap={20} layout="inline" />);
+    it('emits three cells — name, bar, count — in left-to-right DOM order when withNameColumn is set', () => {
+      const { container } = render(
+        <UtilizationBar total={10} cap={20} layout="inline" withNameColumn />,
+      );
       const wrapper = container.querySelector('.utilization');
       expect(wrapper?.className).toContain('layout-inline');
       const children = Array.from(wrapper?.children ?? []);
@@ -73,11 +75,24 @@ describe('UtilizationBar', () => {
       expect(children[2]?.className).toContain('utilization-label');
     });
 
-    it('renders an empty left name cell when no name is supplied', () => {
+    it('emits only bar + count (no name cell) by default — the two-column layout', () => {
       const { container } = render(<UtilizationBar total={10} cap={20} layout="inline" />);
+      const wrapper = container.querySelector('.utilization');
+      const children = Array.from(wrapper?.children ?? []);
+      // No leading name track — bar | count, identical to the pre-org
+      // layout, so non-org rosters carry no extra column-gap left-shift.
+      expect(container.querySelector('.utilization-name')).toBeNull();
+      expect(children[0]?.className).toContain('utilization-bar');
+      expect(children[1]?.className).toContain('utilization-label');
+    });
+
+    it('emits a blank name cell when withNameColumn is set but no name is given', () => {
+      const { container } = render(
+        <UtilizationBar total={10} cap={20} layout="inline" withNameColumn />,
+      );
       const nameCell = container.querySelector('.utilization-name');
-      // The cell exists (so the grid track is present) but holds no text,
-      // so the `auto` column collapses and the bar reads `[bar] count`.
+      // Present (so the three-column grid stays aligned across rows) but
+      // empty — the `auto` track collapses to the widest named row.
       expect(nameCell).not.toBeNull();
       expect(nameCell?.textContent).toBe('');
     });
@@ -142,7 +157,7 @@ describe('UtilizationBar', () => {
   describe('name prop (inline layout)', () => {
     it('renders the name in the LEFT name cell, not inside the count text', () => {
       const { container } = render(
-        <UtilizationBar total={3} cap={10} layout="inline" name="Stake Choir" />,
+        <UtilizationBar total={3} cap={10} layout="inline" withNameColumn name="Stake Choir" />,
       );
       // Name lives in its own left cell …
       expect(container.querySelector('.utilization-name')?.textContent).toBe('Stake Choir');
@@ -153,18 +168,20 @@ describe('UtilizationBar', () => {
 
     it('renders the name in the left cell on the cap-unset inline row', () => {
       const { container } = render(
-        <UtilizationBar total={2} cap={null} layout="inline" name="Stake Choir" />,
+        <UtilizationBar total={2} cap={null} layout="inline" withNameColumn name="Stake Choir" />,
       );
       expect(container.querySelector('.utilization-name')?.textContent).toBe('Stake Choir');
-      // The span-cell count text has no name prefix.
+      // The span-cell count text has no name prefix, and the label spans
+      // from after the name column.
       const label = container.querySelector('.utilization-label');
+      expect(label?.className).toContain('utilization-label-span--after-name');
       expect(label?.textContent).toContain('2 seats');
       expect(label?.textContent).not.toContain('Stake Choir');
     });
 
-    it('leaves the left cell empty and the count un-prefixed when no name is given', () => {
+    it('omits the name cell and un-prefixes the count when withNameColumn is off', () => {
       const { container } = render(<UtilizationBar total={3} cap={10} layout="inline" />);
-      expect(container.querySelector('.utilization-name')?.textContent).toBe('');
+      expect(container.querySelector('.utilization-name')).toBeNull();
       expect(screen.getByText(/^3 \/ 10 seats used$/)).toBeInTheDocument();
     });
   });
