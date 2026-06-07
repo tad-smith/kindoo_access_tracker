@@ -244,12 +244,11 @@ export function useDeleteBuildingMutation() {
  */
 export function buildingDeleteBlocker(referencingWards: ReadonlyArray<Ward>): string | null {
   if (referencingWards.length === 0) return null;
-  const labels = referencingWards.map((w) => `${w.ward_name} (${w.ward_code})`);
+  const labels = referencingWards.map((w) => w.ward_name);
   return `Cannot delete: referenced by ${labels.length} ward(s) — ${labels.join(', ')}`;
 }
 
 export interface WardInput {
-  ward_code: string;
   ward_name: string;
   /** Immutable slug FK to the selected building (preferred). */
   building_id: string;
@@ -267,19 +266,33 @@ export function useAddWardMutation() {
     mutationFn: async (input: WardInput) => {
       const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
-      const code = input.ward_code.trim().toUpperCase();
-      if (!code) throw new Error('Ward code is required.');
-      await setDoc(wardRef(db, sid, code), {
-        ward_code: code,
-        ward_name: input.ward_name.trim(),
-        // Write BOTH: id-first FK + legacy name snapshot.
-        building_id: input.building_id,
-        building_name: input.building_name,
-        seat_cap: input.seat_cap,
-        created_at: serverTimestamp(),
-        last_modified_at: serverTimestamp(),
-        lastActor: actor,
-      } as unknown as Ward);
+      const name = input.ward_name.trim();
+      // Derive the immutable doc id from the name; the code is never a
+      // user input and never re-derived afterward.
+      const code = buildingSlug(name);
+      if (!code) throw new Error('Ward name is required.');
+      const ref = wardRef(db, sid, code);
+      // Race-safe create: the ward name is the only visible identifier, so
+      // a name that slugs to an EXISTING ward is rejected rather than
+      // silently overwriting it. The existence read + write run in one
+      // transaction so two concurrent adds can't both pass.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists()) {
+          throw new Error(`A ward named "${name}" already exists.`);
+        }
+        tx.set(ref, {
+          ward_code: code,
+          ward_name: name,
+          // Write BOTH: id-first FK + legacy name snapshot.
+          building_id: input.building_id,
+          building_name: input.building_name,
+          seat_cap: input.seat_cap,
+          created_at: serverTimestamp(),
+          last_modified_at: serverTimestamp(),
+          lastActor: actor,
+        } as unknown as Ward);
+      });
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn so

@@ -268,7 +268,7 @@ describe('<ConfigurationPage />', () => {
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-wards-add-button'));
     await user.click(screen.getByTestId('config-ward-submit'));
-    expect(await screen.findByText(/Ward code is required/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Ward name is required/i)).toBeInTheDocument();
   });
 
   it('opens the Add Ward modal from the section header', async () => {
@@ -286,7 +286,7 @@ describe('<ConfigurationPage />', () => {
     expect(screen.getByRole('heading', { name: 'Add ward' })).toBeInTheDocument();
   });
 
-  it('opens the Edit Ward modal pre-populated; ward_code is read-only', async () => {
+  it('opens the Edit Ward modal pre-populated; no ward code field is shown', async () => {
     const user = userEvent.setup();
     useWardsMock.mockReturnValue(
       liveResult<Ward>([
@@ -301,10 +301,10 @@ describe('<ConfigurationPage />', () => {
     );
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-ward-edit-CO'));
-    const wardCodeInput = screen.getByLabelText(/Ward code/i) as HTMLInputElement;
-    expect(wardCodeInput.value).toBe('CO');
-    expect(wardCodeInput).toHaveAttribute('readonly');
-    expect(screen.getByRole('heading', { name: /Edit ward — CO/ })).toBeInTheDocument();
+    // The ward name is the only visible identifier; the code is hidden.
+    expect((screen.getByLabelText(/Ward name/i) as HTMLInputElement).value).toBe('Maple');
+    expect(screen.queryByLabelText(/Ward code/i)).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Edit ward' })).toBeInTheDocument();
   });
 
   it('preselects the building by building_id when editing a migrated ward', async () => {
@@ -372,18 +372,20 @@ describe('<ConfigurationPage />', () => {
     );
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-wards-add-button'));
-    await user.type(screen.getByLabelText(/Ward code/i), 'CO');
     await user.type(screen.getByLabelText(/Ward name/i), 'Maple');
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByTestId('config-ward-submit'));
     await vi.waitFor(() => expect(upsertWardMock).toHaveBeenCalled());
-    expect(upsertWardMock).toHaveBeenCalledWith(
+    const arg = upsertWardMock.mock.calls[0]![0];
+    expect(arg).toEqual(
       expect.objectContaining({
-        ward_code: 'CO',
+        ward_name: 'Maple',
         building_id: 'maple-building',
         building_name: 'Maple Building',
       }),
     );
+    // On create the code is derived by the mutation, not passed from the form.
+    expect(arg).not.toHaveProperty('ward_code');
   });
 
   it('renders an Edit button on each Building row; building_id is never shown in form', async () => {

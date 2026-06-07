@@ -37,21 +37,25 @@ describe('buildingDeleteBlocker', () => {
     expect(buildingDeleteBlocker([])).toBeNull();
   });
 
-  it('returns a friendly message listing referencing ward names + codes', () => {
+  it('returns a friendly message listing referencing ward names', () => {
     const msg = buildingDeleteBlocker([
       ward({ ward_code: 'CO', ward_name: 'Maple' }),
       ward({ ward_code: 'PR', ward_name: 'Prairie' }),
     ]);
     expect(msg).toMatch(/Cannot delete/);
     expect(msg).toContain('referenced by 2 ward(s)');
-    expect(msg).toContain('Maple (CO)');
-    expect(msg).toContain('Prairie (PR)');
+    expect(msg).toContain('Maple');
+    expect(msg).toContain('Prairie');
+    // The ward code is no longer surfaced in the UI.
+    expect(msg).not.toContain('(CO)');
+    expect(msg).not.toContain('(PR)');
   });
 
   it('singular case still labels the count', () => {
     const msg = buildingDeleteBlocker([ward({ ward_code: 'CO', ward_name: 'Maple' })]);
     expect(msg).toContain('1 ward(s)');
-    expect(msg).toContain('Maple (CO)');
+    expect(msg).toContain('Maple');
+    expect(msg).not.toContain('(CO)');
   });
 });
 
@@ -129,6 +133,11 @@ vi.mock('../../lib/docs', async () => {
       path: `stakes/csnorth/buildings/${buildingId}`,
       id: buildingId,
     }),
+    wardRef: (_db: unknown, _stakeId: string, wardCode: string) => ({
+      __sentinel: 'wardRef',
+      path: `stakes/csnorth/wards/${wardCode}`,
+      id: wardCode,
+    }),
   };
 });
 
@@ -145,7 +154,7 @@ vi.mock('../../lib/useActiveStake', () => ({
   useActiveStake: () => 'csnorth',
 }));
 
-import { useAddBuildingMutation } from './hooks';
+import { useAddBuildingMutation, useAddWardMutation } from './hooks';
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({
@@ -218,6 +227,71 @@ describe('useAddBuildingMutation', () => {
     await expect(
       result.current.mutateAsync({ building_name: '   ', address: '123 Main' }),
     ).rejects.toThrow(/Building name is required/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('useAddWardMutation', () => {
+  it('derives the ward_code from the name via buildingSlug on create', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useAddWardMutation(), { wrapper });
+    await result.current.mutateAsync({
+      ward_name: '3rd Ward',
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      seat_cap: 20,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [ref, body] = setDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/wards/3rd-ward' });
+    expect(body).toMatchObject({
+      ward_code: '3rd-ward',
+      ward_name: '3rd Ward',
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      seat_cap: 20,
+      created_at: '__server_timestamp__',
+      lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
+    });
+  });
+
+  it('rejects a name that slugs to an existing ward', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useAddWardMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        ward_name: 'Maple Ward',
+        building_id: 'maple-building',
+        building_name: 'Maple Building',
+        seat_cap: 20,
+      }),
+    ).rejects.toThrow(/already exists/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('wraps the existence pre-check + write in a single runTransaction (race-safe)', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useAddWardMutation(), { wrapper });
+    await result.current.mutateAsync({
+      ward_name: 'Oak Ward',
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      seat_cap: 20,
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects when the slug derived from the name is empty', async () => {
+    const { result } = renderHook(() => useAddWardMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        ward_name: '   ',
+        building_id: 'maple-building',
+        building_name: 'Maple Building',
+        seat_cap: 20,
+      }),
+    ).rejects.toThrow(/Ward name is required/i);
     expect(setDocMock).not.toHaveBeenCalled();
   });
 });

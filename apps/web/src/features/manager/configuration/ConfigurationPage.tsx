@@ -13,11 +13,11 @@
 // Every list-bearing tab follows the same pattern: a top-right "Add X"
 // button opens a modal with the same react-hook-form + zod form used
 // for create. Wards / Buildings rows expose a per-row Edit button that
-// opens the modal pre-populated. Wards: `ward_code` is read-only when
-// editing (it's the doc id). Buildings: `building_id` is never shown
-// (it's a slug derived from `building_name` server-side). Kindoo Site
-// id is similarly slugged from `display_name` at create time and pinned
-// for the doc's life.
+// opens the modal pre-populated. Wards: `ward_code` is never shown — it's
+// a slug derived from `ward_name` at create and pinned as the doc id.
+// Buildings: `building_id` is never shown (it's a slug derived from
+// `building_name` server-side). Kindoo Site id is similarly slugged from
+// `display_name` at create time and pinned for the doc's life.
 //
 // Buildings carry a Kindoo Site selector in their Edit dialog; a ward's
 // site is derived from its assigned building, so wards have no site
@@ -192,7 +192,10 @@ function WardsTab() {
   );
 
   const sorted = useMemo(
-    () => [...(wards.data ?? [])].sort((a, b) => a.ward_code.localeCompare(b.ward_code)),
+    // Sort by the display name — the code is hidden, and legacy uppercase
+    // codes would otherwise sort before slug-derived lowercase ones,
+    // making the visible order look arbitrary.
+    () => [...(wards.data ?? [])].sort((a, b) => a.ward_name.localeCompare(b.ward_name)),
     [wards.data],
   );
 
@@ -231,10 +234,7 @@ function WardsTab() {
         {sorted.map((w) => (
           <li key={w.ward_code}>
             <span>
-              <strong>
-                {w.ward_name} ({w.ward_code})
-              </strong>{' '}
-              — building: {w.building_name} · cap {w.seat_cap}
+              <strong>{w.ward_name}</strong> — building: {w.building_name} · cap {w.seat_cap}
             </span>
             <span className="kd-config-row-actions">
               <Button
@@ -265,18 +265,23 @@ function WardsTab() {
         mode={openMode}
         buildingOptions={buildings.data ?? []}
         isPending={upsert.isPending}
-        onSubmit={async (input) => {
+        onSubmit={async (input, existingWardCode) => {
           // The form carries the immutable `building_id`; resolve the
           // selected building's current display name and write both
           // (id-first FK + legacy name snapshot for stale bundles).
           const selected = (buildings.data ?? []).find((b) => b.building_id === input.building_id);
           if (!selected) throw new Error('Selected building no longer exists.');
+          // On EDIT pass the existing doc id through so the mutation
+          // targets the same ward; on CREATE omit it so the mutation
+          // derives the code from the name. The live wards snapshot drives
+          // the unique-display-name guard.
           await upsert.mutateAsync({
-            ward_code: input.ward_code,
+            ...(existingWardCode !== undefined ? { ward_code: existingWardCode } : {}),
             ward_name: input.ward_name,
             building_id: input.building_id,
             building_name: selected.building_name,
             seat_cap: input.seat_cap,
+            existingWards: wards.data ?? [],
           });
           toast('Ward saved.', 'success');
         }}
@@ -330,14 +335,18 @@ interface WardFormDialogProps {
   mode: 'closed' | 'add' | { kind: 'edit'; ward: Ward };
   buildingOptions: readonly Building[];
   isPending: boolean;
-  onSubmit: (input: WardForm) => Promise<void>;
+  /**
+   * `existingWardCode` is the edited ward's immutable doc id on the edit
+   * path, `undefined` on create (the mutation derives the code from the
+   * name).
+   */
+  onSubmit: (input: WardForm, existingWardCode: string | undefined) => Promise<void>;
   onClose: () => void;
 }
 
 function wardFormDefaults(editingWard: Ward | null, buildings: readonly Building[]): WardForm {
   if (!editingWard) {
     return {
-      ward_code: '',
       ward_name: '',
       building_id: '',
       seat_cap: 20,
@@ -348,7 +357,6 @@ function wardFormDefaults(editingWard: Ward | null, buildings: readonly Building
   // on the right option.
   const resolved = resolveWardBuilding(editingWard, buildings);
   return {
-    ward_code: editingWard.ward_code,
     ward_name: editingWard.ward_name,
     building_id: editingWard.building_id ?? resolved?.building_id ?? '',
     seat_cap: editingWard.seat_cap,
@@ -394,7 +402,7 @@ function WardFormDialog({
 
   const submit = handleSubmit(async (input) => {
     try {
-      await onSubmit(input);
+      await onSubmit(input, editingWard?.ward_code);
       onClose();
     } catch (err) {
       toast(errorMessage(err), 'error');
@@ -407,24 +415,9 @@ function WardFormDialog({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
-      title={isEdit ? `Edit ward — ${editingWard?.ward_code ?? ''}` : 'Add ward'}
+      title={isEdit ? 'Edit ward' : 'Add ward'}
     >
       <form onSubmit={submit} className="kd-wizard-form" data-testid="config-ward-form">
-        <label>
-          Ward code
-          <Input
-            {...register('ward_code')}
-            maxLength={8}
-            placeholder="CO"
-            readOnly={isEdit}
-            aria-readonly={isEdit}
-          />
-        </label>
-        {formState.errors.ward_code ? (
-          <p role="alert" className="kd-form-error">
-            {formState.errors.ward_code.message}
-          </p>
-        ) : null}
         <label>
           Ward name
           <Input {...register('ward_name')} placeholder="Maple Ward" />

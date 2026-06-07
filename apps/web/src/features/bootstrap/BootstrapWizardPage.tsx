@@ -435,9 +435,9 @@ function Step3Wards() {
 
   const form = useForm<WardForm>({
     resolver: zodResolver(wardSchema),
-    defaultValues: { ward_code: '', ward_name: '', building_id: '', seat_cap: 20 },
+    defaultValues: { ward_name: '', building_id: '', seat_cap: 20 },
   });
-  const { register, handleSubmit, reset, formState } = form;
+  const { register, handleSubmit, reset, setError, formState } = form;
 
   const buildingOptions = buildings.data ?? [];
 
@@ -447,8 +447,20 @@ function Step3Wards() {
       // building's current display name and write both fields.
       const selected = buildingOptions.find((b) => b.building_id === input.building_id);
       if (!selected) throw new Error('Selected building no longer exists.');
+      // The ward name is now the only visible identifier, so reject inline
+      // a name that collides with a ward already added. Match by NAME
+      // (case-insensitive), not by slug — a slug-only check would miss a
+      // legacy 2-letter-coded ward whose name collides but whose doc id
+      // doesn't. The mutation enforces a slug-existence backstop too.
+      const wanted = input.ward_name.trim().toLowerCase();
+      if ((wards.data ?? []).some((w) => w.ward_name.trim().toLowerCase() === wanted)) {
+        setError('ward_name', {
+          type: 'manual',
+          message: `A ward named "${input.ward_name.trim()}" already exists.`,
+        });
+        return;
+      }
       await addMutation.mutateAsync({
-        ward_code: input.ward_code,
         ward_name: input.ward_name,
         building_id: input.building_id,
         building_name: selected.building_name,
@@ -469,10 +481,7 @@ function Step3Wards() {
         {(wards.data ?? []).map((w) => (
           <li key={w.ward_code}>
             <span>
-              <strong>
-                {w.ward_name} ({w.ward_code})
-              </strong>{' '}
-              — building: {w.building_name} · cap {w.seat_cap}
+              <strong>{w.ward_name}</strong> — building: {w.building_name} · cap {w.seat_cap}
             </span>
             <Button
               variant="danger"
@@ -490,15 +499,6 @@ function Step3Wards() {
         ))}
       </ul>
       <form onSubmit={handleSubmit(onAdd)}>
-        <label>
-          Ward code
-          <Input {...register('ward_code')} placeholder="CO" maxLength={8} />
-        </label>
-        {formState.errors.ward_code ? (
-          <p role="alert" className="kd-form-error">
-            {formState.errors.ward_code.message}
-          </p>
-        ) : null}
         <label>
           Ward name
           <Input {...register('ward_name')} placeholder="Maple Ward" />

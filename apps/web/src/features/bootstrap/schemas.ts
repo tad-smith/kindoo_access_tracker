@@ -28,12 +28,8 @@ export const buildingSchema = z.object({
 export type BuildingForm = z.infer<typeof buildingSchema>;
 
 export const wardSchema = z.object({
-  ward_code: z
-    .string()
-    .trim()
-    .min(1, 'Ward code is required.')
-    .max(8, 'Ward code is too long.')
-    .regex(/^[A-Za-z0-9]+$/, 'Ward code is letters/digits only.'),
+  // `ward_code` is no longer a user input — it's derived from `ward_name`
+  // via `buildingSlug()` at create and never shown.
   ward_name: z.string().trim().min(1, 'Ward name is required.'),
   // The building `<Select>` value is the immutable `building_id` slug;
   // the add handler resolves the display name and writes both fields.

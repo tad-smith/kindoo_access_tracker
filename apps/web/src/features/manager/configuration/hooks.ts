@@ -129,7 +129,16 @@ function requireActiveStake(activeStakeId: string | null): string {
 // ---- Wards mutations ------------------------------------------------
 
 export interface WardInput {
-  ward_code: string;
+  /**
+   * On EDIT, the existing ward's immutable doc id (`ward_code`), carried
+   * through so the write targets the SAME doc — its presence is what
+   * marks the edit path. Absent / undefined on CREATE, where the code is
+   * derived once from `ward_name` via `buildingSlug()`. The code is the
+   * doc id and NEVER re-derived on edit: re-slugging a renamed ward would
+   * write a new doc and orphan every seat / request / grant keyed on the
+   * original code.
+   */
+  ward_code?: string;
   ward_name: string;
   /** Immutable slug FK to the selected building (preferred). */
   building_id: string;
@@ -140,6 +149,36 @@ export interface WardInput {
    */
   building_name: string;
   seat_cap: number;
+  /**
+   * Live wards snapshot for the unique-display-name guard. The ward name
+   * is now the ONLY visible identifier — the code is hidden — so two
+   * wards must not share a name (a slug-only collision check misses
+   * legacy 2-letter-coded wards: a new "Maple" slugs to `maple` and would
+   * not collide with the legacy `Maple` at doc id `CO`). Caller passes
+   * the snapshot it just rendered — no extra read.
+   */
+  existingWards?: ReadonlyArray<Ward>;
+}
+
+/**
+ * Pure guard: returns a user-facing error message when another ward (a
+ * different `ward_code`) already uses `name`, or `null` when the name is
+ * free. Case-insensitive, trimmed — symmetric with
+ * `duplicateBuildingNameBlocker`. `selfWardCode` is the doc id being
+ * edited (undefined on create) so a ward doesn't conflict with itself.
+ */
+export function duplicateWardNameBlocker(
+  name: string,
+  wards: ReadonlyArray<Ward>,
+  selfWardCode: string | undefined,
+): string | null {
+  const wanted = name.trim().toLowerCase();
+  if (!wanted) return null;
+  const clash = wards.find(
+    (w) => w.ward_code !== selfWardCode && w.ward_name.trim().toLowerCase() === wanted,
+  );
+  if (!clash) return null;
+  return `Another ward already uses the name "${clash.ward_name}". Ward names must be unique.`;
 }
 
 export function useUpsertWardMutation() {
@@ -150,8 +189,20 @@ export function useUpsertWardMutation() {
     mutationFn: async (input: WardInput) => {
       const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
-      const code = input.ward_code.trim().toUpperCase();
-      if (!code) throw new Error('Ward code is required.');
+      const name = input.ward_name.trim();
+      // CREATE derives the doc id once from the name (no incoming code);
+      // EDIT carries the existing code through unchanged. `isCreate`
+      // distinguishes the two so the create path can reject a name that
+      // slugs to an existing doc instead of merging into it.
+      const isCreate = input.ward_code === undefined;
+      const code = input.ward_code ?? buildingSlug(name);
+      if (!code) throw new Error('Ward name is required.');
+      // Unique display name — the only visible identifier now. Blocks a
+      // new or renamed ward from sharing a name with another ward,
+      // including legacy 2-letter-coded wards the slug check can't catch.
+      // Self-excluded via the ward's own code on edit.
+      const dupBlocker = duplicateWardNameBlocker(name, input.existingWards ?? [], input.ward_code);
+      if (dupBlocker) throw new Error(dupBlocker);
       const ref = wardRef(db, sid, code);
       // Stamp `created_at` only on the create path. `merge: true` would
       // otherwise re-stamp it on every edit, silently losing the
@@ -162,7 +213,7 @@ export function useUpsertWardMutation() {
         const existing = await tx.get(ref);
         const editBody = {
           ward_code: code,
-          ward_name: input.ward_name.trim(),
+          ward_name: name,
           // Write BOTH: id-first resolution prefers `building_id`; the
           // legacy `building_name` keeps stale bundles working.
           building_id: input.building_id,
@@ -171,9 +222,12 @@ export function useUpsertWardMutation() {
           last_modified_at: serverTimestamp(),
           lastActor: actor,
         };
-        if (existing.exists()) {
-          tx.set(ref, editBody as unknown as Ward, { merge: true });
-        } else {
+        if (isCreate) {
+          // Backstop the name guard against a same-slug collision the
+          // live snapshot may have missed (race / stale read).
+          if (existing.exists()) {
+            throw new Error(`A ward named "${name}" already exists.`);
+          }
           tx.set(
             ref,
             {
@@ -182,6 +236,8 @@ export function useUpsertWardMutation() {
             } as unknown as Ward,
             { merge: true },
           );
+        } else {
+          tx.set(ref, editBody as unknown as Ward, { merge: true });
         }
       });
     },
@@ -469,7 +525,7 @@ export function useDeleteBuildingMutation() {
 /** Pure guard helper — see bootstrap/hooks.ts for rationale. */
 export function buildingDeleteBlocker(referencingWards: ReadonlyArray<Ward>): string | null {
   if (referencingWards.length === 0) return null;
-  const labels = referencingWards.map((w) => `${w.ward_name} (${w.ward_code})`);
+  const labels = referencingWards.map((w) => w.ward_name);
   return `Cannot delete: referenced by ${labels.length} ward(s) — ${labels.join(', ')}`;
 }
 

@@ -224,6 +224,34 @@ describe('wardSchema', () => {
     };
     expect(wardSchema.parse(seed)).toEqual(seed);
   });
+
+  it('accepts a hyphenated slug ward_code (derived from ward_name)', () => {
+    const seed = {
+      ward_code: '3rd-ward',
+      ward_name: '3rd Ward',
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      seat_cap: 30,
+      created_at: T,
+      last_modified_at: T,
+      lastActor: ACTOR,
+    };
+    expect(wardSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('rejects a ward_code with leading/trailing hyphens', () => {
+    expect(() =>
+      wardSchema.parse({
+        ward_code: '-bad-',
+        ward_name: 'Bad',
+        building_name: 'Maple Building',
+        seat_cap: 30,
+        created_at: T,
+        last_modified_at: T,
+        lastActor: ACTOR,
+      }),
+    ).toThrow();
+  });
 });
 
 describe('buildingSchema', () => {
