@@ -185,10 +185,15 @@ export default defineConfig(({ mode }) => {
           //     /firebase-cloud-messaging-push-scope).
           //   - /THIRD_PARTY_LICENSES.txt — T-20 compliance artifact,
           //     served as text/plain from apps/web/dist/.
+          //   - /help/ — static end-user guide HTML (synced from
+          //     docs/user-guide/ into public/help/ by sync-help.mjs).
+          //     Without this the SW serves the SPA shell for
+          //     /help/*.html instead of the real guide files.
           navigateFallbackDenylist: [
             /^\/__\//,
             /^\/firebase-messaging-sw\.js$/,
             /^\/THIRD_PARTY_LICENSES\.txt$/,
+            /^\/help\//,
           ],
           // Network-first for the SPA shell; cache-first for fingerprinted
           // bundle chunks (handled by precache); explicitly never cache

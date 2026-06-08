@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Requesting Building Access — A Guide for Ward &amp; Stake Leaders</title>
+<style>
+  :root{
+    --brand:#2b6cb0; --brand-dark:#2c5282; --brand-tint:#ebf4fb;
+    --ink:#1a2230; --ink-soft:#4a5568; --line:#e2e8f0; --bg:#ffffff;
+    --note:#2b6cb0; --note-bg:#eef5fc;
+    --tip:#2f855a; --tip-bg:#edf7f1;
+    --warn:#b7791f; --warn-bg:#fdf6e7;
+    --imp:#c53030; --imp-bg:#fdecec;
+    --max:52rem; --radius:10px;
+    --mono:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;font-family:var(--sans);color:var(--ink);line-height:1.65;
+    font-size:16px;background:#eef1f5;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .page{max-width:var(--max);margin:0 auto;background:var(--bg);
+    padding:0 3rem 4rem;box-shadow:0 1px 50px rgba(20,30,50,.08);}
+  /* cover */
+  .cover{margin:0 -3rem 2.5rem;padding:3.25rem 3rem 2.5rem;color:#fff;
+    background:linear-gradient(135deg,var(--brand) 0%,var(--brand-dark) 100%);}
+  .cover .eyebrow{font-size:.78rem;letter-spacing:.16em;text-transform:uppercase;
+    opacity:.85;margin:0 0 1rem;font-weight:600;}
+  .cover h1{font-size:2.15rem;line-height:1.15;margin:0 0 .6rem;font-weight:700;letter-spacing:-.01em;}
+  .cover .sub{font-size:1.06rem;opacity:.92;margin:0 0 1.5rem;max-width:36rem;}
+  .cover .meta{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;font-size:.85rem;
+    opacity:.9;border-top:1px solid rgba(255,255,255,.25);padding-top:1rem;}
+  .cover .meta b{font-weight:600;opacity:.8;font-weight:600;}
+  /* typography */
+  h2{font-size:1.5rem;margin:2.75rem 0 1rem;padding-bottom:.4rem;font-weight:700;
+    letter-spacing:-.01em;border-bottom:2px solid var(--brand);color:var(--brand-dark);}
+  h2 .num{color:var(--brand);font-variant-numeric:tabular-nums;}
+  h3{font-size:1.15rem;margin:1.9rem 0 .6rem;font-weight:650;color:var(--ink);}
+  h4{font-size:1rem;margin:1.4rem 0 .4rem;font-weight:650;color:var(--ink-soft);}
+  p{margin:.7rem 0;}
+  a{color:var(--brand-dark);}
+  ul,ol{margin:.6rem 0;padding-left:1.4rem;}
+  li{margin:.35rem 0;}
+  strong{font-weight:650;}
+  .lead{font-size:1.08rem;color:var(--ink-soft);}
+  hr{border:none;border-top:1px solid var(--line);margin:2.5rem 0;}
+  /* UI element references + code */
+  .ui{font-weight:600;background:var(--brand-tint);color:var(--brand-dark);
+    padding:.05em .45em;border-radius:5px;white-space:nowrap;font-size:.95em;}
+  code{font-family:var(--mono);font-size:.88em;background:#f1f3f7;
+    padding:.08em .4em;border-radius:5px;color:#34405a;}
+  /* table of contents */
+  .toc{background:#f7f9fc;border:1px solid var(--line);border-radius:var(--radius);
+    padding:1.25rem 1.5rem;margin:0 0 1rem;}
+  .toc h2{border:none;margin:0 0 .6rem;font-size:1.1rem;padding:0;color:var(--ink);}
+  .toc ol{list-style:none;padding:0;margin:0;counter-reset:toc;}
+  .toc > ol > li{counter-increment:toc;margin:.3rem 0;}
+  .toc > ol > li > a::before{content:counter(toc) ".\00a0\00a0";color:var(--brand);font-weight:600;}
+  .toc a{text-decoration:none;color:var(--ink);}
+  .toc a:hover{color:var(--brand-dark);text-decoration:underline;}
+  /* callouts */
+  .callout{border-left:4px solid var(--note);background:var(--note-bg);
+    padding:.85rem 1.1rem;border-radius:0 var(--radius) var(--radius) 0;margin:1.2rem 0;}
+  .callout p:first-child{margin-top:0;} .callout p:last-child{margin-bottom:0;}
+  .callout .lbl{display:block;font-weight:700;font-size:.74rem;letter-spacing:.08em;
+    text-transform:uppercase;margin-bottom:.25rem;color:var(--note);}
+  .callout.tip{border-color:var(--tip);background:var(--tip-bg);} .callout.tip .lbl{color:var(--tip);}
+  .callout.warn{border-color:var(--warn);background:var(--warn-bg);} .callout.warn .lbl{color:var(--warn);}
+  .callout.imp{border-color:var(--imp);background:var(--imp-bg);} .callout.imp .lbl{color:var(--imp);}
+  /* steps */
+  ol.steps{counter-reset:step;list-style:none;padding-left:0;margin:1rem 0;}
+  ol.steps>li{counter-increment:step;position:relative;padding:.15rem 0 .9rem 2.6rem;margin:0;}
+  ol.steps>li::before{content:counter(step);position:absolute;left:0;top:0;
+    width:1.8rem;height:1.8rem;background:var(--brand);color:#fff;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.9rem;}
+  ol.steps>li:not(:last-child)::after{content:"";position:absolute;left:.875rem;top:1.9rem;
+    bottom:-.1rem;width:2px;background:var(--line);}
+  /* tables */
+  table{border-collapse:collapse;width:100%;margin:1.2rem 0;font-size:.93rem;}
+  th,td{border:1px solid var(--line);padding:.55rem .7rem;text-align:left;vertical-align:top;}
+  th{background:var(--brand-tint);color:var(--brand-dark);font-weight:650;}
+  tbody tr:nth-child(even){background:#fafbfd;}
+  /* screenshot placeholders */
+  figure.shot{margin:1.4rem 0;}
+  .shot-box{border:2px dashed #b9c4d4;background:repeating-linear-gradient(45deg,#f7f9fc,#f7f9fc 10px,#f2f5fa 10px,#f2f5fa 20px);
+    border-radius:var(--radius);min-height:120px;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:.5rem;padding:1.5rem;text-align:center;}
+  .shot-tag{font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;
+    color:#fff;background:#94a3b8;padding:.2em .7em;border-radius:99px;}
+  .shot-desc{color:var(--ink-soft);font-size:.92rem;max-width:32rem;}
+  figure.shot figcaption{font-size:.86rem;color:var(--ink-soft);margin-top:.5rem;
+    padding-left:.2rem;border-left:3px solid var(--brand);padding:.1rem 0 .1rem .6rem;}
+  /* badges used inline to mimic UI chips */
+  .badge{display:inline-block;font-size:.78em;font-weight:650;padding:.1em .55em;
+    border-radius:99px;background:#edf0f5;color:#3b4a63;border:1px solid #dde3ec;vertical-align:baseline;}
+  .badge.urgent{background:#fdecec;color:#c53030;border-color:#f5cdcd;}
+  .badge.auto{background:#eef5fc;color:var(--brand-dark);border-color:#cfe3f6;}
+  .badge.temp{background:#fdf6e7;color:#92670f;border-color:#f0e0bb;}
+  /* footer */
+  footer{margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--line);
+    font-size:.85rem;color:var(--ink-soft);}
+  footer a{color:var(--brand-dark);}
+  .footer-grid{display:flex;flex-wrap:wrap;gap:1.5rem;justify-content:space-between;}
+  /* utilities */
+  .small{font-size:.88rem;color:var(--ink-soft);}
+  @media (max-width:640px){.page{padding:0 1.25rem 3rem}.cover{margin:0 -1.25rem 2rem;padding:2.25rem 1.25rem}}
+  @media print{
+    body{background:#fff;font-size:11pt;}
+    .page{max-width:none;margin:0;box-shadow:none;padding:0 0 1rem;}
+    .cover{margin:0 0 1.5rem;padding:2.5rem 2rem;}
+    .toc{break-after:page;}
+    h2{break-before:auto;break-after:avoid;margin-top:1.6rem;}
+    h3,h4{break-after:avoid;}
+    .callout,figure.shot,table,.shot-box,ol.steps>li{break-inside:avoid;}
+    a{text-decoration:none;}
+    @page{margin:16mm 15mm;}
+  }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <header class="cover">
+    <p class="eyebrow">Stake Building Access</p>
+    <h1>Requesting Building Access</h1>
+    <p class="sub">A step-by-step guide for bishoprics, stake presidencies, and other ward &amp; stake leaders who request Kindoo door access for members.</p>
+    <div class="meta">
+      <span><b>Audience:</b> Ward &amp; stake leaders</span>
+      <span><b>Version:</b> 1.0</span>
+      <span><b>Updated:</b> June 2026</span>
+      <span><b>App:</b> stakebuildingaccess.org</span>
+    </div>
+  </header>
+
+  <p class="lead">Stake Building Access (SBA) is how ward and stake leaders request door access for members in the stake's buildings. You submit a request; a Kindoo Manager grants the access in the door system and marks your request complete. This guide walks you through every part of that process.</p>
+
+  <nav class="toc" aria-label="Table of contents">
+    <h2>What's in this guide</h2>
+    <ol>
+      <li><a href="#about">How building access works</a></li>
+      <li><a href="#signin">Signing in</a></li>
+      <li><a href="#around">Finding your way around</a></li>
+      <li><a href="#roster">Reading your roster</a></li>
+      <li><a href="#new-request">Submitting a request for access</a></li>
+      <li><a href="#temporary">Requesting temporary access</a></li>
+      <li><a href="#remove">Removing someone's access</a></li>
+      <li><a href="#edit">Changing an existing seat</a></li>
+      <li><a href="#my-requests">Tracking your requests</a></li>
+      <li><a href="#after">What happens after you submit</a></li>
+      <li><a href="#faq">Frequently asked questions</a></li>
+      <li><a href="#help">Getting help</a></li>
+    </ol>
+  </nav>
+
+  <!-- 1 -->
+  <h2 id="about"><span class="num">1.</span> How building access works</h2>
+  <p>Door access in your buildings is managed by <strong>Kindoo</strong>, a system that grants each person a "seat" — permission to open specific doors. Your stake has a limited pool of seats, shared across its wards and the stake itself.</p>
+  <p>Stake Building Access (SBA) is the companion app where leaders <strong>request</strong> changes to who has access. SBA doesn't open doors itself — instead, your request is reviewed by a <strong>Kindoo Manager</strong>, who makes the change in Kindoo and then marks your request complete.</p>
+
+  <h3>The three kinds of seats</h3>
+  <table>
+    <thead><tr><th>Seat type</th><th>Where it comes from</th><th>Do you request it?</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge auto">Automatic</span></td><td>Tied to a person's calling. When someone is called or released in the Church's systems, their access follows automatically.</td><td><strong>No.</strong> These appear and disappear on their own as callings change.</td></tr>
+      <tr><td><span class="badge">Manual</span></td><td>Granted to a specific person and kept until someone asks to remove it.</td><td><strong>Yes</strong> — this is the most common request.</td></tr>
+      <tr><td><span class="badge temp">Temporary</span></td><td>Granted with a start and end date. Access ends automatically on the end date.</td><td><strong>Yes</strong> — for short-term needs.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Who you are in the app</h3>
+  <ul>
+    <li><strong>Bishopric members</strong> (bishop and counselors) request access for their own ward.</li>
+    <li><strong>Stake presidency</strong> and other stake leaders with access (e.g. stake clerk, stake executive secretary) request access against the <strong>stake</strong> pool.</li>
+  </ul>
+  <div class="callout"><span class="lbl">Note</span><p>You only ever request access for the scope you serve. A bishopric can request for their ward; the stake presidency can request for the stake. If you serve in more than one role, the app lets you switch between them (see <a href="#around">Section 3</a>).</p></div>
+
+  <!-- 2 -->
+  <h2 id="signin"><span class="num">2.</span> Signing in</h2>
+  <ol class="steps">
+    <li>In your web browser, go to <strong>stakebuildingaccess.org</strong>.</li>
+    <li>Choose how to sign in:
+      <ul>
+        <li><span class="ui">Continue with Google</span> — sign in with your Google or church-linked Google account in a pop-up. Fastest if your email is a Google account.</li>
+        <li><strong>Email a sign-in link</strong> — type your email address and click <span class="ui">Send me a sign-in link</span>. Open the email and click the link to finish signing in. No password needed.</li>
+      </ul>
+    </li>
+    <li>The first time you sign in, you'll land on a page that says your access is pending. Once a Kindoo Manager has added your email, you'll see your roster on the next sign-in.</li>
+  </ol>
+
+  <figure class="shot">
+    <img src="img/sign-in.png" alt="The sign-in page showing the Continue with Google button above the email sign-in-link form" style="width:100%;border-radius:10px;border:1px solid #e2e8f0" />
+    <figcaption>Fig 2.1 — The sign-in page at stakebuildingaccess.org.</figcaption>
+  </figure>
+
+  <div class="callout warn"><span class="lbl">If you can't get past the "pending" screen</span><p>Signing in does <strong>not</strong> automatically grant you access to the app. A Kindoo Manager must add your email first. If you're newly called, this may take a little time — your access follows once the stake's records have synced. If you're still stuck after a day or two, contact your stake's Kindoo Manager (see <a href="#help">Getting help</a>).</p></div>
+
+  <h3>Install it like an app (optional)</h3>
+  <p>SBA works in any browser, but you can also install it to your phone's home screen or your computer's dock so it opens like a regular app. Look for your browser's <em>Install</em> or <em>Add to Home Screen</em> option while the site is open.</p>
+
+  <!-- 3 -->
+  <h2 id="around"><span class="num">3.</span> Finding your way around</h2>
+  <p>After you sign in, SBA opens on your <strong>Roster</strong> — the current list of who has access in your scope. There are three places you'll use:</p>
+  <table>
+    <thead><tr><th>Page</th><th>What it's for</th></tr></thead>
+    <tbody>
+      <tr><td><span class="ui">Roster</span></td><td>See who currently has access. This is also where you start every request.</td></tr>
+      <tr><td><span class="ui">New Request</span></td><td>A form (opened from the Roster) for requesting that someone be added.</td></tr>
+      <tr><td><span class="ui">My Requests</span></td><td>Track the requests you've submitted and their status.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout tip"><span class="lbl">If you serve in more than one role</span><p>If you have access to more than one ward, a <span class="ui">Ward</span> dropdown appears above your roster so you can switch wards. If you hold roles in more than one stake, a stake switcher appears in the top bar. The page always shows the scope you've currently selected.</p></div>
+
+  <!-- 4 -->
+  <h2 id="roster"><span class="num">4.</span> Reading your roster</h2>
+  <p>Your roster lists everyone who currently has access in your scope, grouped by seat type. For each person you'll see their <strong>calling</strong> (or the reason their seat was granted) and their <strong>name</strong>.</p>
+  <ul>
+    <li><strong>Automatic</strong> seats show the calling that grants the access. These don't have a remove option — they come and go with the calling.</li>
+    <li><strong>Manual</strong> seats show the reason the access was granted, and have a remove option.</li>
+    <li><strong>Temporary</strong> seats show the reason plus the start and end dates, and have a remove option.</li>
+  </ul>
+  <p>At the top, a <strong>utilization bar</strong> shows how many of your scope's seats are in use compared to its cap.</p>
+
+  <figure class="shot">
+    <img src="img/ward-roster.png" alt="A bishopric ward roster showing the utilization bar, the New Request button, and a mix of automatic, manual, and temporary rows" style="width:100%;border-radius:10px;border:1px solid #e2e8f0" />
+    <figcaption>Fig 4.1 — A typical roster, with the utilization bar and the New Request button at the top.</figcaption>
+  </figure>
+
+  <!-- 5 -->
+  <h2 id="new-request"><span class="num">5.</span> Submitting a request for access</h2>
+  <p>Every request starts from your Roster. The form already knows which scope you're requesting for, so you can't accidentally request against the wrong ward or the stake.</p>
+
+  <ol class="steps">
+    <li>On your Roster, click the <span class="ui">New&nbsp;Request</span> button at the top right.</li>
+    <li>A form opens, showing <strong>Requesting for:</strong> your scope (your ward, or the stake). This is fixed — there's no scope picker.</li>
+    <li>Choose the <strong>request type</strong>:
+      <ul>
+        <li><strong>Add (manual)</strong> — ongoing access, kept until removed.</li>
+        <li><strong>Add (temporary)</strong> — access with an end date (covered in <a href="#temporary">Section 6</a>).</li>
+      </ul>
+    </li>
+    <li>Fill in the details (see the table below).</li>
+    <li>Click <span class="ui">Submit</span>. The form closes and your request appears in <a href="#my-requests">My Requests</a> as <em>pending</em>.</li>
+  </ol>
+
+  <figure class="shot">
+    <img src="img/new-request-form.png" alt="The New Request form open in a modal, with the type selector, member fields, reason, buildings selector, and Submit/Cancel buttons" style="width:100%;border-radius:10px;border:1px solid #e2e8f0" />
+    <figcaption>Fig 5.1 — The New Request form.</figcaption>
+  </figure>
+
+  <h3>The fields, explained</h3>
+  <table>
+    <thead><tr><th>Field</th><th>Required?</th><th>What to enter</th></tr></thead>
+    <tbody>
+      <tr><td>Request type</td><td>Yes</td><td>Add (manual) or Add (temporary).</td></tr>
+      <tr><td>Dates</td><td>Temporary only</td><td>The start and end dates for temporary access.</td></tr>
+      <tr><td>Member email</td><td>Yes</td><td>The email address of the person who needs access.</td></tr>
+      <tr><td>Member name</td><td>Yes</td><td>The person's name, for the roster and the manager's reference.</td></tr>
+      <tr><td>Reason</td><td>Yes</td><td>Why this person needs access (e.g. their calling or assignment).</td></tr>
+      <tr><td>Buildings</td><td><strong>Yes — at least one</strong></td><td>Tick every building this person should be able to enter. Your ward's building is ticked by default, but you can add or remove buildings.</td></tr>
+      <tr><td>Comment</td><td>Optional</td><td>Anything else the manager should know.</td></tr>
+      <tr><td>Emergency</td><td>Optional</td><td>Flag time-sensitive requests so the manager sees them first.</td></tr>
+      <tr><td>Organization</td><td>Stake requests only</td><td>Assign the seat to a stake organization for reporting. Defaults to "No Organization."</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout"><span class="lbl">Note — you must pick at least one building</span><p>Every add request needs at least one building selected. The <span class="ui">Submit</span> button stays disabled until you've ticked one.</p></div>
+
+  <div class="callout warn"><span class="lbl">"This member already has a seat"</span><p>If the person already has access in this scope, the form blocks the request and tells you so. You don't need to add access they already have — check your roster, and if you need to change their existing access, use <a href="#edit">Change an existing seat</a> instead.</p></div>
+
+  <div class="callout tip"><span class="lbl">What does "Emergency" do?</span><p>Marking a request as an emergency puts it at the top of the manager's queue with a red marker, so genuinely time-sensitive needs (a same-day event, for example) are handled first. Use it sparingly so it stays meaningful.</p></div>
+
+  <!-- 6 -->
+  <h2 id="temporary"><span class="num">6.</span> Requesting temporary access</h2>
+  <p>Temporary access is for short-term needs — a visiting specialist, a one-time event, someone helping for a season.</p>
+  <ol class="steps">
+    <li>Open <span class="ui">New&nbsp;Request</span> from your Roster.</li>
+    <li>Choose <strong>Add (temporary)</strong>. A date field appears right under the type.</li>
+    <li>Set the <strong>start</strong> and <strong>end</strong> dates.</li>
+    <li>Fill in the member, reason, and buildings as usual, then <span class="ui">Submit</span>.</li>
+  </ol>
+  <div class="callout tip"><span class="lbl">You don't need to remember to remove it</span><p>Temporary access ends <strong>automatically</strong> on the end date — Kindoo turns it off, and the seat drops off your roster on its own. There's no need to submit a removal when a temporary seat expires.</p></div>
+
+  <!-- 7 -->
+  <h2 id="remove"><span class="num">7.</span> Removing someone's access</h2>
+  <p>When someone no longer needs manual or temporary access, you can request that it be removed — directly from the roster row.</p>
+  <ol class="steps">
+    <li>On your Roster, find the person's row. (Removal is available on <strong>manual</strong> and <strong>temporary</strong> rows.)</li>
+    <li>Click the remove control on that row.</li>
+    <li>In the <strong>"Remove access for [person]?"</strong> dialog, type a required <strong>reason</strong>.</li>
+    <li>Submit. The row switches to a <strong>removal pending</strong> badge so you don't submit it twice.</li>
+  </ol>
+  <div class="callout"><span class="lbl">Why can't I remove an automatic seat?</span><p>Automatic seats follow a person's calling. The way to remove that access is for the calling to end in the Church's records — once it does, the access goes away on its own. There's no remove button on automatic rows for this reason.</p></div>
+
+  <!-- 8 -->
+  <h2 id="edit"><span class="num">8.</span> Changing an existing seat</h2>
+  <p>Sometimes you don't need to add or remove access — you just need to <strong>change</strong> it. For example, extend a temporary seat's end date, fix the reason, or add another building.</p>
+  <ol class="steps">
+    <li>On your Roster, find the person's row and open its <span class="ui">Edit</span> option.</li>
+    <li>Change what you need:
+      <ul>
+        <li><strong>Temporary seats:</strong> reason, buildings, and the start/end dates.</li>
+        <li><strong>Manual seats:</strong> reason and buildings.</li>
+        <li><strong>Automatic (ward) seats:</strong> you can <em>add</em> buildings, but you can't remove buildings the calling already grants.</li>
+      </ul>
+    </li>
+    <li>Add a <strong>comment</strong> (required for edits) explaining the change, then submit.</li>
+  </ol>
+  <div class="callout"><span class="lbl">Note</span><p>Like add and remove, an edit becomes a request the Kindoo Manager completes — the change takes effect once they've applied it. Stake-wide automatic seats can't be edited.</p></div>
+
+  <!-- 9 -->
+  <h2 id="my-requests"><span class="num">9.</span> Tracking your requests</h2>
+  <p>The <span class="ui">My Requests</span> page lists everything you've submitted, with its current status:</p>
+  <table>
+    <thead><tr><th>Status</th><th>What it means</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Pending</strong></td><td>Submitted and waiting for a Kindoo Manager. You can still cancel it.</td></tr>
+      <tr><td><strong>Complete</strong></td><td>The manager has made the change in Kindoo. A completion note may be shown.</td></tr>
+      <tr><td><strong>Rejected</strong></td><td>The manager declined the request; the reason is shown on the row.</td></tr>
+      <tr><td><strong>Cancelled</strong></td><td>You cancelled it before it was processed.</td></tr>
+    </tbody>
+  </table>
+  <p>To cancel a request that's still pending, click <span class="ui">Cancel</span> on its row. If you hold more than one role, a scope filter lets you narrow the list.</p>
+
+  <figure class="shot">
+    <img src="img/my-requests.png" alt="The My Requests page listing requests with pending, complete, and rejected statuses, and a Cancel button on a pending row" style="width:100%;border-radius:10px;border:1px solid #e2e8f0" />
+    <figcaption>Fig 9.1 — My Requests, showing request statuses.</figcaption>
+  </figure>
+
+  <!-- 10 -->
+  <h2 id="after"><span class="num">10.</span> What happens after you submit</h2>
+  <ol class="steps">
+    <li>Your request lands in the Kindoo Manager's queue, and they're notified by email (and a push notification if they've enabled it).</li>
+    <li>The manager makes the matching change in Kindoo by hand — inviting the person, granting the right doors, or removing access.</li>
+    <li>When the Kindoo work is done, the manager marks your request <strong>complete</strong> and you receive an email.</li>
+  </ol>
+  <div class="callout"><span class="lbl">This is not instant</span><p>Because a person does the Kindoo work by hand, access isn't granted the moment you click Submit. Most stakes handle a handful of requests a week. If something is genuinely time-sensitive, mark it <strong>Emergency</strong> and, if needed, reach out to your Kindoo Manager directly.</p></div>
+
+  <!-- 11 -->
+  <h2 id="faq"><span class="num">11.</span> Frequently asked questions</h2>
+
+  <h4>I signed in but I'm stuck on a "pending" or "not authorized" page.</h4>
+  <p>Creating a sign-in doesn't grant access. A Kindoo Manager has to add your email. If you're newly called, your access follows once the stake's records sync. Contact your Kindoo Manager if it doesn't appear after a day or two.</p>
+
+  <h4>Why isn't access turned on immediately after I submit?</h4>
+  <p>A Kindoo Manager grants the access in Kindoo by hand and then marks your request complete. See <a href="#after">Section 10</a>.</p>
+
+  <h4>The person already has access — how do I change it?</h4>
+  <p>Use <a href="#edit">Change an existing seat</a> (edit) or, if it should be removed, the remove control on their roster row. The add form will block you if a seat already exists.</p>
+
+  <h4>Do I have to remove temporary access when it ends?</h4>
+  <p>No. Temporary access ends automatically on its end date.</p>
+
+  <h4>Why do I have to pick a building?</h4>
+  <p>Access is granted per building, so every add or edit needs at least one building selected. Your ward's building is ticked by default.</p>
+
+  <h4>Can I request access for someone in a different ward?</h4>
+  <p>You request for the scope you serve. If you're in a bishopric, that's your ward; the stake presidency requests against the stake. If you serve in multiple roles, switch scope with the ward or stake selector.</p>
+
+  <!-- 12 -->
+  <h2 id="help"><span class="num">12.</span> Getting help</h2>
+  <p>If you have a question this guide doesn't answer, or you can't get into the app, contact your stake's Kindoo Manager. For app issues, you can also email <a href="mailto:support@stakebuildingaccess.org">support@stakebuildingaccess.org</a>.</p>
+
+  <footer>
+    <div class="footer-grid">
+      <span><strong>Stake Building Access</strong> — Requesting Building Access<br>Guide for ward &amp; stake leaders · Version 1.0 · June 2026</span>
+      <span>stakebuildingaccess.org<br><a href="mailto:support@stakebuildingaccess.org">support@stakebuildingaccess.org</a></span>
+    </div>
+  </footer>
+
+</main>
+</body>
+</html>

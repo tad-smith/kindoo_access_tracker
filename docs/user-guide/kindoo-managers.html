@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kindoo Manager Guide — Stake Building Access</title>
+<style>
+  :root{
+    --brand:#2b6cb0; --brand-dark:#2c5282; --brand-tint:#ebf4fb;
+    --ink:#1a2230; --ink-soft:#4a5568; --line:#e2e8f0; --bg:#ffffff;
+    --note:#2b6cb0; --note-bg:#eef5fc;
+    --tip:#2f855a; --tip-bg:#edf7f1;
+    --warn:#b7791f; --warn-bg:#fdf6e7;
+    --imp:#c53030; --imp-bg:#fdecec;
+    --max:52rem; --radius:10px;
+    --mono:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;font-family:var(--sans);color:var(--ink);line-height:1.65;
+    font-size:16px;background:#eef1f5;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .page{max-width:var(--max);margin:0 auto;background:var(--bg);
+    padding:0 3rem 4rem;box-shadow:0 1px 50px rgba(20,30,50,.08);}
+  .cover{margin:0 -3rem 2.5rem;padding:3.25rem 3rem 2.5rem;color:#fff;
+    background:linear-gradient(135deg,var(--brand) 0%,var(--brand-dark) 100%);}
+  .cover .eyebrow{font-size:.78rem;letter-spacing:.16em;text-transform:uppercase;
+    opacity:.85;margin:0 0 1rem;font-weight:600;}
+  .cover h1{font-size:2.15rem;line-height:1.15;margin:0 0 .6rem;font-weight:700;letter-spacing:-.01em;}
+  .cover .sub{font-size:1.06rem;opacity:.92;margin:0 0 1.5rem;max-width:36rem;}
+  .cover .meta{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;font-size:.85rem;
+    opacity:.9;border-top:1px solid rgba(255,255,255,.25);padding-top:1rem;}
+  .cover .meta b{font-weight:600;opacity:.8;}
+  h2{font-size:1.5rem;margin:2.75rem 0 1rem;padding-bottom:.4rem;font-weight:700;
+    letter-spacing:-.01em;border-bottom:2px solid var(--brand);color:var(--brand-dark);}
+  h2 .num{color:var(--brand);font-variant-numeric:tabular-nums;}
+  h3{font-size:1.15rem;margin:1.9rem 0 .6rem;font-weight:650;color:var(--ink);}
+  h4{font-size:1rem;margin:1.4rem 0 .4rem;font-weight:650;color:var(--ink-soft);}
+  p{margin:.7rem 0;}
+  a{color:var(--brand-dark);}
+  ul,ol{margin:.6rem 0;padding-left:1.4rem;}
+  li{margin:.35rem 0;}
+  strong{font-weight:650;}
+  .lead{font-size:1.08rem;color:var(--ink-soft);}
+  hr{border:none;border-top:1px solid var(--line);margin:2.5rem 0;}
+  .ui{font-weight:600;background:var(--brand-tint);color:var(--brand-dark);
+    padding:.05em .45em;border-radius:5px;white-space:nowrap;font-size:.95em;}
+  code{font-family:var(--mono);font-size:.88em;background:#f1f3f7;
+    padding:.08em .4em;border-radius:5px;color:#34405a;}
+  .toc{background:#f7f9fc;border:1px solid var(--line);border-radius:var(--radius);
+    padding:1.25rem 1.5rem;margin:0 0 1rem;}
+  .toc h2{border:none;margin:0 0 .6rem;font-size:1.1rem;padding:0;color:var(--ink);}
+  .toc ol{list-style:none;padding:0;margin:0;counter-reset:toc;}
+  .toc > ol > li{counter-increment:toc;margin:.3rem 0;}
+  .toc > ol > li > a::before{content:counter(toc) ".\00a0\00a0";color:var(--brand);font-weight:600;}
+  .toc a{text-decoration:none;color:var(--ink);}
+  .toc a:hover{color:var(--brand-dark);text-decoration:underline;}
+  .callout{border-left:4px solid var(--note);background:var(--note-bg);
+    padding:.85rem 1.1rem;border-radius:0 var(--radius) var(--radius) 0;margin:1.2rem 0;}
+  .callout p:first-child{margin-top:0;} .callout p:last-child{margin-bottom:0;}
+  .callout .lbl{display:block;font-weight:700;font-size:.74rem;letter-spacing:.08em;
+    text-transform:uppercase;margin-bottom:.25rem;color:var(--note);}
+  .callout.tip{border-color:var(--tip);background:var(--tip-bg);} .callout.tip .lbl{color:var(--tip);}
+  .callout.warn{border-color:var(--warn);background:var(--warn-bg);} .callout.warn .lbl{color:var(--warn);}
+  .callout.imp{border-color:var(--imp);background:var(--imp-bg);} .callout.imp .lbl{color:var(--imp);}
+  ol.steps{counter-reset:step;list-style:none;padding-left:0;margin:1rem 0;}
+  ol.steps>li{counter-increment:step;position:relative;padding:.15rem 0 .9rem 2.6rem;margin:0;}
+  ol.steps>li::before{content:counter(step);position:absolute;left:0;top:0;
+    width:1.8rem;height:1.8rem;background:var(--brand);color:#fff;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.9rem;}
+  ol.steps>li:not(:last-child)::after{content:"";position:absolute;left:.875rem;top:1.9rem;
+    bottom:-.1rem;width:2px;background:var(--line);}
+  table{border-collapse:collapse;width:100%;margin:1.2rem 0;font-size:.93rem;}
+  th,td{border:1px solid var(--line);padding:.55rem .7rem;text-align:left;vertical-align:top;}
+  th{background:var(--brand-tint);color:var(--brand-dark);font-weight:650;}
+  tbody tr:nth-child(even){background:#fafbfd;}
+  figure.shot{margin:1.4rem 0;}
+  .shot-box{border:2px dashed #b9c4d4;background:repeating-linear-gradient(45deg,#f7f9fc,#f7f9fc 10px,#f2f5fa 10px,#f2f5fa 20px);
+    border-radius:var(--radius);min-height:120px;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:.5rem;padding:1.5rem;text-align:center;}
+  .shot-tag{font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;
+    color:#fff;background:#94a3b8;padding:.2em .7em;border-radius:99px;}
+  .shot-desc{color:var(--ink-soft);font-size:.92rem;max-width:32rem;}
+  figure.shot figcaption{font-size:.86rem;color:var(--ink-soft);margin-top:.5rem;
+    border-left:3px solid var(--brand);padding:.1rem 0 .1rem .6rem;}
+  .badge{display:inline-block;font-size:.78em;font-weight:650;padding:.1em .55em;
+    border-radius:99px;background:#edf0f5;color:#3b4a63;border:1px solid #dde3ec;vertical-align:baseline;}
+  .badge.urgent{background:#fdecec;color:#c53030;border-color:#f5cdcd;}
+  .badge.auto{background:#eef5fc;color:var(--brand-dark);border-color:#cfe3f6;}
+  .badge.temp{background:#fdf6e7;color:#92670f;border-color:#f0e0bb;}
+  footer{margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--line);
+    font-size:.85rem;color:var(--ink-soft);}
+  footer a{color:var(--brand-dark);}
+  .footer-grid{display:flex;flex-wrap:wrap;gap:1.5rem;justify-content:space-between;}
+  .small{font-size:.88rem;color:var(--ink-soft);}
+  @media (max-width:640px){.page{padding:0 1.25rem 3rem}.cover{margin:0 -1.25rem 2rem;padding:2.25rem 1.25rem}}
+  @media print{
+    body{background:#fff;font-size:11pt;}
+    .page{max-width:none;margin:0;box-shadow:none;padding:0 0 1rem;}
+    .cover{margin:0 0 1.5rem;padding:2.5rem 2rem;}
+    .toc{break-after:page;}
+    h2{break-before:auto;break-after:avoid;margin-top:1.6rem;}
+    h3,h4{break-after:avoid;}
+    .callout,figure.shot,table,.shot-box,ol.steps>li{break-inside:avoid;}
+    a{text-decoration:none;}
+    @page{margin:16mm 15mm;}
+  }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <header class="cover">
+    <p class="eyebrow">Stake Building Access</p>
+    <h1>Kindoo Manager Guide</h1>
+    <p class="sub">Everything you need to set up a stake, install the companion Chrome extension, and process building-access requests against Kindoo — from first run to daily work.</p>
+    <div class="meta">
+      <span><b>Audience:</b> Kindoo Managers</span>
+      <span><b>Version:</b> 1.0</span>
+      <span><b>Updated:</b> June 2026</span>
+      <span><b>App:</b> stakebuildingaccess.org</span>
+    </div>
+  </header>
+
+  <p class="lead">As a Kindoo Manager you are the bridge between Stake Building Access (SBA) and Kindoo. Leaders submit requests in SBA; you make the matching change in Kindoo by hand and mark the request complete. This guide covers both the SBA web app and the companion Chrome extension where most of your hands-on work happens.</p>
+
+  <nav class="toc" aria-label="Table of contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#role">Your role &amp; how the pieces fit</a></li>
+      <li><a href="#setup">First-time setup: the stake wizard</a></li>
+      <li><a href="#extension">Installing &amp; configuring the Chrome extension</a></li>
+      <li><a href="#web">The web app at a glance</a></li>
+      <li><a href="#processing">Processing requests (the daily workflow)</a></li>
+      <li><a href="#sync">Keeping SBA and Kindoo in sync</a></li>
+      <li><a href="#sites">Managing multiple Kindoo sites</a></li>
+      <li><a href="#appaccess">App access: who can sign in</a></li>
+      <li><a href="#caps">Seat caps &amp; utilization</a></li>
+      <li><a href="#notifications">Notifications</a></li>
+      <li><a href="#audit">The audit log</a></li>
+      <li><a href="#troubleshooting">Troubleshooting</a></li>
+      <li><a href="#glossary">Glossary</a></li>
+      <li><a href="#help">Getting help</a></li>
+    </ol>
+  </nav>
+
+  <!-- 1 -->
+  <h2 id="role"><span class="num">1.</span> Your role &amp; how the pieces fit</h2>
+  <p>Kindoo controls the doors and is the <strong>authoritative</strong> record of who has access. Kindoo has no programming interface, so access changes are made by hand inside Kindoo's admin site. SBA sits alongside Kindoo to organize the work:</p>
+  <ul>
+    <li><strong>Leaders</strong> (bishoprics, stake presidency) submit requests in SBA.</li>
+    <li><strong>You</strong> review each request, make the change in Kindoo, and mark the request complete.</li>
+    <li>SBA mirrors Kindoo's state so everyone can see who currently has access.</li>
+  </ul>
+
+  <h3>Your two tools</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>What you do there</th></tr></thead>
+    <tbody>
+      <tr><td><strong>SBA web app</strong><br><span class="small">stakebuildingaccess.org</span></td><td>See pending requests, view all seats, configure buildings/wards/sites, manage app access, and read the audit log. <strong>Viewing and configuration</strong> — not where you complete requests.</td></tr>
+      <tr><td><strong>Chrome extension</strong><br><span class="small">"Stake Building Access — Kindoo Helper"</span></td><td>A panel that opens on top of Kindoo. This is where you <strong>provision access in Kindoo and complete or reject requests</strong>, and where you run <strong>Sync</strong>.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout imp"><span class="lbl">Important — completion happens in the extension</span><p>The web app's <span class="ui">Requests&nbsp;Queue</span> is <strong>read-only</strong>. You can see what's pending there, but you complete or reject requests <strong>only in the Chrome extension</strong>, because that's where the Kindoo-side work is done.</p></div>
+
+  <h3>Seat types recap</h3>
+  <table>
+    <thead><tr><th>Type</th><th>Source</th><th>How it ends</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge auto">Automatic</span></td><td>A person's calling. Flows from the Church's records into Kindoo automatically.</td><td>When the calling ends. Sync removes the now-orphaned SBA seat.</td></tr>
+      <tr><td><span class="badge">Manual</span></td><td>Granted to a person on request.</td><td>When someone requests removal.</td></tr>
+      <tr><td><span class="badge temp">Temporary</span></td><td>Granted with an end date.</td><td>Kindoo expires it automatically; Sync clears the SBA seat.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- 2 -->
+  <h2 id="setup"><span class="num">2.</span> First-time setup: the stake wizard</h2>
+  <p>When a stake is first created, the named <strong>bootstrap administrator</strong> signs in and is walked through a one-time setup wizard. (If you're standing up a new stake, this is you.) The stake itself is created by a platform administrator before you sign in — once that's done, signing in as the bootstrap admin starts the wizard automatically.</p>
+
+  <ol class="steps">
+    <li><strong>Stake details.</strong> Confirm the stake name and set the overall <strong>stake seat cap</strong>.</li>
+    <li><strong>Add at least one building.</strong> Buildings come first because every ward must point to a building.</li>
+    <li><strong>Add at least one ward.</strong> Give each ward a name, choose its building, and set its seat cap.</li>
+    <li><strong>Add other Kindoo Managers (optional).</strong> You're added as a manager automatically and can't lock yourself out.</li>
+    <li>Click <span class="ui">Complete&nbsp;Setup</span>. The stake goes live and you land on the manager Dashboard.</li>
+  </ol>
+  <div class="callout tip"><span class="lbl">You can stop and resume</span><p>Each step saves as you go, so you can close the wizard and pick up where you left off. Setup is one-time; after it's done, you make the same changes from <span class="ui">Configuration</span> in the web app.</p></div>
+
+  <figure class="shot">
+    <img src="img/bootstrap-wizard.png" alt="The bootstrap setup wizard on the buildings step, with a building added" style="width:100%;border-radius:10px;border:1px solid #e2e8f0" />
+    <figcaption>Fig 2.1 — The first-time setup wizard.</figcaption>
+  </figure>
+
+  <!-- 3 -->
+  <h2 id="extension"><span class="num">3.</span> Installing &amp; configuring the Chrome extension</h2>
+  <p>The companion extension, <strong>"Stake Building Access — Kindoo Helper,"</strong> adds a slide-over panel to Kindoo's admin pages. It's where you provision access and complete requests.</p>
+  <ol class="steps">
+    <li>In Chrome, open the <a href="https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/klkkpfdafbjebccodmgkogdklachelpb">Chrome Web Store listing</a> and click <span class="ui">Add to Chrome</span>.</li>
+    <li>Open Kindoo's admin site and sign in to Kindoo as you normally would.</li>
+    <li>Click the extension's toolbar button to open the panel, then <strong>sign in with Google</strong> using the same email a manager is registered under in SBA.</li>
+    <li>Navigate <strong>into a specific Kindoo site</strong> (not the "My Sites" listing). The panel needs to know which site you're on.</li>
+  </ol>
+  <div class="callout"><span class="lbl">How the panel behaves</span><p>The toolbar button toggles the panel open and closed. The panel runs on top of Kindoo without changing Kindoo's own pages. If you manage more than one stake on the same Kindoo environment, the panel will ask which stake you're working in.</p></div>
+  <div class="callout warn"><span class="lbl">"This Kindoo site isn't configured"</span><p>The extension matches the Kindoo site you're viewing to a site configured in SBA. If you see a message that the site isn't recognized, make sure you've opened a specific site in Kindoo (not the site list) and that the site exists under <span class="ui">Configuration&nbsp;→&nbsp;Kindoo&nbsp;Sites</span> (see <a href="#sites">Section 7</a>).</p></div>
+
+  <h3>First-run setup: connect your buildings to Kindoo</h3>
+  <p>The first time you open the panel on a recognized Kindoo site, it shows the <span class="ui">Configure&nbsp;Kindoo</span> wizard <strong>before</strong> the request queue. This one-time step links each of your SBA buildings to the Kindoo <strong>Access Rule</strong> that controls that building's doors.</p>
+  <p>An <strong>Access Rule</strong> is a Kindoo feature that grants a person access to a building's doors. When you process a request, the extension grants the member access by adding them to that building's Access Rule — so the Access Rule is what actually opens the doors. The building-to-rule mapping you set here is how the extension knows which rule to use for each building.</p>
+  <div class="callout imp"><span class="lbl">Before you set up the extension — create an Access Rule in Kindoo for each building</span><p>The extension does <strong>not</strong> create Access Rules; it only uses the ones that already exist in Kindoo. Before configuring the extension, sign in to Kindoo's admin site and make sure every building has its own <strong>Access Rule</strong> covering that building's doors. The wizard's dropdown lists these existing Kindoo rules — if a building doesn't have one yet, create it in Kindoo first, then return to the wizard.</p></div>
+  <ol class="steps">
+    <li>Make sure you're inside the specific Kindoo site you want to set up (not the "My Sites" list). The wizard configures <strong>one site at a time</strong>, based on the site you're currently viewing.</li>
+    <li>For each building in the list, choose the matching <strong>Kindoo Access Rule</strong> from its dropdown. Every building must have a rule selected.</li>
+    <li>Click <span class="ui">Save</span>. The panel then opens to the request <span class="ui">Queue</span> and is ready to use.</li>
+  </ol>
+  <div class="callout"><span class="lbl">More than one Kindoo site</span><p>If your buildings span more than one Kindoo site (see <a href="#sites">Section 7</a>), run the wizard once per site: switch to the other site in Kindoo's own interface, reopen the panel, and map that site's buildings. You can re-open the wizard any time from the panel's <strong>gear</strong> (settings) tab to change a mapping later.</p></div>
+  <div class="callout warn"><span class="lbl">If a building or site is missing from the wizard</span><p>The wizard only lists buildings that already exist in SBA and are assigned to the active Kindoo site. If one is missing, add or reassign it under <span class="ui">Configuration&nbsp;→&nbsp;Buildings</span> first. If the wizard reports the site isn't configured in SBA, add it under <span class="ui">Configuration&nbsp;→&nbsp;Kindoo&nbsp;Sites</span> (<a href="#sites">Section 7</a>), then reopen the panel.</p></div>
+
+  <figure class="shot">
+    <img src="img/extension-queue.png" alt="The extension panel open over Kindoo, showing the Queue tab" style="display:block;max-width:400px;width:100%;height:auto;margin:.5rem auto;border-radius:10px;border:1px solid #e2e8f0" />
+    <figcaption>Fig 3.1 — The extension panel open over Kindoo.</figcaption>
+  </figure>
+
+  <!-- 4 -->
+  <h2 id="web"><span class="num">4.</span> The web app at a glance</h2>
+  <p>Sign in at <strong>stakebuildingaccess.org</strong>. Managers land on the <strong>Dashboard</strong>. Here's what each page is for:</p>
+
+  <h4>Dashboard</h4>
+  <p>Your landing page. Three cards: <strong>pending request counts</strong> by type, <strong>recent activity</strong> (the latest audit entries), and <strong>utilization</strong> per ward and the stake. Each links through to the relevant detail page.</p>
+
+  <h4>Requests Queue <span class="badge">read-only</span></h4>
+  <p>Shows pending requests grouped into <strong>Emergency</strong>, <strong>Outstanding</strong>, and <strong>Future</strong>, oldest first. Use it to see what's waiting — but remember you complete and reject requests in the <strong>extension</strong>, not here.</p>
+
+  <h4>All Seats</h4>
+  <p>The full roster across every ward and the stake, with filters for scope, building, and type. You can request a <strong>removal</strong> from here, but there's no edit button (edits are made from the roster pages). A foreign-site member's row may show a <span class="ui">Give Access To Stake Buildings</span> button — see <a href="#sites">Section 7</a>.</p>
+
+  <h4>Configuration</h4>
+  <p>Tabs, in order: <strong>Config</strong> (seat cap, time zone, notification switch), <strong>Managers</strong>, <strong>Kindoo Sites</strong>, <strong>Buildings</strong>, <strong>Wards</strong>, and <strong>Organizations</strong>. Buildings come before Wards because a ward must reference a building.</p>
+
+  <h4>App Access</h4>
+  <p>Shows who can sign in to the web app. Calling-based access is managed automatically and is read-only; you can add <strong>manual</strong> access for someone whose calling isn't on the standard list. See <a href="#appaccess">Section 8</a>.</p>
+
+  <h4>Audit Log</h4>
+  <p>A filterable history of every change. See <a href="#audit">Section 11</a>.</p>
+
+  <h4>Notifications</h4>
+  <p>Turn on push notifications for new requests, per device. See <a href="#notifications">Section 10</a>.</p>
+
+  <!-- 5 -->
+  <h2 id="processing"><span class="num">5.</span> Processing requests (the daily workflow)</h2>
+  <p>This is the core of the job. You'll work in Kindoo with the extension panel open beside it.</p>
+
+  <ol class="steps">
+    <li>Open Kindoo and navigate <strong>into the specific site</strong> the request is for.</li>
+    <li>Open the extension panel and go to the <span class="ui">Queue</span> tab. Pending requests are grouped into <strong>Emergency → Outstanding → Future</strong>, oldest first.</li>
+    <li>Read the request card: member, request type and scope, reason or removal reason, dates, buildings, comment, who requested it, and whether it's marked <span class="badge urgent">Emergency</span>.</li>
+    <li>Click the green action button — labelled <span class="ui">Add Kindoo Access</span> for an add request, <span class="ui">Update Kindoo Access</span> for an edit, or <span class="ui">Remove Kindoo Access</span> for a removal. The extension makes the change in Kindoo for you (inviting the person, granting or updating doors, or removing access), then marks the request complete in SBA.</li>
+    <li>A result dialog confirms success. If a step failed, you can retry from the dialog.</li>
+  </ol>
+
+  <figure class="shot">
+    <img src="img/extension-request.png" alt="A request card in the extension with the Add Kindoo Access and Reject buttons" style="display:block;max-width:400px;width:100%;height:auto;margin:.5rem auto;border-radius:10px;border:1px solid #e2e8f0" />
+    <figcaption>Fig 5.1 — A request card in the extension.</figcaption>
+  </figure>
+
+  <h3>Rejecting a request</h3>
+  <p>Every card has a <span class="ui">Reject</span> button. Click it, enter a required <strong>rejection reason</strong>, and confirm. The requester is notified and sees your reason on their request.</p>
+
+  <h3>Cards that can only be rejected</h3>
+  <table>
+    <thead><tr><th>Situation</th><th>What you'll see</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><strong>An "add" for someone who already has a seat</strong></td><td>The <span class="ui">Add Kindoo Access</span> button is hidden with a "Member already has a seat — reject this request" notice.</td><td>Adding would collide with their existing seat. (Exception: granting a foreign-site member access to stake buildings is allowed — see below.)</td></tr>
+      <tr><td><strong>An "edit" for a seat that no longer exists</strong></td><td>"This request edits a seat that no longer exists — reject it."</td><td>There's nothing to edit; the seat was removed since the request was made.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn"><span class="lbl">"Switch Kindoo sites and try again"</span><p>If the request is for a building on a different Kindoo site than the one you're currently viewing, the extension refuses to provision and tells you which site it needs: <em>"This request needs to be provisioned on '&lt;site name&gt;'. Switch Kindoo sites and try again."</em> Switch sites inside Kindoo's own interface, then retry. See <a href="#sites">Section 7</a>.</p></div>
+
+  <h3>Granting stake-building access to a foreign-site member</h3>
+  <p>On <span class="ui">All Seats</span>, a member who only has access on a <em>foreign</em> Kindoo site may show a <span class="ui">Give Access To Stake Buildings</span> button. Use it to grant them access to the stake's home buildings without waiting for them to submit a request. A red warning notes that this <strong>consumes an additional Kindoo license</strong>, because the person has to be invited into the home Kindoo environment.</p>
+
+  <div class="callout tip"><span class="lbl">You can complete your own requests</span><p>If you also serve in a bishopric or as a stake leader, you may complete or reject requests you submitted yourself. The audit log records both who submitted and who completed.</p></div>
+
+  <!-- 6 -->
+  <h2 id="sync"><span class="num">6.</span> Keeping SBA and Kindoo in sync</h2>
+  <p>Because callings change in the Church's records (and flow into Kindoo) without going through SBA, SBA's seat list can drift from Kindoo's reality. <strong>Sync</strong> finds that drift and lets you reconcile it. Kindoo is always the source of truth — Sync only ever changes the <strong>SBA</strong> side; it never writes to Kindoo.</p>
+
+  <ol class="steps">
+    <li>In Kindoo, open the specific site you want to reconcile.</li>
+    <li>In the extension panel, open <span class="ui">Sync</span>. It reads your SBA seats and your live Kindoo users for that site and lists the differences.</li>
+    <li>Review each row and apply the suggested fix where appropriate. Some rows are review-only (no action).</li>
+  </ol>
+
+  <h3>What the drift rows mean</h3>
+  <table>
+    <thead><tr><th>What Sync found</th><th>Suggested fix</th></tr></thead>
+    <tbody>
+      <tr><td><strong>In Kindoo, not in SBA</strong> <span class="small">(<code>kindoo-only</code>)</span></td><td><strong>Create SBA seat</strong> — add the seat to SBA to match Kindoo.</td></tr>
+      <tr><td><strong>In SBA, not in Kindoo</strong> <span class="small">(<code>sba-only</code>)</span></td><td><strong>Remove from SBA</strong> — the access is gone in Kindoo, so clear the orphaned SBA seat. (This is also how expired temporary seats get cleaned up.)</td></tr>
+      <tr><td><strong>Calling differs</strong> <span class="small">(<code>callings-mismatch</code>)</span></td><td><strong>Update SBA</strong> — replace the seat's calling(s) with Kindoo's.</td></tr>
+      <tr><td><strong>Scope differs</strong> <span class="small">(<code>scope-mismatch</code>)</span></td><td><strong>Update SBA</strong> — move the seat to the scope Kindoo shows.</td></tr>
+      <tr><td><strong>Type differs</strong> <span class="small">(<code>type-mismatch</code>)</span></td><td><strong>Update SBA</strong> — switch between automatic and manual to match Kindoo.</td></tr>
+      <tr><td><strong>Buildings differ</strong> <span class="small">(<code>buildings-mismatch</code>)</span></td><td><strong>Update SBA</strong> — replace the seat's buildings with the doors Kindoo grants.</td></tr>
+      <tr><td><strong>Description doesn't match the format</strong> <span class="small">(<code>kindoo-unparseable</code>)</span></td><td><strong>Update SBA</strong> — treat it as a stake-wide calling (home site only).</td></tr>
+      <tr><td><strong>Blank Kindoo description</strong> <span class="small">(<code>kindoo-no-description</code>)</span></td><td><strong>Review only</strong> — nothing can be inferred; decide manually.</td></tr>
+    </tbody>
+  </table>
+
+  <figure class="shot">
+    <img src="img/extension-sync.png" alt="The Sync drift report listing discrepancy rows with fix buttons" style="display:block;max-width:400px;width:100%;height:auto;margin:.5rem auto;border-radius:10px;border:1px solid #e2e8f0" />
+    <figcaption>Fig 6.1 — The Sync drift report.</figcaption>
+  </figure>
+
+  <div class="callout"><span class="lbl">When to run Sync</span><p>Sync runs only when you start it — there's no schedule. Run it after callings change in your stake (new bishopric, releases) and whenever a roster looks out of date. Newly-called leaders can't sign in to SBA until a Sync that picks up their calling has run.</p></div>
+
+  <div class="callout tip"><span class="lbl">Sync never touches Kindoo</span><p>There is no "update Kindoo" action in Sync — every fix only adjusts SBA to match what Kindoo already shows. The only way SBA writes <em>into</em> Kindoo is when you process a request from the queue (<a href="#processing">Section 5</a>).</p></div>
+
+  <!-- 7 -->
+  <h2 id="sites"><span class="num">7.</span> Managing multiple Kindoo sites</h2>
+  <p>Most stakes run a single Kindoo environment — the <strong>home site</strong>. But a building's doors are sometimes governed by a different stake's Kindoo environment. SBA calls those <strong>Kindoo Sites</strong> so it can route door changes to the right environment.</p>
+  <ul>
+    <li>The <strong>home site</strong> is implied — you don't configure it as a separate entry.</li>
+    <li><strong>Foreign sites</strong> are added under <span class="ui">Configuration&nbsp;→&nbsp;Kindoo&nbsp;Sites</span>.</li>
+    <li>Each <strong>building</strong> can be assigned to a site; a ward inherits its site from its building.</li>
+    <li>The extension discovers the active site's identifier automatically from the Kindoo page you're viewing.</li>
+  </ul>
+  <div class="callout warn"><span class="lbl">Provision on the matching site</span><p>To provision or sync a foreign-site building, you must be inside <em>that</em> Kindoo site in Kindoo. If you're on the wrong one, the extension refuses and tells you which site to switch to. Switch sites in Kindoo's own interface, then reopen the panel.</p></div>
+  <div class="callout"><span class="lbl">How foreign sites affect utilization</span><p>Seats on foreign-site wards draw against <em>that</em> site's seat pool, not your home stake's. They're excluded from your home-stake utilization, and each foreign ward's bar reflects what its own site allotted it.</p></div>
+
+  <!-- 8 -->
+  <h2 id="appaccess"><span class="num">8.</span> App access: who can sign in</h2>
+  <p>Whether a person can sign in to the SBA web app depends on their calling. The list is fixed across the Church — it isn't configurable per stake:</p>
+  <table>
+    <thead><tr><th>Scope</th><th>Callings that grant app access</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Ward</strong></td><td>Bishop · Bishopric First Counselor · Bishopric Second Counselor · Ward Clerk · Ward Executive Secretary</td></tr>
+      <tr><td><strong>Stake</strong></td><td>Stake President · Stake Presidency First Counselor · Stake Presidency Second Counselor · Stake Clerk · Stake Executive Secretary · Stake High Councilor</td></tr>
+    </tbody>
+  </table>
+  <p>Calling-based access is granted and removed automatically by Sync as callings change — these rows are read-only on the <span class="ui">App Access</span> page. For anyone outside that list who genuinely needs to sign in, use <span class="ui">Add manual access</span>.</p>
+  <div class="callout"><span class="lbl">Bishopric lag</span><p>A newly-called leader can't sign in until a Sync run has picked up their calling from Kindoo. If someone reports they can't get in, run Sync and confirm their calling is current in Kindoo.</p></div>
+
+  <!-- 9 -->
+  <h2 id="caps"><span class="num">9.</span> Seat caps &amp; utilization</h2>
+  <p>Each ward has its own seat cap, and the stake has an overall cap. The Dashboard and All Seats show utilization bars that turn amber at 90% and red when over.</p>
+  <ul>
+    <li><strong>Per-ward caps</strong> flag an over-cap when a ward's seat count exceeds its cap.</li>
+    <li>The <strong>stake cap</strong> covers the home site's portion (the stake cap minus home-site ward seats).</li>
+    <li>When a pool crosses from within-cap to over-cap, active managers get an <strong>over-cap email</strong>.</li>
+  </ul>
+  <div class="callout"><span class="lbl">Note</span><p>Sync-driven changes don't immediately recompute over-cap warnings — the count catches up the next time a request is completed. At normal volumes (a few requests a week) this resolves within days.</p></div>
+
+  <!-- 10 -->
+  <h2 id="notifications"><span class="num">10.</span> Notifications</h2>
+  <h3>Email</h3>
+  <table>
+    <thead><tr><th>When</th><th>Who's emailed</th></tr></thead>
+    <tbody>
+      <tr><td>A request is submitted</td><td>Active Kindoo Managers</td></tr>
+      <tr><td>A request is completed</td><td>The original requester</td></tr>
+      <tr><td>A request is rejected</td><td>The original requester</td></tr>
+      <tr><td>A request is cancelled</td><td>Active Kindoo Managers</td></tr>
+      <tr><td>A pool goes over cap</td><td>Active Kindoo Managers</td></tr>
+    </tbody>
+  </table>
+  <p>Emails come from <code>noreply@mail.stakebuildingaccess.org</code> with your stake's name in the sender. You can set a reply-to address and turn all email off with the notifications switch in <span class="ui">Configuration&nbsp;→&nbsp;Config</span>.</p>
+  <h3>Push notifications</h3>
+  <p>On the <span class="ui">Notifications</span> page you can enable push notifications for <strong>new requests</strong>, per device. Enabling it on your phone doesn't affect your laptop, and vice versa.</p>
+
+  <!-- 11 -->
+  <h2 id="audit"><span class="num">11.</span> The audit log</h2>
+  <p>Every change to seats, requests, app access, managers, and stake settings is recorded automatically. The <span class="ui">Audit&nbsp;Log</span> page lets you filter by actor, action, entity, member, and date range, and expand any row to see exactly what changed (before/after). Automated actions made by Sync and the system appear under recognizable actor names rather than a person's email. The default view shows the last 7 days.</p>
+
+  <figure class="shot">
+    <img src="img/audit-log-expanded.png" alt="The Audit Log page with one row expanded to show a before/after diff" style="width:100%;border-radius:10px;border:1px solid #e2e8f0" />
+    <figcaption>Fig 11.1 — The audit log with an expanded change.</figcaption>
+  </figure>
+
+  <!-- 12 -->
+  <h2 id="troubleshooting"><span class="num">12.</span> Troubleshooting</h2>
+
+  <h4>The extension can't tell which Kindoo site I'm on.</h4>
+  <p>Open a <strong>specific</strong> Kindoo site rather than the "My Sites" listing. The panel identifies the active site from the page you're viewing, and the listing page is ambiguous.</p>
+
+  <h4>"This request needs to be provisioned on '&lt;site&gt;'."</h4>
+  <p>You're on the wrong Kindoo site for this request's buildings. Switch to the named site in Kindoo, then retry. (See <a href="#sites">Section 7</a>.)</p>
+
+  <h4>A request can only be rejected.</h4>
+  <p>Either the member already has a seat (for an add) or the seat no longer exists (for an edit). Reject it; if access still needs changing, the requester can submit the right request. (See <a href="#processing">Section 5</a>.)</p>
+
+  <h4>Someone was just made a manager but still can't act as one.</h4>
+  <p>Role changes can take up to about an hour for an idle session, or a couple of seconds for an active one — signing out and back in refreshes it immediately.</p>
+
+  <h4>A leader can't sign in to the web app.</h4>
+  <p>Confirm their calling is on the app-access list (<a href="#appaccess">Section 8</a>) and current in Kindoo, then run Sync. For exceptions, grant manual app access.</p>
+
+  <h4>The extension shows an error right after a new deployment.</h4>
+  <p>If the panel reports a connection/CORS error, the environment's functions may still be deploying. Wait a moment and reopen the panel; if it persists, contact support.</p>
+
+  <!-- 13 -->
+  <h2 id="glossary"><span class="num">13.</span> Glossary</h2>
+  <table>
+    <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Seat</strong></td><td>One person's access record — the doors they can open in a given scope.</td></tr>
+      <tr><td><strong>Scope</strong></td><td>A ward or the stake. Requests and seats belong to a scope.</td></tr>
+      <tr><td><strong>Building</strong></td><td>A physical building with its own set of doors. Seats grant access per building.</td></tr>
+      <tr><td><strong>Kindoo Site</strong></td><td>A Kindoo environment that governs a set of buildings' doors. Home or foreign.</td></tr>
+      <tr><td><strong>Automatic / Manual / Temporary</strong></td><td>The three seat types — calling-based, ongoing, and time-limited.</td></tr>
+      <tr><td><strong>Drift</strong></td><td>A difference between SBA's seat list and Kindoo's actual state, surfaced by Sync.</td></tr>
+      <tr><td><strong>Provision</strong></td><td>Making the access change in Kindoo (inviting a user, granting doors) when completing a request.</td></tr>
+      <tr><td><strong>Organization</strong></td><td>An optional stake-level grouping for seats, used for reporting against an organization's own cap.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- 14 -->
+  <h2 id="help"><span class="num">14.</span> Getting help</h2>
+  <p>For app issues or questions this guide doesn't answer, email <a href="mailto:support@stakebuildingaccess.org">support@stakebuildingaccess.org</a>. The extension is the <a href="https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/klkkpfdafbjebccodmgkogdklachelpb">"Stake Building Access — Kindoo Helper"</a> listing on the Chrome Web Store.</p>
+
+  <footer>
+    <div class="footer-grid">
+      <span><strong>Stake Building Access</strong> — Kindoo Manager Guide<br>Version 1.0 · June 2026</span>
+      <span>stakebuildingaccess.org<br><a href="mailto:support@stakebuildingaccess.org">support@stakebuildingaccess.org</a></span>
+    </div>
+  </footer>
+
+</main>
+</body>
+</html>

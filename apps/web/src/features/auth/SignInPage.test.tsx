@@ -376,4 +376,27 @@ describe('SignInPage — both providers', () => {
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
+
+  // The hero help link points at the static requester guide served from
+  // /help/. A plain <a href> (not a TanStack <Link>) because the guide
+  // is a real Hosting file outside the SPA router.
+  it('links the hero "Read the guide to requesting building access" entry to the requester guide', () => {
+    render(<SignInPage />);
+    const link = screen.getByRole('link', {
+      name: /Read the guide to requesting building access/i,
+    });
+    expect(link).toHaveAttribute('href', '/help/requesting-access.html');
+  });
+
+  it('links the footer "Requester guide" entry to the static requester guide', () => {
+    render(<SignInPage />);
+    const link = screen.getByRole('link', { name: /^Requester guide$/i });
+    expect(link).toHaveAttribute('href', '/help/requesting-access.html');
+  });
+
+  it('links the footer "Manager guide" entry to the static manager guide', () => {
+    render(<SignInPage />);
+    const link = screen.getByRole('link', { name: /^Manager guide$/i });
+    expect(link).toHaveAttribute('href', '/help/kindoo-manager-guide.html');
+  });
 });

@@ -10,3 +10,14 @@
  */
 export const CHROME_WEB_STORE_URL =
   'https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/klkkpfdafbjebccodmgkogdklachelpb';
+
+/**
+ * Static end-user help guides, served by Firebase Hosting from
+ * `public/help/` (synced from `docs/user-guide/` by `sync-help.mjs`).
+ * These are real files outside the SPA router — link to them with a
+ * plain `<a href>`, NOT TanStack `<Link>`. The PWA service worker
+ * denylists `/help/` so navigations resolve to the static HTML rather
+ * than the cached SPA shell (see `vite.config.ts`).
+ */
+export const REQUESTER_GUIDE_URL = '/help/requesting-access.html';
+export const MANAGER_GUIDE_URL = '/help/kindoo-manager-guide.html';
