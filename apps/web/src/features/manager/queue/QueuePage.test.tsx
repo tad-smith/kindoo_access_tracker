@@ -323,7 +323,7 @@ describe('<ManagerQueuePage />', () => {
   it('renders only sections that contain at least one request', () => {
     // Two non-urgent add_manual requests with old requested_at land
     // in Outstanding; no urgent or far-future requests are seeded so
-    // Urgent and Future should not render.
+    // Emergency and Future should not render.
     const requests = [
       makeRequest({
         request_id: 'r-outstanding',
@@ -377,7 +377,7 @@ describe('<ManagerQueuePage />', () => {
     const urgent = within(screen.getByTestId('queue-section-urgent')).getByRole('heading', {
       level: 2,
     });
-    expect(urgent).toHaveTextContent('Urgent Requests (2)');
+    expect(urgent).toHaveTextContent('Emergency Requests (2)');
     const outstanding = within(screen.getByTestId('queue-section-outstanding')).getByRole(
       'heading',
       { level: 2 },
@@ -390,7 +390,7 @@ describe('<ManagerQueuePage />', () => {
   });
 
   it('omits a section heading entirely when its open-request count is zero', () => {
-    // Only an outstanding row — Urgent and Future headings must not
+    // Only an outstanding row — Emergency and Future headings must not
     // appear anywhere in the DOM.
     const requests = [
       makeRequest({
@@ -406,7 +406,7 @@ describe('<ManagerQueuePage />', () => {
     ];
     usePendingMock.mockReturnValue(liveResult(requests));
     render(<ManagerQueuePage />);
-    expect(screen.queryByText(/Urgent Requests \(/)).toBeNull();
+    expect(screen.queryByText(/Emergency Requests \(/)).toBeNull();
     expect(screen.queryByText(/Future Requests \(/)).toBeNull();
     expect(
       within(screen.getByTestId('queue-section-outstanding')).getByRole('heading', { level: 2 }),
@@ -446,7 +446,7 @@ describe('<ManagerQueuePage />', () => {
     expect(screen.getByText(/no pending requests/i)).toBeInTheDocument();
   });
 
-  it('places urgent requests in the Urgent section with a red top-bar marker', () => {
+  it('places urgent requests in the Emergency section with a red top-bar marker', () => {
     const requests = [
       makeRequest({
         request_id: 'r-urgent',

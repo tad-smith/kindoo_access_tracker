@@ -174,7 +174,7 @@ export const newRequestSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['comment'],
-        message: 'A comment is required when the request is marked urgent.',
+        message: 'A comment is required when the request is marked an emergency.',
       });
     }
   });

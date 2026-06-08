@@ -126,7 +126,7 @@ test.describe('manager Request Queue — read-only', () => {
     await expect(page.getByTestId('queue-card-req-normal')).toBeVisible();
     await expect(page.getByTestId('queue-card-req-urgent')).toBeVisible();
 
-    // Urgent lands in the Urgent section; the non-urgent one in Outstanding.
+    // Urgent lands in the Emergency section; the non-urgent one in Outstanding.
     await expect(page.getByTestId('queue-section-urgent')).toBeVisible();
     await expect(
       page.getByTestId('queue-section-urgent').getByTestId('queue-card-req-urgent'),
