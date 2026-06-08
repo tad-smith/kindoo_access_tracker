@@ -5,9 +5,12 @@
 //              icons-only rail).
 //   - Phone:   slide-in drawer (full labels).
 //
-// Items come in two kinds (per `navModel.ts`):
+// Items come in three kinds (per `navModel.ts`):
 //   - `kind: 'link'` — renders as a TanStack `<Link>`. Standard
 //     navigation; `aria-current="page"` when active.
+//   - `kind: 'external'` — renders as a plain `<a href>` to a URL
+//     outside the SPA router (the static `/help/*` guides). No active
+//     state.
 //   - `kind: 'action'` — renders as a `<button>` that runs a side
 //     effect (currently just `sign-out`). No active state.
 //
@@ -21,7 +24,7 @@ import { navSectionsForPrincipal, type NavItem, type NavSection } from './navMod
 import './Nav.css';
 
 export { navSectionsForPrincipal, wardRosterPathFor } from './navModel';
-export type { NavItem, NavSection, NavLinkItem, NavActionItem } from './navModel';
+export type { NavItem, NavSection, NavLinkItem, NavExternalItem, NavActionItem } from './navModel';
 
 interface NavProps {
   principal: Principal;
@@ -145,6 +148,22 @@ function NavItemRender({ item, pathname, onNavigate, onSignOut, signingOut }: Na
         <Icon className="kd-nav-icon" size={20} aria-hidden="true" />
         <span className="kd-nav-label">{item.label}</span>
       </Link>
+    );
+  }
+  if (item.kind === 'external') {
+    // Static file outside the SPA router — plain `<a href>`, never
+    // active. Same tab (a guide the user reads + navigates back from).
+    return (
+      <a
+        href={item.href}
+        className="kd-nav-link"
+        target={item.newTab ? '_blank' : undefined}
+        rel={item.newTab ? 'noopener noreferrer' : undefined}
+        onClick={onNavigate}
+      >
+        <Icon className="kd-nav-icon" size={20} aria-hidden="true" />
+        <span className="kd-nav-label">{item.label}</span>
+      </a>
     );
   }
   // Action item — currently only `sign-out`.

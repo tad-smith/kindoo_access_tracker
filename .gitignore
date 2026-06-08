@@ -36,6 +36,14 @@ functions/.env*
 # Firebase + monorepo
 # Web SPA build output
 apps/*/dist/
+# Generated help guides — synced from docs/user-guide/ by
+# apps/web/scripts/sync-help.mjs on the predev/prebuild hook. Source of
+# truth is docs/user-guide/; never commit the synced copy.
+apps/web/public/help/
+# Regenerable user-guide PDFs — built from the HTML sources via
+# docs/user-guide/build-pdfs.sh. Commit the HTML + img/ + README + script,
+# not the rendered PDFs.
+docs/user-guide/*.pdf
 # Cloud Functions build output (firebase-functions emits to lib/; some setups use dist/)
 functions/lib/
 functions/dist/

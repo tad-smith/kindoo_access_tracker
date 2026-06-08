@@ -36,7 +36,7 @@ import { FirebaseError } from 'firebase/app';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { BrandIcon } from '../../components/layout/BrandIcon';
-import { CHROME_WEB_STORE_URL } from '../../lib/links';
+import { CHROME_WEB_STORE_URL, MANAGER_GUIDE_URL, REQUESTER_GUIDE_URL } from '../../lib/links';
 import { signInEmailSchema, type SignInEmailForm } from './schemas';
 import { clearStashedEmail, sendMagicLink, signInWithGoogle } from './signIn';
 
@@ -305,6 +305,17 @@ function HomeHero(props: HeroProps) {
         <p className="mx-auto mt-8 max-w-[44ch] text-sm leading-relaxed text-[color:var(--kd-fg-2)]">
           {PENDING_AUTH_COPY}
         </p>
+
+        {/* Static help guide — a plain <a> (not TanStack <Link>) because
+            /help/* are real Hosting files outside the SPA router. */}
+        <p className="mx-auto mt-4 text-sm leading-relaxed">
+          <a
+            href={REQUESTER_GUIDE_URL}
+            className="font-medium text-[color:var(--kd-primary)] hover:underline"
+          >
+            New here? Read the guide to requesting building access &rarr;
+          </a>
+        </p>
       </div>
     </section>
   );
@@ -393,6 +404,20 @@ function HomeFooter() {
         <Link to="/privacy" className="text-[color:var(--kd-primary)] hover:underline">
           Privacy
         </Link>
+        <span aria-hidden="true" className="hidden text-[color:var(--kd-border)] sm:inline">
+          ·
+        </span>
+        {/* Plain <a> (not TanStack <Link>) — /help/* are static Hosting
+            files outside the SPA router. */}
+        <a href={REQUESTER_GUIDE_URL} className="text-[color:var(--kd-primary)] hover:underline">
+          Requester guide
+        </a>
+        <span aria-hidden="true" className="hidden text-[color:var(--kd-border)] sm:inline">
+          ·
+        </span>
+        <a href={MANAGER_GUIDE_URL} className="text-[color:var(--kd-primary)] hover:underline">
+          Manager guide
+        </a>
         <span aria-hidden="true" className="hidden text-[color:var(--kd-border)] sm:inline">
           ·
         </span>
