@@ -152,7 +152,7 @@ function NavItemRender({ item, pathname, onNavigate, onSignOut, signingOut }: Na
   }
   if (item.kind === 'external') {
     // Static file outside the SPA router — plain `<a href>`, never
-    // active. Same tab (a guide the user reads + navigates back from).
+    // active. `newTab` items open in a new tab (target/rel set below).
     return (
       <a
         href={item.href}

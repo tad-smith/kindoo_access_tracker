@@ -32,6 +32,30 @@ import react from '@vitejs/plugin-react';
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { syncHelp } from './scripts/sync-help.mjs';
+
+/**
+ * Sync the static end-user help guides from `docs/user-guide/` into
+ * `apps/web/public/help/` on every Vite build/dev start, so the guides
+ * land in `dist/help/` for Hosting to serve.
+ *
+ * Wired as a plugin — NOT a `prebuild`/`predev` npm hook — deliberately:
+ * a mode-specific npm script (`build:staging`, `build:prod`) bypasses
+ * the `prebuild` hook (there is no `prebuild:staging`), which silently
+ * dropped `/help/` from staging deploys. A `buildStart` hook fires for
+ * EVERY Vite invocation regardless of the wrapping npm script, so no
+ * future `build:*` variant can skip it. `buildStart` runs in both serve
+ * (dev) and build, populating `public/help/` before the static-copy and
+ * PWA-precache passes read it.
+ */
+function syncHelpPlugin(): Plugin {
+  return {
+    name: 'kindoo:sync-help',
+    buildStart() {
+      syncHelp();
+    },
+  };
+}
 
 /**
  * Read the FCM SW template, substitute `__VITE_FIREBASE_*__` placeholders
@@ -102,6 +126,8 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [
+      // Populate `public/help/` before any static-copy or precache pass.
+      syncHelpPlugin(),
       TanStackRouterVite({
         routesDirectory: './src/routes',
         generatedRouteTree: './src/routeTree.gen.ts',
