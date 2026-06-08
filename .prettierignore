@@ -17,6 +17,8 @@ scripts/
 # Generated files
 **/version.gen.ts
 apps/web/src/routeTree.gen.ts
+# Help guides synced from docs/user-guide/ by sync-help.mjs.
+apps/web/public/help/
 
 # Lockfiles
 pnpm-lock.yaml
@@ -29,3 +31,9 @@ node_modules/
 # CLAUDE.md files). Prettier on markdown causes format-thrash without value
 # for this project's conventions. Re-evaluate if a markdown linter is wanted later.
 **/*.md
+
+# Hand-authored, self-contained end-user guides (inlined CSS, polished
+# layout) — the source of truth under docs/user-guide/. Prettier would
+# reflow the inlined styles and HTML, churning the operator's source for
+# no value. The synced copy under apps/web/public/help/ is excluded above.
+docs/user-guide/
