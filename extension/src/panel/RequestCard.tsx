@@ -303,7 +303,7 @@ export function RequestCard({
       <div className="sba-request-card-head">
         <span className={badgeClass(request.type)}>{typeBadgeLabel(request.type)}</span>
         <span className="sba-badge">{scopeLabel(request.scope, bundle.wards)}</span>
-        {isUrgent ? <span className="sba-badge sba-badge-urgent">Urgent</span> : null}
+        {isUrgent ? <span className="sba-badge sba-badge-urgent">Emergency</span> : null}
         <span>
           {request.member_name ? (
             <>

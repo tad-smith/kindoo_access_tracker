@@ -126,7 +126,9 @@ describe('QueuePanel', () => {
     await renderPanel();
 
     await waitFor(() => expect(screen.getByTestId('sba-queue-section-urgent')).toBeInTheDocument());
-    expect(screen.getByTestId('sba-queue-section-urgent')).toHaveTextContent('Urgent Requests (1)');
+    expect(screen.getByTestId('sba-queue-section-urgent')).toHaveTextContent(
+      'Emergency Requests (1)',
+    );
     expect(screen.getByTestId('sba-queue-section-outstanding')).toHaveTextContent(
       'Outstanding Requests (1)',
     );

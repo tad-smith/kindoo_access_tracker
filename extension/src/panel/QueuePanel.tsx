@@ -181,7 +181,7 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelPr
       {state.status === 'ready' && requests.length > 0 ? (
         <div data-testid="sba-queue-sections">
           <QueueSection
-            title="Urgent Requests"
+            title="Emergency Requests"
             testid="sba-queue-section-urgent"
             requests={sections.urgent}
             stakeId={stakeId}
