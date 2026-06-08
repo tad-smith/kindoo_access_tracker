@@ -219,7 +219,7 @@
   margin-top: 33px;
 }
 
-/* Centered text on a horizontal divider — `——— Urgent Requests ———`.
+/* Centered text on a horizontal divider — `——— Emergency Requests ———`.
    Pseudo-elements stretch to fill the available width on either side
    of the heading text; gap controls the breathing room around the
    text. Token `--kd-border` matches the queue-card border so the line
