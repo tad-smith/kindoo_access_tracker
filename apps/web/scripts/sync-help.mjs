@@ -10,8 +10,14 @@
 // HTML files served at `/help/*.html` resolve images to `/help/img/...` —
 // shared, no path rewriting.
 //
-// `public/help/` is generated output (gitignored). This script runs as the
-// `predev` / `prebuild` lifecycle hook so the served copy is always fresh.
+// `public/help/` is generated output (gitignored). This module's
+// `syncHelp()` runs from the `kindoo:sync-help` Vite plugin
+// (`vite.config.ts`) on every build/dev `buildStart`, so it is
+// mode-independent — `build`, `build:staging`, `build:prod`, `dev`,
+// preview's build, and the e2e build all populate `public/help/`
+// regardless of which npm script wraps the Vite invocation. A thin CLI
+// wrapper below keeps `pnpm sync-help` working standalone.
+//
 // Node ESM, zero new dependencies — only `node:fs` / `node:path`.
 
 import { cpSync, mkdirSync, rmSync } from 'node:fs';
@@ -34,15 +40,27 @@ const htmlFiles = [
   ['kindoo-managers.html', 'kindoo-manager-guide.html'],
 ];
 
-// Start from a clean output so a removed source file or image doesn't
-// linger in the served copy.
-rmSync(outDir, { recursive: true, force: true });
-mkdirSync(outDir, { recursive: true });
+/**
+ * Copy the guides + shared `img/` into `public/help/`. Starts from a
+ * clean output so a removed source file or image doesn't linger in the
+ * served copy. Idempotent.
+ */
+export function syncHelp() {
+  rmSync(outDir, { recursive: true, force: true });
+  mkdirSync(outDir, { recursive: true });
 
-for (const [src, dest] of htmlFiles) {
-  cpSync(resolve(srcDir, src), resolve(outDir, dest));
+  for (const [src, dest] of htmlFiles) {
+    cpSync(resolve(srcDir, src), resolve(outDir, dest));
+  }
+
+  cpSync(resolve(srcDir, 'img'), resolve(outDir, 'img'), { recursive: true });
+
+  return { count: htmlFiles.length, outDir };
 }
 
-cpSync(resolve(srcDir, 'img'), resolve(outDir, 'img'), { recursive: true });
-
-console.log(`[sync-help] wrote ${htmlFiles.length} guides + img/ to ${outDir}`);
+// CLI wrapper: `node scripts/sync-help.mjs` / `pnpm sync-help`. Only runs
+// the sync when invoked directly, not when imported by `vite.config.ts`.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const { count, outDir: out } = syncHelp();
+  console.log(`[sync-help] wrote ${count} guides + img/ to ${out}`);
+}

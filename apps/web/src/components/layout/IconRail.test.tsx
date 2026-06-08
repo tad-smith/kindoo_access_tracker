@@ -104,9 +104,9 @@ describe('IconRail — external nav item (Get Help)', () => {
     // navModel routes a manager to the Kindoo Manager guide.
     const link = screen.getByRole('link', { name: 'Get Help' });
     expect(link).toHaveAttribute('href', '/help/kindoo-manager-guide.html');
-    // Same-tab guide: no target/rel (we only set those for newTab items).
-    expect(link).not.toHaveAttribute('target');
-    expect(link).not.toHaveAttribute('rel');
+    // Opens in a new tab so the user keeps their place in the app.
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     // External item carries no active state.
     expect(link).not.toHaveAttribute('aria-current');
   });

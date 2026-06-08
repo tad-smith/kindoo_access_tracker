@@ -137,12 +137,14 @@ export function navSectionsForPrincipal(
     // Role-aware static help guide. Managers get the Kindoo Manager
     // guide; bishopric/stake get the requester guide. Last in Quick
     // Links. External (plain `<a href>`) — the guides are static files
-    // outside the SPA router.
+    // outside the SPA router. Opens in a new tab so the user keeps their
+    // place in the app while reading the guide.
     quickLinks.push({
       kind: 'external',
       key: 'get-help',
       label: 'Get Help',
       href: manager ? MANAGER_GUIDE_URL : REQUESTER_GUIDE_URL,
+      newTab: true,
       icon: HelpCircle,
     });
   }

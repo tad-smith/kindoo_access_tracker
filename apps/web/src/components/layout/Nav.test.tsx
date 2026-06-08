@@ -217,6 +217,11 @@ describe('Get Help — role-aware static guide Quick Link', () => {
     expect(item?.kind).toBe('external');
   });
 
+  it('opens in a new tab (newTab: true)', () => {
+    const item = getHelpItem({ managerStakes: ['csnorth'] });
+    expect(item?.kind === 'external' && item.newTab).toBe(true);
+  });
+
   it('points a manager at the Kindoo Manager guide', () => {
     const item = getHelpItem({ managerStakes: ['csnorth'] });
     expect(item?.kind === 'external' && item.href).toBe('/help/kindoo-manager-guide.html');
@@ -386,6 +391,13 @@ describe('<Nav />', () => {
     const link = screen.getByRole('link', { name: /Get Help/ });
     expect(link).toHaveAttribute('href', '/help/kindoo-manager-guide.html');
     expect(link).not.toHaveAttribute('aria-current');
+  });
+
+  it('opens Get Help in a new tab (target=_blank, rel=noopener noreferrer)', async () => {
+    await renderNavAtPath(makePrincipal({ managerStakes: ['csnorth'] }), '/manager/dashboard');
+    const link = screen.getByRole('link', { name: /Get Help/ });
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
   it('reflects the current page identity, not the source, on a deep-linked sub-page', async () => {
