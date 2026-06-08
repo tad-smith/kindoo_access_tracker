@@ -6,6 +6,10 @@
 //
 // Items are a discriminated union:
 //   - `kind: 'link'` — navigates to `to` on click. Renders as `<Link>`.
+//   - `kind: 'external'` — opens an absolute URL outside the SPA router
+//     (e.g. the static `/help/*` guides). Renders as a plain `<a href>`;
+//     never carries active state. Used for the role-aware "Get Help"
+//     Quick Link.
 //   - `kind: 'action'` — runs a side-effect on click. Renders as
 //     `<button>`. Used for Logout (Account section).
 //
@@ -19,6 +23,7 @@ import {
   Building2,
   ClipboardList,
   Globe2,
+  HelpCircle,
   Inbox,
   KeyRound,
   LayoutDashboard,
@@ -29,6 +34,7 @@ import {
   Users,
 } from 'lucide-react';
 import type { Principal } from '../../lib/principal';
+import { MANAGER_GUIDE_URL, REQUESTER_GUIDE_URL } from '../../lib/links';
 
 interface NavItemBase {
   /** Stable key for React lists + active-state lookups. */
@@ -42,13 +48,21 @@ export interface NavLinkItem extends NavItemBase {
   to: string;
 }
 
+export interface NavExternalItem extends NavItemBase {
+  kind: 'external';
+  /** Absolute URL outside the SPA router (e.g. a static `/help/*` guide). */
+  href: string;
+  /** Open in a new tab. Omitted/false → same tab. */
+  newTab?: boolean;
+}
+
 export interface NavActionItem extends NavItemBase {
   kind: 'action';
   /** Discriminator for the runtime side-effect to run on click. */
   action: 'sign-out';
 }
 
-export type NavItem = NavLinkItem | NavActionItem;
+export type NavItem = NavLinkItem | NavExternalItem | NavActionItem;
 
 export interface NavSection {
   /** Stable key. Section header text doubles as the screen-reader label. */
@@ -119,6 +133,17 @@ export function navSectionsForPrincipal(
       label: 'My Requests',
       to: '/my-requests',
       icon: ClipboardList,
+    });
+    // Role-aware static help guide. Managers get the Kindoo Manager
+    // guide; bishopric/stake get the requester guide. Last in Quick
+    // Links. External (plain `<a href>`) — the guides are static files
+    // outside the SPA router.
+    quickLinks.push({
+      kind: 'external',
+      key: 'get-help',
+      label: 'Get Help',
+      href: manager ? MANAGER_GUIDE_URL : REQUESTER_GUIDE_URL,
+      icon: HelpCircle,
     });
   }
 

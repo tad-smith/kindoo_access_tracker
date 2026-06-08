@@ -52,7 +52,7 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'settings', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
-    expect(quick).toEqual(['Dashboard', 'Request Queue', 'My Requests']);
+    expect(quick).toEqual(['Dashboard', 'Request Queue', 'My Requests', 'Get Help']);
     const rosters = sections.find((s) => s.key === 'rosters')?.items.map((i) => i.label);
     expect(rosters).toEqual(['Ward Roster', 'Stake Roster', 'All Seats']);
     const settings = sections.find((s) => s.key === 'settings')?.items.map((i) => i.label);
@@ -68,7 +68,7 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
-    expect(quick).toEqual(['My Requests']);
+    expect(quick).toEqual(['My Requests', 'Get Help']);
     const rosters = sections.find((s) => s.key === 'rosters')?.items.map((i) => i.label);
     expect(rosters).toEqual(['Ward Roster']);
     const account = sections.find((s) => s.key === 'account')?.items.map((i) => i.label);
@@ -82,7 +82,7 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
-    expect(quick).toEqual(['My Requests']);
+    expect(quick).toEqual(['My Requests', 'Get Help']);
     const rosters = sections.find((s) => s.key === 'rosters')?.items.map((i) => i.label);
     expect(rosters).toEqual(['Ward Roster', 'Stake Roster']);
   });
@@ -97,7 +97,7 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     );
     expect(sections.map((s) => s.key)).toEqual(['quick-links', 'rosters', 'settings', 'account']);
     const quick = sections.find((s) => s.key === 'quick-links')?.items.map((i) => i.label);
-    expect(quick).toEqual(['Dashboard', 'Request Queue', 'My Requests']);
+    expect(quick).toEqual(['Dashboard', 'Request Queue', 'My Requests', 'Get Help']);
   });
 
   it('Account section visible to every authorized user (manager / stake / bishopric)', () => {
@@ -189,6 +189,60 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     );
     const keys = sections.flatMap((s) => s.items.map((i) => i.key));
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe('Get Help — role-aware static guide Quick Link', () => {
+  function getHelpItem(overrides: Partial<Principal>) {
+    const sections = navSectionsForPrincipal(makePrincipal(overrides), STAKE_ID);
+    return sections.find((s) => s.key === 'quick-links')?.items.find((i) => i.key === 'get-help');
+  }
+
+  it('appears last in Quick Links for every role', () => {
+    const cases: Partial<Principal>[] = [
+      { managerStakes: ['csnorth'] },
+      { stakeMemberStakes: ['csnorth'] },
+      { bishopricWards: { csnorth: ['CO'] } },
+    ];
+    for (const overrides of cases) {
+      const quick = navSectionsForPrincipal(makePrincipal(overrides), STAKE_ID).find(
+        (s) => s.key === 'quick-links',
+      );
+      expect(quick?.items.at(-1)?.label).toBe('Get Help');
+    }
+  });
+
+  it('is an external item (plain link, not an SPA route)', () => {
+    const item = getHelpItem({ managerStakes: ['csnorth'] });
+    expect(item?.kind).toBe('external');
+  });
+
+  it('points a manager at the Kindoo Manager guide', () => {
+    const item = getHelpItem({ managerStakes: ['csnorth'] });
+    expect(item?.kind === 'external' && item.href).toBe('/help/kindoo-manager-guide.html');
+  });
+
+  it('points a bishopric user at the requester guide', () => {
+    const item = getHelpItem({ bishopricWards: { csnorth: ['CO'] } });
+    expect(item?.kind === 'external' && item.href).toBe('/help/requesting-access.html');
+  });
+
+  it('points a stake (non-manager) user at the requester guide', () => {
+    const item = getHelpItem({ stakeMemberStakes: ['csnorth'] });
+    expect(item?.kind === 'external' && item.href).toBe('/help/requesting-access.html');
+  });
+
+  it('points a manager who is also bishopric at the manager guide (manager wins)', () => {
+    const item = getHelpItem({
+      managerStakes: ['csnorth'],
+      bishopricWards: { csnorth: ['CO'] },
+    });
+    expect(item?.kind === 'external' && item.href).toBe('/help/kindoo-manager-guide.html');
+  });
+
+  it('is absent for a zero-role principal (no Quick Links section at all)', () => {
+    const sections = navSectionsForPrincipal(makePrincipal(), STAKE_ID);
+    expect(sections.find((s) => s.key === 'quick-links')).toBeUndefined();
   });
 });
 
@@ -320,6 +374,18 @@ describe('<Nav />', () => {
     await renderNavAtPath(makePrincipal({ managerStakes: ['csnorth'] }), '/');
     const link = screen.getByRole('link', { name: /Ward Roster/ });
     expect(link).toHaveAttribute('href', '/stake/wards');
+  });
+
+  it('renders Get Help as a plain link to the role-appropriate guide, never active', async () => {
+    // A manager sitting on the manager guide's URL must still not get an
+    // active-state highlight — external items carry no active marker.
+    await renderNavAtPath(
+      makePrincipal({ managerStakes: ['csnorth'] }),
+      '/help/kindoo-manager-guide.html',
+    );
+    const link = screen.getByRole('link', { name: /Get Help/ });
+    expect(link).toHaveAttribute('href', '/help/kindoo-manager-guide.html');
+    expect(link).not.toHaveAttribute('aria-current');
   });
 
   it('reflects the current page identity, not the source, on a deep-linked sub-page', async () => {

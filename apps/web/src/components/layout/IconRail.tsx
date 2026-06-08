@@ -183,6 +183,28 @@ function IconRailItem({ item, isActive, onSignOut, signingOut }: IconRailItemPro
       </li>
     );
   }
+  if (item.kind === 'external') {
+    // Static file outside the SPA router — plain `<a href>`, never
+    // active. stopPropagation keeps the tap from opening the floating
+    // panel.
+    return (
+      <li>
+        <a
+          href={item.href}
+          className="kd-icon-rail-link"
+          title={item.label}
+          aria-label={item.label}
+          target={item.newTab ? '_blank' : undefined}
+          rel={item.newTab ? 'noopener noreferrer' : undefined}
+          onClick={(e) => {
+            e.stopPropagation();
+          }}
+        >
+          <Icon size={22} aria-hidden="true" />
+        </a>
+      </li>
+    );
+  }
   // Action item — currently only `sign-out`.
   const busy = item.action === 'sign-out' && signingOut;
   return (
