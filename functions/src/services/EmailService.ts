@@ -111,7 +111,7 @@ export function buildNewRequestBody(req: AccessRequest, link: string): string {
     lines.push(`Dates:     ${req.start_date} to ${req.end_date}`);
   }
   if (req.comment) lines.push(`Comment:   ${req.comment}`);
-  if (req.urgent === true) lines.push(`Urgent:    yes`);
+  if (req.urgent === true) lines.push(`Emergency: yes`);
   lines.push('');
   lines.push(`Review the queue: ${link}`);
   return lines.join('\n');
