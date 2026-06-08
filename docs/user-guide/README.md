@@ -36,6 +36,21 @@ its `<figure class="shot">…</figure>` block for an `<img>`, e.g.:
 Then re-run `build-pdfs.sh`. Capture from the live app (do **not** include real member
 names or emails — use test data).
 
+### Regenerating the six web-app screenshots
+
+Six of the figures are captured automatically by a Playwright utility against the local
+emulator stack: `e2e/tests/screenshots.capture.ts`. It is **not** part of the regression
+suite (the filename omits `.spec`, so `pnpm test:e2e` skips it) — run it explicitly by
+path, against a fresh emulator instance:
+
+```
+firebase emulators:exec --only firestore,auth "npx playwright test tests/screenshots.capture.ts" --project demo-test
+```
+
+It rewrites the PNGs under `img/` in place. The three extension figures
+(`kindoo-managers` 3.1 / 5.1 / 6.1) need a live Kindoo session + the extension and are
+captured manually.
+
 ### Shot list
 
 **creating-requests**

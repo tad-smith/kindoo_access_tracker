@@ -1,10 +1,13 @@
 // One-purpose capture utility for the end-user documentation guides.
 //
-// NOT part of the regression suite — run it explicitly to (re)generate
-// the six web-app screenshots wired into the HTML guides under
-// `docs/user-guide/`:
+// NOT part of the regression suite. The filename intentionally drops the
+// `.spec` suffix so it does NOT match Playwright's default `testMatch`
+// (`**/*.@(spec|test).ts`) — `pnpm test:e2e` skips it, so a normal CI run
+// never rewrites the tracked PNGs under `docs/user-guide/img/`. Run it
+// explicitly by path to (re)generate the six web-app screenshots wired
+// into the HTML guides under `docs/user-guide/`:
 //
-//   npx playwright test screenshots.capture.spec.ts
+//   npx playwright test tests/screenshots.capture.ts
 //
 // (Always run it under a fresh emulator instance — see the command in
 // the task brief / the worktree report.)
