@@ -561,7 +561,7 @@ describe('<NewRequestForm /> — B-11 stake-scope all-buildings default', () => 
 });
 
 describe('<NewRequestForm /> — urgent flag', () => {
-  it('renders the Urgent? checkbox above the submit button', () => {
+  it('renders the Emergency? checkbox above the submit button', () => {
     render(
       <NewRequestForm
         scopes={[{ value: 'CO', label: 'Ward CO' }]}
@@ -601,7 +601,7 @@ describe('<NewRequestForm /> — urgent flag', () => {
     await user.click(screen.getByTestId('new-request-urgent'));
     await user.click(screen.getByTestId('new-request-submit'));
     // Inline form error suppressed; the right-aligned helper under the
-    // Urgent? checkbox already conveys "comment required". Submit is
+    // Emergency? checkbox already conveys "comment required". Submit is
     // still gated by the schema; assert only the observable.
     expect(submitMock).not.toHaveBeenCalled();
   });

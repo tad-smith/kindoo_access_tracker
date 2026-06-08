@@ -566,11 +566,12 @@ export function NewRequestForm({
 
       <div className="kd-urgent-block">
         <label className="kd-urgent-row">
-          <input type="checkbox" {...register('urgent')} data-testid="new-request-urgent" /> Urgent?
+          <input type="checkbox" {...register('urgent')} data-testid="new-request-urgent" />{' '}
+          Emergency?
         </label>
         {watchedUrgent ? (
           <p className="kd-urgent-hint" data-testid="new-request-urgent-hint">
-            Add a comment explaining the urgency
+            Add a comment explaining the emergency
           </p>
         ) : null}
       </div>

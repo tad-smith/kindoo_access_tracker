@@ -123,13 +123,15 @@ describe('EmailService — pure builders', () => {
   it('new-request body surfaces the urgent flag when set', () => {
     const urgent: AccessRequest = { ...baseRequest, urgent: true, comment: 'needed today' };
     const body = buildNewRequestBody(urgent, buildLink('/manager/queue'));
-    expect(body).toContain('Urgent:    yes');
+    expect(body).toContain('Emergency: yes');
   });
 
   it('new-request body omits the urgent flag when unset/false', () => {
-    expect(buildNewRequestBody(baseRequest, buildLink('/manager/queue'))).not.toContain('Urgent:');
+    expect(buildNewRequestBody(baseRequest, buildLink('/manager/queue'))).not.toContain(
+      'Emergency:',
+    );
     const explicit: AccessRequest = { ...baseRequest, urgent: false };
-    expect(buildNewRequestBody(explicit, buildLink('/manager/queue'))).not.toContain('Urgent:');
+    expect(buildNewRequestBody(explicit, buildLink('/manager/queue'))).not.toContain('Emergency:');
   });
 
   // ---- completed -----------------------------------------------------------

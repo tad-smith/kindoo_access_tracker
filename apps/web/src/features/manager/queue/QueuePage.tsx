@@ -1,5 +1,5 @@
 // Manager Requests Queue page (live, read-only). Pending-only; rendered
-// as three ordered sections (Urgent / Outstanding / Future) using the
+// as three ordered sections (Emergency / Outstanding / Future) using the
 // `comparison_date` rule in `@kindoo/shared`'s `partitionPendingRequests`.
 //
 // The queue is a visibility-only surface: completion and rejection
@@ -123,7 +123,7 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
       ) : (
         <div data-testid="queue-cards">
           <QueueSection
-            title="Urgent Requests"
+            title="Emergency Requests"
             testid="queue-section-urgent"
             requests={sections.urgent}
             focusedId={focusedId}
