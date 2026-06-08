@@ -414,7 +414,7 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 
   reason: string;              // free-text on submit; edit_manual / edit_temp carry the replacement reason
   comment: string;
-  urgent: boolean;             // requester flag; defaults false. Client gates the comment-required UX on it.
+  urgent: boolean;             // requester flag; defaults false. Renders to the user as the "Emergency" label/badge (field name unchanged). Client gates the comment-required UX on it.
   start_date?: string;         // add_temp / edit_temp
   end_date?: string;           // add_temp / edit_temp
   building_names: string[];    // requester's selection: stake-scope add types AND every edit type (carries the post-edit set)
