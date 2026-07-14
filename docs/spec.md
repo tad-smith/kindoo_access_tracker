@@ -128,7 +128,7 @@ The web app reads the principal via `usePrincipal()` from `apps/web/src/lib/prin
 
 **Claim staleness.** When underlying role data changes (a manager toggles `active`, Sync adjusts `access.importer_callings` via `syncApplyFix`, etc.), the relevant sync trigger calls `setCustomUserClaims` then `revokeRefreshTokens` so the next request from that user picks up fresh claims. Worst-case staleness on revocation: ~1 hour for an idle session, <2 seconds for an active one (the SDK auto-refreshes on any 401).
 
-**Bishopric lag.** A newly-called bishopric member can't sign in until Sync runs against the latest Kindoo data (which itself reflects Church Access Automation's LCR pull) and populates `access.importer_callings`. Accepted for v1.
+**Bishopric lag.** A newly-called Bishopric member can't sign in until Sync runs against the latest Kindoo data (which itself reflects Church Access Automation's LCR pull) and populates `access.importer_callings`. Accepted for v1.
 
 ### 4.1 Sign-in providers
 
@@ -355,8 +355,8 @@ SBA still *provisions* every new Kindoo seat as a **Guest** (`UserRole: 2` on th
 
 **App access.** Whether a member gets in-app (web/SPA) access is **no longer per-stake configurable**. There are no `wardCallingTemplates` / `stakeCallingTemplates` collections, no Configuration tabs to edit them, and no `give_app_access` / `auto_kindoo_access` / `sheet_order` template fields. App access is granted **iff** the member's calling is in a hard-coded churchwide calling list (`packages/shared/src/appAccessCallings.ts`, matched trimmed + case-insensitively):
 
-- **Ward scope:** Bishop; Bishopric First Counselor; Bishopric Second Counselor; Ward Clerk; Ward Executive Secretary.
 - **Stake scope:** Stake President; Stake Presidency First Counselor; Stake Presidency Second Counselor; Stake Clerk; Stake Executive Secretary; Stake High Councilor.
+- **Ward scope:** Bishop; Bishopric First Counselor; Bishopric Second Counselor; Ward Clerk; Ward Executive Secretary.
 
 The list is **exclusive** — there is no per-stake customization and no wildcard mechanism. Sync's `syncApplyFix` populates `access.importer_callings[scope]` from `filterAppAccessCallings(scope, callings)` (the subset of a seat's callings that hit the list); a scope whose callings yield no list match gets its `importer_callings[scope]` cleared. Because the list is now the only criterion, any app access a member previously held through a calling not on this list (or via a wildcard template) is **revoked on the next Sync run** that touches their seat. Seat **type** is unaffected — it stays role-derived (`DepartmentType`) + door-grant-derived (see "Seat type from Kindoo role, then door grants" above), never template-derived. Seat / access `sort_order` and roster ordering use the canonical churchwide `callingSortOrder` table (`seatCallingOrder()`), not any per-template order — see "Roster sort order" below.
 
@@ -375,7 +375,7 @@ The compiled table is global (the calling hierarchy is churchwide), so there is 
 
 **Cadence.** Sync runs on-demand, when the operator opens the extension's Sync panel on Kindoo and triggers a run. No scheduled cadence. The system-clock interval between LCR-side changes and SBA-side auto-seat existence is therefore bounded only by how often the operator runs Sync, not by a server-side schedule. Accepted at v1 scale (csnorth, ~250 seats, 1–2 requests/week). If the lag becomes operationally visible the next-step fix is either a scheduled Sync trigger or a Cloud Function that polls Kindoo on the same cadence the old importer ran.
 
-**Bishopric lag.** New bishopric members can't sign into the app until Sync runs against the latest Kindoo data (which itself reflects Church Access Automation's LCR pull). Lag is unbounded by clock; bounded only by Sync-run cadence (see "Cadence" above).
+**Bishopric lag.** New Bishopric members can't sign into the app until Sync runs against the latest Kindoo data (which itself reflects Church Access Automation's LCR pull). Lag is unbounded by clock; bounded only by Sync-run cadence (see "Cadence" above).
 
 ## 9. Email notifications
 
