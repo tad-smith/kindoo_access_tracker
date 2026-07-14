@@ -160,7 +160,7 @@
   <h2 id="role"><span class="num">1.</span> Your role &amp; how the pieces fit</h2>
   <p>Kindoo controls the doors and is the <strong>authoritative</strong> record of who has access. Kindoo has no programming interface, so access changes are made by hand inside Kindoo's admin site. SBA sits alongside Kindoo to organize the work:</p>
   <ul>
-    <li><strong>Leaders</strong> (bishoprics, stake presidency) submit requests in SBA.</li>
+    <li><strong>Leaders</strong> (Stake Presidencies, Bishoprics) submit requests in SBA.</li>
     <li><strong>You</strong> review each request, make the change in Kindoo, and mark the request complete.</li>
     <li>SBA mirrors Kindoo's state so everyone can see who currently has access.</li>
   </ul>
@@ -291,7 +291,7 @@
   <h3>Granting stake-building access to a foreign-site member</h3>
   <p>On <span class="ui">All Seats</span>, a member who only has access on a <em>foreign</em> Kindoo site may show a <span class="ui">Give Access To Stake Buildings</span> button. Use it to grant them access to the stake's home buildings without waiting for them to submit a request. A red warning notes that this <strong>consumes an additional Kindoo license</strong>, because the person has to be invited into the home Kindoo environment.</p>
 
-  <div class="callout tip"><span class="lbl">You can complete your own requests</span><p>If you also serve in a bishopric or as a stake leader, you may complete or reject requests you submitted yourself. The audit log records both who submitted and who completed.</p></div>
+  <div class="callout tip"><span class="lbl">You can complete your own requests</span><p>If you also serve as a stake leader or in a Bishopric, you may complete or reject requests you submitted yourself. The audit log records both who submitted and who completed.</p></div>
 
   <!-- 6 -->
   <h2 id="sync"><span class="num">6.</span> Keeping SBA and Kindoo in sync</h2>
@@ -323,7 +323,7 @@
     <figcaption>Fig 6.1 — The Sync drift report.</figcaption>
   </figure>
 
-  <div class="callout"><span class="lbl">When to run Sync</span><p>Sync runs only when you start it — there's no schedule. Run it after callings change in your stake (new bishopric, releases) and whenever a roster looks out of date. Newly-called leaders can't sign in to SBA until a Sync that picks up their calling has run.</p></div>
+  <div class="callout"><span class="lbl">When to run Sync</span><p>Sync runs only when you start it — there's no schedule. Run it after callings change in your stake (new Bishopric, releases) and whenever a roster looks out of date. Newly-called leaders can't sign in to SBA until a Sync that picks up their calling has run.</p></div>
 
   <div class="callout tip"><span class="lbl">Sync never touches Kindoo</span><p>There is no "update Kindoo" action in Sync — every fix only adjusts SBA to match what Kindoo already shows. The only way SBA writes <em>into</em> Kindoo is when you process a request from the queue (<a href="#processing">Section 5</a>).</p></div>
 
@@ -345,8 +345,8 @@
   <table>
     <thead><tr><th>Scope</th><th>Callings that grant app access</th></tr></thead>
     <tbody>
-      <tr><td><strong>Ward</strong></td><td>Bishop · Bishopric First Counselor · Bishopric Second Counselor · Ward Clerk · Ward Executive Secretary</td></tr>
       <tr><td><strong>Stake</strong></td><td>Stake President · Stake Presidency First Counselor · Stake Presidency Second Counselor · Stake Clerk · Stake Executive Secretary · Stake High Councilor</td></tr>
+      <tr><td><strong>Ward</strong></td><td>Bishop · Bishopric First Counselor · Bishopric Second Counselor · Ward Clerk · Ward Executive Secretary</td></tr>
     </tbody>
   </table>
   <p>Calling-based access is granted and removed automatically by Sync as callings change — these rows are read-only on the <span class="ui">App Access</span> page. For anyone outside that list who genuinely needs to sign in, use <span class="ui">Add manual access</span>.</p>
@@ -354,10 +354,10 @@
 
   <!-- 9 -->
   <h2 id="caps"><span class="num">9.</span> Seat caps &amp; utilization</h2>
-  <p>Each ward has its own seat cap, and the stake has an overall cap. The Dashboard and All Seats show utilization bars that turn amber at 90% and red when over.</p>
+  <p>The stake has an overall cap, and each ward has its own seat cap. The Dashboard and All Seats show utilization bars that turn amber at 90% and red when over.</p>
   <ul>
-    <li><strong>Per-ward caps</strong> flag an over-cap when a ward's seat count exceeds its cap.</li>
     <li>The <strong>stake cap</strong> covers the home site's portion (the stake cap minus home-site ward seats).</li>
+    <li><strong>Per-ward caps</strong> flag an over-cap when a ward's seat count exceeds its cap.</li>
     <li>When a pool crosses from within-cap to over-cap, active managers get an <strong>over-cap email</strong>.</li>
   </ul>
   <div class="callout"><span class="lbl">Note</span><p>Sync-driven changes don't immediately recompute over-cap warnings — the count catches up the next time a request is completed. At normal volumes (a few requests a week) this resolves within days.</p></div>
@@ -415,7 +415,7 @@
     <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
     <tbody>
       <tr><td><strong>Seat</strong></td><td>One person's access record — the doors they can open in a given scope.</td></tr>
-      <tr><td><strong>Scope</strong></td><td>A ward or the stake. Requests and seats belong to a scope.</td></tr>
+      <tr><td><strong>Scope</strong></td><td>The stake or a ward. Requests and seats belong to a scope.</td></tr>
       <tr><td><strong>Building</strong></td><td>A physical building with its own set of doors. Seats grant access per building.</td></tr>
       <tr><td><strong>Kindoo Site</strong></td><td>A Kindoo environment that governs a set of buildings' doors. Home or foreign.</td></tr>
       <tr><td><strong>Automatic / Manual / Temporary</strong></td><td>The three seat types — calling-based, ongoing, and time-limited.</td></tr>

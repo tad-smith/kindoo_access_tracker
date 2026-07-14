@@ -80,3 +80,57 @@ test('the Kindoo Manager guide serves real guide HTML with the SW controlling th
   ).toBeVisible();
   await expect(page).toHaveTitle(/Kindoo Manager Guide/i);
 });
+
+// Section deep-linking: a copy-link icon is injected after every h2/h3
+// (except the ToC) by the guides' inline script. Clicking it copies the
+// absolute section URL and shows a "Link copied" affordance without
+// jumping. The requester guide's "Install it like an app" subsection has
+// a stable authored id (`install-app`) so its shareable link is clean.
+test('the requester guide injects copy-link anchors on its sections', async ({ page }) => {
+  await page.goto('/help/requesting-access.html');
+
+  // Every numbered section heading gets an anchor; none appear in the ToC.
+  await expect(page.locator('main.page h2 a.anchor').first()).toBeAttached();
+  await expect(page.locator('nav.toc a.anchor')).toHaveCount(0);
+
+  // The Install subsection keeps its authored id and its anchor.
+  await expect(page.locator('h3#install-app a.anchor')).toHaveCount(1);
+});
+
+test('clicking a section copy-link copies the absolute deep-link and confirms it', async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/help/requesting-access.html');
+
+  const installAnchor = page.locator('h3#install-app a.anchor');
+  await installAnchor.click();
+
+  // Hash updates to the section id — no navigation away, no full jump.
+  await expect(page).toHaveURL(/\/help\/requesting-access\.html#install-app$/);
+
+  // The "Link copied" affordance is shown (the `.copied` class drives the
+  // ::after tooltip).
+  await expect(installAnchor).toHaveClass(/copied/);
+
+  // The clipboard holds the absolute, shareable deep-link.
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toMatch(/\/help\/requesting-access\.html#install-app$/);
+});
+
+test('the requester guide deep-links to the expanded Install subsection', async ({ page }) => {
+  await page.goto('/help/requesting-access.html#install-app');
+
+  const install = page.locator('h3#install-app');
+  await expect(install).toBeVisible();
+  await expect(install).toHaveText(/Install it like an app/i);
+
+  // The subsection was expanded into a concrete per-platform install
+  // table (heading → intro paragraph → table).
+  const installTable = page.locator('h3#install-app + p + table');
+  await expect(installTable).toBeVisible();
+  await expect(installTable).toContainText('iPhone / iPad');
+  await expect(installTable).toContainText('Add to Home Screen');
+  await expect(installTable).toContainText('Windows / Chromebook');
+});
