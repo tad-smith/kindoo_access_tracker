@@ -16,6 +16,11 @@ export { buildingSlug } from './buildingSlug.js';
 export { callingSortOrder, seatCallingOrder } from './callingSortOrder.js';
 export { canonicalEmail, emailsEqual } from './canonicalEmail.js';
 export { principalFromClaims } from './principal.js';
+export {
+  deriveRequesterDisplay,
+  formatRequesterLabel,
+  type RequesterDisplay,
+} from './requesterDisplay.js';
 export { buildingNameById, resolveWardBuilding, resolveWardSite } from './resolveWardSite.js';
 export { scopeLabel } from './scopeLabel.js';
 export {

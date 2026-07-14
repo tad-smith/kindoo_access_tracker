@@ -15,9 +15,16 @@
 //   - done(partial)  → ResultDialog kind='partial' visible; retry button
 //                      calls markRequestComplete only
 
-import { useCallback, useState } from 'react';
-import { scopeLabel, type AccessRequest } from '@kindoo/shared';
+import { useCallback, useEffect, useState } from 'react';
 import {
+  deriveRequesterDisplay,
+  formatRequesterLabel,
+  scopeLabel,
+  type Access,
+  type AccessRequest,
+} from '@kindoo/shared';
+import {
+  getAccessByEmail,
   getSeatByEmail,
   markRequestComplete,
   writeKindooSiteEid,
@@ -109,6 +116,33 @@ export function RequestCard({
 }: RequestCardProps) {
   const [state, setState] = useState<CardState>({ kind: 'idle' });
   const [rejectOpen, setRejectOpen] = useState(false);
+
+  // Live-derive the requester's name + calling from their `access` doc
+  // for this request's scope (Option A — nothing is captured on the
+  // request; mirrors the web Queue). One-shot SW-side read; while the
+  // doc is loading or absent (or the read fails) `access` stays null,
+  // so `formatRequesterLabel` degrades to the raw email — no branching
+  // and no empty flash.
+  const [requesterAccess, setRequesterAccess] = useState<Access | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getAccessByEmail(stakeId, request.requester_canonical)
+      .then((access) => {
+        if (!cancelled) setRequesterAccess(access);
+      })
+      .catch(() => {
+        // Degrade to the email fallback; never block the card on a
+        // requester-lookup miss.
+        if (!cancelled) setRequesterAccess(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stakeId, request.requester_canonical]);
+  const requesterLabel = formatRequesterLabel(
+    deriveRequesterDisplay(requesterAccess, request.scope),
+    request.requester_email,
+  );
 
   const isUrgent = request.urgent === true;
   const submittedAt = formatTimestamp(request.requested_at);
@@ -317,7 +351,7 @@ export function RequestCard({
       </div>
       <div className="sba-request-meta">
         <span>
-          <strong>Requester:</strong> {request.requester_email}
+          <strong>Requester:</strong> {requesterLabel}
         </span>
         {submittedAt ? (
           <span>

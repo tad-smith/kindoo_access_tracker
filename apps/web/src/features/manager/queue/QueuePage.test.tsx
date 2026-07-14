@@ -7,10 +7,11 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import type { AccessRequest } from '@kindoo/shared';
-import { makeRequest } from '../../../../test/fixtures';
+import { makeAccess, makeRequest } from '../../../../test/fixtures';
 
 const usePendingMock = vi.fn();
 const useSeatForMemberMock = vi.fn();
+const useAccessForMemberMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./hooks', () => ({
@@ -19,6 +20,7 @@ vi.mock('./hooks', () => ({
 
 vi.mock('../../requests/hooks', () => ({
   useSeatForMember: (canonical: string | null) => useSeatForMemberMock(canonical),
+  useAccessForMember: (canonical: string | null) => useAccessForMemberMock(canonical),
 }));
 
 vi.mock('@tanstack/react-router', () => ({
@@ -87,6 +89,10 @@ function loadingDocResult() {
 beforeEach(() => {
   vi.clearAllMocks();
   useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
+  // Default: no access doc resolved for the requester, so the card falls
+  // back to the requester email. Individual tests override to assert the
+  // name / calling render.
+  useAccessForMemberMock.mockReturnValue(liveDocResult(undefined));
   // jsdom does not implement scrollIntoView; stub on the prototype so
   // the focus-card effect does not throw. Using `Object.defineProperty`
   // sidesteps the readonly-element-prototype TS check; restoreAllMocks
@@ -271,7 +277,7 @@ describe('<ManagerQueuePage />', () => {
     expect(card.querySelector('.kd-queue-card-submitted')).not.toBeNull();
   });
 
-  it('shows the requester email on its own row (falls back to email-only until requester_name lands)', () => {
+  it('falls back to the requester email when the requester has no access doc', () => {
     const requests = [
       makeRequest({
         request_id: 'r1',
@@ -283,10 +289,70 @@ describe('<ManagerQueuePage />', () => {
       }),
     ];
     usePendingMock.mockReturnValue(liveResult(requests));
+    // Default beforeEach mock already returns no access doc.
     render(<ManagerQueuePage />);
     const card = screen.getByTestId('queue-card-r1');
     expect(within(card).getByText(/Requester:/)).toBeInTheDocument();
     expect(card.textContent).toMatch(/Requester:\s*bishop@example\.com/);
+  });
+
+  it("renders the requester's name and calling derived from their access doc", () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        requester_email: 'bishop@example.com',
+        requester_canonical: 'bishop@example.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useAccessForMemberMock.mockReturnValue(
+      liveDocResult(
+        makeAccess({
+          member_canonical: 'bishop@example.com',
+          member_name: 'Bishop Bob',
+          importer_callings: { CO: ['Bishop'] },
+        }),
+      ),
+    );
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(card.textContent).toMatch(/Requester:\s*Bishop Bob \(Bishop\)/);
+    expect(card.textContent).not.toMatch(/bishop@example\.com/);
+  });
+
+  it('renders the requester name alone when they have no calling for the scope', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        requester_email: 'bishop@example.com',
+        requester_canonical: 'bishop@example.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useAccessForMemberMock.mockReturnValue(
+      liveDocResult(
+        makeAccess({
+          member_canonical: 'bishop@example.com',
+          member_name: 'Bishop Bob',
+          // Calling is for a different scope than the request's (CO).
+          importer_callings: { MR: ['Bishop'] },
+          manual_grants: {},
+        }),
+      ),
+    );
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(card.textContent).toMatch(/Requester:\s*Bishop Bob/);
+    // No calling for the scope → no parenthesised calling after the name,
+    // and no email fallback.
+    expect(card.textContent).not.toMatch(/Requester:\s*Bishop Bob\s*\(/);
+    expect(card.textContent).not.toMatch(/bishop@example\.com/);
   });
 
   it('shows buildings on a dedicated card row as a comma-delimited list', () => {

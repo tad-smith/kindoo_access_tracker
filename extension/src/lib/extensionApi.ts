@@ -24,6 +24,8 @@ import type {
   AuthSignOutResponse,
   AuthSnapshot,
   AuthStateChangedPush,
+  DataGetAccessByEmailRequest,
+  DataGetAccessByEmailResponse,
   DataGetSeatByEmailRequest,
   DataGetSeatByEmailResponse,
   DataGetStakeConfigPayload,
@@ -59,6 +61,7 @@ export type { EidStakeCandidate, ResolveEidStakesPayload } from './messaging';
  * components. */
 export type StakeConfigBundle = DataGetStakeConfigPayload;
 import type {
+  Access,
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
   MarkRequestCompleteInput,
@@ -231,6 +234,19 @@ export async function writeKindooConfig(
 export async function getSeatByEmail(stakeId: string, canonical: string): Promise<Seat | null> {
   const req: DataGetSeatByEmailRequest = { type: 'data.getSeatByEmail', stakeId, canonical };
   const res: DataGetSeatByEmailResponse = await sendMessage(req);
+  return unwrap(res);
+}
+
+/**
+ * Fetch the `access` doc for a request's requester by canonical email.
+ * Returns `null` when the requester has no access doc. The RequestCard
+ * live-derives the requester's display name + calling from it
+ * (`deriveRequesterDisplay`) for the "Requester:" line; a `null` result
+ * degrades that label to the raw requester email.
+ */
+export async function getAccessByEmail(stakeId: string, canonical: string): Promise<Access | null> {
+  const req: DataGetAccessByEmailRequest = { type: 'data.getAccessByEmail', stakeId, canonical };
+  const res: DataGetAccessByEmailResponse = await sendMessage(req);
   return unwrap(res);
 }
 

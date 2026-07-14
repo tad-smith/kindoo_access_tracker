@@ -15,10 +15,10 @@ import { doc, orderBy, query, serverTimestamp, setDoc, where } from 'firebase/fi
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail } from '@kindoo/shared';
-import type { AccessRequest, Building, Seat, Ward } from '@kindoo/shared';
+import type { Access, AccessRequest, Building, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreDoc, useFirestoreCollection } from '../../lib/data';
 import { db, auth } from '../../lib/firebase';
-import { buildingsCol, requestsCol, seatRef, wardsCol } from '../../lib/docs';
+import { accessRef, buildingsCol, requestsCol, seatRef, wardsCol } from '../../lib/docs';
 import { useActiveStake } from '../../lib/useActiveStake';
 import { usePrincipal } from '../../lib/principal';
 import { allowedScopesFor } from './scopeOptions';
@@ -42,6 +42,25 @@ export function useSeatForMember(canonical: string | null) {
     return seatRef(db, activeStakeId, canonical);
   }, [canonical, activeStakeId]);
   return useFirestoreDoc<Seat>(ref);
+}
+
+/**
+ * Live subscription to a member's `access` doc by canonical email. The
+ * doc id IS the canonical email — no query needed. Used to live-derive a
+ * requester's display name + calling on the manager Queue (Option A: the
+ * request itself stores no name/calling). Managers may read any
+ * `access/{email}` (see `firestore.rules`), and the Queue is
+ * manager-gated, so the read is always permitted for this surface.
+ *
+ * `null` canonical disables the subscription.
+ */
+export function useAccessForMember(canonical: string | null) {
+  const activeStakeId = useActiveStake();
+  const ref = useMemo(() => {
+    if (!canonical || !activeStakeId) return null;
+    return accessRef(db, activeStakeId, canonical);
+  }, [canonical, activeStakeId]);
+  return useFirestoreDoc<Access>(ref);
 }
 
 /**

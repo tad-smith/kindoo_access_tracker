@@ -19,6 +19,7 @@ const getEnvironmentsMock = vi.fn();
 const readKindooSessionMock = vi.fn();
 const markRequestCompleteMock = vi.fn();
 const getSeatByEmailMock = vi.fn();
+const getAccessByEmailMock = vi.fn();
 const writeKindooSiteEidMock = vi.fn();
 const rejectRequestMock = vi.fn();
 
@@ -54,13 +55,31 @@ vi.mock('../lib/extensionApi', async () => {
     ...actual,
     markRequestComplete: (...args: unknown[]) => markRequestCompleteMock(...args),
     getSeatByEmail: (...args: unknown[]) => getSeatByEmailMock(...args),
+    getAccessByEmail: (...args: unknown[]) => getAccessByEmailMock(...args),
     writeKindooSiteEid: (...args: unknown[]) => writeKindooSiteEidMock(...args),
     rejectRequest: (...args: unknown[]) => rejectRequestMock(...args),
   };
 });
 
-import type { AccessRequest } from '@kindoo/shared';
+import type { Access, AccessRequest } from '@kindoo/shared';
 import type { StakeConfigBundle } from '../lib/extensionApi';
+
+/**
+ * Minimal `access` doc — only the fields `deriveRequesterDisplay` reads
+ * (member_name + importer_callings / manual_grants). Bookkeeping fields
+ * are irrelevant to the requester-label derivation, so the cast keeps
+ * the fixture focused.
+ */
+function accessDoc(overrides: Partial<Access> = {}): Access {
+  return {
+    member_canonical: 'requester@example.com',
+    member_email: 'requester@example.com',
+    member_name: '',
+    importer_callings: {},
+    manual_grants: {},
+    ...overrides,
+  } as Access;
+}
 
 function bundle(): StakeConfigBundle {
   return {
@@ -156,6 +175,7 @@ describe('RequestCard', () => {
     readKindooSessionMock.mockReset();
     markRequestCompleteMock.mockReset();
     getSeatByEmailMock.mockReset();
+    getAccessByEmailMock.mockReset();
     writeKindooSiteEidMock.mockReset();
     rejectRequestMock.mockReset();
     readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 'tok', eid: 27994 } });
@@ -165,6 +185,9 @@ describe('RequestCard', () => {
     // Default: subject has no SBA seat yet (first-time-add path);
     // individual tests override when they need a populated seat.
     getSeatByEmailMock.mockResolvedValue(null);
+    // Default: requester has no access doc → the "Requester:" line falls
+    // back to the raw email. Tests that assert name / calling override.
+    getAccessByEmailMock.mockResolvedValue(null);
   });
   afterEach(() => {
     vi.resetModules();
@@ -208,6 +231,44 @@ describe('RequestCard', () => {
     // Default bundle() ships `wards: []`.
     await renderCard({ request: addRequest({ scope: 'CO' }) });
     expect(screen.getByTestId('sba-request-r1')).toHaveTextContent('CO');
+  });
+
+  // ---- Requester line (name + calling, live-derived) ----------------
+
+  it("renders the requester's name and calling derived from their access doc", async () => {
+    // Default addRequest scope is 'stake'; the calling is recorded under
+    // that scope, so it surfaces.
+    getAccessByEmailMock.mockResolvedValue(
+      accessDoc({ member_name: 'Bishop Bob', importer_callings: { stake: ['Bishop'] } }),
+    );
+    await renderCard();
+    const card = screen.getByTestId('sba-request-r1');
+    await waitFor(() => expect(card.textContent).toMatch(/Requester:\s*Bishop Bob \(Bishop\)/));
+    // The raw requester email is replaced, not appended.
+    expect(card.textContent).not.toMatch(/requester@example\.com/);
+    expect(getAccessByEmailMock).toHaveBeenCalledWith('csnorth', 'requester@example.com');
+  });
+
+  it('renders the requester name alone when they have no calling for the scope', async () => {
+    // Calling is recorded under 'CO', but the request's scope is 'stake'
+    // → no calling applies → name only (no parenthesised calling, no
+    // email fallback).
+    getAccessByEmailMock.mockResolvedValue(
+      accessDoc({ member_name: 'Bishop Bob', importer_callings: { CO: ['Bishop'] } }),
+    );
+    await renderCard();
+    const card = screen.getByTestId('sba-request-r1');
+    await waitFor(() => expect(card.textContent).toMatch(/Requester:\s*Bishop Bob/));
+    expect(card.textContent).not.toMatch(/Requester:\s*Bishop Bob\s*\(/);
+    expect(card.textContent).not.toMatch(/requester@example\.com/);
+  });
+
+  it('falls back to the requester email when the requester has no access doc', async () => {
+    // Default getAccessByEmailMock resolves null.
+    await renderCard();
+    const card = screen.getByTestId('sba-request-r1');
+    await waitFor(() => expect(getAccessByEmailMock).toHaveBeenCalled());
+    expect(card.textContent).toMatch(/Requester:\s*requester@example\.com/);
   });
 
   it('runs provisionAddOrChange and markRequestComplete on click, then shows the result dialog', async () => {

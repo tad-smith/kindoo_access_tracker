@@ -18,6 +18,7 @@ import {
 } from '../lib/auth';
 import { getMyPendingRequests, markRequestComplete, syncApplyFix } from '../lib/api';
 import {
+  loadAccessByEmail,
   loadSeatByEmail,
   loadStakeConfig,
   loadSyncData,
@@ -151,6 +152,14 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
       try {
         const seat = await loadSeatByEmail(req.stakeId, req.canonical);
         return { ok: true, data: seat };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.getAccessByEmail': {
+      try {
+        const access = await loadAccessByEmail(req.stakeId, req.canonical);
+        return { ok: true, data: access };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }

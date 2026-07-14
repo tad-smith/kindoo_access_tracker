@@ -16,6 +16,7 @@
 // already handles.
 
 import type {
+  Access,
   Building,
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
@@ -172,6 +173,22 @@ export interface DataGetSeatByEmailRequest {
 }
 
 /**
+ * One-shot read of the `access` doc for a request's requester. The panel
+ * live-derives the requester's display name + calling from it
+ * (`deriveRequesterDisplay` / `formatRequesterLabel`) for the "Requester:"
+ * card line — nothing is captured on the request at submit time (Option
+ * A). `null` is a valid return (no access doc); the label degrades to the
+ * raw requester email.
+ */
+export interface DataGetAccessByEmailRequest {
+  type: 'data.getAccessByEmail';
+  /** Stake to read against. */
+  stakeId: string;
+  /** Canonical email — the `access` doc id. */
+  canonical: string;
+}
+
+/**
  * Persist a discovered Kindoo environment ID onto a foreign
  * `KindooSite` doc. Kindoo Sites Phase 3 — the manager UI captures
  * only display name + expected site name; the extension auto-
@@ -312,6 +329,7 @@ export type ExtensionRequest =
   | DataGetStakeConfigRequest
   | DataWriteKindooConfigRequest
   | DataGetSeatByEmailRequest
+  | DataGetAccessByEmailRequest
   | DataGetSyncDataRequest
   | DataSyncApplyFixRequest
   | DataWriteKindooSiteEidRequest
@@ -330,6 +348,7 @@ export type ApiMarkRequestCompleteResponse = Result<MarkRequestCompleteOutput>;
 export type DataGetStakeConfigResponse = Result<DataGetStakeConfigPayload>;
 export type DataWriteKindooConfigResponse = Result<{ ok: true }>;
 export type DataGetSeatByEmailResponse = Result<Seat | null>;
+export type DataGetAccessByEmailResponse = Result<Access | null>;
 export type DataGetSyncDataResponse = Result<SyncDataBundle>;
 export type DataSyncApplyFixResponse = Result<SyncApplyFixResult>;
 export type DataWriteKindooSiteEidResponse = Result<{ ok: true }>;
@@ -353,17 +372,19 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
               ? DataWriteKindooConfigResponse
               : R extends DataGetSeatByEmailRequest
                 ? DataGetSeatByEmailResponse
-                : R extends DataGetSyncDataRequest
-                  ? DataGetSyncDataResponse
-                  : R extends DataSyncApplyFixRequest
-                    ? DataSyncApplyFixResponse
-                    : R extends DataWriteKindooSiteEidRequest
-                      ? DataWriteKindooSiteEidResponse
-                      : R extends DataResolveEidStakesRequest
-                        ? DataResolveEidStakesResponse
-                        : R extends DataRejectRequestRequest
-                          ? DataRejectRequestResponse
-                          : never;
+                : R extends DataGetAccessByEmailRequest
+                  ? DataGetAccessByEmailResponse
+                  : R extends DataGetSyncDataRequest
+                    ? DataGetSyncDataResponse
+                    : R extends DataSyncApplyFixRequest
+                      ? DataSyncApplyFixResponse
+                      : R extends DataWriteKindooSiteEidRequest
+                        ? DataWriteKindooSiteEidResponse
+                        : R extends DataResolveEidStakesRequest
+                          ? DataResolveEidStakesResponse
+                          : R extends DataRejectRequestRequest
+                            ? DataRejectRequestResponse
+                            : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 
