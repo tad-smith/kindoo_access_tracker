@@ -31,7 +31,7 @@ import {
   updateDoc,
   writeBatch,
 } from 'firebase/firestore';
-import type { Building, KindooSite, Seat, Stake, Ward } from '@kindoo/shared';
+import type { Access, Building, KindooSite, Seat, Stake, Ward } from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
@@ -394,6 +394,27 @@ export async function loadSeatByEmail(stakeId: string, canonical: string): Promi
   const snap = await getDoc(seatRef);
   if (!snap.exists()) return null;
   return snap.data() as Seat;
+}
+
+/**
+ * One-shot read of `stakes/{stakeId}/access/{canonical}`. Returns `null`
+ * when the member has no access doc. The panel live-derives a requester's
+ * display name + calling from this doc (`deriveRequesterDisplay`); a null
+ * result degrades the requester line to the raw email. Managers may read
+ * any `access/{canonical}` (`firestore.rules` `match /access/{canonical}`
+ * gates read on `isManager(stakeId)`), and the extension operator is
+ * always a manager, so the read is permitted; a denial surfaces a
+ * permission-denied that propagates back through the SW message pipeline.
+ */
+export async function loadAccessByEmail(
+  stakeId: string,
+  canonical: string,
+): Promise<Access | null> {
+  const db = firestore();
+  const accessRef = doc(db, 'stakes', stakeId, 'access', canonical);
+  const snap = await getDoc(accessRef);
+  if (!snap.exists()) return null;
+  return snap.data() as Access;
 }
 
 /**
