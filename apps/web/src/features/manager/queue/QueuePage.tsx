@@ -17,9 +17,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { type AccessRequest, partitionPendingRequests } from '@kindoo/shared';
+import {
+  type AccessRequest,
+  deriveRequesterDisplay,
+  formatRequesterLabel,
+  partitionPendingRequests,
+} from '@kindoo/shared';
 import { usePendingRequests } from './hooks';
-import { useSeatForMember } from '../../requests/hooks';
+import { useAccessForMember, useSeatForMember } from '../../requests/hooks';
 import { useScopeLabel } from '../../../lib/scopeLabel';
 import { Badge } from '../../../components/ui/Badge';
 import { RosterMemberLine } from '../../../components/roster/RosterMemberLine';
@@ -232,6 +237,17 @@ function QueueCard({ request, isFocused, labelForScope }: QueueCardProps) {
     request.type === 'edit_auto' || request.type === 'edit_manual' || request.type === 'edit_temp';
   const editTargetMissing = isEditType && dup.isSuccess && !dup.data;
 
+  // Live-derive the requester's name + calling from their access doc for
+  // this request's scope (Option A — nothing is captured on the request).
+  // While the access doc is still loading or absent, `access.data` is
+  // undefined; `deriveRequesterDisplay(undefined, …)` yields all nulls, so
+  // `formatRequesterLabel` falls back to the email (no empty flash).
+  const requesterAccess = useAccessForMember(request.requester_canonical);
+  const requesterLabel = formatRequesterLabel(
+    deriveRequesterDisplay(requesterAccess.data, request.scope),
+    request.requester_email,
+  );
+
   const reqDate = (() => {
     const ts = request.requested_at as unknown as { toDate?: () => Date };
     if (ts && ts.toDate) return ts.toDate().toISOString().slice(0, 16).replace('T', ' ');
@@ -311,11 +327,7 @@ function QueueCard({ request, isFocused, labelForScope }: QueueCardProps) {
       ) : null}
       <div className="kd-queue-card-meta">
         <span>
-          {/* TODO: requester_name is not stored on the request; show
-              "Name (email)" once it's captured at submit time (would
-              need a userIndex display_name lookup or a denormed field
-              on AccessRequest). For now we fall back to email-only. */}
-          <strong>Requester:</strong> {request.requester_email}
+          <strong>Requester:</strong> {requesterLabel}
         </span>
       </div>
       {blockedByDuplicate && dup.data ? (
