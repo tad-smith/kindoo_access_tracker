@@ -8,7 +8,7 @@
 
 The Church of Jesus Christ of Latter-day Saints organizes members into **stakes**, each containing multiple **wards** (individual congregations). This app is built for a single stake; the schema is parameterized on `{stakeId}` from day one (per F15) so a future second stake is a routing change rather than a data refactor.
 
-**Kindoo** is a door-access system licensed per seat. The stake receives a global pool of seats and allocates them across its wards and its own stake-level pool.
+**Kindoo** is a door-access system licensed per seat. The stake receives a global pool of seats and allocates them across its own stake-level pool and its wards.
 
 There are three seat types:
 
@@ -18,7 +18,7 @@ There are three seat types:
 | **Manual** | Assigned to an individual. | Held until explicitly removed. |
 | **Temporary** | Assigned with a start and end date. | Held through the end date. Kindoo (authoritative) expires the access; the extension's Sync then removes the now-orphaned SBA seat as `sba-only`. See §7, §8. |
 
-Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for manual/temp seats in their ward. The Stake Presidency does the same against the stake pool. One or more **Kindoo Managers** process those requests by manually mirroring changes into Kindoo (which has no API), then marking the requests complete.
+The Stake Presidency submits requests for manual/temp seats against the stake pool. Bishoprics (Bishop + two counselors; one Bishopric per ward) do the same for their ward. One or more **Kindoo Managers** process those requests by manually mirroring changes into Kindoo (which has no API), then marking the requests complete.
 
 ## 2. Stack
 
@@ -47,7 +47,7 @@ A user can hold roles on more than one stake simultaneously (per F18 / `architec
 
 **Switcher click handler** writes both `sessionStorage` AND `localStorage` and invalidates TanStack Query's per-stake reads so the SPA refetches against the newly-selected stake. The URL does not change.
 
-**Stake switcher dropdown** in the brand bar surfaces a drop-down next to the current stake name when the user has any role on ≥ 2 stakes. Hidden entirely when the user has access to only one stake. Visible to all role types — managers, stake-presidency members, bishopric — anyone who holds a role on more than one stake.
+**Stake switcher dropdown** in the brand bar surfaces a drop-down next to the current stake name when the user has any role on ≥ 2 stakes. Hidden entirely when the user has access to only one stake. Visible to all role types — managers, Stake Presidency members, Bishopric — anyone who holds a role on more than one stake.
 
 **Middle-click / new-tab caveat.** A tab opened via middle-click on an in-SPA link starts with an empty `sessionStorage` and falls through to `localStorage`. That's acceptable: `localStorage` is almost always the right stake, and there is no `?stake=X` stamping on `<Link>` `href`s — the URL stays clean. If the user opens a new tab into a stake they weren't last on, they switch with the dropdown.
 
@@ -128,7 +128,7 @@ The web app reads the principal via `usePrincipal()` from `apps/web/src/lib/prin
 
 **Claim staleness.** When underlying role data changes (a manager toggles `active`, Sync adjusts `access.importer_callings` via `syncApplyFix`, etc.), the relevant sync trigger calls `setCustomUserClaims` then `revokeRefreshTokens` so the next request from that user picks up fresh claims. Worst-case staleness on revocation: ~1 hour for an idle session, <2 seconds for an active one (the SDK auto-refreshes on any 401).
 
-**Bishopric lag.** A newly-called bishopric member can't sign in until Sync runs against the latest Kindoo data (which itself reflects Church Access Automation's LCR pull) and populates `access.importer_callings`. Accepted for v1.
+**Bishopric lag.** A newly-called Bishopric member can't sign in until Sync runs against the latest Kindoo data (which itself reflects Church Access Automation's LCR pull) and populates `access.importer_callings`. Accepted for v1.
 
 ### 4.1 Sign-in providers
 
@@ -185,7 +185,7 @@ The SPA is built on TanStack Router with file-based routes under `apps/web/src/r
 
 Two routes render without an auth gate; neither participates in role resolution or `gateDecision()`.
 
-- **`/` (signed-out homepage)** — rendered by `apps/web/src/features/auth/SignInPage.tsx` whenever no Firebase Auth user is present. Audience is ward and stake leadership (bishopric, stake presidency, executive secretaries, clerks) — not Kindoo Managers, who are a downstream role. Layout: a sticky top bar (brand + secondary "Sign in" affordance), a centred hero (headline + sub-line + a "Continue with Google" primary button above the magic-link sign-in form: an email input + a "Send me a sign-in link" primary button), two short feature bullets (request access, auto-expiring temporary grants), a one-paragraph explainer, a short note that new sign-ins land in pending authorization until a stake manager adds the email (§4.1), and a footer linking to `/privacy`, the Chrome Web Store listing, and a contact `mailto:`. The topbar affordance scrolls / focuses the magic-link form. The Google CTA drives `signInWithPopup`; the magic-link form drives `sendSignInLinkToEmail()`. After a magic-link submit the form area swaps to a "Check your email" confirmation state. The action-handler route (the page the emailed link lands on) lives under the same app and runs `signInWithEmailLink()`; on success the SPA redirects to `/` and `gateDecision()` in `apps/web/src/routes/index.tsx` runs unchanged. Cross-device case is handled by re-prompting for the email when `localStorage` is empty (§4.1).
+- **`/` (signed-out homepage)** — rendered by `apps/web/src/features/auth/SignInPage.tsx` whenever no Firebase Auth user is present. Audience is stake and ward leadership (Stake Presidency, Bishopric, executive secretaries, clerks) — not Kindoo Managers, who are a downstream role. Layout: a sticky top bar (brand + secondary "Sign in" affordance), a centred hero (headline + sub-line + a "Continue with Google" primary button above the magic-link sign-in form: an email input + a "Send me a sign-in link" primary button), two short feature bullets (request access, auto-expiring temporary grants), a one-paragraph explainer, a short note that new sign-ins land in pending authorization until a stake manager adds the email (§4.1), and a footer linking to `/privacy`, the Chrome Web Store listing, and a contact `mailto:`. The topbar affordance scrolls / focuses the magic-link form. The Google CTA drives `signInWithPopup`; the magic-link form drives `sendSignInLinkToEmail()`. After a magic-link submit the form area swaps to a "Check your email" confirmation state. The action-handler route (the page the emailed link lands on) lives under the same app and runs `signInWithEmailLink()`; on success the SPA redirects to `/` and `gateDecision()` in `apps/web/src/routes/index.tsx` runs unchanged. Cross-device case is handled by re-prompting for the email when `localStorage` is empty (§4.1).
 - **`/privacy`** — TanStack Router file route at `apps/web/src/routes/privacy.tsx`. Public; no auth gate; renders identically for reviewers, signed-out visitors, and signed-in users. Hosts the privacy policy for both the web app and the companion "Stake Building Access — Kindoo Helper" Chrome MV3 extension, and is the privacy URL declared on the Chrome Web Store listing. Sections cover: operator identity, what the extension does, data accessed and why, storage and processing (Firestore + Cloud Functions, US region), authentication via `chrome.identity` + Firebase, per-permission justifications for the extension's MV3 manifest, user rights, and a change log keyed on `LAST_UPDATED`. When the extension manifest changes (permissions, host_permissions, OAuth scopes) the corresponding section is updated in the same commit.
 
 `/privacy` carries zero `[PLACEHOLDER]` tokens. The homepage's `CHROME_WEB_STORE_URL` points at the live Chrome Web Store listing for "Stake Building Access — Kindoo Helper" (extension ID `klkkpfdafbjebccodmgkogdklachelpb`). `CONTACT_MAILTO` is `mailto:support@stakebuildingaccess.org`.
@@ -355,8 +355,8 @@ SBA still *provisions* every new Kindoo seat as a **Guest** (`UserRole: 2` on th
 
 **App access.** Whether a member gets in-app (web/SPA) access is **no longer per-stake configurable**. There are no `wardCallingTemplates` / `stakeCallingTemplates` collections, no Configuration tabs to edit them, and no `give_app_access` / `auto_kindoo_access` / `sheet_order` template fields. App access is granted **iff** the member's calling is in a hard-coded churchwide calling list (`packages/shared/src/appAccessCallings.ts`, matched trimmed + case-insensitively):
 
-- **Ward scope:** Bishop; Bishopric First Counselor; Bishopric Second Counselor; Ward Clerk; Ward Executive Secretary.
 - **Stake scope:** Stake President; Stake Presidency First Counselor; Stake Presidency Second Counselor; Stake Clerk; Stake Executive Secretary; Stake High Councilor.
+- **Ward scope:** Bishop; Bishopric First Counselor; Bishopric Second Counselor; Ward Clerk; Ward Executive Secretary.
 
 The list is **exclusive** — there is no per-stake customization and no wildcard mechanism. Sync's `syncApplyFix` populates `access.importer_callings[scope]` from `filterAppAccessCallings(scope, callings)` (the subset of a seat's callings that hit the list); a scope whose callings yield no list match gets its `importer_callings[scope]` cleared. Because the list is now the only criterion, any app access a member previously held through a calling not on this list (or via a wildcard template) is **revoked on the next Sync run** that touches their seat. Seat **type** is unaffected — it stays role-derived (`DepartmentType`) + door-grant-derived (see "Seat type from Kindoo role, then door grants" above), never template-derived. Seat / access `sort_order` and roster ordering use the canonical churchwide `callingSortOrder` table (`seatCallingOrder()`), not any per-template order — see "Roster sort order" below.
 
@@ -375,7 +375,7 @@ The compiled table is global (the calling hierarchy is churchwide), so there is 
 
 **Cadence.** Sync runs on-demand, when the operator opens the extension's Sync panel on Kindoo and triggers a run. No scheduled cadence. The system-clock interval between LCR-side changes and SBA-side auto-seat existence is therefore bounded only by how often the operator runs Sync, not by a server-side schedule. Accepted at v1 scale (csnorth, ~250 seats, 1–2 requests/week). If the lag becomes operationally visible the next-step fix is either a scheduled Sync trigger or a Cloud Function that polls Kindoo on the same cadence the old importer ran.
 
-**Bishopric lag.** New bishopric members can't sign into the app until Sync runs against the latest Kindoo data (which itself reflects Church Access Automation's LCR pull). Lag is unbounded by clock; bounded only by Sync-run cadence (see "Cadence" above).
+**Bishopric lag.** New Bishopric members can't sign into the app until Sync runs against the latest Kindoo data (which itself reflects Church Access Automation's LCR pull). Lag is unbounded by clock; bounded only by Sync-run cadence (see "Cadence" above).
 
 ## 9. Email notifications
 
