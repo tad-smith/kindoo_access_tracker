@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Requesting Building Access — A Guide for Ward &amp; Stake Leaders</title>
+<title>Requesting Building Access — A Guide for Stake &amp; Ward Leaders</title>
 <style>
   :root{
     --brand:#2b6cb0; --brand-dark:#2c5282; --brand-tint:#ebf4fb;
@@ -38,6 +38,18 @@
   h2 .num{color:var(--brand);font-variant-numeric:tabular-nums;}
   h3{font-size:1.15rem;margin:1.9rem 0 .6rem;font-weight:650;color:var(--ink);}
   h4{font-size:1rem;margin:1.4rem 0 .4rem;font-weight:650;color:var(--ink-soft);}
+  /* section anchor / copy-link */
+  .anchor{position:relative;display:inline-flex;align-items:center;justify-content:center;
+    width:1em;height:1em;margin-left:.4em;vertical-align:middle;line-height:0;
+    color:var(--brand);opacity:0;text-decoration:none;transition:opacity .12s ease;}
+  .anchor svg{width:.72em;height:.72em;fill:none;stroke:currentColor;stroke-width:2;}
+  h2:hover .anchor,h3:hover .anchor,.anchor:focus-visible{opacity:.6;}
+  .anchor:hover{opacity:1;}
+  .anchor.copied::after{content:"Link copied";position:absolute;left:100%;top:50%;
+    transform:translateY(-50%);margin-left:.5em;white-space:nowrap;line-height:1.4;font-size:.85rem;
+    font-weight:600;color:#fff;background:var(--ink);padding:.35em .6em;border-radius:6px;z-index:5;pointer-events:none;}
+  @media (hover:none){.anchor{opacity:.45;}}
+  @media print{.anchor{display:none;}}
   p{margin:.7rem 0;}
   a{color:var(--brand-dark);}
   ul,ol{margin:.6rem 0;padding-left:1.4rem;}
@@ -124,16 +136,16 @@
   <header class="cover">
     <p class="eyebrow">Stake Building Access</p>
     <h1>Requesting Building Access</h1>
-    <p class="sub">A step-by-step guide for bishoprics, stake presidencies, and other ward &amp; stake leaders who request Kindoo door access for members.</p>
+    <p class="sub">A step-by-step guide for Stake Presidencies, Bishoprics, and other stake &amp; ward leaders who request Kindoo door access for members.</p>
     <div class="meta">
-      <span><b>Audience:</b> Ward &amp; stake leaders</span>
-      <span><b>Version:</b> 1.0</span>
-      <span><b>Updated:</b> June 2026</span>
+      <span><b>Audience:</b> Stake &amp; ward leaders</span>
+      <span><b>Version:</b> 1.1</span>
+      <span><b>Updated:</b> July 2026</span>
       <span><b>App:</b> stakebuildingaccess.org</span>
     </div>
   </header>
 
-  <p class="lead">Stake Building Access (SBA) is how ward and stake leaders request door access for members in the stake's buildings. You submit a request; a Kindoo Manager grants the access in the door system and marks your request complete. This guide walks you through every part of that process.</p>
+  <p class="lead">Stake Building Access (SBA) is how stake and ward leaders request door access for members in the stake's buildings. You submit a request; a Kindoo Manager grants the access in the door system and marks your request complete. This guide walks you through every part of that process.</p>
 
   <nav class="toc" aria-label="Table of contents">
     <h2>What's in this guide</h2>
@@ -170,10 +182,10 @@
 
   <h3>Who you are in the app</h3>
   <ul>
+    <li><strong>Stake Presidency</strong> and other stake leaders with access (e.g. stake clerk, stake executive secretary) request access against the <strong>stake</strong> pool.</li>
     <li><strong>Bishopric members</strong> (bishop and counselors) request access for their own ward.</li>
-    <li><strong>Stake presidency</strong> and other stake leaders with access (e.g. stake clerk, stake executive secretary) request access against the <strong>stake</strong> pool.</li>
   </ul>
-  <div class="callout"><span class="lbl">Note</span><p>You only ever request access for the scope you serve. A bishopric can request for their ward; the stake presidency can request for the stake. If you serve in more than one role, the app lets you switch between them (see <a href="#around">Section 3</a>).</p></div>
+  <div class="callout"><span class="lbl">Note</span><p>You only ever request access for the scope you serve. The Stake Presidency can request for the stake; a Bishopric can request for their ward. If you serve in more than one role, the app lets you switch between them (see <a href="#around">Section 3</a>).</p></div>
 
   <!-- 2 -->
   <h2 id="signin"><span class="num">2.</span> Signing in</h2>
@@ -195,8 +207,18 @@
 
   <div class="callout warn"><span class="lbl">If you can't get past the "pending" screen</span><p>Signing in does <strong>not</strong> automatically grant you access to the app. A Kindoo Manager must add your email first. If you're newly called, this may take a little time — your access follows once the stake's records have synced. If you're still stuck after a day or two, contact your stake's Kindoo Manager (see <a href="#help">Getting help</a>).</p></div>
 
-  <h3>Install it like an app (optional)</h3>
-  <p>SBA works in any browser, but you can also install it to your phone's home screen or your computer's dock so it opens like a regular app. Look for your browser's <em>Install</em> or <em>Add to Home Screen</em> option while the site is open.</p>
+  <h3 id="install-app">Install it like an app (optional)</h3>
+  <p>SBA is a <strong>web app</strong>, so it works in any browser with nothing to install. If you'd like, you can also add it to your phone's home screen or your computer's dock so it opens in its own window — full-screen, with its own icon, just like a regular app. Installing is optional and doesn't change how SBA works; it only makes it quicker to open.</p>
+  <table>
+    <thead><tr><th>Your device</th><th>How to install</th></tr></thead>
+    <tbody>
+      <tr><td><strong>iPhone / iPad</strong><br><span class="small">Safari</span></td><td>Open <strong>stakebuildingaccess.org</strong> in Safari, tap the <span class="ui">Share</span> button (the square with an upward arrow), scroll down and tap <span class="ui">Add to Home Screen</span>, then tap <span class="ui">Add</span>.</td></tr>
+      <tr><td><strong>Android phone / tablet</strong><br><span class="small">Chrome</span></td><td>Open the site in Chrome, tap the <span class="ui">⋮</span> menu (top-right), choose <span class="ui">Add to Home screen</span> (or <span class="ui">Install app</span>), then confirm.</td></tr>
+      <tr><td><strong>Windows / Chromebook</strong><br><span class="small">Chrome or Edge</span></td><td>With the site open, click the <strong>install icon</strong> at the right end of the address bar (a small monitor with a down arrow). If you don't see it, open the <span class="ui">⋮</span> menu and choose <span class="ui">Install Stake Building Access…</span>, then click <span class="ui">Install</span>.</td></tr>
+      <tr><td><strong>Mac</strong><br><span class="small">Safari or Chrome</span></td><td><strong>Safari:</strong> choose <span class="ui">File → Add to Dock…</span> <strong>Chrome:</strong> click the install icon in the address bar, or open <span class="ui">⋮ → Cast, save, and share → Install…</span></td></tr>
+    </tbody>
+  </table>
+  <p class="small">Menu labels vary slightly by browser version. Once installed, open SBA from your home screen, Start menu, Dock, or app launcher like any other app. To remove it, just delete the icon (on a phone, press and hold it) — the website itself is unaffected.</p>
 
   <!-- 3 -->
   <h2 id="around"><span class="num">3.</span> Finding your way around</h2>
@@ -210,7 +232,7 @@
     </tbody>
   </table>
 
-  <div class="callout tip"><span class="lbl">If you serve in more than one role</span><p>If you have access to more than one ward, a <span class="ui">Ward</span> dropdown appears above your roster so you can switch wards. If you hold roles in more than one stake, a stake switcher appears in the top bar. The page always shows the scope you've currently selected.</p></div>
+  <div class="callout tip"><span class="lbl">If you serve in more than one role</span><p>If you hold roles in more than one stake, a stake switcher appears in the top bar. If you have access to more than one ward, a <span class="ui">Ward</span> dropdown appears above your roster so you can switch wards. The page always shows the scope you've currently selected.</p></div>
 
   <!-- 4 -->
   <h2 id="roster"><span class="num">4.</span> Reading your roster</h2>
@@ -223,17 +245,17 @@
   <p>At the top, a <strong>utilization bar</strong> shows how many of your scope's seats are in use compared to its cap.</p>
 
   <figure class="shot">
-    <img src="img/ward-roster.png" alt="A bishopric ward roster showing the utilization bar, the New Request button, and a mix of automatic, manual, and temporary rows" style="width:100%;border-radius:10px;border:1px solid #e2e8f0" />
+    <img src="img/ward-roster.png" alt="A Bishopric ward roster showing the utilization bar, the New Request button, and a mix of automatic, manual, and temporary rows" style="width:100%;border-radius:10px;border:1px solid #e2e8f0" />
     <figcaption>Fig 4.1 — A typical roster, with the utilization bar and the New Request button at the top.</figcaption>
   </figure>
 
   <!-- 5 -->
   <h2 id="new-request"><span class="num">5.</span> Submitting a request for access</h2>
-  <p>Every request starts from your Roster. The form already knows which scope you're requesting for, so you can't accidentally request against the wrong ward or the stake.</p>
+  <p>Every request starts from your Roster. The form already knows which scope you're requesting for, so you can't accidentally request against the wrong stake or ward.</p>
 
   <ol class="steps">
     <li>On your Roster, click the <span class="ui">New&nbsp;Request</span> button at the top right.</li>
-    <li>A form opens, showing <strong>Requesting for:</strong> your scope (your ward, or the stake). This is fixed — there's no scope picker.</li>
+    <li>A form opens, showing <strong>Requesting for:</strong> your scope (the stake, or your ward). This is fixed — there's no scope picker.</li>
     <li>Choose the <strong>request type</strong>:
       <ul>
         <li><strong>Add (manual)</strong> — ongoing access, kept until removed.</li>
@@ -356,7 +378,7 @@
   <p>Access is granted per building, so every add or edit needs at least one building selected. Your ward's building is ticked by default.</p>
 
   <h4>Can I request access for someone in a different ward?</h4>
-  <p>You request for the scope you serve. If you're in a bishopric, that's your ward; the stake presidency requests against the stake. If you serve in multiple roles, switch scope with the ward or stake selector.</p>
+  <p>You request for the scope you serve. The Stake Presidency requests against the stake; if you're in a Bishopric, that's your ward. If you serve in multiple roles, switch scope with the stake or ward selector.</p>
 
   <!-- 12 -->
   <h2 id="help"><span class="num">12.</span> Getting help</h2>
@@ -364,11 +386,45 @@
 
   <footer>
     <div class="footer-grid">
-      <span><strong>Stake Building Access</strong> — Requesting Building Access<br>Guide for ward &amp; stake leaders · Version 1.0 · June 2026</span>
+      <span><strong>Stake Building Access</strong> — Requesting Building Access<br>Guide for stake &amp; ward leaders · Version 1.1 · July 2026</span>
       <span>stakebuildingaccess.org<br><a href="mailto:support@stakebuildingaccess.org">support@stakebuildingaccess.org</a></span>
     </div>
   </footer>
 
 </main>
+<script>
+(function(){
+  var scope=document.querySelector('main.page'); if(!scope) return;
+  var used={};
+  function slugify(t){
+    var s=t.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    if(!s)s='section';
+    if(used[s]){used[s]++;s=s+'-'+used[s];}else{used[s]=1;}
+    return s;
+  }
+  Array.prototype.forEach.call(scope.querySelectorAll('h2,h3'),function(h){
+    if(h.closest('.toc'))return;
+    var id=h.id;
+    if(!id){id=slugify(h.textContent);h.id=id;}else{used[id]=1;}
+    var a=document.createElement('a');
+    a.className='anchor'; a.href='#'+id;
+    a.setAttribute('aria-label','Copy link to “'+h.textContent.trim()+'”');
+    a.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8"/></svg>';
+    h.appendChild(a);
+  });
+  var t;
+  scope.addEventListener('click',function(e){
+    var a=e.target.closest&&e.target.closest('a.anchor'); if(!a)return;
+    e.preventDefault();
+    var url=location.origin+location.pathname+a.getAttribute('href');
+    history.replaceState(null,'',a.getAttribute('href'));
+    function done(){a.classList.add('copied');clearTimeout(t);t=setTimeout(function(){a.classList.remove('copied');},1400);}
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(url).then(done,done);}
+    else{var ta=document.createElement('textarea');ta.value=url;ta.style.position='fixed';ta.style.opacity='0';
+      document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(_){}
+      document.body.removeChild(ta);done();}
+  });
+})();
+</script>
 </body>
 </html>
