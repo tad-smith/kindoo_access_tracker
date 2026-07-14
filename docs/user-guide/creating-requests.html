@@ -38,6 +38,18 @@
   h2 .num{color:var(--brand);font-variant-numeric:tabular-nums;}
   h3{font-size:1.15rem;margin:1.9rem 0 .6rem;font-weight:650;color:var(--ink);}
   h4{font-size:1rem;margin:1.4rem 0 .4rem;font-weight:650;color:var(--ink-soft);}
+  /* section anchor / copy-link */
+  .anchor{position:relative;display:inline-flex;align-items:center;justify-content:center;
+    width:1em;height:1em;margin-left:.4em;vertical-align:middle;line-height:0;
+    color:var(--brand);opacity:0;text-decoration:none;transition:opacity .12s ease;}
+  .anchor svg{width:.72em;height:.72em;fill:none;stroke:currentColor;stroke-width:2;}
+  h2:hover .anchor,h3:hover .anchor,.anchor:focus-visible{opacity:.6;}
+  .anchor:hover{opacity:1;}
+  .anchor.copied::after{content:"Link copied";position:absolute;left:100%;top:50%;
+    transform:translateY(-50%);margin-left:.5em;white-space:nowrap;font-size:.7rem;
+    font-weight:600;color:#fff;background:var(--ink);padding:.18em .5em;border-radius:5px;pointer-events:none;}
+  @media (hover:none){.anchor{opacity:.45;}}
+  @media print{.anchor{display:none;}}
   p{margin:.7rem 0;}
   a{color:var(--brand-dark);}
   ul,ol{margin:.6rem 0;padding-left:1.4rem;}
@@ -195,8 +207,18 @@
 
   <div class="callout warn"><span class="lbl">If you can't get past the "pending" screen</span><p>Signing in does <strong>not</strong> automatically grant you access to the app. A Kindoo Manager must add your email first. If you're newly called, this may take a little time — your access follows once the stake's records have synced. If you're still stuck after a day or two, contact your stake's Kindoo Manager (see <a href="#help">Getting help</a>).</p></div>
 
-  <h3>Install it like an app (optional)</h3>
-  <p>SBA works in any browser, but you can also install it to your phone's home screen or your computer's dock so it opens like a regular app. Look for your browser's <em>Install</em> or <em>Add to Home Screen</em> option while the site is open.</p>
+  <h3 id="install-app">Install it like an app (optional)</h3>
+  <p>SBA is a <strong>web app</strong>, so it works in any browser with nothing to install. If you'd like, you can also add it to your phone's home screen or your computer's dock so it opens in its own window — full-screen, with its own icon, just like a regular app. Installing is optional and doesn't change how SBA works; it only makes it quicker to open.</p>
+  <table>
+    <thead><tr><th>Your device</th><th>How to install</th></tr></thead>
+    <tbody>
+      <tr><td><strong>iPhone / iPad</strong><br><span class="small">Safari</span></td><td>Open <strong>stakebuildingaccess.org</strong> in Safari, tap the <span class="ui">Share</span> button (the square with an upward arrow), scroll down and tap <span class="ui">Add to Home Screen</span>, then tap <span class="ui">Add</span>.</td></tr>
+      <tr><td><strong>Android phone / tablet</strong><br><span class="small">Chrome</span></td><td>Open the site in Chrome, tap the <span class="ui">⋮</span> menu (top-right), choose <span class="ui">Add to Home screen</span> (or <span class="ui">Install app</span>), then confirm.</td></tr>
+      <tr><td><strong>Windows / Chromebook</strong><br><span class="small">Chrome or Edge</span></td><td>With the site open, click the <strong>install icon</strong> at the right end of the address bar (a small monitor with a down arrow). If you don't see it, open the <span class="ui">⋮</span> menu and choose <span class="ui">Install Stake Building Access…</span>, then click <span class="ui">Install</span>.</td></tr>
+      <tr><td><strong>Mac</strong><br><span class="small">Safari or Chrome</span></td><td><strong>Safari:</strong> choose <span class="ui">File → Add to Dock…</span> <strong>Chrome:</strong> click the install icon in the address bar, or open <span class="ui">⋮ → Cast, save, and share → Install…</span></td></tr>
+    </tbody>
+  </table>
+  <p class="small">Menu labels vary slightly by browser version. Once installed, open SBA from your home screen, Start menu, Dock, or app launcher like any other app. To remove it, just delete the icon (on a phone, press and hold it) — the website itself is unaffected.</p>
 
   <!-- 3 -->
   <h2 id="around"><span class="num">3.</span> Finding your way around</h2>
@@ -370,5 +392,39 @@
   </footer>
 
 </main>
+<script>
+(function(){
+  var scope=document.querySelector('main.page'); if(!scope) return;
+  var used={};
+  function slugify(t){
+    var s=t.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    if(!s)s='section';
+    if(used[s]){used[s]++;s=s+'-'+used[s];}else{used[s]=1;}
+    return s;
+  }
+  Array.prototype.forEach.call(scope.querySelectorAll('h2,h3'),function(h){
+    if(h.closest('.toc'))return;
+    var id=h.id;
+    if(!id){id=slugify(h.textContent);h.id=id;}else{used[id]=1;}
+    var a=document.createElement('a');
+    a.className='anchor'; a.href='#'+id;
+    a.setAttribute('aria-label','Copy link to “'+h.textContent.trim()+'”');
+    a.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8"/></svg>';
+    h.appendChild(a);
+  });
+  var t;
+  scope.addEventListener('click',function(e){
+    var a=e.target.closest&&e.target.closest('a.anchor'); if(!a)return;
+    e.preventDefault();
+    var url=location.origin+location.pathname+a.getAttribute('href');
+    history.replaceState(null,'',a.getAttribute('href'));
+    function done(){a.classList.add('copied');clearTimeout(t);t=setTimeout(function(){a.classList.remove('copied');},1400);}
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(url).then(done,done);}
+    else{var ta=document.createElement('textarea');ta.value=url;ta.style.position='fixed';ta.style.opacity='0';
+      document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(_){}
+      document.body.removeChild(ta);done();}
+  });
+})();
+</script>
 </body>
 </html>

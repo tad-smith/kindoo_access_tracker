@@ -36,6 +36,18 @@
   h2 .num{color:var(--brand);font-variant-numeric:tabular-nums;}
   h3{font-size:1.15rem;margin:1.9rem 0 .6rem;font-weight:650;color:var(--ink);}
   h4{font-size:1rem;margin:1.4rem 0 .4rem;font-weight:650;color:var(--ink-soft);}
+  /* section anchor / copy-link */
+  .anchor{position:relative;display:inline-flex;align-items:center;justify-content:center;
+    width:1em;height:1em;margin-left:.4em;vertical-align:middle;line-height:0;
+    color:var(--brand);opacity:0;text-decoration:none;transition:opacity .12s ease;}
+  .anchor svg{width:.72em;height:.72em;fill:none;stroke:currentColor;stroke-width:2;}
+  h2:hover .anchor,h3:hover .anchor,.anchor:focus-visible{opacity:.6;}
+  .anchor:hover{opacity:1;}
+  .anchor.copied::after{content:"Link copied";position:absolute;left:100%;top:50%;
+    transform:translateY(-50%);margin-left:.5em;white-space:nowrap;font-size:.7rem;
+    font-weight:600;color:#fff;background:var(--ink);padding:.18em .5em;border-radius:5px;pointer-events:none;}
+  @media (hover:none){.anchor{opacity:.45;}}
+  @media print{.anchor{display:none;}}
   p{margin:.7rem 0;}
   a{color:var(--brand-dark);}
   ul,ol{margin:.6rem 0;padding-left:1.4rem;}
@@ -425,5 +437,39 @@
   </footer>
 
 </main>
+<script>
+(function(){
+  var scope=document.querySelector('main.page'); if(!scope) return;
+  var used={};
+  function slugify(t){
+    var s=t.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    if(!s)s='section';
+    if(used[s]){used[s]++;s=s+'-'+used[s];}else{used[s]=1;}
+    return s;
+  }
+  Array.prototype.forEach.call(scope.querySelectorAll('h2,h3'),function(h){
+    if(h.closest('.toc'))return;
+    var id=h.id;
+    if(!id){id=slugify(h.textContent);h.id=id;}else{used[id]=1;}
+    var a=document.createElement('a');
+    a.className='anchor'; a.href='#'+id;
+    a.setAttribute('aria-label','Copy link to “'+h.textContent.trim()+'”');
+    a.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8"/></svg>';
+    h.appendChild(a);
+  });
+  var t;
+  scope.addEventListener('click',function(e){
+    var a=e.target.closest&&e.target.closest('a.anchor'); if(!a)return;
+    e.preventDefault();
+    var url=location.origin+location.pathname+a.getAttribute('href');
+    history.replaceState(null,'',a.getAttribute('href'));
+    function done(){a.classList.add('copied');clearTimeout(t);t=setTimeout(function(){a.classList.remove('copied');},1400);}
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(url).then(done,done);}
+    else{var ta=document.createElement('textarea');ta.value=url;ta.style.position='fixed';ta.style.opacity='0';
+      document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(_){}
+      document.body.removeChild(ta);done();}
+  });
+})();
+</script>
 </body>
 </html>
