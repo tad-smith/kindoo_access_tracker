@@ -22,6 +22,10 @@ import {
 
 const STAKE: Pick<Stake, 'stake_name'> = { stake_name: 'CSNorth Stake' };
 
+// The derived `{Name} ({Calling})` requester label, resolved by the
+// service layer and passed into the pure builders.
+const REQUESTER_LABEL = 'John Smith (Bishop)';
+
 const baseRequest: AccessRequest = {
   request_id: 'req-1',
   type: 'add_manual',
@@ -87,19 +91,33 @@ describe('EmailService — pure builders', () => {
 
   // ---- new-request ---------------------------------------------------------
 
-  it('new-request subject names the requester and the scope', () => {
-    const subject = buildNewRequestSubject(baseRequest);
+  it('new-request subject names the requester (name + calling) and the scope', () => {
+    const subject = buildNewRequestSubject(baseRequest, REQUESTER_LABEL);
+    expect(subject).toBe('[Stake Building Access] New request from John Smith (Bishop) (GE)');
+  });
+
+  it('new-request subject falls back to the raw email when no label is derived', () => {
+    const subject = buildNewRequestSubject(baseRequest, baseRequest.requester_email);
     expect(subject).toBe('[Stake Building Access] New request from Bish@gmail.com (GE)');
   });
 
-  it('new-request body uses the add_manual lead verb', () => {
+  it('new-request body uses the add_manual lead verb and the requester label', () => {
     const link = buildLink('/manager/queue');
-    const body = buildNewRequestBody(baseRequest, link);
-    expect(body).toContain('Bish@gmail.com submitted a new manual-add request');
+    const body = buildNewRequestBody(baseRequest, link, REQUESTER_LABEL);
+    expect(body).toContain('John Smith (Bishop) submitted a new manual-add request');
     expect(body).toContain('Subject Person');
     expect(body).toContain('Subject@gmail.com');
     expect(body).toContain('Reason:    Bishop');
     expect(body).toContain('Review the queue: https://stakebuildingaccess.org/manager/queue');
+  });
+
+  it('new-request body falls back to the raw email when the label is the email', () => {
+    const body = buildNewRequestBody(
+      baseRequest,
+      buildLink('/manager/queue'),
+      baseRequest.requester_email,
+    );
+    expect(body).toContain('Bish@gmail.com submitted a new manual-add request');
   });
 
   it('new-request body uses the add_temp lead verb and includes dates', () => {
@@ -109,29 +127,31 @@ describe('EmailService — pure builders', () => {
       start_date: '2026-05-01',
       end_date: '2026-05-15',
     };
-    const body = buildNewRequestBody(req, buildLink('/manager/queue'));
+    const body = buildNewRequestBody(req, buildLink('/manager/queue'), REQUESTER_LABEL);
     expect(body).toContain('requested temp access for');
     expect(body).toContain('Dates:     2026-05-01 to 2026-05-15');
   });
 
   it('new-request body uses the remove lead verb', () => {
     const req: AccessRequest = { ...baseRequest, type: 'remove' };
-    const body = buildNewRequestBody(req, buildLink('/manager/queue'));
+    const body = buildNewRequestBody(req, buildLink('/manager/queue'), REQUESTER_LABEL);
     expect(body).toContain('requested removal of');
   });
 
   it('new-request body surfaces the urgent flag when set', () => {
     const urgent: AccessRequest = { ...baseRequest, urgent: true, comment: 'needed today' };
-    const body = buildNewRequestBody(urgent, buildLink('/manager/queue'));
+    const body = buildNewRequestBody(urgent, buildLink('/manager/queue'), REQUESTER_LABEL);
     expect(body).toContain('Emergency: yes');
   });
 
   it('new-request body omits the urgent flag when unset/false', () => {
-    expect(buildNewRequestBody(baseRequest, buildLink('/manager/queue'))).not.toContain(
-      'Emergency:',
-    );
+    expect(
+      buildNewRequestBody(baseRequest, buildLink('/manager/queue'), REQUESTER_LABEL),
+    ).not.toContain('Emergency:');
     const explicit: AccessRequest = { ...baseRequest, urgent: false };
-    expect(buildNewRequestBody(explicit, buildLink('/manager/queue'))).not.toContain('Emergency:');
+    expect(
+      buildNewRequestBody(explicit, buildLink('/manager/queue'), REQUESTER_LABEL),
+    ).not.toContain('Emergency:');
   });
 
   // ---- completed -----------------------------------------------------------
@@ -186,13 +206,22 @@ describe('EmailService — pure builders', () => {
 
   // ---- cancelled -----------------------------------------------------------
 
-  it('cancelled subject + body name the canceller', () => {
+  it('cancelled subject + body name the canceller (name + calling)', () => {
     const req: AccessRequest = { ...baseRequest, status: 'cancelled' };
-    const subject = buildCancelledSubject(req);
-    expect(subject).toBe('[Stake Building Access] Request cancelled by Bish@gmail.com');
-    const body = buildCancelledBody(req, buildLink('/manager/queue'));
-    expect(body).toContain('Bish@gmail.com cancelled their request');
+    const subject = buildCancelledSubject(req, REQUESTER_LABEL);
+    expect(subject).toBe('[Stake Building Access] Request cancelled by John Smith (Bishop)');
+    const body = buildCancelledBody(req, buildLink('/manager/queue'), REQUESTER_LABEL);
+    expect(body).toContain('John Smith (Bishop) cancelled their request');
     expect(body).toContain('Open the queue:');
+  });
+
+  it('cancelled subject + body fall back to the raw email when no label is derived', () => {
+    const req: AccessRequest = { ...baseRequest, status: 'cancelled' };
+    expect(buildCancelledSubject(req, req.requester_email)).toBe(
+      '[Stake Building Access] Request cancelled by Bish@gmail.com',
+    );
+    const body = buildCancelledBody(req, buildLink('/manager/queue'), req.requester_email);
+    expect(body).toContain('Bish@gmail.com cancelled their request');
   });
 
   // ---- over-cap ------------------------------------------------------------

@@ -100,6 +100,23 @@ async function seedManager(canonical: string, active: boolean, email = canonical
   });
 }
 
+// Seed the requester's `access` doc so the manager-bound emails render
+// `{Name} ({Calling})` derived live for the request's scope (GE).
+async function seedRequesterAccess(): Promise<void> {
+  const { db } = requireEmulators();
+  await db.doc(`stakes/${STAKE_ID}/access/${baseRequest.requester_canonical}`).set({
+    member_canonical: baseRequest.requester_canonical,
+    member_email: baseRequest.requester_email,
+    member_name: 'John Smith',
+    importer_callings: { GE: ['Bishop'] },
+    manual_grants: {},
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    last_modified_by: { email: 'admin@example.com', canonical: 'admin@example.com' },
+    lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
+  });
+}
+
 function mockSender(
   responses: SendResult[] | ((payload: EmailPayload) => SendResult | Promise<SendResult>),
 ): { sender: ResendSender; calls: SendCall[] } {
@@ -153,8 +170,9 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     delete process.env['WEB_BASE_URL'];
   });
 
-  it('on create (pending) sends a new-request email to active managers', async () => {
+  it('on create (pending) sends a new-request email naming the requester by name + calling', async () => {
     await seedStake();
+    await seedRequesterAccess();
     await seedManager('alice@gmail.com', true);
     await seedManager('bob@gmail.com', false); // inactive — excluded
     await seedManager('carol@gmail.com', true);
@@ -168,9 +186,22 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     expect(c.from).toContain('CSNorth Stake');
     expect(c.from).toContain('<noreply@mail.stakebuildingaccess.org>');
     expect(c.to.sort()).toEqual(['alice@gmail.com', 'carol@gmail.com']);
-    expect(c.subject).toContain('New request from Bish@gmail.com');
-    expect(c.text).toContain('submitted a new manual-add request');
+    expect(c.subject).toContain('New request from John Smith (Bishop) (GE)');
+    expect(c.text).toContain('John Smith (Bishop) submitted a new manual-add request');
     expect(c.text).toContain('https://stakebuildingaccess.org/manager/queue');
+  });
+
+  it('on create (pending) falls back to the raw email when no requester access doc exists', async () => {
+    await seedStake();
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls } = mockSender([{ ok: true, id: 'mid-1b' }]);
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnRequestWrite.run(makeEvent({ before: null, after: baseRequest }));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.subject).toContain('New request from Bish@gmail.com (GE)');
+    expect(calls[0]!.text).toContain('Bish@gmail.com submitted a new manual-add request');
   });
 
   it('on pending → complete sends a completed email to the requester only', async () => {
@@ -234,8 +265,9 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     expect(calls[0]!.text).toContain('Reason:    Already has access.');
   });
 
-  it('on pending → cancelled sends a cancelled email to managers', async () => {
+  it('on pending → cancelled sends a cancelled email naming the requester by name + calling', async () => {
     await seedStake();
+    await seedRequesterAccess();
     await seedManager('alice@gmail.com', true);
     await seedManager('carol@gmail.com', true);
     const { sender, calls } = mockSender([{ ok: true, id: 'mid-5' }]);
@@ -247,7 +279,8 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.to.sort()).toEqual(['alice@gmail.com', 'carol@gmail.com']);
-    expect(calls[0]!.subject).toContain('Request cancelled by Bish@gmail.com');
+    expect(calls[0]!.subject).toContain('Request cancelled by John Smith (Bishop)');
+    expect(calls[0]!.text).toContain('John Smith (Bishop) cancelled their request');
   });
 
   it('non-status update on a pending request does not send anything', async () => {
