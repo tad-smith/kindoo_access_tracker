@@ -8,7 +8,7 @@
 
 The Church of Jesus Christ of Latter-day Saints organizes members into **stakes**, each containing multiple **wards** (individual congregations). This app is built for a single stake; the schema is parameterized on `{stakeId}` from day one (per F15) so a future second stake is a routing change rather than a data refactor.
 
-**Kindoo** is a door-access system licensed per seat. The stake receives a global pool of seats and allocates them across its wards and its own stake-level pool.
+**Kindoo** is a door-access system licensed per seat. The stake receives a global pool of seats and allocates them across its own stake-level pool and its wards.
 
 There are three seat types:
 
@@ -18,7 +18,7 @@ There are three seat types:
 | **Manual** | Assigned to an individual. | Held until explicitly removed. |
 | **Temporary** | Assigned with a start and end date. | Held through the end date. Kindoo (authoritative) expires the access; the extension's Sync then removes the now-orphaned SBA seat as `sba-only`. See §7, §8. |
 
-Bishoprics (Bishop + two counselors; one bishopric per ward) submit requests for manual/temp seats in their ward. The Stake Presidency does the same against the stake pool. One or more **Kindoo Managers** process those requests by manually mirroring changes into Kindoo (which has no API), then marking the requests complete.
+The Stake Presidency submits requests for manual/temp seats against the stake pool. Bishoprics (Bishop + two counselors; one Bishopric per ward) do the same for their ward. One or more **Kindoo Managers** process those requests by manually mirroring changes into Kindoo (which has no API), then marking the requests complete.
 
 ## 2. Stack
 
@@ -47,7 +47,7 @@ A user can hold roles on more than one stake simultaneously (per F18 / `architec
 
 **Switcher click handler** writes both `sessionStorage` AND `localStorage` and invalidates TanStack Query's per-stake reads so the SPA refetches against the newly-selected stake. The URL does not change.
 
-**Stake switcher dropdown** in the brand bar surfaces a drop-down next to the current stake name when the user has any role on ≥ 2 stakes. Hidden entirely when the user has access to only one stake. Visible to all role types — managers, stake-presidency members, bishopric — anyone who holds a role on more than one stake.
+**Stake switcher dropdown** in the brand bar surfaces a drop-down next to the current stake name when the user has any role on ≥ 2 stakes. Hidden entirely when the user has access to only one stake. Visible to all role types — managers, Stake Presidency members, Bishopric — anyone who holds a role on more than one stake.
 
 **Middle-click / new-tab caveat.** A tab opened via middle-click on an in-SPA link starts with an empty `sessionStorage` and falls through to `localStorage`. That's acceptable: `localStorage` is almost always the right stake, and there is no `?stake=X` stamping on `<Link>` `href`s — the URL stays clean. If the user opens a new tab into a stake they weren't last on, they switch with the dropdown.
 
@@ -185,7 +185,7 @@ The SPA is built on TanStack Router with file-based routes under `apps/web/src/r
 
 Two routes render without an auth gate; neither participates in role resolution or `gateDecision()`.
 
-- **`/` (signed-out homepage)** — rendered by `apps/web/src/features/auth/SignInPage.tsx` whenever no Firebase Auth user is present. Audience is ward and stake leadership (bishopric, stake presidency, executive secretaries, clerks) — not Kindoo Managers, who are a downstream role. Layout: a sticky top bar (brand + secondary "Sign in" affordance), a centred hero (headline + sub-line + a "Continue with Google" primary button above the magic-link sign-in form: an email input + a "Send me a sign-in link" primary button), two short feature bullets (request access, auto-expiring temporary grants), a one-paragraph explainer, a short note that new sign-ins land in pending authorization until a stake manager adds the email (§4.1), and a footer linking to `/privacy`, the Chrome Web Store listing, and a contact `mailto:`. The topbar affordance scrolls / focuses the magic-link form. The Google CTA drives `signInWithPopup`; the magic-link form drives `sendSignInLinkToEmail()`. After a magic-link submit the form area swaps to a "Check your email" confirmation state. The action-handler route (the page the emailed link lands on) lives under the same app and runs `signInWithEmailLink()`; on success the SPA redirects to `/` and `gateDecision()` in `apps/web/src/routes/index.tsx` runs unchanged. Cross-device case is handled by re-prompting for the email when `localStorage` is empty (§4.1).
+- **`/` (signed-out homepage)** — rendered by `apps/web/src/features/auth/SignInPage.tsx` whenever no Firebase Auth user is present. Audience is stake and ward leadership (Stake Presidency, Bishopric, executive secretaries, clerks) — not Kindoo Managers, who are a downstream role. Layout: a sticky top bar (brand + secondary "Sign in" affordance), a centred hero (headline + sub-line + a "Continue with Google" primary button above the magic-link sign-in form: an email input + a "Send me a sign-in link" primary button), two short feature bullets (request access, auto-expiring temporary grants), a one-paragraph explainer, a short note that new sign-ins land in pending authorization until a stake manager adds the email (§4.1), and a footer linking to `/privacy`, the Chrome Web Store listing, and a contact `mailto:`. The topbar affordance scrolls / focuses the magic-link form. The Google CTA drives `signInWithPopup`; the magic-link form drives `sendSignInLinkToEmail()`. After a magic-link submit the form area swaps to a "Check your email" confirmation state. The action-handler route (the page the emailed link lands on) lives under the same app and runs `signInWithEmailLink()`; on success the SPA redirects to `/` and `gateDecision()` in `apps/web/src/routes/index.tsx` runs unchanged. Cross-device case is handled by re-prompting for the email when `localStorage` is empty (§4.1).
 - **`/privacy`** — TanStack Router file route at `apps/web/src/routes/privacy.tsx`. Public; no auth gate; renders identically for reviewers, signed-out visitors, and signed-in users. Hosts the privacy policy for both the web app and the companion "Stake Building Access — Kindoo Helper" Chrome MV3 extension, and is the privacy URL declared on the Chrome Web Store listing. Sections cover: operator identity, what the extension does, data accessed and why, storage and processing (Firestore + Cloud Functions, US region), authentication via `chrome.identity` + Firebase, per-permission justifications for the extension's MV3 manifest, user rights, and a change log keyed on `LAST_UPDATED`. When the extension manifest changes (permissions, host_permissions, OAuth scopes) the corresponding section is updated in the same commit.
 
 `/privacy` carries zero `[PLACEHOLDER]` tokens. The homepage's `CHROME_WEB_STORE_URL` points at the live Chrome Web Store listing for "Stake Building Access — Kindoo Helper" (extension ID `klkkpfdafbjebccodmgkogdklachelpb`). `CONTACT_MAILTO` is `mailto:support@stakebuildingaccess.org`.
