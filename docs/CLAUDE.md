@@ -11,7 +11,7 @@ docs/
 ├── spec.md                        # live source of truth for runtime behaviour
 ├── architecture.md                # numbered design decisions (D1, D2, ...)
 ├── firebase-schema.md             # authoritative data model + rules + indexes
-├── firebase-migration.md          # phase plan (Phase A complete; Phase 12 active)
+├── firebase-migration.md          # phase plan (Phase A complete; Phase 12 complete)
 ├── open-questions.md              # active ambiguities + [RESOLVED] trail
 ├── navigation-redesign.md         # Phase 10.1 nav redesign design doc
 ├── TASKS.md                       # cross-cutting work-in-flight
@@ -20,8 +20,13 @@ docs/
 │   ├── README.md
 │   ├── template.md
 │   └── phase-N-*.md
-└── runbooks/                      # per-procedure operator playbooks (summaries; full ones in infra/runbooks/)
+├── runbooks/                      # per-procedure operator playbooks (summaries; full ones in infra/runbooks/)
+└── user-guide/                    # hand-authored end-user help guides (HTML + PDF); synced into apps/web/public/help/ — see below
 ```
+
+## Help guides
+
+End-user help guides are hand-authored, self-contained HTML in `docs/user-guide/`: `creating-requests.html` (requester guide) and `kindoo-managers.html` (Kindoo Manager guide), with shared screenshots in `img/` and PDF copies built by `build-pdfs.sh`. `docs/user-guide/` is the source of truth. The copies the SPA serves live in `apps/web/public/help/` — gitignored, generated output that `apps/web/scripts/sync-help.mjs` writes on every Vite build. Edit the source here; never hand-edit `public/help/`. See `apps/web/CLAUDE.md` for the serve pipeline.
 
 ## Conventions
 

@@ -18,6 +18,8 @@ A door-access tracker that manages Kindoo seat assignments across the wards of a
 
 **Per-workspace `CLAUDE.md` files** describe local conventions for each. Read the one for the workspace you're working in. Cross-workspace coordination via root `TASKS.md`.
 
+**End-user help guides** are hand-authored HTML in `docs/user-guide/`, synced into `apps/web/public/help/` by `apps/web/scripts/sync-help.mjs` and served at `/help/*.html`. See `apps/web/CLAUDE.md` and `docs/CLAUDE.md`.
+
 ## Start each session by reading
 
 1. `docs/spec.md` — live source of truth for runtime behaviour.
