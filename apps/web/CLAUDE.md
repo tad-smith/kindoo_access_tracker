@@ -79,3 +79,13 @@ src/
 - vite-plugin-pwa configured in `vite.config.ts`. Workbox: cache-first for static assets, network-first for `index.html`, never cache Firestore traffic.
 - Manifest auto-generated from config.
 - Push notifications via FCM Web. Service worker at `public/firebase-messaging-sw.js` handles background pushes; coexists with the vite-plugin-pwa SW at distinct scope.
+
+## Help guides
+
+Static end-user help guides are served by Firebase Hosting as real files under `/help/`, outside the SPA router. Source of truth is `docs/user-guide/`; `apps/web/scripts/sync-help.mjs` (`syncHelp()`) copies the two HTML files — renamed to `requesting-access.html` and `kindoo-manager-guide.html` — plus `img/` into `apps/web/public/help/`. It's wired as the `kindoo:sync-help` plugin in `vite.config.ts` on the `buildStart` hook, so it fires for every Vite invocation (dev, build, preview, e2e) regardless of the wrapping npm script.
+
+- **`public/help/` is generated output (gitignored).** Never hand-edit it; edit the source in `docs/user-guide/` and let the plugin resync.
+- **Served URLs:** `/help/requesting-access.html`, `/help/kindoo-manager-guide.html`. Link with a plain `<a href>`, not TanStack `<Link>` — they're outside the router.
+- **Canonical URL constants:** `REQUESTER_GUIDE_URL` / `MANAGER_GUIDE_URL` in `src/lib/links.ts`. Don't hardcode the paths elsewhere.
+- **PWA denylist:** `navigateFallbackDenylist` in `vite.config.ts` includes `/^\/help\//` so navigations resolve to the static HTML, not the cached SPA shell.
+- **Tests:** `test/vite-config-sync-help.test.ts` (plugin wiring) and `e2e/tests/auth/help-guides.spec.ts` (served pages).
