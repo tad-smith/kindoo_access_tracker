@@ -450,6 +450,7 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 - `urgent` is set at create time (rules validate `urgent is bool`) and immutable thereafter — the cancel/complete/reject `affectedKeys()` allowlists exclude it.
 - Edit types (`edit_auto`, `edit_manual`, `edit_temp`) — see [`spec.md`](spec.md) §6.1. `edit_auto` is forbidden at `scope == 'stake'` (Policy 1) at three layers: web UI, rules, and the `markRequestComplete` callable. `edit_temp` carries `start_date` + `end_date` with the same ISO YYYY-MM-DD + start <= end shape as `add_temp`. All three edit types require a non-empty `comment` at creation time, enforced by the shared zod schema, the Firestore rule, and the web form.
 - A Kindoo Manager may create an `add_manual` / `scope: 'stake'` request without a stake claim — the "Give Access To Stake Buildings" carve-out (§6 create rule, [`spec.md`](spec.md) §6.1 / §15, PR #223). This is the only request type for which manager status alone authorises a stake-scope create; every other stake-scope type requires the stake claim.
+- The manager queue and extension card display the requester as `{Name} ({Calling})`, **live-derived** from the requester's `access/{requester_canonical}` doc (§4.5) for the request's `scope`; the request stores only `requester_email` / `requester_canonical` — no requester name or calling is captured on this doc. See [`spec.md`](spec.md) §5.3 / §15.
 
 ### 4.8 `wardCallingTemplates` / `stakeCallingTemplates` — REMOVED
 
