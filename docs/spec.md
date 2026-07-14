@@ -383,13 +383,15 @@ Five notification types ship via Resend (Phase 9), fired by Firestore triggers o
 
 | Trigger | Recipients | Subject | Link back |
 | --- | --- | --- | --- |
-| Request submitted | active Kindoo Managers | `[Kindoo Access] New request from <requester> (<scope label>)` | `<WEB_BASE_URL>/manager/queue` |
-| Request completed | original requester | `[Kindoo Access] Your request for <member_email> has been completed` | `<WEB_BASE_URL>/my` |
-| Request rejected | original requester | `[Kindoo Access] Your request was rejected` | `<WEB_BASE_URL>/my` |
-| Request cancelled | active Kindoo Managers | `[Kindoo Access] Request cancelled by <requester>` | `<WEB_BASE_URL>/manager/queue` |
-| Over-cap detected | active Kindoo Managers | `[Kindoo Access] Over-cap warning` | `<WEB_BASE_URL>/manager/seats` |
+| Request submitted | active Kindoo Managers | `[Stake Building Access] New request from <requester name + calling> (<scope label>)` | `<WEB_BASE_URL>/manager/queue` |
+| Request completed | original requester | `[Stake Building Access] Your request for <member_email> has been completed` | `<WEB_BASE_URL>/my` |
+| Request rejected | original requester | `[Stake Building Access] Your request was rejected` | `<WEB_BASE_URL>/my` |
+| Request cancelled | active Kindoo Managers | `[Stake Building Access] Request cancelled by <requester name + calling>` | `<WEB_BASE_URL>/manager/queue` |
+| Over-cap detected | active Kindoo Managers | `[Stake Building Access] Over-cap warning` | `<WEB_BASE_URL>/manager/seats` |
 
 Bodies are plain text; every email includes a link back to the relevant page (`WEB_BASE_URL` is set per project via `functions/.env.<project>`). The R-1 completion email surfaces a `Note:` line carrying `request.completion_note` so the requester knows nothing visibly changed. The over-cap email lists every flagged pool with its current count / cap and a deep-link to the filtered All Seats page.
+
+**Requester naming (manager emails).** The two manager-facing emails — new-request and cancelled — name the requester as `{Name} ({Calling})` in both subject and body, not the raw email (the new-request subject reads `New request from {Name} ({Calling}) ({scope label})`; its body opens `{Name} ({Calling}) submitted a new … request`; the cancelled subject reads `Request cancelled by {Name} ({Calling})`, body `{Name} ({Calling}) cancelled their request …`). `resolveRequesterLabel` in `EmailService.ts` derives the label live per send from the requester's `access/{requester_canonical}` doc for the request's `scope`, through the same shared `deriveRequesterDisplay` / `formatRequesterLabel` pair the manager Queue and extension card use (§5.3 / §15) — name from `member_name`, calling from `importer_callings[scope]` (falling back to `manual_grants[scope][].reason`). It falls back to the raw `requester_email` when the requester has no access doc or the doc carries no name. The completion / rejection / over-cap emails name the member, not the requester, and are unchanged.
 
 **From address.** Fixed envelope `noreply@mail.stakebuildingaccess.org` (verified Resend subdomain per F17 / T-04). Display name interpolates the stake name: `<stake.stake_name> — Stake Building Access <noreply@mail.stakebuildingaccess.org>`. Optional `Reply-To` from `stake.notifications_reply_to` when set; otherwise the header is omitted (replies bounce off `noreply@`).
 

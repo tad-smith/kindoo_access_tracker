@@ -18,8 +18,15 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
-import { auditId } from '@kindoo/shared';
-import type { AccessRequest, AuditLog, OverCapEntry, RequestType, Stake } from '@kindoo/shared';
+import { auditId, deriveRequesterDisplay, formatRequesterLabel } from '@kindoo/shared';
+import type {
+  Access,
+  AccessRequest,
+  AuditLog,
+  OverCapEntry,
+  RequestType,
+  Stake,
+} from '@kindoo/shared';
 import { WEB_BASE_URL } from '../lib/params.js';
 import { getResendSender, type EmailPayload } from '../lib/resend.js';
 
@@ -92,15 +99,19 @@ export function scopeLabel(scope: string): string {
 // Subject + body builders. Pure; unit-tested independently of I/O.
 // ---------------------------------------------------------------------------
 
-export function buildNewRequestSubject(req: AccessRequest): string {
-  return `[Stake Building Access] New request from ${req.requester_email} (${scopeLabel(req.scope)})`;
+export function buildNewRequestSubject(req: AccessRequest, requesterLabel: string): string {
+  return `[Stake Building Access] New request from ${requesterLabel} (${scopeLabel(req.scope)})`;
 }
 
-export function buildNewRequestBody(req: AccessRequest, link: string): string {
+export function buildNewRequestBody(
+  req: AccessRequest,
+  link: string,
+  requesterLabel: string,
+): string {
   const lead = TYPE_LEAD_VERB[req.type];
   const subject = displayPerson(req);
   const lines: string[] = [
-    `${req.requester_email} ${lead} ${subject}.`,
+    `${requesterLabel} ${lead} ${subject}.`,
     '',
     `Type:      ${req.type}`,
     `Scope:     ${scopeLabel(req.scope)}`,
@@ -155,14 +166,18 @@ export function buildRejectedBody(req: AccessRequest, link: string): string {
   return lines.join('\n');
 }
 
-export function buildCancelledSubject(req: AccessRequest): string {
-  return `[Stake Building Access] Request cancelled by ${req.requester_email}`;
+export function buildCancelledSubject(req: AccessRequest, requesterLabel: string): string {
+  return `[Stake Building Access] Request cancelled by ${requesterLabel}`;
 }
 
-export function buildCancelledBody(req: AccessRequest, link: string): string {
+export function buildCancelledBody(
+  req: AccessRequest,
+  link: string,
+  requesterLabel: string,
+): string {
   const noun = TYPE_NOUN[req.type];
   const lines: string[] = [
-    `${req.requester_email} cancelled their request for ${noun} for ${req.member_email}${req.member_name ? ` (${req.member_name})` : ''}.`,
+    `${requesterLabel} cancelled their request for ${noun} for ${req.member_email}${req.member_name ? ` (${req.member_name})` : ''}.`,
     '',
     `Scope:     ${scopeLabel(req.scope)}`,
     `Type:      ${req.type}`,
@@ -201,23 +216,24 @@ type BaseDeps = {
 export async function notifyManagersNewRequest(
   deps: BaseDeps & { req: AccessRequest; managerEmails: string[] },
 ): Promise<void> {
-  const { stake, req, managerEmails } = deps;
-  if (!emailsEnabled(stake, deps.stakeId, 'newRequest')) return;
+  const { db, stakeId, stake, req, managerEmails } = deps;
+  if (!emailsEnabled(stake, stakeId, 'newRequest')) return;
   if (managerEmails.length === 0) {
     logger.info('email skipped — no active managers', {
-      stakeId: deps.stakeId,
+      stakeId,
       type: 'newRequest',
     });
     return;
   }
   const link = safeBuildLink(deps, '/manager/queue');
   if (link === undefined) return;
+  const requesterLabel = await resolveRequesterLabel(db, stakeId, req);
   await sendOne(deps, {
     payload: buildPayload({
       stake,
       to: managerEmails,
-      subject: buildNewRequestSubject(req),
-      text: buildNewRequestBody(req, link),
+      subject: buildNewRequestSubject(req, requesterLabel),
+      text: buildNewRequestBody(req, link, requesterLabel),
     }),
     context: { type: 'newRequest', requestId: req.request_id },
   });
@@ -265,20 +281,21 @@ export async function notifyRequesterRejected(
 export async function notifyManagersCancelled(
   deps: BaseDeps & { req: AccessRequest; managerEmails: string[] },
 ): Promise<void> {
-  const { stake, req, managerEmails } = deps;
-  if (!emailsEnabled(stake, deps.stakeId, 'cancelled')) return;
+  const { db, stakeId, stake, req, managerEmails } = deps;
+  if (!emailsEnabled(stake, stakeId, 'cancelled')) return;
   if (managerEmails.length === 0) {
-    logger.info('email skipped — no active managers', { stakeId: deps.stakeId, type: 'cancelled' });
+    logger.info('email skipped — no active managers', { stakeId, type: 'cancelled' });
     return;
   }
   const link = safeBuildLink(deps, '/manager/queue');
   if (link === undefined) return;
+  const requesterLabel = await resolveRequesterLabel(db, stakeId, req);
   await sendOne(deps, {
     payload: buildPayload({
       stake,
       to: managerEmails,
-      subject: buildCancelledSubject(req),
-      text: buildCancelledBody(req, link),
+      subject: buildCancelledSubject(req, requesterLabel),
+      text: buildCancelledBody(req, link, requesterLabel),
     }),
     context: { type: 'cancelled', requestId: req.request_id },
   });
@@ -475,4 +492,20 @@ async function writeEmailFailedAudit(
 function displayPerson(req: AccessRequest): string {
   const name = req.member_name?.trim();
   return name ? `${name} (${req.member_email})` : req.member_email;
+}
+
+/**
+ * Resolve the requester's `{Name} ({Calling})` label live from their
+ * `access` doc for the request's scope, matching the manager Queue card.
+ * Falls back to the raw `requester_email` when no access doc / name
+ * exists (per `formatRequesterLabel`). One read per manager email send.
+ */
+async function resolveRequesterLabel(
+  db: Firestore,
+  stakeId: string,
+  req: AccessRequest,
+): Promise<string> {
+  const snap = await db.doc(`stakes/${stakeId}/access/${req.requester_canonical}`).get();
+  const access = snap.exists ? (snap.data() as Access) : null;
+  return formatRequesterLabel(deriveRequesterDisplay(access, req.scope), req.requester_email);
 }
