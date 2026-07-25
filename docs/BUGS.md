@@ -342,10 +342,12 @@ A first-time signer-in whose `access/{canonical}` doc predates their sign-in lan
 
 ---
 
-## [B-3] New Request scope dropdown is not filtered by the user's role union [FIXED 2026-05-03]
-Status: closed (fixed in PR #52)
+## [B-3] New Request scope dropdown is not filtered by the user's role union [FIXED 2026-05-03] [REVERSED 2026-07-24]
+Status: closed (fixed in PR #52; manager half reversed in PR #240)
 Owner: @web-engineer
 Phase: post Phase 11
+
+**[REVERSED 2026-07-24 — PR #240.]** The manager half of this fix no longer holds. Kindoo Managers now hold blanket request-creation authority: every scope (the stake and every ward), every request type, with no `access` row of their own. `allowedScopesFor` returns `'stake'` plus every ward in the catalogue for a manager claim, and `isScopeAllowed` returns true for any scope. The **bishopric half of B-3 stands** — a bishopric user with no stake claim still sees only their own wards, and platform superadmin status alone still adds nothing (that half is what the original entry's "Manager / superadmin status no longer adds scope options on its own" was reaching for, and the superadmin clause survives verbatim). The "Defense-in-depth" paragraph below describes a predicate that no longer exists: the rule's create branch is once again `isManager(stakeId) || (scope == 'stake' && isStakeMember(stakeId)) || (scope in bishopricWardOf(stakeId))`, which is where it stood before PR #52. See `architecture.md` D23, T-36's reversal trail, and `docs/changelog/manager-request-any-scope.md`. Original wording preserved below.
 
 The scope dropdown on the New Request page surfaced `stake` plus every configured ward regardless of which roles the signed-in user actually held. A bishopric user with no stake claim could pick wards they had no access to; the rules-side `create` predicate then rejected the submit, leaving the user with a confusing post-submit error rather than a filtered dropdown that would have prevented the mistake at the point of selection.
 

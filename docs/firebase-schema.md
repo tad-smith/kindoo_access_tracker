@@ -257,7 +257,7 @@ Manager allow-list. Doc existence + `active=true` defines the manager set.
 ```
 
 **Written by:** Bootstrap wizard (auto-adds bootstrap admin); manager via Configuration page.
-**Read by:** `syncManagersClaims` trigger; manager list reads.
+**Read by:** `syncManagersClaims` trigger; manager list reads; the requester-label derivation on the manager Queue, the extension card, and `EmailService.resolveRequesterLabel` (§4.7 — a manager-submitted request has no `access` row to name its requester).
 
 ### 4.5 `stakes/{stakeId}/access/{canonicalEmail}`
 
@@ -449,8 +449,8 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 - For `remove`, server-side guards (rules + client tx): no pending-pending duplicate for same (scope, member); no remove against a non-existent manual/temp seat (the latter caught by client tx, not rules).
 - `urgent` is set at create time (rules validate `urgent is bool`) and immutable thereafter — the cancel/complete/reject `affectedKeys()` allowlists exclude it.
 - Edit types (`edit_auto`, `edit_manual`, `edit_temp`) — see [`spec.md`](spec.md) §6.1. `edit_auto` is forbidden at `scope == 'stake'` (Policy 1) at three layers: web UI, rules, and the `markRequestComplete` callable. `edit_temp` carries `start_date` + `end_date` with the same ISO YYYY-MM-DD + start <= end shape as `add_temp`. All three edit types require a non-empty `comment` at creation time, enforced by the shared zod schema, the Firestore rule, and the web form.
-- A Kindoo Manager may create an `add_manual` / `scope: 'stake'` request without a stake claim — the "Give Access To Stake Buildings" carve-out (§6 create rule, [`spec.md`](spec.md) §6.1 / §15, PR #223). This is the only request type for which manager status alone authorises a stake-scope create; every other stake-scope type requires the stake claim.
-- The manager queue and extension card display the requester as `{Name} ({Calling})`, **live-derived** from the requester's `access/{requester_canonical}` doc (§4.5) for the request's `scope`; the request stores only `requester_email` / `requester_canonical` — no requester name or calling is captured on this doc. See [`spec.md`](spec.md) §5.3 / §15.
+- A Kindoo Manager may create a request in **any** scope — the stake and every ward — for every type, with no `access` row of their own (§6 create rule, [`spec.md`](spec.md) §6.1, `architecture.md` D23, PR #240). Manager authority is blanket, not an intersection with claim-derived scopes: a manager who also holds a Bishopric claim may submit for wards outside that claim. Platform superadmin status alone grants nothing. Policy 1 (`edit_auto` forbidden at `scope == 'stake'`) is an independent conjunct and binds managers too.
+- The manager queue, extension card, and manager notification emails display the requester as `{Name} ({Calling})`, **live-derived** from the requester's `access/{requester_canonical}` doc (§4.5) for the request's `scope`, with the requester's `kindooManagers/{requester_canonical}` doc (§4.4) as backstop for both fields — name when `access` has none, and the literal calling `"Kindoo Manager"` when no calling resolves for the scope. Only an `active === true` manager doc contributes; `access` wins on each field independently. The request stores only `requester_email` / `requester_canonical` — no requester name or calling is captured on this doc. See [`spec.md`](spec.md) §5.3 / §9 / §15.
 
 ### 4.8 `wardCallingTemplates` / `stakeCallingTemplates` — REMOVED
 
@@ -874,18 +874,17 @@ service cloud.firestore {
           && (request.resource.data.type == 'remove'
               || request.resource.data.scope != 'stake'
               || request.resource.data.building_names.size() > 0)
+          // Role-for-scope gate. Any one branch authorises:
+          //   - Kindoo Manager → every scope, every type, no `access`
+          //     row required
+          //   - scope == 'stake' → caller holds `stake: true`
+          //   - scope == <ward>  → caller's `wards` includes that code
+          // `scope` is deliberately not checked against the wards
+          // collection — see D23.
           && (
-               (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
+               isManager(stakeId)
+            || (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
             || (request.resource.data.scope in bishopricWardOf(stakeId))
-            // Narrow "Give Access To Stake Buildings" carve-out: a manager
-            // may create a stake-scope request WITHOUT a stake claim, but
-            // ONLY for add_manual (every other stake-scope type still
-            // requires the stake claim through the branch above).
-            || (
-                 request.resource.data.scope == 'stake'
-              && request.resource.data.type == 'add_manual'
-              && isManager(stakeId)
-            )
           );
 
         // State transition: pending → {complete, rejected, cancelled}
@@ -929,8 +928,8 @@ service cloud.firestore {
 - **No client writes to importer_callings** — same pattern. `access.update` rules verify it's unchanged on every client write.
 - **Cross-stake denial is automatic** — `isAnyMember(stakeId)` returns false when the user has no claims for that stakeId, so reads are denied at the stake-doc level and inherit through.
 - **Admin SDK writes bypass everything** — the Cloud Functions (audit triggers, claim sync, request-completion callables) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
-- **Requests-create role-for-scope gate (B-3 / T-36)** — the submit predicate requires the caller hold the role matching the scope being written: `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. Manager status alone does NOT grant creation rights — a pure-manager user with no stake / no ward claim has no submit surface. A manager who also holds `stake: true` or a bishopric ward inherits creation rights through those branches. The SPA's `allowedScopesFor` filter (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer.
-- **Manager `add_manual` stake carve-out ("Give Access To Stake Buildings")** — one narrow exception to the role-for-scope gate above: a Kindoo Manager (no stake claim required) may create a request when `request.resource.data.scope == 'stake' && request.resource.data.type == 'add_manual'`. This is the third branch of the create predicate's role-for-scope `&& (...)` clause. It backs the manager-only All Seats affordance that grants a foreign-site-only member home-site stake access (`spec.md` §6.1 / §15). Manager creation stays BLOCKED for every other stake-scope type — `add_temp`, `edit_auto`, `edit_manual`, `edit_temp`, and `remove` still require the stake claim through the first branch. The web mirror is `GrantStakeAccessDialog` (which submits exactly `add_manual` / `scope: 'stake'`); this rule is the defense-in-depth layer that keeps a hand-crafted POST inside the same carve-out. PR #223.
+- **Requests-create role-for-scope gate** — the submit predicate admits any of three branches: `isManager(stakeId)` (every scope, every type, no `access` row required), `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. The SPA's `isScopeAllowed` / `allowedScopesFor` (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer. Two properties are load-bearing. **(a) Manager authority is blanket.** It is not intersected with the caller's claim-derived scopes, so a manager who also holds a Bishopric claim may submit for wards outside it. **(b) Platform superadmin status alone grants nothing** — only the per-stake manager claim does, which is a deliberate divergence from the nav model's superadmin-as-manager treatment. The manager branch widens WHO may create, never WHAT the payload must carry: every other create conjunct — non-empty `member_name` for add types, non-empty `building_names` for stake-scope add/edit types, the required `comment` on edit types, and Policy 1's `edit_auto`-not-at-stake — still binds a manager submit. This reverses the B-3 / T-36 hardening (PR #52) and subsumes the `add_manual` stake carve-out it had been punctured with (PR #223). See `architecture.md` D23 and PR #240.
+- **The create rule does not verify the ward code exists** — a manager can write a `scope` naming a ward absent from the `wards` collection. Admitting it avoids an `exists()` read on every submit; it is an accepted data-quality gap for a trusted role, not an escalation (D23).
 
 #### Bootstrap-admin gate
 

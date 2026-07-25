@@ -3,6 +3,8 @@
 **Shipped:** 2026-06-06
 **Commits:** [PR #223](https://github.com/tad-smith/kindoo_access_tracker/pull/223) (`feat/grant-stake-access`)
 
+> **[SUPERSEDED — in part, 2026-07-24]** The Firestore-rule half of this entry no longer describes live behaviour. PR #240 gave Kindoo Managers blanket request-creation authority in every scope for every type, which subsumes and deletes the `add_manual` / `scope: 'stake'` carve-out described below. The **`GrantStakeAccessDialog` UI, the extension queue gate, and the parallel-site completion behaviour are unchanged and still live.** See `architecture.md` D23 and [`manager-request-any-scope.md`](manager-request-any-scope.md). Original wording preserved.
+
 ## What shipped
 
 A Kindoo Manager can now grant a foreign-site-only ward member access to the home-site stake buildings directly from the manager **All Seats** page, without waiting for that member (or their bishopric) to submit their own request. A per-member **"Give Access To Stake Buildings"** button opens `GrantStakeAccessDialog`, which submits an ordinary `add_manual` / `scope: 'stake'` request through the existing submit path. On completion the stake grant lands as a parallel-site `duplicate_grant` on the member's existing seat, and applying it from the extension on the home Kindoo environment invites the (foreign-only) member there — consuming an additional home-environment Kindoo license, which the dialog's red banner warns about up front.

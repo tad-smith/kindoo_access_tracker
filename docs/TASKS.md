@@ -460,11 +460,13 @@ Effort: small. Surface during a future polish pass.
 
 Closed: optional `Completion note` textarea added to BOTH `CompleteAddDialog` and `CompleteRemoveDialog` in `apps/web/src/features/manager/queue/QueuePage.tsx` (3 rows, vertical resize, placeholder "What did you do? (Optional context for the requester.)"). Wired through `useCompleteAddRequest` / `useCompleteRemoveRequest` in `hooks.ts`; empty/whitespace-only is dropped from the write. R-1 race interaction: manager note wins and the system tag is appended as `"<manager-note>\n\n[System: Seat already removed at completion time (no-op).]"`, preserving both signals on the completion email; helper `resolveRemoveCompletionNote` is exported for unit testing.
 
-## [T-36] Harden the requests-create rule to require role-for-scope (drop the `isManager` blanket allowance)
-Status: done (PR #52)
+## [T-36] Harden the requests-create rule to require role-for-scope (drop the `isManager` blanket allowance) [REVERSED 2026-07-24]
+Status: done (PR #52); reversed (PR #240)
 Owner: @backend-engineer
 Phase: post Phase 11 (paired with B-3)
 Branch / PR: `fix/b-3-new-request-scope-filter` / [#52](https://github.com/tad-smith/kindoo_access_tracker/pull/52)
+
+**[REVERSED 2026-07-24 — PR #240.]** The `isManager(stakeId) ||` term is back at the head of the requests `create` predicate, unconditional. Kindoo Managers hold blanket request-creation authority: every scope (the stake and every ward), every request type, no `access` row required. The **"Proposed change" paragraph below describes a predicate that no longer exists**, and four of the five listed test cases now assert the opposite outcome — the manager-only stake-scope and ward-scope creates succeed, and a manager+bishopric user may submit for wards outside their ward list (two pre-existing tests in `firestore/tests/requests.test.ts` had their premise flipped to encode that). The last case — a bishopric user with no claim for the target ward → denied — still holds and is still the regression guard. PR #223's `add_manual` / `scope: 'stake'` carve-out, which had already punctured this hardening, is deleted as subsumed. Rationale, the non-guard on ward-code existence, and the deliberate platform-superadmin exclusion are recorded as `architecture.md` D23; see also B-3's reversal trail and `docs/changelog/manager-request-any-scope.md`. Original wording preserved below.
 
 The `match /stakes/{stakeId}/requests/{requestId}` create predicate in `firestore/firestore.rules` (lines 470–474) currently allows any of:
 
