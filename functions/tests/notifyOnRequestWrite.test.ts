@@ -87,12 +87,17 @@ async function seedStake(overrides: Partial<Stake> = {}): Promise<void> {
   await db.doc(`stakes/${STAKE_ID}`).set(stake);
 }
 
-async function seedManager(canonical: string, active: boolean, email = canonical): Promise<void> {
+async function seedManager(
+  canonical: string,
+  active: boolean,
+  email = canonical,
+  name = canonical,
+): Promise<void> {
   const { db } = requireEmulators();
   await db.doc(`stakes/${STAKE_ID}/kindooManagers/${canonical}`).set({
     member_canonical: canonical,
     member_email: email,
-    name: canonical,
+    name,
     active,
     added_at: Timestamp.now(),
     added_by: { email: 'admin@example.com', canonical: 'admin@example.com' },
@@ -202,6 +207,67 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.subject).toContain('New request from Bish@gmail.com (GE)');
     expect(calls[0]!.text).toContain('Bish@gmail.com submitted a new manual-add request');
+  });
+
+  // A Kindoo Manager may submit in any scope without an `access` row, so
+  // the label falls back to their `kindooManagers` doc.
+  it('names a manager-submitted request "{Name} (Kindoo Manager)" when the requester has no access doc', async () => {
+    await seedStake();
+    await seedManager(
+      baseRequest.requester_canonical,
+      true,
+      baseRequest.requester_email,
+      'Manager Mary',
+    );
+    const { sender, calls } = mockSender([{ ok: true, id: 'mid-1c' }]);
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnRequestWrite.run(makeEvent({ before: null, after: baseRequest }));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.subject).toContain('New request from Manager Mary (Kindoo Manager) (GE)');
+    expect(calls[0]!.text).toContain(
+      'Manager Mary (Kindoo Manager) submitted a new manual-add request',
+    );
+  });
+
+  // Access doc wins on both fields when it carries a calling for the scope.
+  it('prefers the access-derived calling over "Kindoo Manager" for a manager who also holds access', async () => {
+    await seedStake();
+    await seedRequesterAccess();
+    await seedManager(
+      baseRequest.requester_canonical,
+      true,
+      baseRequest.requester_email,
+      'Manager Mary',
+    );
+    const { sender, calls } = mockSender([{ ok: true, id: 'mid-1d' }]);
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnRequestWrite.run(makeEvent({ before: null, after: baseRequest }));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.subject).toContain('New request from John Smith (Bishop) (GE)');
+  });
+
+  // An inactive manager doc contributes nothing — same output as before
+  // the fallback existed.
+  it("falls back to the raw email when the requester's manager doc is inactive", async () => {
+    await seedStake();
+    await seedManager('alice@gmail.com', true);
+    await seedManager(
+      baseRequest.requester_canonical,
+      false,
+      baseRequest.requester_email,
+      'Manager Mary',
+    );
+    const { sender, calls } = mockSender([{ ok: true, id: 'mid-1e' }]);
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnRequestWrite.run(makeEvent({ before: null, after: baseRequest }));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.subject).toContain('New request from Bish@gmail.com (GE)');
   });
 
   it('on pending → complete sends a completed email to the requester only', async () => {
