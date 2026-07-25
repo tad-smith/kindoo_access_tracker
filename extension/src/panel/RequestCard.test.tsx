@@ -20,6 +20,7 @@ const readKindooSessionMock = vi.fn();
 const markRequestCompleteMock = vi.fn();
 const getSeatByEmailMock = vi.fn();
 const getAccessByEmailMock = vi.fn();
+const getKindooManagerByEmailMock = vi.fn();
 const writeKindooSiteEidMock = vi.fn();
 const rejectRequestMock = vi.fn();
 
@@ -56,12 +57,13 @@ vi.mock('../lib/extensionApi', async () => {
     markRequestComplete: (...args: unknown[]) => markRequestCompleteMock(...args),
     getSeatByEmail: (...args: unknown[]) => getSeatByEmailMock(...args),
     getAccessByEmail: (...args: unknown[]) => getAccessByEmailMock(...args),
+    getKindooManagerByEmail: (...args: unknown[]) => getKindooManagerByEmailMock(...args),
     writeKindooSiteEid: (...args: unknown[]) => writeKindooSiteEidMock(...args),
     rejectRequest: (...args: unknown[]) => rejectRequestMock(...args),
   };
 });
 
-import type { Access, AccessRequest } from '@kindoo/shared';
+import type { Access, AccessRequest, KindooManager } from '@kindoo/shared';
 import type { StakeConfigBundle } from '../lib/extensionApi';
 
 /**
@@ -79,6 +81,21 @@ function accessDoc(overrides: Partial<Access> = {}): Access {
     manual_grants: {},
     ...overrides,
   } as Access;
+}
+
+/**
+ * Minimal `kindooManagers` doc — `deriveRequesterDisplay` reads only
+ * `name` + `active`. Bookkeeping fields (added_at / added_by / lastActor)
+ * don't affect the derivation, so the cast keeps the fixture focused.
+ */
+function managerDoc(overrides: Partial<KindooManager> = {}): KindooManager {
+  return {
+    member_canonical: 'requester@example.com',
+    member_email: 'requester@example.com',
+    name: 'Manager Mary',
+    active: true,
+    ...overrides,
+  } as KindooManager;
 }
 
 function bundle(): StakeConfigBundle {
@@ -176,6 +193,7 @@ describe('RequestCard', () => {
     markRequestCompleteMock.mockReset();
     getSeatByEmailMock.mockReset();
     getAccessByEmailMock.mockReset();
+    getKindooManagerByEmailMock.mockReset();
     writeKindooSiteEidMock.mockReset();
     rejectRequestMock.mockReset();
     readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 'tok', eid: 27994 } });
@@ -188,6 +206,9 @@ describe('RequestCard', () => {
     // Default: requester has no access doc → the "Requester:" line falls
     // back to the raw email. Tests that assert name / calling override.
     getAccessByEmailMock.mockResolvedValue(null);
+    // Default: requester is not on the manager allow-list. Tests that
+    // exercise the `{Name} (Kindoo Manager)` backstop override.
+    getKindooManagerByEmailMock.mockResolvedValue(null);
   });
   afterEach(() => {
     vi.resetModules();
@@ -264,11 +285,91 @@ describe('RequestCard', () => {
   });
 
   it('falls back to the requester email when the requester has no access doc', async () => {
-    // Default getAccessByEmailMock resolves null.
+    // Default getAccessByEmailMock + getKindooManagerByEmailMock resolve null.
     await renderCard();
     const card = screen.getByTestId('sba-request-r1');
     await waitFor(() => expect(getAccessByEmailMock).toHaveBeenCalled());
     expect(card.textContent).toMatch(/Requester:\s*requester@example\.com/);
+  });
+
+  // ---- Requester line — Kindoo Manager backstop -----------------------
+
+  it('renders "{Name} (Kindoo Manager)" for a manager who submitted without an access row', async () => {
+    // A Kindoo Manager may now submit in ANY scope without holding an
+    // `access` row — the manager doc is the only identity source.
+    getAccessByEmailMock.mockResolvedValue(null);
+    getKindooManagerByEmailMock.mockResolvedValue(managerDoc());
+    await renderCard();
+    const card = screen.getByTestId('sba-request-r1');
+    await waitFor(() =>
+      expect(card.textContent).toMatch(/Requester:\s*Manager Mary \(Kindoo Manager\)/),
+    );
+    expect(card.textContent).not.toMatch(/requester@example\.com/);
+    expect(getKindooManagerByEmailMock).toHaveBeenCalledWith('csnorth', 'requester@example.com');
+  });
+
+  it("prefers the requester's real calling for the scope over the Kindoo Manager label", async () => {
+    // Requester is BOTH a manager and holds a calling for this scope;
+    // the access-derived calling wins.
+    getAccessByEmailMock.mockResolvedValue(
+      accessDoc({ member_name: 'Bishop Bob', importer_callings: { stake: ['Bishop'] } }),
+    );
+    getKindooManagerByEmailMock.mockResolvedValue(managerDoc({ name: 'Manager Mary' }));
+    await renderCard();
+    const card = screen.getByTestId('sba-request-r1');
+    await waitFor(() => expect(card.textContent).toMatch(/Requester:\s*Bishop Bob \(Bishop\)/));
+    expect(card.textContent).not.toMatch(/Kindoo Manager/);
+    expect(card.textContent).not.toMatch(/Manager Mary/);
+  });
+
+  it("prefers the access doc's name but backstops the calling with the Kindoo Manager label", async () => {
+    // Name and calling resolve INDEPENDENTLY: the access doc has a name
+    // but no calling for this scope, so the manager supplies only the
+    // calling half.
+    getAccessByEmailMock.mockResolvedValue(
+      accessDoc({ member_name: 'Bishop Bob', importer_callings: { CO: ['Bishop'] } }),
+    );
+    getKindooManagerByEmailMock.mockResolvedValue(managerDoc({ name: 'Manager Mary' }));
+    await renderCard();
+    const card = screen.getByTestId('sba-request-r1');
+    await waitFor(() =>
+      expect(card.textContent).toMatch(/Requester:\s*Bishop Bob \(Kindoo Manager\)/),
+    );
+  });
+
+  it('ignores an INACTIVE manager doc — label is unchanged from the access-only result', async () => {
+    // A revoked manager keeps their doc (audit trail) with
+    // `active: false`; it must not contribute name or calling.
+    getAccessByEmailMock.mockResolvedValue(null);
+    getKindooManagerByEmailMock.mockResolvedValue(managerDoc({ active: false }));
+    await renderCard();
+    const card = screen.getByTestId('sba-request-r1');
+    await waitFor(() => expect(getKindooManagerByEmailMock).toHaveBeenCalled());
+    expect(card.textContent).toMatch(/Requester:\s*requester@example\.com/);
+    expect(card.textContent).not.toMatch(/Kindoo Manager/);
+    expect(card.textContent).not.toMatch(/Manager Mary/);
+  });
+
+  it('degrades to the access-only label when the manager read fails', async () => {
+    // Each read degrades independently — a rules denial on the manager
+    // doc must not discard the access doc's contribution.
+    getAccessByEmailMock.mockResolvedValue(
+      accessDoc({ member_name: 'Bishop Bob', importer_callings: { stake: ['Bishop'] } }),
+    );
+    getKindooManagerByEmailMock.mockRejectedValue(new Error('permission-denied'));
+    await renderCard();
+    const card = screen.getByTestId('sba-request-r1');
+    await waitFor(() => expect(card.textContent).toMatch(/Requester:\s*Bishop Bob \(Bishop\)/));
+  });
+
+  it('degrades to the manager-only label when the access read fails', async () => {
+    getAccessByEmailMock.mockRejectedValue(new Error('permission-denied'));
+    getKindooManagerByEmailMock.mockResolvedValue(managerDoc());
+    await renderCard();
+    const card = screen.getByTestId('sba-request-r1');
+    await waitFor(() =>
+      expect(card.textContent).toMatch(/Requester:\s*Manager Mary \(Kindoo Manager\)/),
+    );
   });
 
   it('runs provisionAddOrChange and markRequestComplete on click, then shows the result dialog', async () => {

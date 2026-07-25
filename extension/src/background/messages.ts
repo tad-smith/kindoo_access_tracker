@@ -19,6 +19,7 @@ import {
 import { getMyPendingRequests, markRequestComplete, syncApplyFix } from '../lib/api';
 import {
   loadAccessByEmail,
+  loadKindooManagerByEmail,
   loadSeatByEmail,
   loadStakeConfig,
   loadSyncData,
@@ -160,6 +161,14 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
       try {
         const access = await loadAccessByEmail(req.stakeId, req.canonical);
         return { ok: true, data: access };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.getKindooManagerByEmail': {
+      try {
+        const manager = await loadKindooManagerByEmail(req.stakeId, req.canonical);
+        return { ok: true, data: manager };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }

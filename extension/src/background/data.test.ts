@@ -862,6 +862,82 @@ describe('loadSeatByEmail — stake parameterisation', () => {
   });
 });
 
+describe('loadKindooManagerByEmail', () => {
+  beforeEach(() => {
+    getDocMock.mockReset();
+    docMock.mockClear();
+  });
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it('reads the manager doc under the supplied stakeId, not a hardcoded constant', async () => {
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ member_canonical: 'a@example.com', name: 'Manager A', active: true }),
+    });
+    const { loadKindooManagerByEmail } = await import('./data');
+    await loadKindooManagerByEmail('east-co', 'a@example.com');
+    expect(docMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'stakes',
+      'east-co',
+      'kindooManagers',
+      'a@example.com',
+    );
+  });
+
+  it('returns the doc data when the requester is on the manager allow-list', async () => {
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ member_canonical: 'a@example.com', name: 'Manager A', active: true }),
+    });
+    const { loadKindooManagerByEmail } = await import('./data');
+    await expect(loadKindooManagerByEmail(STAKE_ID, 'a@example.com')).resolves.toEqual({
+      member_canonical: 'a@example.com',
+      name: 'Manager A',
+      active: true,
+    });
+  });
+
+  it('returns null when the requester has no kindooManagers doc', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false, data: () => undefined });
+    const { loadKindooManagerByEmail } = await import('./data');
+    await expect(loadKindooManagerByEmail(STAKE_ID, 'nobody@example.com')).resolves.toBeNull();
+  });
+
+  it('returns an INACTIVE manager doc verbatim — active-vs-not is the caller’s call', async () => {
+    // `deriveRequesterDisplay` is the single place that decides an
+    // inactive manager contributes nothing; the reader must not
+    // pre-filter or the shared helper's contract splits in two.
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ member_canonical: 'a@example.com', name: 'Former Manager', active: false }),
+    });
+    const { loadKindooManagerByEmail } = await import('./data');
+    await expect(loadKindooManagerByEmail(STAKE_ID, 'a@example.com')).resolves.toEqual({
+      member_canonical: 'a@example.com',
+      name: 'Former Manager',
+      active: false,
+    });
+  });
+
+  it('propagates a read failure — the panel, not the SW, owns the degrade-to-null', async () => {
+    // Mirrors `loadAccessByEmail`: a rules denial surfaces as a wire
+    // error through the SW message pipeline; RequestCard catches it and
+    // falls back to the raw email.
+    getDocMock.mockRejectedValue(
+      Object.assign(new Error('Missing or insufficient permissions.'), {
+        code: 'permission-denied',
+      }),
+    );
+    const { loadKindooManagerByEmail } = await import('./data');
+    await expect(loadKindooManagerByEmail(STAKE_ID, 'a@example.com')).rejects.toThrow(
+      'Missing or insufficient permissions.',
+    );
+  });
+});
+
 describe('rejectRequest — SW-side write (getDoc + updateDoc, no transaction)', () => {
   // The canonical claim DIFFERS from a naive `canonicalEmail(email)`
   // recompute, so a test that asserts the written canonical can tell
