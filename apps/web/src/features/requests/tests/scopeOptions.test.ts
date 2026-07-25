@@ -1,5 +1,8 @@
-// Unit tests for `allowedScopesFor` — the pure New-Request scope-filter
-// helper. Covers each row in the operator-stated spec table for B-3.
+// Unit tests for the pure New-Request scope-authority helpers. Covers
+// each row in the operator-stated spec table, including the Kindoo
+// Manager branch (manager → every scope, no `access` row needed) and
+// the platform-superadmin regression guard (superadmin alone grants
+// nothing).
 
 import { describe, expect, it } from 'vitest';
 import { allowedScopesFor, canEditSeat, isScopeAllowed } from '../scopeOptions';
@@ -33,7 +36,7 @@ function makePrincipal(overrides: Partial<Principal>): Principal {
   };
 }
 
-describe('allowedScopesFor — B-3 scope filter', () => {
+describe('allowedScopesFor — scope filter', () => {
   it('stake-only: returns just the stake option', () => {
     const principal = makePrincipal({ stakeMemberStakes: [STAKE_ID] });
     expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([
@@ -79,24 +82,51 @@ describe('allowedScopesFor — B-3 scope filter', () => {
     expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([]);
   });
 
-  it('manager-only (no stake / no ward claim): empty list — manager status does not grant scope options', () => {
+  it('manager-only (no stake / no ward claim): stake plus every ward in the catalogue', () => {
     const principal = makePrincipal({ managerStakes: [STAKE_ID] });
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([
+      { value: 'stake', label: 'Stake' },
+      { value: 'BA', label: 'Bayside' },
+      { value: 'CO', label: 'Cottonwood' },
+      { value: 'GR', label: 'Greenfield' },
+    ]);
+  });
+
+  it('manager of another stake: empty list — the manager claim is per-stake', () => {
+    const principal = makePrincipal({ managerStakes: ['other'] });
     expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([]);
   });
 
-  it('platform superadmin without stake / ward claim: empty list — superadmin status does not grant scope options', () => {
-    const principal = makePrincipal({ isPlatformSuperadmin: true });
-    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([]);
-  });
-
-  it('manager + stake claim: stake option only (manager adds nothing on top)', () => {
+  it('manager + bishopric of a ward: that ward is listed once, not twice', () => {
     const principal = makePrincipal({
       managerStakes: [STAKE_ID],
-      stakeMemberStakes: [STAKE_ID],
+      bishopricWards: { [STAKE_ID]: ['CO'] },
     });
     expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([
       { value: 'stake', label: 'Stake' },
+      { value: 'BA', label: 'Bayside' },
+      { value: 'CO', label: 'Cottonwood' },
+      { value: 'GR', label: 'Greenfield' },
     ]);
+  });
+
+  it('manager + stake + bishopric: stake is listed once and each ward once', () => {
+    const principal = makePrincipal({
+      managerStakes: [STAKE_ID],
+      stakeMemberStakes: [STAKE_ID],
+      bishopricWards: { [STAKE_ID]: ['CO', 'GR'] },
+    });
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([
+      { value: 'stake', label: 'Stake' },
+      { value: 'BA', label: 'Bayside' },
+      { value: 'CO', label: 'Cottonwood' },
+      { value: 'GR', label: 'Greenfield' },
+    ]);
+  });
+
+  it('platform superadmin without manager / stake / ward claim: empty list — superadmin status does not grant scope options', () => {
+    const principal = makePrincipal({ isPlatformSuperadmin: true });
+    expect(allowedScopesFor(principal, STAKE_ID, WARDS)).toEqual([]);
   });
 
   it('different stake claim: ignores wards keyed under another stake', () => {
@@ -152,8 +182,34 @@ describe('isScopeAllowed — symmetric authority gate for the per-row Remove but
     expect(isScopeAllowed(principal, STAKE_ID, 'CO')).toBe(false);
   });
 
-  it('manager-only (no stake / no ward claim): never allowed — manager status alone does not grant authority', () => {
+  it('manager-only (no stake / no ward claim): allowed for stake and for any ward', () => {
     const principal = makePrincipal({ managerStakes: [STAKE_ID] });
+    expect(isScopeAllowed(principal, STAKE_ID, 'stake')).toBe(true);
+    expect(isScopeAllowed(principal, STAKE_ID, 'CO')).toBe(true);
+    // A ward the manager holds no bishopric claim for, and one absent
+    // from the catalogue entirely.
+    expect(isScopeAllowed(principal, STAKE_ID, 'GR')).toBe(true);
+    expect(isScopeAllowed(principal, STAKE_ID, 'ZZ')).toBe(true);
+  });
+
+  it('manager + bishopric: allowed for a ward OUTSIDE the bishopric list — manager authority is blanket, not an intersection', () => {
+    const principal = makePrincipal({
+      managerStakes: [STAKE_ID],
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+    });
+    expect(isScopeAllowed(principal, STAKE_ID, 'CO')).toBe(true);
+    expect(isScopeAllowed(principal, STAKE_ID, 'GR')).toBe(true);
+    expect(isScopeAllowed(principal, STAKE_ID, 'stake')).toBe(true);
+  });
+
+  it('manager of another stake: never allowed here — the manager claim is per-stake', () => {
+    const principal = makePrincipal({ managerStakes: ['other'] });
+    expect(isScopeAllowed(principal, STAKE_ID, 'stake')).toBe(false);
+    expect(isScopeAllowed(principal, STAKE_ID, 'CO')).toBe(false);
+  });
+
+  it('platform superadmin without a manager claim: never allowed — superadmin status alone grants nothing', () => {
+    const principal = makePrincipal({ isPlatformSuperadmin: true });
     expect(isScopeAllowed(principal, STAKE_ID, 'stake')).toBe(false);
     expect(isScopeAllowed(principal, STAKE_ID, 'CO')).toBe(false);
   });
@@ -210,9 +266,26 @@ describe('canEditSeat — per-row Edit affordance gate', () => {
     expect(canEditSeat(principal, STAKE_ID, seat)).toBe(true);
   });
 
-  it('manager-only (no stake / no ward claim): never editable — symmetric with Remove', () => {
+  it('manager-only (no stake / no ward claim): editable in any scope — symmetric with Remove', () => {
     const principal = makePrincipal({ managerStakes: [STAKE_ID] });
-    expect(canEditSeat(principal, STAKE_ID, makeSeat({ type: 'auto', scope: 'CO' }))).toBe(false);
+    expect(canEditSeat(principal, STAKE_ID, makeSeat({ type: 'auto', scope: 'CO' }))).toBe(true);
+    expect(
+      canEditSeat(principal, STAKE_ID, makeSeat({ type: 'manual', scope: 'CO', callings: [] })),
+    ).toBe(true);
+    expect(
+      canEditSeat(principal, STAKE_ID, makeSeat({ type: 'manual', scope: 'stake', callings: [] })),
+    ).toBe(true);
+  });
+
+  it('manager-only: stake-scope auto seat stays non-editable — Policy 1 outranks the manager branch', () => {
+    const principal = makePrincipal({ managerStakes: [STAKE_ID] });
+    expect(canEditSeat(principal, STAKE_ID, makeSeat({ type: 'auto', scope: 'stake' }))).toBe(
+      false,
+    );
+  });
+
+  it('platform superadmin without a manager claim: never editable', () => {
+    const principal = makePrincipal({ isPlatformSuperadmin: true });
     expect(
       canEditSeat(principal, STAKE_ID, makeSeat({ type: 'manual', scope: 'CO', callings: [] })),
     ).toBe(false);

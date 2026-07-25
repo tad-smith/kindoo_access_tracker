@@ -11,8 +11,8 @@
 //   2. **Role-for-scope.** Mirrors `RemovalAffordance`: same
 //      `canEditSeat` predicate (which composes the stake-auto carve-out
 //      with `isScopeAllowed`). A bishopric of CO sees the button on CO
-//      rows; a stake user sees it on stake rows; a manager-only user
-//      without a stake / ward claim sees nothing (B-3 / T-36).
+//      rows; a stake user sees it on stake rows; a Kindoo Manager sees
+//      it on every row Policy 1 doesn't hide.
 //
 // Caller-side note: pages already filter the row list to scopes the
 // viewer can see, but the affordance ALSO checks `canEditSeat` so a
