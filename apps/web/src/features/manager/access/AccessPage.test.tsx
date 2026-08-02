@@ -535,6 +535,106 @@ describe('<AccessPage />', () => {
     ]);
   });
 
+  it('defaults the add-modal access level to Full', async () => {
+    const u = userEvent.setup();
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    await u.click(screen.getByTestId('access-add-manual-button'));
+    const level = screen.getByTestId('add-manual-level') as HTMLSelectElement;
+    expect(Array.from(level.options).map((o) => o.value)).toEqual(['full', 'limited']);
+    expect(level.value).toBe('full');
+  });
+
+  it('submits level "full" when the access level is left at its default', async () => {
+    const u = userEvent.setup();
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    await u.click(screen.getByTestId('access-add-manual-button'));
+    const form = screen.getByTestId('add-manual-form');
+    await u.type(within(form).getByLabelText(/Email/i), 'sub@example.com');
+    await u.type(within(form).getByLabelText(/Name/i), 'Sub');
+    await u.type(within(form).getByLabelText(/Reason/i), 'Covering bishop');
+    await u.click(screen.getByTestId('access-add-manual-submit'));
+    expect(addManualMutate).toHaveBeenCalledWith(expect.objectContaining({ level: 'full' }));
+  });
+
+  it('submits level "limited" when Limited is chosen', async () => {
+    const u = userEvent.setup();
+    useAccessListMock.mockReturnValue(liveResult<Access>([]));
+    render(<AccessPage />);
+    await u.click(screen.getByTestId('access-add-manual-button'));
+    const form = screen.getByTestId('add-manual-form');
+    await u.type(within(form).getByLabelText(/Email/i), 'sub@example.com');
+    await u.type(within(form).getByLabelText(/Name/i), 'Sub');
+    await u.selectOptions(screen.getByTestId('add-manual-level'), 'limited');
+    await u.type(within(form).getByLabelText(/Reason/i), 'Covering bishop');
+    await u.click(screen.getByTestId('access-add-manual-submit'));
+    expect(addManualMutate).toHaveBeenCalledWith(expect.objectContaining({ level: 'limited' }));
+  });
+
+  it('badges a limited grant in both the table and the card view', () => {
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'lim@x.com',
+          member_email: 'lim@x.com',
+          importer_callings: {},
+          manual_grants: {
+            stake: [
+              {
+                grant_id: 'g-lim',
+                reason: 'Covering bishop',
+                level: 'limited',
+                granted_by: { email: 'm@x.com', canonical: 'm@x.com' },
+                granted_at: {
+                  seconds: 0,
+                  nanoseconds: 0,
+                  toDate: () => new Date(),
+                  toMillis: () => 0,
+                },
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    // Both views are always mounted; CSS picks which one is visible.
+    expect(screen.getByTestId('access-table-level-lim@x.com-g-lim')).toHaveTextContent('Limited');
+    expect(screen.getByTestId('access-grant-level-lim@x.com-g-lim')).toHaveTextContent('Limited');
+  });
+
+  it('shows no level badge on a full grant, which carries no level key', () => {
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'full@x.com',
+          member_email: 'full@x.com',
+          importer_callings: {},
+          manual_grants: {
+            stake: [
+              {
+                grant_id: 'g-full',
+                reason: 'Covering bishop',
+                granted_by: { email: 'm@x.com', canonical: 'm@x.com' },
+                granted_at: {
+                  seconds: 0,
+                  nanoseconds: 0,
+                  toDate: () => new Date(),
+                  toMillis: () => 0,
+                },
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    expect(screen.queryByTestId('access-table-level-full@x.com-g-full')).toBeNull();
+    expect(screen.queryByTestId('access-grant-level-full@x.com-g-full')).toBeNull();
+    expect(screen.queryByText('Limited')).toBeNull();
+  });
+
   it('opens the delete confirmation dialog when a grant Delete is clicked', async () => {
     const u = userEvent.setup();
     useAccessListMock.mockReturnValue(

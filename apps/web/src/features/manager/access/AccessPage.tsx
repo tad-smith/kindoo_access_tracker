@@ -291,7 +291,20 @@ function AccessTable({ users, scopeFilter, wards, onDeleteRequest }: AccessTable
         {rows.map((r, i) => (
           <tr key={`${r.canonical}|${r.scope}|${r.source}|${r.calling}|${i}`}>
             <td>{scopeLabel(r.scope, wards)}</td>
-            <td>{r.calling}</td>
+            <td>
+              {r.calling}
+              {r.grant?.level === 'limited' ? (
+                <>
+                  {' '}
+                  <Badge
+                    variant="info"
+                    data-testid={`access-table-level-${r.canonical}-${r.grant.grant_id}`}
+                  >
+                    Limited
+                  </Badge>
+                </>
+              ) : null}
+            </td>
             <td>
               <RosterMemberLine name={null} email={r.email} />
             </td>
@@ -373,6 +386,16 @@ function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardP
                 {grants.map((g) => (
                   <li key={g.grant_id}>
                     {g.reason}{' '}
+                    {g.level === 'limited' ? (
+                      <>
+                        <Badge
+                          variant="info"
+                          data-testid={`access-grant-level-${access.member_canonical}-${g.grant_id}`}
+                        >
+                          Limited
+                        </Badge>{' '}
+                      </>
+                    ) : null}
                     <Button
                       variant="danger"
                       onClick={() => onDeleteRequest(scope, g)}
@@ -395,9 +418,17 @@ const addManualSchema = z.object({
   member_email: z.string().trim().min(1).email('Must be a valid email.'),
   member_name: z.string().trim().min(1, 'Name is required.'),
   scope: z.string().trim().min(1, 'Scope is required.'),
+  // Form-level tri-state is binary; the stored grant only ever carries
+  // `level: 'limited'`. 'full' is the form's representation of "no
+  // marker" — the mutation drops the key. See `useAddManualGrantMutation`.
+  level: z.enum(['full', 'limited']).default('full'),
   reason: z.string().trim().min(1, 'Reason is required.'),
 });
-type AddManualForm = z.infer<typeof addManualSchema>;
+// `level`'s `.default()` splits input from output: the raw form value may
+// omit it, the parsed value never does. RHF needs both generics so
+// `register` types against the input and `onSubmit` against the output.
+type AddManualFormInput = z.input<typeof addManualSchema>;
+type AddManualForm = z.output<typeof addManualSchema>;
 
 interface AddManualGrantDialogProps {
   open: boolean;
@@ -418,15 +449,16 @@ function AddManualGrantDialog({ open, onClose }: AddManualGrantDialogProps) {
     () => [...(wards.data ?? [])].sort((a, b) => a.ward_code.localeCompare(b.ward_code)),
     [wards.data],
   );
-  const form = useForm<AddManualForm>({
+  const form = useForm<AddManualFormInput, unknown, AddManualForm>({
     resolver: zodResolver(addManualSchema),
-    defaultValues: { member_email: '', member_name: '', scope: 'stake', reason: '' },
+    defaultValues: { member_email: '', member_name: '', scope: 'stake', level: 'full', reason: '' },
   });
   const { register, handleSubmit, reset, formState } = form;
 
   // Reset whenever the dialog opens so a previous draft doesn't carry.
   useEffect(() => {
-    if (open) reset({ member_email: '', member_name: '', scope: 'stake', reason: '' });
+    if (open)
+      reset({ member_email: '', member_name: '', scope: 'stake', level: 'full', reason: '' });
   }, [open, reset]);
 
   async function onSubmit(input: AddManualForm) {
@@ -488,6 +520,17 @@ function AddManualGrantDialog({ open, onClose }: AddManualGrantDialogProps) {
             No wards configured. Add wards via Configuration to grant ward-scope access.
           </p>
         ) : null}
+        <label>
+          Access level
+          <Select {...register('level')} data-testid="add-manual-level">
+            <option value="full">Full</option>
+            <option value="limited">Limited</option>
+          </Select>
+        </label>
+        <p className="kd-form-hint">
+          Full gives the same authority you have. Limited lets them request temporary access only —
+          up to 90 days — and change or remove just those temporary seats.
+        </p>
         <label>
           Reason
           <Input {...register('reason')} placeholder="Covering bishop" />

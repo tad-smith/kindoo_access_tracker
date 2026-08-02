@@ -83,6 +83,11 @@ export interface AddManualGrantInput {
   member_name: string;
   scope: string;
   reason: string;
+  /**
+   * Form-side tier. `'full'` is the absence of a marker — the written
+   * grant omits `level` entirely. Only `'limited'` persists a key.
+   */
+  level: 'full' | 'limited';
 }
 
 /**
@@ -119,6 +124,12 @@ export function useAddManualGrantMutation() {
       const grant: ManualGrant = {
         grant_id: crypto.randomUUID(),
         reason: input.reason.trim(),
+        // Full grants carry NO `level` key — absence is the full tier.
+        // Deletion is `arrayRemove` on the stored object, which matches
+        // by deep equality, so a grant written with a stray
+        // `level: 'full'` would not match what the UI hands back and
+        // would be undeletable. Only ever add the key for 'limited'.
+        ...(input.level === 'limited' ? { level: 'limited' as const } : {}),
         granted_by: actor,
         // The serverTimestamp sentinel can't live inside an arrayUnion
         // value (Firestore rejects it for atomic-array ops). We use
