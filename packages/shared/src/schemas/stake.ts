@@ -28,6 +28,8 @@ export const stakeSchema = z.object({
   notifications_enabled: z.boolean(),
   // Optional — existing stake docs predate the field. Absent ⇒ off.
   eq_president_app_access: z.boolean().optional(),
+  // Operator-only, console-set. Absent/empty ⇒ the WEB_BASE_URL param.
+  web_base_url_override: z.string().optional(),
 
   last_over_caps_json: z.array(overCapEntrySchema),
 

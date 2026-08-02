@@ -93,6 +93,16 @@ export type Stake = {
    * replies to its bishopric / clerk inbox.
    */
   notifications_reply_to?: string;
+  /**
+   * Hidden operator-only escape hatch — there is no UI for it anywhere;
+   * set it by hand in the Firestore console. Non-empty after trim ⇒ it
+   * is the base URL for ALL of this stake's email links; absent or
+   * empty ⇒ the `WEB_BASE_URL` function param. Exists because the app
+   * is dual-hosted and a stake's users may live on the legacy domain.
+   *
+   * Affects email links only — never routing, hosting, or auth domains.
+   */
+  web_base_url_override?: string;
 
   // ----- Operational state (server-written) -----
   /** Pools currently over cap; written at end of the over-cap recompute path. Empty array == all clear. */
