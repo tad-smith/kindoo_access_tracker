@@ -9,6 +9,7 @@ import {
   defaultBuildingsForScope,
   editSeatSchema,
   isCrossWardSelection,
+  makeEditSeatSchema,
   makeNewRequestSchema,
   newRequestSchema,
   removeRequestSchema,
@@ -702,5 +703,134 @@ describe('editSeatSchema', () => {
       });
       expect(result.success).toBe(false);
     });
+  });
+});
+
+describe('makeNewRequestSchema — D24 limited-access gates', () => {
+  // `opts.limited` narrows the submittable surface to `add_temp` inside
+  // a ≤90-day window. Everything a full user could submit before must
+  // still parse when the flag is absent — that regression is the point
+  // of the paired assertions below.
+
+  const wards: Ward[] = [ward({ ward_code: 'CO', building_name: 'Maple Building' })];
+  const limitedSchema = makeNewRequestSchema(wards, [], { limited: true });
+  const fullSchema = makeNewRequestSchema(wards, []);
+
+  function tempSubmission(startDate: string, endDate: string) {
+    return {
+      type: 'add_temp' as const,
+      scope: 'CO',
+      member_email: 'bob@example.com',
+      member_name: 'Bob',
+      reason: 'visiting speaker',
+      comment: '',
+      start_date: startDate,
+      end_date: endDate,
+      building_names: ['Maple Building'],
+      urgent: false,
+    };
+  }
+
+  // 2026-05-01 → 2026-07-30 is exactly 90 days; 07-31 is 91.
+  const NINETY_DAYS = ['2026-05-01', '2026-07-30'] as const;
+  const NINETY_ONE_DAYS = ['2026-05-01', '2026-07-31'] as const;
+
+  it('admits a temp window of exactly 90 days', () => {
+    const result = limitedSchema.safeParse(tempSubmission(...NINETY_DAYS));
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a 91-day temp window, reporting on end_date', () => {
+    const result = limitedSchema.safeParse(tempSubmission(...NINETY_ONE_DAYS));
+    expect(result.success).toBe(false);
+    const issue = result.error?.issues.find((i) => i.path.join('.') === 'end_date');
+    expect(issue?.message).toMatch(/limited to 90 days/i);
+  });
+
+  it('rejects an add_manual submission from a limited user, reporting on type', () => {
+    const result = limitedSchema.safeParse({
+      ...tempSubmission('', ''),
+      type: 'add_manual' as const,
+    });
+    expect(result.success).toBe(false);
+    const issue = result.error?.issues.find((i) => i.path.join('.') === 'type');
+    expect(issue?.message).toMatch(/temporary requests only/i);
+  });
+
+  it('regression — a NON-limited user keeps a 200-day temp window', () => {
+    const result = fullSchema.safeParse(tempSubmission('2026-01-01', '2026-07-20'));
+    expect(result.success).toBe(true);
+  });
+
+  it('regression — a NON-limited user may still submit add_manual', () => {
+    const result = fullSchema.safeParse({
+      ...tempSubmission('', ''),
+      type: 'add_manual' as const,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('keeps the cross-ward comment gate working alongside the limited gates', () => {
+    const result = limitedSchema.safeParse({
+      ...tempSubmission(...NINETY_DAYS),
+      building_names: ['Cedar Building'],
+    });
+    expect(result.success).toBe(false);
+    const issue = result.error?.issues.find((i) => i.path.join('.') === 'comment');
+    expect(issue?.message).toMatch(/outside the ward/i);
+  });
+});
+
+describe('makeEditSeatSchema — D24 temp-window cap', () => {
+  function editTemp(startDate: string, endDate: string) {
+    return {
+      type: 'edit_temp' as const,
+      reason: 'visiting speaker',
+      comment: 'extending the window',
+      building_names: ['Maple Building'],
+      start_date: startDate,
+      end_date: endDate,
+    };
+  }
+
+  it('admits an edit_temp window of exactly 90 days when limited', () => {
+    const schema = makeEditSeatSchema({ limited: true });
+    expect(schema.safeParse(editTemp('2026-05-01', '2026-07-30')).success).toBe(true);
+  });
+
+  it('rejects a 91-day edit_temp window when limited, reporting on end_date', () => {
+    const schema = makeEditSeatSchema({ limited: true });
+    const result = schema.safeParse(editTemp('2026-05-01', '2026-07-31'));
+    expect(result.success).toBe(false);
+    const issue = result.error?.issues.find((i) => i.path.join('.') === 'end_date');
+    expect(issue?.message).toMatch(/limited to 90 days/i);
+  });
+
+  it('regression — a NON-limited edit_temp keeps an unbounded window', () => {
+    expect(makeEditSeatSchema().safeParse(editTemp('2026-01-01', '2026-12-31')).success).toBe(true);
+    expect(
+      makeEditSeatSchema({ limited: false }).safeParse(editTemp('2026-01-01', '2026-12-31'))
+        .success,
+    ).toBe(true);
+  });
+
+  it('leaves every non-temp edit type uncapped even when limited (unreachable, but inert)', () => {
+    const schema = makeEditSeatSchema({ limited: true });
+    const result = schema.safeParse({
+      type: 'edit_manual' as const,
+      reason: 'sub teacher',
+      comment: 'note',
+      building_names: ['Maple Building'],
+      start_date: '2026-01-01',
+      end_date: '2026-12-31',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('still enforces the base editSeatSchema rules (comment required)', () => {
+    const schema = makeEditSeatSchema({ limited: true });
+    const result = schema.safeParse({ ...editTemp('2026-05-01', '2026-05-08'), comment: '  ' });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.some((i) => i.path.join('.') === 'comment')).toBe(true);
   });
 });

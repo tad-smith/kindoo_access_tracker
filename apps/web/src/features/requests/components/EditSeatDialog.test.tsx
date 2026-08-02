@@ -39,6 +39,37 @@ vi.mock('../../organizations/hooks', async () => {
   };
 });
 
+// The dialog resolves the D24 `limited` flag from the principal + the
+// active stake. Both default to a FULL user in `beforeEach`, so every
+// pre-existing test in this file keeps its original behaviour; the
+// limited-access block at the bottom overrides them.
+const usePrincipalMock = vi.fn();
+const useActiveStakeMock = vi.fn();
+vi.mock('../../../lib/principal', () => ({
+  usePrincipal: () => usePrincipalMock(),
+}));
+vi.mock('../../../lib/useActiveStake', () => ({
+  useActiveStake: () => useActiveStakeMock(),
+}));
+
+const STAKE_ID = 'csnorth';
+
+function principal(opts: { limited?: boolean } = {}) {
+  return {
+    isAuthenticated: true,
+    firebaseAuthSignedIn: true,
+    email: 'bishop@example.com',
+    canonical: 'bishop@example.com',
+    isPlatformSuperadmin: false,
+    managerStakes: [],
+    stakeMemberStakes: [],
+    bishopricWards: { [STAKE_ID]: ['CO'] },
+    limitedStakes: opts.limited ? [STAKE_ID] : [],
+    hasAnyRole: () => true,
+    wardsInStake: () => ['CO'],
+  };
+}
+
 import { EditSeatDialog } from './EditSeatDialog';
 
 const FAKE_TS = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
@@ -91,6 +122,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   submitMutateAsync.mockResolvedValue({ id: 'req-new' });
   useOrganizationsMock.mockReturnValue(liveResult([]));
+  usePrincipalMock.mockReturnValue(principal());
+  useActiveStakeMock.mockReturnValue(STAKE_ID);
 });
 
 describe('<EditSeatDialog /> — edit_auto sub-type', () => {
@@ -1035,5 +1068,154 @@ describe('<EditSeatDialog /> — organization selector (stake scope only)', () =
     await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
     const arg = submitMutateAsync.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(arg.organization_id).toBeNull();
+  });
+});
+
+describe('<EditSeatDialog /> — limited app access (D24)', () => {
+  // `canEditSeat` guarantees only temp seats reach this dialog for a
+  // limited principal, so every case below is `edit_temp`.
+
+  function tempSeat(scope: string) {
+    return makeSeat({
+      type: 'temp',
+      scope,
+      callings: [],
+      reason: 'visiting speaker',
+      building_names: ['Maple Building'],
+      start_date: '2026-05-01',
+      end_date: '2026-05-08',
+    });
+  }
+
+  function wardCatalogue() {
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
+      ],
+    );
+  }
+
+  it('states the 90-day cap above the date fields', () => {
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat('CO')} onOpenChange={() => {}} />);
+    expect(screen.getByTestId('edit-seat-temp-cap-hint')).toHaveTextContent(/90 days/i);
+  });
+
+  it('regression — a NON-limited edit_temp dialog shows no cap hint', () => {
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat('CO')} onOpenChange={() => {}} />);
+    expect(screen.queryByTestId('edit-seat-temp-cap-hint')).toBeNull();
+  });
+
+  it('blocks an edit stretching the window past 90 days', async () => {
+    const user = userEvent.setup();
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat('CO')} onOpenChange={() => {}} />);
+    await user.clear(screen.getByTestId('edit-seat-end-date'));
+    await user.type(screen.getByTestId('edit-seat-end-date'), '2026-07-31');
+    await user.type(screen.getByTestId('edit-seat-comment'), 'extending');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    // The cap hint carries the same copy, so match on the alert role.
+    const alerts = await screen.findAllByRole('alert');
+    expect(alerts.some((el) => /limited to 90 days/i.test(el.textContent ?? ''))).toBe(true);
+    expect(submitMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('admits an edit landing exactly on the 90-day boundary', async () => {
+    const user = userEvent.setup();
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat('CO')} onOpenChange={() => {}} />);
+    await user.clear(screen.getByTestId('edit-seat-end-date'));
+    await user.type(screen.getByTestId('edit-seat-end-date'), '2026-07-30');
+    await user.type(screen.getByTestId('edit-seat-comment'), 'extending');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
+    expect(submitMutateAsync.mock.calls[0]?.[0]).toMatchObject({
+      type: 'edit_temp',
+      end_date: '2026-07-30',
+    });
+  });
+
+  it('ward scope: locks the buildings to the ward building and renders no checkboxes', () => {
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat('CO')} onOpenChange={() => {}} />);
+    expect(screen.getByTestId('edit-seat-locked-building')).toHaveTextContent('Maple Building');
+    expect(screen.queryByTestId('edit-seat-building-maple')).toBeNull();
+    expect(screen.queryByTestId('edit-seat-building-cedar')).toBeNull();
+  });
+
+  it('ward scope: submits exactly the ward building even when the seat carried more', async () => {
+    const user = userEvent.setup();
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    const seat = makeSeat({
+      type: 'temp',
+      scope: 'CO',
+      callings: [],
+      reason: 'visiting speaker',
+      building_names: ['Maple Building', 'Cedar Building'],
+      start_date: '2026-05-01',
+      end_date: '2026-05-08',
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.type(screen.getByTestId('edit-seat-comment'), 'shortening the grant');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
+    expect(submitMutateAsync.mock.calls[0]?.[0]).toMatchObject({
+      type: 'edit_temp',
+      scope: 'CO',
+      building_names: ['Maple Building'],
+    });
+  });
+
+  it('ward scope with no building configured: blocks with a message and a disabled Submit', () => {
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: '' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
+    );
+    render(<EditSeatDialog seat={tempSeat('CO')} onOpenChange={() => {}} />);
+    expect(screen.getByTestId('edit-seat-locked-building-missing')).toHaveTextContent(
+      /Kindoo Manager/i,
+    );
+    expect(screen.getByTestId('edit-seat-confirm')).toBeDisabled();
+  });
+
+  it('stake scope: keeps the ordinary checklist', () => {
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    mockCatalogue(
+      [],
+      [
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
+      ],
+    );
+    render(<EditSeatDialog seat={tempSeat('stake')} onOpenChange={() => {}} />);
+    expect(screen.getByTestId('edit-seat-building-maple')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-seat-building-cedar')).toBeInTheDocument();
+    expect(screen.queryByTestId('edit-seat-locked-building')).toBeNull();
+  });
+
+  it('regression — a NON-limited ward edit keeps the checklist and the seat’s own selection', () => {
+    wardCatalogue();
+    const seat = makeSeat({
+      type: 'temp',
+      scope: 'CO',
+      callings: [],
+      reason: 'visiting speaker',
+      building_names: ['Maple Building', 'Cedar Building'],
+      start_date: '2026-05-01',
+      end_date: '2026-05-08',
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    expect(screen.queryByTestId('edit-seat-locked-building')).toBeNull();
+    expect((screen.getByTestId('edit-seat-building-maple') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId('edit-seat-building-cedar') as HTMLInputElement).checked).toBe(true);
   });
 });

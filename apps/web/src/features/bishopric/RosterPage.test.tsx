@@ -146,7 +146,7 @@ function mockPendingRemoveFor(canonical: string) {
 
 import { BishopricRosterPage } from './RosterPage';
 
-function principal(wards: string[]) {
+function principal(wards: string[], opts: { limited?: boolean } = {}) {
   return {
     isAuthenticated: true,
     firebaseAuthSignedIn: true,
@@ -156,6 +156,7 @@ function principal(wards: string[]) {
     managerStakes: [],
     stakeMemberStakes: [],
     bishopricWards: { csnorth: wards },
+    limitedStakes: opts.limited ? ['csnorth'] : [],
     hasAnyRole: () => true,
     wardsInStake: () => wards,
   };
@@ -1045,5 +1046,74 @@ describe('<BishopricRosterPage /> — Kindoo Sites label (spec §15)', () => {
     mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Pine)' }]);
     render(<BishopricRosterPage initialWard="CO" />);
     expect(screen.queryByTestId('kindoo-site-badge-a@x.com')).toBeNull();
+  });
+});
+
+describe('<BishopricRosterPage /> — limited app access (D24)', () => {
+  // A limited bishopric member's authority stops at temp seats. The
+  // roster must not offer Edit or Remove on the durable rows at all —
+  // the rules would reject those submits.
+
+  function threeSeatTypes() {
+    return [
+      makeSeat({
+        member_canonical: 'auto@x.com',
+        member_email: 'auto@x.com',
+        member_name: 'Auto Person',
+        type: 'auto',
+        callings: ['Bishop'],
+        scope: 'CO',
+      }),
+      makeSeat({
+        member_canonical: 'manual@x.com',
+        member_email: 'manual@x.com',
+        member_name: 'Manual Person',
+        type: 'manual',
+        callings: [],
+        scope: 'CO',
+      }),
+      makeSeat({
+        member_canonical: 'temp@x.com',
+        member_email: 'temp@x.com',
+        member_name: 'Temp Person',
+        type: 'temp',
+        callings: [],
+        scope: 'CO',
+        start_date: '2026-05-01',
+        end_date: '2026-06-01',
+      }),
+    ];
+  }
+
+  it('shows neither Edit nor Remove on auto and manual rows, but both on the temp row', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO'], { limited: true }));
+    mockSeats(threeSeatTypes());
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    expect(screen.queryByTestId('edit-btn-auto@x.com')).toBeNull();
+    expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+
+    expect(screen.queryByTestId('edit-btn-manual@x.com')).toBeNull();
+    expect(screen.queryByTestId('remove-btn-manual@x.com')).toBeNull();
+
+    expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+  });
+
+  it('regression — a NON-limited bishopric keeps Edit on all three and Remove on the non-auto rows', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats(threeSeatTypes());
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    expect(screen.getByTestId('edit-btn-auto@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+
+    // Auto rows have never carried Remove — LCR owns them.
+    expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+    expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
   });
 });

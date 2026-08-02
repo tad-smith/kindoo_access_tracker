@@ -4,8 +4,9 @@
 // `<Dialog>` wrapping a react-hook-form `<form>` whose Cancel / Submit
 // live in `Dialog.Footer` inside the form.
 //
-// Data (scopes / buildings / wards) comes from the shared
-// `useNewRequestFormData` hook. While the catalogue is loading the
+// Data (scopes / buildings / wards / `limited`) comes from the shared
+// `useNewRequestFormData` hook; `limited` narrows the form to the D24
+// surface (temp-only, 90-day cap, ward building locked). While the catalogue is loading the
 // dialog renders a spinner in place of the form. The dialog is always
 // launched from a scoped roster context, so it narrows the form's scope
 // list to the single launched scope — the form renders it as a fixed
@@ -27,7 +28,7 @@ export interface NewRequestDialogProps {
 }
 
 export function NewRequestDialog({ open, onOpenChange, scope }: NewRequestDialogProps) {
-  const { scopes, buildings, wards, isLoading } = useNewRequestFormData();
+  const { scopes, buildings, wards, isLoading, limited } = useNewRequestFormData();
 
   // Lock the form to the single launched scope: the form renders a
   // one-element scope list as a fixed label, never the dropdown. The
@@ -52,6 +53,7 @@ export function NewRequestDialog({ open, onOpenChange, scope }: NewRequestDialog
           buildings={buildings}
           wards={wards}
           {...(scope !== undefined ? { initialScope: scope } : {})}
+          limited={limited}
           onSubmitted={() => onOpenChange(false)}
           onCancel={() => onOpenChange(false)}
         />
