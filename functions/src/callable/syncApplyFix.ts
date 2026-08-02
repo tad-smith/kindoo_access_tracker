@@ -43,7 +43,9 @@
 // calling order (`@kindoo/shared:seatCallingOrder`) and reconcile the
 // corresponding access doc against the hard-coded app-access calling sets
 // (`filterAppAccessCallings` — ward callings for ward scopes, stake
-// callings for 'stake' scope). `applyScopeMismatch` /
+// callings for 'stake' scope, plus the stake-gated Elders Quorum
+// President ward calling when `stake.eq_president_app_access` is on).
+// `applyScopeMismatch` /
 // `applyBuildingsMismatch` don't touch type or callings, so that
 // bookkeeping doesn't apply to them.
 //
@@ -79,6 +81,7 @@ import { assertSeatSiteStamped } from '../lib/wardSites.js';
 import type {
   Access,
   ActorRef,
+  AppAccessOptions,
   Building,
   BuildingsMismatchPayload,
   CallingsMismatchPayload,
@@ -88,6 +91,7 @@ import type {
   SbaOnlyRemovePayload,
   ScopeMismatchPayload,
   Seat,
+  Stake,
   SyncApplyFixInput,
   SyncApplyFixResult,
   TypeMismatchPayload,
@@ -178,18 +182,39 @@ export const syncApplyFix = onCall(
       throw new HttpsError('permission-denied', 'manager record is inactive');
     }
 
+    // Stake-gated app-access config, read ONCE per invocation and threaded
+    // into the handlers. Deliberately outside the handler transactions:
+    // each one has a strict reads-before-writes ordering that an extra
+    // mid-transaction read would have to thread through. Missing stake doc
+    // ⇒ off (absent means off — see `Stake.eq_president_app_access`). A
+    // config flip landing mid-Sync-run is a benign race: the next run
+    // re-detects the row and heals it.
+    const stakeSnap = await db.doc(`stakes/${stakeId}`).get();
+    const appAccessOpts: AppAccessOptions = {
+      eqPresidentAccess:
+        (stakeSnap.data() as Partial<Stake> | undefined)?.eq_president_app_access === true,
+    };
+
     const code: string = fix.code;
     switch (code) {
       case 'kindoo-only':
-        return applyKindooOnly(stakeId, fix.payload as KindooOnlyPayload);
+        return applyKindooOnly(stakeId, fix.payload as KindooOnlyPayload, appAccessOpts);
       case 'callings-mismatch':
-        return applyCallingsMismatch(stakeId, fix.payload as CallingsMismatchPayload);
+        return applyCallingsMismatch(
+          stakeId,
+          fix.payload as CallingsMismatchPayload,
+          appAccessOpts,
+        );
       case 'scope-mismatch':
         return applyScopeMismatch(stakeId, fix.payload as ScopeMismatchPayload);
       case 'type-mismatch':
-        return applyTypeMismatch(stakeId, fix.payload as TypeMismatchPayload);
+        return applyTypeMismatch(stakeId, fix.payload as TypeMismatchPayload, appAccessOpts);
       case 'kindoo-unparseable':
-        return applyKindooUnparseable(stakeId, fix.payload as KindooUnparseablePayload);
+        return applyKindooUnparseable(
+          stakeId,
+          fix.payload as KindooUnparseablePayload,
+          appAccessOpts,
+        );
       case 'buildings-mismatch':
         return applyBuildingsMismatch(stakeId, fix.payload as BuildingsMismatchPayload);
       case 'sba-only':
@@ -203,6 +228,7 @@ export const syncApplyFix = onCall(
 async function applyKindooOnly(
   stakeId: string,
   payload: KindooOnlyPayload | undefined,
+  appAccessOpts: AppAccessOptions,
 ): Promise<SyncApplyFixResult> {
   if (!payload || typeof payload !== 'object') {
     throw new HttpsError('invalid-argument', 'payload required');
@@ -269,7 +295,7 @@ async function applyKindooOnly(
     let priorAccess: Access | undefined;
     if (isAuto) {
       sortOrder = seatCallingOrder(dedupedCallings);
-      accessCallings = filterAppAccessCallings(scope, dedupedCallings);
+      accessCallings = filterAppAccessCallings(scope, dedupedCallings, appAccessOpts);
       const accessSnap = await tx.get(accessRef);
       if (accessSnap.exists) priorAccess = accessSnap.data() as Access;
     }
@@ -377,6 +403,7 @@ async function applyKindooOnly(
 async function applyCallingsMismatch(
   stakeId: string,
   payload: CallingsMismatchPayload | undefined,
+  appAccessOpts: AppAccessOptions,
 ): Promise<SyncApplyFixResult> {
   if (!payload || typeof payload !== 'object') {
     throw new HttpsError('invalid-argument', 'payload required');
@@ -433,7 +460,7 @@ async function applyCallingsMismatch(
     // callings against the scope's app-access set, then either rewrite the
     // scope's importer_callings or clear it. Read the access doc before
     // any write.
-    const accessCallings = filterAppAccessCallings(seat.scope, newCallings);
+    const accessCallings = filterAppAccessCallings(seat.scope, newCallings, appAccessOpts);
     const accessSnap = await tx.get(accessRef);
     if (accessCallings.length > 0) {
       writeAccessForAutoScope(tx, accessRef, {
@@ -550,6 +577,7 @@ async function applyScopeMismatch(
 async function applyTypeMismatch(
   stakeId: string,
   payload: TypeMismatchPayload | undefined,
+  appAccessOpts: AppAccessOptions,
 ): Promise<SyncApplyFixResult> {
   if (!payload || typeof payload !== 'object') {
     throw new HttpsError('invalid-argument', 'payload required');
@@ -605,7 +633,9 @@ async function applyTypeMismatch(
 
       const newSortOrder = seatCallingOrder(autoCallings);
       update.sort_order = newSortOrder;
-      const accessCallings = filterAppAccessCallings(seat.scope, autoCallings);
+      // Promote only. The demote branch below clears the whole scope entry,
+      // which is correct in either toggle state, so it takes no options.
+      const accessCallings = filterAppAccessCallings(seat.scope, autoCallings, appAccessOpts);
       if (accessCallings.length > 0) {
         const accessSnap = await tx.get(accessRef);
         const priorAccess = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
@@ -682,6 +712,7 @@ async function applyTypeMismatch(
 async function applyKindooUnparseable(
   stakeId: string,
   payload: KindooUnparseablePayload | undefined,
+  appAccessOpts: AppAccessOptions,
 ): Promise<SyncApplyFixResult> {
   if (!payload || typeof payload !== 'object') {
     throw new HttpsError('invalid-argument', 'payload required');
@@ -734,7 +765,9 @@ async function applyKindooUnparseable(
       // Firestore's reads-before-writes rule.
       const accessSnap = await tx.get(accessRef);
       const stakeSort = seatCallingOrder([calling]);
-      const stakeHasGrant = filterAppAccessCallings('stake', [calling]).length > 0;
+      // Inert: the probe is against the STAKE set, which the Elders Quorum
+      // President opt-in never touches. Passed for uniformity only.
+      const stakeHasGrant = filterAppAccessCallings('stake', [calling], appAccessOpts).length > 0;
       // The seat's `sort_order` comes from the canonical churchwide order
       // (parity with `applyKindooOnly` / `applyCallingsMismatch`); `null`
       // for an unknown calling. The access grant is gated on the stake
