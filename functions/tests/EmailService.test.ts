@@ -116,6 +116,12 @@ describe('EmailService — pure builders', () => {
     ).toBe('https://kindoo.csnorth.org/my-requests');
   });
 
+  it('buildLink accepts an http:// override', () => {
+    expect(buildLink('/my-requests', { web_base_url_override: 'http://kindoo.csnorth.org' })).toBe(
+      'http://kindoo.csnorth.org/my-requests',
+    );
+  });
+
   it('buildLink falls back to the param when the override is absent / empty / whitespace', () => {
     expect(buildLink('/my-requests', {})).toBe('https://stakebuildingaccess.org/my-requests');
     expect(buildLink('/my-requests', { web_base_url_override: '' })).toBe(
@@ -123,6 +129,22 @@ describe('EmailService — pure builders', () => {
     );
     expect(buildLink('/my-requests', { web_base_url_override: '   ' })).toBe(
       'https://stakebuildingaccess.org/my-requests',
+    );
+  });
+
+  it('buildLink ignores an override with no http(s) scheme', () => {
+    expect(buildLink('/my-requests', { web_base_url_override: 'kindoo.csnorth.org' })).toBe(
+      'https://stakebuildingaccess.org/my-requests',
+    );
+    expect(buildLink('/my-requests', { web_base_url_override: 'javascript:alert(1)' })).toBe(
+      'https://stakebuildingaccess.org/my-requests',
+    );
+  });
+
+  it('buildLink still throws when the param is unset and the override is rejected', () => {
+    delete process.env['WEB_BASE_URL'];
+    expect(() => buildLink('/', { web_base_url_override: 'kindoo.csnorth.org' })).toThrow(
+      /WEB_BASE_URL/,
     );
   });
 

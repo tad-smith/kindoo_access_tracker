@@ -95,10 +95,13 @@ export type Stake = {
   notifications_reply_to?: string;
   /**
    * Hidden operator-only escape hatch — there is no UI for it anywhere;
-   * set it by hand in the Firestore console. Non-empty after trim ⇒ it
-   * is the base URL for ALL of this stake's email links; absent or
-   * empty ⇒ the `WEB_BASE_URL` function param. Exists because the app
-   * is dual-hosted and a stake's users may live on the legacy domain.
+   * set it by hand in the Firestore console. Exists because the app is
+   * dual-hosted and a stake's users may live on the legacy domain.
+   *
+   * Must start with `http://` or `https://`. When it does, it is the
+   * base URL for ALL of this stake's email links. Absent, empty, or
+   * missing the scheme ⇒ ignored (a rejected value is logged) and the
+   * `WEB_BASE_URL` function param applies.
    *
    * Affects email links only — never routing, hosting, or auth domains.
    */

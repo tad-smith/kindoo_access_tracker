@@ -82,10 +82,8 @@ export function buildFromAddress(stake: Pick<Stake, 'stake_name'>): string {
 
 /**
  * Read the stake's base URL and append a route. The per-stake
- * `web_base_url_override` wins when non-empty after trim; otherwise the
- * `WEB_BASE_URL` param applies. The override is deliberately
- * unvalidated — it's an operator-only field set by hand in the
- * Firestore console.
+ * `web_base_url_override` wins over the `WEB_BASE_URL` param — see
+ * {@link resolveBaseUrl} for the guard on it.
  *
  * Throws if neither is set — the trigger surface catches and writes an
  * `email_send_failed` audit row, so deploy-time misconfiguration is
@@ -97,14 +95,29 @@ export function buildFromAddress(stake: Pick<Stake, 'stake_name'>): string {
  * "missing" and "empty string" the same way.
  */
 export function buildLink(route: string, stake?: Pick<Stake, 'web_base_url_override'>): string {
-  const override = stake?.web_base_url_override?.trim();
-  const base = override || WEB_BASE_URL.value();
+  const base = resolveBaseUrl(stake);
   if (!base) {
     throw new Error('WEB_BASE_URL is not set on the function. Set it at deploy time.');
   }
   const trimmed = base.replace(/\/+$/, '');
   const path = route.startsWith('/') ? route : `/${route}`;
   return `${trimmed}${path}`;
+}
+
+/**
+ * The override applies only when it trims to a non-empty `http(s)://`
+ * string; anything else is logged and ignored, falling back to the
+ * `WEB_BASE_URL` param exactly as if the field were absent. The scheme
+ * check is the whole validation — the field is operator-only and set by
+ * hand in the Firestore console, but it drives every link in every
+ * email this stake sends, so a typo shouldn't be silent.
+ */
+function resolveBaseUrl(stake?: Pick<Stake, 'web_base_url_override'>): string {
+  const override = stake?.web_base_url_override?.trim();
+  if (!override) return WEB_BASE_URL.value();
+  if (override.startsWith('https://') || override.startsWith('http://')) return override;
+  logger.warn('web_base_url_override ignored — needs an http:// or https:// scheme', { override });
+  return WEB_BASE_URL.value();
 }
 
 /** Pretty scope label for subject lines. */
