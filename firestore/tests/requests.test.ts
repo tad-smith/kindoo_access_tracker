@@ -1215,8 +1215,12 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
         );
       });
 
+      // Seeds a temp seat for the fixture's `member_canonical`: an
+      // `edit_temp` from a limited user is gated on the TARGET SEAT's
+      // type, resolved as `seats/{member_canonical}`.
       it('ward-scope edit_temp within the cap with the ward building + comment → ok', async () => {
         await seedWards();
+        await seedSeat('temp');
         const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
         await assertSucceeds(
           db.doc(PATH).set(
@@ -1459,6 +1463,8 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
 
       it('id resolves + stale building_name → edit_temp with the CURRENT name is allowed', async () => {
         await seedWards();
+        // `edit_temp` from a limited user also needs a temp target seat.
+        await seedSeat('temp');
         const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
         await assertSucceeds(
           db.doc(PATH).set(
@@ -1575,6 +1581,64 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
       });
     });
 
+    // The edit-side mirror of the block above. Each case seeds the wards
+    // too, so every other conjunct in the create predicate passes and the
+    // only thing left to deny on is the target seat's type — a denial
+    // here is attributable to `limitedEditTargetIsTemp` and nothing else.
+    //
+    // Note the seat key: `edit_*` resolves `seats/{member_canonical}`,
+    // not the `seat_member_canonical` the remove gate reads.
+    describe('edit_temp restricted to temp seats', () => {
+      it('edit_temp against a manual seat → denied', async () => {
+        await seedWards();
+        await seedSeat('manual');
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingEditTempByBishopric(WARD, { building_names: [WARD_BUILDING] })),
+        );
+      });
+
+      it('edit_temp against an auto seat → denied', async () => {
+        await seedWards();
+        await seedSeat('auto');
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingEditTempByBishopric(WARD, { building_names: [WARD_BUILDING] })),
+        );
+      });
+
+      it('edit_temp against a missing seat doc → denied (fails closed)', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingEditTempByBishopric(WARD, { building_names: [WARD_BUILDING] })),
+        );
+      });
+
+      it('edit_temp with no member_canonical field → denied', async () => {
+        await seedWards();
+        await seedSeat('temp');
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        const payload = pendingEditTempByBishopric(WARD, { building_names: [WARD_BUILDING] });
+        delete payload['member_canonical'];
+        await assertFails(db.doc(PATH).set(payload));
+      });
+
+      it('edit_temp with an empty member_canonical → denied', async () => {
+        await seedWards();
+        await seedSeat('temp');
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditTempByBishopric(WARD, {
+              building_names: [WARD_BUILDING],
+              member_canonical: '',
+            }),
+          ),
+        );
+      });
+    });
+
     // Full users carry no `limited` key on their claim block, so
     // `!isLimited(stakeId)` short-circuits the whole D25 clause. These
     // pin that the new rule is invisible to them.
@@ -1614,6 +1678,18 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
         await seedSeat('manual');
         const db = bishopricContext(env, STAKE_ID, [WARD]).firestore();
         await assertSucceeds(db.doc(PATH).set(pendingRemoveByBishopric(WARD)));
+      });
+
+      // The assertion that proves the edit gate binds LIMITED callers
+      // only. A full user editing a manual seat is ordinary business:
+      // if this ever flips red, the D25 clause has leaked out of its
+      // `!isLimited(stakeId)` guard and narrowed everyone.
+      it('non-limited bishopric edit_temp against a manual seat → still ok', async () => {
+        await seedSeat('manual');
+        const db = bishopricContext(env, STAKE_ID, [WARD]).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(pendingEditTempByBishopric(WARD, { building_names: [OTHER_BUILDING] })),
+        );
       });
 
       it('non-limited stake member add_manual → still ok', async () => {

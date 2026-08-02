@@ -677,6 +677,40 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/stakes/$(sid)/seats/$(data.seat_member_canonical)).data.type == 'temp';
       }
 
+      // The edit-side mirror: a limited user may only edit TEMP seats.
+      // Only `edit_temp` ever reaches here — `edit_auto` / `edit_manual`
+      // are already off the limited type list — but without this the
+      // create predicate accepted an off-UI `edit_temp` aimed at a
+      // manual / auto seat, which `markRequestComplete` then rejected
+      // at completion, leaving a dead row in the manager queue.
+      //
+      // Reads a DIFFERENT field than the remove gate: `edit_*` resolves
+      // its seat as `seats/{member_canonical}` (see
+      // `functions/src/callable/markRequestComplete.ts`), while `remove`
+      // uses `seat_member_canonical`. Same defensive guards for the same
+      // reason — an absent or empty field would build a collection path
+      // and error opaquely rather than deny legibly. A seat doc that
+      // simply doesn't exist still denies: `get()` returns null and the
+      // field read errors.
+      //
+      // Same accepted edge as the remove gate: this checks the seat's
+      // PRIMARY `type`, so a temp duplicate grant sitting under a
+      // non-temp primary is denied for limited users. `canEditSeat` in
+      // the client applies the identical primary-type test, so the UI
+      // never offers a submit these rules reject.
+      //
+      // Document access cost: 1 seat `get()`. Worst case for the whole
+      // limited path is a ward-scope `edit_temp` — this read on top of
+      // `limitedWardBuildingName`'s 3 — so 4 of the 10 allowed per
+      // single-document request. `add_temp` and `remove` short-circuit
+      // this conjunct and pay nothing for it.
+      function limitedEditTargetIsTemp(sid, data) {
+        return 'member_canonical' in data
+          && data.member_canonical is string
+          && data.member_canonical.size() > 0
+          && get(/databases/$(database)/documents/stakes/$(sid)/seats/$(data.member_canonical)).data.type == 'temp';
+      }
+
       // ----- Requests -----
       // Reads: managers see all; the original requester sees their
       // own; stake-scope members see every request in the stake
@@ -810,8 +844,8 @@ service cloud.firestore {
           // `stakes[stakeId].limited == true` gets a narrowed submit
           // surface; everyone else is untouched — a full user short-
           // circuits on `!isLimited(stakeId)` and never evaluates a
-          // single clause below (nor pays for the two `get()` reads
-          // the ward / seat checks need). Managers are never limited —
+          // single clause below (nor pays for the `get()` reads the
+          // ward / seat checks need). Managers are never limited —
           // the claim minter refuses to mint `limited` for an active
           // `kindooManagers` row — so the manager branch above keeps
           // its full reach.
@@ -824,7 +858,9 @@ service cloud.firestore {
           //     own building (stake scope keeps the free building
           //     choice — there is no single ward to lock to);
           //   - `remove` allowed only against a seat whose
-          //     `type == 'temp'`.
+          //     `type == 'temp'`, and `edit_temp` likewise — the same
+          //     temp-only authority read through each type's own seat
+          //     key (`seat_member_canonical` vs `member_canonical`).
           //
           // This is the LAST clause in the predicate on purpose: the
           // date-shape and role-for-scope gates above must have
@@ -837,6 +873,8 @@ service cloud.firestore {
                  request.resource.data.type in ['add_temp', 'edit_temp', 'remove']
               && (request.resource.data.type != 'remove'
                   || limitedRemoveTargetIsTemp(stakeId, request.resource.data))
+              && (request.resource.data.type != 'edit_temp'
+                  || limitedEditTargetIsTemp(stakeId, request.resource.data))
               && (request.resource.data.type == 'remove'
                   || (
                        tempWindowWithin90Days(request.resource.data)
