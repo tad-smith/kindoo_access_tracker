@@ -47,6 +47,7 @@ import {
   type WardForm,
 } from './schemas';
 import {
+  useBackfillEqPresidentAccessMutation,
   useBuildings,
   useDeleteBuildingMutation,
   useDeleteKindooSiteMutation,
@@ -1216,6 +1217,10 @@ function ManagerFormDialog({ open, isPending, onSubmit, onClose }: ManagerFormDi
 function ConfigKeysTab() {
   const stake = useStakeDoc();
   const update = useUpdateStakeConfigMutation();
+  const backfill = useBackfillEqPresidentAccessMutation();
+  // Non-null while the post-save backfill offer is on screen; the value
+  // is the direction the flag just moved.
+  const [backfillPrompt, setBackfillPrompt] = useState<'grant' | 'revoke' | null>(null);
 
   const defaults = useMemo<ConfigForm>(() => {
     const s = stake.data;
@@ -1224,6 +1229,9 @@ function ConfigKeysTab() {
       stake_seat_cap: s?.stake_seat_cap ?? 0,
       timezone: s?.timezone ?? 'America/Denver',
       notifications_enabled: s?.notifications_enabled ?? true,
+      // Opt-in, so absent means off. Deliberately NOT `?? true` like
+      // `notifications_enabled` above.
+      eq_president_app_access: s?.eq_president_app_access === true,
     };
   }, [stake.data]);
 
@@ -1234,11 +1242,41 @@ function ConfigKeysTab() {
   const { control, register, handleSubmit, formState } = form;
 
   async function onSubmit(input: ConfigForm) {
+    // Read the persisted value before the write lands — the live stake
+    // snapshot updates underneath us once the mutation resolves.
+    const prev = stake.data?.eq_president_app_access === true;
     try {
       await update.mutateAsync(input);
       toast('Config saved.', 'success');
+      // Offer the reconcile pass only on a real flip. The `setup_complete`
+      // guard is defensive — routing keeps everyone on the bootstrap
+      // wizard until setup completes — but it pins the requirement that
+      // initial setup never raises a backfill dialog.
+      if (input.eq_president_app_access !== prev && stake.data?.setup_complete === true) {
+        setBackfillPrompt(input.eq_president_app_access ? 'grant' : 'revoke');
+      }
     } catch (err) {
       toast(errorMessage(err), 'error');
+    }
+  }
+
+  async function onConfirmBackfill() {
+    if (!backfillPrompt) return;
+    try {
+      const res = await backfill.mutateAsync(backfillPrompt);
+      toast(
+        backfillPrompt === 'grant'
+          ? `Granted app access to ${res.docs_written} member(s).`
+          : `Revoked app access for ${res.docs_written + res.docs_deleted} member(s).`,
+        'success',
+      );
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    } finally {
+      // Close either way: the config save already landed, and Sync
+      // self-heals the access docs on its next run, so a failed backfill
+      // is a delay rather than a broken state.
+      setBackfillPrompt(null);
     }
   }
 
@@ -1287,6 +1325,21 @@ function ConfigKeysTab() {
         />
         <span>Email Notifications Enabled</span>
       </label>
+      <label className="kd-switch-label" htmlFor="config-eq-president-access">
+        <Controller
+          name="eq_president_app_access"
+          control={control}
+          render={({ field }) => (
+            <Switch
+              id="config-eq-president-access"
+              checked={field.value === true}
+              onCheckedChange={field.onChange}
+              data-testid="config-eq-president-access"
+            />
+          )}
+        />
+        <span>Elders Quorum Presidents Get App Access</span>
+      </label>
       {formState.errors.stake_name ? (
         <p role="alert" className="kd-form-error">
           {formState.errors.stake_name.message}
@@ -1297,6 +1350,38 @@ function ConfigKeysTab() {
           {update.isPending ? 'Saving…' : 'Save config'}
         </Button>
       </div>
+      <Dialog
+        open={backfillPrompt !== null}
+        onOpenChange={(next) => {
+          if (!next) setBackfillPrompt(null);
+        }}
+        dismissable={!backfill.isPending}
+        title={
+          backfillPrompt === 'revoke'
+            ? 'Revoke access from Elders Quorum Presidents?'
+            : 'Grant access to current Elders Quorum Presidents?'
+        }
+        description={
+          backfillPrompt === 'revoke'
+            ? 'The setting is saved — Sync will no longer grant app access for the Elders Quorum President calling. Do you also want to revoke the access existing Elders Quorum Presidents were already granted? If you skip this, they keep access until their callings next change via Sync.'
+            : 'The setting is saved — new Elders Quorum Presidents will get app access as Sync picks up their callings. Do you also want to grant access now to members who currently hold the Elders Quorum President calling?'
+        }
+      >
+        <Dialog.Footer>
+          <Dialog.CancelButton data-testid="config-eq-backfill-cancel">
+            {backfillPrompt === 'revoke' ? 'Leave access in place' : 'Not now'}
+          </Dialog.CancelButton>
+          <Dialog.ConfirmButton
+            onClick={() => {
+              void onConfirmBackfill();
+            }}
+            disabled={backfill.isPending}
+            data-testid="config-eq-backfill-confirm"
+          >
+            {backfillPrompt === 'revoke' ? 'Revoke access now' : 'Grant access now'}
+          </Dialog.ConfirmButton>
+        </Dialog.Footer>
+      </Dialog>
     </form>
   );
 }

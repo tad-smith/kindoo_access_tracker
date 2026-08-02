@@ -295,4 +295,41 @@ describe('pickPrimarySegment', () => {
     const primary = pickPrimarySegment(parsed);
     expect(primary?.scope).toBe('stake');
   });
+
+  it('prefers the EQ President ward segment when the stake opts in', () => {
+    // Elders Quorum President grants ward app access only under
+    // `eqPresidentAccess`; with it on, the non-app-access stake segment
+    // loses primary to the ward.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Elders Quorum President)',
+      STAKE,
+      WARDS,
+    );
+    const primary = pickPrimarySegment(parsed, { eqPresidentAccess: true });
+    expect(primary?.scope).toBe('CO');
+  });
+
+  it('leaves the EQ President ward segment inert when the stake has not opted in', () => {
+    // Same description, gate off → neither segment grants app access, so
+    // the preference is inert and stake-first ordering applies.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Elders Quorum President)',
+      STAKE,
+      WARDS,
+    );
+    const primary = pickPrimarySegment(parsed, { eqPresidentAccess: false });
+    expect(primary?.scope).toBe('stake');
+  });
+
+  it('keeps stake-first when the opted-in EQ President ties a stake app-access calling', () => {
+    // Gate on → both segments grant app access for their scope, so the
+    // existing stake-first tiebreak still wins.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Stake Clerk) | Maple Ward (Elders Quorum President)',
+      STAKE,
+      WARDS,
+    );
+    const primary = pickPrimarySegment(parsed, { eqPresidentAccess: true });
+    expect(primary?.scope).toBe('stake');
+  });
 });

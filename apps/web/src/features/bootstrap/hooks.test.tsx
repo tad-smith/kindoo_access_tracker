@@ -92,6 +92,7 @@ describe('bootstrap duplicateBuildingNameBlocker', () => {
 // `created_at` and wiped fields), and immutable-slug create semantics.
 
 const setDocMock = vi.fn().mockResolvedValue(undefined);
+const updateDocMock = vi.fn().mockResolvedValue(undefined);
 const getDocMock = vi.fn();
 const serverTimestampMock = vi.fn(() => '__server_timestamp__');
 // runTransaction shim — invokes the callback with a tx that delegates
@@ -111,7 +112,7 @@ vi.mock('firebase/firestore', async () => {
     ...actual,
     setDoc: (...args: unknown[]) => setDocMock(...args),
     deleteDoc: vi.fn().mockResolvedValue(undefined),
-    updateDoc: vi.fn().mockResolvedValue(undefined),
+    updateDoc: (...args: unknown[]) => updateDocMock(...args),
     getDoc: (...args: unknown[]) => getDocMock(...args),
     runTransaction: (db: unknown, fn: (tx: unknown) => Promise<unknown>) =>
       runTransactionMock(db, fn),
@@ -138,6 +139,11 @@ vi.mock('../../lib/docs', async () => {
       path: `stakes/csnorth/wards/${wardCode}`,
       id: wardCode,
     }),
+    stakeRef: (_db: unknown, stakeId: string) => ({
+      __sentinel: 'stakeRef',
+      path: `stakes/${stakeId}`,
+      id: stakeId,
+    }),
   };
 });
 
@@ -154,7 +160,7 @@ vi.mock('../../lib/useActiveStake', () => ({
   useActiveStake: () => 'csnorth',
 }));
 
-import { useAddBuildingMutation, useAddWardMutation } from './hooks';
+import { useAddBuildingMutation, useAddWardMutation, useStep1Mutation } from './hooks';
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({
@@ -165,9 +171,41 @@ function wrapper({ children }: { children: ReactNode }) {
 
 beforeEach(() => {
   setDocMock.mockClear();
+  updateDocMock.mockClear();
   getDocMock.mockClear();
   serverTimestampMock.mockClear();
   runTransactionMock.mockClear();
+});
+
+describe('useStep1Mutation', () => {
+  it('writes the Elders Quorum President app-access opt-in alongside the stake fields', async () => {
+    const { result } = renderHook(() => useStep1Mutation(), { wrapper });
+    await result.current.mutateAsync({
+      stake_name: 'My Stake',
+      stake_seat_cap: 200,
+      eq_president_app_access: true,
+    });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const [, body] = updateDocMock.mock.calls[0]!;
+    expect(body).toMatchObject({
+      stake_name: 'My Stake',
+      stake_seat_cap: 200,
+      eq_president_app_access: true,
+      lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
+    });
+  });
+
+  it('persists the opt-in as false when the wizard leaves the switch off', async () => {
+    const { result } = renderHook(() => useStep1Mutation(), { wrapper });
+    await result.current.mutateAsync({
+      stake_name: 'My Stake',
+      stake_seat_cap: 200,
+      eq_president_app_access: false,
+    });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const [, body] = updateDocMock.mock.calls[0]!;
+    expect(body).toMatchObject({ eq_president_app_access: false });
+  });
 });
 
 describe('useAddBuildingMutation', () => {

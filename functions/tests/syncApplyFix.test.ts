@@ -31,6 +31,33 @@ async function seedManager(opts: { active?: boolean; email?: string } = {}): Pro
   });
 }
 
+/**
+ * Seed the stake parent doc. Most of this suite deliberately does NOT
+ * call this — the callable's stake read must default the Elders Quorum
+ * President gate to OFF on a missing doc, and the unseeded tests pin
+ * that. Pass `eqPresidentAccess` to exercise the gate explicitly.
+ */
+async function seedStake(opts: { eqPresidentAccess?: boolean } = {}): Promise<void> {
+  const { db } = requireEmulators();
+  const body: Record<string, unknown> = {
+    stake_name: 'Cottonwood South Stake',
+    bootstrap_admin_email: 'admin@gmail.com',
+    setup_complete: true,
+    stake_seat_cap: 0,
+    timezone: 'America/Denver',
+    notifications_enabled: true,
+    last_over_caps_json: [],
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    last_modified_by: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+    lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+  };
+  if (opts.eqPresidentAccess !== undefined) {
+    body.eq_president_app_access = opts.eqPresidentAccess;
+  }
+  await db.doc(`stakes/${STAKE_ID}`).set(body);
+}
+
 async function seedSeat(opts: {
   canonical?: string;
   scope?: string;
@@ -2047,8 +2074,9 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       it('stamps sort_order = canonical MIN and writes access docs for ward app-access callings', async () => {
         await seedManager();
         // `Bishop` (canonical 42) + `Ward Clerk` (canonical 47) are both
-        // in the WARD app-access set; `Elders Quorum President` (canonical
-        // 51) is NOT — it ranks for sort but earns no app access.
+        // in the base WARD app-access set; `Elders Quorum President`
+        // (canonical 51) is stake-gated and this suite seeds no stake doc,
+        // so the gate reads OFF — it ranks for sort but earns no access.
         const result = await syncApplyFix.run(
           callableReq({
             auth: { email: MANAGER_EMAIL },
@@ -2244,8 +2272,9 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       it('on auto: a replace that DROPS the app-access calling clears importer_callings[scope] and deletes the access doc (both maps empty)', async () => {
         await seedManager();
         // Old calling `Bishop` (42) is in the WARD app-access set; new
-        // calling `Elders Quorum President` (51) ranks for sort but is NOT
-        // in the set. The replace must remove the now-unjustified grant.
+        // calling `Elders Quorum President` (51) ranks for sort but earns
+        // no access with the stake gate OFF (no stake doc seeded). The
+        // replace must remove the now-unjustified grant.
         await seedSeat({
           scope: 'CO',
           type: 'auto',
@@ -2280,7 +2309,8 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
 
       it('on auto: a replace that drops the grant but leaves manual_grants clears importer_callings[scope] yet keeps the doc', async () => {
         await seedManager();
-        // `Bishop` (in WARD set) → `Elders Quorum President` (not in set).
+        // `Bishop` (in WARD set) → `Elders Quorum President` (stake gate
+        // OFF, so not in the set).
         await seedSeat({
           scope: 'CO',
           type: 'auto',
@@ -2559,6 +2589,210 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
           email: 'SyncActor:type-mismatch',
           canonical: 'SyncActor:type-mismatch',
         });
+      });
+    });
+
+    // The one stake-gated ward calling: Elders Quorum President grants
+    // app access only when `stake.eq_president_app_access === true`. The
+    // callable reads the stake doc once per invocation; a missing doc
+    // reads as OFF (every other test in this file relies on that).
+    describe('Elders Quorum President stake gate', () => {
+      const EQP = 'Elders Quorum President';
+
+      it('kindoo-only auto ward seat: gate ON writes an access doc carrying the calling', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'CO',
+                  type: 'auto',
+                  callings: [EQP],
+                  buildingNames: ['Maple Building'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: [EQP] });
+        expect(access.manual_grants).toEqual({});
+        expect(access.sort_order).toBe(51);
+      });
+
+      it('kindoo-only auto ward seat: gate explicitly OFF writes no access doc', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: false });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'CO',
+                  type: 'auto',
+                  callings: [EQP],
+                  buildingNames: ['Maple Building'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+        expect(accessSnap.exists).toBe(false);
+        // The seat itself is unaffected by the gate.
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.callings).toEqual([EQP]);
+        expect(seat.sort_order).toBe(51);
+      });
+
+      it('kindoo-only: gate ON does NOT extend to the quorum counselors (exact title only)', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'CO',
+                  type: 'auto',
+                  callings: ['Elders Quorum First Counselor'],
+                  buildingNames: ['Maple Building'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+        expect(accessSnap.exists).toBe(false);
+      });
+
+      it('callings-mismatch: gate ON keeps access when the replace target is the calling', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+        await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 42 });
+        await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 42 });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'callings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, callings: [EQP] },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+        // With the gate OFF this same replace deletes the doc (see the
+        // sibling test above); with it ON the grant is rewritten, not cleared.
+        expect(accessSnap.exists).toBe(true);
+        const access = accessSnap.data() as Access;
+        expect(access.importer_callings).toEqual({ CO: [EQP] });
+        // The seat's own sort_order is recomputed to 51, but the access
+        // doc's keeps the smaller PRIOR value — `writeAccessForAutoScope`
+        // stamps `pickMin(prior, new)`. Pre-existing behaviour of the
+        // replace path, unrelated to the gate; pinned here so a future
+        // change to it is deliberate.
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.sort_order).toBe(51);
+        expect(access.sort_order).toBe(42);
+      });
+
+      it('type-mismatch promote: gate ON writes the access doc for the promoted seat', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+        await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: EQP });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'type-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, newType: 'auto', callings: [EQP] },
+              },
+            },
+          }),
+        );
+
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: [EQP] });
+        expect(access.sort_order).toBe(51);
+      });
+
+      it('kindoo-unparseable: gate ON still grants NO stake-scope access (ward-only opt-in)', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+        await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 42 });
+        await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 42 });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-unparseable',
+                payload: { memberEmail: MEMBER_EMAIL, calling: EQP },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('stake');
+        // The opt-in extends the WARD set only. At stake scope the calling
+        // earns nothing, so the old ward grant is reaped and no stake grant
+        // replaces it — both maps empty → doc deleted.
+        const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+        expect(accessSnap.exists).toBe(false);
       });
     });
   });

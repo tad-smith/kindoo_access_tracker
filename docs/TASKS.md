@@ -6,6 +6,30 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-73] Pin the dependency tree Cloud Build installs for Cloud Functions
+Status: open
+Owner: @infra-engineer
+Phase: cross-cutting
+
+`firebase deploy` uploads only `functions/lib`, and Cloud Build runs `npm install` against the **generated** `functions/lib/package.json` (written by `functions/scripts/build.mjs`, which copies `dependencies` verbatim from `functions/package.json`). No lockfile reaches that install and `pnpm-lock.yaml` is not consulted, so every range resolves fresh at deploy time — the deployed tree is one neither local dev nor CI has exercised. A 2026-08-02 staging deploy resolved `firebase-admin` 13.8.0 → 13.10.0 and `firebase-functions` 7.2.5 → 7.3.2 relative to the pinned lockfile versions.
+
+That gap has already caused one full outage of the deploy: `@firebase/database-compat` 2.1.5 declares `@firebase/app` as an **optional** peer, so npm skipped it, and all 24 functions died at container start on `Cannot find module '@firebase/app'` — `firebase-functions/v1` (pulled in by the 1st-gen `onAuthUserCreate`) loads `firebase-admin/database` eagerly, and Cloud Functions loads the whole `index.js` in every container. PR #241 unblocked deploys by declaring `@firebase/app` explicitly, but that is a point fix; the same class of break recurs whenever an upstream package changes its dependency shape.
+
+Fix: have `build.mjs` emit a lockfile into `lib/` beside the generated `package.json` so Cloud Build installs a fully pinned tree. Note the lockfile must be generated for the **generated** manifest, not committed at `functions/package-lock.json` — that path is never installed from. The pinned versions should be the ones CI actually exercises, and npm's resolution differs from pnpm's, so the two need reconciling rather than assuming they agree.
+
+## [T-72] Consumer updates for stake-gated Elders Quorum President app access
+Status: done (2026-08-02 — PR #241; architecture decision D23)
+Owner: @backend-engineer / @web-engineer / @extension-engineer
+Phase: cross-cutting
+
+`packages/shared` gained the opt-in stake flag `eq_president_app_access` (absent ⇒ off), an optional `AppAccessOptions` trailing param on `appAccessCallingsForScope` / `filterAppAccessCallings`, and IO types for a new `backfillEqPresidentAccess` callable. Existing call sites compile unchanged, so each consumer had to thread the flag through deliberately. All three landed in PR #241:
+
+- **functions** — `syncApplyFix` reads the stake doc once per invocation and threads `AppAccessOptions` into `applyKindooOnly` / `applyCallingsMismatch` / `applyTypeMismatch` / `applyKindooUnparseable`; `backfillEqPresidentAccess` implements the grant/revoke sweep over auto ward-scope seats; `createStake` seeds `eq_president_app_access: false`.
+- **apps/web** — the switch ships on the Configuration → Config tab (with the flip-triggered backfill dialog) and on the bootstrap wizard's Step 1 (no dialog). No client-side app-access filtering existed to thread the flag into — the web reads `access` docs the server derives, so there was no second call site.
+- **extension** — the flag threads through `pickPrimarySegment` / `pickSegmentForSite` (parser) and `pickSegmentForSite` / `buildKindooBlock` (detector), so the primary-segment tiebreak agrees with the server.
+
+See `spec.md` §8, `architecture.md` D23, and `docs/changelog/eq-president-app-access.md`.
+
 ## [T-71] Organizations v1 deferrals — per-org pending bars + duplicate-grant inline edit
 Status: open
 Owner: @web-engineer

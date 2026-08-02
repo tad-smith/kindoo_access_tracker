@@ -54,6 +54,9 @@ No Sheets-client wrapper, no importer service, no `runImporter` / `runImportNow`
 - **Wrap all multi-doc writes in `db.runTransaction(...)`** — same atomicity guarantees as client transactions.
 - **All secrets via env injection** (`process.env.RESEND_API_KEY`); never in code.
 - **Cloud Functions 2nd gen** for everything (Cloud Run under the hood). Default timeout 60s; bump to 540s for any long-running scheduled job or callable. Default memory 256MB.
+- **Read per-stake config once per invocation, outside the transactions.** `syncApplyFix` reads the stake doc after the auth gate and threads the derived options into each handler; the handlers keep their strict reads-before-writes ordering untouched. A config flip landing mid-run is a benign race the next run heals — don't add a mid-transaction read to close it.
+- **Manager auth on callables reads `kindooManagers/{canonical}` directly, not the claim.** The custom claim can be ~1h stale on an idle session. `syncApplyFix` and `backfillEqPresidentAccess` both check the doc plus `active === true`.
+- **Reconcile callables are merge-only over the field they own.** `backfillEqPresidentAccess` adds / removes exactly one calling inside `importer_callings[scope]` rather than reusing `writeAccessForAutoScope`'s wholesale replace — a rebuild would silently "fix" unrelated entries the operator didn't consent to touching. A destructive direction takes an explicit parameter guarded against current config (`failed-precondition` on mismatch), so a stale client confirmation can't write the wrong side.
 
 ## Don't
 

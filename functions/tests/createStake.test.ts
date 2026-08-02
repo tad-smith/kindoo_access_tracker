@@ -217,6 +217,8 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     expect(stake.setup_complete).toBe(false);
     expect(stake.stake_seat_cap).toBe(0);
     expect(stake.timezone).toBe('America/Denver');
+    // Opt-in app-access flag starts off on a fresh stake.
+    expect(stake.eq_president_app_access).toBe(false);
     expect(stake.notifications_enabled).toBe(true);
     expect(stake.last_over_caps_json).toEqual([]);
     // Bookkeeping
@@ -409,6 +411,7 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     expect(after['setup_complete']).toBe(false);
     expect(after['stake_seat_cap']).toBe(0);
     expect(after['timezone']).toBe('America/Phoenix');
+    expect(after['eq_president_app_access']).toBe(false);
     expect(after['notifications_enabled']).toBe(true);
     expect(after['last_over_caps_json']).toEqual([]);
     expect(after['created_by']).toBe(SUPERADMIN_EMAIL);

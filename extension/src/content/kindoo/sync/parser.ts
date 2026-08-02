@@ -16,7 +16,12 @@
 // Phase 1 of the sync feature; design doc at
 // `extension/docs/sync-design.md` §"Description parser".
 
-import { filterAppAccessCallings, type Stake, type Ward } from '@kindoo/shared';
+import {
+  filterAppAccessCallings,
+  type AppAccessOptions,
+  type Stake,
+  type Ward,
+} from '@kindoo/shared';
 
 /** One scope+calling segment within a parsed description. */
 export interface ParsedSegment {
@@ -139,11 +144,12 @@ export function parseDescription(
 
 /** True iff any calling in `segment.calling` (split on `,`) grants app
  * access for the segment's own scope — ward callings for ward scopes,
- * the stake list for `'stake'`. Uses the hard-coded app-access lists. */
-function segmentGrantsAppAccess(segment: ParsedSegment): boolean {
+ * the stake list for `'stake'`. Uses the hard-coded app-access lists,
+ * plus the stake-gated ward calling when `opts.eqPresidentAccess`. */
+function segmentGrantsAppAccess(segment: ParsedSegment, opts?: AppAccessOptions): boolean {
   if (!segment.resolvedScope || segment.scope === null) return false;
   const callings = segment.calling.split(',').map((c) => c.trim());
-  return filterAppAccessCallings(segment.scope, callings).length > 0;
+  return filterAppAccessCallings(segment.scope, callings, opts).length > 0;
 }
 
 /**
@@ -157,13 +163,20 @@ function segmentGrantsAppAccess(segment: ParsedSegment): boolean {
  * access — apply SBA's `pickPrimaryScope` ordering: stake-scope first,
  * then alphabetical by `ward_code`. Returns `null` when no segment
  * resolved.
+ *
+ * `opts` carries the per-stake app-access gates (currently just
+ * `eqPresidentAccess`). Omitting it means every gate is off, which must
+ * match the server's read of an absent `stake.eq_president_app_access`.
  */
-export function pickPrimarySegment(parsed: ParsedDescription): ParsedSegment | null {
+export function pickPrimarySegment(
+  parsed: ParsedDescription,
+  opts?: AppAccessOptions,
+): ParsedSegment | null {
   const resolved = parsed.segments.filter((s) => s.resolvedScope);
   if (resolved.length === 0) return null;
 
   // Prefer app-access-granting segments when at least one exists.
-  const appAccess = resolved.filter(segmentGrantsAppAccess);
+  const appAccess = resolved.filter((s) => segmentGrantsAppAccess(s, opts));
   const pool = appAccess.length > 0 ? appAccess : resolved;
 
   const stakeSeg = pool.find((s) => s.scope === 'stake');

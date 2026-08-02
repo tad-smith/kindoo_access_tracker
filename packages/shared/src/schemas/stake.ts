@@ -26,6 +26,8 @@ export const stakeSchema = z.object({
   timezone: z.string(),
 
   notifications_enabled: z.boolean(),
+  // Optional — existing stake docs predate the field. Absent ⇒ off.
+  eq_president_app_access: z.boolean().optional(),
 
   last_over_caps_json: z.array(overCapEntrySchema),
 

@@ -88,6 +88,18 @@ test.describe('Manager admin pages (Phase 7)', () => {
     await expect(page.getByTestId('config-tab-stake-callings')).toHaveCount(0);
   });
 
+  test('Config tab shows the Elders Quorum President opt-in, off for a stake that never set it', async ({
+    page,
+  }) => {
+    // `eq_president_app_access` is opt-in: the seeded stake doc omits it,
+    // so the switch must render off against a real bundle.
+    await signInAsManager(page, 'mgr-eq@example.com');
+    await page.goto('/manager/configuration?tab=config');
+    const sw = page.getByTestId('config-eq-president-access');
+    await expect(sw).toBeVisible();
+    await expect(sw).toHaveAttribute('aria-checked', 'false');
+  });
+
   test('Configuration deep-link to ?tab=managers lands on the Managers panel', async ({ page }) => {
     await signInAsManager(page, 'mgr-cfg2@example.com');
     await page.goto('/manager/configuration?tab=managers');

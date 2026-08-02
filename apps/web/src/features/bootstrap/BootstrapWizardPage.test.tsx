@@ -152,6 +152,56 @@ describe('<BootstrapWizardPage />', () => {
     expect(within(step).queryByLabelText(/sheet/i)).not.toBeInTheDocument();
   });
 
+  it('step 1 offers the Elders Quorum President app-access opt-in, off by default', () => {
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    const step = screen.getByTestId('wizard-step-1');
+    const sw = within(step).getByTestId('bootstrap-eq-president-access');
+    expect(sw).toHaveAttribute('role', 'switch');
+    // Opt-in: the persisted field is absent on a fresh stake, so the
+    // switch must render off (not on, as `notifications_enabled` would).
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+    expect(within(step).getByLabelText(/Elders Quorum Presidents Get App Access/i)).toBe(sw);
+  });
+
+  it('step 1 shows the opt-in switch on when the stake already has it set', () => {
+    useStakeDocMock.mockReturnValue(stakeResult(makeStake({ eq_president_app_access: true })));
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('bootstrap-eq-president-access')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('step 1 writes the Elders Quorum President opt-in when saved', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.type(within(screen.getByTestId('wizard-step-1')).getByLabelText(/Stake name/i), 'S');
+    await user.click(screen.getByTestId('bootstrap-eq-president-access'));
+    await user.click(
+      within(screen.getByTestId('wizard-step-1')).getByRole('button', { name: /^Save$/ }),
+    );
+    await vi.waitFor(() => {
+      expect(step1Mutate).toHaveBeenCalledWith(
+        expect.objectContaining({ eq_president_app_access: true }),
+      );
+    });
+  });
+
+  it('step 1 raises no backfill dialog when the opt-in is toggled during setup', async () => {
+    // Deliberate: a stake still in setup has no seats to reconcile, so
+    // the wizard saves silently where the Config tab would prompt.
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.type(within(screen.getByTestId('wizard-step-1')).getByLabelText(/Stake name/i), 'S');
+    await user.click(screen.getByTestId('bootstrap-eq-president-access'));
+    await user.click(
+      within(screen.getByTestId('wizard-step-1')).getByRole('button', { name: /^Save$/ }),
+    );
+    await vi.waitFor(() => expect(step1Mutate).toHaveBeenCalled());
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText(/Grant access now/i)).toBeNull();
+  });
+
   it('disables Complete Setup until steps 1–3 are valid', () => {
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     expect(screen.getByTestId('bootstrap-complete-setup')).toBeDisabled();

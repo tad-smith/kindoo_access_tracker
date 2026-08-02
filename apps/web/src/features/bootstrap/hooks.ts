@@ -84,6 +84,7 @@ function requireActiveStake(activeStakeId: string | null): string {
 export interface Step1Input {
   stake_name: string;
   stake_seat_cap: number;
+  eq_president_app_access: boolean;
 }
 
 /**
@@ -92,6 +93,11 @@ export interface Step1Input {
  * only updates it. Defaults for `timezone` / `notifications_enabled`
  * are seeded by `createStake` (or assumed already present); we only
  * touch what the wizard exposes.
+ *
+ * `eq_president_app_access` is the one config toggle the wizard does
+ * expose, so a stake can opt in before its first Sync run. No backfill
+ * dialog follows the write here (unlike the Configuration page's Config
+ * tab) — a stake still in setup has no existing seats to reconcile.
  */
 export function useStep1Mutation() {
   const principal = usePrincipal();
@@ -104,6 +110,7 @@ export function useStep1Mutation() {
       await updateDoc(stakeRef(db, sid), {
         stake_name: input.stake_name,
         stake_seat_cap: input.stake_seat_cap,
+        eq_president_app_access: input.eq_president_app_access,
         last_modified_at: serverTimestamp(),
         last_modified_by: actor,
         lastActor: actor,
